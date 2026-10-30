@@ -1,3 +1,6 @@
+[submodule "forks/gpui-component"]
+	path = forks/gpui-component
+	url = https://github.com/ibisjp/gpui-component.git
 [submodule "forks/gpui-pre"]
 	path = forks/gpui-pre
 	url = https://github.com/ibisjp/gpui-pre.git
