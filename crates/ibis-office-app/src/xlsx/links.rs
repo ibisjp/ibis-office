@@ -6,10 +6,11 @@
 //! (`#Sheet1!A1`), shown as Excel's 「ハイパーリンク」 style; ⌘-click a
 //! linked cell follows it; the panel takes a link off.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+use gpui_kit::prelude::FluentBuilder as _;
 use crate::shell::palette::rgb;
 use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, Hyperlink, Rgb, SheetCommand, StyleChange};
 
@@ -142,7 +143,7 @@ impl SlideEditor {
         let Some(link) = self.current_link() else { return false };
         match (&link.target, &link.location) {
             (Some(url), _) => {
-                cx.open_url(url);
+                crate::shell::links::open_external_url(url,cx);
                 self.status = Some(crate::shell::i18n::format("_xlsx.opening-url", &[("url", url)]).into());
                 cx.notify();
             }
@@ -187,21 +188,21 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_size(px(12.)).child(current))
-            .child(Input::new(&address).small().cleanable(true))
-            .child(div().text_size(px(11.)).text_color(rgb(0x666666)).child(crate::shell::i18n::text("xlsx.link-display-text")))
-            .child(Input::new(&display_text).small().cleanable(true))
-            .child(div().text_size(px(11.)).text_color(rgb(0x666666)).child(crate::shell::i18n::text("xlsx.link-tooltip")))
-            .child(Input::new(&tooltip).small().cleanable(true));
+            .p_0().child(div().text_sm().child(current))
+            .child(crate::shell::chrome::text_field(&address).full_width())
+            .child(div().text_sm().text_color(rgb(0x666666)).child(crate::shell::i18n::text("xlsx.link-display-text")))
+            .child(crate::shell::chrome::text_field(&display_text).full_width())
+            .child(div().text_sm().text_color(rgb(0x666666)).child(crate::shell::i18n::text("xlsx.link-tooltip")))
+            .child(crate::shell::chrome::text_field(&tooltip).full_width());
 
         if !places.is_empty() {
             let mut place_row = h_flex().gap_1().flex_wrap();
             for (idx, (label, target_ref)) in places.into_iter().enumerate() {
                 let a_target = address.clone();
                 place_row = place_row.child(
-                    Button::new(("link-place", idx))
+                    crate::shell::chrome::action_button(("link-place", idx))
                         .small()
-                        .ghost()
+
                         .label(label)
                         .on_click(cx.listener(move |_, _, window, cx| {
                             let val = target_ref.clone();
@@ -211,32 +212,27 @@ impl SlideEditor {
                 );
             }
             body = body
-                .child(div().text_size(px(11.)).text_color(rgb(0x666666)).child(crate::shell::i18n::text("xlsx.link-places-in-workbook")))
+                .child(div().text_sm().text_color(rgb(0x666666)).child(crate::shell::i18n::text("xlsx.link-places-in-workbook")))
                 .child(place_row);
         }
 
         body = body
-            .child(
-                Button::new("link-insert")
-                    .primary()
-                    .small()
+            ;
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("link-insert", "", crate::shell::chrome::ActionButtonKind::Primary)
                     .label(crate::shell::i18n::text("_shell.insert-link"))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .disabled(a2.read(cx).value().trim().is_empty())
+                    .on_click(cx.listener(move |this, _, w, cx| {
                         let text = a2.read(cx).value().to_string();
                         let disp_str = d2.read(cx).value().to_string();
                         let tip_str = t2.read(cx).value().to_string();
                         let disp = (!disp_str.trim().is_empty()).then_some(disp_str.as_str());
                         let tip = (!tip_str.trim().is_empty()).then_some(tip_str.as_str());
                         this.insert_cell_link_full(&text, disp, tip, cx);
-                    })),
-            )
-            .child(
-                Button::new("link-remove")
-                    .small()
-                    .ghost()
+                        if this.current_link().is_some(){this.close_panel_dialog(w,cx);}
+                    })))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx)).when(self.current_link().is_some(),|bar|bar.action(crate::shell::chrome::ActionDefinition::new("link-remove", "", crate::shell::chrome::ActionButtonKind::Destructive)
                     .label(crate::shell::i18n::text("_shell.remove-link"))
-                    .on_click(cx.listener(|this, _, _, cx| this.remove_cell_link(cx))),
-            );
-        Some(SidebarPanel { title: crate::shell::i18n::text("insert.link").into(), body: body.into_any_element() })
+                    .on_click(cx.listener(|this, _, _, cx| this.remove_cell_link(cx)))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("insert.link"), body.into_any_element(), panel_terminal_actions))
     }
 }

@@ -3,8 +3,8 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Conditional formatting: formula and cell-value rules on a captured selection. Other
 //! imported rule types remain listed and keep their original XML.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::DropdownMenu as _;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -14,6 +14,8 @@ use ibis_doc_model::{CellRange, CfKind, CfRule, CfStyle, Command, ConditionalFor
 use crate::shell::chrome::{SidebarPanel, MenuEntry, MenuItem, fill_menu};
 use crate::shell::editor::SlideEditor;
 
+mod manager;
+
 const OPERATORS: [(&str, &str); 8] = [
     ("lessThan", "_xlsx.less-than"), ("lessThanOrEqual", "_xlsx.less-than-or-equal-to"), ("equal", "_xlsx.equal-to"), ("notEqual", "_xlsx.not-equal-to"),
     ("greaterThanOrEqual", "_xlsx.greater-than-or-equal-to"), ("greaterThan", "_xlsx.greater-than"), ("between", "_xlsx.between"), ("notBetween", "_xlsx.not-between"),
@@ -21,6 +23,8 @@ const OPERATORS: [(&str, &str); 8] = [
 
 pub(crate) struct ConditionalPanel {
     pub(crate) range: Entity<InputState>,
+    pub(crate) manager:bool,
+    scroll:ScrollHandle,
     pub(crate) ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Bounds<Pixels>>>>,
     pub(crate) formula: Entity<InputState>,
     pub(crate) formula2: Entity<InputState>,
@@ -83,6 +87,7 @@ impl SlideEditor {
         text_color.update(cx, |i, cx| i.set_value(text_hex, window, cx));
         let stop = old.as_ref().is_some_and(|(_, f)| f.rules[0].stop);
         let panel = ConditionalPanel {
+            manager:false,scroll:ScrollHandle::new(),
             range: range_input,
             ui: Default::default(),
             formula,
@@ -280,12 +285,18 @@ impl SlideEditor {
 
     pub(crate) fn conditional_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let sel_range = self.selected_range();
+        if self.wb().conditional_edit.as_ref().is_some_and(|p|p.manager){return self.conditional_manager_panel(cx);}
         let p = self.sheet_state()?.conditional_edit.as_ref()?;
         let range = p.ranges.iter().map(|r| format!("{}:{}", ibis_doc_model::cell_name(r.first_column, r.first_row), ibis_doc_model::cell_name(r.last_column, r.last_row))).collect::<Vec<_>>().join(" ");
         let mark = |id: &str, child: AnyElement| {
             let ui = p.ui.clone();
             let id = id.to_string();
             div().relative().child(child).child(canvas(|_, _, _| {}, move |bounds, _, _, _| { ui.borrow_mut().insert(id.clone(), bounds); }).absolute().top_0().left_0().size_full()).into_any_element()
+        };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| { ui.borrow_mut().insert(id.clone(), bounds); })
         };
         let editor=cx.entity().downgrade();
         let mut choices:Vec<MenuEntry>=vec![MenuItem::tr("conditional.expression").checked(p.kind.is_none()&&p.top10.is_none()).on(|this,_,cx|{if let Some(p)=this.wb_mut().conditional_edit.as_mut(){p.top10=None;p.kind=None;p.error.clear();}cx.notify();}).into()];
@@ -326,14 +337,23 @@ impl SlideEditor {
         let is_italic = p.italic;
         let filter_sel = p.filter_selection_only;
         let mut body = v_flex().gap_2().px(px(18.)).py(px(8.))
-            .child(div().text_size(px(12.)).child(SharedString::from(crate::shell::i18n::format("_xlsx.applies-to-range", &[("range", &range)]))))
-            .child(mark("kind", Button::new("conditional-kind").small().label(kind_label).dropdown_menu(move|m,window,cx|fill_menu(m.min_w(px(200.)),&choices,&editor,window,cx)).into_any_element()))
-            .child(mark("range", Input::new(&p.range).small().cleanable(true).into_any_element()))
-            .child(mark("formula", Input::new(&p.formula).small().cleanable(true).into_any_element()))
-            .when(top10.is_none() && p.kind.is_some_and(|k|k>=6), |d| d.child(mark("formula2",Input::new(&p.formula2).small().cleanable(true).into_any_element())))
+            .p_0().child(div().text_sm().child(SharedString::from(crate::shell::i18n::format("_xlsx.applies-to-range", &[("range", &range)]))))
+            .child(mark("kind", div().w(px(224.)).max_w(px(224.)).child(crate::shell::chrome::Dropdown::from_entries("conditional-kind",kind_label,choices,true,0,&editor).into_any_element()).into_any_element()))
+            .child(mark("range", super::range_field::local_range_field(&p.range,"conditional_edit-p-range",false,cx).into_any_element()))
+            .child(mark("formula", {
+                // 上位/下位 N: the box is the rank, a count (1–1000 items, 1–100 percent) with ▲▼. The rule is made by OK, not on
+                // Enter, so a step only changes the box. A value or a formula has none.
+                let field = crate::shell::chrome::text_field(&p.formula).full_width();
+                match top10 {
+                    Some((_, percent)) => field.spinner("conditional-top10-rank", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, if percent { 100.0 } else { 1000.0 }).integer_only(), cx, |_, _, _, _| {}),
+                    None => field,
+                }
+                .into_any_element()
+            }))
+            .when(top10.is_none() && p.kind.is_some_and(|k|k>=6), |d| d.child(mark("formula2",crate::shell::chrome::text_field(&p.formula2).full_width().into_any_element())))
             .when_some(top10, |d, (bottom, percent)| {
                 d.child(h_flex().gap_1()
-                    .child(mark("top10-bottom", Button::new("conditional-top10-bottom").small().label(if bottom { crate::shell::i18n::text("_xlsx.cf-bottom") } else { crate::shell::i18n::text("_xlsx.cf-top") }).on_click(cx.listener(|this, _, _, cx| {
+                    .child(mark("top10-bottom", crate::shell::chrome::action_button("conditional-top10-bottom").small().label(if bottom { crate::shell::i18n::text("_xlsx.cf-bottom") } else { crate::shell::i18n::text("_xlsx.cf-top") }).on_click(cx.listener(|this, _, _, cx| {
                         if let Some(p) = this.wb_mut().conditional_edit.as_mut()
                             && let Some((b, pct)) = p.top10.as_mut()
                         {
@@ -342,7 +362,7 @@ impl SlideEditor {
                         }
                         cx.notify();
                     })).into_any_element()))
-                    .child(mark("top10-percent", Button::new("conditional-top10-percent").small().label(if percent { crate::shell::i18n::text("_xlsx.cf-percent") } else { crate::shell::i18n::text("_xlsx.cf-items") }).on_click(cx.listener(|this, _, _, cx| {
+                    .child(mark("top10-percent", crate::shell::chrome::action_button("conditional-top10-percent").small().label(if percent { crate::shell::i18n::text("_xlsx.cf-percent") } else { crate::shell::i18n::text("_xlsx.cf-items") }).on_click(cx.listener(|this, _, _, cx| {
                         if let Some(p) = this.wb_mut().conditional_edit.as_mut()
                             && let Some((_, pct)) = p.top10.as_mut()
                         {
@@ -352,73 +372,40 @@ impl SlideEditor {
                     })).into_any_element()))
                 )
             })
-            .child(
-                h_flex().gap_1().flex_wrap()
-                    .child(mark("preset-red", Button::new("conditional-preset-red").small().label(crate::shell::i18n::text("xlsx.cf.preset-red")).on_click(cx.listener(|this, _, window, cx| this.apply_conditional_preset("FFC7CE", "9C0006", window, cx))).into_any_element()))
-                    .child(mark("preset-yellow", Button::new("conditional-preset-yellow").small().label(crate::shell::i18n::text("xlsx.cf.preset-yellow")).on_click(cx.listener(|this, _, window, cx| this.apply_conditional_preset("FFEB9C", "9C6500", window, cx))).into_any_element()))
-                    .child(mark("preset-green", Button::new("conditional-preset-green").small().label(crate::shell::i18n::text("xlsx.cf.preset-green")).on_click(cx.listener(|this, _, window, cx| this.apply_conditional_preset("C6EFCE", "006100", window, cx))).into_any_element()))
-                    .child(mark("preset-red-text", Button::new("conditional-preset-red-text").small().label(crate::shell::i18n::text("xlsx.cf.preset-red-text")).on_click(cx.listener(|this, _, window, cx| this.apply_conditional_preset("", "9C0006", window, cx))).into_any_element()))
-            )
+            .child({
+                let presets=[("xlsx.cf.preset-red","FFC7CE","9C0006"),("xlsx.cf.preset-yellow","FFEB9C","9C6500"),("xlsx.cf.preset-green","C6EFCE","006100"),("xlsx.cf.preset-red-text","","9C0006")];
+                let selected=presets.iter().position(|(_,fill,color)|p.fill.read(cx).value().as_ref()==*fill&&p.text_color.read(cx).value().as_ref()==*color).unwrap_or(0);
+                let choices=presets.into_iter().map(|(label,fill,color)|{
+                    let bg=u32::from_str_radix(fill,16).unwrap_or(0xffffff);let fg=u32::from_str_radix(color,16).unwrap_or(0);
+                    crate::shell::chrome::preview_dropdown::PreviewChoice{label:crate::shell::i18n::text(label),content:std::rc::Rc::new(move||div().px_2().w_full().bg(crate::shell::palette::rgb(bg)).text_color(crate::shell::palette::rgb(fg)).child("123,456").into_any_element()),choose:std::rc::Rc::new(move|e,w,cx|e.apply_conditional_preset(fill,color,w,cx))}
+                }).collect();crate::shell::chrome::preview_dropdown::preview_dropdown("conditional-style-preview",choices,selected,cx)
+            })
             .child(crate::shell::i18n::text("_xlsx.fill-color-rgb"))
-            .child(mark("fill", Input::new(&p.fill).small().cleanable(true).into_any_element()))
+            .child(mark("fill", crate::shell::chrome::panel_color_field("conditional-fill",&p.fill,cx)))
             .child(crate::shell::i18n::text("xlsx.cf.text-color-rgb"))
-            .child(mark("text-color", Input::new(&p.text_color).small().cleanable(true).into_any_element()))
+            .child(mark("text-color", crate::shell::chrome::panel_color_field("panel-color-xlsx-conditional-edit-1",&p.text_color,cx).into_any_element()))
             .child(
                 h_flex().gap_1()
-                    .child(mark("bold", Button::new("conditional-bold").small().when(is_bold, |b| b.primary()).label("B").on_click(cx.listener(|this, _, _, cx| {
+                    .child(mark("bold", crate::shell::chrome::action_button("conditional-bold").small().ghost().icon(crate::shell::icons::Material("format_bold")).tooltip(crate::shell::i18n::text("_shell.bold")).when(is_bold,|b|b.bg(crate::shell::palette::rgb(crate::shell::chrome::SELECTED_ROW_BG))).on_click(cx.listener(|this, _, _, cx| {
                         if let Some(p) = this.wb_mut().conditional_edit.as_mut() { p.bold = !p.bold; }
                         cx.notify();
                     })).into_any_element()))
-                    .child(mark("italic", Button::new("conditional-italic").small().when(is_italic, |b| b.primary()).label("I").on_click(cx.listener(|this, _, _, cx| {
+                    .child(mark("italic", crate::shell::chrome::action_button("conditional-italic").small().ghost().icon(crate::shell::icons::Material("format_italic")).tooltip(crate::shell::i18n::text("_shell.italic-i")).when(is_italic,|b|b.bg(crate::shell::palette::rgb(crate::shell::chrome::SELECTED_ROW_BG))).on_click(cx.listener(|this, _, _, cx| {
                         if let Some(p) = this.wb_mut().conditional_edit.as_mut() { p.italic = !p.italic; }
                         cx.notify();
                     })).into_any_element()))
             )
-            .child(mark("stop", Button::new("conditional-stop").small().label(if p.stop { crate::shell::i18n::text("_xlsx.stop-if-true-on") } else { crate::shell::i18n::text("_xlsx.stop-if-true-off") }).on_click(cx.listener(|this, _, _, cx| {
+            .child(mark("stop", crate::shell::chrome::action_button("conditional-stop").small().label(if p.stop { crate::shell::i18n::text("_xlsx.stop-if-true-on") } else { crate::shell::i18n::text("_xlsx.stop-if-true-off") }).on_click(cx.listener(|this, _, _, cx| {
                 if let Some(p) = this.wb_mut().conditional_edit.as_mut() { p.stop = !p.stop; }
                 cx.notify();
             })).into_any_element()))
-            .child(div().text_size(px(12.)).child(SharedString::from(p.error.clone())))
-            .child(h_flex().gap_1()
-                .child(mark("apply", Button::new("conditional-apply").primary().small().label(if p.editing.is_some() { crate::shell::i18n::text("_xlsx.update-rule") } else { crate::shell::i18n::text("_xlsx.add-rule") }).on_click(cx.listener(|this, _, _, cx| this.apply_conditional(cx))).into_any_element()))
-                .when(p.editing.is_some(), |d| d.child(mark("duplicate-apply", Button::new("conditional-duplicate-apply").small().label(crate::shell::i18n::text("_xlsx.add-as-copy")).on_click(cx.listener(|this, _, _, cx| this.apply_conditional_as_copy(cx))).into_any_element())))
-            )
-            .child(mark("clear", Button::new("conditional-clear").small().label(crate::shell::i18n::text("_xlsx.delete-rules-in-selection")).on_click(cx.listener(|this, _, _, cx| this.clear_conditional_selection(cx))).into_any_element()))
-            .child(
-                h_flex().gap_1()
-                    .child(mark("filter-sheet", Button::new("conditional-filter-sheet").small().when(!filter_sel, |b| b.primary()).label(crate::shell::i18n::text("xlsx.cf.filter-sheet")).on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(p) = this.wb_mut().conditional_edit.as_mut() { p.filter_selection_only = false; }
-                        cx.notify();
-                    })).into_any_element()))
-                    .child(mark("filter-selection", Button::new("conditional-filter-selection").small().when(filter_sel, |b| b.primary()).label(crate::shell::i18n::text("xlsx.cf.filter-selection")).on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(p) = this.wb_mut().conditional_edit.as_mut() { p.filter_selection_only = true; }
-                        cx.notify();
-                    })).into_any_element()))
-            );
-        if let Some((_, sheet)) = self.current_sheet() {
-            let mut order: Vec<_> = sheet.conditional.iter().enumerate().flat_map(|(i, f)| {
-                let matches_filter = !filter_sel || sel_range.is_some_and(|sel| {
-                    f.ranges.iter().any(|r| {
-                        r.first_row <= sel.last_row && r.last_row >= sel.first_row
-                            && r.first_column <= sel.last_column && r.last_column >= sel.first_column
-                    })
-                });
-                f.rules.iter().enumerate().filter(move |_| matches_filter).map(move |(j, r)| (i, j, r))
-            }).collect();
-            order.sort_by_key(|(_, _, r)| r.priority);
-            for (at, &(index, rule, r)) in order.iter().enumerate() {
-                let editable = sheet.conditional[index].rules.len() == 1 && match &r.kind { CfKind::Expression(_) | CfKind::TimePeriod { .. } | CfKind::Top10 { .. } => true, CfKind::CellIs {operator, formulas} => OPERATORS.iter().position(|(n,_)|n==operator).is_some_and(|k|formulas.len()==if k>=6 {2}else{1}), _=>false };
-                body = body.child(div().text_size(px(12.)).child(crate::shell::i18n::format("_xlsx.priority-priority-rule-group-number", &[("priority", &r.priority), ("group", &(index + 1)), ("number", &(rule + 1))])))
-                    .child(h_flex().gap_1()
-                        .child(mark(&format!("edit-{index}"), Button::new(("conditional-edit", at)).small().label(crate::shell::i18n::text("_xlsx.edit")).disabled(!editable).on_click(cx.listener(move |this, _, window, cx| this.open_conditional(Some(index), window, cx))).into_any_element()))
-                        .child(mark(&format!("duplicate-{index}-{rule}"), Button::new(("conditional-duplicate", at)).small().label(crate::shell::i18n::text("_shell.duplicate")).on_click(cx.listener(move |this, _, window, cx| this.duplicate_conditional_rule(index, rule, window, cx))).into_any_element()))
-                        .child(mark(&format!("delete-{index}-{rule}"), Button::new(("conditional-delete", at)).small().label(crate::shell::i18n::text("_shell.delete")).on_click(cx.listener(move |this, _, window, cx| this.delete_conditional_rule(index, rule, window, cx))).into_any_element()))
-                        .child(mark(&format!("up-{index}-{rule}"), Button::new(("conditional-up", at)).small().label("↑").disabled(at == 0).on_click(cx.listener(move |this, _, window, cx| this.manage_conditional(index, rule, Some(true), window, cx))).into_any_element()))
-                        .child(mark(&format!("down-{index}-{rule}"), Button::new(("conditional-down", at)).small().label("↓").disabled(at + 1 == order.len()).on_click(cx.listener(move |this, _, window, cx| this.manage_conditional(index, rule, Some(false), window, cx))).into_any_element()))
-                        .child(mark(&format!("rule-stop-{index}-{rule}"), Button::new(("conditional-rule-stop", at)).small().label(if r.stop { crate::shell::i18n::text("_xlsx.stop-on") } else { crate::shell::i18n::text("_xlsx.stop-off") }).on_click(cx.listener(move |this, _, window, cx| this.manage_conditional(index, rule, None, window, cx))).into_any_element())));
-            }
-        }
-        Some(SidebarPanel { title: "xlsx.conditional".into(), body: body.into_any_element() })
+            .child(div().text_sm().child(SharedString::from(p.error.clone())))
+;
+        let footer=crate::shell::chrome::action_bar()
+            .action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("conditional-apply", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|e,_,_,cx|e.apply_conditional(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))
+            .when(p.editing.is_some(),|bar|bar.action(mark_action("duplicate-apply", crate::shell::chrome::ActionDefinition::new("conditional-copy-add", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_xlsx.add-as-copy")).on_click(cx.listener(|e,_,_,cx|e.apply_conditional_as_copy(cx))))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("xlsx.cf.edit-title"),body.into_any_element(),footer))
     }
 }
 

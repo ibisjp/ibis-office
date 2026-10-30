@@ -475,7 +475,7 @@ impl SlideEditor {
                 MenuItem::tr("pptx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_spelling(w, cx)).into(),
                 MenuItem::tr("pptx.thesaurus").icon("menu_book").on(|e, w, cx| e.open_pptx_thesaurus(w, cx)).into(),
                 MenuItem::tr("pptx.insets-actions").icon("padding").on(|e, w, cx| e.open_text_insets_panel(w, cx)).into(),
-                MenuItem::tr("pptx.link").icon("link").shortcut("⌘K").on(|e, w, cx| e.slide_open_link_panel(w, cx)).into(),
+                self.slide_hyperlink_context_entry(),
             ]);
             return entries;
         }
@@ -857,7 +857,7 @@ impl SlideEditor {
         entries.extend([
             MenuEntry::Separator,
             Submenu::tr("pptx.menu.animation", "animation", crate::pptx::animation_ui::animation_items(self)).into(),
-            MenuItem::tr("pptx.link").icon("link").shortcut("⌘K").on(|e, w, cx| e.slide_open_link_panel(w, cx)).into(),
+            self.slide_hyperlink_context_entry(),
             MenuItem::tr("pptx.frame.settings").icon("straighten").on(|e, w, cx| e.open_frame_panel(w, cx)).into(),
             MenuItem::tr("pptx.alt-text").icon("accessibility").on(|e, w, cx| e.open_alt_text_panel(w, cx)).into(),
         ]);
@@ -922,6 +922,15 @@ impl SlideEditor {
                 cx.notify();
                 return;
             }
+        }
+        if let Some((target,link))=self.slide_link_target_at(layout.to_emu(event.position)){
+            let id=match &target{crate::pptx::links::LinkTarget::Shape(id)|crate::pptx::links::LinkTarget::Text{shape:id,..}|crate::pptx::links::LinkTarget::CellText{shape:id,..}=>*id};
+            self.set_selection(vec![id]);
+            let entry=self.slide_hyperlink_menu_for(target,link);
+            let mut entries=self.shape_context_menu_entries();
+            entries.retain(|e|match e{crate::shell::chrome::MenuEntry::Item(i)=>i.id!="pptx.link",crate::shell::chrome::MenuEntry::Submenu(s)=>s.id!="hyperlink.menu",_=>true});
+            entries.push(entry);
+            self.open_hyperlink_context(event.position,entries,window,cx);return;
         }
         let slop = crate::pptx::interaction::LINE_SLOP_PX as f64 / layout.scale as f64;
         let hit = crate::pptx::interaction::hit_test(self.slide(), p, slop);

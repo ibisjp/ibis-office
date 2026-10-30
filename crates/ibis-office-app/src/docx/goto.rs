@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Block, FlowDocument, FlowPos, FlowRunKind};
@@ -261,6 +261,7 @@ pub(crate) fn document_comment_paras(editor: &SlideEditor) -> Vec<u32> {
 impl SlideEditor {
     /// 編集 > ジャンプ…: サイドバーにジャンプパネルを開く。
     pub(crate) fn open_go_to_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let value_input = cx.new(|cx| InputState::new(window, cx).placeholder(text("docx.goto.placeholder")));
         let panel = GoToPanel {
             target: GoToTarget::Page,
@@ -609,12 +610,19 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
-        let mut body = v_flex().gap_3().px(px(16.)).py(px(10.));
+        let mut body = v_flex().gap_3().px(px(16.)).py(px(10.)).p_0();
 
         // 1. 移動先ヘッダー
         body = body.child(
-            div().text_size(px(12.)).font_weight(FontWeight::BOLD).text_color(theme.foreground).child(text("docx.goto.what"))
+            div().text_sm().font_weight(FontWeight::BOLD).text_color(theme.foreground).child(text("docx.goto.what"))
         );
 
         // 2. 移動先選択ボタン群
@@ -638,11 +646,7 @@ impl SlideEditor {
             target_grid = target_grid.child(
                 mark(
                     &id_str,
-                    Button::new(SharedString::from(id_str.clone()))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if is_sel { "●" } else { "○" }, text(t.label_key())))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    crate::shell::chrome::radio_button(SharedString::from(id_str.clone()), is_sel, false, text(t.label_key()), cx.listener(move |this, _, _, cx| {
                             this.set_go_to_target(t, cx);
                         }))
                         .into_any_element(),
@@ -655,8 +659,8 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(theme.muted_foreground).child(text(current_target.input_label_key())))
-                .child(mark("goto-input", Input::new(&p.value_input).small().cleanable(true).into_any_element()))
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.muted_foreground).child(text(current_target.input_label_key())))
+                .child(mark("goto-input", crate::shell::chrome::text_field(&p.value_input).full_width().into_any_element()))
         );
 
         // 4. ブックマークまたは見出し選択可能リスト
@@ -665,16 +669,16 @@ impl SlideEditor {
                 let bms = document_bookmarks(doc);
                 if !bms.is_empty() {
                     let mut bm_box = v_flex().gap_1().max_h(px(120.)).overflow_hidden();
-                    bm_box = bm_box.child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(text("_docx.existing-bookmarks")));
+                    bm_box = bm_box.child(div().text_sm().text_color(theme.muted_foreground).child(text("_docx.existing-bookmarks")));
                     for (bm_name, _) in bms {
                         let name_clone = bm_name.clone();
                         let btn_id = format!("goto-bookmark-{bm_name}");
                         bm_box = bm_box.child(
                             mark(
                                 &btn_id,
-                                Button::new(SharedString::from(btn_id.clone()))
+                                crate::shell::chrome::action_button(SharedString::from(btn_id.clone()))
                                     .small()
-                                    .ghost()
+
                                     .label(SharedString::from(bm_name))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.jump_bookmark(&name_clone, cx);
@@ -690,7 +694,7 @@ impl SlideEditor {
             let headings = self.outline();
             if !headings.is_empty() {
                 let mut h_box = v_flex().gap_1().max_h(px(120.)).overflow_hidden();
-                h_box = h_box.child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(text("_docx.headings-in-document")));
+                h_box = h_box.child(div().text_sm().text_color(theme.muted_foreground).child(text("_docx.headings-in-document")));
                 for (lvl, title, para_id) in headings {
                     let indent = "  ".repeat(lvl.saturating_sub(1) as usize);
                     let label_str = format!("{indent}{title}");
@@ -698,9 +702,9 @@ impl SlideEditor {
                     h_box = h_box.child(
                         mark(
                             &btn_id,
-                            Button::new(SharedString::from(btn_id.clone()))
+                            crate::shell::chrome::action_button(SharedString::from(btn_id.clone()))
                                 .small()
-                                .ghost()
+
                                 .label(SharedString::from(label_str))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.jump_to(para_id, cx);
@@ -715,78 +719,39 @@ impl SlideEditor {
         }
 
         // 5. アクションボタン: 前へ / 次へ / ジャンプ / 閉じる
-        let action_row = h_flex()
-            .gap_1()
-            .items_center()
-            .pt(px(4.))
-            .child(
-                mark(
-                    "goto-prev",
-                    Button::new("goto-prev")
-                        .small()
-                        .ghost()
-                        .label(text("docx.goto.btn-prev"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.go_to_previous(cx);
-                        }))
-                        .into_any_element(),
-                )
-            )
-            .child(
-                mark(
-                    "goto-next",
-                    Button::new("goto-next")
-                        .small()
-                        .ghost()
-                        .label(text("docx.goto.btn-next"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.go_to_next(cx);
-                        }))
-                        .into_any_element(),
-                )
-            )
-            .child(
-                mark(
-                    "goto-jump",
-                    Button::new("goto-jump")
-                        .small()
-                        .primary()
-                        .label(text("docx.goto.btn-jump"))
+        let action_row = crate::shell::chrome::action_bar()
+            .action(
+                mark_action("goto-jump", crate::shell::chrome::ActionDefinition::new("goto-jump", text("docx.goto.btn-jump"), crate::shell::chrome::ActionButtonKind::Primary)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.go_to_jump(cx);
-                        }))
-                        .into_any_element(),
-                )
+                        })))
             )
-            .child(
-                mark(
-                    "goto-close",
-                    Button::new("goto-close")
-                        .small()
-                        .ghost()
-                        .label(text("docx.goto.btn-close"))
+            .action(
+                mark_action("goto-prev", crate::shell::chrome::ActionDefinition::new("goto-prev", text("docx.goto.btn-prev"), crate::shell::chrome::ActionButtonKind::Normal)
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.close_go_to_panel(cx);
-                        }))
-                        .into_any_element(),
-                )
-            );
-        body = body.child(action_row);
+                            this.go_to_previous(cx);
+                        })))
+            )
+            .action(
+                mark_action("goto-next", crate::shell::chrome::ActionDefinition::new("goto-next", text("docx.goto.btn-next"), crate::shell::chrome::ActionButtonKind::Normal)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.go_to_next(cx);
+                        })))
+            )
+
+        .action(crate::shell::chrome::dialog_close_definition(cx));
 
         // 6. メッセージ表示
         if !p.message.is_empty() {
             body = body.child(
                 div()
-                    .text_size(px(11.))
+                    .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(SharedString::from(p.message.clone()))
             );
         }
 
-        Some(SidebarPanel {
-            title: text("docx.goto.title").into(),
-            body: body.into_any_element(),
-        })
+        Some(SidebarPanel::with_footer(text("docx.goto.title"),body.into_any_element(),action_row))
     }
 }
 

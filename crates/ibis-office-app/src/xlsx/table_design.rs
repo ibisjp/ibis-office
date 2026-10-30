@@ -5,8 +5,8 @@
 //! name, its header and 集計行 (each column's function), its style and its
 //! options (縞模様, 最初の列, 最後の列, フィルター ボタン).
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputState,InputEvent};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -19,6 +19,7 @@ use crate::shell::i18n::text;
 pub(crate) struct TableDesignPanel {
     pub(crate) index: usize,
     pub(crate) name: Entity<InputState>,
+    _name_subscription: Subscription,
     /// The column whose 集計行 function is being chosen.
     pub(crate) total_column: Option<usize>,
     pub(crate) message: String,
@@ -134,6 +135,9 @@ impl SlideEditor {
         let name = self.current_sheet().map(|(_, s)| s.tables[index].name.clone()).unwrap_or_default();
         let input = cx.new(|cx| InputState::new(window, cx));
         input.update(cx, |i, cx| i.set_value(name, window, cx));
+        let name_subscription=cx.subscribe_in(&input,window,|this,_,event:&InputEvent,_,cx|{
+            if matches!(event,InputEvent::Change) { this.rename_table(cx); }
+        });
         let s = self.wb_mut();
         s.custom_format = None;
         s.page_setup = false;
@@ -143,8 +147,8 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
-        s.panels.table_design = Some(TableDesignPanel { index, name: input, total_column: None, message: String::new() });
+        s.close_settings();
+        s.panels.table_design = Some(TableDesignPanel { index, name: input, _name_subscription:name_subscription, total_column: None, message: String::new() });
         self.sidebar_open = true;
         cx.notify();
     }
@@ -435,37 +439,36 @@ impl SlideEditor {
         let message = p.message.clone();
         let total_column = p.total_column;
         let st = t.style.clone().unwrap_or_default();
-        let check = |on: bool, label: &str| format!("{} {}", if on { "☑" } else { "☐" }, text(label));
         let mut body = v_flex()
             .gap_1()
             .px(px(18.))
             .py(px(8.))
-            .child(text("_xlsx.table-name"))
-            .child(h_flex().gap_1().child(div().flex_1().child(Input::new(&p.name).small().cleanable(true))).child(Button::new("table-rename").small().label(text("_xlsx.change")).on_click(cx.listener(|this, _, _, cx| this.rename_table(cx)))))
+            .p_0().child(text("_xlsx.table-name"))
+            .child(crate::shell::chrome::text_field(&p.name).full_width())
             .child(div().pt(px(6.)).child(text("_xlsx.table-style-options")))
-            .child(Button::new("table-header").small().label(check(t.header_rows > 0, "docx.table-design.header-row")).on_click(cx.listener(move |this, _, _, cx| this.toggle_header_row(index, cx))))
-            .child(Button::new("table-totals").small().label(check(t.totals_rows > 0, "docx.table-design.total-row")).on_click(cx.listener(move |this, _, _, cx| this.toggle_totals_row(index, cx))))
-            .child(Button::new("table-row-stripes").small().label(check(st.row_stripes, "_xlsx.banded-rows")).on_click(cx.listener(move |this, _, _, cx| this.set_table_style(index, |s| s.row_stripes = !s.row_stripes, cx))))
-            .child(Button::new("table-column-stripes").small().label(check(st.column_stripes, "_xlsx.banded-columns")).on_click(cx.listener(move |this, _, _, cx| this.set_table_style(index, |s| s.column_stripes = !s.column_stripes, cx))))
-            .child(Button::new("table-first-column").small().label(check(st.first_column, "docx.table-design.first-column")).on_click(cx.listener(move |this, _, _, cx| this.set_table_style(index, |s| s.first_column = !s.first_column, cx))))
-            .child(Button::new("table-last-column").small().label(check(st.last_column, "docx.table-design.last-column")).on_click(cx.listener(move |this, _, _, cx| this.set_table_style(index, |s| s.last_column = !s.last_column, cx))))
-            .child(Button::new("table-filter-button").small().label(check(t.filter.is_some(), "_xlsx.filter-button")).disabled(t.header_rows == 0).on_click(cx.listener(move |this, _, _, cx| this.toggle_table_filter_button(index, cx))));
+            .child(crate::shell::chrome::checkbox_button("table-header", crate::shell::i18n::text("docx.table-design.header-row"), t.header_rows > 0, false, cx.listener(move |this, _, _, cx| this.toggle_header_row(index, cx))))
+            .child(crate::shell::chrome::checkbox_button("table-totals", crate::shell::i18n::text("docx.table-design.total-row"), t.totals_rows > 0, false, cx.listener(move |this, _, _, cx| this.toggle_totals_row(index, cx))))
+            .child(crate::shell::chrome::checkbox_button("table-row-stripes", crate::shell::i18n::text("_xlsx.banded-rows"), st.row_stripes, false, cx.listener(move |this, _, _, cx| this.set_table_style(index, |s| s.row_stripes = !s.row_stripes, cx))))
+            .child(crate::shell::chrome::checkbox_button("table-column-stripes", crate::shell::i18n::text("_xlsx.banded-columns"), st.column_stripes, false, cx.listener(move |this, _, _, cx| this.set_table_style(index, |s| s.column_stripes = !s.column_stripes, cx))))
+            .child(crate::shell::chrome::checkbox_button("table-first-column", crate::shell::i18n::text("docx.table-design.first-column"), st.first_column, false, cx.listener(move |this, _, _, cx| this.set_table_style(index, |s| s.first_column = !s.first_column, cx))))
+            .child(crate::shell::chrome::checkbox_button("table-last-column", crate::shell::i18n::text("docx.table-design.last-column"), st.last_column, false, cx.listener(move |this, _, _, cx| this.set_table_style(index, |s| s.last_column = !s.last_column, cx))))
+            .child(crate::shell::chrome::checkbox_button("table-filter-button", crate::shell::i18n::text("_xlsx.filter-button"), t.filter.is_some(), t.header_rows == 0, cx.listener(move |this, _, _, cx| this.toggle_table_filter_button(index, cx))));
         if t.totals_rows > 0 {
             body = body.child(div().pt(px(6.)).child(text("_xlsx.total-row-functions")));
             for (i, name) in t.columns.iter().enumerate() {
                 let current = t.totals.get(i).and_then(|x| x.function.clone());
                 let shown = current.as_deref().and_then(|f| TOTALS.iter().find(|x| x.0 == f)).map_or(text("_shell.none").to_string(), |x| text(x.2).to_string());
-                body = body.child(Button::new(SharedString::from(format!("table-total-{i}"))).small().label(format!("{name}: {shown}")).on_click(cx.listener(move |this, _, _, cx| {
+                body = body.child(crate::shell::chrome::action_button(SharedString::from(format!("table-total-{i}"))).small().label(format!("{name}: {shown}")).on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(p) = this.wb_mut().panels.table_design.as_mut() {
                         p.total_column = if p.total_column == Some(i) { None } else { Some(i) };
                     }
                     cx.notify();
                 })));
                 if total_column == Some(i) {
-                    let mut choices = h_flex().gap_1().flex_wrap().pl(px(12.)).child(Button::new(SharedString::from(format!("table-total-{i}-none"))).small().label(text("_shell.none")).on_click(cx.listener(move |this, _, _, cx| this.set_table_total(index, i, None, cx))));
+                    let mut choices = h_flex().gap_1().flex_wrap().pl(px(12.)).child(crate::shell::chrome::action_button(SharedString::from(format!("table-total-{i}-none"))).small().label(text("_shell.none")).on_click(cx.listener(move |this, _, _, cx| this.set_table_total(index, i, None, cx))));
                     for (f, _, label) in TOTALS {
                         let on = current.as_deref() == Some(f);
-                        choices = choices.child(Button::new(SharedString::from(format!("table-total-{i}-{f}"))).small().label(format!("{}{}", if on { "◉ " } else { "" }, text(label))).on_click(cx.listener(move |this, _, _, cx| this.set_table_total(index, i, Some(f), cx))));
+                        choices = choices.child(crate::shell::chrome::radio_button(SharedString::from(format!("table-total-{i}-{f}")), on, false, text(label), cx.listener(move |this, _, _, cx| this.set_table_total(index, i, Some(f), cx))));
                     }
                     body = body.child(choices);
                 }
@@ -474,62 +477,58 @@ impl SlideEditor {
         body = body
             .child(div().pt(px(6.)).child(text("_xlsx.options")))
             .child(
-                h_flex()
+                v_flex()
                     .gap_1()
-                    .flex_wrap()
+                    .items_start()
                     .child(
-                        Button::new("table-design-resize")
+                        crate::shell::chrome::action_button("table-design-resize")
                             .small()
                             .label(text("_xlsx.table-resize"))
                             .on_click(cx.listener(|this, _, window, cx| this.resize_table_dialog(window, cx))),
                     )
                     .child(
-                        Button::new("table-design-pivot")
+                        crate::shell::chrome::action_button("table-design-pivot")
                             .small()
                             .label(text("xlsx.pivot-insert"))
                             .on_click(cx.listener(|this, _, window, cx| this.open_create_pivot(window, cx))),
                     )
                     .child(
-                        Button::new("table-design-slicer")
+                        crate::shell::chrome::action_button("table-design-slicer")
                             .small()
                             .label(text("xlsx.slicer-insert"))
                             .on_click(cx.listener(|this, _, window, cx| this.open_slicer_insert_panel(window, cx))),
                     )
                     .child(
-                        Button::new("table-design-timeline")
+                        crate::shell::chrome::action_button("table-design-timeline")
                             .small()
                             .label(text("xlsx.timeline-insert"))
                             .on_click(cx.listener(|this, _, window, cx| this.open_timeline_insert_panel(window, cx))),
                     )
                     .child(
-                        Button::new("table-design-dedupe")
+                        crate::shell::chrome::destructive_button("table-design-dedupe",cx)
                             .small()
                             .label(text("xlsx.remove-duplicates"))
                             .on_click(cx.listener(|this, _, window, cx| this.open_dedupe_panel(window, cx))),
                     )
                     .child(
-                        Button::new("table-design-to-range")
+                        crate::shell::chrome::action_button("table-design-to-range")
                             .small()
                             .label(text("xlsx.table-to-range"))
                             .on_click(cx.listener(|this, _, _, cx| this.table_to_range(cx))),
                     ),
             );
         body = body.child(div().pt(px(6.)).child(text("_xlsx.table-styles")));
-        let mut styles = h_flex().gap_1().flex_wrap();
+        let mut styles = v_flex().gap_1();
         for (name, label) in style_names() {
             let on = st.name == name;
             let chosen = name.clone();
-            styles = styles.child(Button::new(SharedString::from(format!("table-style-{name}"))).small().label(format!("{}{label}", if on { "◉ " } else { "" })).on_click(cx.listener(move |this, _, _, cx| {
+            styles = styles.child(crate::shell::chrome::radio_button(SharedString::from(format!("table-style-{name}")), on, false, label, cx.listener(move |this, _, _, cx| {
                 let chosen = chosen.clone();
                 this.set_table_style(index, move |s| s.name = chosen, cx)
             })));
         }
-        body = body.child(styles).child(div().text_size(px(12.)).child(SharedString::from(message))).child(Button::new("table-design-close").small().label(text("_shell.close")).on_click(cx.listener(|this, _, window, cx| {
-            this.wb_mut().panels.table_design = None;
-            this.focus_handle.focus(window, cx);
-            cx.notify();
-        })));
-        Some(SidebarPanel { title: "_xlsx.table-design".into(), body: body.into_any_element() })
+        body = body.child(styles).child(div().text_sm().child(SharedString::from(message)));
+        Some(SidebarPanel{title:"_xlsx.table-design".into(),body:body.into_any_element()})
     }
 
     /// テーブルの選択 (`mode`: 0=全体, 1=データ, 2=列全体, 3=列データ, 4=行)
@@ -996,7 +995,7 @@ impl SlideEditor {
             ui: Default::default(),
         };
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.new_table_style = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -1047,7 +1046,6 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
-        let check = |on: bool, label: &str| format!("{} {}", if on { "☑" } else { "☐" }, text(label));
         let row_stripes = p.row_stripes;
         let col_stripes = p.col_stripes;
         let first_col = p.first_col;
@@ -1057,28 +1055,28 @@ impl SlideEditor {
             .gap_1()
             .px(px(18.))
             .py(px(8.))
-            .child(text("xlsx.new-table-style.name"))
-            .child(mark("name", Input::new(&p.name).small().cleanable(true).into_any_element()))
+            .p_0().child(text("xlsx.new-table-style.name"))
+            .child(mark("name", crate::shell::chrome::text_field(&p.name).full_width().into_any_element()))
             .child(div().pt(px(6.)).child(text("_xlsx.table-style-options")))
-            .child(Button::new("custom-row-stripes").small().label(check(row_stripes, "_xlsx.banded-rows")).on_click(cx.listener(|this, _, _, cx| {
+            .child(crate::shell::chrome::checkbox_button("custom-row-stripes", crate::shell::i18n::text("_xlsx.banded-rows"), row_stripes, false, cx.listener(|this, _, _, cx| {
                 if let Some(p) = this.wb_mut().panels.new_table_style.as_mut() {
                     p.row_stripes = !p.row_stripes;
                 }
                 cx.notify();
             })))
-            .child(Button::new("custom-col-stripes").small().label(check(col_stripes, "_xlsx.banded-columns")).on_click(cx.listener(|this, _, _, cx| {
+            .child(crate::shell::chrome::checkbox_button("custom-col-stripes", crate::shell::i18n::text("_xlsx.banded-columns"), col_stripes, false, cx.listener(|this, _, _, cx| {
                 if let Some(p) = this.wb_mut().panels.new_table_style.as_mut() {
                     p.col_stripes = !p.col_stripes;
                 }
                 cx.notify();
             })))
-            .child(Button::new("custom-first-col").small().label(check(first_col, "docx.table-design.first-column")).on_click(cx.listener(|this, _, _, cx| {
+            .child(crate::shell::chrome::checkbox_button("custom-first-col", crate::shell::i18n::text("docx.table-design.first-column"), first_col, false, cx.listener(|this, _, _, cx| {
                 if let Some(p) = this.wb_mut().panels.new_table_style.as_mut() {
                     p.first_col = !p.first_col;
                 }
                 cx.notify();
             })))
-            .child(Button::new("custom-last-col").small().label(check(last_col, "docx.table-design.last-column")).on_click(cx.listener(|this, _, _, cx| {
+            .child(crate::shell::chrome::checkbox_button("custom-last-col", crate::shell::i18n::text("docx.table-design.last-column"), last_col, false, cx.listener(|this, _, _, cx| {
                 if let Some(p) = this.wb_mut().panels.new_table_style.as_mut() {
                     p.last_col = !p.last_col;
                 }
@@ -1086,29 +1084,15 @@ impl SlideEditor {
             })));
 
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xD9534F)).child(SharedString::from(p.message.clone())));
+            body = body.child(div().text_sm().text_color(rgb(0xD9534F)).child(SharedString::from(p.message.clone())));
         }
-
-        body = body.child(h_flex().gap_2().pt(px(6.)).child(
-            Button::new("new-table-style-ok")
-                .primary()
-                .small()
+        let panel_actions = crate::shell::chrome::action_bar().action(
+            crate::shell::chrome::ActionDefinition::new("new-table-style-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
                 .label(text("OK"))
                 .on_click(cx.listener(|this, _, _, cx| this.apply_new_table_style(cx)))
-        ).child(
-            Button::new("new-table-style-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.new_table_style = None;
-                    cx.notify();
-                }))
-        ));
-
-        Some(SidebarPanel {
-            title: text("xlsx.new-table-style.title"),
-            body: body.into_any_element(),
-        })
+        )
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("xlsx.new-table-style.title"), body.into_any_element(), panel_actions))
     }
 }
 

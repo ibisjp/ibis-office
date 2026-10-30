@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Percentage crop inputs; preserve the picture frame, media and other effects.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -72,14 +72,16 @@ impl SlideEditor {
         let p = self.pptx()?.crop_panel.as_ref()?;
         let (fields, error) = (p.fields.clone(), p.error.clone());
         let mut body = v_flex().gap_2().px(px(18.)).py(px(8.))
-            .child(div().text_size(px(12.)).child(crate::shell::i18n::text("pptx.crop-panel.keeps-picture-frame-negative")));
-        for (label, field) in [crate::shell::i18n::text("pptx.crop-panel.left-percent"), crate::shell::i18n::text("pptx.crop-panel.top-percent"), crate::shell::i18n::text("pptx.crop-panel.right-percent"), crate::shell::i18n::text("pptx.crop-panel.bottom-percent")].into_iter().zip(fields) {
-            body = body.child(div().text_size(px(13.)).child(label)).child(Input::new(&field).small().cleanable(true));
+            .p_0().child(div().text_sm().child(crate::shell::i18n::text("pptx.crop-panel.keeps-picture-frame-negative")));
+        for (i, (label, field)) in [crate::shell::i18n::text("pptx.crop-panel.left-percent"), crate::shell::i18n::text("pptx.crop-panel.top-percent"), crate::shell::i18n::text("pptx.crop-panel.right-percent"), crate::shell::i18n::text("pptx.crop-panel.bottom-percent")].into_iter().zip(fields).enumerate() {
+            // Applied with 適用, so ▲▼ only change the field. Negative values extend the picture.
+            let spinner = crate::shell::chrome::SpinnerSpec::new(1.0).max(100.0);
+            body = body.child(crate::shell::chrome::text_field_row(label, crate::shell::chrome::text_field(&field).unit("%", px(24.)).spinner(format!("pptx-crop-field-{i}"), spinner, cx, |_, _, _, _| {})));
         }
-        if let Some(error) = error { body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error)); }
-        body = body.child(h_flex().gap_1()
-            .child(Button::new("pptx-crop-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_crop_panel(w, cx))))
-            .child(Button::new("pptx-crop-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_crop_panel(w, cx)))));
-        Some(SidebarPanel { title: crate::shell::i18n::text("pptx.crop-panel.crop-picture"), body: body.into_any_element() })
+        if let Some(error) = error { body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error)); }
+        let panel_actions = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-crop-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_crop_panel(w, cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-crop-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_crop_panel(w, cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("pptx.crop-panel.crop-picture"), body.into_any_element(), panel_actions))
     }
 }

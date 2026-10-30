@@ -65,9 +65,71 @@ static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 /// Every scenario: the shell's examples and each format's
 /// (`FormatEditor::scenarios`), as (name, function).
+#[path = "../tests/shell/dialog_apply.rs"]
+pub(crate) mod dialog_apply;
+#[path = "../tests/shell/button_probe.rs"]
+pub(crate) mod button_probe;
+#[path = "../tests/shell/hyperlinks.rs"]
+mod hyperlink_scenarios;
+#[path = "../tests/shell/panel_dialog.rs"]
+mod panel_dialog_scenarios;
+#[path = "../tests/shell/merge_workflow.rs"]
+mod merge_workflow_scenarios;
+#[path = "../tests/shell/ui_refinements.rs"]
+mod ui_refinements;
+#[path = "../tests/shell/layout_refinements.rs"]
+mod layout_refinements;
+#[path = "../tests/shell/xlsx_ink_followup.rs"]
+mod xlsx_ink_followup;
+#[path="../tests/shell/ui_followup.rs"]
+mod ui_followup;
+#[path="../tests/shell/issues_33_plus.rs"]
+mod issues_33_plus;
+#[path="../tests/shell/issues59_62.rs"]
+mod issues59_62;
+#[path="../tests/shell/ui_20261028.rs"]
+mod ui_20261028;
+#[path="../tests/shell/ui_20261029_align.rs"]
+mod ui_20261029_align;
+#[path="../tests/shell/editing_20261028.rs"]
+mod editing_20261028;
+#[path="../tests/shell/followup_20261028.rs"]
+mod followup_20261028;
+#[path="../tests/shell/issues64_65.rs"]
+mod issues64_65;
+#[path = "../tests/shell/dropdown.rs"]
+mod dropdown;
+#[path = "../tests/shell/segment_control_ui.rs"]
+mod segment_control_ui;
+#[path = "../tests/shell/panel_catalog.rs"]
+mod panel_catalog;
+
+#[path = "../tests/shell/menu_viewport.rs"]
+mod menu_viewport;
+
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     use crate::shell::format::FormatEditor;
     let mut all = crate::shell::scenario_examples::all();
+    all.extend(crate::native_quit_scenarios::all());
+    all.extend(panel_dialog_scenarios::all());
+    all.push(("shell::submenu_viewport_fit",menu_viewport::run));
+    all.extend(hyperlink_scenarios::all());
+    all.extend(dialog_apply::all());
+    all.extend(ui_refinements::all());
+    all.extend(layout_refinements::all());
+    all.extend(ui_followup::all());
+    all.extend(issues_33_plus::all());
+    all.extend(issues59_62::all());
+    all.extend(ui_20261028::all());
+    all.extend(ui_20261029_align::all());
+    all.extend(editing_20261028::all());
+    all.extend(followup_20261028::all());
+    all.extend(issues64_65::all());
+    all.push(("shell::dropdown_item_attributes",dropdown::run));
+    all.push(("shell::toolbar_style_common_dropdown",dropdown::toolbar_style));
+    all.extend(xlsx_ink_followup::all());
+    all.extend(segment_control_ui::all());
+    all.extend(merge_workflow_scenarios::all());
     all.extend(crate::shell::scenario_i18n::all());
     all.extend(crate::shell::scenario_fix::all());
     all.extend(crate::shell::scenario_menus::all());
@@ -80,7 +142,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 /// Unfixed bug scenarios (corpus_report), skipped in normal `cargo test` and
 /// run with `--ignored` or `--include-ignored`.
 pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
-    let mut out = Vec::new();
+    let mut out: Vec<(&'static str, fn())> = vec![("shell::dump_all_right_panels", panel_catalog::dump_all_right_panels)];
+    out.extend(ui_followup::ignored());
     #[cfg(target_os = "macos")]
     {
         out.extend(crate::pptx::corpus_report::ignored());
@@ -133,6 +196,11 @@ pub(crate) fn dump_menu_ids(file: &str, ids: &[String]) {
 /// (`!pptx::gradient`), printing each result as libtest does. The exit
 /// status: 0 when all pass.
 pub fn run(args: &[String]) -> i32 {
+    crate::native_shape_clipboard::simulate(None);
+    if args.iter().any(|arg|matches!(arg.as_str(),"--help"|"-h")) {
+        println!("Usage: scenarios [--list] [--ignored | --include-ignored] [name ...] [!excluded-name ...]");
+        return 0;
+    }
     let only_ignored = args.iter().any(|a| a == "--ignored");
     let include_ignored = args.iter().any(|a| a == "--include-ignored");
     let filter: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
@@ -149,6 +217,11 @@ pub fn run(args: &[String]) -> i32 {
         all()
     };
     let chosen: Vec<_> = source.into_iter().filter(|(name, _)| matches(name)).collect();
+    if args.iter().any(|a| a == "--list") {
+        // Names only, one per line, so a caller can run them in separate processes.
+        for (name, _) in &chosen { println!("{name}"); }
+        return 0;
+    }
     let skipped_ignored: Vec<_> = if !only_ignored && !include_ignored {
         ignored().into_iter().filter(|(name, _)| matches(name)).collect()
     } else {
@@ -165,6 +238,7 @@ pub fn run(args: &[String]) -> i32 {
     // minute of the 333).
     let mut before = test_files();
     for (name, f) in &chosen {
+        crate::native_shape_clipboard::simulate(None);
         CURRENT.with(|c| *c.borrow_mut() = name.to_string());
         // What one scenario sets (typing corrections, the user's name, the backup copy) is not the next one's start.
         crate::shell::autocorrect::reset();
@@ -172,7 +246,9 @@ pub fn run(args: &[String]) -> i32 {
         crate::docx::backup::reset();
         let started = crate::clock::Instant::now();
         let pool = AutoreleasePool::new();
+        crate::shell::links::CAPTURE_URLS.with(|s|*s.borrow_mut()=Some(Vec::new()));
         let result = std::panic::catch_unwind(f);
+        crate::shell::links::CAPTURE_URLS.with(|s|*s.borrow_mut()=None);
         drop(pool);
         let took = started.elapsed();
         let after = test_files();
@@ -515,7 +591,7 @@ impl Scenario {
         self.settle();
     }
 
-    fn dispatch(&mut self, events: Vec<PlatformInput>) {
+    pub(crate) fn dispatch(&mut self, events: Vec<PlatformInput>) {
         self.cx
             .update_window(self.window.into(), |_, window, app| {
                 for event in events {
@@ -656,6 +732,15 @@ impl Scenario {
     pub(crate) fn click_shape(&mut self, index: usize) {
         let at = self.shape_position(index);
         self.click(at);
+    }
+
+    /// Select shape `index` of the current slide as PowerPoint does: a click inside a shape
+    /// that has text puts the caret in it, so Escape then leaves the shape selected.
+    pub(crate) fn select_shape(&mut self, index: usize) {
+        self.click_shape(index);
+        if self.with(|e, _| e.text_editing().is_some()) {
+            self.key("escape");
+        }
     }
 
     /// A double click on shape `index` of the current slide (edits its text).

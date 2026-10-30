@@ -1495,7 +1495,7 @@ pub(crate) fn cell_color_menu(editor: &SlideEditor, fill: bool) -> Vec<MenuEntry
         .map(|&(name, c)| Swatch::with_id(if fill { "xlsx.fill" } else { "xlsx.color" }, Rgb(c), crate::shell::i18n::text(name), false, &pick))
         .collect();
     let none = fill.then(|| MenuItem::tr("xlsx.fill-none").icon("format_color_reset").on(format(StyleChange::Fill(None))));
-    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None })]
+    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None, current:None })]
 }
 
 /// The palette of the colour new border lines are drawn in.
@@ -1601,7 +1601,7 @@ pub(crate) fn palette_menu_with_ids(
         standard,
         pick: Some(pick),
         more: None,
-        button: None,
+        button: None, current:None,
     })]
 }
 
@@ -2427,8 +2427,8 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.compatibility-check").icon("rule").on(|this, window, cx| this.open_xlsx_compatibility_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.error-options").icon("rule").on(|this, window, cx| this.open_error_options_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.autocorrect").icon("spellcheck").on(|this, window, cx| this.open_autocorrect_panel(window, cx)).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.autorecover-settings").icon("settings_backup_restore").on(|this, window, cx| { this.wb_mut().panels.close(); this.open_autorecover_settings(window, cx) }).into());
-    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.recover-unsaved").icon("restore_page").on(|this, _window, cx| { this.wb_mut().panels.close(); this.open_recover_unsaved(cx) }).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.autorecover-settings").icon("settings_backup_restore").on(|this, window, cx| { this.wb_mut().close_settings(); this.open_autorecover_settings(window, cx) }).into());
+    menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.recover-unsaved").icon("restore_page").on(|this, _window, cx| { this.wb_mut().close_settings(); this.open_recover_unsaved(cx) }).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.backup-save-settings").icon("save_as").on(|this, window, cx| this.open_xlsx_backup_save_settings_panel(window, cx)).into());
     menus.items_mut(crate::shell::chrome::MenuId::Tools).push(MenuItem::tr("xlsx.open-and-repair").icon("cleaning_services").disabled(super::repair::damaged_workbook().is_none()).on(|this, window, cx| this.open_xlsx_repair_damaged(window, cx)).into());
     let hide_ink = editor.current_sheet().is_some_and(|(_, s)| s.hide_ink);
@@ -2816,7 +2816,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     // ファイル > 未保存のブックの回復…
     let mut recover_entry: MenuEntry = MenuItem::tr("xlsx.recover-unsaved")
         .icon("restore_page")
-        .on(|this, _window, cx| { this.wb_mut().panels.close(); this.open_recover_unsaved(cx) })
+        .on(|this, _window, cx| { this.wb_mut().close_settings(); this.open_recover_unsaved(cx) })
         .into();
     for (_, entries) in menus.menus.iter_mut() {
         match insert_after(entries, "file.open", recover_entry) {
@@ -3519,8 +3519,8 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.signature-line", |this, _, cx| { this.insert_sheet_signature_line("", "", cx); });
     menus.connect("xlsx.ink", |this, window, cx| this.open_ink_panel(window, cx));
     menus.connect("xlsx.autocorrect", |this, window, cx| this.open_autocorrect_panel(window, cx));
-    menus.connect("xlsx.autorecover-settings", |this, window, cx| { this.wb_mut().panels.close(); this.open_autorecover_settings(window, cx) });
-    menus.connect("xlsx.recover-unsaved", |this, _window, cx| { this.wb_mut().panels.close(); this.open_recover_unsaved(cx) });
+    menus.connect("xlsx.autorecover-settings", |this, window, cx| { this.wb_mut().close_settings(); this.open_autorecover_settings(window, cx) });
+    menus.connect("xlsx.recover-unsaved", |this, _window, cx| { this.wb_mut().close_settings(); this.open_recover_unsaved(cx) });
     menus.connect("xlsx.backup-save-settings", |this, window, cx| this.open_xlsx_backup_save_settings_panel(window, cx));
     menus.connect("xlsx.open-and-repair", |this, window, cx| this.open_xlsx_repair_damaged(window, cx));
     menus.connect("xlsx.print-active-sheet", |this, _, cx| this.set_print_what(super::PrintWhat::ActiveSheet, cx));
@@ -3737,32 +3737,16 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             })
             .into(),
     );
-    let style_items: Vec<MenuEntry> = vec![
-        MenuItem::tr("xlsx.chart-style-none").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(None, cx)).into(),
-        MenuItem::tr("xlsx.chart-style-1").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(1), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-2").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(2), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-3").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(3), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-4").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(4), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-5").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(5), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-6").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(6), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-7").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(7), cx)).into(),
-        MenuItem::tr("xlsx.chart-style-8").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_style(Some(8), cx)).into(),
-    ];
+    let style_items:Vec<MenuEntry>=super::chart_edit::CHART_STYLES.iter().map(|(key,style)|{
+        let style=*style;MenuItem::tr(key).disabled(!has_chart).on(move |e,_,cx|e.set_sheet_chart_visual_style(style,cx)).into()
+    }).collect();
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(
         crate::shell::chrome::Submenu::tr("xlsx.chart-styles", "palette", style_items).into(),
     );
-    let palette_items: Vec<MenuEntry> = vec![
-        MenuItem::tr("xlsx.chart-palette-1").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(0, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-2").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(1, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-3").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(2, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-4").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(3, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-5").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(4, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-6").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(5, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-7").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(6, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-8").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(7, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-9").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(8, cx)).into(),
-        MenuItem::tr("xlsx.chart-palette-10").disabled(!has_chart).on(|this, _, cx| this.set_sheet_chart_color_palette(9, cx)).into(),
-    ];
+    let palette_items:Vec<MenuEntry>=super::chart_edit::COLOR_PALETTES.iter().enumerate().map(|(i,(key,colors))| {
+        let mut item=MenuItem::tr(key).disabled(!has_chart).on(move |e,_,cx|e.set_sheet_chart_color_palette(i,cx));
+        item.dropdown_content=Some(crate::shell::chrome::dropdown::ItemContent::Palette(colors.to_vec()));item.into()
+    }).collect();
     menus.items_mut(crate::shell::chrome::MenuId::Format).push(
         crate::shell::chrome::Submenu::tr("xlsx.chart-palettes", "color_lens", palette_items).into(),
     );
@@ -3835,25 +3819,11 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.chart-error-bars", |this, _, cx| {
         this.toggle_sheet_chart_error_bars(cx);
     });
-    menus.connect("xlsx.chart-style-none", |this, _, cx| this.set_sheet_chart_style(None, cx));
-    menus.connect("xlsx.chart-style-1", |this, _, cx| this.set_sheet_chart_style(Some(1), cx));
-    menus.connect("xlsx.chart-style-2", |this, _, cx| this.set_sheet_chart_style(Some(2), cx));
-    menus.connect("xlsx.chart-style-3", |this, _, cx| this.set_sheet_chart_style(Some(3), cx));
-    menus.connect("xlsx.chart-style-4", |this, _, cx| this.set_sheet_chart_style(Some(4), cx));
-    menus.connect("xlsx.chart-style-5", |this, _, cx| this.set_sheet_chart_style(Some(5), cx));
-    menus.connect("xlsx.chart-style-6", |this, _, cx| this.set_sheet_chart_style(Some(6), cx));
-    menus.connect("xlsx.chart-style-7", |this, _, cx| this.set_sheet_chart_style(Some(7), cx));
-    menus.connect("xlsx.chart-style-8", |this, _, cx| this.set_sheet_chart_style(Some(8), cx));
+    for (key,style) in super::chart_edit::CHART_STYLES {menus.connect(key,move |e,_,cx|e.set_sheet_chart_visual_style(style,cx));}
     menus.connect("xlsx.chart-palette-1", |this, _, cx| this.set_sheet_chart_color_palette(0, cx));
     menus.connect("xlsx.chart-palette-2", |this, _, cx| this.set_sheet_chart_color_palette(1, cx));
     menus.connect("xlsx.chart-palette-3", |this, _, cx| this.set_sheet_chart_color_palette(2, cx));
     menus.connect("xlsx.chart-palette-4", |this, _, cx| this.set_sheet_chart_color_palette(3, cx));
-    menus.connect("xlsx.chart-palette-5", |this, _, cx| this.set_sheet_chart_color_palette(4, cx));
-    menus.connect("xlsx.chart-palette-6", |this, _, cx| this.set_sheet_chart_color_palette(5, cx));
-    menus.connect("xlsx.chart-palette-7", |this, _, cx| this.set_sheet_chart_color_palette(6, cx));
-    menus.connect("xlsx.chart-palette-8", |this, _, cx| this.set_sheet_chart_color_palette(7, cx));
-    menus.connect("xlsx.chart-palette-9", |this, _, cx| this.set_sheet_chart_color_palette(8, cx));
-    menus.connect("xlsx.chart-palette-10", |this, _, cx| this.set_sheet_chart_color_palette(9, cx));
     for &(preset, id) in &crate::pptx::chart_panel::ChartPreset::ALL {
         menus.connect(id, move |this, _, cx| this.set_sheet_chart_type(preset, cx));
     }
@@ -4701,7 +4671,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.page-break", |this, _, cx| this.toggle_row_break(cx));
     menus.connect("xlsx.pivot-insert", |this, window, cx| this.open_create_pivot(window, cx));
     menus.connect("xlsx.recommended-pivots", |this, window, cx| this.open_recommended_pivots(window, cx));
-    menus.connect("xlsx.recommended-pivot-tables", |this, window, cx| this.open_recommended_pivot_tables(window, cx));
+    // "xlsx.recommended-pivot-tables" (the menu list's id) is an alias of "xlsx.recommended-pivots" (see `canonical_menu_id`): both insert the recommended PivotTable; connecting the alias again would replace this.
     menus.connect("xlsx.pivot-chart-insert", |this, window, cx| this.open_insert_pivot_chart(window, cx));
     menus.connect("xlsx.chart-format", |this, window, cx| this.open_sheet_chart_panel(window, cx));
     menus.connect("xlsx.chart-switch-row-column", |this, window, cx| this.switch_sheet_chart_row_column(window, cx));

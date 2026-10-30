@@ -7,9 +7,9 @@
 //! number) and its major gridlines. Each change is one step to undo;
 //! saving writes it into the chart's part (`ibis-pptx` save/xlsx.rs).
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -21,16 +21,30 @@ use ibis_doc_model::chart::{
 use ibis_doc_model::{CellRange, Chart, Color, Command, DispBlanksAs, Fill, Rgb, ShapeId, ShapeKind, Stroke};
 
 use crate::shell::chrome::SidebarPanel;
+use crate::shell::chrome::segment_control::{SegmentItem,Mode};
+use crate::shell::chrome::SegmentControlRow;
 use crate::shell::editor::SlideEditor;
 
 /// The fields of the panel, for the chart they were filled from.
 pub(crate) struct ChartPanel {
     pub(crate) shape: ShapeId,
+    pub(crate) tab: usize,
+    pub(crate) rendering_sidebar: bool,
+    pub(crate) axis_tab: usize,
+    pub(crate) palette_selected: Option<usize>,
+    pub(crate) detail_open: [bool;3],
+    pub(crate) detail_state: [std::rc::Rc<crate::shell::chrome::collapsible_section::SectionState>;3],
+    pub(crate) series_editor: Option<super::chart_series::SeriesEditor>,
+    pub(crate) series_reorder: std::rc::Rc<std::cell::RefCell<crate::shell::chrome::data_table::RowReorder>>,
     pub(crate) title: Entity<InputState>,
+    pub(crate) background: Entity<InputState>,
     pub(crate) cat_title: Entity<InputState>,
     pub(crate) val_title: Entity<InputState>,
     pub(crate) sec_val_title: Entity<InputState>,
     pub(crate) ser_title: Entity<InputState>,
+    pub(crate) domain_min: Entity<InputState>,
+    pub(crate) domain_max: Entity<InputState>,
+    pub(crate) domain_unit: Entity<InputState>,
     pub(crate) min: Entity<InputState>,
     pub(crate) max: Entity<InputState>,
     pub(crate) unit: Entity<InputState>,
@@ -181,18 +195,7 @@ pub(crate) const STROKE_COLORS: [(&str, Option<Rgb>); 7] = [
     ("_shell.none", None),
 ];
 
-/// The chart visual styles offered (c:style).
-pub(crate) const CHART_STYLES: [(&str, Option<u32>); 9] = [
-    ("xlsx.chart-style-none", None),
-    ("xlsx.sparkline-style-1", Some(1)),
-    ("xlsx.sparkline-style-2", Some(2)),
-    ("xlsx.sparkline-style-3", Some(3)),
-    ("xlsx.sparkline-style-4", Some(4)),
-    ("xlsx.sparkline-style-5", Some(5)),
-    ("xlsx.sparkline-style-6", Some(6)),
-    ("xlsx.chart-style-7", Some(7)),
-    ("xlsx.chart-style-8", Some(8)),
-];
+pub(crate) use super::chart_style::{CHART_STYLES,ChartStylePreset};
 
 /// The color palettes offered for series coloring.
 pub(crate) const COLOR_PALETTES: [(&str, &[u32]); 10] = [
@@ -208,20 +211,29 @@ pub(crate) const COLOR_PALETTES: [(&str, &[u32]); 10] = [
     ("_xlsx.monochrome-6", &[0xC00000, 0xED1C24, 0xF15A24, 0xF7931E, 0xF9A03F, 0xFBB040]),
 ];
 
-/// The chart's first category axis, by index.
-pub(crate) fn category_axis(chart: &Chart) -> Option<usize> {
-    chart.axes.iter().position(|a| a.kind == AxisKind::Category && !a.deleted)
+/// The primary domain axis: category/date, or a scatter/bubble's horizontal value axis.
+pub(crate) fn category_axis(chart:&Chart)->Option<usize>{
+    let referenced=|i:usize|chart.groups.iter().any(|g|g.axes.contains(&chart.axes[i].id));
+    chart.axes.iter().enumerate().find(|(i,a)|!a.deleted&&a.kind==AxisKind::Category&&referenced(*i)).map(|(i,_)|i)
+        .or_else(||chart.axes.iter().position(|a|!a.deleted&&a.kind==AxisKind::Category))
+        .or_else(||chart.axes.iter().enumerate().find(|(i,a)|!a.deleted&&a.kind==AxisKind::Value&&matches!(a.side,Side::Bottom|Side::Top)&&referenced(*i)).map(|(i,_)|i))
 }
-
-/// The chart's first value axis (the one the panel scales), by index.
-pub(crate) fn value_axis(chart: &Chart) -> Option<usize> {
-    chart.axes.iter().position(|a| a.kind == AxisKind::Value && !a.deleted)
+/// The primary range axis connected to the primary domain axis. Both scatter axes are Value.
+pub(crate) fn value_axis(chart:&Chart)->Option<usize>{
+    let domain=category_axis(chart);
+    let domain_id=domain.map(|i|chart.axes[i].id);
+    let horizontal_values=domain.is_some_and(|i|matches!(chart.axes[i].side,Side::Left|Side::Right));
+    let orientation=|a:&ibis_doc_model::chart::Axis|if horizontal_values{matches!(a.side,Side::Bottom|Side::Top)}else{matches!(a.side,Side::Left|Side::Right)};
+    let connected=|a:&ibis_doc_model::chart::Axis|domain_id.is_some_and(|id|a.cross_axis_id==Some(id)||chart.groups.iter().any(|g|g.axes.contains(&id)&&g.axes.contains(&a.id)));
+    chart.axes.iter().enumerate().filter(|(i,a)|Some(*i)!=domain&&!a.deleted&&a.kind==AxisKind::Value)
+        .max_by_key(|(_,a)| (connected(a),orientation(a),matches!(a.side,Side::Left|Side::Bottom)))
+        .map(|(i,_)|i)
 }
-
-/// The chart's secondary value axis, by index.
-pub(crate) fn secondary_value_axis(chart: &Chart) -> Option<usize> {
-    let first = value_axis(chart)?;
-    chart.axes.iter().enumerate().position(|(i, a)| i != first && a.kind == AxisKind::Value && !a.deleted)
+/// A second range axis, excluding the scatter/bubble's primary X/domain axis.
+pub(crate) fn secondary_value_axis(chart:&Chart)->Option<usize>{
+    let primary=value_axis(chart)?;let domain=category_axis(chart);
+    let vertical=matches!(chart.axes[primary].side,Side::Left|Side::Right);
+    chart.axes.iter().enumerate().find(|(i,a)|*i!=primary&&Some(*i)!=domain&&!a.deleted&&a.kind==AxisKind::Value&&matches!(a.side,Side::Left|Side::Right)==vertical).map(|(i,_)|i)
 }
 
 /// The chart's series axis (for 3D charts), by index.
@@ -245,6 +257,14 @@ fn parse_field(text: &str) -> Result<Option<Number>, ()> {
 impl SlideEditor {
     /// The chart selected on the current sheet.
     pub(crate) fn sheet_chart(&self) -> Option<(ShapeId, &Chart)> {
+        if let Some(p) = self.sheet_state().and_then(|s| s.chart_edit.as_ref()) {
+            if let Some(edit) = &p.series_editor { if !p.rendering_sidebar {return Some((p.shape, &edit.chart));} }
+        }
+        if self.sheet_range_pick_active() {
+            let id = self.wb().chart_edit.as_ref()?.shape;
+            let shape = self.presentation().slides.iter().flat_map(|slide| &slide.shapes).find(|shape| shape.id == id)?;
+            if let ShapeKind::Chart(chart) = &shape.kind { return Some((id, chart)); }
+        }
         let id = self.selection?;
         let shape = self.slide().shapes.iter().find(|s| s.id == id)?;
         match &shape.kind {
@@ -256,10 +276,12 @@ impl SlideEditor {
     /// 表示形式 > グラフの書式…: the panel for the selected chart.
     pub(crate) fn open_sheet_chart_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((id, chart)) = self.sheet_chart() else {
+            self.wb_mut().chart_edit=None;
             self.status = Some(crate::shell::i18n::text("_xlsx.select-a-chart").into());
             return cx.notify();
         };
         let title = chart.title.as_ref().map_or(String::new(), |t| t.text.clone());
+        let background = match chart.background {Fill::Solid(c)=>format!("{:06X}",c.rgb.0),_=>String::new()};
         let cat_axis = category_axis(chart).map(|i| &chart.axes[i]);
         let val_axis = value_axis(chart).map(|i| &chart.axes[i]);
         let cat_title = cat_axis.and_then(|a| a.title.as_ref()).map_or(String::new(), |t| t.text.clone());
@@ -297,18 +319,24 @@ impl SlideEditor {
         let ex_under = ex.underflow.map_or(String::new(), |n| ibis_calc::number_to_xml(n.0));
         let ex_over = ex.overflow.map_or(String::new(), |n| ibis_calc::number_to_xml(n.0));
         let ex_gap = ex.gap_width.map_or(String::new(), |g| g.to_string());
+        let domain_scale=(number_field(cat_axis.and_then(|a|a.min)),number_field(cat_axis.and_then(|a|a.max)),number_field(cat_axis.and_then(|a|a.major_unit)));
         let panel = ChartPanel {
             shape: id,
+            palette_selected: None, rendering_sidebar: false, tab: self.document_memory.get::<usize>("xlsx.chart-format.tab").unwrap_or(0).min(2), axis_tab: 0, detail_open: [false;3], detail_state: Default::default(), series_editor: None, series_reorder: Default::default(),
             ex_bin_width: field(ex_width, cx, window),
             ex_bin_count: field(ex_count, cx, window),
             ex_underflow: field(ex_under, cx, window),
             ex_overflow: field(ex_over, cx, window),
             ex_gap_width: field(ex_gap, cx, window),
             title: field(title, cx, window),
+            background: field(background, cx, window),
             cat_title: field(cat_title, cx, window),
             val_title: field(val_title, cx, window),
             sec_val_title: field(sec_val_title, cx, window),
             ser_title: field(ser_title, cx, window),
+            domain_min:field(domain_scale.0,cx,window),
+            domain_max:field(domain_scale.1,cx,window),
+            domain_unit:field(domain_scale.2,cx,window),
             min: field(min, cx, window),
             max: field(max, cx, window),
             unit: field(unit, cx, window),
@@ -322,9 +350,33 @@ impl SlideEditor {
             range: range_input,
             error: None,
         };
+        for input in [&panel.domain_min,&panel.domain_max,&panel.domain_unit,&panel.title,&panel.cat_title,&panel.val_title,&panel.sec_val_title,&panel.ser_title,&panel.min,&panel.max,&panel.unit,&panel.gap_width,&panel.overlap,&panel.of_pie_split_pos,&panel.of_pie_second_size,&panel.three_d_rot_x,&panel.three_d_rot_y,&panel.three_d_depth] {
+            cx.subscribe_in(input, window, |this,_,event:&gpui_kit::component::input::InputEvent,_,cx| {
+                if matches!(event,gpui_kit::component::input::InputEvent::PressEnter{..}|gpui_kit::component::input::InputEvent::Blur)
+                    && this.wb().chart_edit.as_ref().is_some_and(|p|p.series_editor.is_none()) {this.apply_sheet_chart_panel(cx);}
+            }).detach();
+        }
+        cx.subscribe_in(&panel.title,window,|this,_,event:&gpui_kit::component::input::InputEvent,_,cx| {
+            if matches!(event,gpui_kit::component::input::InputEvent::Change) {
+                let text=this.wb().chart_edit.as_ref().map(|p|p.title.read(cx).value().to_string()).unwrap_or_default();
+                this.change_sheet_chart(|c|{if let Some(title)=c.title.as_mut(){title.text=text;}},cx);
+            }
+        }).detach();
+        cx.subscribe_in(&panel.background,window,|this,input,event:&gpui_kit::component::input::InputEvent,_,cx| {
+            if !matches!(event,gpui_kit::component::input::InputEvent::Change|gpui_kit::component::input::InputEvent::PressEnter{..}) {return;}
+            let value=input.read(cx).value().trim().trim_start_matches('#').to_string();
+            let fill=if value.is_empty(){Fill::None}else{
+                let Some(color)=u32::from_str_radix(&value,16).ok().filter(|_|value.len()==6) else{return;};
+                Fill::Solid(Color {rgb:Rgb(color),alpha:255})
+            };
+            this.change_sheet_chart(|c|c.background=fill,cx);
+        }).detach();
+        cx.subscribe_in(&panel.range,window,|this,_,event:&gpui_kit::component::input::InputEvent,w,cx| {
+            if matches!(event,gpui_kit::component::input::InputEvent::PressEnter{..}|gpui_kit::component::input::InputEvent::Blur)
+                && !this.sheet_range_pick_active() && this.wb().chart_edit.as_ref().is_some_and(|p|p.series_editor.is_none()) {this.set_sheet_chart_data(false,w,cx);}
+        }).detach();
+        self.begin_sheet_settings();
         let state = self.wb_mut();
-        state.sort_edit = None;
-        state.conditional_edit = None;
         state.chart_edit = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -332,9 +384,15 @@ impl SlideEditor {
 
     /// Change the selected chart by `f` (one step to undo).
     pub(crate) fn change_sheet_chart(&mut self, f: impl FnOnce(&mut Chart), cx: &mut Context<Self>) {
+        if let Some(edit) = self.sheet_state_mut().and_then(|s| s.chart_edit.as_mut()).and_then(|p| p.series_editor.as_mut()) {
+            let before=edit.chart.clone();f(&mut edit.chart);super::chart_style::inherit_new_text(&before,&mut edit.chart); self.commit_chart_series_model(cx); cx.notify(); return;
+        }
         let Some((shape, chart)) = self.sheet_chart() else { return };
-        let mut chart = chart.clone();
+        let before = chart.clone();
+        let mut chart = before.clone();
         f(&mut chart);
+        super::chart_style::inherit_new_text(&before,&mut chart);
+        if chart == before { return; }
         let slide = self.current_slide;
         if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(chart))) }]) {
             log::warn!("chart edit rejected: {err}");
@@ -412,10 +470,7 @@ impl SlideEditor {
     /// series turned from columns to rows or back (`switch`).
     pub(crate) fn set_sheet_chart_data(&mut self, switch: bool, window: &mut Window, cx: &mut Context<Self>) {
         let fail = |this: &mut Self, text: &str, cx: &mut Context<Self>| {
-            if let Some(p) = this.wb_mut().chart_edit.as_mut() {
-                p.error = Some(crate::shell::i18n::text(text));
-            }
-            cx.notify();
+            this.show_panel_message(crate::shell::i18n::text(text),cx);
         };
         let Some((shape, chart)) = self.sheet_chart().map(|(id, c)| (id, c.clone())) else { return };
         let Some(source) = self.source.clone() else { return };
@@ -435,7 +490,11 @@ impl SlideEditor {
         };
         let changed = (sheet.as_str(), range) != (current.0.as_str(), current.1);
         // A new range: series in columns when it has no more columns than rows (as Excel does); else the chart's own.
-        let by_columns = if switch { !current.2 } else if changed { range.last_column - range.first_column <= range.last_row - range.first_row } else { current.2 };
+        let is_xy_or_stock = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Stock { .. } | ibis_doc_model::ChartType::Scatter { .. } | ibis_doc_model::ChartType::Bubble { .. }));
+        let by_columns = if switch { !current.2 } else if changed {
+            // X-Y and stock charts read their own layout: in columns unless the range is wider than tall.
+            if is_xy_or_stock { range.last_row - range.first_row >= range.last_column - range.first_column } else { ibis_pptx::preferred_series_columns(self.presentation(),&sheet,range) }
+        } else { current.2 };
         let is_scatter = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Scatter { .. }));
         let is_bubble = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Bubble { .. }));
         let stock_kind = if chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Stock { .. })) {
@@ -470,7 +529,14 @@ impl SlideEditor {
         let Some(refs) = refs else {
             return fail(self, "_xlsx.use-a-range-of-at-least-2-rows-and-2-columns-who", cx);
         };
-        let target = ibis_pptx::sheet_chart_from_data(&chart, self.presentation(), &refs);
+        // A new layout or range: a series no name cell names takes its default name again, not the one of the series it replaces.
+        let mut renamed = chart.clone();
+        if switch || changed {
+            for (series, r) in renamed.groups.iter_mut().flat_map(|g| g.series.iter_mut()).zip(&refs) {
+                if r.name.is_none() { series.name.clear(); }
+            }
+        }
+        let target = ibis_pptx::sheet_chart_from_data(&renamed, self.presentation(), &refs);
         if target == chart {
             return cx.notify();
         }
@@ -578,6 +644,7 @@ impl SlideEditor {
             curr += g.series.len();
         }
 
+        chart.groups.retain(|g|!g.series.is_empty());
         let target = ibis_pptx::sheet_chart_from_data(&chart, self.presentation(), &refs);
         source.set_chart_data(shape, target.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs.clone() });
         let slide = self.current_slide;
@@ -1235,7 +1302,7 @@ impl SlideEditor {
     pub(crate) fn set_sheet_chart_trendline_type(&mut self, kind: Option<TrendlineType>, cx: &mut Context<Self>) {
         self.change_sheet_chart(
             |c| {
-                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                for series in c.groups.iter_mut().filter(|g|g.kind.supports_series_analysis()).flat_map(|g| g.series.iter_mut()) {
                     match kind {
                         None => series.trendline = None,
                         Some(k) => {
@@ -1254,7 +1321,7 @@ impl SlideEditor {
     pub(crate) fn set_sheet_chart_trendline_disp_eq(&mut self, disp_eq: bool, cx: &mut Context<Self>) {
         self.change_sheet_chart(
             |c| {
-                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                for series in c.groups.iter_mut().filter(|g|g.kind.supports_series_analysis()).flat_map(|g| g.series.iter_mut()) {
                     if let Some(tl) = series.trendline.as_mut() {
                         tl.disp_eq = disp_eq;
                     }
@@ -1268,7 +1335,7 @@ impl SlideEditor {
     pub(crate) fn set_sheet_chart_trendline_disp_r_sqr(&mut self, disp_r_sqr: bool, cx: &mut Context<Self>) {
         self.change_sheet_chart(
             |c| {
-                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                for series in c.groups.iter_mut().filter(|g|g.kind.supports_series_analysis()).flat_map(|g| g.series.iter_mut()) {
                     if let Some(tl) = series.trendline.as_mut() {
                         tl.disp_r_sqr = disp_r_sqr;
                     }
@@ -1290,7 +1357,7 @@ impl SlideEditor {
     pub(crate) fn set_sheet_chart_error_bars_shown(&mut self, shown: bool, cx: &mut Context<Self>) {
         self.change_sheet_chart(
             |c| {
-                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                for series in c.groups.iter_mut().filter(|g|g.kind.supports_series_analysis()).flat_map(|g| g.series.iter_mut()) {
                     if shown {
                         if series.error_bars.is_none() {
                             series.error_bars = Some(ibis_doc_model::ErrorBars::default());
@@ -1308,7 +1375,7 @@ impl SlideEditor {
     pub(crate) fn set_sheet_chart_error_bar_type(&mut self, bar_type: ErrorBarType, cx: &mut Context<Self>) {
         self.change_sheet_chart(
             |c| {
-                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                for series in c.groups.iter_mut().filter(|g|g.kind.supports_series_analysis()).flat_map(|g| g.series.iter_mut()) {
                     let mut eb = series.error_bars.clone().unwrap_or_default();
                     eb.bar_type = bar_type;
                     series.error_bars = Some(eb);
@@ -1322,7 +1389,7 @@ impl SlideEditor {
     pub(crate) fn set_sheet_chart_error_bar_val_type(&mut self, val_type: ErrorBarValueType, cx: &mut Context<Self>) {
         self.change_sheet_chart(
             |c| {
-                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                for series in c.groups.iter_mut().filter(|g|g.kind.supports_series_analysis()).flat_map(|g| g.series.iter_mut()) {
                     let mut eb = series.error_bars.clone().unwrap_or_default();
                     eb.val_type = val_type;
                     series.error_bars = Some(eb);
@@ -1336,7 +1403,7 @@ impl SlideEditor {
     pub(crate) fn set_sheet_chart_error_bar_end_cap(&mut self, end_cap: bool, cx: &mut Context<Self>) {
         self.change_sheet_chart(
             |c| {
-                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                for series in c.groups.iter_mut().filter(|g|g.kind.supports_series_analysis()).flat_map(|g| g.series.iter_mut()) {
                     if let Some(eb) = series.error_bars.as_mut() {
                         eb.no_end_cap = !end_cap;
                     }
@@ -1358,7 +1425,7 @@ impl SlideEditor {
     pub(crate) fn set_sheet_chart_marker_symbol(&mut self, symbol: MarkerSymbol, cx: &mut Context<Self>) {
         self.change_sheet_chart(
             |c| {
-                for series in c.groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+                for series in c.groups.iter_mut().filter(|g|g.kind.supports_markers()).flat_map(|g| g.series.iter_mut()) {
                     if symbol == MarkerSymbol::None {
                         series.marker = None;
                     } else if let Some(m) = series.marker.as_mut() {
@@ -1443,14 +1510,8 @@ impl SlideEditor {
         );
     }
 
-    /// グラフのスタイル（c:style val="N"）を設定.
-    pub(crate) fn set_sheet_chart_style(&mut self, style_id: Option<u32>, cx: &mut Context<Self>) {
-        self.change_sheet_chart(
-            |c| {
-                c.style = style_id;
-            },
-            cx,
-        );
+    pub(crate) fn set_sheet_chart_visual_style(&mut self,style:ChartStylePreset,cx:&mut Context<Self>) {
+        self.change_sheet_chart(|chart|style.apply(chart),cx);
     }
 
     /// グラフの配色パレットを全系列に適用.
@@ -1477,6 +1538,7 @@ impl SlideEditor {
             },
             cx,
         );
+        if let Some(p)=self.wb_mut().chart_edit.as_mut(){p.palette_selected=Some(palette_index);}
     }
 
     /// グラフの種類の変更: the selected chart's one group made `preset` (one step to undo).
@@ -1681,7 +1743,7 @@ impl SlideEditor {
                     if g.three_d.is_some() {
                         let is_pie = matches!(g.kind, ibis_doc_model::ChartType::Pie { .. });
                         g.three_d = Some(if is_pie {
-                            ibis_doc_model::View3D { rot_x: 30, rot_y: 0, right_angle_axes: false, depth_percent: 100 }
+                            ibis_doc_model::View3D { rot_x: 30, rot_y: 0, right_angle_axes: false, depth_percent: 100, height_percent: None, series_in_depth: true, gap_depth: 150 }
                         } else {
                             ibis_doc_model::View3D::default()
                         });
@@ -1700,6 +1762,12 @@ impl SlideEditor {
         let val_title = p.val_title.read(cx).value().to_string();
         let sec_val_title = p.sec_val_title.read(cx).value().to_string();
         let ser_title = p.ser_title.read(cx).value().to_string();
+        let domain_fields=[p.domain_min.read(cx).value().to_string(),p.domain_max.read(cx).value().to_string(),p.domain_unit.read(cx).value().to_string()];
+        let domain_scale=domain_fields.iter().map(|s|parse_field(s)).collect::<Result<Vec<_>,_>>();
+        if domain_scale.as_ref().is_err()||domain_scale.as_ref().ok().is_some_and(|v|v[0].zip(v[1]).is_some_and(|(a,b)|a.0>=b.0)||v[2].is_some_and(|n|n.0<=0.)){
+            if let Some(p)=self.wb_mut().chart_edit.as_mut(){p.error=Some(crate::shell::i18n::text("_xlsx.enter-numbers-for-the-minimum-maximum-and-major"));}cx.notify();return;
+        }
+        let domain_scale=domain_scale.unwrap();
         let fields = [p.min.read(cx).value().to_string(), p.max.read(cx).value().to_string(), p.unit.read(cx).value().to_string()];
         let parsed: Result<Vec<Option<Number>>, ()> = fields.iter().map(|f| parse_field(f)).collect();
         let gap_str = p.gap_width.read(cx).value().trim().to_string();
@@ -1756,6 +1824,7 @@ impl SlideEditor {
                 }
                 if let Some(i) = category_axis(c) {
                     let a = &mut c.axes[i];
+                    if a.kind==AxisKind::Value{(a.min,a.max,a.major_unit)=(domain_scale[0],domain_scale[1],domain_scale[2]);}
                     if let Some(t) = a.title.as_mut()
                         && !cat_title.trim().is_empty()
                     {
@@ -1826,9 +1895,12 @@ impl SlideEditor {
         }
     }
 
-    pub(crate) fn sheet_chart_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+    pub(crate) fn sheet_chart_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel>{
         self.sheet_state()?.chart_edit.as_ref()?;
-        self.render_sheet_chart_panel(cx)
+        self.wb_mut().chart_edit.as_mut()?.rendering_sidebar=true;
+        let panel=self.render_sheet_chart_panel(cx);
+        if let Some(p)=self.wb_mut().chart_edit.as_mut(){p.rendering_sidebar=false;}
+        panel
     }
 
     #[inline(never)]
@@ -1888,31 +1960,14 @@ impl SlideEditor {
             ibis_doc_model::ChartType::OfPie { .. } => Some(g.of_pie.as_ref().and_then(|op| op.split).unwrap_or(ibis_doc_model::OfPieSplit::Position)),
             _ => None,
         });
-        let mut places = h_flex().gap_1();
+        let mut places = SegmentControlRow::new(Mode::Proportional{width:px(264.)});
         for (i, (label, place)) in LEGEND_PLACES.iter().enumerate() {
             let place = *place;
             let on = legend == place || (place.is_none() && legend.is_none());
-            places = places.child(Button::new(("chart-legend", i)).small().label(crate::shell::i18n::text(label)).when(on, |b| b.primary()).on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_legend(place, cx))));
-        }
-        let label_pos = chart.groups.iter().flat_map(|g| &g.series).find_map(|s| s.labels.as_ref()).and_then(|l| l.position);
-        let has_labels = chart.groups.iter().flat_map(|g| &g.series).any(|s| s.labels.is_some());
-        let mut label_buttons = h_flex().gap_1();
-        for (i, (label, pos)) in LABEL_POSITIONS.iter().enumerate() {
-            let pos = *pos;
-            let on = match pos {
-                None => !has_labels,
-                Some(p) => has_labels && label_pos == p,
-            };
-            label_buttons = label_buttons.child(
-                Button::new(("chart-labels", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_labels_position(pos, cx))),
-            );
+            places = places.child(SegmentItem::label(("chart-legend", i), crate::shell::i18n::text(label), on).tooltip(crate::shell::i18n::text(label)).on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_legend(place, cx))));
         }
         let display_unit = val_axis.and_then(|i| chart.axes[i].display_unit.map(|u| u.0));
-        let mut disp_unit_buttons = h_flex().gap_1();
+        let mut disp_unit_buttons = SegmentControlRow::new(Mode::Proportional{width:px(264.)});
         for (i, (label, unit)) in DISPLAY_UNITS.iter().enumerate() {
             let unit = *unit;
             let on = match (unit, display_unit) {
@@ -1921,15 +1976,12 @@ impl SlideEditor {
                 _ => false,
             };
             disp_unit_buttons = disp_unit_buttons.child(
-                Button::new(("chart-disp-unit", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
+                SegmentItem::label(("chart-disp-unit", i), crate::shell::i18n::text(label), on).tooltip(crate::shell::i18n::text(label))
                     .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_display_unit(unit.map(Number), cx))),
             );
         }
         let sec_display_unit = sec_val_axis.and_then(|i| chart.axes[i].display_unit.map(|u| u.0));
-        let mut sec_disp_unit_buttons = h_flex().gap_1();
+        let mut sec_disp_unit_buttons = SegmentControlRow::new(Mode::Proportional{width:px(264.)});
         for (i, (label, unit)) in DISPLAY_UNITS.iter().enumerate() {
             let unit = *unit;
             let on = match (unit, sec_display_unit) {
@@ -1938,37 +1990,18 @@ impl SlideEditor {
                 _ => false,
             };
             sec_disp_unit_buttons = sec_disp_unit_buttons.child(
-                Button::new(("chart-sec-disp-unit", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
+                SegmentItem::label(("chart-sec-disp-unit", i), crate::shell::i18n::text(label), on).tooltip(crate::shell::i18n::text(label))
                     .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_sec_val_axis_display_unit(unit.map(Number), cx))),
             );
         }
         let current_blanks = chart.disp_blanks_as.unwrap_or(DispBlanksAs::Gap);
-        let mut blank_buttons = h_flex().gap_1();
+        let mut blank_buttons = SegmentControlRow::new(Mode::Proportional {width:px(264.)});
         for (i, (label, opt)) in BLANK_CELL_OPTIONS.iter().enumerate() {
             let opt = *opt;
             let on = opt == Some(current_blanks);
             blank_buttons = blank_buttons.child(
-                Button::new(("chart-blanks", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
+                SegmentItem::label(("chart-blanks", i),crate::shell::i18n::text(label),on)
                     .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_disp_blanks_as(opt, cx))),
-            );
-        }
-        let current_marker = chart.groups.iter().flat_map(|g| &g.series).find_map(|s| s.marker.as_ref()).map(|m| m.symbol).unwrap_or(MarkerSymbol::None);
-        let mut marker_buttons = h_flex().gap_1();
-        for (i, (label, sym)) in MARKER_SYMBOLS.iter().enumerate() {
-            let sym = *sym;
-            let on = sym == current_marker;
-            marker_buttons = marker_buttons.child(
-                Button::new(("chart-marker", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_marker_symbol(sym, cx))),
             );
         }
         let has_radar = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Radar { .. }));
@@ -1976,16 +2009,12 @@ impl SlideEditor {
             ibis_doc_model::ChartType::Radar { style } => Some(style.unwrap_or(ibis_doc_model::RadarStyle::Standard)),
             _ => None,
         });
-        let mut radar_style_buttons = h_flex().gap_1();
+        let mut radar_style_buttons = crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic);
         for (i, (label, style)) in RADAR_STYLES.iter().enumerate() {
             let style = *style;
             let on = current_radar_style == style;
             radar_style_buttons = radar_style_buttons.child(
-                Button::new(("chart-radar-style", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_radar_style(style, cx))),
+                crate::shell::chrome::segment_control::SegmentItem::label(("chart-radar-style", i),crate::shell::i18n::text(label),on).disabled(false).on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_radar_style(style, cx))),
             );
         }
         let has_surface = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Surface { .. }));
@@ -1993,235 +2022,44 @@ impl SlideEditor {
             ibis_doc_model::ChartType::Surface { is_3d, wireframe } => Some((is_3d, wireframe)),
             _ => None,
         });
-        let mut surface_type_buttons = h_flex().gap_1();
+        let mut surface_type_buttons = crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow);
         for (i, (label, is_3d, wireframe)) in SURFACE_TYPES.iter().enumerate() {
             let (is_3d, wireframe) = (*is_3d, *wireframe);
             let on = current_surface == Some((is_3d, wireframe));
             surface_type_buttons = surface_type_buttons.child(
-                Button::new(("chart-surface-type", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_surface_type(is_3d, wireframe, cx))),
+                crate::shell::chrome::radio_button(("chart-surface-type", i),on,false,crate::shell::i18n::text(label),cx.listener(move |this, _, _, cx| this.set_sheet_chart_surface_type(is_3d, wireframe, cx))),
             );
         }
-        let mut of_pie_kind_buttons = h_flex().gap_1();
+        let mut of_pie_kind_buttons = crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic);
         for (i, (label, kind)) in OF_PIE_KINDS.iter().enumerate() {
             let kind = *kind;
             let on = kind == current_of_pie_kind;
             of_pie_kind_buttons = of_pie_kind_buttons.child(
-                Button::new(("chart-of-pie-kind", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_of_pie_kind(kind, cx))),
+                crate::shell::chrome::segment_control::SegmentItem::label(("chart-of-pie-kind", i),crate::shell::i18n::text(label),on).disabled(false).on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_of_pie_kind(kind, cx))),
             );
         }
-        let mut of_pie_split_buttons = h_flex().gap_1();
+        let mut of_pie_split_buttons = crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic);
         for (i, (label, split)) in OF_PIE_SPLITS.iter().enumerate() {
             let split = *split;
             let on = split == current_of_pie_split;
             of_pie_split_buttons = of_pie_split_buttons.child(
-                Button::new(("chart-of-pie-split", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_of_pie_split(split, cx))),
+                crate::shell::chrome::segment_control::SegmentItem::label(("chart-of-pie-split", i),crate::shell::i18n::text(label),on).on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_of_pie_split(split, cx))),
             );
         }
-        let current_stroke_width = chart.groups.iter().flat_map(|g| &g.series).find_map(|s| s.stroke.as_ref()).map(|s| s.width);
-        let mut line_buttons = h_flex().gap_1();
-        for (i, (label, width)) in LINE_WIDTHS.iter().enumerate() {
-            let width = *width;
-            let on = match (width, current_stroke_width) {
-                (None, None) => true,
-                (Some(w), Some(cw)) => (w as i64 - cw as i64).abs() < 5_000,
-                _ => false,
-            };
-            line_buttons = line_buttons.child(
-                Button::new(("chart-line-width", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_line_stroke(width, cx))),
-            );
-        }
-        let mut axis_type_buttons = h_flex().gap_1();
+        let mut axis_type_buttons = crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic);
         for (i, (label, is_date)) in AXIS_TYPE_OPTIONS.iter().enumerate() {
             let is_date = *is_date;
             let on = cat_date == is_date;
             axis_type_buttons = axis_type_buttons.child(
-                Button::new(("chart-cat-axis-type", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_cat_axis_date(is_date, cx))),
+                crate::shell::chrome::segment_control::SegmentItem::label(("chart-cat-axis-type", i),crate::shell::i18n::text(label),on).disabled(false).on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_cat_axis_date(is_date, cx))),
             );
         }
-        let current_fill = chart.groups.iter().flat_map(|g| &g.series).next().map(|s| &s.fill);
-        let mut fill_buttons = h_flex().gap_1();
-        for (i, (label, rgb)) in FILL_COLORS.iter().enumerate() {
-            let rgb = *rgb;
-            let on = match (rgb, current_fill) {
-                (None, Some(Fill::None)) => true,
-                (Some(r), Some(Fill::Solid(color))) => color.rgb == r,
-                _ => false,
-            };
-            let fill_val = match rgb {
-                Some(r) => Fill::Solid(Color::opaque(r)),
-                None => Fill::None,
-            };
-            fill_buttons = fill_buttons.child(
-                Button::new(("chart-fill-color", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_series_fill(fill_val.clone(), cx))),
-            );
-        }
-        let current_stroke_color = chart.groups.iter().flat_map(|g| &g.series).next().and_then(|s| s.stroke.as_ref()).map(|s| s.color.rgb);
-        let mut stroke_color_buttons = h_flex().gap_1();
-        for (i, (label, rgb)) in STROKE_COLORS.iter().enumerate() {
-            let rgb = *rgb;
-            let on = match (rgb, current_stroke_color) {
-                (None, None) => true,
-                (Some(r), Some(cr)) => r == cr,
-                _ => false,
-            };
-            stroke_color_buttons = stroke_color_buttons.child(
-                Button::new(("chart-stroke-color", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_series_stroke_color(rgb, cx))),
-            );
-        }
-        let active_trendline = chart.groups.iter().flat_map(|g| &g.series).find_map(|s| s.trendline.as_ref());
-        let has_trendline = active_trendline.is_some();
-        let tl_kind = active_trendline.map(|t| t.kind);
-        let tl_disp_eq = active_trendline.map_or(false, |t| t.disp_eq);
-        let tl_disp_r_sqr = active_trendline.map_or(false, |t| t.disp_r_sqr);
-        let mut trendline_type_buttons = h_flex().gap_1();
-        for (i, (label, kind)) in TRENDLINE_TYPES.iter().enumerate() {
-            let kind = *kind;
-            let on = tl_kind == kind;
-            trendline_type_buttons = trendline_type_buttons.child(
-                Button::new(("chart-trendline-type", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_trendline_type(kind, cx))),
-            );
-        }
-        let active_error_bars = chart.groups.iter().flat_map(|g| &g.series).find_map(|s| s.error_bars.as_ref());
-        let has_error_bars = active_error_bars.is_some();
-        let eb_bar_type = active_error_bars.map(|e| e.bar_type).unwrap_or_default();
-        let eb_val_type = active_error_bars.map(|e| e.val_type).unwrap_or_default();
-        let eb_end_cap = active_error_bars.map_or(true, |e| !e.no_end_cap);
-        let mut error_bar_type_buttons = h_flex().gap_1();
-        for (i, (label, bt)) in ERROR_BAR_TYPES.iter().enumerate() {
-            let bt = *bt;
-            let on = eb_bar_type == bt;
-            error_bar_type_buttons = error_bar_type_buttons.child(
-                Button::new(("chart-error-bar-type", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_error_bar_type(bt, cx))),
-            );
-        }
-        let mut error_bar_val_type_buttons = h_flex().gap_1();
-        for (i, (label, vt)) in ERROR_BAR_VAL_TYPES.iter().enumerate() {
-            let vt = *vt;
-            let on = eb_val_type == vt;
-            error_bar_val_type_buttons = error_bar_val_type_buttons.child(
-                Button::new(("chart-error-bar-val-type", i))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .when(on, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_error_bar_val_type(vt, cx))),
-            );
-        }
-        let current_style = chart.style;
-        let mut style_buttons_1 = h_flex().gap_1();
-        let mut style_buttons_2 = h_flex().gap_1();
-        for (i, (label, s_val)) in CHART_STYLES.iter().enumerate() {
-            let s_val = *s_val;
-            let on = current_style == s_val;
-            let btn = Button::new(("chart-style", i))
-                .small()
-                .label(crate::shell::i18n::text(label))
-                .when(on, |b| b.primary())
-                .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_style(s_val, cx)));
-            if i < 5 {
-                style_buttons_1 = style_buttons_1.child(btn);
-            } else {
-                style_buttons_2 = style_buttons_2.child(btn);
-            }
-        }
-        let mut palette_buttons_1 = h_flex().gap_1();
-        let mut palette_buttons_2 = h_flex().gap_1();
-        for (i, (label, _)) in COLOR_PALETTES.iter().enumerate() {
-            let btn = Button::new(("chart-palette", i))
-                .small()
-                .label(crate::shell::i18n::text(label))
-                .on_click(cx.listener(move |this, _, _, cx| this.set_sheet_chart_color_palette(i, cx)));
-            if i < 4 {
-                palette_buttons_1 = palette_buttons_1.child(btn);
-            } else {
-                palette_buttons_2 = palette_buttons_2.child(btn);
-            }
-        }
-        let total_series: usize = chart.groups.iter().map(|g| g.series.len()).sum();
-        let mut series_list = v_flex().gap_1();
-        let mut s_idx = 0;
-        for group in &chart.groups {
-            for s in &group.series {
-                let idx = s_idx;
-                let name = if s.name.is_empty() {
-                    format!("{} {}", crate::shell::i18n::text("xlsx.chart-series"), idx + 1)
-                } else {
-                    s.name.clone()
-                };
-                let can_up = idx > 0;
-                let can_down = idx + 1 < total_series;
-                let can_delete = total_series > 1;
-                series_list = series_list.child(
-                    h_flex()
-                        .gap_1()
-                        .items_center()
-                        .child(div().flex_1().text_xs().truncate().child(name))
-                        .child(
-                            Button::new(("chart-series-up", idx))
-                                .small()
-                                .label("▲")
-                                .disabled(!can_up)
-                                .on_click(cx.listener(move |this, _, window, cx| this.move_sheet_chart_series(idx, true, window, cx))),
-                        )
-                        .child(
-                            Button::new(("chart-series-down", idx))
-                                .small()
-                                .label("▼")
-                                .disabled(!can_down)
-                                .on_click(cx.listener(move |this, _, window, cx| this.move_sheet_chart_series(idx, false, window, cx))),
-                        )
-                        .child(
-                            Button::new(("chart-series-delete", idx))
-                                .small()
-                                .label("✕")
-                                .disabled(!can_delete)
-                                .on_click(cx.listener(move |this, _, window, cx| this.delete_sheet_chart_series(idx, window, cx))),
-                        ),
-                );
-                s_idx += 1;
-            }
-        }
-        let add_series_btn = Button::new("chart-series-add")
-            .small()
-            .label(crate::shell::i18n::text("xlsx.chart-series-add"))
-            .on_click(cx.listener(|this, _, window, cx| this.add_sheet_chart_series(window, cx)));
+        let series_list = self.chart_series_table(cx);
+        let add_series_btn = crate::shell::chrome::primary_button("chart-series-add")
+            .label(crate::shell::i18n::text("chart.ui.add"))
+            .on_click(cx.listener(|this, _, window, cx| this.open_chart_series_editor(None, window, cx)));
         let show_hidden = !chart.plot_vis_only;
-        let labeled = |key: &str, input: &Entity<InputState>| v_flex().gap_1().child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text(key))).child(Input::new(input).small().cleanable(true));
+        let labeled = |key: &str, input: crate::shell::chrome::TextField| v_flex().gap_1().child(div().text_color(crate::shell::palette::rgb(0x5f6368)).child(crate::shell::i18n::text(key))).child(input);
         // A chartEx chart's own settings: the points that are totals (a waterfall), the bins (a histogram).
         let ex_section = chart.ex_source.as_ref().map(|source| {
             let xml = source.0.xml();
@@ -2238,16 +2076,16 @@ impl SlideEditor {
             if xml.contains("layoutId=\"clusteredColumn\"") && !is_pareto(&xml) {
                 section = section
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.bins")))
-                    .child(labeled("xlsx.chart-ex.bin-width", &p.ex_bin_width))
-                    .child(labeled("xlsx.chart-ex.bin-count", &p.ex_bin_count))
-                    .child(labeled("xlsx.chart-ex.underflow", &p.ex_underflow))
-                    .child(labeled("xlsx.chart-ex.overflow", &p.ex_overflow))
-                    .child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text("xlsx.chart-ex.bins-hint")))
+                    .child(labeled("xlsx.chart-ex.bin-width", crate::shell::chrome::text_field(&p.ex_bin_width).full_width()))
+                    .child(labeled("xlsx.chart-ex.bin-count", chart_spin(&p.ex_bin_count, "chart-ex-bin-count", crate::shell::chrome::SpinnerSpec::new(1.0).min(1.0).integer_only(), cx)))
+                    .child(labeled("xlsx.chart-ex.underflow", crate::shell::chrome::text_field(&p.ex_underflow).full_width()))
+                    .child(labeled("xlsx.chart-ex.overflow", crate::shell::chrome::text_field(&p.ex_overflow).full_width()))
+                    .child(div().text_color(crate::shell::palette::rgb(0x5f6368)).child(crate::shell::i18n::text("xlsx.chart-ex.bins-hint")))
                     .child(Checkbox::new("chart-ex-closed-right").label(crate::shell::i18n::text("xlsx.chart-ex.closed-right")).checked(o.closed_right).on_click(cx.listener(|this, on: &bool, _, cx| {
                         let on = *on;
                         this.set_chart_ex_options(move |o| o.closed_right = on, cx)
                     })))
-                    .child(Button::new("chart-ex-bins-apply").primary().small().label(crate::shell::i18n::text("xlsx.chart-ex.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_bins(cx))));
+                    .child(crate::shell::chrome::primary_button("chart-ex-bins-apply").small().label(crate::shell::i18n::text("xlsx.chart-ex.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_bins(cx))));
             }
             if xml.contains("layoutId=\"boxWhisker\"") {
                 section = section
@@ -2280,107 +2118,25 @@ impl SlideEditor {
             if is_funnel(&xml) {
                 section = section
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.funnel")))
-                    .child(labeled("xlsx.chart-ex.gap-width", &p.ex_gap_width))
-                    .child(Button::new("chart-ex-funnel-apply").primary().small().label(crate::shell::i18n::text("xlsx.chart-ex.apply-gap")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_gap_width(cx))));
+                    .child(labeled("xlsx.chart-ex.gap-width", chart_spin(&p.ex_gap_width, "chart-ex-funnel-gap", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 500.0).integer_only(), cx)))
+                    .child(crate::shell::chrome::primary_button("chart-ex-funnel-apply").small().label(crate::shell::i18n::text("xlsx.chart-ex.apply-gap")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_gap_width(cx))));
             }
             if is_pareto(&xml) {
                 section = section
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.pareto")))
-                    .child(labeled("xlsx.chart-ex.gap-width", &p.ex_gap_width))
-                    .child(Button::new("chart-ex-pareto-apply").primary().small().label(crate::shell::i18n::text("xlsx.chart-ex.apply-gap")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_gap_width(cx))));
+                    .child(labeled("xlsx.chart-ex.gap-width", chart_spin(&p.ex_gap_width, "chart-ex-pareto-gap", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 500.0).integer_only(), cx)))
+                    .child(crate::shell::chrome::primary_button("chart-ex-pareto-apply").small().label(crate::shell::i18n::text("xlsx.chart-ex.apply-gap")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_gap_width(cx))));
             }
             section
         });
-        let field = |label: &str, input: &Entity<InputState>| h_flex().gap_2().items_center().child(div().w(px(72.)).child(label.to_string())).child(div().flex_1().child(Input::new(input).small().cleanable(true)));
-        let body = v_flex()
-            .gap_2()
-            .px(px(18.))
-            .py(px(8.))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.data-range")))
-            .child(Input::new(&p.range).small().cleanable(true))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(Button::new("chart-range-apply").primary().small().label(crate::shell::i18n::text("_xlsx.apply-range")).on_click(cx.listener(|this, _, window, cx| this.set_sheet_chart_data(false, window, cx))))
-                    .child(Button::new("chart-switch").small().label(crate::shell::i18n::text("_xlsx.switch-row-column")).on_click(cx.listener(|this, _, window, cx| this.set_sheet_chart_data(true, window, cx))))
-                    .child(Button::new("chart-move").small().label(crate::shell::i18n::text("_xlsx.move-chart")).on_click(cx.listener(|this, _, window, cx| this.open_move_chart_panel(window, cx)))),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(Button::new("chart-save-template").small().label(crate::shell::i18n::text("_xlsx.save-as-template")).on_click(cx.listener(|this, _, window, cx| this.open_chart_template_panel(crate::xlsx::chart_template::ChartTemplateMode::Save, window, cx))))
-                    .child(Button::new("chart-apply-template").small().label(crate::shell::i18n::text("_xlsx.apply-template")).on_click(cx.listener(|this, _, window, cx| this.open_chart_template_panel(crate::xlsx::chart_template::ChartTemplateMode::Apply, window, cx)))),
-            )
-            .when_some(ex_section, |b, section| b.child(section))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-series")))
-            .child(series_list)
-            .child(add_series_btn)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_shell.chart-styles")))
-            .child(style_buttons_1)
-            .child(style_buttons_2)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.chart-colors")))
-            .child(palette_buttons_1)
-            .child(palette_buttons_2)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.chart-title")))
-            .child(Checkbox::new("chart-title-shown").label(crate::shell::i18n::text("_xlsx.show")).checked(titled).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_title_shown(*on, cx))))
-            .child(Input::new(&p.title).small().cleanable(true))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_shell.legend")))
-            .child(places)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.data-labels")))
-            .child(label_buttons)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("pptx.common.fill")))
-            .child(fill_buttons)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("pptx.chrome.border-weight")))
-            .child(line_buttons)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_shell.border-color")))
-            .child(stroke_color_buttons)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.marker")))
-            .child(marker_buttons)
-            .when(cat_axis.is_some(), |b| {
-                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.horizontal-category-axis")))
-                    .child(Checkbox::new("chart-cat-title-shown").label(crate::shell::i18n::text("_xlsx.show-axis-title")).checked(cat_titled).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_cat_axis_title_shown(*on, cx))))
-                    .child(Input::new(&p.cat_title).small().cleanable(true))
-                    .child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text("_xlsx.axis-type")))
-                    .child(axis_type_buttons)
-                    .child(Checkbox::new("chart-cat-gridlines").label(crate::shell::i18n::text("_xlsx.gridlines")).checked(cat_gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_cat_gridlines(*on, cx))))
-                    .child(Checkbox::new("chart-cat-reversed").label(crate::shell::i18n::text("_xlsx.categories-in-reverse-order")).checked(cat_reversed).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_cat_axis_reversed(*on, cx))))
-            })
-            .when(val_axis.is_some(), |b| {
-                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.vertical-value-axis")))
-                    .child(Checkbox::new("chart-val-title-shown").label(crate::shell::i18n::text("_xlsx.show-axis-title")).checked(val_titled).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_val_axis_title_shown(*on, cx))))
-                    .child(Input::new(&p.val_title).small().cleanable(true))
-                    .child(field(&crate::shell::i18n::text("xlsx.chart-axis-min"), &p.min))
-                    .child(field(&crate::shell::i18n::text("xlsx.chart-axis-max"), &p.max))
-                    .child(field(&crate::shell::i18n::text("_xlsx.major-unit"), &p.unit))
-                    .child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text("_xlsx.display-units")))
-                    .child(disp_unit_buttons)
-                    .child(Checkbox::new("chart-gridlines").label(crate::shell::i18n::text("_xlsx.gridlines")).checked(gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_gridlines(*on, cx))))
-                    .child(Checkbox::new("chart-val-minor-gridlines").label(crate::shell::i18n::text("_xlsx.minor-gridlines")).checked(val_minor_gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_val_minor_gridlines(*on, cx))))
-                    .child(Checkbox::new("chart-val-reversed").label(crate::shell::i18n::text("_xlsx.categories-in-reverse-order")).checked(val_reversed).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_val_axis_reversed(*on, cx))))
-                    .child(Checkbox::new("chart-val-log-scale").label(crate::shell::i18n::text("_xlsx.logarithmic-scale")).checked(val_log_scale).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_val_axis_log_scale(on.then_some(Number(10.0)), cx))))
-            })
-            .when(sec_val_axis.is_some(), |b| {
-                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.secondary-value-axis")))
-                    .child(Checkbox::new("chart-sec-val-title-shown").label(crate::shell::i18n::text("_xlsx.show-axis-title")).checked(sec_val_titled).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_sec_val_axis_title_shown(*on, cx))))
-                    .child(Input::new(&p.sec_val_title).small().cleanable(true))
-                    .child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text("_xlsx.display-units")))
-                    .child(sec_disp_unit_buttons)
-                    .child(Checkbox::new("chart-sec-gridlines").label(crate::shell::i18n::text("_xlsx.gridlines")).checked(sec_val_gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_sec_val_axis_gridlines(*on, cx))))
-                    .child(Checkbox::new("chart-sec-val-minor-gridlines").label(crate::shell::i18n::text("_xlsx.minor-gridlines")).checked(sec_val_minor_gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_sec_val_axis_minor_gridlines(*on, cx))))
-                    .child(Checkbox::new("chart-sec-val-reversed").label(crate::shell::i18n::text("_xlsx.categories-in-reverse-order")).checked(sec_val_reversed).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_sec_val_axis_reversed(*on, cx))))
-                    .child(Checkbox::new("chart-sec-val-log-scale").label(crate::shell::i18n::text("_xlsx.logarithmic-scale")).checked(sec_val_log_scale).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_sec_val_axis_log_scale(on.then_some(Number(10.0)), cx))))
-            })
-            .when(ser_axis.is_some(), |b| {
-                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.series-axis")))
-                    .child(Checkbox::new("chart-ser-title-shown").label(crate::shell::i18n::text("_xlsx.show-axis-title")).checked(ser_titled).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_ser_axis_title_shown(*on, cx))))
-                    .child(Input::new(&p.ser_title).small().cleanable(true))
-                    .child(Checkbox::new("chart-ser-gridlines").label(crate::shell::i18n::text("_xlsx.gridlines")).checked(ser_gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_ser_axis_gridlines(*on, cx))))
-                    .child(Checkbox::new("chart-ser-reversed").label(crate::shell::i18n::text("_xlsx.categories-in-reverse-order")).checked(ser_reversed).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_ser_axis_reversed(*on, cx))))
-            })
+        let field = |label: &str, input: crate::shell::chrome::TextField| crate::shell::chrome::text_field_row(label.to_string(), input);
+        let command_font=self.resources.font(&ibis_doc_model::TextStyle::default());
+        let command_width=["_xlsx.apply-range","_xlsx.switch-row-column","_xlsx.move-chart","_xlsx.save-as-template","_xlsx.apply-template"].iter().map(|key|self.resources.text_width(&crate::shell::i18n::text(key),&command_font,14.)+32.).fold(0.,f32::max);
+        let kind_settings=v_flex().gap_2().when_some(ex_section,|b,section|b.child(section))
             .when(has_bar, |b| {
                 b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.series-options")))
-                    .child(field(&crate::shell::i18n::text("_xlsx.gap-width"), &p.gap_width))
-                    .child(field(&crate::shell::i18n::text("_xlsx.series-overlap"), &p.overlap))
+                    .child(field(&crate::shell::i18n::text("_xlsx.gap-width"), chart_spin(&p.gap_width, "chart-gap-width", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 500.0).integer_only(), cx)))
+                    .child(field(&crate::shell::i18n::text("_xlsx.series-overlap"), chart_spin(&p.overlap, "chart-overlap", crate::shell::chrome::SpinnerSpec::new(1.0).range(-100.0, 100.0).integer_only(), cx)))
             })
             .when(has_radar, |b| {
                 b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.radar-style")))
@@ -2391,8 +2147,8 @@ impl SlideEditor {
                     .child(of_pie_kind_buttons)
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("fix.chart-edit.split-series")))
                     .child(of_pie_split_buttons)
-                    .child(field(&crate::shell::i18n::text("fix.chart-edit.split-position-value"), &p.of_pie_split_pos))
-                    .child(field(&crate::shell::i18n::text("fix.chart-edit.second-plot-size"), &p.of_pie_second_size))
+                    .child(field(&crate::shell::i18n::text("fix.chart-edit.split-position-value"), crate::shell::chrome::text_field(&p.of_pie_split_pos).full_width()))
+                    .child(field(&crate::shell::i18n::text("fix.chart-edit.second-plot-size"), chart_spin(&p.of_pie_second_size, "chart-of-pie-size", crate::shell::chrome::SpinnerSpec::new(1.0).range(5.0, 200.0).integer_only(), cx)))
             })
             .when(has_stock, |b| {
                 b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("fix.chart-edit.stock-chart-options")))
@@ -2406,31 +2162,19 @@ impl SlideEditor {
             })
             .when(has_3d, |b| {
                 b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-3d-rotation")))
-                    .child(field(&crate::shell::i18n::text("xlsx.chart-3d-x-rotation"), &p.three_d_rot_x))
-                    .child(field(&crate::shell::i18n::text("xlsx.chart-3d-y-rotation"), &p.three_d_rot_y))
+                    .child(field(&crate::shell::i18n::text("xlsx.chart-3d-x-rotation"), chart_spin(&p.three_d_rot_x, "chart-3d-rot-x", crate::shell::chrome::SpinnerSpec::new(1.0).range(-90.0, 90.0).integer_only(), cx)))
+                    .child(field(&crate::shell::i18n::text("xlsx.chart-3d-y-rotation"), chart_spin(&p.three_d_rot_y, "chart-3d-rot-y", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 360.0).integer_only(), cx)))
                     .child(Checkbox::new("chart-3d-right-angle-axes").label(crate::shell::i18n::text("xlsx.chart-3d-right-angle-axes")).checked(right_angle_axes).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_3d_rotation(None, None, Some(*on), None, cx))))
-                    .child(field(&crate::shell::i18n::text("xlsx.chart-3d-depth"), &p.three_d_depth))
+                    .child(field(&crate::shell::i18n::text("xlsx.chart-3d-depth"), chart_spin(&p.three_d_depth, "chart-3d-depth", crate::shell::chrome::SpinnerSpec::new(1.0).range(20.0, 2000.0).integer_only(), cx)))
                     .child(
-                        Button::new("chart-3d-reset-defaults")
+                        crate::shell::chrome::action_button("chart-3d-reset-defaults")
                             .small()
                             .label(crate::shell::i18n::text("xlsx.chart-3d-reset-defaults"))
                             .on_click(cx.listener(|this, _, _, cx| this.reset_sheet_chart_3d_rotation(cx)))
                     )
             })
-            .when_some(chart.pivot_source.clone(), |b, p_name| {
-                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.pivot-chart")))
-                    .child(
-                        h_flex().items_center().gap_2()
-                            .child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text("xlsx.pivot-chart-source")))
-                            .child(div().text_xs().font_weight(FontWeight::MEDIUM).child(p_name))
-                    )
-                    .child(
-                        Button::new("pivot-chart-open-fields")
-                            .small()
-                            .label(crate::shell::i18n::text("xlsx.pivot-chart-open-fields"))
-                            .on_click(cx.listener(|this, _, window, cx| this.open_pivot_fields(window, cx)))
-                    )
-            })
+;
+        let data_settings=v_flex().gap_2()
             .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.data-table")))
             .child(Checkbox::new("chart-data-table-shown").label(crate::shell::i18n::text("_xlsx.show-data-table")).checked(has_data_table).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_data_table_shown(*on, cx))))
             .when(has_data_table, |b| {
@@ -2439,37 +2183,101 @@ impl SlideEditor {
                     .child(Checkbox::new("chart-data-table-vert").label(crate::shell::i18n::text("_xlsx.vertical-border")).checked(dt_vert).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_data_table_show_vert_border(*on, cx))))
                     .child(Checkbox::new("chart-data-table-outline").label(crate::shell::i18n::text("_xlsx.outside-borders")).checked(dt_outline).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_data_table_show_outline(*on, cx))))
             })
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("pptx.chrome.trendline")))
-            .child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text("fix.series.type")))
-            .child(trendline_type_buttons)
-            .when(has_trendline, |b| {
-                b.child(Checkbox::new("chart-trendline-disp-eq").label(crate::shell::i18n::text("_xlsx.display-equation-on-chart")).checked(tl_disp_eq).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_trendline_disp_eq(*on, cx))))
-                    .child(Checkbox::new("chart-trendline-disp-r-sqr").label(crate::shell::i18n::text("_xlsx.display-r-squared-value-on-chart")).checked(tl_disp_r_sqr).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_trendline_disp_r_sqr(*on, cx))))
-            })
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("pptx.chrome.error-bars")))
-            .child(Checkbox::new("chart-error-bars-shown").label(crate::shell::i18n::text("_xlsx.show-error-bars")).checked(has_error_bars).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_error_bars_shown(*on, cx))))
-            .when(has_error_bars, |b| {
-                b.child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text("_xlsx.text-direction")))
-                    .child(error_bar_type_buttons)
-                    .child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text("_xlsx.error-amount")))
-                    .child(error_bar_val_type_buttons)
-                    .child(Checkbox::new("chart-error-bars-end-cap").label(crate::shell::i18n::text("_xlsx.end-cap")).checked(eb_end_cap).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_error_bar_end_cap(*on, cx))))
-            })
             .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.hidden-and-empty-cells")))
-            .child(div().text_xs().text_color(theme.muted).child(crate::shell::i18n::text("_xlsx.show-empty-cells-as")))
-            .child(blank_buttons)
+            .child(blank_buttons.label(crate::shell::i18n::text("_xlsx.show-empty-cells-as")))
             .child(Checkbox::new("chart-show-hidden").label(crate::shell::i18n::text("_xlsx.show-data-in-hidden-rows-and-columns")).checked(show_hidden).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_plot_vis_only(!*on, cx))))
-            .when_some(p.error.clone(), |b, e| b.child(div().text_xs().text_color(theme.danger).child(e)))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(Button::new("chart-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_sheet_chart_panel(cx))))
-                    .child(Button::new("chart-close").small().label(crate::shell::i18n::text("_shell.close")).on_click(cx.listener(|this, _, _, cx| {
-                        this.wb_mut().chart_edit = None;
-                        cx.notify();
-                    }))),
-            );
-        Some(SidebarPanel { title: crate::shell::i18n::text("_xlsx.format-chart").into(), body: body.into_any_element() })
+;
+        let template_commands=v_flex().gap_2()
+            .child(crate::shell::chrome::action_button("chart-move").w(px(command_width)).max_w_full().label(crate::shell::i18n::text("_xlsx.move-chart")).on_click(cx.listener(|e,_,w,cx|e.open_move_chart_panel(w,cx))))
+            .child(crate::shell::chrome::action_button("chart-save-template").w(px(command_width)).max_w_full().label(crate::shell::i18n::text("_xlsx.save-as-template")).on_click(cx.listener(|e,_,w,cx|e.open_chart_template_panel(crate::xlsx::chart_template::ChartTemplateMode::Save,w,cx))))
+            .child(crate::shell::chrome::action_button("chart-apply-template").w(px(command_width)).max_w_full().label(crate::shell::i18n::text("_xlsx.apply-template")).on_click(cx.listener(|e,_,w,cx|e.open_chart_template_panel(crate::xlsx::chart_template::ChartTemplateMode::Apply,w,cx))))
+            .when_some(chart.pivot_source.clone(), |b, p_name| {
+                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.pivot-chart")))
+                    .child(
+                        h_flex().items_center().gap_2()
+                            .child(div().text_color(crate::shell::palette::rgb(0x5f6368)).child(crate::shell::i18n::text("xlsx.pivot-chart-source")))
+                            .child(div().font_weight(FontWeight::MEDIUM).child(p_name))
+                    )
+                    .child(
+                        crate::shell::chrome::action_button("pivot-chart-open-fields")
+                            .small()
+                            .label(crate::shell::i18n::text("xlsx.pivot-chart-open-fields"))
+                            .on_click(cx.listener(|this, _, window, cx| this.open_pivot_fields(window, cx)))
+                    )
+            })
+;
+        let body = v_flex()
+            .gap_2()
+            .px(px(18.))
+            .py(px(8.))
+            .p_0().child(self.chart_panel_tabs(cx))
+            .when(p.tab == 2, |b| b
+            .child(div().child(crate::shell::i18n::text("chart.ui.type")))
+            .child(self.chart_type_dropdown(cx))
+            .child(div().child(crate::shell::i18n::text("_xlsx.data-range")))
+            .child(super::range_field::range_field(&p.range,"chart-global-range",cx).full_width())
+            .child(crate::shell::chrome::action_button("chart-switch").w(px(command_width)).max_w_full().label(crate::shell::i18n::text("_xlsx.switch-row-column")).on_click(cx.listener(|this,_,w,cx|this.set_sheet_chart_data(true,w,cx))))
+            )
+            .when(p.tab == 0, |b| b.child(h_flex().justify_between().items_center().child(crate::shell::i18n::text("xlsx.chart-series")).child(add_series_btn)).child(series_list))
+            .when(p.tab == 2, |b| b
+            .child(div().child(crate::shell::i18n::text("_shell.chart-styles")))
+            .child(self.chart_style_dropdown(cx))
+            .child(crate::shell::chrome::dropdown_row(crate::shell::i18n::text("_xlsx.chart-colors"),self.chart_palette_dropdown(cx)))
+            .child(Checkbox::new("chart-title-shown").label(crate::shell::i18n::text("chart.ui.show-title")).checked(titled).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_title_shown(*on, cx))))
+            .child(div().pl(px(14.)).child(crate::shell::chrome::text_field(&p.title).full_width().disabled(!titled)))
+            .child(places.label(crate::shell::i18n::text("_shell.legend")))
+            .child(crate::shell::chrome::color_text_field_row(crate::shell::i18n::text("_shell.background"),crate::shell::chrome::panel_color_field("chart-background",&p.background,cx)))
+            )
+            .when(p.tab == 1, |b| b
+            .child(self.chart_axis_tabs(cx))
+            .when(cat_axis.is_some() && p.axis_tab == 0, |b| {
+                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text(if cat_axis.is_some_and(|i|chart.axes[i].kind==AxisKind::Value){"chart.ui.horizontal-value-axis"}else if cat_axis.is_some_and(|i|matches!(chart.axes[i].side,Side::Left|Side::Right)){"chart.ui.vertical-categories"}else{"_xlsx.horizontal-category-axis"})))
+                    .child(Checkbox::new("chart-cat-title-shown").label(crate::shell::i18n::text("_xlsx.show-axis-title")).checked(cat_titled).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_cat_axis_title_shown(*on, cx))))
+                    .child(crate::shell::chrome::text_field(&p.cat_title).full_width())
+                    .when(cat_axis.is_some_and(|i|chart.axes[i].kind==AxisKind::Category),|b|b.child(div().text_color(crate::shell::palette::rgb(0x5f6368)).child(crate::shell::i18n::text("_xlsx.axis-type"))).child(axis_type_buttons))
+                    .when(cat_axis.is_some_and(|i|chart.axes[i].kind==AxisKind::Value),|b|b.child(field(&crate::shell::i18n::text("xlsx.chart-axis-min"),chart_spin(&p.domain_min,"chart-domain-min",crate::shell::chrome::SpinnerSpec::new(1.),cx))).child(field(&crate::shell::i18n::text("xlsx.chart-axis-max"),chart_spin(&p.domain_max,"chart-domain-max",crate::shell::chrome::SpinnerSpec::new(1.),cx))).child(field(&crate::shell::i18n::text("_xlsx.major-unit"),chart_spin(&p.domain_unit,"chart-domain-unit",crate::shell::chrome::SpinnerSpec::new(1.).min(0.),cx))))
+                    .child(Checkbox::new("chart-cat-gridlines").label(crate::shell::i18n::text("_xlsx.gridlines")).checked(cat_gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_cat_gridlines(*on, cx))))
+                    .child(Checkbox::new("chart-cat-reversed").label(crate::shell::i18n::text("_xlsx.categories-in-reverse-order")).checked(cat_reversed).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_cat_axis_reversed(*on, cx))))
+            })
+            .when(val_axis.is_some() && p.axis_tab == 1, |b| {
+                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text(super::chart_series::value_axis_label(chart,false))))
+                    .child(Checkbox::new("chart-val-title-shown").label(crate::shell::i18n::text("_xlsx.show-axis-title")).checked(val_titled).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_val_axis_title_shown(*on, cx))))
+                    .child(crate::shell::chrome::text_field(&p.val_title).full_width())
+                    .child(field(&crate::shell::i18n::text("xlsx.chart-axis-min"), crate::shell::chrome::text_field(&p.min).full_width()))
+                    .child(field(&crate::shell::i18n::text("xlsx.chart-axis-max"), crate::shell::chrome::text_field(&p.max).full_width()))
+                    .child(field(&crate::shell::i18n::text("_xlsx.major-unit"), crate::shell::chrome::text_field(&p.unit).full_width()))
+                    .child(disp_unit_buttons.label(crate::shell::i18n::text("_xlsx.display-units")))
+                    .child(Checkbox::new("chart-gridlines").label(crate::shell::i18n::text("_xlsx.gridlines")).checked(gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_gridlines(*on, cx))))
+                    .child(Checkbox::new("chart-val-minor-gridlines").label(crate::shell::i18n::text("_xlsx.minor-gridlines")).checked(val_minor_gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_val_minor_gridlines(*on, cx))))
+                    .child(Checkbox::new("chart-val-reversed").label(crate::shell::i18n::text("_xlsx.categories-in-reverse-order")).checked(val_reversed).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_val_axis_reversed(*on, cx))))
+                    .child(Checkbox::new("chart-val-log-scale").label(crate::shell::i18n::text("_xlsx.logarithmic-scale")).checked(val_log_scale).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_val_axis_log_scale(on.then_some(Number(10.0)), cx))))
+            })
+            .when(sec_val_axis.is_some() && p.axis_tab == 2, |b| {
+                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text(super::chart_series::value_axis_label(chart,true))))
+                    .child(Checkbox::new("chart-sec-val-title-shown").label(crate::shell::i18n::text("_xlsx.show-axis-title")).checked(sec_val_titled).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_sec_val_axis_title_shown(*on, cx))))
+                    .child(crate::shell::chrome::text_field(&p.sec_val_title).full_width())
+                    .child(sec_disp_unit_buttons.label(crate::shell::i18n::text("_xlsx.display-units")))
+                    .child(Checkbox::new("chart-sec-gridlines").label(crate::shell::i18n::text("_xlsx.gridlines")).checked(sec_val_gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_sec_val_axis_gridlines(*on, cx))))
+                    .child(Checkbox::new("chart-sec-val-minor-gridlines").label(crate::shell::i18n::text("_xlsx.minor-gridlines")).checked(sec_val_minor_gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_sec_val_axis_minor_gridlines(*on, cx))))
+                    .child(Checkbox::new("chart-sec-val-reversed").label(crate::shell::i18n::text("_xlsx.categories-in-reverse-order")).checked(sec_val_reversed).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_sec_val_axis_reversed(*on, cx))))
+                    .child(Checkbox::new("chart-sec-val-log-scale").label(crate::shell::i18n::text("_xlsx.logarithmic-scale")).checked(sec_val_log_scale).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_sec_val_axis_log_scale(on.then_some(Number(10.0)), cx))))
+            })
+            .when(ser_axis.is_some() && p.axis_tab == 3, |b| {
+                b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.series-axis")))
+                    .child(Checkbox::new("chart-ser-title-shown").label(crate::shell::i18n::text("_xlsx.show-axis-title")).checked(ser_titled).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_ser_axis_title_shown(*on, cx))))
+                    .child(crate::shell::chrome::text_field(&p.ser_title).full_width())
+                    .child(Checkbox::new("chart-ser-gridlines").label(crate::shell::i18n::text("_xlsx.gridlines")).checked(ser_gridlines).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_ser_axis_gridlines(*on, cx))))
+                    .child(Checkbox::new("chart-ser-reversed").label(crate::shell::i18n::text("_xlsx.categories-in-reverse-order")).checked(ser_reversed).on_click(cx.listener(|this, on: &bool, _, cx| this.set_sheet_chart_ser_axis_reversed(*on, cx))))
+            })
+            )
+            .when(p.tab == 2, |b| b
+            .child(self.chart_detail_section(0,"chart.ui.kind-settings",kind_settings.into_any_element(),cx))
+            .child(self.chart_detail_section(1,"chart.ui.visible-data",data_settings.into_any_element(),cx))
+            .child(self.chart_detail_section(2,"chart.ui.template-placement",template_commands.into_any_element(),cx))
+            )
+            .when_some(p.error.clone(), |b, e| b.child(div().text_color(theme.danger).child(e)))
+            ;
+        Some(SidebarPanel {title:crate::shell::i18n::text("_xlsx.format-chart"),body:body.into_any_element()})
     }
 }
 
@@ -2479,4 +2287,10 @@ fn is_funnel(raw: &str) -> bool {
 
 fn is_pareto(raw: &str) -> bool {
     raw.contains("layoutId=\"pareto\"") || raw.contains("layoutId=\"paretoLine\"") || raw.contains("paretoLine")
+}
+
+/// A number field of the chart panel with ▲▼. The panel applies its fields with its buttons (適用), not on Enter, so a
+/// step only changes the field.
+fn chart_spin(input: &Entity<InputState>, id: &'static str, spec: crate::shell::chrome::SpinnerSpec, cx: &Context<SlideEditor>) -> crate::shell::chrome::TextField {
+    crate::shell::chrome::text_field(input).full_width().spinner(id, spec, cx, |e, _, _, cx| e.apply_sheet_chart_panel(cx))
 }

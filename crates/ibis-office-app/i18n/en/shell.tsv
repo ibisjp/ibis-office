@@ -826,3 +826,53 @@ window.open-in-excel	Open in Excel
 window.open-in-powerpoint	Open in PowerPoint
 window.open-in-office.confirm-title	Confirm
 window.open-in-office.specify-path	Please specify the path to {app}.
+
+_shell.find	Find
+
+ui.custom	Custom
+ui.caption-label	Label
+ui.merge-row	Edit recipient
+ui.add	Add
+
+ui.tab-duplicate	A tab stop already exists at this position. Choose another position.
+ui.merge-add-column	Add a column (merge field)
+ui.merge-csv	Load CSV file
+ui.merge-manual	Manual input
+ui.merge-recipient	Recipient
+
+field.browse	Browse…
+field.minutes	min
+
+autocorrect.entry-title	Edit replacement
+autocorrect.entry-required	Enter the text to replace.
+autocorrect.entry-duplicate	This replacement already exists. Edit the existing rule.
+
+hyperlink.menu	Hyperlink
+hyperlink.open	Open Link
+hyperlink.edit	Edit Link…
+hyperlink.remove	Remove Link
+
+autocorrect.tab.settings	Settings
+autocorrect.tab.dictionary	Replacement dictionary
+theme.custom-editor	Edit Custom Colors
+theme.palette-list	Color Schemes
+math.editor.title	Equation
+math.editor.hint	Enter an equation in UnicodeMath or LaTeX
+ink.panel.title	Drawing (Ink)
+ink.panel.tools	Drawing tool
+ink.panel.width	Width
+ink.panel.color	Color
+ink.panel.effects	Ink effect
+theme.custom-scheme	Custom Colors
+ink.panel.mouse	Draw with mouse
+
+shell.action.ok	OK
+
+start.recent.remove	Remove from list
+shell.row.actions	More actions
+
+color.palette.more	More Colors...
+color.dialog.title	Color Picker
+color.dialog.invalid	Enter a six-digit hexadecimal color.
+
+shell.start-window	Start Window

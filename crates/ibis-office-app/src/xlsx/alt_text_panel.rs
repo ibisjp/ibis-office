@@ -3,8 +3,8 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! 代替テキスト (Alt Text): the selected shapes' title and description for accessibility (`cNvPr/@descr`, `@title`).
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -47,7 +47,7 @@ impl SlideEditor {
         let desc_field = cx.new(|cx| InputState::new(window, cx).default_value(current_alt.description));
 
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.sort_edit = None;
         state.conditional_edit = None;
         state.chart_edit = None;
@@ -92,9 +92,9 @@ impl SlideEditor {
         let body = v_flex()
             .gap_3()
             .p_3()
-            .child(
+            .p_0().child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(rgb(0x5f6368))
                     .child(t("xlsx.alt-text.hint")),
             )
@@ -102,21 +102,18 @@ impl SlideEditor {
                 v_flex()
                     .gap_1()
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(t("xlsx.alt-text.title")))
-                    .child(Input::new(&title_field)),
+                    .child(crate::shell::chrome::text_field(&title_field).full_width()),
             )
             .child(
                 v_flex()
                     .gap_1()
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(t("xlsx.alt-text.description")))
-                    .child(Input::new(&desc_field)),
+                    .child(crate::shell::chrome::text_field(&desc_field).full_width()),
             )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .justify_end()
-                    .child(
-                        Button::new("alt-text-apply")
-                            .primary()
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("alt-text-apply", "", crate::shell::chrome::ActionButtonKind::Primary)
                             .label(t("xlsx.alt-text.apply"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.apply_sheet_alt_text(cx);
@@ -125,19 +122,8 @@ impl SlideEditor {
                                 cx.notify();
                             })),
                     )
-                    .child(
-                        Button::new("alt-text-close")
-                            .ghost()
-                            .label(t("_shell.close"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_sheet_alt_text_panel(cx);
-                            })),
-                    ),
-            );
 
-        Some(SidebarPanel {
-            title: t("xlsx.alt-text"),
-            body: body.into_any_element(),
-        })
+        .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(t("xlsx.alt-text"), body.into_any_element(), panel_actions))
     }
 }

@@ -1004,6 +1004,9 @@ pub struct Document {
     presentation: Presentation,
     undo: Vec<Vec<Command>>,
     redo: Vec<Vec<Command>>,
+    /// Last successful worksheet edit, before undo inversion, for Repeat (F4).
+    repeat_sheet: Vec<crate::sheet_command::SheetCommand>,
+    repeat_sheet_group: bool,
     /// The `undo.len()` at which the document was opened or last saved (`None` if that state is no
     /// longer reachable on the undo/redo stack, or if mutated outside undo history).
     clean_undo_len: Option<usize>,
@@ -1020,7 +1023,7 @@ impl Default for Document {
 
 impl Document {
     pub fn new(presentation: Presentation) -> Self {
-        Self { presentation, undo: Vec::new(), redo: Vec::new(), clean_undo_len: Some(0), file: None }
+        Self { presentation, undo: Vec::new(), redo: Vec::new(), repeat_sheet:Vec::new(), repeat_sheet_group:false, clean_undo_len: Some(0), file: None }
     }
 
     /// Mark the current state of the document as saved (clean).
@@ -1033,6 +1036,8 @@ impl Document {
     pub fn reset_history(&mut self) {
         self.undo.clear();
         self.redo.clear();
+        self.repeat_sheet.clear();
+        self.repeat_sheet_group = false;
         self.clean_undo_len = Some(0);
     }
 
@@ -1080,6 +1085,10 @@ impl Document {
     /// Apply `commands` as one undo step. If any command fails, the ones
     /// before it are rolled back and the document is unchanged.
     pub fn execute(&mut self, commands: Vec<Command>) -> Result<(), EditError> {
+        let repeat:Vec<_> = commands.iter().filter_map(|command|match command {
+            Command::Sheet(edit @ (crate::SheetCommand::SetFormat{..}|crate::SheetCommand::Insert{..}|crate::SheetCommand::Delete{..}|crate::SheetCommand::ClearFormats{..}|crate::SheetCommand::ShiftCells{..})) => Some(edit.clone()),
+            _ => None,
+        }).collect();
         let inverses = self.apply_all(commands)?;
         if !inverses.is_empty() {
             if self.clean_undo_len.is_some_and(|clean| clean > self.undo.len()) {
@@ -1087,9 +1096,18 @@ impl Document {
             }
             self.undo.push(inverses);
             self.redo.clear();
+            let same_target = self.repeat_sheet_group && !repeat.is_empty() && !self.repeat_sheet.is_empty() && repeat.iter().chain(&self.repeat_sheet).all(|edit|match (repeat.first(),edit) {
+                (Some(crate::SheetCommand::SetFormat{slide:a,ranges:x,..}),crate::SheetCommand::SetFormat{slide:b,ranges:y,..}) => a==b && x==y,
+                _ => false,
+            });
+            if same_target {self.repeat_sheet.extend(repeat);} else {self.repeat_sheet = repeat;}
         }
         Ok(())
     }
+
+    pub fn repeat_sheet_commands(&self) -> &[crate::SheetCommand] { &self.repeat_sheet }
+    pub fn begin_repeat_sheet_group(&mut self) { self.repeat_sheet.clear(); self.repeat_sheet_group=true; }
+    pub fn end_repeat_sheet_group(&mut self) { self.repeat_sheet_group=false; }
 
     /// Apply `commands` as part of the most recent undo step, so that for
     /// example inserting a text box and typing its first text undo together.

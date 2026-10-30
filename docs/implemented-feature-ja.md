@@ -516,6 +516,11 @@ ibisOffice が実装している Word (.docx)・Excel (.xlsx)・PowerPoint (.ppt
 | 504 | docx: 書式・スタイルの検索と置換 | <nobr>完了</nobr> |
 | 505 | docx: 検索範囲と方向 | <nobr>完了</nobr> |
 | 506 | docx: ページ・見出し・注等へのジャンプ | <nobr>完了</nobr> |
+| 507 | docx: 縦書きの句読点・括弧・引用符・単位・記号の縦書き字形 | <nobr>完了</nobr> |
+| 508 | docx: 縦書きでの入力中の変換文字の縦書き表示 | <nobr>完了</nobr> |
+| 509 | docx: 最近使ったファイルの「…」メニューから履歴だけを削除 | <nobr>完了</nobr> |
+| 510 | docx: 色選択ダイアログ（色相環） | <nobr>完了</nobr> |
+| 511 | docx: 数値欄の上下矢印で単位を保ったまま増減 | <nobr>完了</nobr> |
 
 ### xlsx
 
@@ -1454,6 +1459,19 @@ ibisOffice が実装している Word (.docx)・Excel (.xlsx)・PowerPoint (.ppt
 | 931 | xlsx: 保存・言語・信頼設定を詳細照合 | <nobr>完了</nobr> |
 | 932 | xlsx: Macの環境設定とWindowsのオプション差を記録 | <nobr>完了</nobr> |
 | 933 | xlsx: データ型・XMLマップ・外部リンク管理の追加調査 | <nobr>完了</nobr> |
+| 934 | xlsx: 並べ替えの右ペイン（レベルの複製・並べ替え、色・アイコンによる並べ替え、リアルタイム反映） | <nobr>完了</nobr> |
+| 935 | xlsx: ヘッダーとフッターの右ペイン編集 | <nobr>完了</nobr> |
+| 936 | xlsx: ウォッチ ウィンドウを開いたままシートを操作 | <nobr>完了</nobr> |
+| 937 | xlsx: シナリオの登録と管理の閉じるボタン | <nobr>完了</nobr> |
+| 938 | xlsx: 数式入力の補助（関数名の補完、矢印キーでの参照選択、参照の色分け、参照範囲のドラッグ） | <nobr>完了</nobr> |
+| 939 | xlsx: 長い数式の折り返しと数式バーのキー操作 | <nobr>完了</nobr> |
+| 940 | xlsx: 符号で始まる入力を数式として読む | <nobr>完了</nobr> |
+| 941 | xlsx: 数値入力時の列幅の自動拡張 | <nobr>完了</nobr> |
+| 942 | xlsx: コピーした図形の貼り付け | <nobr>完了</nobr> |
+| 943 | xlsx: グラフの背景色と系列名の指定 | <nobr>完了</nobr> |
+| 944 | xlsx: 最近使ったファイルの「…」メニューから履歴だけを削除 | <nobr>完了</nobr> |
+| 945 | xlsx: 色選択ダイアログ（色相環） | <nobr>完了</nobr> |
+| 946 | xlsx: 数値欄の上下矢印で単位を保ったまま増減 | <nobr>完了</nobr> |
 
 ### pptx
 
@@ -1826,3 +1844,11 @@ ibisOffice が実装している Word (.docx)・Excel (.xlsx)・PowerPoint (.ppt
 | 365 | pptx: 旧版・互換形式・廃止機能を個別追跡 | <nobr>完了</nobr> |
 | 366 | pptx: 既存features/scenarios/coverageをID対応 | <nobr>完了</nobr> |
 | 367 | pptx: 未対応機能の無編集往復保存と代替表示を評価 | <nobr>完了</nobr> |
+| 368 | pptx: 動画・音声の再生タイミングの保存 | <nobr>完了</nobr> |
+| 369 | pptx: 編集中の動画・音声のコントロール バー | <nobr>完了</nobr> |
+| 370 | pptx: リンクされた動画・音声の互換性チェック | <nobr>完了</nobr> |
+| 371 | pptx: 独自図形に切り抜いた画像のクリップ | <nobr>完了</nobr> |
+| 372 | pptx: スライドの追加と複製のショートカット | <nobr>完了</nobr> |
+| 373 | pptx: 最近使ったファイルの「…」メニューから履歴だけを削除 | <nobr>完了</nobr> |
+| 374 | pptx: 色選択ダイアログ（色相環） | <nobr>完了</nobr> |
+| 375 | pptx: 数値欄の上下矢印で単位を保ったまま増減 | <nobr>完了</nobr> |

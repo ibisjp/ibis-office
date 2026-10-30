@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! Independent Latin, East Asian, and Complex Script font names without font enumeration.
+//! Independent Latin, East Asian, and Complex Script fonts, using the toolbar's searchable font list.
 use gpui_kit::*;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input,InputEvent,InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent,InputState};
 use gpui_kit::component::{Sizable as _,h_flex,v_flex};
 use ibis_doc_model::{FlowPos,RunFormat,FlowDocument,Block,RevisionKind};
 use ibis_doc_model::flow_command;
@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::shell::{chrome::SidebarPanel,editor::SlideEditor};
 pub(crate) struct FontEditState {
     pub(crate) fields:[Entity<InputState>;3],
+    pub(crate) ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<&'static str, Bounds<Pixels>>>>,
     target:(FlowPos,FlowPos),
     initial:[String;3],
     document:Arc<FlowDocument>,
@@ -51,6 +52,7 @@ impl SlideEditor {
         fonts.map(|values|values.map(Option::unwrap_or_default))
     }
     pub(crate) fn open_font_edit(&mut self,window:&mut Window,cx:&mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(target)=self.ordered_selection() else{return};let Some(document)=self.flow().cloned() else{return};
         let Some(initial)=self.selected_font_names() else{return};
         let fields=initial.clone().map(|value|cx.new(|cx| {let mut input=InputState::new(window,cx);input.set_value(value,window,cx);input}));
@@ -58,7 +60,7 @@ impl SlideEditor {
             if let InputEvent::PressEnter {..}=event {this.apply_font_edit(window,cx);}
         })).collect();
         if let Some(state)=self.doc_state_mut() {
-            state.font_edit=Some(FontEditState {fields,target,initial,document,error:None,_subscriptions:subscriptions});
+            state.font_edit=Some(FontEditState {fields,ui:Default::default(),target,initial,document,error:None,_subscriptions:subscriptions});
             state.color_edit=None;state.paragraph_edit=None;state.picture_edit=None;state.table_size=None;state.style_edit=None;state.link=None;state.find=None;state.comments=None;
         }
         self.sidebar_open=true;cx.notify();
@@ -76,20 +78,65 @@ impl SlideEditor {
         if !changed.into_iter().any(|v|v) || self.apply_text_properties(properties,cx) {
             let document=self.flow().unwrap().clone();
             if let Some(edit)=self.doc_state_mut().and_then(|s|s.font_edit.as_mut()) {edit.initial=values;edit.document=document;edit.error=None;}
-            self.focus_handle.focus(window,cx);
+            if !self.panel_dialog_is_modal() { self.focus_handle.focus(window,cx); }
         }
         cx.notify();
     }
-    pub(crate) fn font_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel> {
-        let edit=self.doc_state()?.font_edit.as_ref()?;
-        let row=|label:&'static str,field:&Entity<InputState>|h_flex().gap_2().child(div().w(px(140.)).text_sm().child(crate::shell::i18n::text(label))).child(Input::new(field).small().cleanable(true));
-        let body=v_flex().gap_2().px(px(18.)).py(px(8.))
-            .child(div().text_sm().child(crate::shell::i18n::text("docx.font-panel.blank-means-not-specified-mixed")))
-            .child(row("docx.font-panel.latin-font",&edit.fields[0]))
-            .child(row("docx.font-panel.east-asian-font",&edit.fields[1]))
-            .child(row("docx.font-panel.complex-script-font",&edit.fields[2]))
-            .children(edit.error.clone().map(|error|div().text_sm().child(error)))
-            .child(Button::new("docx-font-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|this,_,window,cx|this.apply_font_edit(window,cx))));
-        Some(SidebarPanel {title:crate::shell::i18n::text("_shell.font"),body:body.into_any_element()})
+    /// Keyboard activation of the same recent/system choices used by the font dialog popovers.
+    pub(crate) fn doc_font_menu_entries(&self, id: &str) -> Option<Vec<crate::shell::chrome::MenuEntry>> {
+        let (index, menu_id) = match id {
+            "docx-font-latin-list" => (0, "docx-font-latin-list"),
+            "docx-font-east-asian-list" => (1, "docx-font-east-asian-list"),
+            "docx-font-complex-script-list" => (2, "docx-font-complex-script-list"),
+            _ => return None,
+        };
+        let input = self.doc_state()?.font_edit.as_ref()?.fields[index].clone();
+        Some(crate::shell::font_list::build_font_menu_entries(menu_id, Vec::new(), None,
+            move |name, _, window, cx| {
+                input.update(cx, |state, cx| state.set_value(name.to_string(), window, cx));
+                cx.notify();
+            }))
+    }
+
+    pub(crate) fn font_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        let edit = self.doc_state()?.font_edit.as_ref()?;
+        let weak = cx.entity().downgrade();
+        let row = |index: usize, label: &'static str, menu_id: &'static str| {
+            let field = edit.fields[index].clone();
+            let current = field.read(cx).value().to_string();
+            let input = field.clone();
+            let entries = crate::shell::font_list::build_font_menu_entries(
+                menu_id, Vec::new(), (!current.is_empty()).then_some(current.as_str()),
+                move |name, _, window, cx| {
+                    input.update(cx, |state, cx| state.set_value(name.to_string(), window, cx));
+                    cx.notify();
+                },
+            );
+            v_flex().gap_1()
+                .child(div().text_sm().child(crate::shell::i18n::text(label)))
+                .child(div().relative().w(crate::shell::chrome::FONT_DROPDOWN_WIDTH).flex_none()
+                    .child(crate::shell::chrome::font_dropdown(menu_id, &current, entries, index, &weak))
+                    .child(canvas(|_, _, _| {}, {
+                        let ui = edit.ui.clone();
+                        move |bounds, _, _, _| { ui.borrow_mut().insert(menu_id, bounds); }
+                    }).absolute().inset_0()))
+        };
+        let body = v_flex().gap_2().px(px(18.)).py(px(8.))
+            .p_0().child(div().text_sm().child(crate::shell::i18n::text("docx.font-panel.blank-means-not-specified-mixed")))
+            .child(row(0, "docx.font-panel.latin-font", "docx-font-latin-list"))
+            .child(row(1, "docx.font-panel.east-asian-font", "docx-font-east-asian-list"))
+            .child(row(2, "docx.font-panel.complex-script-font", "docx-font-complex-script-list"))
+            .children(edit.error.clone().map(|error| div().text_sm().child(error)));
+        let footer = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("docx-font-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary)
+                .on_click(cx.listener(|this, _, window, cx| this.apply_font_edit(window, cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("docx-font-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if let Some(state) = this.doc_state_mut() { state.font_edit = None; }
+                    this.sidebar_open = false;
+                    this.focus_handle.focus(window, cx);
+                    cx.notify();
+                })));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("_shell.font"), body.into_any_element(), footer))
     }
 }

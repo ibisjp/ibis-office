@@ -409,6 +409,8 @@ impl SlideEditor {
             return;
         }
         self.commit_edit(window, cx);
+        // The editor's clips (opened for their control bars) do not play in the show.
+        self.stop_clips(cx);
         // Nothing is edited during the show (Delete would remove the selection).
         self.drag = None;
         self.selection = None;
@@ -577,17 +579,31 @@ impl SlideEditor {
         show.presenter = true;
         if let (true, Some(editor_display)) = (other, editor_display) {
             show.external = Some(ShowWindows { editor_display, swapped: false, windows: Vec::new() });
-            self.open_show_windows(cx);
-            // No window could be opened: as with one display, in the editor's window.
-            if self.show_windows().is_empty()
-                && let Some(show) = self.slideshow.as_mut()
-            {
-                show.external = None;
-                show.made_fullscreen = !window.is_fullscreen();
-                if show.made_fullscreen {
-                    window.toggle_fullscreen();
-                }
-            }
+            // Not here, inside the editor's own update: GPUI draws a window once before `open_window` returns, and the show's windows
+            // update the editor to draw (`ShowView::render`), which panics while the editor is being updated (a panic abort on Windows,
+            // exit code 0xc0000409: issue #51, the presenter view started with two displays).
+            let editor = cx.entity();
+            let handle = window.window_handle();
+            cx.defer(move |cx| {
+                Self::open_show_windows(&editor, cx);
+                // No window could be opened: as with one display, in the editor's window.
+                handle
+                    .update(cx, |_, window, cx| {
+                        editor.update(cx, |this, cx| {
+                            if this.show_windows().is_empty()
+                                && let Some(show) = this.slideshow.as_mut()
+                            {
+                                show.external = None;
+                                show.made_fullscreen = !window.is_fullscreen();
+                                if show.made_fullscreen {
+                                    window.toggle_fullscreen();
+                                }
+                                cx.notify();
+                            }
+                        })
+                    })
+                    .ok();
+            });
         }
         cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -713,9 +729,11 @@ impl SlideEditor {
 
     /// The full-screen windows of the presenter's view and the audience's
     /// slide show, each on its display.
-    fn open_show_windows(&mut self, cx: &mut Context<Self>) {
-        let Some((presenter, audience)) = self.show_displays(cx) else { return };
-        let editor = cx.entity();
+    ///
+    /// Not inside an update of the editor: GPUI draws a window once before `open_window` returns, and a show window updates the
+    /// editor to draw (`ShowView::render`), which panics while the editor is being updated.
+    fn open_show_windows(editor: &Entity<Self>, cx: &mut App) {
+        let Some((presenter, audience)) = editor.read(cx).show_displays(cx) else { return };
         let mut handles = Vec::new();
         for (kind, display) in [(ShowKind::Audience, audience), (ShowKind::Presenter, presenter)] {
             let options = WindowOptions {
@@ -731,9 +749,11 @@ impl SlideEditor {
                 Err(err) => log::warn!("Cannot open the slide show window: {err}"),
             }
         }
-        if let Some(external) = self.slideshow.as_mut().and_then(|s| s.external.as_mut()) {
-            external.windows = handles;
-        }
+        editor.update(cx, |this, _| {
+            if let Some(external) = this.slideshow.as_mut().and_then(|s| s.external.as_mut()) {
+                external.windows = handles;
+            }
+        });
     }
 
     /// The windows of the show on their own displays (presenter's view,
@@ -763,7 +783,9 @@ impl SlideEditor {
         external.swapped = !external.swapped;
         let old = std::mem::take(&mut external.windows);
         self.close_show_windows(old, cx);
-        self.open_show_windows(cx);
+        // After this update (see `start_presenter_view_on`).
+        let editor = cx.entity();
+        cx.defer(move |cx| Self::open_show_windows(&editor, cx));
     }
 
     /// End the slide show, back to the editor on the slide it ended on.

@@ -23,6 +23,15 @@ pub(crate) fn table_element_editing(
     res: &Resources,
     edited: Option<((usize, usize), &TextPositions)>,
 ) -> Div {
+    table_element_recording(table,frame,scale,res,edited,None)
+}
+
+/// Also record linked cells so pointer hit tests use the painted character geometry.
+pub(crate) fn table_element_recording(
+    table:&Table,frame:EmuRect,scale:f32,res:&Resources,
+    edited:Option<((usize,usize),&TextPositions)>,
+    recorded:Option<&std::collections::HashMap<(usize,usize),TextPositions>>,
+) -> Div {
     // PowerPoint saves the rows it laid out, adding up to the frame; rows
     // that fall short of it were not laid out (in users' private
     // presentations, one table adds up, another is half its frame) and are
@@ -30,9 +39,9 @@ pub(crate) fn table_element_editing(
     let stated: i64 = table.rows.iter().map(|r| if r.height > 0 { r.height } else { table.row_text_height(r) }).sum();
     let laid_out = (stated - frame.height).abs() <= frame.height / 100 && !row_text_overflows(table);
     if !laid_out && table.rows.iter().all(|r| r.cells.iter().all(|c| c.row_span <= 1)) {
-        return growing_table(table, frame, scale, res, edited);
+        return growing_table(table, frame, scale, res, edited,recorded);
     }
-    fixed_table(table, frame, scale, res, edited)
+    fixed_table(table, frame, scale, res, edited,recorded)
 }
 
 /// Whether any row's explicit `height` (> 0) is shorter than the wrapped height of one of its cells' text.
@@ -86,14 +95,14 @@ fn cell_fill_element(div: Div, fill: &Fill, res: &Resources, scale: f32, at: Opt
 /// measured on a table of a user's private presentation, whose rows grow
 /// with their text and end
 /// short of the frame). Rows are laid out by GPUI, which measures the text.
-fn growing_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edited: Option<((usize, usize), &TextPositions)>) -> Div {
+fn growing_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edited: Option<((usize, usize), &TextPositions)>,recorded:Option<&std::collections::HashMap<(usize,usize),TextPositions>>) -> Div {
     let px_of = |e: i64| e as f32 * scale;
     let rows = table.rows.iter().enumerate().map(|(r, row)| {
         let cells = row.cells.iter().enumerate().filter_map(|(c, cell)| {
             if cell.merged {
                 return None;
             }
-            let positions = edited.filter(|(at, _)| *at == (r, c)).map(|(_, p)| p);
+            let positions = edited.filter(|(at, _)| *at == (r, c)).map(|(_, p)| p).or_else(||recorded?.get(&(r,c)));
             let span = cell.column_span.max(1) as usize;
             let at = c;
             let at_emu: i64 = table.columns[..at.min(table.columns.len())].iter().sum();
@@ -111,11 +120,13 @@ fn growing_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edi
                         move |bounds, _, window, _| {
                             let (ox, oy) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
                             let (bw, bh) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+                            // A thinnest of one pixel on a screen; none in a PDF (a window that only records), which has the border's own thickness.
+                            let min_px = if window.is_recording_paints_only() { 0.0 } else { 1.0 };
                             let mut segs = Vec::new();
                             if edge < 2 {
-                                render_h_line(&mut segs, 0.0, bw, bh * 0.5, &stroke, scale, edge == 1, false, false);
+                                render_h_line(&mut segs, 0.0, bw, bh * 0.5, &stroke, scale, min_px, edge == 1, false, false);
                             } else {
-                                render_v_line(&mut segs, bw * 0.5, 0.0, bh, &stroke, scale, edge == 3, false, false);
+                                render_v_line(&mut segs, bw * 0.5, 0.0, bh, &stroke, scale, min_px, edge == 3, false, false);
                             }
                             for seg in &segs {
                                 let r = Bounds::new(
@@ -135,7 +146,24 @@ fn growing_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edi
                         _ => d.right(px(-t / 2.0)).top_0().bottom_0().w(px(t)),
                     });
                 }
-                let d = div().absolute().bg(hsla(stroke.color));
+                // The box keeps the thinnest of one pixel for the layout; the line is painted at its own thickness in a PDF (a window that only records).
+                let (raw, color) = (stroke.width as f32 * scale, hsla(stroke.color));
+                let c = canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        let (x, y) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+                        let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+                        let thick = if window.is_recording_paints_only() { raw } else { t };
+                        let r = if edge < 2 {
+                            Bounds::new(point(px(x), px(y + (h - thick) / 2.0)), size(px(w), px(thick)))
+                        } else {
+                            Bounds::new(point(px(x + (w - thick) / 2.0), px(y)), size(px(thick), px(h)))
+                        };
+                        window.paint_quad(gpui_kit::fill(r, color));
+                    },
+                )
+                .size_full();
+                let d = div().absolute().child(c);
                 Some(match edge {
                     0 => d.top(px(-t / 2.0)).left_0().right_0().h(px(t)),
                     1 => d.bottom(px(-t / 2.0)).left_0().right_0().h(px(t)),
@@ -151,14 +179,15 @@ fn growing_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edi
                     move |bounds, _, window, _| {
                         let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
                         let o = bounds.origin;
+                        let min_px = if window.is_recording_paints_only() { 0.0 } else { 1.0 };
                         if let Some(s) = &tl_br {
-                            let width = px((s.width as f32 * scale).max(1.0));
+                            let width = px((s.width as f32 * scale).max(min_px));
                             if let Some(p) = crate::render::shape_view::polygon_styled(&[o, point(o.x + px(w), o.y + px(h))], Some(width), false, s.cap, s.join) {
                                 window.paint_path(p, hsla(s.color));
                             }
                         }
                         if let Some(s) = &bl_tr {
-                            let width = px((s.width as f32 * scale).max(1.0));
+                            let width = px((s.width as f32 * scale).max(min_px));
                             if let Some(p) = crate::render::shape_view::polygon_styled(&[point(o.x, o.y + px(h)), point(o.x + px(w), o.y)], Some(width), false, s.cap, s.join) {
                                 window.paint_path(p, hsla(s.color));
                             }
@@ -192,7 +221,7 @@ fn merge_stroke(existing: &mut Option<Stroke>, new_s: &Option<Stroke>) {
     }
 }
 
-fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edited: Option<((usize, usize), &TextPositions)>) -> Div {
+fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edited: Option<((usize, usize), &TextPositions)>,recorded:Option<&std::collections::HashMap<(usize,usize),TextPositions>>) -> Div {
     let heights = table.row_heights(frame.height);
     let offsets = |sizes: &[i64]| -> Vec<i64> {
         let mut at = 0;
@@ -227,7 +256,7 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
             let (left, right) = (edge_x(c), edge_x(c + c_span));
             let (top, bottom) = (edge_y(r), edge_y(r + r_span));
             let (w, h) = (right - left, bottom - top);
-            let positions = edited.filter(|(at, _)| *at == (r, c)).map(|(_, p)| p);
+            let positions = edited.filter(|(at, _)| *at == (r, c)).map(|(_, p)| p).or_else(||recorded?.get(&(r,c)));
             let cell_origin_x = (frame.x + xs_emu[c]) as f32 * scale;
             // A fill reaches one pixel into the next column and row (painted later, so the neighbour's own fill covers it):
             // the device-pixel snapping of the boxes otherwise leaves a hairline of the background between two fills.
@@ -262,10 +291,13 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
     }
 
 
+    // The border segments for a thinnest border of `min_px` pixels: one on a screen, so a thin border does not vanish; none in a PDF (a window that only
+    // records), which has the border's own thickness (PowerPoint's PDF: 0.5 pt, where one pixel of a window a point to a pixel made 1 pt).
+    let build_segments = |min_px: f32| -> Vec<BorderSegment> {
     let mut border_segments = Vec::new();
 
     // Render horizontal segments (run-length merged where adjacent segments share stroke)
-    for (r, row_edges) in h_edges.into_iter().enumerate() {
+    for (r, row_edges) in h_edges.iter().enumerate() {
         let at_y = edge_y(r);
         let is_outer_top = r == 0;
         let is_outer_bottom = r == num_rows;
@@ -295,6 +327,7 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
                 at_y,
                 &stroke,
                 scale,
+                min_px,
                 is_outer_bottom,
                 is_outer_left,
                 is_outer_right,
@@ -305,7 +338,7 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
     }
 
     // Render vertical segments (run-length merged)
-    for (c, col_edges) in v_edges.into_iter().enumerate() {
+    for (c, col_edges) in v_edges.iter().enumerate() {
         let at_x = edge_x(c);
         let is_outer_left = c == 0;
         let is_outer_right = c == num_cols;
@@ -335,6 +368,7 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
                 to_y,
                 &stroke,
                 scale,
+                min_px,
                 is_outer_right,
                 is_outer_top,
                 is_outer_bottom,
@@ -344,6 +378,11 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
         }
     }
 
+    border_segments
+    };
+    let border_segments = build_segments(1.0);
+    let vector_segments = build_segments(0.0);
+
     let at = (frame.x as f32 * scale, frame.y as f32 * scale);
     let border_canvas = canvas(
         |_, _, _| {},
@@ -352,7 +391,8 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
             let exact = exact_origin(bounds.origin, at, sf);
             let ox = f32::from(exact.x);
             let oy = f32::from(exact.y);
-            for seg in &border_segments {
+            let recording = window.is_recording_paints_only();
+            for seg in if recording { &vector_segments } else { &border_segments } {
                 let r = Bounds::new(
                     point(px(ox + seg.bounds[0]), px(oy + seg.bounds[1])),
                     size(px(seg.bounds[2]), px(seg.bounds[3])),
@@ -362,7 +402,7 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
             for (p0, p1, stroke) in &diagonals {
                 let start = point(px(ox + p0[0]), px(oy + p0[1]));
                 let end = point(px(ox + p1[0]), px(oy + p1[1]));
-                let width = px((stroke.width as f32 * scale).max(1.0));
+                let width = px((stroke.width as f32 * scale).max(if recording { 0.0 } else { 1.0 }));
                 if let Some(p) = crate::render::shape_view::polygon_styled(&[start, end], Some(width), false, stroke.cap, stroke.join) {
                     window.paint_path(p, hsla(stroke.color));
                 }
@@ -397,17 +437,18 @@ fn render_h_line(
     at_y: f32,
     stroke: &Stroke,
     scale: f32,
+    min_px: f32,
     is_bottom: bool,
     is_outer_left: bool,
     is_outer_right: bool,
 ) {
-    let t = (stroke.width as f32 * scale).max(1.0);
+    let t = (stroke.width as f32 * scale).max(min_px);
     let color = hsla(stroke.color);
     for &(mut a, mut b) in stroke.compound.bands() {
         if is_bottom {
             (a, b) = (1.0 - b, 1.0 - a);
         }
-        let band_t = ((b - a) * t).max(0.5);
+        let band_t = ((b - a) * t).max(min_px * 0.5);
         let offset = ((a + b) / 2.0 - 0.5) * t;
         let band_top = at_y + offset - band_t / 2.0;
 
@@ -472,17 +513,18 @@ fn render_v_line(
     to_y: f32,
     stroke: &Stroke,
     scale: f32,
+    min_px: f32,
     is_right: bool,
     is_outer_top: bool,
     is_outer_bottom: bool,
 ) {
-    let t = (stroke.width as f32 * scale).max(1.0);
+    let t = (stroke.width as f32 * scale).max(min_px);
     let color = hsla(stroke.color);
     for &(mut a, mut b) in stroke.compound.bands() {
         if is_right {
             (a, b) = (1.0 - b, 1.0 - a);
         }
-        let band_t = ((b - a) * t).max(0.5);
+        let band_t = ((b - a) * t).max(min_px * 0.5);
         let offset = ((a + b) / 2.0 - 0.5) * t;
         let band_left = at_x + offset - band_t / 2.0;
 

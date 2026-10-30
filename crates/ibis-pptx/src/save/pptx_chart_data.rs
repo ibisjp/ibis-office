@@ -342,8 +342,10 @@ fn chart_from_cells(chart: &Chart, workbook: &Presentation, refs: &[SeriesRefs],
         if let Some(cells) = r.name.as_deref().and_then(|f| cells(workbook, f)) {
             let n = cells.into_iter().map(shown).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ");
             series.name = if n.is_empty() { format!("系列{}", i + 1) } else { n };
-        } else {
-            series.name = format!("系列{}", i + 1);
+        } else if series.name.is_empty() {
+            // A series with no name formula owns a literal chart name. Keep it
+            // when refreshing cell values, including names edited in the UI.
+            series.name = if crate::english_names() { format!("Series{}", i + 1) } else { format!("系列{}", i + 1) }; // i18n-ok（文書に保存する名前）
         }
         if let Some(cells) = r.categories.as_deref().and_then(|f| cells(workbook, f)) {
             if is_scatter {
@@ -649,23 +651,41 @@ pub fn refs_range(refs: &[SeriesRefs]) -> Option<(String, CellRange, bool)> {
 /// naming them and the first column the categories: in columns, or in rows.
 /// `None` when the range has no such heading row and column of text.
 pub fn refs_for_range(workbook: &Presentation, sheet: &str, range: CellRange, by_columns: bool) -> Option<Vec<SeriesRefs>> {
-    if range.last_row <= range.first_row || range.last_column <= range.first_column {
-        return None;
+    use ibis_doc_model::CellValue;
+    let model=sheet_of(workbook,sheet)?;
+    let (first,last,count,series_first,series_last)=if by_columns{(range.first_row,range.last_row,range.last_row-range.first_row+1,range.first_column,range.last_column)}else{(range.first_column,range.last_column,range.last_column-range.first_column+1,range.first_row,range.last_row)};
+    let cell=|point:u32,series:u32|{let(r,c)=if by_columns{(point,series)}else{(series,point)};model.cell(r,c).map(|c|&c.value)};
+    let number=|point,series|matches!(cell(point,series),Some(CellValue::Number(_)));
+    let header=|series|count>1 && matches!(cell(first,series),Some(CellValue::Text(t))if !t.is_empty()) && (first+1..=last).all(|point|number(point,series));
+    let category=series_first<series_last && (first+u32::from(count>1)..=last).all(|point|matches!(cell(point,series_first),Some(CellValue::Text(t))if !t.is_empty()));
+    let values_first=series_first+u32::from(category);
+    let one=|point0,series,point1|{let(r0,c0,r1,c1)=if by_columns{(point0,series,point1,series)}else{(series,point0,series,point1)};format_ref(sheet,CellRange{first_row:r0,first_column:c0,last_row:r1,last_column:c1})};
+    let mut out=Vec::new();
+    for series in values_first..=series_last{
+        let has_header=header(series);let data_first=first+u32::from(has_header);
+        if !(data_first..=last).any(|point|number(point,series)){continue;}
+        out.push(SeriesRefs{name:has_header.then(||one(first,series,first)),categories:category.then(||one(data_first,series_first,last)),values:Some(one(data_first,series,last)),..Default::default()});
     }
-    let model = sheet_of(workbook, sheet)?;
-    let is_number = |r: u32, c: u32| matches!(model.cell(r, c).map(|x| &x.value), Some(ibis_doc_model::CellValue::Number(_)));
-    let heading_row = (range.first_column + 1..=range.last_column).all(|c| !is_number(range.first_row, c));
-    let heading_column = (range.first_row + 1..=range.last_row).all(|r| !is_number(r, range.first_column));
-    if !heading_row || !heading_column {
-        return None;
-    }
-    let one = |r0: u32, c0: u32, r1: u32, c1: u32| format_ref(sheet, CellRange { first_row: r0, first_column: c0, last_row: r1, last_column: c1 });
-    let (r0, c0, r1, c1) = (range.first_row, range.first_column, range.last_row, range.last_column);
-    Some(if by_columns {
-        (c0 + 1..=c1).map(|c| SeriesRefs { name: Some(one(r0, c, r0, c)), categories: Some(one(r0 + 1, c0, r1, c0)), values: Some(one(r0 + 1, c, r1, c)), ..Default::default() }).collect()
-    } else {
-        (r0 + 1..=r1).map(|r| SeriesRefs { name: Some(one(r, c0, r, c0)), categories: Some(one(r0, c0 + 1, r0, c1)), values: Some(one(r, c0 + 1, r, c1)), ..Default::default() }).collect()
-    })
+    (!out.is_empty()).then_some(out)
+}
+
+/// Choose between complete numeric series layouts. Equal point counts favour columns.
+pub fn preferred_series_columns(workbook:&Presentation,sheet:&str,range:CellRange)->bool{
+    let score=|by_columns|->Option<u32>{
+        let refs=refs_for_range(workbook,sheet,range,by_columns)?;
+        let model=sheet_of(workbook,sheet)?;
+        let mut points=0;
+        // A layout that leaves a line of the range out (a row of headings, read as series by rows) is not complete.
+        let lines=if by_columns{range.last_column-range.first_column+1}else{range.last_row-range.first_row+1};
+        let category=refs.first().is_some_and(|s|s.categories.is_some());
+        if refs.len() as u32+u32::from(category)<lines{return None;}
+        for series in refs{
+            let (_,r)=parse_ref(series.values.as_deref()?)?;
+            if !(r.first_row..=r.last_row).all(|row|(r.first_column..=r.last_column).all(|col|matches!(model.cell(row,col).map(|c|&c.value),Some(ibis_doc_model::CellValue::Number(_))))){return None;}
+            points=points.max((r.last_row-r.first_row+1)*(r.last_column-r.first_column+1));
+        }Some(points)
+    };
+    match(score(true),score(false)){(Some(a),Some(b))=>a>=b,(Some(_),None)=>true,(None,Some(_))=>false,(None,None)=>range.last_row-range.first_row>=range.last_column-range.first_column}
 }
 
 /// The series of a scatter chart over `range` of `sheet`:
@@ -685,12 +705,12 @@ pub fn scatter_refs_for_range(workbook: &Presentation, sheet: &str, range: CellR
         if c1 <= c0 {
             return None;
         }
-        let has_header = (c0..=c1).any(|c| !is_number(r0, c));
+        let has_header = r1>r0 && (c0..=c1).all(|c| matches!(model.cell(r0,c).map(|x|&x.value),Some(ibis_doc_model::CellValue::Text(t)) if !t.is_empty())) && (r0+1..=r1).all(|r|(c0..=c1).all(|c|is_number(r,c)));
         let data_r0 = if has_header { r0 + 1 } else { r0 };
         if r1 < data_r0 {
             return None;
         }
-        if !(data_r0..=r1).all(|r| (c0..=c1).all(|c| is_number(r, c))) {
+        if !(data_r0..=r1).any(|r| (c0..=c1).any(|c| is_number(r, c))) {
             return None;
         }
         Some((c0 + 1..=c1).map(|c| SeriesRefs {
@@ -703,12 +723,12 @@ pub fn scatter_refs_for_range(workbook: &Presentation, sheet: &str, range: CellR
         if r1 <= r0 {
             return None;
         }
-        let has_header = (r0..=r1).any(|r| !is_number(r, c0));
+        let has_header = c1>c0 && (r0..=r1).all(|r| matches!(model.cell(r,c0).map(|x|&x.value),Some(ibis_doc_model::CellValue::Text(t)) if !t.is_empty())) && (c0+1..=c1).all(|c|(r0..=r1).all(|r|is_number(r,c)));
         let data_c0 = if has_header { c0 + 1 } else { c0 };
         if c1 < data_c0 {
             return None;
         }
-        if !(data_c0..=c1).all(|c| (r0..=r1).all(|r| is_number(r, c))) {
+        if !(data_c0..=c1).any(|c| (r0..=r1).any(|r| is_number(r, c))) {
             return None;
         }
         Some((r0 + 1..=r1).map(|r| SeriesRefs {
@@ -879,17 +899,31 @@ pub(crate) fn write_sheet_chart_series(package: &mut Package, chart_part: &str, 
         return Err(unsupported("系列の数の合わないグラフのデータ"));
     }
     let doc = package.xml_mut(chart_part)?;
+    super::chart_topology::sync_series(doc,after,refs)?;
     let all = resize_series(doc, chart_part, &counts, true)?;
     const AFTER_TX: &[&str] = &["spPr", "invertIfNegative", "pictureOptions", "marker", "dPt", "dLbls", "trendline", "errBars", "explosion", "cat", "val", "smooth", "shape", "extLst"];
     const AFTER_CAT: &[&str] = &["val", "smooth", "shape", "bubble3D", "extLst"];
     const AFTER_VAL: &[&str] = &["smooth", "shape", "bubble3D", "extLst"];
     let series: Vec<&ibis_doc_model::Series> = after.groups.iter().flat_map(|g| g.series.iter()).collect();
+    let root=doc.root_element().ok_or_else(||unsupported("グラフのルート要素"))?;
+    let drawing_prefix=doc.lookup_prefix(root,"http://schemas.openxmlformats.org/drawingml/2006/main").filter(|p|!p.is_empty()).unwrap_or_else(||{doc.set_attr(root,"xmlns:a","http://schemas.openxmlformats.org/drawingml/2006/main");"a".into()});
     for ((ser, r), model) in all.into_iter().zip(refs).zip(series) {
         let p = prefix_of(doc, ser);
+        // Rebuilding references and caches must also retain each series' model appearance.
+        // The caller's settings baseline already has these groups, so no later delta writes them.
+        super::pptx_chart::write_series_fill(doc,ser,&model.fill,&p,&drawing_prefix)?;
+        super::pptx_chart::write_series_stroke(doc,ser,model.stroke.as_ref(),&p,&drawing_prefix)?;
+        super::pptx_chart::write_series_marker(doc,ser,model.marker.as_ref(),&p,&drawing_prefix)?;
+        super::pptx_chart::write_labels(doc,ser,None,model.labels.as_ref())?;
+        super::pptx_chart::write_trendline(doc,ser,model.trendline.as_ref())?;
+        super::pptx_chart::write_error_bars(doc,ser,model.error_bars.as_ref())?;
         if let Some(f) = &r.name {
             let tx = series_child(doc, ser, "tx", AFTER_TX);
             clear(doc, tx);
             write_str_ref(doc, tx, &p, f, &[model.name.clone()]);
+        } else if !model.name.is_empty() {
+            let tx=series_child(doc,ser,"tx",AFTER_TX);clear(doc,tx);
+            let value=doc.append_element(tx,&format!("{p}v"));doc.set_text(value,&model.name);
         } else if let Some(tx) = doc.child(ser, "tx") {
             doc.detach(tx);
         }

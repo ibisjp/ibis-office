@@ -516,6 +516,11 @@ This document lists all features implemented in ibisOffice across Word (.docx), 
 | 504 | docx: Find and replace formatting and styles | Completed |
 | 505 | docx: Search scope and direction | Completed |
 | 506 | docx: Go To page, heading, footnote, etc. | Completed |
+| 507 | docx: Vertical forms for punctuation, brackets, quotation marks, units and symbols in vertical text | Completed |
+| 508 | docx: Vertical display of text being composed with an input method | Completed |
+| 509 | docx: Remove an entry from the recent files list with the ... menu | Completed |
+| 510 | docx: Color picker dialog (hue wheel) | Completed |
+| 511 | docx: Number field up/down arrows that keep the unit | Completed |
 
 ### xlsx
 
@@ -1454,6 +1459,19 @@ This document lists all features implemented in ibisOffice across Word (.docx), 
 | 931 | xlsx: Save, language and trust settings | Completed |
 | 932 | xlsx: Document differences between Mac preferences and Windows options | Completed |
 | 933 | xlsx: Audit data types, XML maps, and external link management | Completed |
+| 934 | xlsx: Sort pane with level copy and reorder, sorting by color or icon, and real-time update | Completed |
+| 935 | xlsx: Header and footer editing in a side pane | Completed |
+| 936 | xlsx: Modeless Watch Window that keeps the sheet editable | Completed |
+| 937 | xlsx: Close button in the Scenario Manager | Completed |
+| 938 | xlsx: Formula entry assistance: function name completion, arrow key reference picking, reference colors and dragging reference ranges | Completed |
+| 939 | xlsx: Long formula wrapping and formula bar keyboard navigation | Completed |
+| 940 | xlsx: Entries that start with a sign are read as formulas | Completed |
+| 941 | xlsx: Automatic column widening when a number is entered | Completed |
+| 942 | xlsx: Pasting shapes copied from Microsoft Office | Completed |
+| 943 | xlsx: Chart background color and series name from the first cell | Completed |
+| 944 | xlsx: Remove an entry from the recent files list with the ... menu | Completed |
+| 945 | xlsx: Color picker dialog (hue wheel) | Completed |
+| 946 | xlsx: Number field up/down arrows that keep the unit | Completed |
 
 ### pptx
 
@@ -1826,3 +1844,11 @@ This document lists all features implemented in ibisOffice across Word (.docx), 
 | 365 | pptx: Track legacy formats and deprecated features | Completed |
 | 366 | pptx: Map existing features, scenarios, and coverage IDs | Completed |
 | 367 | pptx: Evaluate unmodified round-trip preservation and fallback rendering | Completed |
+| 368 | pptx: Saving play timing of video and audio for Microsoft PowerPoint | Completed |
+| 369 | pptx: Control bar for video and audio while editing | Completed |
+| 370 | pptx: Compatibility check for linked video and audio | Completed |
+| 371 | pptx: Clipping of pictures cropped to custom shapes | Completed |
+| 372 | pptx: Shortcuts to add and duplicate slides and shapes | Completed |
+| 373 | pptx: Remove an entry from the recent files list with the ... menu | Completed |
+| 374 | pptx: Color picker dialog (hue wheel) | Completed |
+| 375 | pptx: Number field up/down arrows that keep the unit | Completed |

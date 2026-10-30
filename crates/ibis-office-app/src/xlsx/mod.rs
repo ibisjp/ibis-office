@@ -44,6 +44,11 @@ pub(crate) mod data_table;
 pub(crate) mod custom_format;
 pub(crate) mod fill;
 pub(crate) mod chart_edit;
+pub(crate) mod chart_style;
+pub(crate) mod chart_series;
+pub(crate) mod chart_dropdown;
+pub(crate) mod chart_type_compatibility;
+pub(crate) mod range_field;
 pub(crate) mod move_chart;
 pub(crate) mod chart_template;
 pub(crate) mod comment_card;
@@ -53,6 +58,7 @@ pub(crate) mod filter;
 pub(crate) mod format_more;
 pub(crate) mod autocomplete;
 pub(crate) mod pivot;
+pub(crate) mod row_fit;
 pub(crate) mod table_design;
 pub(crate) mod header_footer;
 pub(crate) mod header_footer_edit;
@@ -66,6 +72,7 @@ pub(crate) mod scenarios;
 #[path = "../tests/xlsx/corpus_report.rs"]
 pub(crate) mod corpus_report;
 pub(crate) mod sheet_ui;
+mod sheet_tab_scroll;
 mod right_pane;
 pub(crate) mod sheet_view;
 pub(crate) mod slicer;
@@ -100,6 +107,7 @@ pub(crate) mod pivot_group;
 pub(crate) mod pivot_options;
 pub(crate) mod trace;
 pub(crate) mod formula_audit;
+pub(crate) mod formula_reference;
 pub(crate) mod properties_panel;
 pub(crate) mod pivot_calc_field;
 pub(crate) mod pivot_calc_item;
@@ -130,6 +138,8 @@ use crate::shell::format::{FormatEditor, FormatState};
 
 /// What only an open workbook has.
 pub(crate) struct State {
+    pub(crate) range_pick: Option<range_field::RangePick>,
+    pub(crate) range_pick_click_release: bool,
     /// The selected cell of each worksheet, as (column, row) of the cell or
     /// of the top-left cell of its merged range. A sheet not in here has A1.
     pub(crate) cells: HashMap<SlideId, (u32, u32)>,
@@ -150,6 +160,9 @@ pub(crate) struct State {
     pub(crate) bar_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     /// The formula bar widened to several lines (the ▼ at its right end), as Excel's: all the lines of a cell are shown and typed into; closed, it shows one line.
     pub(crate) bar_expanded: bool,
+    pub(crate) bar_visual_lines: Vec<(usize,String)>,
+    pub(crate) bar_caret_row: Option<usize>,
+    pub(crate) bar_shapes: Vec<std::rc::Rc<ShapedLine>>,
     /// The scrolling of the widened bar.
     pub(crate) bar_scroll: ScrollHandle,
     /// Cells copied or cut.
@@ -190,6 +203,9 @@ pub(crate) struct State {
     pub(crate) validation_warning: Option<validation::ValidationWarning>,
     /// A list's drop-down, while open.
     pub(crate) list_popup: Option<validation::ListPopup>,
+    pub(crate) validation_choices: Option<validation::ValidationChoices>,
+    pub(crate) validation_rejected: Option<(u32, u32)>,
+    pub(crate) validation_message_bounds: Option<Bounds<Pixels>>,
     /// A filter heading's ▼ panel, while open.
     pub(crate) filter_panel: Option<filter::FilterPanel>,
     /// The cell whose comment (thread or note) shows, the pointer on it.
@@ -231,6 +247,8 @@ pub(crate) struct State {
     pub(crate) right_key: Option<right_pane::RightKey>,
     /// Scrolling of the sheet tabs along the bottom.
     pub(crate) tab_scroll: ScrollHandle,
+    pub(crate) tab_reveal: Option<SlideId>,
+    pub(crate) tab_last_click: Option<(SlideId, usize)>,
     /// Whether the formula bar is shown.
     pub(crate) show_formula_bar: bool,
     /// データの入力規則のマーク表示 (Circle Invalid Data).
@@ -299,6 +317,7 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(&m("r"), FillRight, c),
         KeyBinding::new("ctrl-;", InsertDate, c),
         KeyBinding::new("ctrl-shift-;", InsertTime, c),
+        KeyBinding::new("ctrl-:", InsertTime, c),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-;", InsertTime, c),
         KeyBinding::new("ctrl-space", SelectColumns, c),
@@ -350,7 +369,7 @@ impl FormatEditor for Workbook {
 
     fn sidebar(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<crate::shell::chrome::SidebarPanel> {
         let chain = |editor: &mut SlideEditor, cx: &mut Context<SlideEditor>| {
-            editor.symbol_panel(cx).or_else(|| editor.custom_format_panel(cx)).or_else(|| editor.page_setup_panel(cx)).or_else(|| editor.cell_link_panel(cx)).or_else(|| editor.sheet_find_panel(cx)).or_else(|| editor.sheet_spelling_panel(cx)).or_else(|| editor.validation_panel(cx)).or_else(|| editor.names_panel(cx)).or_else(|| editor.conditional_panel(cx)).or_else(|| editor.sort_panel(cx)).or_else(|| editor.edit_panel(cx)).or_else(|| editor.sheet_chart_panel(cx))
+            editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel")).or_else(|| editor.custom_format_panel(cx)).or_else(|| editor.page_setup_panel(cx).map(|panel| panel.modal_named("page_setup_panel"))).or_else(|| editor.header_footer_edit_panel(cx)).or_else(|| editor.cell_link_panel(cx).map(|panel| panel.modal_named("cell_link_panel"))).or_else(|| editor.sheet_find_panel(cx)).or_else(|| editor.sheet_spelling_panel(cx).map(|panel| panel.modal_named("sheet_spelling_panel"))).or_else(|| editor.validation_panel(cx).map(|panel| panel.modal_named("validation_panel"))).or_else(|| editor.names_panel(cx).map(|panel|panel.modal_named("names_panel"))).or_else(|| editor.conditional_panel(cx).map(|panel|panel.modal_named("conditional_panel"))).or_else(|| editor.sort_panel(cx).map(|panel| if editor.wb().sort_edit.as_ref().is_some_and(|p|p.editor.is_some()){panel.modal_named("sort_level_editor")}else{panel})).or_else(|| editor.edit_panel(cx)).or_else(|| editor.sheet_chart_panel(cx))
         };
         let panel = chain(editor, cx);
         // No tabs: the pane shows what is selected (right_pane.rs).
@@ -401,7 +420,7 @@ impl FormatEditor for Workbook {
             _ => None,
         });
         conditional::apply_ahead(sheets.collect());
-        FormatState::Workbook(State { cells: HashMap::new(), cell_ends: HashMap::new(), cell_drag: false, deselect_drag: None, split_drag: None, jump: sheet_ui::CellJump::new(window, cx), cell_edit: None, bar_bounds: Default::default(), bar_expanded: false, bar_scroll: ScrollHandle::new(), clip: None, header_geometry: Default::default(), header_drag: None, timeline_drag: None, control_drag: None, ruler_margin_drag: None, header_select: None, header_hover: None, header_popup: None, fill_source: None, cell_move: None, fill_copy: false, move_overwrite: None, tab_start: None, painter: None, names: None, validation: None, validation_warning: None, list_popup: None, filter_panel: None, comment_hover: None, table_dialog: None, chart_edit: None, last_fill: None, last_paste: None, find: None, spelling: None, link: None, page_setup: false, header_footer_edit: None, custom_format: None, format_open: [true; 6], conditional_edit: None, sort_edit: None, panels: Default::default(), links_notice: crate::shell::settings_window::links_warning_enabled() && presentation.workbook.as_ref().is_some_and(|w| w.external_books.iter().any(|b| !b.broken && !b.name.is_empty())), border_line: ibis_doc_model::BorderLine::Thin, border_color: ibis_doc_model::Rgb::BLACK, tab_drag: None, tab_scroll: ScrollHandle::new(), right_key: None, show_formula_bar: true, validation_circles: false, unlocked_ranges: HashSet::new(), trace_arrows: Vec::new(), calc_warmup_started: false, print_what: PrintWhat::ActiveSheet, shape_selection: Vec::new(), always_create_backup: None, show_all_notes: false, design_mode: false, status_summary_mask: STATUS_SUMMARY_DEFAULT })
+        FormatState::Workbook(State { range_pick: None, range_pick_click_release: false, cells: HashMap::new(), cell_ends: HashMap::new(), cell_drag: false, deselect_drag: None, split_drag: None, jump: sheet_ui::CellJump::new(window, cx), cell_edit: None, bar_bounds: Default::default(), bar_expanded: false, bar_visual_lines: Vec::new(), bar_caret_row:None, bar_shapes:Vec::new(), bar_scroll: ScrollHandle::new(), clip: None, header_geometry: Default::default(), header_drag: None, timeline_drag: None, control_drag: None, ruler_margin_drag: None, header_select: None, header_hover: None, header_popup: None, fill_source: None, cell_move: None, fill_copy: false, move_overwrite: None, tab_start: None, painter: None, names: None, validation: None, validation_warning: None, list_popup: None, validation_choices: None, validation_rejected: None, validation_message_bounds: None, filter_panel: None, comment_hover: None, table_dialog: None, chart_edit: None, last_fill: None, last_paste: None, find: None, spelling: None, link: None, page_setup: false, header_footer_edit: None, custom_format: None, format_open: [true; 6], conditional_edit: None, sort_edit: None, panels: Default::default(), links_notice: crate::shell::settings_window::links_warning_enabled() && presentation.workbook.as_ref().is_some_and(|w| w.external_books.iter().any(|b| !b.broken && !b.name.is_empty())), border_line: ibis_doc_model::BorderLine::Thin, border_color: ibis_doc_model::Rgb::BLACK, tab_drag: None, tab_scroll: ScrollHandle::new(), tab_reveal: None, tab_last_click: None, right_key: None, show_formula_bar: true, validation_circles: false, unlocked_ranges: HashSet::new(), trace_arrows: Vec::new(), calc_warmup_started: false, print_what: PrintWhat::ActiveSheet, shape_selection: Vec::new(), always_create_backup: None, show_all_notes: false, design_mode: false, status_summary_mask: STATUS_SUMMARY_DEFAULT })
     }
 
     /// A worksheet at its own zoom, as Excel shows it.
@@ -589,7 +608,8 @@ impl FormatEditor for Workbook {
     }
 
     /// After the first render completes, warm up the formula dependency index on a background thread.
-    fn before_render(editor: &mut SlideEditor, window: &mut Window, _cx: &mut Context<SlideEditor>) {
+    fn before_render(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) {
+        if editor.sheet_range_pick_active() { editor.clear_sheet_range_handle_bounds(); editor.update_sheet_range_pick(window, cx); }
         if let Some(state) = editor.sheet_state_mut() {
             if !state.calc_warmup_started {
                 state.calc_warmup_started = true;
@@ -688,3 +708,5 @@ impl SlideEditor {
         cx.notify();
     }
 }
+
+pub(crate) mod formula_layout;

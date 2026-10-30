@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -352,7 +352,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.sparkline = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -1075,6 +1075,13 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                        ui.borrow_mut().insert(id.clone(), bounds);
+                    })
+        };
 
         let current_kind = p.kind;
         let is_edit = p.group_index.is_some();
@@ -1106,60 +1113,21 @@ impl SlideEditor {
         let min_custom_input = p.min_custom_input.clone();
         let max_custom_input = p.max_custom_input.clone();
 
-        let kind_button = |kind: SparklineKind, label: gpui::SharedString, id: &'static str, cx: &mut Context<Self>| {
-            let is_sel = current_kind == kind;
-            Button::new(id)
-                .label(label)
-                .small()
-                .when(is_sel, |b| b.primary())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.set_sparkline_kind(kind, cx);
-                }))
+        let kind_button = |kind: SparklineKind, label: SharedString, id: &'static str, cx: &mut Context<Self>| {
+            let ui=p.ui.clone();
+            crate::shell::chrome::segment_control::SegmentItem::label(id,label,current_kind==kind)
+                .on_bounds(move |b|{ui.borrow_mut().insert(id.to_string(),b);})
+                .on_click(cx.listener(move |e,_,_,cx|e.set_sparkline_kind(kind,cx)))
         };
 
-        let style_buttons: Vec<AnyElement> = SPARKLINE_STYLES
-            .iter()
-            .enumerate()
-            .map(|(i, preset)| {
-                let is_sel = current_style == Some(i);
-                let id = format!("xlsx.sparkline.style.{}", i + 1);
-                mark(
-                    &id,
-                    Button::new(id.clone())
-                        .label(text(preset.name))
-                        .small()
-                        .when(is_sel, |b| b.primary())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_sparkline_style_preset(i, cx);
-                        }))
-                        .into_any_element(),
-                )
-            })
-            .collect();
-
-        let color_buttons: Vec<AnyElement> = SPARKLINE_COLORS
-            .iter()
-            .enumerate()
-            .map(|(i, (label, rgb))| {
-                let is_sel = current_series == Some(*rgb);
-                let id = format!("xlsx.sparkline.color.{}", i + 1);
-                mark(
-                    &id,
-                    Button::new(id.clone())
-                        .label(text(label))
-                        .small()
-                        .when(is_sel, |b| b.primary())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_sparkline_series_color(Some(*rgb), cx);
-                        }))
-                        .into_any_element(),
-                )
-            })
-            .collect();
-
+        let style_entries=SPARKLINE_STYLES.iter().enumerate().map(|(i,p)|crate::shell::chrome::MenuItem::new("xlsx.sparkline.style-choice",text(p.name)).checked(current_style==Some(i)).on(move|e,_,cx|e.set_sparkline_style_preset(i,cx)).into()).collect();
+        let style_dropdown=crate::shell::chrome::Dropdown::from_entries("sparkline-style-dropdown",current_style.map(|i|text(SPARKLINE_STYLES[i].name)).unwrap_or_else(||text("_shell.custom")),style_entries,true,0,&cx.weak_entity()).into_any_element();
+        let color_choices=SPARKLINE_COLORS.iter().map(|(name,color)|{let color=*color;crate::shell::chrome::dropdown::ColorPaletteItem::single(text(name),color.0,std::rc::Rc::new(move |e,_,cx|e.set_sparkline_series_color(Some(color),cx)))}).collect();
+        let color_index=SPARKLINE_COLORS.iter().position(|(_,c)|Some(*c)==current_series).unwrap_or(0);
+        let color_dropdown=crate::shell::chrome::ColorPaletteDropdown::new("sparkline-line-color",color_choices,color_index,&cx.weak_entity());
         let point_target_buttons: Vec<AnyElement> = [
             ("xlsx.sparkline.point-target.high", "_xlsx.high-point", SparklinePointKind::High),
-            ("xlsx.sparkline.point-target.low", "_shell.at-least", SparklinePointKind::Low),
+            ("xlsx.sparkline.point-target.low", "xlsx.sparkline.low-point", SparklinePointKind::Low),
             ("xlsx.sparkline.point-target.negative", "_xlsx.negative-points", SparklinePointKind::Negative),
             ("xlsx.sparkline.point-target.first", "_xlsx.first-point", SparklinePointKind::First),
             ("xlsx.sparkline.point-target.last", "_xlsx.last-point", SparklinePointKind::Last),
@@ -1170,11 +1138,7 @@ impl SlideEditor {
             let is_sel = selected_point_kind == pt;
             mark(
                 id,
-                Button::new(id)
-                    .label(text(label))
-                    .small()
-                    .when(is_sel, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::radio_button(id,is_sel,false,text(label),cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.wb_mut().panels.sparkline.as_mut() {
                             p.selected_point_kind = pt;
                         }
@@ -1185,46 +1149,17 @@ impl SlideEditor {
         })
         .collect();
 
-        let point_color_buttons: Vec<AnyElement> = SPARKLINE_COLORS
-            .iter()
-            .enumerate()
-            .map(|(i, (label, rgb))| {
-                let is_sel = current_point_color == Some(*rgb);
-                let id = format!("xlsx.sparkline.point-color.{}", i + 1);
-                mark(
-                    &id,
-                    Button::new(id.clone())
-                        .label(text(label))
-                        .small()
-                        .when(is_sel, |b| b.primary())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_sparkline_point_color(selected_point_kind, Some(*rgb), cx);
-                        }))
-                        .into_any_element(),
-                )
-            })
-            .collect();
+        let point_color_choices=SPARKLINE_COLORS.iter().map(|(name,color)|{let color=*color;crate::shell::chrome::dropdown::ColorPaletteItem::single(text(name),color.0,std::rc::Rc::new(move |e,_,cx|e.set_sparkline_point_color(selected_point_kind,Some(color),cx)))}).collect();
+        let point_color_index=SPARKLINE_COLORS.iter().position(|(_,c)|Some(*c)==current_point_color).unwrap_or(0);
+        let point_color_dropdown=crate::shell::chrome::ColorPaletteDropdown::new("sparkline-point-color",point_color_choices,point_color_index,&cx.weak_entity());
 
-        let weight_buttons: Vec<AnyElement> = SPARKLINE_WEIGHTS
-            .iter()
-            .enumerate()
-            .map(|(i, (label, w))| {
-                let is_sel = current_weight == *w;
-                let id = format!("xlsx.sparkline.weight.{}", i + 1);
-                mark(
-                    &id,
-                    Button::new(id.clone())
-                        .label(*label)
-                        .small()
-                        .when(is_sel, |b| b.primary())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_sparkline_line_weight(*w, cx);
-                        }))
-                        .into_any_element(),
-                )
-            })
-            .collect();
 
+        let weight_buttons=SPARKLINE_WEIGHTS.iter().enumerate().map(|(i,(label,w))| {
+            let id=format!("xlsx.sparkline.weight.{}",i+1);let ui=p.ui.clone();let weight=*w;
+            crate::shell::chrome::segment_control::SegmentItem::label(id.clone(),*label,current_weight==weight)
+                .on_bounds(move |b|{ui.borrow_mut().insert(id.clone(),b);})
+                .on_click(cx.listener(move |e,_,_,cx|e.set_sparkline_line_weight(weight,cx)))
+        }).collect::<Vec<_>>();
         let empty_buttons: Vec<AnyElement> = SPARKLINE_EMPTY_OPTIONS
             .iter()
             .enumerate()
@@ -1238,11 +1173,7 @@ impl SlideEditor {
                 let empty_mode = *empty_val;
                 mark(
                     id,
-                    Button::new(id)
-                        .label(text(label))
-                        .small()
-                        .when(is_sel, |b| b.primary())
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    crate::shell::chrome::radio_button(id,is_sel,false,text(label),cx.listener(move |this, _, _, cx| {
                             this.set_sparkline_empty(empty_mode, cx);
                         }))
                         .into_any_element(),
@@ -1250,71 +1181,53 @@ impl SlideEditor {
             })
             .collect();
 
+        let footer = crate::shell::chrome::action_bar()
+                    .action(mark_action("xlsx.sparkline.apply", crate::shell::chrome::ActionDefinition::new("xlsx.sparkline.apply", "", crate::shell::chrome::ActionButtonKind::Primary).label(if is_edit { text("_shell.apply") } else { text("_xlsx.create") }).on_click(cx.listener(|this, _, _, cx| {
+                        this.apply_sparkline(cx);
+                    }))))
+                    .action(mark_action("xlsx.sparkline.cancel", crate::shell::chrome::ActionDefinition::new("xlsx.sparkline.cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| {
+                        this.wb_mut().panels.sparkline = None;
+                        cx.notify();
+                    }))));
         let body = v_flex()
             .gap_2()
             .px(px(16.))
             .py(px(8.))
-            .child(
+            .p_0().child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(13.)).font_weight(gpui::FontWeight::BOLD).child(if is_edit { text("_xlsx.edit-sparkline") } else { text("_xlsx.create-sparklines") }))
+                    .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).child(if is_edit { text("_xlsx.edit-sparkline") } else { text("_xlsx.create-sparklines") }))
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).child(text("fix.series.type")))
+                    .child(div().text_sm().child(text("fix.series.type")))
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(mark("xlsx.sparkline.kind.line", kind_button(SparklineKind::Line, crate::shell::i18n::text("pptx.insert-chart.line"), "xlsx.sparkline.kind.line", cx).into_any_element()))
-                            .child(mark("xlsx.sparkline.kind.column", kind_button(SparklineKind::Column, crate::shell::i18n::text("_xlsx.column-2"), "xlsx.sparkline.kind.column", cx).into_any_element()))
-                            .child(mark("xlsx.sparkline.kind.winloss", kind_button(SparklineKind::WinLoss, crate::shell::i18n::text("_xlsx.win-loss"), "xlsx.sparkline.kind.winloss", cx).into_any_element()))
+                        crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
+                            .child(kind_button(SparklineKind::Line, crate::shell::i18n::text("pptx.insert-chart.line"), "xlsx.sparkline.kind.line", cx))
+                            .child(kind_button(SparklineKind::Column, crate::shell::i18n::text("_xlsx.column-2"), "xlsx.sparkline.kind.column", cx))
+                            .child(kind_button(SparklineKind::WinLoss, crate::shell::i18n::text("_xlsx.win-loss"), "xlsx.sparkline.kind.winloss", cx))
                     )
             )
+            .child(crate::shell::chrome::dropdown_row(text("_shell.styles"),style_dropdown))
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).child(text("_shell.styles")))
-                    .child(h_flex().gap_1().flex_wrap().children(style_buttons))
+                    .child(div().text_sm().child(text("_xlsx.line-color")))
+                    .child(color_dropdown)
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).child(text("_xlsx.line-color")))
-                    .child(h_flex().gap_1().flex_wrap().children(color_buttons))
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(div().text_size(px(12.)).child(text("xlsx.sparkline-marker-colors")))
+                    .child(div().text_sm().child(text("xlsx.sparkline-marker-colors")))
                     .child(h_flex().gap_1().flex_wrap().children(point_target_buttons))
-                    .child(h_flex().gap_1().flex_wrap().children(point_color_buttons))
+                    .child(point_color_dropdown)
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).child(text("pptx.chrome.line-weight")))
-                    .child(h_flex().gap_1().flex_wrap().children(weight_buttons))
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .justify_between()
-                            .child(div().text_size(px(12.)).child(text("_xlsx.data-range")))
-                            .child(mark(
-                                "xlsx.sparkline.use-data-range",
-                                Button::new("xlsx.sparkline.use-data-range")
-                                    .xsmall()
-                                    .ghost()
-                                    .label(text("xlsx.subtotal-use-selection"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.set_sparkline_range_from_selection("data", window, cx)))
-                                    .into_any_element(),
-                            )),
-                    )
-                    .child(mark("xlsx.sparkline.data-range", Input::new(&p.data_range_input).small().cleanable(true).into_any_element()))
+                    .child(div().text_sm().child(text("pptx.chrome.line-weight")))
+                    .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).children(weight_buttons))
             )
             .child(
                 v_flex()
@@ -1323,23 +1236,25 @@ impl SlideEditor {
                         h_flex()
                             .items_center()
                             .justify_between()
-                            .child(div().text_size(px(12.)).child(text("_xlsx.location-range")))
-                            .child(mark(
-                                "xlsx.sparkline.use-location-range",
-                                Button::new("xlsx.sparkline.use-location-range")
-                                    .xsmall()
-                                    .ghost()
-                                    .label(text("xlsx.subtotal-use-selection"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.set_sparkline_range_from_selection("location", window, cx)))
-                                    .into_any_element(),
-                            )),
+                            .child(div().text_sm().child(text("_xlsx.data-range"))),
                     )
-                    .child(mark("xlsx.sparkline.location-range", Input::new(&p.location_range_input).small().cleanable(true).into_any_element()))
+                    .child(mark("xlsx.sparkline.data-range", super::range_field::local_range_field(&p.data_range_input,"sparkline_dialog-p-data_range_input",false,cx).into_any_element()))
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).font_weight(gpui::FontWeight::BOLD).child(text("_shell.view")))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(div().text_sm().child(text("_xlsx.location-range"))),
+                    )
+                    .child(mark("xlsx.sparkline.location-range", super::range_field::local_range_field(&p.location_range_input,"sparkline_dialog-p-location_range_input",false,cx).into_any_element()))
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(div().text_sm().font_weight(gpui::FontWeight::BOLD).child(text("_shell.view")))
                     .child(mark("xlsx.sparkline.high", Checkbox::new("sparkline-high").label(text("_xlsx.high-point")).checked(high).on_click(cx.listener(|this, on: &bool, _, cx| {
                         if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.high = *on; }
                         cx.notify();
@@ -1389,35 +1304,20 @@ impl SlideEditor {
                             h_flex()
                                 .items_center()
                                 .justify_between()
-                                .child(div().text_size(px(12.)).child(text("_xlsx.date-range")))
-                                .child(mark(
-                                    "xlsx.sparkline.use-date-range",
-                                    Button::new("xlsx.sparkline.use-date-range")
-                                        .xsmall()
-                                        .ghost()
-                                        .label(text("xlsx.subtotal-use-selection"))
-                                        .on_click(cx.listener(|this, _, window, cx| this.set_sparkline_range_from_selection("date", window, cx)))
-                                        .into_any_element(),
-                                )),
+                                .child(div().text_sm().child(text("_xlsx.date-range"))),
                         )
-                        .child(mark("xlsx.sparkline.date-range", Input::new(&p.date_range_input).small().cleanable(true).into_any_element()))
+                        .child(mark("xlsx.sparkline.date-range", super::range_field::local_range_field(&p.date_range_input,"sparkline_dialog-p-date_range_input",false,cx).into_any_element()))
                 )
             })
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).child(text("_xlsx.vertical-axis-min")))
+                    .child(div().text_sm().child(text("_xlsx.vertical-axis-min")))
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .flex_wrap()
+                        crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                             .child(mark(
                                 "xlsx.sparkline.min.individual",
-                                Button::new("xlsx.sparkline.min.individual")
-                                    .label(text("_xlsx.automatic-for-each"))
-                                    .small()
-                                    .when(min_axis_kind == 0, |b| b.primary())
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                crate::shell::chrome::radio_button("xlsx.sparkline.min.individual", min_axis_kind == 0, false, text("_xlsx.automatic-for-each"), cx.listener(|this, _, _, cx| {
                                         if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.min_axis_kind = 0; }
                                         cx.notify();
                                     }))
@@ -1425,11 +1325,7 @@ impl SlideEditor {
                             ))
                             .child(mark(
                                 "xlsx.sparkline.min.group",
-                                Button::new("xlsx.sparkline.min.group")
-                                    .label(text("_xlsx.same-for-all"))
-                                    .small()
-                                    .when(min_axis_kind == 1, |b| b.primary())
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                crate::shell::chrome::radio_button("xlsx.sparkline.min.group", min_axis_kind == 1, false, text("_xlsx.same-for-all"), cx.listener(|this, _, _, cx| {
                                         if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.min_axis_kind = 1; }
                                         cx.notify();
                                     }))
@@ -1437,11 +1333,7 @@ impl SlideEditor {
                             ))
                             .child(mark(
                                 "xlsx.sparkline.min.custom",
-                                Button::new("xlsx.sparkline.min.custom")
-                                    .label(text("_xlsx.custom-value"))
-                                    .small()
-                                    .when(min_axis_kind == 2, |b| b.primary())
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                crate::shell::chrome::radio_button("xlsx.sparkline.min.custom", min_axis_kind == 2, false, text("_xlsx.custom-value"), cx.listener(|this, _, _, cx| {
                                         if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.min_axis_kind = 2; }
                                         cx.notify();
                                     }))
@@ -1449,24 +1341,18 @@ impl SlideEditor {
                             )),
                     )
                     .when(min_axis_kind == 2, |b| {
-                        b.child(mark("xlsx.sparkline.min-value", Input::new(&min_custom_input).small().cleanable(true).into_any_element()))
+                        b.child(mark("xlsx.sparkline.min-value", crate::shell::chrome::text_field(&min_custom_input).full_width().into_any_element()))
                     }),
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).child(text("_xlsx.vertical-axis-max")))
+                    .child(div().text_sm().child(text("_xlsx.vertical-axis-max")))
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .flex_wrap()
+                        crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                             .child(mark(
                                 "xlsx.sparkline.max.individual",
-                                Button::new("xlsx.sparkline.max.individual")
-                                    .label(text("_xlsx.automatic-for-each"))
-                                    .small()
-                                    .when(max_axis_kind == 0, |b| b.primary())
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                crate::shell::chrome::radio_button("xlsx.sparkline.max.individual", max_axis_kind == 0, false, text("_xlsx.automatic-for-each"), cx.listener(|this, _, _, cx| {
                                         if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.max_axis_kind = 0; }
                                         cx.notify();
                                     }))
@@ -1474,11 +1360,7 @@ impl SlideEditor {
                             ))
                             .child(mark(
                                 "xlsx.sparkline.max.group",
-                                Button::new("xlsx.sparkline.max.group")
-                                    .label(text("_xlsx.same-for-all"))
-                                    .small()
-                                    .when(max_axis_kind == 1, |b| b.primary())
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                crate::shell::chrome::radio_button("xlsx.sparkline.max.group", max_axis_kind == 1, false, text("_xlsx.same-for-all"), cx.listener(|this, _, _, cx| {
                                         if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.max_axis_kind = 1; }
                                         cx.notify();
                                     }))
@@ -1486,11 +1368,7 @@ impl SlideEditor {
                             ))
                             .child(mark(
                                 "xlsx.sparkline.max.custom",
-                                Button::new("xlsx.sparkline.max.custom")
-                                    .label(text("_xlsx.custom-value"))
-                                    .small()
-                                    .when(max_axis_kind == 2, |b| b.primary())
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                crate::shell::chrome::radio_button("xlsx.sparkline.max.custom", max_axis_kind == 2, false, text("_xlsx.custom-value"), cx.listener(|this, _, _, cx| {
                                         if let Some(p) = this.wb_mut().panels.sparkline.as_mut() { p.max_axis_kind = 2; }
                                         cx.notify();
                                     }))
@@ -1498,54 +1376,40 @@ impl SlideEditor {
                             )),
                     )
                     .when(max_axis_kind == 2, |b| {
-                        b.child(mark("xlsx.sparkline.max-value", Input::new(&max_custom_input).small().cleanable(true).into_any_element()))
+                        b.child(mark("xlsx.sparkline.max-value", crate::shell::chrome::text_field(&max_custom_input).full_width().into_any_element()))
                     }),
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).child(text("_xlsx.show-empty-cells-as")))
+                    .child(div().text_sm().child(text("_xlsx.show-empty-cells-as")))
                     .child(h_flex().gap_1().flex_wrap().children(empty_buttons))
             )
             .when(!p.message.is_empty(), |b| {
                 let msg = p.message.clone();
-                b.child(div().text_size(px(12.)).text_color(gpui::red()).child(msg))
+                b.child(div().text_sm().text_color(gpui::red()).child(msg))
             })
-            .child(
-                h_flex()
-                    .gap_2()
-                    .pt_2()
-                    .child(mark("xlsx.sparkline.apply", Button::new("xlsx.sparkline.apply").primary().small().label(if is_edit { text("_shell.apply") } else { text("_xlsx.create") }).on_click(cx.listener(|this, _, _, cx| {
-                        this.apply_sparkline(cx);
-                    })).into_any_element()))
-                    .child(mark("xlsx.sparkline.cancel", Button::new("xlsx.sparkline.cancel").small().label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| {
-                        this.wb_mut().panels.sparkline = None;
-                        cx.notify();
-                    })).into_any_element()))
-            )
+
             .when(is_edit, |b| {
                 b.child(
                     v_flex()
                         .gap_1()
                         .pt_2()
-                        .child(mark("xlsx.sparkline.group", Button::new("xlsx.sparkline.group").small().label(text("xlsx.group")).on_click(cx.listener(|this, _, _, cx| {
+                        .child(mark("xlsx.sparkline.group", crate::shell::chrome::action_button("xlsx.sparkline.group").small().label(text("xlsx.group")).on_click(cx.listener(|this, _, _, cx| {
                             this.group_selected_sparklines(cx);
                         })).into_any_element()))
-                        .child(mark("xlsx.sparkline.ungroup", Button::new("xlsx.sparkline.ungroup").small().label(text("_shell.ungroup")).on_click(cx.listener(|this, _, _, cx| {
+                        .child(mark("xlsx.sparkline.ungroup", crate::shell::chrome::destructive_button("xlsx.sparkline.ungroup",cx).small().label(text("_shell.ungroup")).on_click(cx.listener(|this, _, _, cx| {
                             this.ungroup_selected_sparklines(cx);
                         })).into_any_element()))
-                        .child(mark("xlsx.sparkline.clear-selected", Button::new("xlsx.sparkline.clear-selected").small().label(text("_xlsx.clear-selected-sparklines")).on_click(cx.listener(|this, _, _, cx| {
+                        .child(mark("xlsx.sparkline.clear-selected", crate::shell::chrome::destructive_button("xlsx.sparkline.clear-selected",cx).small().label(text("_xlsx.clear-selected-sparklines")).on_click(cx.listener(|this, _, _, cx| {
                             this.clear_sparklines_action(false, cx);
                         })).into_any_element()))
-                        .child(mark("xlsx.sparkline.clear-group", Button::new("xlsx.sparkline.clear-group").small().label(text("_xlsx.clear-group")).on_click(cx.listener(|this, _, _, cx| {
+                        .child(mark("xlsx.sparkline.clear-group", crate::shell::chrome::destructive_button("xlsx.sparkline.clear-group",cx).small().label(text("_xlsx.clear-group")).on_click(cx.listener(|this, _, _, cx| {
                             this.clear_sparklines_action(true, cx);
                         })).into_any_element()))
                 )
             });
 
-        Some(SidebarPanel {
-            title: text("_xlsx.sparklines").into(),
-            body: body.into_any_element(),
-        })
+        Some(SidebarPanel::with_footer(text("_xlsx.sparklines"),body.into_any_element(),footer))
     }
 }

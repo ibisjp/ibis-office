@@ -73,7 +73,7 @@ impl SlideEditor {
 
     pub(crate) fn open_unhide_window_panel(&mut self, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
-        self.wb_mut().panels.close();
+        self.wb_mut().close_settings();
         let message = if self.is_workbook_windows_locked() {
             text("_xlsx.this-can-t-be-done-because-the-workbook-window-i").to_string()
         } else {
@@ -111,8 +111,15 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let id = id.to_string();
+            let ui = p.ui.clone();
+            action.on_bounds(move |bounds, _, _| {
+                        ui.borrow_mut().insert(id.clone(), bounds);
+                    })
+        };
 
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
 
         if is_locked {
             body = body.child(
@@ -122,7 +129,7 @@ impl SlideEditor {
                     .bg(cx.theme().danger.opacity(0.1))
                     .border_1()
                     .border_color(cx.theme().danger)
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(cx.theme().danger)
                     .child(text("_xlsx.this-can-t-be-done-because-the-workbook-window-i")),
             );
@@ -132,23 +139,23 @@ impl SlideEditor {
                     .p(px(6.))
                     .rounded_md()
                     .bg(cx.theme().danger.opacity(0.1))
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(cx.theme().danger)
                     .child(SharedString::from(p.message.clone())),
             );
         }
 
-        body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.unhide-workbook")));
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.unhide-workbook")));
 
         let mut list_box = v_flex().gap_1().p(px(4.)).border_1().border_color(cx.theme().border).rounded_md().min_h(px(80.));
         if !is_hidden {
-            list_box = list_box.child(div().text_size(px(12.)).text_color(cx.theme().muted).child(text("_xlsx.no-hidden-workbooks")));
+            list_box = list_box.child(div().text_sm().text_color(cx.theme().muted).child(text("_xlsx.no-hidden-workbooks")));
         } else {
             let item_el = div()
                 .px(px(6.))
                 .py(px(4.))
                 .rounded_sm()
-                .text_size(px(12.))
+                .text_sm()
                 .bg(cx.theme().accent.opacity(0.2))
                 .child(SharedString::from(wb_name));
             list_box = list_box.child(mark(
@@ -164,37 +171,23 @@ impl SlideEditor {
 
         // Buttons
         let can_unhide = is_hidden && !is_locked;
-        let mut buttons_row = h_flex().gap_2().justify_end().pt(px(8.));
-        buttons_row = buttons_row.child(mark(
-            "unhide-window-ok",
-            Button::new("btn-unhide-ok").primary()
-                .small()
+        let mut buttons_row = crate::shell::chrome::action_bar();
+        buttons_row = buttons_row.action(mark_action("unhide-window-ok", crate::shell::chrome::ActionDefinition::new("btn-unhide-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
                 .disabled(!can_unhide)
                 .label(text("OK"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.unhide_workbook_window(cx);
-                }))
-                .into_any_element(),
-        ));
-        buttons_row = buttons_row.child(mark(
-            "unhide-window-cancel",
-            Button::new("btn-unhide-cancel")
-                .small()
-                .ghost()
+                }))));
+        buttons_row = buttons_row.action(mark_action("unhide-window-cancel", crate::shell::chrome::ActionDefinition::new("btn-unhide-cancel", "", crate::shell::chrome::ActionButtonKind::Normal)
                 .label(text("_shell.cancel"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.wb_mut().panels.unhide_window = None;
                     this.sidebar_open = false;
                     cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        body = body.child(buttons_row);
+                }))));
 
-        Some(SidebarPanel {
-            title: text("_xlsx.unhide-window").into(),
-            body: body.into_any_element(),
-        })
+
+        Some(SidebarPanel::with_footer(text("_xlsx.unhide-window"), body.into_any_element(), buttons_row))
     }
 
     /// When workbook window is hidden, render an empty workspace placeholder.
@@ -224,7 +217,7 @@ impl SlideEditor {
                     .child(text("_xlsx.to-show-the-workbook-again-choose-unhide-window")),
             )
             .child(
-                Button::new("btn-hidden-unhide")
+                crate::shell::chrome::action_button("btn-hidden-unhide")
                     .small()
                     .disabled(is_locked)
                     .label(text("_xlsx.unhide"))

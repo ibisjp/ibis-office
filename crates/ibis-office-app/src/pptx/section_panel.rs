@@ -5,8 +5,8 @@
 use gpui_kit::*;
 use crate::shell::palette::rgb;
 use gpui_kit::component::{Sizable as _,h_flex,v_flex};
-use gpui_kit::component::button::{Button,ButtonVariants as _};
-use gpui_kit::component::input::{Input,InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use ibis_doc_model::{Command,Section,SlideId};
 use crate::shell::{chrome::SidebarPanel,editor::SlideEditor};
 pub(crate) struct SectionPanel {
@@ -84,9 +84,9 @@ impl SlideEditor {
     }
     pub(crate) fn close_section_panel(&mut self,w:&mut Window,cx:&mut Context<Self>) {if let Some(s)=self.pptx_mut() {s.section_panel=None;}self.focus_handle.focus(w,cx);cx.notify();}
     pub(crate) fn pptx_section_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel> {
-        let p=self.pptx()?.section_panel.as_ref()?;let name=p.name.clone();let error=p.error.clone();let mut body=v_flex().gap_2().px(px(18.)).py(px(8.)).child(div().child(crate::shell::i18n::text("_shell.name"))).child(Input::new(&name).small().cleanable(true));
+        let p=self.pptx()?.section_panel.as_ref()?;let name=p.name.clone();let error=p.error.clone();let mut body=v_flex().gap_2().px(px(18.)).py(px(8.)).p_0().child(div().child(crate::shell::i18n::text("_shell.name"))).child(crate::shell::chrome::text_field(&name).full_width());
         if let Some(error)=error {body=body.child(div().text_color(rgb(0xb3261e)).child(error));}
-        body=body.child(h_flex().gap_1().child(Button::new("pptx-section-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e,_,w,cx|e.apply_section_panel(w,cx)))).child(Button::new("pptx-section-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e,_,w,cx|e.close_section_panel(w,cx)))));
-        Some(SidebarPanel {title:crate::shell::i18n::text("pptx.goto.section"),body:body.into_any_element()})
+        let panel_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("pptx-section-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,w,cx|e.apply_section_panel(w,cx)))).action(crate::shell::chrome::ActionDefinition::new("pptx-section-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,w,cx|e.close_section_panel(w,cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("pptx.goto.section"), body.into_any_element(), panel_actions))
     }
 }

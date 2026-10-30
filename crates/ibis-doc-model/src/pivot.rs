@@ -2701,6 +2701,7 @@ pub fn chart_from_pivot(pivot: &PivotTable, built: &PivotBuilt) -> Chart {
         ex: None,
         ex_format: None,
         excel_layout: false,
+        word_layout: false,
         cell_refs: Vec::new(),
         ex_source: None,
     };

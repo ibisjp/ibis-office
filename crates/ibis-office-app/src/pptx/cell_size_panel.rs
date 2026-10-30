@@ -4,8 +4,8 @@
 //! セルのサイズ: the height of the rows and the width of the columns of the
 //! cells selected in a table typed as numbers (cm), as PowerPoint's レイアウト >
 //! セルのサイズ. The table grows or shrinks by what the rows and columns do.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -124,19 +124,16 @@ impl SlideEditor {
         let p = self.pptx()?.cell_size_panel.as_ref()?;
         let (height, width, error) = (p.height.clone(), p.width.clone(), p.error.clone());
         let t = crate::shell::i18n::text;
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
-        body = body.child(div().text_size(px(13.)).child(t("pptx.cell-size-panel.row-height-cm"))).child(Input::new(&height).small().cleanable(true));
-        body = body.child(div().text_size(px(13.)).child(t("pptx.cell-size-panel.column-width-cm"))).child(Input::new(&width).small().cleanable(true));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
+        body = body.child(crate::shell::chrome::text_field_row(t("pptx.cell-size-panel.row-height-cm"), crate::shell::chrome::text_field(&height).unit("cm", px(24.)).spinner("pptx-cell-size-height", crate::shell::chrome::SpinnerSpec::new(0.1).min(0.25), cx, |_, _, _, _| {})));
+        body = body.child(crate::shell::chrome::text_field_row(t("pptx.cell-size-panel.column-width-cm"), crate::shell::chrome::text_field(&width).unit("cm", px(24.)).spinner("pptx-cell-size-width", crate::shell::chrome::SpinnerSpec::new(0.1).min(0.25), cx, |_, _, _, _| {})));
         if let Some(error) = error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error));
+            body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));
         }
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("pptx-cell-size-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_cell_size_panel(w, cx))))
-                .child(Button::new("pptx-cell-size-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_cell_size_panel(w, cx)))),
-        );
-        Some(SidebarPanel { title: t("pptx.cell-size-panel.cell-size"), body: body.into_any_element() })
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-cell-size-apply", t("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_cell_size_panel(w, cx))))
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-cell-size-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_cell_size_panel(w, cx))));
+        Some(SidebarPanel::with_footer(t("pptx.cell-size-panel.cell-size"), body.into_any_element(), panel_actions))
     }
 }
 

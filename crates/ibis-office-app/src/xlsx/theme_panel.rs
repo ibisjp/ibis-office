@@ -4,8 +4,8 @@
 //! テーマの配色とフォント (表示形式 > テーマの配色 / テーマの色とフォント…):
 //! ブックのテーマ（12色のカラースキームおよび見出し・本文フォント）の切り替え・編集。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -18,7 +18,7 @@ use crate::shell::editor::SlideEditor;
 pub(crate) struct XlsxThemePanel {
     pub(crate) colors: Vec<(&'static str, &'static str, Entity<InputState>)>,
     pub(crate) fonts: [Entity<InputState>; 4],
-    error: Option<SharedString>,
+    pub(crate) error: Option<SharedString>,
 }
 
 
@@ -74,6 +74,7 @@ impl SlideEditor {
 
     /// Open the workbook theme colors and fonts editing sidebar panel.
     pub(crate) fn open_xlsx_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.theme_colors_ui.editing=false;
         self.commit_cell_edit(cx);
         let have = self.presentation().workbook.as_ref().map(|w| w.theme_colors.clone()).unwrap_or_else(|| self.presentation().theme_colors.clone());
         let fonts = self.presentation().workbook.as_ref().and_then(|w| w.theme_fonts.clone()).or_else(|| self.presentation().theme_fonts.clone()).unwrap_or_default();
@@ -93,7 +94,7 @@ impl SlideEditor {
             font(window, cx, &fonts.minor.east_asian),
         ];
         if let Some(s) = self.sheet_state_mut() {
-            s.panels.close();
+            s.close_settings();
             s.panels.theme = Some(XlsxThemePanel { colors, fonts, error: None });
         }
         self.sidebar_open = true;
@@ -141,45 +142,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn xlsx_theme_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let panel = self.sheet_state()?.panels.theme.as_ref()?;
-        let t = crate::shell::i18n::text;
-        let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
-        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.));
-
-        let mut palette_row = h_flex().gap_1().flex_wrap();
-        for preset in &THEME_PALETTES {
-            let pid = preset.id;
-            let active = self.is_xlsx_theme_palette_active(pid);
-            let btn = Button::new(format!("xlsx-preset-{pid}")).small().ghost().label(t(preset.label_key));
-            let btn = if active { btn.border_1() } else { btn };
-            palette_row = palette_row.child(btn.on_click(cx.listener(move |e, _, w, cx| {
-                e.apply_xlsx_theme_palette(pid, cx);
-                e.open_xlsx_theme_panel(w, cx);
-            })));
-        }
-        body = body.child(label(&t("xlsx.theme-palette"))).child(palette_row);
-
-        for (_, name, input) in &panel.colors {
-            body = body.child(label(&t(name))).child(Input::new(input).small().cleanable(true));
-        }
-        for (name, input) in [
-            ("pptx.theme-panel.heading-font-latin", &panel.fonts[0]),
-            ("pptx.theme-panel.heading-font-east-asian", &panel.fonts[1]),
-            ("pptx.theme-panel.body-font-latin", &panel.fonts[2]),
-            ("pptx.theme-panel.body-font-east-asian", &panel.fonts[3]),
-        ] {
-            body = body.child(label(&t(name))).child(Input::new(input).small().cleanable(true));
-        }
-        if let Some(error) = &panel.error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error.clone()));
-        }
-        let body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("xlsx-theme-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_xlsx_theme_panel(w, cx))))
-                .child(Button::new("xlsx-theme-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_xlsx_theme_panel(w, cx)))),
-        );
-        Some(SidebarPanel { title: t("xlsx.theme-colors"), body: body.into_any_element() })
+        self.shared_theme_colors_panel(cx)
     }
 
     /// Check if the workbook matches a predefined theme fonts preset.

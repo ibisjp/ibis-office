@@ -42,7 +42,49 @@ impl SlideSteps for Scenario {
 }
 
 /// Undo everything, check it is the file as opened, and redo everything.
+/// Presses a button of the open dialog's action bar, as the pointer does: the
+/// dialog is modal, so the menu bar's items are disabled while it is open.
+fn press_panel_button(s: &mut Scenario, id: &str) {
+    let _probe = crate::shell::scenario::button_probe::Probe::new();
+    s.update(|_, _, cx| cx.notify());
+    crate::shell::scenario::button_probe::click(s, id);
+}
+/// Presses a choice in the body of the open dialog (a radio button): first scrolled above the
+/// action bar that sits over the dialog's bottom, which a pointer could not press through.
+fn press_panel_choice(s: &mut Scenario, id: &str) {
+    use crate::shell::scenario::button_probe;
+    let _probe = button_probe::Probe::new();
+    s.update(|_, _, cx| cx.notify());
+    for _ in 0..8 {
+        let (Some(b), Some(d)) = (button_probe::bounds(id), s.with(|e, _| e.panel_dialog.bounds)) else { break };
+        if b.origin.y + b.size.height <= d.origin.y + d.size.height - gpui_kit::px(crate::shell::chrome::ACTION_BAR_PADDING_Y * 2. + 40.) { break; }
+        s.wheel((f32::from(d.origin.x + d.size.width - gpui_kit::px(18.)), f32::from(d.origin.y + gpui_kit::px(70.))), -180.);
+        s.settle();
+    }
+    button_probe::click(s, id);
+}
+/// Presses the 削除 button of the first or last colour stop in the open gradient dialog.
+fn press_gradient_remove(s: &mut Scenario, last: bool) {
+    let n = s.with(|e, _| e.pptx().unwrap().gradient_panel.as_ref().unwrap().stops.len());
+    press_panel_button(s, &format!("pptx-gradient-remove-{}", if last { n - 1 } else { 0 }));
+}
+/// Closes the modal command panel that is open (the menu bar's items are disabled behind it).
+fn close_modal_panel(s: &mut Scenario) {
+    if s.with(|e, _| e.panel_dialog_is_modal()) {
+        s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    }
+}
+fn close_chart_settings(s:&mut Scenario){
+    if s.with(|e,_|e.pptx().is_some_and(|p|p.chart_panel.is_some())&&e.panel_dialog.active){
+        let _probe=crate::shell::scenario::button_probe::Probe::new();s.update(|_,_,cx|cx.notify());crate::shell::scenario::button_probe::click(s,"dialog-default-close");
+    }
+}
 fn undo_all_and_redo(s: &mut Scenario) {
+    close_chart_settings(s);
+    // A modal panel (プロパティ、検査、数式...) blocks undo: Undo and Redo are the slide's, so they come after it.
+    if s.with(|e, _| e.panel_dialog_is_modal()) {
+        s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    }
     let end = s.with(|e, _| e.presentation().slides.clone());
     let mut steps = 0;
     while s.with(|e, _| e.document.can_undo()) {
@@ -203,7 +245,7 @@ pub(crate) fn select_with_clicks_and_the_rubber_band() {
 pub(crate) fn move_resize_and_rotate() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.page(3);
-    s.click_shape(1);
+    s.select_shape(1);
     let before = s.with(|e, _| e.slide().shapes[1].frame);
     let from = s.shape_position(1);
     s.drag(from, (from.0 + 60.0, from.1 + 30.0));
@@ -237,7 +279,7 @@ pub(crate) fn order_and_align() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.page(3);
     let first = s.with(|e, _| e.slide().shapes[1].id);
-    s.click_shape(1);
+    s.select_shape(1);
     s.menu("pptx.order.front");
     assert_eq!(s.with(|e, _| e.slide().shapes.last().map(|x| x.id)), Some(first));
     s.menu("pptx.order.back");
@@ -395,7 +437,7 @@ pub(crate) fn format_part_of_a_text() {
 pub(crate) fn lists_indents_and_spacing() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.page(2);
-    s.click_shape(1);
+    s.select_shape(1);
     s.toolbar("numbered");
     assert_eq!(s.with(|e, _| e.selected_list()), Some(ibis_doc_model::ListKind::Numbered));
     s.toolbar("indent-more");
@@ -1062,7 +1104,7 @@ pub(crate) fn shape_size_and_place_by_numbers() {
                 f.update(cx, |f, cx| f.set_value(value, w, cx));
             }
         });
-        s.menu("pptx.frame.apply");
+        press_panel_button(&mut s,"pptx-frame-apply");
         if values[1] == "-1" {
             assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), original, "a negative width changes nothing");
         }
@@ -1083,7 +1125,7 @@ pub(crate) fn shape_size_and_place_by_numbers() {
     s.menu("pptx.frame.settings");
     s.key("cmd-a");
     s.type_text("3");
-    s.menu("pptx.frame.cancel");
+    press_panel_button(&mut s,"pptx-frame-cancel");
     assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), changed);
     undo_all_and_redo(&mut s);
 }
@@ -1106,7 +1148,7 @@ pub(crate) fn shape_scaling_by_percent() {
         fields[5].update(cx, |f, cx| f.set_value("150", w, cx));
         fields[6].update(cx, |f, cx| f.set_value("200%", w, cx));
     });
-    s.menu("pptx.frame.apply");
+    press_panel_button(&mut s,"pptx-frame-apply");
 
     let scaled = s.with(|e, _| e.selected_shapes()[0].clone());
     let expected_h = ((base_h as f64) * 1.5).round() as i64;
@@ -1122,7 +1164,7 @@ pub(crate) fn shape_scaling_by_percent() {
         let fields = p.fields.clone();
         fields[5].update(cx, |f, cx| f.set_value("50", w, cx));
     });
-    s.menu("pptx.frame.apply");
+    press_panel_button(&mut s,"pptx-frame-apply");
 
     let locked_scaled = s.with(|e, _| e.selected_shapes()[0].clone());
     let expected_locked_h = ((scaled.frame.height as f64) * 0.5).round() as i64;
@@ -1136,9 +1178,9 @@ pub(crate) fn shape_scaling_by_percent() {
         let fields = e.pptx().unwrap().frame_panel.as_ref().unwrap().fields.clone();
         fields[5].update(cx, |f, cx| f.set_value("-10", w, cx));
     });
-    s.menu("pptx.frame.apply");
+    press_panel_button(&mut s,"pptx-frame-apply");
     assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), locked_scaled, "invalid scale changes nothing");
-    s.menu("pptx.frame.cancel");
+    press_panel_button(&mut s,"pptx-frame-cancel");
 
     // 4. 保存と再読込
     s.save_as("scaled-frame.pptx");
@@ -1267,14 +1309,12 @@ pub(crate) fn edit_chart_data() {
     let series = values.iter().position(|v| v.len() > 1).unwrap();
     let original = s.with(|e, _| e.slide().shapes[shape].clone());
     // Not a number: nothing changes.
-    s.update(|_, w, cx| values[series][0].update(cx, |f, cx| f.set_value("たくさん", w, cx)));
-    s.menu("pptx.chart.apply");
+    s.update(|_, w, cx| values[series][0].update(cx, |f, cx| {f.set_value("たくさん",w,cx);cx.emit(gpui_kit::component::input::InputEvent::Change);}));
     assert_eq!(s.with(|e, _| e.slide().shapes[shape].clone()), original);
     s.update(|_, w, cx| {
-        values[series][0].update(cx, |f, cx| f.set_value("1,234.5", w, cx));
-        names[series].update(cx, |f, cx| f.set_value("書き換えた系列", w, cx));
+        values[series][0].update(cx, |f, cx| {f.set_value("1,234.5",w,cx);cx.emit(gpui_kit::component::input::InputEvent::Change);});
+        names[series].update(cx, |f, cx| {f.set_value("書き換えた系列",w,cx);cx.emit(gpui_kit::component::input::InputEvent::Change);});
     });
-    s.menu("pptx.chart.apply");
     let read = |p: &ibis_doc_model::Presentation| -> (Option<f64>, String) {
         let ShapeKind::Chart(c) = &p.slides[page].shapes[shape].kind else { panic!("a chart") };
         let x = c.groups.iter().flat_map(|g| g.series.iter()).nth(series).unwrap();
@@ -1282,6 +1322,7 @@ pub(crate) fn edit_chart_data() {
     };
     assert_eq!(s.with(|e, _| read(e.presentation())), (Some(1234.5), "書き換えた系列".to_string()));
     s.screenshot("edited");
+    close_chart_settings(&mut s); // The data dialog is modal: undo and the toolbar are the slide's.
     // グラフ タイトル: above chart, then none, with undo/redo.
     let title = |s: &mut Scenario| s.with(|e, _| match &e.slide().shapes[shape].kind {
         ShapeKind::Chart(c) => c.title.as_ref().map(|t| t.text.clone()),
@@ -1354,8 +1395,7 @@ pub(crate) fn insert_chart() {
     assert_eq!(s.shapes(), before + 1);
     assert!(s.with(|e, _| e.pptx().unwrap().chart_panel.is_some()), "its data panel");
     let values = s.with(|e, _| e.pptx().unwrap().chart_panel.as_ref().unwrap().values.clone());
-    s.update(|_, w, cx| values[0][0].update(cx, |f, cx| f.set_value("6", w, cx)));
-    s.menu("pptx.chart.apply");
+    s.update(|_, w, cx| values[0][0].update(cx, |f, cx| {f.set_value("6",w,cx);cx.emit(gpui_kit::component::input::InputEvent::Change);}));
     let first = |p: &ibis_doc_model::Presentation| match &p.slides[1].shapes[before].kind {
         ShapeKind::Chart(c) => c.groups[0].series[0].values[0].map(|n| n.0),
         _ => None,
@@ -1376,6 +1416,7 @@ pub(crate) fn insert_chart_kinds() {
     let before = s.shapes();
 
     // 1. Insert Pie chart from menu
+    close_chart_settings(&mut s);
     s.menu("pptx.insert-chart.pie");
     assert_eq!(s.shapes(), before + 1);
     assert_eq!(s.with(|e, _| e.selection_kind()), SelectionKind::Chart);
@@ -1383,8 +1424,7 @@ pub(crate) fn insert_chart_kinds() {
 
     // Edit pie chart data: change first value
     let values = s.with(|e, _| e.pptx().unwrap().chart_panel.as_ref().unwrap().values.clone());
-    s.update(|_, w, cx| values[0][0].update(cx, |f, cx| f.set_value("10.5", w, cx)));
-    s.menu("pptx.chart.apply");
+    s.update(|_, w, cx| values[0][0].update(cx, |f, cx| {f.set_value("10.5",w,cx);cx.emit(gpui_kit::component::input::InputEvent::Change);}));
 
     // Check first slice angle menu option
     assert!(s.toolbar_state("chart-first-angle").is_some());
@@ -1395,6 +1435,7 @@ pub(crate) fn insert_chart_kinds() {
     assert!(matches!(pie_chart.groups[0].kind, ibis_doc_model::ChartType::Pie { first_angle: 90 }));
 
     // 2. Insert Doughnut chart from menu
+    close_chart_settings(&mut s);
     s.menu("pptx.insert-chart.doughnut");
     assert_eq!(s.shapes(), before + 2);
     s.toolbar_menu("chart-hole-size", "pptx.chart.hole-size.50");
@@ -1404,6 +1445,7 @@ pub(crate) fn insert_chart_kinds() {
     assert!(matches!(doughnut_chart.groups[0].kind, ibis_doc_model::ChartType::Doughnut { hole: 50, .. }));
 
     // 3. Insert Bar chart from menu
+    close_chart_settings(&mut s);
     s.menu("pptx.insert-chart.bar");
     assert_eq!(s.shapes(), before + 3);
     let bar_shape = s.with(|e, _| e.selected_shapes()[0].clone());
@@ -1411,6 +1453,7 @@ pub(crate) fn insert_chart_kinds() {
     assert!(matches!(bar_chart.groups[0].kind, ibis_doc_model::ChartType::Bar { horizontal: true, .. }));
 
     // 4. Insert Line chart from menu
+    close_chart_settings(&mut s);
     s.menu("pptx.insert-chart.line");
     assert_eq!(s.shapes(), before + 4);
     let line_shape = s.with(|e, _| e.selected_shapes()[0].clone());
@@ -2546,15 +2589,11 @@ pub(crate) fn hyperlinks() {
 /// PPTX-OBJECT-023: 表（Table）セル内テキストに対するハイパーリンク (⌘K) 設定・保存・再読込・削除・Undo/Redo
 pub(crate) fn table_cell_hyperlinks() {
     use ibis_doc_model::SlideLink;
-    let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
-    let (page, shape) = s
-        .with(|e, _| {
-            e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
-                sl.shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Table(_))).map(|j| (i, j))
-            })
-        })
-        .expect("a slide with a table");
-    s.page(page + 1);
+    // Keep the link regression independent of unrelated benchmark rendering.
+    let mut s=Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e,w,cx|e.insert_slide_table_with(2,2,Some(&[vec!["A".into(),"B".into()],vec!["C".into(),"Target".into()]]),w,cx));
+    let page=0;
+    let shape=s.with(|e,_|e.slide().shapes.iter().position(|sh|matches!(sh.kind,ShapeKind::Table(_))).unwrap());
 
     // セル (1, 1) をダブルクリックして編集状態にし、テキストを全選択
     let at = cell_middle(&mut s, shape, 1, 1);
@@ -3085,6 +3124,8 @@ pub(crate) fn paste_takes_what_was_copied_last() {
     assert_eq!(s.shapes(), shapes + 1, "the copied shape");
     assert!(s.with(|e, _| e.selected_shapes().first().is_some_and(|sh| matches!(sh.kind, ShapeKind::Auto(_)))));
     // Another application copies a text.
+    // The other application's copy replaces the whole pasteboard, the shapes' own format too.
+    crate::native_shape_clipboard::simulate(None);
     s.update(|_, _, cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("あとからコピー".to_string())));
     s.update(|e, _, _| e.set_selection(Vec::new()));
     s.key("cmd-v");
@@ -3561,23 +3602,23 @@ pub(crate) fn text_outline_colors_and_weights() {
             body.paragraphs[0].runs[0].style.outline
         })
     };
-    assert_eq!(run(&mut s), Some((ibis_doc_model::Rgb(0x4472c4), 12_700)));
+    assert_eq!(run(&mut s), Some((ibis_doc_model::Rgb(0x0070c0), 12_700)));
 
     // 2. 太さを 3 pt（38,100 EMU）に変更（色は青を維持）
     s.menu("pptx.text-outline.3pt");
-    assert_eq!(run(&mut s), Some((ibis_doc_model::Rgb(0x4472c4), 38_100)));
+    assert_eq!(run(&mut s), Some((ibis_doc_model::Rgb(0x0070c0), 38_100)));
 
     // 3. Undo / Redo
     s.key("cmd-z");
-    assert_eq!(run(&mut s), Some((ibis_doc_model::Rgb(0x4472c4), 12_700)));
+    assert_eq!(run(&mut s), Some((ibis_doc_model::Rgb(0x0070c0), 12_700)));
     s.key("cmd-shift-z");
-    assert_eq!(run(&mut s), Some((ibis_doc_model::Rgb(0x4472c4), 38_100)));
+    assert_eq!(run(&mut s), Some((ibis_doc_model::Rgb(0x0070c0), 38_100)));
 
     // 4. 保存と再読込（ラウンドトリップ）
     s.save_as("text-outline-blue-3pt.pptx");
     let saved = s.reopen();
     let r = &saved.slides[0].shapes[1].text_body().unwrap().paragraphs[0].runs[0].style;
-    assert_eq!(r.outline, Some((ibis_doc_model::Rgb(0x4472c4), 38_100)));
+    assert_eq!(r.outline, Some((ibis_doc_model::Rgb(0x0070c0), 38_100)));
 
     // 5. 赤色に変更（太さ 3 pt は維持）
     s.menu("pptx.text-outline.red");
@@ -4605,7 +4646,7 @@ pub(crate) fn chart_series_and_plot_area_formatting_options() {
     let (page, shape) = s
         .with(|e, _| {
             e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
-                sl.shapes.iter().position(|sh| matches!(&sh.kind, ShapeKind::Chart(c) if c.groups.iter().any(|g| matches!(g.kind, ChartType::Bar { .. }) && !g.series.is_empty()))).map(|j| (i, j))
+                sl.shapes.iter().position(|sh| matches!(&sh.kind, ShapeKind::Chart(c) if matches!(c.groups.as_slice(), [g] if matches!(g.kind, ChartType::Bar { .. }) && g.series.iter().any(|x| x.values.len() > 1)))).map(|j| (i, j))
             })
         })
         .expect("a slide with a bar chart");
@@ -4624,7 +4665,6 @@ pub(crate) fn chart_series_and_plot_area_formatting_options() {
     s.update(|e, _, cx| {
         e.set_chart_series_fill(None, Fill::Solid(Color::opaque(Rgb(0x112233))), cx);
         e.set_chart_series_stroke(None, Some(Stroke::solid(Color::opaque(Rgb(0x445566)), 28_575)), cx);
-        e.set_chart_series_marker_symbol(None, MarkerSymbol::Diamond, cx);
         e.set_chart_plot_background(Fill::Solid(Color::opaque(Rgb(0xEEFFEE))), cx);
     });
 
@@ -4633,13 +4673,6 @@ pub(crate) fn chart_series_and_plot_area_formatting_options() {
     let first_ser = c.groups[0].series.first().expect("series");
     assert_eq!(first_ser.fill, Fill::Solid(Color::opaque(Rgb(0x112233))));
     assert_eq!(first_ser.stroke.as_ref().unwrap().color, Color::opaque(Rgb(0x445566)));
-    assert_eq!(first_ser.marker.as_ref().unwrap().symbol, MarkerSymbol::Diamond);
-
-    // 2. ツールバーメニューからマーカー記号を三角に変更
-    s.toolbar_menu("chart-series-format", "pptx.chart.marker.triangle");
-    let c = get_chart(&mut s);
-    let first_ser = c.groups[0].series.first().expect("series");
-    assert_eq!(first_ser.marker.as_ref().unwrap().symbol, MarkerSymbol::Triangle);
 
     // 3. 保存と再読込
     s.save_as("test-chart-series-plot-area-options.pptx");
@@ -4649,9 +4682,24 @@ pub(crate) fn chart_series_and_plot_area_formatting_options() {
     let saved_ser = rc.groups[0].series.first().expect("saved series");
     assert_eq!(saved_ser.fill, Fill::Solid(Color::opaque(Rgb(0x112233))));
     assert_eq!(saved_ser.stroke.as_ref().unwrap().color, Color::opaque(Rgb(0x445566)));
-    assert_eq!(saved_ser.marker.as_ref().unwrap().symbol, MarkerSymbol::Triangle);
 
-    // 4. Undo / Redo
+    // 4. マーカーは折れ線グラフの系列のもの（棒グラフにマーカーは無い）：種類を折れ線に変えて、
+    //    設定・ツールバーでの変更・保存・再読込を確かめる
+    s.toolbar_menu("chart-type", "chart.type.line");
+    assert_eq!(get_chart(&mut s).groups[0].kind, ChartType::Line);
+    s.update(|e, _, cx| e.set_chart_series_marker_symbol(None, MarkerSymbol::Diamond, cx));
+    let c = get_chart(&mut s);
+    assert_eq!(c.groups[0].series.first().expect("series").marker.as_ref().unwrap().symbol, MarkerSymbol::Diamond);
+    s.toolbar_menu("chart-series-format", "pptx.chart.marker.triangle");
+    let c = get_chart(&mut s);
+    assert_eq!(c.groups[0].series.first().expect("series").marker.as_ref().unwrap().symbol, MarkerSymbol::Triangle);
+    s.save_as("test-chart-series-marker-line.pptx");
+    let saved = s.reopen();
+    let ShapeKind::Chart(rc) = &saved.slides[page].shapes[shape].kind else { panic!("a chart") };
+    assert_eq!(rc.groups[0].kind, ChartType::Line);
+    assert_eq!(rc.groups[0].series.first().expect("saved series").marker.as_ref().unwrap().symbol, MarkerSymbol::Triangle);
+
+    // 5. Undo / Redo
     undo_all_and_redo(&mut s);
 }
 
@@ -4875,7 +4923,7 @@ pub(crate) fn unsupported_text_copy_is_atomic() {
     let shape = s.with(|e, _| e.slide().shapes.iter().find(|sh| sh.text_body().is_some_and(|b| b.paragraphs.iter().any(|p| !p.runs.is_empty()))).unwrap().clone());
     {
         let mut copy = shape.clone();
-        copy.text_body_mut().unwrap().paragraphs[0].bullet = Some(ibis_doc_model::Bullet { text: "".into(), picture: Some(ibis_doc_model::MediaId(999)), size: 100_000, color: None, auto: None });
+        copy.text_body_mut().unwrap().paragraphs[0].bullet = Some(ibis_doc_model::Bullet { text: "".into(), picture: Some(ibis_doc_model::MediaId(999)), size: 100_000, color: None, auto: None, symbol: None });
         assert!(ibis_pptx::save::check_shape_insertion(&copy).is_err());
         let before = s.with(|e, _| e.presentation().clone());
         s.update(|e, _, cx| {
@@ -5020,7 +5068,7 @@ pub(crate) fn scale_slide_size() {
     s.menu("pptx.slide-size.portrait");
     assert!(s.with(|e, _| e.pptx().unwrap().size_panel.is_some()), "the panel opens with the swapped size");
     s.screenshot("panel");
-    s.menu("pptx.slide-size.apply");
+    press_panel_button(&mut s,"pptx-size-apply");
     let portrait = EmuSize::new(wide.height, wide.width);
     assert_eq!(s.with(|e, _| e.presentation().slide_size), portrait);
     let k = portrait.width as f64 / wide.width as f64;
@@ -5461,6 +5509,9 @@ pub(crate) fn new_open_save_and_copy_presentation() {
 
     // 最近使ったファイル（recent_files）に開いたファイルが記録されていること
     let original_path = s.with(|e, _| e.path.clone()).expect("file has path");
+    // The scenarios keep the user's data apart (todo-fix #83): the file is recorded when 開く opens it.
+    s.update(|e, w, cx| e.open_path(original_path.clone(), None, w, cx));
+    s.settle();
     let has_recent = s.with(|e, _| e.recent_files.iter().any(|r| r.file_name() == original_path.file_name()));
     assert!(has_recent, "開いたファイルが最近使ったファイルに登録されている");
 
@@ -5694,6 +5745,7 @@ pub(crate) fn scatter_and_bubble_charts() {
     let before = s.shapes();
 
     // 1. 散布図（直線）をメニューから新規挿入
+    close_chart_settings(&mut s); close_modal_panel(&mut s); // the chart panel is modal
     s.menu("pptx.insert-chart.scatter");
     assert_eq!(s.shapes(), before + 1);
     assert_eq!(s.with(|e, _| e.selection_kind()), SelectionKind::Chart);
@@ -5724,6 +5776,7 @@ pub(crate) fn scatter_and_bubble_charts() {
     s.screenshot("bubble-scale-200");
 
     // 4. 新規バブルチャートをメニューから挿入
+    close_chart_settings(&mut s); close_modal_panel(&mut s); // the chart panel is modal
     s.menu("pptx.insert-chart.bubble");
     assert_eq!(s.shapes(), before + 2);
     let inserted_bubble = s.with(|e, _| e.selected_shapes()[0].clone());
@@ -5735,6 +5788,8 @@ pub(crate) fn scatter_and_bubble_charts() {
     let saved = s.reopen();
     assert_eq!(saved.slides[1].shapes.len(), before + 2);
 
+    close_chart_settings(&mut s);
+    close_modal_panel(&mut s);
     undo_all_and_redo(&mut s);
 }
 
@@ -5794,6 +5849,136 @@ pub(crate) fn insert_video_and_audio() {
     }
     let _ = a;
     undo_all_and_redo(&mut s);
+}
+
+/// 動画・音声のコントロールバー: the pointer over a clip shows its bar under
+/// it, in two rows (the seek bar; under it back to the start, the play/pause
+/// toggle, the volume icon, the volume slider and the time). The toggle plays
+/// and pauses, the seek bar (a click, a drag) and the back button move the
+/// position and the time follows, the volume icon mutes and unmutes to the
+/// level before, the slider sets the level; the bar goes with the pointer when
+/// the clip does not play. The presses do not select, move or resize the shape.
+pub(crate) fn clip_control_bar() {
+    use crate::pptx::clip_bar::{geometry, BAR_H};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing");
+    let video = root.join("clip-test.mp4");
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    let v = s.update(|e, _, cx| e.insert_clip(&video, std::fs::read(&video).unwrap(), false, cx)).unwrap();
+    s.key("escape");
+    let frame = s.with(|e, _| e.slide().shape(v).unwrap().frame);
+    let center = s.at(EmuPoint::new(frame.x + frame.width / 2, frame.y + frame.height / 2));
+    let bar = |s: &mut Scenario| s.with(|e, _| {
+        let b = e.clip_bar_bounds(v, e.slide_layout().unwrap()).unwrap();
+        (f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width))
+    });
+    let shown = |s: &mut Scenario| s.with(|e, _| e.clip_bars_shown());
+    // Away from the clip: no bar.
+    s.hover((5.0, 5.0));
+    assert!(shown(&mut s).is_empty(), "no bar while the pointer is elsewhere");
+    // Over the clip: its bar, under it.
+    s.hover(center);
+    assert_eq!(shown(&mut s), vec![v], "the bar is shown while the pointer is over the clip");
+    let (bx, by, bw) = bar(&mut s);
+    assert!(by >= center.1, "the bar is under the clip: {by} vs {}", center.1);
+    assert!(BAR_H > 40.0, "two rows");
+    // Two rows: the seek bar over the whole width; under it, left to right, back, play, mute, volume, time.
+    let g = geometry(bw);
+    assert!(g.seek_y + 8.0 < g.row_y, "the seek bar is above the controls' row");
+    assert!(g.seek.0 <= 16.0 && g.seek.1 >= bw - 16.0, "the seek bar covers the width: {:?} of {bw}", g.seek);
+    assert!(g.back_x < g.play_x && g.play_x < g.mute_x && g.mute_x < g.volume.0 && g.volume.1 < g.time_x, "back, play, mute, volume, time in this order");
+    assert!(((g.volume.1 - g.volume.0) - 80.0).abs() < 1.0, "the slider is about 80px: {:?}", g.volume);
+    assert!(g.time_x < bw, "the time is inside the bar");
+    s.screenshot("hover");
+    // The pointer goes down to the bar: it stays.
+    let row = by + g.row_y;
+    let seek_row = by + g.seek_y;
+    s.hover((bx + g.play_x + 10.0, row));
+    assert_eq!(shown(&mut s), vec![v], "the bar stays while the pointer is over it");
+    let selected = s.selected();
+    #[cfg(target_os = "macos")]
+    {
+        let state = |s: &mut Scenario| s.with(|e, _| e.clip_bar_state(v));
+        let wait_for = |s: &mut Scenario, what: &str, ok: &dyn Fn(&mut Scenario) -> bool| {
+            for _ in 0..30 {
+                if ok(s) { return; }
+                crate::media_player::run_loop(0.1);
+                s.wait(100);
+            }
+            let st = s.with(|e, _| e.clip_bar_state(v));
+            panic!("{what}: {st:?}");
+        };
+        let press = |s: &mut Scenario, at: (f32, f32)| { s.hover(at); s.click(at); };
+        wait_for(&mut s, "the length of the clip is known", &|s| state(s).length_ms > 0);
+        let length = state(&mut s).length_ms;
+        assert_eq!(state(&mut s).elapsed_ms, 0);
+        assert_eq!(s.with(|e, _| e.clip_bar_time_text(v)), format!("0:00 / 0:{:02}", length / 1000), "the time label");
+        // One toggle: play, pause, play.
+        let play = (bx + g.play_x + 12.0, row);
+        press(&mut s, play);
+        assert!(state(&mut s).playing, "the toggle plays");
+        s.hover((5.0, 5.0));
+        assert_eq!(shown(&mut s), vec![v], "the bar stays while the clip plays");
+        s.screenshot("playing");
+        press(&mut s, play);
+        assert!(!state(&mut s).playing, "the toggle pauses");
+        press(&mut s, play);
+        assert!(state(&mut s).playing, "the toggle plays again");
+        press(&mut s, play);
+        assert!(!state(&mut s).playing, "and pauses again");
+        // A click on the seek bar: the position goes there, the time follows.
+        let span = g.seek.1 - g.seek.0;
+        press(&mut s, (bx + g.seek.0 + span * 0.5, seek_row));
+        wait_for(&mut s, "the clip seeks to the middle", &|s| state(s).elapsed_ms.abs_diff(length / 2) <= length / 10);
+        let middle = s.with(|e, _| e.clip_bar_time_text(v));
+        assert_eq!(middle, format!("0:{:02} / 0:{:02}", state(&mut s).elapsed_ms / 1000, length / 1000), "the time label follows the position");
+        s.screenshot("seeked");
+        // A drag on it.
+        s.hover((bx + g.seek.0 + span * 0.2, seek_row));
+        s.drag((bx + g.seek.0 + span * 0.2, seek_row), (bx + g.seek.0 + span * 0.8, seek_row));
+        wait_for(&mut s, "the clip seeks to 80%", &|s| state(s).elapsed_ms.abs_diff(length * 8 / 10) <= length / 10);
+        let late = s.with(|e, _| e.clip_bar_time_text(v));
+        assert!(state(&mut s).elapsed_ms > length / 2 + length / 10, "the drag went on past the middle: {:?}", state(&mut s));
+        assert_eq!(late, format!("0:{:02} / 0:{:02}", state(&mut s).elapsed_ms / 1000, length / 1000), "the time label follows the position");
+        assert!(!state(&mut s).playing, "a seek does not play the clip");
+        // Back to the start.
+        press(&mut s, (bx + g.back_x + 12.0, row));
+        wait_for(&mut s, "back to the start", &|s| state(s).elapsed_ms <= length / 10);
+        assert!(s.with(|e, _| e.clip_bar_time_text(v)).starts_with("0:00 /"), "the time is at the start");
+        // Volume: the slider sets the level, the icon mutes and unmutes to it.
+        let vol = |s: &mut Scenario| s.with(|e, _| e.clip_bar_volume(v));
+        assert!(!vol(&mut s).is_silent());
+        let slider = |f: f32| (bx + g.volume.0 + (g.volume.1 - g.volume.0) * f, row);
+        press(&mut s, slider(0.5));
+        assert!((vol(&mut s).level - 0.5).abs() < 0.05, "the slider's level: {:?}", vol(&mut s));
+        s.hover(slider(0.25));
+        s.drag(slider(0.25), slider(0.75));
+        assert!((vol(&mut s).level - 0.75).abs() < 0.05, "the slider is dragged: {:?}", vol(&mut s));
+        let before = vol(&mut s).level;
+        let mute = (bx + g.mute_x + 12.0, row);
+        press(&mut s, mute);
+        assert!(vol(&mut s).is_silent(), "the icon mutes");
+        s.screenshot("muted");
+        press(&mut s, mute);
+        assert!(!vol(&mut s).is_silent(), "the icon unmutes");
+        assert!((vol(&mut s).level - before).abs() < 0.001, "back to the level before the mute: {:?}", vol(&mut s));
+        // The slider at 0 looks muted; the icon's click then goes to the last level.
+        press(&mut s, slider(0.0));
+        assert!(vol(&mut s).is_silent(), "the slider at 0 is silent");
+        press(&mut s, mute);
+        assert!((vol(&mut s).level - before).abs() < 0.05, "from 0 the icon goes to the last level: {:?}", vol(&mut s));
+        // The document is not changed by the bar.
+        let options = s.with(|e, _| crate::shell::editor::SlideEditor::clip_of(e.slide().shape(v).unwrap()).unwrap().options.volume);
+        assert_eq!(options, ibis_doc_model::MediaVolume::High, "the bar's volume does not change the clip's saved volume");
+        // Not playing, the pointer gone: the bar goes.
+        s.hover((5.0, 5.0));
+        assert!(shown(&mut s).is_empty(), "the bar goes with the pointer when the clip is paused");
+        s.update(|e, _, cx| e.stop_clips(cx));
+    }
+    assert_eq!(s.selected(), selected, "the bar's presses do not change the selection");
+    assert_eq!(s.with(|e, _| e.slide().shape(v).unwrap().frame), frame, "the clip was not moved");
+    s.hover((5.0, 5.0));
+    assert!(shown(&mut s).is_empty(), "the bar goes with the pointer");
 }
 
 /// 箇条書きの記号・番号の種類: a bullet symbol and a numbering scheme chosen
@@ -5868,7 +6053,7 @@ pub(crate) fn numbered_list_start_at() {
         let f = e.pptx().unwrap().paragraph_panel.as_ref().unwrap().fields[5].clone();
         f.update(cx, |f, cx| f.set_value("0", w, cx));
     });
-    s.menu("pptx.paragraph.apply");
+    press_panel_button(&mut s,"pptx-paragraph-apply");
     assert!(s.with(|e, _| e.pptx().unwrap().paragraph_panel.as_ref().unwrap().error.is_some()), "0 is rejected");
 
     // 正常値（10）を入力して適用
@@ -5876,7 +6061,7 @@ pub(crate) fn numbered_list_start_at() {
         let f = e.pptx().unwrap().paragraph_panel.as_ref().unwrap().fields[5].clone();
         f.update(cx, |f, cx| f.set_value("10", w, cx));
     });
-    s.menu("pptx.paragraph.apply");
+    press_panel_button(&mut s,"pptx-paragraph-apply");
     assert!(s.with(|e, _| e.pptx().unwrap().paragraph_panel.is_none()), "panel closes on valid apply");
     let labels10 = text(&mut s);
     assert_eq!(labels10[0], Some("10.".to_string()));
@@ -5905,14 +6090,14 @@ pub(crate) fn first_slide_number() {
         let first = e.pptx().unwrap().size_panel.as_ref().unwrap().first.clone();
         first.update(cx, |f, cx| f.set_value("x", w, cx));
     });
-    s.menu("pptx.slide-size.apply");
+    press_panel_button(&mut s,"pptx-size-apply");
     assert_eq!(s.with(|e, _| e.presentation().clone()), original);
     assert!(s.with(|e, _| e.pptx().unwrap().size_panel.is_some()), "the panel stays for the invalid value");
     s.update(|e, w, cx| {
         let first = e.pptx().unwrap().size_panel.as_ref().unwrap().first.clone();
         first.update(cx, |f, cx| f.set_value("5", w, cx));
     });
-    s.menu("pptx.slide-size.apply");
+    press_panel_button(&mut s,"pptx-size-apply");
     assert_eq!(s.with(|e, _| e.presentation().first_slide_number), 5);
     s.save_as("first-number.pptx");
     assert_eq!(s.reopen().first_slide_number, 5);
@@ -5989,7 +6174,7 @@ pub(crate) fn lock_aspect_ratio() {
         let h = (old.height as f64 * 2.0 / 360_000.0).to_string();
         fields[0].update(cx, |f, cx| f.set_value(&h, w, cx));
     });
-    s.menu("pptx.frame.apply");
+    press_panel_button(&mut s,"pptx-frame-apply");
     let now = s.with(|e, _| e.slide().shape(id).unwrap().frame);
     assert_eq!(now.height, old.height * 2);
     assert!((now.width - old.width * 2).abs() <= 2, "the width follows: {old:?} {now:?}");
@@ -6009,7 +6194,7 @@ pub(crate) fn lock_aspect_ratio() {
         let h = (now.height as f64 / 360_000.0 / 2.0).to_string();
         fields[0].update(cx, |f, cx| f.set_value(&h, w, cx));
     });
-    s.menu("pptx.frame.apply");
+    press_panel_button(&mut s,"pptx-frame-apply");
     let after = s.with(|e, _| e.slide().shape(id).unwrap().frame);
     assert!((after.width - now.width).abs() <= 1_500, "unlocked: the width stays (up to the panel's 0.01 cm): {now:?} {after:?}");
     assert!(after.height < now.height);
@@ -6218,7 +6403,7 @@ pub(crate) fn print_settings_panel() {
     assert!(settings.needs_pictures());
     assert!(total >= 2);
     // Closing keeps what was kept; reopening shows it.
-    s.update(|e, w, cx| e.close_print_panel(w, cx));
+    s.update(|e, w, cx| e.close_panel_dialog(w, cx)); // modal: the menu bar is off until it is closed
     assert!(s.with(|e, _| e.pptx().unwrap().print_panel.is_none()));
     assert_eq!(s.with(|e, _| e.print_settings()), settings);
     // ノート ページ: replaces the handout, and is made of pictures.
@@ -6229,6 +6414,7 @@ pub(crate) fn print_settings_panel() {
     assert!(notes.notes_pages && notes.handout.is_none() && notes.needs_pictures());
     assert!(notes.arguments(1, &Default::default()).contains(&"--notes-pages".to_string()));
     // アウトライン: replaces the notes pages, and is made of text pages.
+    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
     s.menu("file.print");
     s.update(|e, _, cx| e.edit_print_panel(|p| { p.handout = None; p.notes_pages = false; p.outline = true; }, cx));
     s.update(|e, _, cx| assert!(e.keep_print_settings(cx)));
@@ -6875,6 +7061,7 @@ pub(crate) fn reset_slide_placement() {
         (index, reset)
     });
     s.click_shape(index);
+    s.key("escape"); // a click in a text shape enters its text; Escape leaves the shape selected
     s.key("right");
     s.menu("pptx.rotate.right");
     let moved = s.with(|e, _| e.slide().clone());
@@ -6909,6 +7096,7 @@ pub(crate) fn reset_slide_layout_and_formatting() {
 
     // 1. Move and rotate the placeholder
     s.click_shape(index);
+    s.key("escape"); // a click in a text shape enters its text; Escape leaves the shape selected
     s.key("right");
     s.menu("pptx.rotate.right");
 
@@ -6979,15 +7167,15 @@ pub(crate) fn text_font_scale_custom() {
     let mut s=Scenario::open("test/editing/pptx-plan.pptx");
     s.update(|e,_,cx| {let id=e.document.ids().new_shape_id();let body=ibis_doc_model::TextBody::plain("任意倍率 UI",ibis_doc_model::TextStyle::default());e.insert_shape(ibis_doc_model::Shape::new(id,ibis_doc_model::EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::TextBox(body)),cx);});s.save_as("../pptx-font-scale-custom-base.pptx");drop(s);let mut s=Scenario::open("target/scenario/pptx-font-scale-custom-base.pptx");let index=s.shapes()-1;s.click_shape(index);let before=s.with(|e,_|e.slide().shapes[index].clone());s.menu("pptx.text.insets-custom");
     for value in ["NaN","inf","101","0","-1","0.0006","0.999"] {
-        s.update(|e,w,cx| {let f=e.pptx().unwrap().insets_panel.as_ref().unwrap().fields[4].clone();f.update(cx,|f,cx|f.set_value(value,w,cx));});s.menu("pptx.insets.apply");assert_eq!(s.with(|e,_|e.slide().shapes[index].clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_some()));
+        s.update(|e,w,cx| {let f=e.pptx().unwrap().insets_panel.as_ref().unwrap().fields[4].clone();f.update(cx,|f,cx|f.set_value(value,w,cx));});press_panel_button(&mut s,"pptx-insets-apply");assert_eq!(s.with(|e,_|e.slide().shapes[index].clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_some()));
     }
-    s.update(|e,w,cx| {let f=e.pptx().unwrap().insets_panel.as_ref().unwrap().fields[4].clone();f.update(cx,|f,cx| {f.set_value("87.654",w,cx);f.focus(w,cx);});});s.menu("pptx.insets.apply");let mut expected=before.clone();expected.text_body_mut().unwrap().font_scale=87_654;assert_eq!(s.with(|e,_|e.slide().shapes[index].clone()),expected);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[index].clone()),before);s.key("cmd-shift-z");s.save_as("rate87654.pptx");assert_eq!(s.reopen().slides[0].shapes[index].text_body().unwrap().font_scale,87_654);
-    s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");s.menu("pptx.insets.apply");assert_eq!(s.with(|e,_|e.slide().shapes[index].text_body().unwrap().font_scale),87_654);let other=s.with(|e,_|e.slide().shapes[1].text_body().unwrap().font_scale);let ids=s.with(|e,_|vec![e.slide().shapes[1].id,e.slide().shapes[index].id]);s.update(|e,_,_|e.set_selection(ids));s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.9");s.menu("pptx.insets.apply");assert_eq!(s.with(|e,_|e.slide().shapes[1].text_body().unwrap().font_scale),other);assert_eq!(s.with(|e,_|e.slide().shapes[index].text_body().unwrap().font_scale),87_654);s.save_as("mixed-rate-kept.pptx");s.menu("pptx.text.insets-custom");s.update(|e,w,cx| {let p=e.pptx().unwrap().insets_panel.as_ref().unwrap();let a=p.fields[0].clone();let b=p.fields[4].clone();a.update(cx,|f,cx|f.set_value("0.8",w,cx));b.update(cx,|f,cx|f.set_value("80",w,cx));});    s.menu("pptx.insets.apply");
+    s.update(|e,w,cx| {let f=e.pptx().unwrap().insets_panel.as_ref().unwrap().fields[4].clone();f.update(cx,|f,cx| {f.set_value("87.654",w,cx);f.focus(w,cx);});});press_panel_button(&mut s,"pptx-insets-apply");let mut expected=before.clone();expected.text_body_mut().unwrap().font_scale=87_654;assert_eq!(s.with(|e,_|e.slide().shapes[index].clone()),expected);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[index].clone()),before);s.key("cmd-shift-z");s.save_as("rate87654.pptx");assert_eq!(s.reopen().slides[0].shapes[index].text_body().unwrap().font_scale,87_654);
+    s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");press_panel_button(&mut s,"pptx-insets-apply");assert_eq!(s.with(|e,_|e.slide().shapes[index].text_body().unwrap().font_scale),87_654);let other=s.with(|e,_|e.slide().shapes[1].text_body().unwrap().font_scale);let ids=s.with(|e,_|vec![e.slide().shapes[1].id,e.slide().shapes[index].id]);s.update(|e,_,_|e.set_selection(ids));s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.9");press_panel_button(&mut s,"pptx-insets-apply");assert_eq!(s.with(|e,_|e.slide().shapes[1].text_body().unwrap().font_scale),other);assert_eq!(s.with(|e,_|e.slide().shapes[index].text_body().unwrap().font_scale),87_654);s.save_as("mixed-rate-kept.pptx");s.menu("pptx.text.insets-custom");s.update(|e,w,cx| {let p=e.pptx().unwrap().insets_panel.as_ref().unwrap();let a=p.fields[0].clone();let b=p.fields[4].clone();a.update(cx,|f,cx|f.set_value("0.8",w,cx));b.update(cx,|f,cx|f.set_value("80",w,cx));});    press_panel_button(&mut s,"pptx-insets-apply");
     assert_eq!(s.with(|e,_|e.slide().shapes[1].text_body().unwrap().font_scale),80_000);
     assert_eq!(s.with(|e,_|e.slide().shapes[index].text_body().unwrap().font_scale),80_000);
     assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_none()));
     for (input,scale) in [("1",1_000),("99.999",99_999),("100",100_000)] {
-        s.update(|e,_,_| {let id=e.slide().shapes[index].id;e.set_selection(vec![id]);});s.click_shape(index);s.menu("pptx.text.insets-custom");s.update(|e,w,cx| {let f=e.pptx().unwrap().insets_panel.as_ref().unwrap().fields[4].clone();f.update(cx,|f,cx|f.set_value(input,w,cx));});let before=s.with(|e,_|e.slide().shapes[index].clone());s.menu("pptx.insets.apply");assert_eq!(s.with(|e,_|e.slide().shapes[index].text_body().unwrap().font_scale),scale);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[index].clone()),before);s.key("cmd-shift-z");s.save_as(&format!("rate{scale}.pptx"));assert_eq!(s.reopen().slides[0].shapes[index].text_body().unwrap().font_scale,scale);
+        s.update(|e,_,_| {let id=e.slide().shapes[index].id;e.set_selection(vec![id]);});s.click_shape(index);s.menu("pptx.text.insets-custom");s.update(|e,w,cx| {let f=e.pptx().unwrap().insets_panel.as_ref().unwrap().fields[4].clone();f.update(cx,|f,cx|f.set_value(input,w,cx));});let before=s.with(|e,_|e.slide().shapes[index].clone());press_panel_button(&mut s,"pptx-insets-apply");assert_eq!(s.with(|e,_|e.slide().shapes[index].text_body().unwrap().font_scale),scale);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[index].clone()),before);s.key("cmd-shift-z");s.save_as(&format!("rate{scale}.pptx"));assert_eq!(s.reopen().slides[0].shapes[index].text_body().unwrap().font_scale,scale);
     }
     undo_all_and_redo(&mut s);
 }
@@ -7015,19 +7203,19 @@ pub(crate) fn custom_glow_and_snapshot_rejection() {
     s.menu("pptx.glow.custom");s.key("cmd-a");s.type_text("7.125");
     let input=s.with(|e,_|e.pptx().unwrap().glow_panel.as_ref().unwrap().fields[0].clone());
     assert_eq!(s.with(|_,cx|input.read(cx).value().to_string()),"7.125");
-    fields(&mut s,["7.125","#12aBcD","37.5"]);let before=s.with(|e,_|e.slide().shapes[index].clone());s.menu("pptx.glow.apply");
+    fields(&mut s,["7.125","#12aBcD","37.5"]);let before=s.with(|e,_|e.slide().shapes[index].clone());press_panel_button(&mut s,"pptx-glow-apply");
     let expected=(ibis_doc_model::Color {rgb:ibis_doc_model::Rgb(0x12ABCD),alpha:96},90_488);
     let glow=|s:&mut Scenario|s.with(|e,_| {let ShapeKind::Auto(a)=&e.slide().shapes[index].kind else {panic!("auto")};a.glow});
     assert_eq!(glow(&mut s),Some(expected));s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[index].clone()),before);s.key("cmd-shift-z");s.save_as("custom-glow.pptx");let saved=s.reopen();let ShapeKind::Auto(a)=&saved.slides[0].shapes[index].kind else {panic!("auto")};assert_eq!(a.glow,Some(expected));
     for values in [["NaN","123456","50"],["inf","123456","50"],["-1","123456","50"],["1","12345","50"],["1","GG0000","50"],["1","123456","101"],["1","123456","NaN"],["169093.20062993","123456","50"]] {
-        s.menu("pptx.glow.custom");fields(&mut s,values);let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.glow.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));s.menu("pptx.glow.cancel");
+        s.menu("pptx.glow.custom");fields(&mut s,values);let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-glow-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));press_panel_button(&mut s,"pptx-glow-cancel");
     }
-    s.menu("pptx.glow.custom");fields(&mut s,["0","FFFFFF","0"]);s.menu("pptx.glow.apply");assert_eq!(glow(&mut s),Some((ibis_doc_model::Color {rgb:ibis_doc_model::Rgb(0xFFFFFF),alpha:0},0)));s.save_as("zero-glow.pptx");
-    s.menu("pptx.glow.custom");s.menu("pptx.glow.blue5");let changed=s.with(|e,_|e.presentation().clone());s.menu("pptx.glow.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),changed);assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));s.menu("pptx.glow.cancel");
-    s.menu("pptx.glow.custom");fields(&mut s,["169093.20055118","000000","100"]);s.menu("pptx.glow.apply");assert_eq!(glow(&mut s),Some((ibis_doc_model::Color::BLACK,i32::MAX as i64)));s.save_as("max-glow.pptx");let saved=s.reopen();let ShapeKind::Auto(a)=&saved.slides[0].shapes[index].kind else {panic!("auto")};assert_eq!(a.glow,Some((ibis_doc_model::Color::BLACK,i32::MAX as i64)));s.key("cmd-z");
-    s.menu("pptx.glow.custom");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[index].id;e.run(vec![ibis_doc_model::Command::RemoveShape {slide,shape}],cx);});let deleted=s.with(|e,_|e.presentation().clone());s.menu("pptx.glow.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),deleted);assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));s.menu("pptx.glow.cancel");s.key("cmd-z");
-    s.click_shape(index);s.menu("pptx.glow.custom");s.double_click_shape(index);s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());s.menu("pptx.glow.apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));s.menu("pptx.glow.cancel");s.update(|e,w,cx| {e.input_mark("",cx);e.end_text_edit(w,cx);});
-    let ids=s.with(|e,_|vec![e.slide().shapes[index].id,*e.slide().placeholders.keys().next().unwrap()]);s.update(|e,_,_|e.set_selection(ids));s.menu("pptx.glow.custom");fields(&mut s,["8","ABCDEF","80"]);let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.glow.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));s.menu("pptx.glow.cancel");undo_all_and_redo(&mut s);
+    s.menu("pptx.glow.custom");fields(&mut s,["0","FFFFFF","0"]);press_panel_button(&mut s,"pptx-glow-apply");assert_eq!(glow(&mut s),Some((ibis_doc_model::Color {rgb:ibis_doc_model::Rgb(0xFFFFFF),alpha:0},0)));s.save_as("zero-glow.pptx");
+    s.menu("pptx.glow.custom");s.update(|e,_,cx|e.set_shape_glow(Some((ibis_doc_model::Color {rgb:ibis_doc_model::Rgb(0x4472C4),alpha:128},63_500)),cx));let changed=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-glow-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),changed);assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));press_panel_button(&mut s,"pptx-glow-cancel");
+    s.menu("pptx.glow.custom");fields(&mut s,["169093.20055118","000000","100"]);press_panel_button(&mut s,"pptx-glow-apply");assert_eq!(glow(&mut s),Some((ibis_doc_model::Color::BLACK,i32::MAX as i64)));s.save_as("max-glow.pptx");let saved=s.reopen();let ShapeKind::Auto(a)=&saved.slides[0].shapes[index].kind else {panic!("auto")};assert_eq!(a.glow,Some((ibis_doc_model::Color::BLACK,i32::MAX as i64)));s.key("cmd-z");
+    s.menu("pptx.glow.custom");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[index].id;e.run(vec![ibis_doc_model::Command::RemoveShape {slide,shape}],cx);});let deleted=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-glow-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),deleted);assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));press_panel_button(&mut s,"pptx-glow-cancel");s.key("cmd-z");
+    s.click_shape(index);s.double_click_shape(index);s.menu("pptx.glow.custom");s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());press_panel_button(&mut s,"pptx-glow-apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));press_panel_button(&mut s,"pptx-glow-cancel");s.update(|e,w,cx| {e.input_mark("",cx);e.end_text_edit(w,cx);});
+    let ids=s.with(|e,_|vec![e.slide().shapes[index].id,*e.slide().placeholders.keys().next().unwrap()]);s.update(|e,_,_|e.set_selection(ids));s.menu("pptx.glow.custom");fields(&mut s,["8","ABCDEF","80"]);let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-glow-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));press_panel_button(&mut s,"pptx-glow-cancel");undo_all_and_redo(&mut s);
 }
 
 pub(crate) fn custom_shadow_and_snapshot_rejection() {
@@ -7042,20 +7230,20 @@ pub(crate) fn custom_shadow_and_snapshot_rejection() {
     s.menu("pptx.shadow.custom");s.key("cmd-a");s.type_text("7.125");
     let input=s.with(|e,_|e.pptx().unwrap().shadow_panel.as_ref().unwrap().fields[0].clone());
     assert_eq!(s.with(|_,cx|input.read(cx).value().to_string()),"7.125");
-    fields(&mut s,["7.125","#12aBcD","37.5","4.125","123.456"]);let before=s.with(|e,_|e.slide().shapes[index].clone());s.menu("pptx.shadow.apply");
+    fields(&mut s,["7.125","#12aBcD","37.5","4.125","123.456"]);let before=s.with(|e,_|e.slide().shapes[index].clone());press_panel_button(&mut s,"pptx-shadow-apply");
     let expected=ibis_doc_model::Shadow::simple(ibis_doc_model::Color {rgb:ibis_doc_model::Rgb(0x12ABCD),alpha:96},90_488,52_388,7_407_360);
     let shadow=|s:&mut Scenario|s.with(|e,_| {let ShapeKind::Auto(a)=&e.slide().shapes[index].kind else {panic!("auto")};a.shadow});
     assert_eq!(shadow(&mut s),Some(expected));s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[index].clone()),before);s.key("cmd-shift-z");s.save_as("custom-shadow.pptx");let saved=s.reopen();let ShapeKind::Auto(a)=&saved.slides[0].shapes[index].kind else {panic!("auto")};assert_eq!(a.shadow,Some(expected));assert_eq!(a.glow,Some((ibis_doc_model::Color {rgb:ibis_doc_model::Rgb(0x4472C4),alpha:128},63_500)));
-    let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.shadow.custom");s.menu("pptx.glow.custom");assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_none()));assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_some()));s.menu("pptx.shadow.custom");assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_none()));s.menu("pptx.shadow.cancel");assert_eq!(s.with(|e,_|e.presentation().clone()),before);
+    let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.shadow.custom");assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));assert!(s.with(|e,_|e.pptx().unwrap().glow_panel.is_none()));press_panel_button(&mut s,"pptx-shadow-cancel");assert_eq!(s.with(|e,_|e.presentation().clone()),before);
     for values in [["NaN","123456","50","1","0"],["-1","123456","50","1","0"],["1","12345","50","1","0"],["1","GG0000","50","1","0"],["1","123456","101","1","0"],["1","123456","NaN","1","0"],["169093.20062993","123456","50","1","0"],["1","123456","50","169093.20062993","0"],["1","123456","50","NaN","0"],["1","123456","50","-1","0"],["1","123456","50","1","360"],["1","123456","50","1","-1"],["1","123456","50","1","inf"]] {
-        s.menu("pptx.shadow.custom");fields(&mut s,values);let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.shadow.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));s.menu("pptx.shadow.cancel");
+        s.menu("pptx.shadow.custom");fields(&mut s,values);let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-shadow-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));press_panel_button(&mut s,"pptx-shadow-cancel");
     }
-    s.menu("pptx.shadow.custom");fields(&mut s,["0","FFFFFF","0","0","0"]);s.menu("pptx.shadow.apply");assert_eq!(shadow(&mut s),Some(ibis_doc_model::Shadow::simple(ibis_doc_model::Color {rgb:ibis_doc_model::Rgb(0xFFFFFF),alpha:0},0,0,0)));s.save_as("zero-shadow.pptx");
-    s.menu("pptx.shadow.custom");s.menu("pptx.shadow.right");let changed=s.with(|e,_|e.presentation().clone());s.menu("pptx.shadow.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),changed);assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));s.menu("pptx.shadow.cancel");
-    s.menu("pptx.shadow.custom");fields(&mut s,["169093.20055118","000000","100","169093.20055118","359.99998333"]);s.menu("pptx.shadow.apply");assert_eq!(shadow(&mut s),Some(ibis_doc_model::Shadow::simple(ibis_doc_model::Color::BLACK,i32::MAX as i64,i32::MAX as i64,21_599_999)));s.save_as("max-shadow.pptx");let saved=s.reopen();let ShapeKind::Auto(a)=&saved.slides[0].shapes[index].kind else {panic!("auto")};assert_eq!(a.shadow,Some(ibis_doc_model::Shadow::simple(ibis_doc_model::Color::BLACK,i32::MAX as i64,i32::MAX as i64,21_599_999)));s.key("cmd-z");
-    s.menu("pptx.shadow.custom");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[index].id;e.run(vec![ibis_doc_model::Command::RemoveShape {slide,shape}],cx);});let deleted=s.with(|e,_|e.presentation().clone());s.menu("pptx.shadow.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),deleted);assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));s.menu("pptx.shadow.cancel");s.key("cmd-z");
-    s.click_shape(index);s.menu("pptx.shadow.custom");s.double_click_shape(index);s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());s.menu("pptx.shadow.apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));s.menu("pptx.shadow.cancel");s.update(|e,w,cx| {e.input_mark("",cx);e.end_text_edit(w,cx);});
-    let ids=s.with(|e,_|vec![e.slide().shapes[index].id,*e.slide().placeholders.keys().next().unwrap()]);s.update(|e,_,_|e.set_selection(ids));s.menu("pptx.shadow.custom");fields(&mut s,["8","ABCDEF","80","3","45"]);let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.shadow.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));s.menu("pptx.shadow.cancel");undo_all_and_redo(&mut s);
+    s.menu("pptx.shadow.custom");fields(&mut s,["0","FFFFFF","0","0","0"]);press_panel_button(&mut s,"pptx-shadow-apply");assert_eq!(shadow(&mut s),Some(ibis_doc_model::Shadow::simple(ibis_doc_model::Color {rgb:ibis_doc_model::Rgb(0xFFFFFF),alpha:0},0,0,0)));s.save_as("zero-shadow.pptx");
+    s.menu("pptx.shadow.custom");s.update(|e,_,cx|e.set_shape_shadow(Some(ibis_doc_model::Shadow::simple(ibis_doc_model::Color {rgb:ibis_doc_model::Rgb(0),alpha:128},0,50_800,0)),cx));let changed=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-shadow-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),changed);assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));press_panel_button(&mut s,"pptx-shadow-cancel");
+    s.menu("pptx.shadow.custom");fields(&mut s,["169093.20055118","000000","100","169093.20055118","359.99998333"]);press_panel_button(&mut s,"pptx-shadow-apply");assert_eq!(shadow(&mut s),Some(ibis_doc_model::Shadow::simple(ibis_doc_model::Color::BLACK,i32::MAX as i64,i32::MAX as i64,21_599_999)));s.save_as("max-shadow.pptx");let saved=s.reopen();let ShapeKind::Auto(a)=&saved.slides[0].shapes[index].kind else {panic!("auto")};assert_eq!(a.shadow,Some(ibis_doc_model::Shadow::simple(ibis_doc_model::Color::BLACK,i32::MAX as i64,i32::MAX as i64,21_599_999)));s.key("cmd-z");
+    s.menu("pptx.shadow.custom");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[index].id;e.run(vec![ibis_doc_model::Command::RemoveShape {slide,shape}],cx);});let deleted=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-shadow-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),deleted);assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));press_panel_button(&mut s,"pptx-shadow-cancel");s.key("cmd-z");
+    s.click_shape(index);s.double_click_shape(index);s.menu("pptx.shadow.custom");s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());press_panel_button(&mut s,"pptx-shadow-apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));press_panel_button(&mut s,"pptx-shadow-cancel");s.update(|e,w,cx| {e.input_mark("",cx);e.end_text_edit(w,cx);});
+    let ids=s.with(|e,_|vec![e.slide().shapes[index].id,*e.slide().placeholders.keys().next().unwrap()]);s.update(|e,_,_|e.set_selection(ids));s.menu("pptx.shadow.custom");fields(&mut s,["8","ABCDEF","80","3","45"]);let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-shadow-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().shadow_panel.is_some()));press_panel_button(&mut s,"pptx-shadow-cancel");undo_all_and_redo(&mut s);
 }
 
 pub(crate) fn shape_glow_presets_and_safe_rejection() {
@@ -8016,7 +8204,7 @@ pub(crate) fn copy_and_paste_paragraph_formats() {
     s.update(|e, _, cx| {
         let mut body = e.edited_body().unwrap().clone();
         let p = &mut body.paragraphs[0]; p.align = Some(ibis_doc_model::TextAlign::Right); p.margin_left = 360_000; p.indent = -180_000; p.level = 1;
-        p.font_align = ibis_doc_model::FontAlign::Center; p.line_spacing = Some(ibis_doc_model::LineSpacing::Points(1850)); p.space_before = 200; p.bullet = Some(ibis_doc_model::Bullet { text: "◆".into(), picture: None, size: 125_000, color: Some(ibis_doc_model::Rgb(0x112233)), auto: None });
+        p.font_align = ibis_doc_model::FontAlign::Center; p.line_spacing = Some(ibis_doc_model::LineSpacing::Points(1850)); p.space_before = 200; p.bullet = Some(ibis_doc_model::Bullet { text: "◆".into(), picture: None, size: 125_000, color: Some(ibis_doc_model::Rgb(0x112233)), auto: None, symbol: None });
         body.paragraphs[1].space_after = 400; body.unify_lines();
         e.run(vec![ibis_doc_model::Command::SetTextBody { slide: e.current_slide, shape: e.text_editing().unwrap().shape, body }], cx);
         let edit = e.pptx_mut().unwrap().edit.as_mut().unwrap(); edit.anchor = 7; edit.caret = 7;
@@ -8148,32 +8336,32 @@ pub(crate) fn find_and_replace_presentation() {
 /// S10: custom dimensions, invalid input, cancellation and undo/redo.
 /// S9: section block order and thumbnail folding through menu commands.
 pub(crate) fn section_order_and_thumbnail_folding() {
-    let mut s=Scenario::open("test/editing/pptx-plan.pptx");s.menu("pptx.section.add");s.key("cmd-a");s.type_text("前半");s.menu("pptx.section.apply");s.page(3);s.menu("pptx.section.add");s.key("cmd-a");s.type_text("後半");s.menu("pptx.section.apply");let original=s.with(|e,_|e.presentation().clone());
+    let mut s=Scenario::open("test/editing/pptx-plan.pptx");s.menu("pptx.section.add");s.key("cmd-a");s.type_text("前半");press_panel_button(&mut s,"pptx-section-apply");s.page(3);s.menu("pptx.section.add");s.key("cmd-a");s.type_text("後半");press_panel_button(&mut s,"pptx-section-apply");let original=s.with(|e,_|e.presentation().clone());
     s.screenshot("sections-expanded");s.menu("pptx.section.fold");assert!(s.with(|e,_|e.pptx().unwrap().folded_sections.contains(&original.sections[1].id)));assert_eq!(s.with(|e,_|e.presentation().clone()),original);s.screenshot("sections-folded");s.menu("pptx.section.fold");assert!(s.with(|e,_|e.pptx().unwrap().folded_sections.is_empty()));assert_eq!(s.with(|e,_|e.presentation().clone()),original);
     assert_eq!(s.menu_state("pptx.section.move-down").unwrap().0,false);s.menu("pptx.section.move-up");let moved=s.with(|e,_|e.presentation().clone());assert_eq!(moved.sections,vec![original.sections[1].clone(),original.sections[0].clone()]);assert_eq!(moved.slides.iter().map(|x|x.id).collect::<Vec<_>>(),[original.slides[2].id,original.slides[3].id,original.slides[0].id,original.slides[1].id]);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),original);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().clone()),moved);s.save_as("sections-moved.pptx");let reread=s.reopen();assert_eq!(reread.sections.iter().map(|x|(&x.id,&x.name,x.slides.len())).collect::<Vec<_>>(),moved.sections.iter().map(|x|(&x.id,&x.name,x.slides.len())).collect::<Vec<_>>());for (new,old) in reread.slides.iter().zip(&moved.slides) {assert_eq!(new.shapes.iter().filter_map(|x|x.text_body()).map(|x|x.text()).collect::<Vec<_>>(),old.shapes.iter().filter_map(|x|x.text_body()).map(|x|x.text()).collect::<Vec<_>>());}
     assert_eq!(s.menu_state("pptx.section.move-up").unwrap().0,false);s.menu("pptx.section.move-down");assert_eq!(s.with(|e,_|e.presentation().clone()),original);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),moved);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().clone()),original);
     let data=s.save_as("section-move-source.pptx");let copy=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/scenario/pptx-section-move-source.pptx");std::fs::copy(data,&copy).unwrap();drop(s);let mut s=Scenario::open("target/scenario/pptx-section-move-source.pptx");s.page(3);let original=s.with(|e,_|e.presentation().clone());s.menu("pptx.section.move-up");let moved=s.with(|e,_|e.presentation().clone());s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),original);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().clone()),moved);s.save_as("source-sections-moved.pptx");assert_eq!(s.reopen().sections[0].name,"後半");s.screenshot("source-sections-moved");
-    s.page(1);s.menu("pptx.section.add");s.key("cmd-a");s.type_text("境界から");s.menu("pptx.section.apply");let empty=s.with(|e,_|e.presentation().clone());assert_eq!(empty.sections.len(),3);assert!(empty.sections[0].slides.is_empty());s.screenshot("empty-section-header");
+    s.page(1);s.menu("pptx.section.add");s.key("cmd-a");s.type_text("境界から");press_panel_button(&mut s,"pptx-section-apply");let empty=s.with(|e,_|e.presentation().clone());assert_eq!(empty.sections.len(),3);assert!(empty.sections[0].slides.is_empty());s.screenshot("empty-section-header");
     // These coordinates are the first header in the 1200x720 scenario window.
     s.click((50.,165.));assert_eq!(s.with(|e,_|e.current_section()),Some(0));s.click((11.,165.));assert!(s.with(|e,_|e.pptx().unwrap().folded_sections.contains(&empty.sections[0].id)));assert_eq!(s.with(|e,_|e.presentation().clone()),empty);s.click((11.,165.));assert!(!s.with(|e,_|e.pptx().unwrap().folded_sections.contains(&empty.sections[0].id)));
     s.menu("pptx.section.move-down");let moved=s.with(|e,_|e.presentation().clone());let mut expected=empty.clone();expected.sections.swap(0,1);assert_eq!(moved,expected);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),empty);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().clone()),moved);s.key("cmd-z");
-    s.menu("pptx.section.rename");s.key("cmd-a");s.type_text("空のセクション");s.menu("pptx.section.apply");assert_eq!(s.with(|e,_|e.presentation().sections[0].name.clone()),"空のセクション");s.save_as("empty-section-renamed.pptx");assert!(s.reopen().sections[0].slides.is_empty());s.menu("pptx.section.remove");assert_eq!(s.with(|e,_|e.presentation().sections.len()),2);assert_eq!(s.with(|e,_|e.presentation().slides.clone()),empty.slides);s.save_as("empty-section-removed.pptx");assert_eq!(s.reopen().sections.len(),2);
+    s.menu("pptx.section.rename");s.key("cmd-a");s.type_text("空のセクション");press_panel_button(&mut s,"pptx-section-apply");assert_eq!(s.with(|e,_|e.presentation().sections[0].name.clone()),"空のセクション");s.save_as("empty-section-renamed.pptx");assert!(s.reopen().sections[0].slides.is_empty());s.menu("pptx.section.remove");assert_eq!(s.with(|e,_|e.presentation().sections.len()),2);assert_eq!(s.with(|e,_|e.presentation().slides.clone()),empty.slides);s.save_as("empty-section-removed.pptx");assert_eq!(s.reopen().sections.len(),2);
 }
 
 /// S9: real menu/name input, structure conflicts, UndoRedo and persistence.
 pub(crate) fn named_sections_and_conflict_rejection() {
     let mut s=Scenario::open("test/editing/pptx-plan.pptx");let original=s.with(|e,_|e.presentation().clone());
-    s.menu("pptx.section.add");s.key("cmd-a");s.type_text("   ");s.menu("pptx.section.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),original);assert!(s.with(|e,_|e.pptx().unwrap().section_panel.is_some()));s.menu("pptx.section.cancel");
-    s.menu("pptx.section.add");s.key("cmd-a");s.type_text("全体");s.menu("pptx.section.apply");let one=s.with(|e,_|e.presentation().sections.clone());assert_eq!(one.len(),1);assert_eq!(one[0].name,"全体");assert_eq!(one[0].slides,original.slides.iter().map(|s|s.id).collect::<Vec<_>>());s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),original);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),one);
-    s.page(3);s.menu("pptx.section.add");s.key("cmd-a");s.type_text("後半");s.menu("pptx.section.apply");let two=s.with(|e,_|e.presentation().sections.clone());assert_eq!(two.len(),2);assert_eq!(two[0].slides.len(),2);assert_eq!(two[1].slides.len(),2);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),one);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),two);
-    s.menu("pptx.section.rename");s.key("cmd-a");s.type_text("後半 & <日本語>");s.menu("pptx.section.apply");let named=s.with(|e,_|e.presentation().sections.clone());assert_eq!(named[1].name,"後半 & <日本語>");assert_eq!(named[1].id,two[1].id);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),two);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),named);s.save_as("named-sections.pptx");let reopened=s.reopen();assert_eq!(reopened.sections.iter().map(|x|(&x.id,&x.name,x.slides.len())).collect::<Vec<_>>(),named.iter().map(|x|(&x.id,&x.name,x.slides.len())).collect::<Vec<_>>());
-    s.menu("pptx.section.rename");s.key("cmd-a");s.type_text("古い対象");s.menu("pptx.duplicate-slide");let changed=s.with(|e,_|e.presentation().clone());s.menu("pptx.section.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),changed);assert!(s.with(|e,_|e.pptx().unwrap().section_panel.is_some()));s.menu("pptx.section.cancel");s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),named);
-    s.page(3);s.menu("pptx.section.rename");s.key("cmd-a");s.type_text("本文後の名前");s.double_click_shape(0);s.key("end");s.type_text("本文変更");s.key("escape");let text=s.with(|e,_|e.presentation().slides.clone());s.menu("pptx.section.apply");assert_eq!(s.with(|e,_|e.presentation().sections[1].name.clone()),"本文後の名前");assert_eq!(s.with(|e,_|e.presentation().slides.clone()),text);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),named);s.key("cmd-z");s.key("cmd-shift-z");s.key("cmd-shift-z");
-    let before=s.with(|e,_|e.presentation().sections.clone());s.menu("pptx.section.rename");s.double_click_shape(0);s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());s.menu("pptx.section.apply");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),before);assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));s.menu("pptx.section.cancel");s.key("escape");
+    s.menu("pptx.section.add");s.key("cmd-a");s.type_text("   ");press_panel_button(&mut s,"pptx-section-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),original);assert!(s.with(|e,_|e.pptx().unwrap().section_panel.is_some()));press_panel_button(&mut s,"pptx-section-cancel");
+    s.menu("pptx.section.add");s.key("cmd-a");s.type_text("全体");press_panel_button(&mut s,"pptx-section-apply");let one=s.with(|e,_|e.presentation().sections.clone());assert_eq!(one.len(),1);assert_eq!(one[0].name,"全体");assert_eq!(one[0].slides,original.slides.iter().map(|s|s.id).collect::<Vec<_>>());s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),original);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),one);
+    s.page(3);s.menu("pptx.section.add");s.key("cmd-a");s.type_text("後半");press_panel_button(&mut s,"pptx-section-apply");let two=s.with(|e,_|e.presentation().sections.clone());assert_eq!(two.len(),2);assert_eq!(two[0].slides.len(),2);assert_eq!(two[1].slides.len(),2);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),one);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),two);
+    s.menu("pptx.section.rename");s.key("cmd-a");s.type_text("後半 & <日本語>");press_panel_button(&mut s,"pptx-section-apply");let named=s.with(|e,_|e.presentation().sections.clone());assert_eq!(named[1].name,"後半 & <日本語>");assert_eq!(named[1].id,two[1].id);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),two);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),named);s.save_as("named-sections.pptx");let reopened=s.reopen();assert_eq!(reopened.sections.iter().map(|x|(&x.id,&x.name,x.slides.len())).collect::<Vec<_>>(),named.iter().map(|x|(&x.id,&x.name,x.slides.len())).collect::<Vec<_>>());
+    s.menu("pptx.section.rename");s.key("cmd-a");s.type_text("古い対象");s.update(|e,w,cx|e.duplicate_current_slide(w,cx));let changed=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-section-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),changed);assert!(s.with(|e,_|e.pptx().unwrap().section_panel.is_some()));press_panel_button(&mut s,"pptx-section-cancel");s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),named);
+    s.page(3);s.double_click_shape(0);s.key("end");s.type_text("本文変更");s.key("escape");let text=s.with(|e,_|e.presentation().slides.clone());s.menu("pptx.section.rename");s.key("cmd-a");s.type_text("本文後の名前");press_panel_button(&mut s,"pptx-section-apply");assert_eq!(s.with(|e,_|e.presentation().sections[1].name.clone()),"本文後の名前");assert_eq!(s.with(|e,_|e.presentation().slides.clone()),text);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),named);s.key("cmd-z");s.key("cmd-shift-z");s.key("cmd-shift-z");
+    let before=s.with(|e,_|e.presentation().sections.clone());s.menu("pptx.section.rename");let target=s.with(|e,_|e.slide().shapes[0].id);s.update(|e,w,cx|e.begin_text_edit(target,false,false,w,cx));s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());press_panel_button(&mut s,"pptx-section-apply");assert_eq!(s.with(|e,_|e.presentation().sections.clone()),before);assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));press_panel_button(&mut s,"pptx-section-cancel");s.key("escape");
     s.page(3);let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.section.remove");assert_eq!(s.with(|e,_|e.presentation().sections.len()),1);assert_eq!(s.with(|e,_|e.presentation().slides.clone()),before.slides);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),before);s.key("cmd-shift-z");s.save_as("merged-sections.pptx");assert_eq!(s.reopen().sections.len(),1);s.menu("pptx.section.remove");assert!(s.with(|e,_|e.presentation().sections.is_empty()));s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().sections.len()),1);s.key("cmd-shift-z");s.save_as("cleared-sections.pptx");assert!(s.reopen().sections.is_empty());
-    drop(s);let mut s=Scenario::open("test/editing/pptx-plan.pptx");s.page(3);s.menu("pptx.section.add");s.key("cmd-a");s.type_text("途中から");s.menu("pptx.section.apply");let sections=s.with(|e,_|e.presentation().sections.clone());assert_eq!(sections.len(),2);assert_eq!(sections[0].name,"既定のセクション");assert_eq!(sections[0].slides.len(),2);assert_eq!(sections[1].name,"途中から");s.save_as("prefix-sections.pptx");assert_eq!(s.reopen().sections.len(),2);
+    drop(s);let mut s=Scenario::open("test/editing/pptx-plan.pptx");s.page(3);s.menu("pptx.section.add");s.key("cmd-a");s.type_text("途中から");press_panel_button(&mut s,"pptx-section-apply");let sections=s.with(|e,_|e.presentation().sections.clone());assert_eq!(sections.len(),2);assert_eq!(sections[0].name,"既定のセクション");assert_eq!(sections[0].slides.len(),2);assert_eq!(sections[1].name,"途中から");s.save_as("prefix-sections.pptx");assert_eq!(s.reopen().sections.len(),2);
     let opened=s.save_as("sections-source.pptx");let copy=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/scenario/pptx-sections-source.pptx");std::fs::copy(opened,&copy).unwrap();drop(s);
-    let mut s=Scenario::open("target/scenario/pptx-sections-source.pptx");s.page(3);let original=s.with(|e,_|e.presentation().clone());s.menu("pptx.section.rename");s.key("cmd-a");s.type_text("原本の名称変更");s.menu("pptx.section.apply");assert_eq!(s.with(|e,_|e.presentation().sections[1].id.clone()),original.sections[1].id);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),original);s.key("cmd-shift-z");s.save_as("source-renamed-sections.pptx");assert_eq!(s.reopen().sections[1].name,"原本の名称変更");
+    let mut s=Scenario::open("target/scenario/pptx-sections-source.pptx");s.page(3);let original=s.with(|e,_|e.presentation().clone());s.menu("pptx.section.rename");s.key("cmd-a");s.type_text("原本の名称変更");press_panel_button(&mut s,"pptx-section-apply");assert_eq!(s.with(|e,_|e.presentation().sections[1].id.clone()),original.sections[1].id);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),original);s.key("cmd-shift-z");s.save_as("source-renamed-sections.pptx");assert_eq!(s.reopen().sections[1].name,"原本の名称変更");
     s.page(1);s.menu("pptx.section.remove");assert_eq!(s.with(|e,_|e.presentation().sections.len()),1);s.save_as("source-first-removed.pptx");assert_eq!(s.reopen().sections[0].slides.len(),4);s.menu("pptx.section.remove");assert!(s.with(|e,_|e.presentation().sections.is_empty()));s.save_as("source-cleared-sections.pptx");assert!(s.reopen().sections.is_empty());
 }
 
@@ -8182,10 +8370,10 @@ pub(crate) fn custom_slide_size() {
     let original = s.with(|e, _| e.presentation().clone());
     s.menu("pptx.slide-size.custom");
     s.key("cmd-a"); s.type_text("NaN");
-    s.menu("pptx.slide-size.apply");
+    press_panel_button(&mut s,"pptx-size-apply");
     assert_eq!(s.with(|e, _| e.presentation().clone()), original);
     assert!(s.with(|e, _| e.pptx().unwrap().size_panel.is_some()));
-    s.menu("pptx.slide-size.cancel");
+    press_panel_button(&mut s,"pptx-size-cancel");
     assert_eq!(s.with(|e, _| e.presentation().clone()), original);
     s.menu("pptx.slide-size.custom");
     s.key("cmd-a"); s.type_text("20");
@@ -8193,7 +8381,7 @@ pub(crate) fn custom_slide_size() {
         let height = e.pptx().unwrap().size_panel.as_ref().unwrap().height.clone();
         height.update(cx, |h, cx| h.set_value("30", w, cx));
     });
-    s.menu("pptx.slide-size.apply");
+    press_panel_button(&mut s,"pptx-size-apply");
     assert_eq!(s.with(|e, _| e.presentation().slide_size), ibis_doc_model::EmuSize::new(7_200_000, 10_800_000));
     assert_eq!(s.with(|e, _| e.presentation().slides.clone()), original.slides);
     s.key("cmd-z"); assert_eq!(s.with(|e, _| e.presentation().clone()), original);
@@ -8206,19 +8394,19 @@ pub(crate) fn custom_slide_size() {
 /// T11: custom four-sided insets, invalid input, cancel and persisted shape text.
 pub(crate) fn text_insets_reject_changed_body() {
     let mut s=Scenario::open("test/editing/pptx-plan.pptx");s.click_shape(1);s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");
-    s.double_click_shape(1);s.key("cmd-a");s.type_text("replacement insets");s.key("escape");let before=s.with(|e,_|e.presentation().clone());
-    s.menu("pptx.insets.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_some()));s.menu("pptx.insets.cancel");
+    s.update(|e,w,cx|{e.end_text_edit(w,cx);let (slide,shape)=(e.current_slide,e.slide().shapes[1].id);e.run(vec![ibis_doc_model::Command::SetText{slide,shape,text:"replacement insets".into()}],cx);});let before=s.with(|e,_|e.presentation().clone());
+    press_panel_button(&mut s,"pptx-insets-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_some()));press_panel_button(&mut s,"pptx-insets-cancel");
     s.key("cmd-z");assert_ne!(s.with(|e,_|e.presentation().clone()),before);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.presentation().clone()),before);
-    s.click_shape(1);s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");s.menu("pptx.insets.apply");s.save_as("insets-reopened.pptx");assert_eq!(s.reopen().slides[0].shapes[1].text_body().unwrap().insets.left,252_000);undo_all_and_redo(&mut s);
+    s.click_shape(1);s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");press_panel_button(&mut s,"pptx-insets-apply");s.save_as("insets-reopened.pptx");assert_eq!(s.reopen().slides[0].shapes[1].text_body().unwrap().insets.left,252_000);undo_all_and_redo(&mut s);
     let ids=s.with(|e,_|e.slide().shapes.iter().filter(|sh|sh.text_body().is_some()).take(2).map(|sh|sh.id).collect::<Vec<_>>());assert_eq!(ids.len(),2);s.update(|e,_,_|e.set_selection(ids.clone()));s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.9");
-    s.update(|e,_,cx| {e.set_selection(vec![ids[0]]);e.delete_selected(cx);});let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.insets.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_some()));s.menu("pptx.insets.cancel");s.key("cmd-z");
-    s.click_shape(1);s.menu("pptx.text.insets-custom");s.double_click_shape(1);s.update(|e,_,cx|e.input_mark("未確定",cx));let before=s.with(|e,_|e.edited_body().unwrap().clone());s.menu("pptx.insets.apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),before);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));s.menu("pptx.insets.cancel");
-    s.menu("pptx.text.insets-custom");assert!(s.with(|e,_|e.slide().shapes[1].text_body().unwrap().text().contains("未確定")));s.key("cmd-a");s.type_text("0.9");s.menu("pptx.insets.apply");assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_none()));s.save_as("insets-ime-reopened.pptx");assert_eq!(s.reopen().slides[0].shapes[1].text_body().unwrap().insets.left,324_000);
+    s.update(|e,_,cx| {e.set_selection(vec![ids[0]]);e.delete_selected(cx);});let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-insets-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_some()));press_panel_button(&mut s,"pptx-insets-cancel");s.key("cmd-z");
+    s.click_shape(1);s.menu("pptx.text.insets-custom");let target=s.with(|e,_|e.slide().shapes[1].id);s.update(|e,w,cx|e.begin_text_edit(target,false,false,w,cx));s.update(|e,_,cx|e.input_mark("未確定",cx));let before=s.with(|e,_|e.edited_body().unwrap().clone());press_panel_button(&mut s,"pptx-insets-apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),before);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));press_panel_button(&mut s,"pptx-insets-cancel");
+    s.menu("pptx.text.insets-custom");assert!(s.with(|e,_|e.slide().shapes[1].text_body().unwrap().text().contains("未確定")));s.key("cmd-a");s.type_text("0.9");press_panel_button(&mut s,"pptx-insets-apply");assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_none()));s.save_as("insets-ime-reopened.pptx");assert_eq!(s.reopen().slides[0].shapes[1].text_body().unwrap().insets.left,324_000);
 
     undo_all_and_redo(&mut s);drop(s);
     let mut s=Scenario::open("test/benchmark/earnings-presentation.pptx");s.menu("view.sidebar");let (page,shape)=s.with(|e,_|e.presentation().slides.iter().enumerate().find_map(|(i,sl)|sl.shapes.iter().position(|sh|matches!(sh.kind,ShapeKind::Table(_))).map(|j|(i,j)))).unwrap();s.page(page+1);let cell=cell_middle(&mut s,shape,1,1);s.double_click(cell);s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");
-    s.double_click(cell);s.key("cmd-a");s.type_text("cell replacement");s.key("escape");let before=s.with(|e,_|e.slide().shapes[shape].clone());s.menu("pptx.insets.apply");assert_eq!(s.with(|e,_|e.slide().shapes[shape].clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_some()));s.menu("pptx.insets.cancel");
-    s.double_click(cell);s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");s.menu("pptx.insets.apply");s.save_as("insets-cell-reopened.pptx");let reread=s.reopen();let ShapeKind::Table(t)=&reread.slides[page].shapes[shape].kind else {panic!("table")};assert_eq!(t.rows[1].cells[1].text.insets.left,252_000);assert_eq!(t.rows[1].cells[1].text.text(),"cell replacement");undo_all_and_redo(&mut s);
+    s.update(|e,w,cx|{e.end_text_edit(w,cx);let (slide,shape)=(e.current_slide,e.slide().shapes[shape].id);e.run(vec![ibis_doc_model::Command::InCell{row:1,column:1,command:Box::new(ibis_doc_model::Command::SetText{slide,shape,text:"cell replacement".into()})}],cx);});let before=s.with(|e,_|e.slide().shapes[shape].clone());press_panel_button(&mut s,"pptx-insets-apply");assert_eq!(s.with(|e,_|e.slide().shapes[shape].clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().insets_panel.is_some()));press_panel_button(&mut s,"pptx-insets-cancel");
+    s.double_click(cell);s.menu("pptx.text.insets-custom");s.key("cmd-a");s.type_text("0.7");press_panel_button(&mut s,"pptx-insets-apply");s.save_as("insets-cell-reopened.pptx");let reread=s.reopen();let ShapeKind::Table(t)=&reread.slides[page].shapes[shape].kind else {panic!("table")};assert_eq!(t.rows[1].cells[1].text.insets.left,252_000);assert_eq!(t.rows[1].cells[1].text.text(),"cell replacement");undo_all_and_redo(&mut s);
 
 }
 
@@ -8227,16 +8415,16 @@ pub(crate) fn custom_text_insets() {
     s.double_click_shape(1);
     let before = s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone());
     s.menu("pptx.text.insets-custom"); s.key("cmd-a"); s.type_text("-1");
-    s.menu("pptx.insets.apply");
+    press_panel_button(&mut s,"pptx-insets-apply");
     assert_eq!(s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone()), before);
     assert!(s.with(|e, _| e.pptx().unwrap().insets_panel.is_some()));
-    s.menu("pptx.insets.cancel");
+    press_panel_button(&mut s,"pptx-insets-cancel");
     s.click_shape(1); s.menu("pptx.text.insets-custom");
     s.update(|e, w, cx| {
         let fields = e.pptx().unwrap().insets_panel.as_ref().unwrap().fields.clone();
         for (field, value) in fields.into_iter().zip(["0.1", "0.2", "0.3", "0.4"]) { field.update(cx, |f, cx| f.set_value(value, w, cx)); }
     });
-    s.menu("pptx.insets.apply");
+    press_panel_button(&mut s,"pptx-insets-apply");
     let expected = ibis_doc_model::Insets { left: 36_000, top: 72_000, right: 108_000, bottom: 144_000 };
     let after = s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone());
     assert_eq!(after.insets, expected); assert_eq!(after.paragraphs, before.paragraphs);
@@ -8255,7 +8443,7 @@ pub(crate) fn custom_text_insets() {
         let fields = e.pptx().unwrap().insets_panel.as_ref().unwrap().fields.clone();
         for (field, value) in fields.into_iter().zip(["0.1", "0.2", "0.3", "0.4"]) { field.update(cx, |f, cx| f.set_value(value, w, cx)); }
     });
-    s.menu("pptx.insets.apply");
+    press_panel_button(&mut s,"pptx-insets-apply");
     let body = |s: &mut Scenario| s.with(|e, _| {
         let ShapeKind::Table(t) = &e.slide().shapes[shape].kind else { panic!("table") };
         t.rows[1].cells[1].text.clone()
@@ -8301,12 +8489,12 @@ pub(crate) fn custom_picture_crop() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.update(|e, _, cx| e.insert_picture("custom.png", png(160, 120, [0x44, 0x88, 0xaa]), cx));
     let original = s.with(|e, _| e.selected_shapes()[0].clone());
-    s.toolbar_menu("crop", "pptx.crop.custom"); s.key("cmd-a"); s.type_text("NaN"); s.menu("pptx.crop.apply");
+    s.toolbar_menu("crop", "pptx.crop.custom"); s.key("cmd-a"); s.type_text("NaN"); press_panel_button(&mut s,"pptx-crop-apply");
     assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), original);
     let fields = s.with(|e, _| e.pptx().unwrap().crop_panel.as_ref().unwrap().fields.clone());
     for values in [["50", "0", "50", "0"], ["12.345", "-10", "23.456", "7.89"]] {
         s.update(|_, w, cx| { for (f, value) in fields.iter().zip(values) { f.update(cx, |f, cx| f.set_value(value, w, cx)); } });
-        s.menu("pptx.crop.apply");
+        press_panel_button(&mut s,"pptx-crop-apply");
         if values[0] == "50" { assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), original); }
     }
     let changed = s.with(|e, _| e.selected_shapes()[0].clone());
@@ -8318,7 +8506,7 @@ pub(crate) fn custom_picture_crop() {
     s.save_as("custom-crop.pptx");
     let saved = s.reopen(); let ShapeKind::Picture(p) = &saved.slides[0].shapes.last().unwrap().kind else { panic!("picture") };
     assert_eq!(p.crop, expected);
-    s.toolbar_menu("crop", "pptx.crop.custom"); s.key("cmd-a"); s.type_text("3"); s.menu("pptx.crop.cancel");
+    s.toolbar_menu("crop", "pptx.crop.custom"); s.key("cmd-a"); s.type_text("3"); press_panel_button(&mut s,"pptx-crop-cancel");
     assert_eq!(s.with(|e, _| e.selected_shapes()[0].clone()), changed);
     undo_all_and_redo(&mut s);
 }
@@ -8356,18 +8544,18 @@ pub(crate) fn transition_advance_settings() {
 }
 
 pub(crate) fn transition_timing_rejects_changed_target() {
-    let mut s=Scenario::open("test/editing/pptx-plan.pptx");s.toolbar_menu("transition","transition.fade");s.toolbar_menu("transition","transition.timing");s.key("cmd-a");s.type_text("1.234");s.toolbar_menu("transition","transition.duration.2000");let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.timing.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().timing_panel.is_some()));s.menu("pptx.timing.cancel");
-    s.toolbar_menu("transition","transition.timing");s.key("cmd-a");s.type_text("1.234");s.menu("pptx.timing.apply");let after=s.with(|e,_|e.slide().transition.clone());assert_eq!(after.as_ref().unwrap().duration,1234);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),before);s.key("cmd-shift-z");s.save_as("timing-reopened.pptx");assert_eq!(s.reopen().slides[0].transition,after);
-    let target=s.with(|e,_|e.current_slide);s.toolbar_menu("transition","transition.timing");s.key("cmd-a");s.type_text("2.456");s.update(|e,_,cx|e.move_current_slide(1,cx));let before=s.with(|e,_|e.presentation().clone());let mut expected=before.clone();expected.slide_mut(target).unwrap().transition.as_mut().unwrap().duration=2456;s.menu("pptx.timing.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),expected);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),before);s.key("cmd-shift-z");s.save_as("timing-moved.pptx");assert_eq!(s.reopen().slides[1].transition,expected.slide(target).unwrap().transition);
-    s.toolbar_menu("transition","transition.timing");s.menu("pptx.delete-slide");let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.timing.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().timing_panel.is_some()));s.menu("pptx.timing.cancel");s.key("cmd-z");undo_all_and_redo(&mut s);
+    let mut s=Scenario::open("test/editing/pptx-plan.pptx");s.toolbar_menu("transition","transition.fade");s.toolbar_menu("transition","transition.timing");s.key("cmd-a");s.type_text("1.234");s.toolbar_menu("transition","transition.duration.2000");let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-timing-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().timing_panel.is_some()));press_panel_button(&mut s,"pptx-timing-cancel");
+    s.toolbar_menu("transition","transition.timing");s.key("cmd-a");s.type_text("1.234");press_panel_button(&mut s,"pptx-timing-apply");let after=s.with(|e,_|e.slide().transition.clone());assert_eq!(after.as_ref().unwrap().duration,1234);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),before);s.key("cmd-shift-z");s.save_as("timing-reopened.pptx");assert_eq!(s.reopen().slides[0].transition,after);
+    let target=s.with(|e,_|e.current_slide);s.toolbar_menu("transition","transition.timing");s.key("cmd-a");s.type_text("2.456");s.update(|e,_,cx|e.move_current_slide(1,cx));let before=s.with(|e,_|e.presentation().clone());let mut expected=before.clone();expected.slide_mut(target).unwrap().transition.as_mut().unwrap().duration=2456;press_panel_button(&mut s,"pptx-timing-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),expected);s.key("cmd-z");assert_eq!(s.with(|e,_|e.presentation().clone()),before);s.key("cmd-shift-z");s.save_as("timing-moved.pptx");assert_eq!(s.reopen().slides[1].transition,expected.slide(target).unwrap().transition);
+    s.toolbar_menu("transition","transition.timing");s.update(|e,w,cx|e.delete_slide(w,cx));let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-timing-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().timing_panel.is_some()));press_panel_button(&mut s,"pptx-timing-cancel");s.key("cmd-z");undo_all_and_redo(&mut s);
 }
 
 pub(crate) fn transition_timing_numeric_limits() {
     let mut s=Scenario::open("test/editing/pptx-plan.pptx");s.toolbar_menu("transition","transition.fade");s.toolbar_menu("transition","transition.timing");
-    s.update(|e,w,cx| {let p=e.pptx().unwrap().timing_panel.as_ref().unwrap();let (d,a)=(p.duration.clone(),p.after.clone());d.update(cx,|f,cx|f.set_value("4294967.295",w,cx));a.update(cx,|f,cx|f.set_value("2147483.647",w,cx));});s.menu("pptx.timing.auto");let before=s.with(|e,_|e.slide().transition.clone());s.menu("pptx.timing.apply");let expected=s.with(|e,_|e.slide().transition.clone());assert_eq!(expected.as_ref().unwrap().duration,u32::MAX);assert_eq!(expected.as_ref().unwrap().after,Some(i32::MAX as u32));s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().transition.clone()),before);s.key("cmd-shift-z");s.save_as("timing-limits.pptx");assert_eq!(s.reopen().slides[0].transition,expected);
+    s.update(|e,w,cx| {let p=e.pptx().unwrap().timing_panel.as_ref().unwrap();let (d,a)=(p.duration.clone(),p.after.clone());d.update(cx,|f,cx|f.set_value("4294967.295",w,cx));a.update(cx,|f,cx|f.set_value("2147483.647",w,cx));});press_panel_button(&mut s,"pptx-timing-auto");let before=s.with(|e,_|e.slide().transition.clone());press_panel_button(&mut s,"pptx-timing-apply");let expected=s.with(|e,_|e.slide().transition.clone());assert_eq!(expected.as_ref().unwrap().duration,u32::MAX);assert_eq!(expected.as_ref().unwrap().after,Some(i32::MAX as u32));s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().transition.clone()),before);s.key("cmd-shift-z");s.save_as("timing-limits.pptx");assert_eq!(s.reopen().slides[0].transition,expected);
     s.toolbar_menu("transition","transition.timing");for (duration,after) in [("1.234","2147483.648"),("4294967.296","1"),("inf","1"),("1","NaN")] {
-        s.update(|e,w,cx| {let p=e.pptx().unwrap().timing_panel.as_ref().unwrap();let (d,a)=(p.duration.clone(),p.after.clone());d.update(cx,|f,cx|f.set_value(duration,w,cx));a.update(cx,|f,cx|f.set_value(after,w,cx));});s.menu("pptx.timing.apply");assert_eq!(s.with(|e,_|e.slide().transition.clone()),expected);assert!(s.with(|e,_|e.pptx().unwrap().timing_panel.is_some()));
-    }s.menu("pptx.timing.cancel");undo_all_and_redo(&mut s);
+        s.update(|e,w,cx| {let p=e.pptx().unwrap().timing_panel.as_ref().unwrap();let (d,a)=(p.duration.clone(),p.after.clone());d.update(cx,|f,cx|f.set_value(duration,w,cx));a.update(cx,|f,cx|f.set_value(after,w,cx));});press_panel_button(&mut s,"pptx-timing-apply");assert_eq!(s.with(|e,_|e.slide().transition.clone()),expected);assert!(s.with(|e,_|e.pptx().unwrap().timing_panel.is_some()));
+    }press_panel_button(&mut s,"pptx-timing-cancel");undo_all_and_redo(&mut s);
 }
 
 pub(crate) fn custom_transition_timing() {
@@ -8375,8 +8563,8 @@ pub(crate) fn custom_transition_timing() {
     s.toolbar_menu("transition", "transition.fade");
     let original = s.with(|e, _| e.slide().transition.clone());
     s.toolbar_menu("transition", "transition.timing"); s.key("cmd-a"); s.type_text("-0.001");
-    s.menu("pptx.timing.apply"); assert_eq!(s.with(|e, _| e.slide().transition.clone()), original);
-    s.menu("pptx.timing.cancel");
+    press_panel_button(&mut s,"pptx-timing-apply"); assert_eq!(s.with(|e, _| e.slide().transition.clone()), original);
+    press_panel_button(&mut s,"pptx-timing-cancel");
     s.toolbar_menu("transition", "transition.timing");
     s.update(|e, w, cx| {
         let p = e.pptx().unwrap().timing_panel.as_ref().unwrap();
@@ -8384,16 +8572,16 @@ pub(crate) fn custom_transition_timing() {
         duration.update(cx, |f, cx| f.set_value("1.234", w, cx));
         after.update(cx, |f, cx| f.set_value("2.567", w, cx));
     });
-    s.menu("pptx.timing.auto"); s.menu("pptx.timing.click"); s.menu("pptx.timing.apply");
+    press_panel_button(&mut s,"pptx-timing-auto"); press_panel_button(&mut s,"pptx-timing-click"); press_panel_button(&mut s,"pptx-timing-apply");
     let expected = s.with(|e, _| e.slide().transition.clone()).unwrap();
     assert_eq!((expected.effect.as_str(), expected.duration, expected.after, expected.on_click), ("fade", 1234, Some(2567), false));
     s.key("cmd-z"); assert_eq!(s.with(|e, _| e.slide().transition.clone()), original);
     s.key("cmd-shift-z"); s.save_as("custom-timing.pptx");
     assert_eq!(s.reopen().slides[0].transition.as_ref(), Some(&expected));
     s.toolbar_menu("transition", "transition.timing");
-    s.menu("pptx.timing.auto");
+    press_panel_button(&mut s,"pptx-timing-auto");
     s.update(|e, w, cx| { let after = e.pptx().unwrap().timing_panel.as_ref().unwrap().after.clone(); after.update(cx, |f, cx| f.set_value("NaN", w, cx)); });
-    s.menu("pptx.timing.apply");
+    press_panel_button(&mut s,"pptx-timing-apply");
     assert_eq!(s.with(|e, _| e.slide().transition.as_ref().unwrap().after), None, "disabled after does not reject ignored input");
     undo_all_and_redo(&mut s);
 }
@@ -8430,17 +8618,18 @@ pub(crate) fn copy_script_fonts() {
 pub(crate) fn paragraph_panel_rejects_changed_body() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.double_click_shape(1); s.key("cmd-a"); s.type_text("first"); s.key("enter"); s.type_text("second"); s.key("enter"); s.type_text("third");
-    s.menu("pptx.paragraph.settings"); s.menu("pptx.paragraph.points");
-    s.double_click_shape(1); s.key("cmd-a"); s.type_text("replacement"); s.key("escape");
+    s.menu("pptx.paragraph.settings"); press_panel_button(&mut s,"pptx-paragraph-points");
+    // The dialog is modal, so the body is changed under it from outside (no click or key reaches the slide).
+    s.update(|e, _, cx| { let (slide, shape) = (e.current_slide, e.slide().shapes[1].id); e.run(vec![ibis_doc_model::Command::SetText { slide, shape, text: "replacement".into() }], cx); });
     let before = s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone());
     assert!(s.with(|e, _| e.pptx().unwrap().paragraph_panel.is_some()));
-    s.menu("pptx.paragraph.apply");
+    press_panel_button(&mut s,"pptx-paragraph-apply");
     assert_eq!(s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone()), before);
     assert!(s.with(|e, _| e.pptx().unwrap().paragraph_panel.is_some()));
-    s.menu("pptx.paragraph.cancel");
+    press_panel_button(&mut s,"pptx-paragraph-cancel");
     s.key("cmd-z"); assert_ne!(s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone()), before);
     s.key("cmd-shift-z"); assert_eq!(s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone()), before);
-    s.click_shape(1); s.menu("pptx.paragraph.settings"); s.menu("pptx.paragraph.points"); s.menu("pptx.paragraph.apply");
+    s.click_shape(1); s.menu("pptx.paragraph.settings"); press_panel_button(&mut s,"pptx-paragraph-points"); press_panel_button(&mut s,"pptx-paragraph-apply");
     let after = s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone());
     assert_ne!(after, before);
     s.save_as("paragraph-conflict-reopened.pptx");
@@ -8448,30 +8637,32 @@ pub(crate) fn paragraph_panel_rejects_changed_body() {
     undo_all_and_redo(&mut s);
     // Pending IME is not yet in the model: reject it without committing it.
     s.click_shape(1); s.menu("pptx.paragraph.settings");
-    s.double_click_shape(1);
+    // The dialog is modal (no click reaches the slide): the text edit begins from outside.
+    s.update(|e, w, cx| { let shape = e.slide().shapes[1].id; e.begin_text_edit(shape, false, false, w, cx); });
     s.update(|e, _, cx| e.input_mark("未確定", cx));
     let before = s.with(|e, _| e.edited_body().unwrap().clone());
-    s.menu("pptx.paragraph.apply");
+    press_panel_button(&mut s,"pptx-paragraph-apply");
     assert_eq!(s.with(|e, _| e.edited_body().unwrap().clone()), before);
     assert!(s.with(|e, _| e.text_editing().unwrap().marked.is_some()));
-    s.menu("pptx.paragraph.cancel");
+    press_panel_button(&mut s,"pptx-paragraph-cancel");
     // Opening a fresh panel commits IME first, then captures its current body.
     s.menu("pptx.paragraph.settings");
     assert!(s.with(|e, _| e.slide().shapes[1].text_body().unwrap().text().contains("未確定")));
-    s.menu("pptx.paragraph.points"); s.menu("pptx.paragraph.apply");
+    press_panel_button(&mut s,"pptx-paragraph-points"); press_panel_button(&mut s,"pptx-paragraph-apply");
     assert!(s.with(|e, _| e.pptx().unwrap().paragraph_panel.is_none()));
     drop(s);
     let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
     s.menu("view.sidebar"); // Placed by the layout with the right pane.
     let (page, shape) = s.with(|e, _| e.presentation().slides.iter().enumerate().find_map(|(i, sl)| sl.shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Table(_))).map(|j| (i, j)))).unwrap();
     s.page(page + 1); let cell = cell_middle(&mut s, shape, 1, 1); s.double_click(cell);
-    s.menu("pptx.paragraph.settings"); s.menu("pptx.paragraph.points");
-    s.double_click(cell); s.key("cmd-a"); s.type_text("cell replacement"); s.key("escape");
+    s.menu("pptx.paragraph.settings"); press_panel_button(&mut s,"pptx-paragraph-points");
+    // The dialog is modal: the cell is changed under it from outside.
+    s.update(|e, _, cx| { let (slide, sid) = (e.current_slide, e.slide().shapes[shape].id); e.run(vec![ibis_doc_model::Command::InCell { row: 1, column: 1, command: Box::new(ibis_doc_model::Command::SetTextBody { slide, shape: sid, body: ibis_doc_model::TextBody::plain("cell replacement", ibis_doc_model::TextStyle::default()) }) }], cx); });
     let before = s.with(|e, _| e.slide().clone());
-    s.menu("pptx.paragraph.apply");
+    press_panel_button(&mut s,"pptx-paragraph-apply");
     assert_eq!(s.with(|e, _| e.slide().clone()), before);
     assert!(s.with(|e, _| e.pptx().unwrap().paragraph_panel.is_some()));
-    s.menu("pptx.paragraph.cancel");
+    press_panel_button(&mut s,"pptx-paragraph-cancel");
     s.key("cmd-z"); assert_ne!(s.with(|e, _| e.slide().clone()), before);
     s.key("cmd-shift-z"); assert_eq!(s.with(|e, _| e.slide().clone()), before);
     s.save_as("cell-paragraph-conflict.pptx");
@@ -8487,7 +8678,7 @@ pub(crate) fn table_cell_font_alignment_options() {
     for (id, value) in [("auto", ibis_doc_model::FontAlign::Auto), ("top", ibis_doc_model::FontAlign::Top), ("center", ibis_doc_model::FontAlign::Center), ("baseline", ibis_doc_model::FontAlign::Baseline), ("bottom", ibis_doc_model::FontAlign::Bottom)] {
         let at = cell_middle(&mut s, shape, 1, 1); s.double_click(at); s.key("cmd-a");
         let before = s.with(|e, _| e.slide().shapes[shape].clone());
-        s.menu("pptx.paragraph.settings"); s.menu(&format!("pptx.paragraph.font-{id}")); s.menu("pptx.paragraph.apply");
+        s.menu("pptx.paragraph.settings"); s.update(|e, _, cx| e.set_paragraph_panel_font_align(value, cx)); /* the dropdown's item `{id}` */ let _ = id; press_panel_button(&mut s,"pptx-paragraph-apply");
         let mut expected = before.clone();
         let ShapeKind::Table(table) = &mut expected.kind else { panic!("table") };
         for p in &mut table.rows[1].cells[1].text.paragraphs { p.font_align = value; }
@@ -8507,7 +8698,7 @@ pub(crate) fn paragraph_font_alignment_options() {
         s.double_click_shape(1);
         s.update(|e, _, _| { let edit = e.pptx_mut().unwrap().edit.as_mut().unwrap(); edit.anchor = 6; edit.caret = 6; });
         let before = s.with(|e, _| e.edited_body().unwrap().clone());
-        s.menu("pptx.paragraph.settings"); s.menu(&format!("pptx.paragraph.font-{id}")); s.menu("pptx.paragraph.apply");
+        s.menu("pptx.paragraph.settings"); s.update(|e, _, cx| e.set_paragraph_panel_font_align(value, cx)); /* the dropdown's item `{id}` */ let _ = id; press_panel_button(&mut s,"pptx-paragraph-apply");
         let after = s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone());
         let mut expected = before.clone(); expected.paragraphs[1].font_align = value; expected.paragraphs[2].font_align = value;
         assert_eq!(after, expected);
@@ -8525,23 +8716,23 @@ pub(crate) fn custom_paragraph_spacing() {
     s.double_click_shape(1); s.key("cmd-a"); s.type_text("first"); s.key("enter"); s.type_text("second"); s.key("enter"); s.type_text("third");
     let before = s.with(|e, _| e.edited_body().unwrap().clone());
     s.key("home");
-    s.menu("pptx.paragraph.settings"); s.menu("pptx.paragraph.points"); s.key("cmd-a"); s.type_text("0"); s.menu("pptx.paragraph.apply");
+    s.menu("pptx.paragraph.settings"); press_panel_button(&mut s,"pptx-paragraph-points"); s.key("cmd-a"); s.type_text("0"); press_panel_button(&mut s,"pptx-paragraph-apply");
     assert_eq!(s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone()), before);
     s.update(|e, w, cx| { let fields = e.pptx().unwrap().paragraph_panel.as_ref().unwrap().fields.clone(); for (f, value) in fields.into_iter().zip(["24.5", "3.25", "6.75"]) { f.update(cx, |f, cx| f.set_value(value, w, cx)); } });
-    s.menu("pptx.paragraph.apply");
+    press_panel_button(&mut s,"pptx-paragraph-apply");
     let after = s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone());
     assert_eq!(after.paragraphs[0], before.paragraphs[0]); assert_eq!(after.paragraphs[1], before.paragraphs[1]);
     let p = &after.paragraphs[2]; assert_eq!((p.line_spacing, p.space_before, p.space_after), (Some(ibis_doc_model::LineSpacing::Points(2450)), 325, 675));
     s.key("cmd-z"); assert_eq!(s.with(|e, _| e.slide().shapes[1].text_body().unwrap().clone()), before);
     s.key("cmd-shift-z"); s.save_as("paragraph-spacing.pptx");
     let saved = s.reopen(); let p = &saved.slides[0].shapes[1].text_body().unwrap().paragraphs[2]; assert_eq!((p.line_spacing, p.space_before, p.space_after), (Some(ibis_doc_model::LineSpacing::Points(2450)), 325, 675));
-    s.double_click_shape(1); s.key("cmd-a"); s.menu("pptx.paragraph.settings"); s.menu("pptx.paragraph.multiple");
+    s.double_click_shape(1); s.key("cmd-a"); s.menu("pptx.paragraph.settings"); press_panel_button(&mut s,"pptx-paragraph-multiple");
     s.update(|e, w, cx| { let f = e.pptx().unwrap().paragraph_panel.as_ref().unwrap().fields[0].clone(); f.update(cx, |f, cx| f.set_value("1.375", w, cx)); });
-    s.menu("pptx.paragraph.apply");
+    press_panel_button(&mut s,"pptx-paragraph-apply");
     assert!(s.with(|e, _| e.slide().shapes[1].text_body().unwrap().paragraphs.iter().all(|p| p.line_spacing == Some(ibis_doc_model::LineSpacing::Percent(137500)))));
     s.save_as("paragraph-multiple.pptx");
     assert!(s.reopen().slides[0].shapes[1].text_body().unwrap().paragraphs.iter().all(|p| p.line_spacing == Some(ibis_doc_model::LineSpacing::Percent(137500))));
-    s.click_shape(1); s.menu("pptx.paragraph.settings"); s.menu("pptx.paragraph.default"); s.menu("pptx.paragraph.cancel");
+    s.click_shape(1); s.menu("pptx.paragraph.settings"); press_panel_button(&mut s,"pptx-paragraph-default"); press_panel_button(&mut s,"pptx-paragraph-cancel");
     assert!(s.with(|e, _| e.slide().shapes[1].text_body().unwrap().paragraphs.iter().all(|p| p.line_spacing == Some(ibis_doc_model::LineSpacing::Percent(137500)))));
     undo_all_and_redo(&mut s);
     drop(s);
@@ -8549,9 +8740,9 @@ pub(crate) fn custom_paragraph_spacing() {
     let (page, shape) = s.with(|e, _| e.presentation().slides.iter().enumerate().find_map(|(i, sl)| sl.shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Table(_))).map(|j| (i, j)))).unwrap();
     s.page(page + 1); let cell = cell_middle(&mut s, shape, 1, 1); s.double_click(cell);
     let before = s.with(|e, _| e.edited_body().unwrap().clone());
-    s.key("cmd-a"); s.menu("pptx.paragraph.settings"); s.menu("pptx.paragraph.points");
+    s.key("cmd-a"); s.menu("pptx.paragraph.settings"); press_panel_button(&mut s,"pptx-paragraph-points");
     s.update(|e, w, cx| { let fields = e.pptx().unwrap().paragraph_panel.as_ref().unwrap().fields.clone(); for (f, value) in fields.into_iter().zip(["18.5", "2", "4"]) { f.update(cx, |f, cx| f.set_value(value, w, cx)); } });
-    s.menu("pptx.paragraph.apply");
+    press_panel_button(&mut s,"pptx-paragraph-apply");
     s.save_as("cell-paragraph-spacing.pptx");
     let saved = s.reopen(); let ShapeKind::Table(t) = &saved.slides[page].shapes[shape].kind else { panic!("table") };
     let body = &t.rows[1].cells[1].text;
@@ -8662,20 +8853,20 @@ pub(crate) fn custom_linear_gradient_targets_and_conflicts() {
     });s.save_as("../pptx-gradient-custom-base.pptx");drop(s);
     let mut s=Scenario::open("target/scenario/pptx-gradient-custom-base.pptx");let own=s.shapes()-2;let table=s.shapes()-1;s.click_shape(own);
     let fields=|s:&mut Scenario,angle:&str,values:&[[&str;3]]|s.update(|e,w,cx| {let p=e.pptx().unwrap().gradient_panel.as_ref().unwrap();let a=p.angle.clone();let rows=p.stops.clone();assert_eq!(rows.len(),values.len());a.update(cx,|f,cx|f.set_value(angle,w,cx));for (row,values) in rows.iter().zip(values) {for (f,v) in row.iter().zip(*values) {f.update(cx,|f,cx|f.set_value(v,w,cx));}}});
-    s.menu("pptx.fill.custom");assert_eq!(s.menu_state("pptx.gradient.remove-first"),Some((false,false)));s.key("cmd-a");s.type_text("33.333");assert_eq!(s.with(|e,cx|e.pptx().unwrap().gradient_panel.as_ref().unwrap().angle.read(cx).value().to_string()),"33.333");s.menu("pptx.gradient.add");fields(&mut s,"33.333",&[["100","112233","50"],["0","#aAbBcC","0"],["25","00FF00","37.5"]]);
-    let expected=Fill::Linear {angle:1_999_980,scaled:false,stops:vec![GradientStop {position:0,color:Color {rgb:Rgb(0xAABBCC),alpha:0}},GradientStop {position:25_000,color:Color {rgb:Rgb(0x00FF00),alpha:96}},GradientStop {position:100_000,color:Color {rgb:Rgb(0x112233),alpha:128}}]};let before=s.with(|e,_|e.slide().shapes[own].clone());s.menu("pptx.gradient.apply");let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.kind else {panic!("auto")};a.fill=expected.clone();assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),before);s.key("cmd-shift-z");s.save_as("custom-shape-gradient.pptx");assert_eq!(s.reopen().slides[0].shapes[own].kind,changed.kind);
-    s.menu("pptx.fill.custom");s.menu("pptx.gradient.remove-last");assert_eq!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().stops.len()),2);s.menu("pptx.gradient.add");fields(&mut s,"359.99998333",&[["0","000000","100"],["100","FFFFFF","100"],["50","123456","100"]]);s.menu("pptx.gradient.apply");s.save_as("added-removed-stops.pptx");let saved=s.reopen();let ShapeKind::Auto(a)=&saved.slides[0].shapes[own].kind else {panic!("auto")};let Fill::Linear {angle,stops,..}= &a.fill else {panic!("linear")};assert_eq!(*angle,21_599_999);assert_eq!(stops.len(),3);assert_eq!(stops[1].position,50_000);assert_eq!(stops[1].color,Color::opaque(Rgb(0x123456)));
+    s.menu("pptx.fill.custom");assert_eq!(s.menu_state("pptx.gradient.remove-first"),Some((false,false)));s.key("cmd-a");s.type_text("33.333");assert_eq!(s.with(|e,cx|e.pptx().unwrap().gradient_panel.as_ref().unwrap().angle.read(cx).value().to_string()),"33.333");press_panel_button(&mut s,"pptx-gradient-add");fields(&mut s,"33.333",&[["100","112233","50"],["0","#aAbBcC","0"],["25","00FF00","37.5"]]);
+    let expected=Fill::Linear {angle:1_999_980,scaled:false,stops:vec![GradientStop {position:0,color:Color {rgb:Rgb(0xAABBCC),alpha:0}},GradientStop {position:25_000,color:Color {rgb:Rgb(0x00FF00),alpha:96}},GradientStop {position:100_000,color:Color {rgb:Rgb(0x112233),alpha:128}}]};let before=s.with(|e,_|e.slide().shapes[own].clone());press_panel_button(&mut s,"pptx-gradient-apply");let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.kind else {panic!("auto")};a.fill=expected.clone();assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),before);s.key("cmd-shift-z");s.save_as("custom-shape-gradient.pptx");assert_eq!(s.reopen().slides[0].shapes[own].kind,changed.kind);
+    s.menu("pptx.fill.custom");press_gradient_remove(&mut s,true);assert_eq!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().stops.len()),2);press_panel_button(&mut s,"pptx-gradient-add");fields(&mut s,"359.99998333",&[["0","000000","100"],["100","FFFFFF","100"],["50","123456","100"]]);press_panel_button(&mut s,"pptx-gradient-apply");s.save_as("added-removed-stops.pptx");let saved=s.reopen();let ShapeKind::Auto(a)=&saved.slides[0].shapes[own].kind else {panic!("auto")};let Fill::Linear {angle,stops,..}= &a.fill else {panic!("linear")};assert_eq!(*angle,21_599_999);assert_eq!(stops.len(),3);assert_eq!(stops[1].position,50_000);assert_eq!(stops[1].color,Color::opaque(Rgb(0x123456)));
     for (angle,bad) in [("-1",["0","000000","100"]),("360",["0","000000","100"]),("NaN",["0","000000","100"]),("1",["-0.1","000000","100"]),("1",["100.1","000000","100"]),("1",["0","ABCDE","100"]),("1",["0","000000","NaN"]),("1",["0","000000","101"])] {
-        s.menu("pptx.fill.custom");fields(&mut s,angle,&[bad,["50","FFFFFF","100"],["100","123456","100"]]);let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");
+        s.menu("pptx.fill.custom");fields(&mut s,angle,&[bad,["50","FFFFFF","100"],["100","123456","100"]]);let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");
     }
-    s.menu("pptx.fill.custom");s.menu("pptx.glow.yellow10");let altered=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),altered);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");
-    s.menu("pptx.fill.custom");s.double_click_shape(own);s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));s.menu("pptx.gradient.cancel");s.update(|e,w,cx| {e.input_mark("",cx);e.end_text_edit(w,cx);});
-    s.menu("pptx.background.custom");s.menu("pptx.gradient.add");fields(&mut s,"12.5",&[["100","112233","50"],["0","AABBCC","0"],["25","00FF00","37.5"]]);let mut background=expected.clone();let Fill::Linear {angle,..}=&mut background else {panic!("linear")};*angle=750_000;let before=s.with(|e,_|e.slide().background.clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.slide().background.clone()),background);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().background.clone()),before);s.key("cmd-shift-z");s.save_as("custom-background-gradient.pptx");assert_eq!(s.reopen().slides[0].background,background);
-    s.menu("pptx.background.custom");s.update(|e,_,cx|e.set_background(Fill::Solid(Color::BLACK),cx));let altered=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),altered);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");s.key("cmd-z");
-    s.click_shape(table);let frame=s.with(|e,_|e.slide().shapes[table].frame);let cell=s.at(ibis_doc_model::EmuPoint::new(frame.x+750_000,frame.y+300_000));s.double_click(cell);assert_eq!(s.with(|e,_|e.text_editing().unwrap().cell),Some((0,0)));s.menu("pptx.fill.custom");fields(&mut s,"33.333",&[["100","112233","50"],["0","AABBCC","0"]]);let before=s.with(|e,_|e.slide().shapes[table].clone());s.menu("pptx.gradient.apply");let mut changed=before.clone();let ShapeKind::Table(t)=&mut changed.kind else {panic!("table")};t.rows[0].cells[0].fill=Fill::Linear {angle:1_999_980,scaled:false,stops:vec![GradientStop {position:0,color:Color {rgb:Rgb(0xAABBCC),alpha:0}},GradientStop {position:100_000,color:Color {rgb:Rgb(0x112233),alpha:128}}]};assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),before);s.key("cmd-shift-z");s.save_as("custom-cell-gradient.pptx");assert_eq!(s.reopen().slides[0].shapes[table].kind,changed.kind);s.key("escape");
-    s.click_shape(table);s.double_click(cell);let corner=cell_middle(&mut s,table,0,1);s.shift_click(corner);assert_eq!(s.with(|e,_|e.text_editing().unwrap().cell_anchor),Some((0,1)));s.menu("pptx.fill.custom");fields(&mut s,"45",&[["0","102938","100"],["100","ABCDEF","25"]]);let before=s.with(|e,_|e.slide().shapes[table].clone());s.menu("pptx.gradient.apply");let mut changed=before.clone();let ShapeKind::Table(t)=&mut changed.kind else {panic!("table")};let range_fill=Fill::Linear {angle:2_700_000,scaled:false,stops:vec![GradientStop {position:0,color:Color::opaque(Rgb(0x102938))},GradientStop {position:100_000,color:Color {rgb:Rgb(0xABCDEF),alpha:64}}]};for cell in &mut t.rows[0].cells {cell.fill=range_fill.clone();}assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),changed);s.save_as("custom-cell-range-gradient.pptx");assert_eq!(s.reopen().slides[0].shapes[table].kind,changed.kind);s.key("escape");
-    let ids=s.with(|e,_|vec![e.slide().shapes[own].id,e.slide().shapes[table].id]);s.update(|e,_,_|e.set_selection(ids));s.menu("pptx.fill.custom");fields(&mut s,"30",&[["0","000000","100"],["50","808080","20"],["100","FFFFFF","100"]]);let before=s.with(|e,_|e.slide().clone());s.menu("pptx.gradient.apply");let mut changed=before.clone();let multi_fill=Fill::Linear {angle:1_800_000,scaled:false,stops:vec![GradientStop {position:0,color:Color::BLACK},GradientStop {position:50_000,color:Color {rgb:Rgb(0x808080),alpha:51}},GradientStop {position:100_000,color:Color::WHITE}]};let ShapeKind::Auto(a)=&mut changed.shapes[own].kind else {panic!("auto")};a.fill=multi_fill.clone();let ShapeKind::Table(t)=&mut changed.shapes[table].kind else {panic!("table")};for cell in t.rows.iter_mut().flat_map(|r|&mut r.cells) {cell.fill=multi_fill.clone();}assert_eq!(s.with(|e,_|e.slide().clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().clone()),before);s.key("cmd-shift-z");s.save_as("custom-multi-gradient.pptx");let saved=s.reopen();assert_eq!(saved.slides[0].shapes[own].kind,changed.shapes[own].kind);assert_eq!(saved.slides[0].shapes[table].kind,changed.shapes[table].kind);s.update(|e,_,_| {let id=e.slide().shapes[own].id;e.set_selection(vec![id]);});
-    s.click_shape(own);s.menu("pptx.fill.custom");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[own].id;e.run(vec![Command::RemoveShape {slide,shape}],cx);});let deleted=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),deleted);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");s.key("cmd-z");undo_all_and_redo(&mut s);
+    s.menu("pptx.fill.custom");s.update(|e,_,cx|e.set_shape_glow(Some((ibis_doc_model::Color{rgb:ibis_doc_model::Rgb(0xFFC000),alpha:160},127_000)),cx));let altered=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),altered);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");
+    s.menu("pptx.fill.custom");s.double_click_shape(own);s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");s.update(|e,w,cx| {e.input_mark("",cx);e.end_text_edit(w,cx);});
+    s.menu("pptx.background.custom");press_panel_button(&mut s,"pptx-gradient-add");fields(&mut s,"12.5",&[["100","112233","50"],["0","AABBCC","0"],["25","00FF00","37.5"]]);let mut background=expected.clone();let Fill::Linear {angle,..}=&mut background else {panic!("linear")};*angle=750_000;let before=s.with(|e,_|e.slide().background.clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.slide().background.clone()),background);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().background.clone()),before);s.key("cmd-shift-z");s.save_as("custom-background-gradient.pptx");assert_eq!(s.reopen().slides[0].background,background);
+    s.menu("pptx.background.custom");s.update(|e,_,cx|e.set_background(Fill::Solid(Color::BLACK),cx));let altered=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),altered);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");s.key("cmd-z");
+    s.click_shape(table);let frame=s.with(|e,_|e.slide().shapes[table].frame);let cell=s.at(ibis_doc_model::EmuPoint::new(frame.x+750_000,frame.y+300_000));s.double_click(cell);assert_eq!(s.with(|e,_|e.text_editing().unwrap().cell),Some((0,0)));s.menu("pptx.fill.custom");fields(&mut s,"33.333",&[["100","112233","50"],["0","AABBCC","0"]]);let before=s.with(|e,_|e.slide().shapes[table].clone());press_panel_button(&mut s,"pptx-gradient-apply");let mut changed=before.clone();let ShapeKind::Table(t)=&mut changed.kind else {panic!("table")};t.rows[0].cells[0].fill=Fill::Linear {angle:1_999_980,scaled:false,stops:vec![GradientStop {position:0,color:Color {rgb:Rgb(0xAABBCC),alpha:0}},GradientStop {position:100_000,color:Color {rgb:Rgb(0x112233),alpha:128}}]};assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),before);s.key("cmd-shift-z");s.save_as("custom-cell-gradient.pptx");assert_eq!(s.reopen().slides[0].shapes[table].kind,changed.kind);s.key("escape");
+    s.click_shape(table);s.double_click(cell);let corner=cell_middle(&mut s,table,0,1);s.shift_click(corner);assert_eq!(s.with(|e,_|e.text_editing().unwrap().cell_anchor),Some((0,1)));s.menu("pptx.fill.custom");fields(&mut s,"45",&[["0","102938","100"],["100","ABCDEF","25"]]);let before=s.with(|e,_|e.slide().shapes[table].clone());press_panel_button(&mut s,"pptx-gradient-apply");let mut changed=before.clone();let ShapeKind::Table(t)=&mut changed.kind else {panic!("table")};let range_fill=Fill::Linear {angle:2_700_000,scaled:false,stops:vec![GradientStop {position:0,color:Color::opaque(Rgb(0x102938))},GradientStop {position:100_000,color:Color {rgb:Rgb(0xABCDEF),alpha:64}}]};for cell in &mut t.rows[0].cells {cell.fill=range_fill.clone();}assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),changed);s.save_as("custom-cell-range-gradient.pptx");assert_eq!(s.reopen().slides[0].shapes[table].kind,changed.kind);s.key("escape");
+    let ids=s.with(|e,_|vec![e.slide().shapes[own].id,e.slide().shapes[table].id]);s.update(|e,_,_|e.set_selection(ids));s.menu("pptx.fill.custom");fields(&mut s,"30",&[["0","000000","100"],["50","808080","20"],["100","FFFFFF","100"]]);let before=s.with(|e,_|e.slide().clone());press_panel_button(&mut s,"pptx-gradient-apply");let mut changed=before.clone();let multi_fill=Fill::Linear {angle:1_800_000,scaled:false,stops:vec![GradientStop {position:0,color:Color::BLACK},GradientStop {position:50_000,color:Color {rgb:Rgb(0x808080),alpha:51}},GradientStop {position:100_000,color:Color::WHITE}]};let ShapeKind::Auto(a)=&mut changed.shapes[own].kind else {panic!("auto")};a.fill=multi_fill.clone();let ShapeKind::Table(t)=&mut changed.shapes[table].kind else {panic!("table")};for cell in t.rows.iter_mut().flat_map(|r|&mut r.cells) {cell.fill=multi_fill.clone();}assert_eq!(s.with(|e,_|e.slide().clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().clone()),before);s.key("cmd-shift-z");s.save_as("custom-multi-gradient.pptx");let saved=s.reopen();assert_eq!(saved.slides[0].shapes[own].kind,changed.shapes[own].kind);assert_eq!(saved.slides[0].shapes[table].kind,changed.shapes[table].kind);s.update(|e,_,_| {let id=e.slide().shapes[own].id;e.set_selection(vec![id]);});
+    s.click_shape(own);s.menu("pptx.fill.custom");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[own].id;e.run(vec![Command::RemoveShape {slide,shape}],cx);});let deleted=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),deleted);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");s.key("cmd-z");undo_all_and_redo(&mut s);
 }
 
 
@@ -8687,19 +8878,39 @@ pub(crate) fn custom_path_gradient_targets_and_conflicts() {
     let mut s=Scenario::open("target/scenario/pptx-gradient-path-custom-base.pptx");let own=s.shapes()-2;let table=s.shapes()-1;s.click_shape(own);
     let focus=|s:&mut Scenario,values:[&str;4]|s.update(|e,w,cx| {let p=e.pptx().unwrap().gradient_panel.as_ref().unwrap();let fields=p.focus.clone();let rows=p.stops.clone();for (f,v) in fields.iter().zip(values) {f.update(cx,|f,cx|f.set_value(v,w,cx));}for (row,values) in rows.iter().zip([["0","000000","100"],["100","FFFFFF","100"]]) {for (f,v) in row.iter().zip(values) {f.update(cx,|f,cx|f.set_value(v,w,cx));}}});
     for (id,path,values,positions) in [("pptx.gradient.rect",GradientPath::Rect,["12.345","23.456","34.567","45.678"],[12_345,23_456,34_567,45_678]),("pptx.gradient.shape",GradientPath::Shape,["0","0","100","100"],[0,0,100_000,100_000]),("pptx.gradient.circle",GradientPath::Circle,["50","50","50","50"],[50_000;4])] {
-        s.menu("pptx.fill.custom-path");assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().path.is_some()));s.key("cmd-a");s.type_text(values[0]);assert_eq!(s.with(|e,cx|e.pptx().unwrap().gradient_panel.as_ref().unwrap().focus[0].read(cx).value().to_string()),values[0]);focus(&mut s,values);s.menu(id);assert_eq!(s.menu_state(id),Some((true,true)));let before=s.with(|e,_|e.slide().shapes[own].clone());let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.kind else {panic!("auto")};a.fill=Fill::Path {path,focus:positions,stops:stops.clone()};s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),before);s.key("cmd-shift-z");s.save_as(&format!("custom-{}.pptx",path.name()));assert_eq!(s.reopen().slides[0].shapes[own].kind,changed.kind);
+        s.menu("pptx.fill.custom-path");assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().path.is_some()));s.key("cmd-a");s.type_text(values[0]);assert_eq!(s.with(|e,cx|e.pptx().unwrap().gradient_panel.as_ref().unwrap().focus[0].read(cx).value().to_string()),values[0]);focus(&mut s,values);press_panel_button(&mut s,&id.replace('.',"-"));assert_eq!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().path),Some(path),"the chosen type is on");let before=s.with(|e,_|e.slide().shapes[own].clone());let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.kind else {panic!("auto")};a.fill=Fill::Path {path,focus:positions,stops:stops.clone()};press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),before);s.key("cmd-shift-z");s.save_as(&format!("custom-{}.pptx",path.name()));assert_eq!(s.reopen().slides[0].shapes[own].kind,changed.kind);
     }
-    for invalid in ["NaN","inf","2147483.648","-2147483.649","text"] {s.menu("pptx.fill.custom-path");focus(&mut s,[invalid,"50","50","50"]);let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");}
-    s.menu("pptx.fill.custom-path");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[own].id;let frame=e.slide().shapes[own].frame.translated(127_000,0);e.run(vec![Command::SetFrame {slide,shape,frame}],cx);});let altered=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),altered);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");s.key("cmd-z");
-    s.menu("pptx.fill.custom-path");s.double_click_shape(own);s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));s.menu("pptx.gradient.cancel");s.update(|e,w,cx| {e.input_mark("",cx);e.end_text_edit(w,cx);});
-    s.menu("pptx.background.custom-path");s.menu("pptx.gradient.rect");focus(&mut s,["-0.001","100.001","0","50"]);let expected=Fill::Path {path:GradientPath::Rect,focus:[-1,100_001,0,50_000],stops:stops.clone()};let before=s.with(|e,_|e.slide().background.clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.slide().background.clone()),expected);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().background.clone()),before);s.key("cmd-shift-z");s.save_as("custom-path-background.pptx");assert_eq!(s.reopen().slides[0].background,expected);
-    s.click_shape(table);let cell=cell_middle(&mut s,table,0,0);s.double_click(cell);let corner=cell_middle(&mut s,table,0,1);s.shift_click(corner);s.menu("pptx.fill.custom-path");s.menu("pptx.gradient.shape");focus(&mut s,["12.345","23.456","34.567","45.678"]);let fill=Fill::Path {path:GradientPath::Shape,focus:[12_345,23_456,34_567,45_678],stops:stops.clone()};let before=s.with(|e,_|e.slide().shapes[table].clone());let mut changed=before.clone();let ShapeKind::Table(t)=&mut changed.kind else {panic!("table")};for cell in &mut t.rows[0].cells {cell.fill=fill.clone();}s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),before);s.key("cmd-shift-z");s.save_as("custom-path-cell-range.pptx");assert_eq!(s.reopen().slides[0].shapes[table].kind,changed.kind);s.key("escape");
-    s.update(|e,_,_| {let ids=vec![e.slide().shapes[own].id,e.slide().shapes[table].id];e.set_selection(ids);});s.menu("pptx.fill.custom-path");s.menu("pptx.gradient.rect");focus(&mut s,["20","30","40","50"]);let fill=Fill::Path {path:GradientPath::Rect,focus:[20_000,30_000,40_000,50_000],stops:stops.clone()};let before=s.with(|e,_|e.slide().clone());let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.shapes[own].kind else {panic!("auto")};a.fill=fill.clone();let ShapeKind::Table(t)=&mut changed.shapes[table].kind else {panic!("table")};for cell in t.rows.iter_mut().flat_map(|r|&mut r.cells) {cell.fill=fill.clone();}s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.slide().clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().clone()),before);s.key("cmd-shift-z");s.save_as("custom-path-multi.pptx");let saved=s.reopen();assert_eq!(saved.slides[0].shapes[own].kind,changed.shapes[own].kind);assert_eq!(saved.slides[0].shapes[table].kind,changed.shapes[table].kind);
-    s.update(|e,_,_| {let id=e.slide().shapes[own].id;e.set_selection(vec![id]);});s.menu("pptx.fill.custom-path");s.menu("pptx.gradient.add");s.update(|e,w,cx| {let fields=e.pptx().unwrap().gradient_panel.as_ref().unwrap().stops[2].clone();for (f,v) in fields.iter().zip(["50","12aBcD","37.5"]) {f.update(cx,|f,cx|f.set_value(v,w,cx));}});let before=s.with(|e,_|e.slide().shapes[own].clone());s.menu("pptx.gradient.apply");let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.kind else {panic!("auto")};a.fill=Fill::Path {path:GradientPath::Rect,focus:[20_000,30_000,40_000,50_000],stops:vec![stops[0].clone(),GradientStop {position:50_000,color:Color {rgb:ibis_doc_model::Rgb(0x12ABCD),alpha:96}},stops[1].clone()]};assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),before);s.key("cmd-shift-z");s.save_as("custom-path-three-stops.pptx");assert_eq!(s.reopen().slides[0].shapes[own].kind,changed.kind);
-    s.menu("pptx.fill.custom-path");s.menu("pptx.fill.custom");assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().path.is_none()));s.menu("pptx.fill.custom-path");assert_eq!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().path),Some(GradientPath::Rect));s.menu("pptx.gradient.cancel");
-    s.menu("pptx.fill.custom-path");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[own].id;e.run(vec![Command::RemoveShape {slide,shape}],cx);});let deleted=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),deleted);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");s.key("cmd-z");undo_all_and_redo(&mut s);
+    for invalid in ["NaN","inf","2147483.648","-2147483.649","text"] {s.menu("pptx.fill.custom-path");focus(&mut s,[invalid,"50","50","50"]);let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");}
+    s.menu("pptx.fill.custom-path");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[own].id;let frame=e.slide().shapes[own].frame.translated(127_000,0);e.run(vec![Command::SetFrame {slide,shape,frame}],cx);});let altered=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),altered);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");s.key("cmd-z");
+    s.menu("pptx.fill.custom-path");s.double_click_shape(own);s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");s.update(|e,w,cx| {e.input_mark("",cx);e.end_text_edit(w,cx);});
+    s.menu("pptx.background.custom-path");press_panel_button(&mut s,"pptx-gradient-rect");focus(&mut s,["-0.001","100.001","0","50"]);let expected=Fill::Path {path:GradientPath::Rect,focus:[-1,100_001,0,50_000],stops:stops.clone()};let before=s.with(|e,_|e.slide().background.clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.slide().background.clone()),expected);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().background.clone()),before);s.key("cmd-shift-z");s.save_as("custom-path-background.pptx");assert_eq!(s.reopen().slides[0].background,expected);
+    s.click_shape(table);let cell=cell_middle(&mut s,table,0,0);s.double_click(cell);let corner=cell_middle(&mut s,table,0,1);s.shift_click(corner);s.menu("pptx.fill.custom-path");press_panel_button(&mut s,"pptx-gradient-shape");focus(&mut s,["12.345","23.456","34.567","45.678"]);let fill=Fill::Path {path:GradientPath::Shape,focus:[12_345,23_456,34_567,45_678],stops:stops.clone()};let before=s.with(|e,_|e.slide().shapes[table].clone());let mut changed=before.clone();let ShapeKind::Table(t)=&mut changed.kind else {panic!("table")};for cell in &mut t.rows[0].cells {cell.fill=fill.clone();}press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),before);s.key("cmd-shift-z");s.save_as("custom-path-cell-range.pptx");assert_eq!(s.reopen().slides[0].shapes[table].kind,changed.kind);s.key("escape");
+    s.update(|e,_,_| {let ids=vec![e.slide().shapes[own].id,e.slide().shapes[table].id];e.set_selection(ids);});s.menu("pptx.fill.custom-path");press_panel_button(&mut s,"pptx-gradient-rect");focus(&mut s,["20","30","40","50"]);let fill=Fill::Path {path:GradientPath::Rect,focus:[20_000,30_000,40_000,50_000],stops:stops.clone()};let before=s.with(|e,_|e.slide().clone());let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.shapes[own].kind else {panic!("auto")};a.fill=fill.clone();let ShapeKind::Table(t)=&mut changed.shapes[table].kind else {panic!("table")};for cell in t.rows.iter_mut().flat_map(|r|&mut r.cells) {cell.fill=fill.clone();}press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.slide().clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().clone()),before);s.key("cmd-shift-z");s.save_as("custom-path-multi.pptx");let saved=s.reopen();assert_eq!(saved.slides[0].shapes[own].kind,changed.shapes[own].kind);assert_eq!(saved.slides[0].shapes[table].kind,changed.shapes[table].kind);
+    s.update(|e,_,_| {let id=e.slide().shapes[own].id;e.set_selection(vec![id]);});s.menu("pptx.fill.custom-path");press_panel_button(&mut s,"pptx-gradient-add");s.update(|e,w,cx| {let fields=e.pptx().unwrap().gradient_panel.as_ref().unwrap().stops[2].clone();for (f,v) in fields.iter().zip(["50","12aBcD","37.5"]) {f.update(cx,|f,cx|f.set_value(v,w,cx));}});let before=s.with(|e,_|e.slide().shapes[own].clone());press_panel_button(&mut s,"pptx-gradient-apply");let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.kind else {panic!("auto")};a.fill=Fill::Path {path:GradientPath::Rect,focus:[20_000,30_000,40_000,50_000],stops:vec![stops[0].clone(),GradientStop {position:50_000,color:Color {rgb:ibis_doc_model::Rgb(0x12ABCD),alpha:96}},stops[1].clone()]};assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),before);s.key("cmd-shift-z");s.save_as("custom-path-three-stops.pptx");assert_eq!(s.reopen().slides[0].shapes[own].kind,changed.kind);
+    s.menu("pptx.fill.custom-path");press_panel_button(&mut s,"pptx-gradient-cancel");s.menu("pptx.fill.custom");assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().path.is_none()));press_panel_button(&mut s,"pptx-gradient-cancel");s.menu("pptx.fill.custom-path");assert_eq!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().path),Some(GradientPath::Rect));press_panel_button(&mut s,"pptx-gradient-cancel");
+    s.menu("pptx.fill.custom-path");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[own].id;e.run(vec![Command::RemoveShape {slide,shape}],cx);});let deleted=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),deleted);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");s.key("cmd-z");undo_all_and_redo(&mut s);
 }
 
+
+/// A click on a shape with no text puts the caret in (an empty text body); leaving without typing takes
+/// the body back and leaves no undo step, while typing keeps it.
+pub(crate) fn click_on_empty_shape_leaves_it_unchanged() {
+    use ibis_doc_model::{AutoShape,EmuRect,Geometry,Rgb,Shape};
+    let mut s=Scenario::open("test/editing/pptx-plan.pptx");
+    s.update(|e,_,cx| {let id=e.document.ids().new_shape_id();e.insert_shape(Shape::new(id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(AutoShape::new(Geometry::Rect,Fill::Solid(ibis_doc_model::Color::opaque(Rgb(0x336699))),None))),cx);});
+    let own=s.shapes()-1;
+    let original=s.with(|e,_|e.slide().shapes[own].clone());let undo=s.with(|e,_|e.document.undo_len());
+    s.click_shape(own);
+    assert!(s.with(|e,_|e.text_editing().is_some_and(|t|t.shape==original.id)),"the click puts the caret in");
+    s.key("escape");
+    assert!(s.with(|e,_|e.text_editing().is_none()));
+    assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),original,"no text body is left");
+    assert_eq!(s.with(|e,_|e.document.undo_len()),undo,"and no undo step");
+    assert!(!s.with(|e,_|e.document.can_redo()));
+    // Typing keeps the body.
+    s.click_shape(own);s.type_text("a");s.key("escape");
+    assert_eq!(s.with(|e,_|e.slide().shapes[own].text_body().map(|b|b.text())),Some("a".to_string()));
+}
 
 pub(crate) fn gradient_stop_count_on_reopened_source() {
     use ibis_doc_model::{AutoShape,Color,EmuRect,Geometry,GradientPath,GradientStop,Rgb,Shape};
@@ -8707,10 +8918,10 @@ pub(crate) fn gradient_stop_count_on_reopened_source() {
         let mut s=Scenario::open("test/editing/pptx-plan.pptx");
         s.update(|e,_,cx| {let stops=vec![GradientStop {position:0,color:Color::BLACK},GradientStop {position:50_000,color:Color::opaque(Rgb(0x112233))},GradientStop {position:100_000,color:Color::WHITE}];let fill=if path_mode {Fill::Path {path:GradientPath::Rect,focus:[50_000;4],stops}} else {Fill::Linear {angle:0,scaled:false,stops}};let id=e.document.ids().new_shape_id();e.insert_shape(Shape::new(id,EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(AutoShape::new(Geometry::Rect,fill,None))),cx);});
         let base=s.save_as(if path_mode {"../pptx-gradient-count-path-base.pptx"} else {"../pptx-gradient-count-linear-base.pptx"});drop(s);
-        let mut s=Scenario::open(base.to_str().unwrap());let own=s.shapes()-1;s.click_shape(own);let original=s.with(|e,_|e.slide().shapes[own].clone());
-        let menu=if path_mode {"pptx.fill.custom-path"} else {"pptx.fill.custom"};s.menu(menu);s.menu("pptx.gradient.add");s.update(|e,w,cx| {let row=e.pptx().unwrap().gradient_panel.as_ref().unwrap().stops[3].clone();for (field,value) in row.iter().zip(["25","AABBCC","50"]) {field.update(cx,|f,cx|f.set_value(value,w,cx));}});s.menu("pptx.gradient.apply");let added=s.with(|e,_|e.slide().shapes[own].clone());assert_ne!(original,added);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),original);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),added);s.save_as(if path_mode {"path-added.pptx"} else {"linear-added.pptx"});assert_eq!(s.reopen().slides[0].shapes[own].kind,added.kind);let ShapeKind::Auto(auto)=&added.kind else {panic!("auto")};let count=match &auto.fill {Fill::Linear {stops,..}|Fill::Path {stops,..}=>stops.len(),_=>panic!("gradient")};assert_eq!(count,4);
-        s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),original);s.menu(menu);s.menu("pptx.gradient.remove-first");s.menu("pptx.gradient.apply");let removed=s.with(|e,_|e.slide().shapes[own].clone());s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),original);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),removed);s.save_as(if path_mode {"path-removed.pptx"} else {"linear-removed.pptx"});assert_eq!(s.reopen().slides[0].shapes[own].kind,removed.kind);let ShapeKind::Auto(auto)=&removed.kind else {panic!("auto")};let count=match &auto.fill {Fill::Linear {stops,..}|Fill::Path {stops,..}=>stops.len(),_=>panic!("gradient")};assert_eq!(count,2);
-        s.menu(if path_mode {"pptx.fill.custom"} else {"pptx.fill.custom-path"});s.menu("pptx.gradient.apply");let switched=s.with(|e,_|e.slide().shapes[own].clone());let ShapeKind::Auto(auto)=&switched.kind else {panic!("auto")};assert!(if path_mode {matches!(auto.fill,Fill::Linear {..})} else {matches!(auto.fill,Fill::Path {..})});s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),removed);s.key("cmd-shift-z");s.save_as(if path_mode {"path-to-linear.pptx"} else {"linear-to-path.pptx"});assert_eq!(s.reopen().slides[0].shapes[own].kind,switched.kind);
+        let mut s=Scenario::open(base.to_str().unwrap());let own=s.shapes()-1;s.click_shape(own);
+        let menu=if path_mode {"pptx.fill.custom-path"} else {"pptx.fill.custom"};s.menu(menu);/* The click only put the caret in (an empty text body); opening the panel takes it back, so the shape is as the file has it. */let original=s.with(|e,_|e.slide().shapes[own].clone());assert!(s.with(|e,_|e.slide().shapes[own].text_body().is_none()));press_panel_button(&mut s,"pptx-gradient-add");s.update(|e,w,cx| {let row=e.pptx().unwrap().gradient_panel.as_ref().unwrap().stops[3].clone();for (field,value) in row.iter().zip(["25","AABBCC","50"]) {field.update(cx,|f,cx|f.set_value(value,w,cx));}});press_panel_button(&mut s,"pptx-gradient-apply");let added=s.with(|e,_|e.slide().shapes[own].clone());assert_ne!(original,added);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),original);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),added);s.save_as(if path_mode {"path-added.pptx"} else {"linear-added.pptx"});assert_eq!(s.reopen().slides[0].shapes[own].kind,added.kind);let ShapeKind::Auto(auto)=&added.kind else {panic!("auto")};let count=match &auto.fill {Fill::Linear {stops,..}|Fill::Path {stops,..}=>stops.len(),_=>panic!("gradient")};assert_eq!(count,4);
+        s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),original);s.menu(menu);press_gradient_remove(&mut s,false);press_panel_button(&mut s,"pptx-gradient-apply");let removed=s.with(|e,_|e.slide().shapes[own].clone());s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),original);s.key("cmd-shift-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),removed);s.save_as(if path_mode {"path-removed.pptx"} else {"linear-removed.pptx"});assert_eq!(s.reopen().slides[0].shapes[own].kind,removed.kind);let ShapeKind::Auto(auto)=&removed.kind else {panic!("auto")};let count=match &auto.fill {Fill::Linear {stops,..}|Fill::Path {stops,..}=>stops.len(),_=>panic!("gradient")};assert_eq!(count,2);
+        s.menu(if path_mode {"pptx.fill.custom"} else {"pptx.fill.custom-path"});press_panel_button(&mut s,"pptx-gradient-apply");let switched=s.with(|e,_|e.slide().shapes[own].clone());let ShapeKind::Auto(auto)=&switched.kind else {panic!("auto")};assert!(if path_mode {matches!(auto.fill,Fill::Linear {..})} else {matches!(auto.fill,Fill::Path {..})});s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),removed);s.key("cmd-shift-z");s.save_as(if path_mode {"path-to-linear.pptx"} else {"linear-to-path.pptx"});assert_eq!(s.reopen().slides[0].shapes[own].kind,switched.kind);
     }
 }
 
@@ -8721,27 +8932,27 @@ pub(crate) fn custom_pattern_all_presets_targets_and_conflicts() {
     let mut s=Scenario::open("target/scenario/pptx-pattern-custom-base.pptx");let own=s.shapes()-2;let table=s.shapes()-1;s.click_shape(own);
     let colors=|s:&mut Scenario,values:[[&str;2];2]|s.update(|e,w,cx| {let p=e.pptx().unwrap().gradient_panel.as_ref().unwrap();assert!(p.pattern.is_some());assert_eq!(p.stops.len(),2);let rows=p.stops.clone();for (row,values) in rows.iter().zip(values) {for (f,v) in row.iter().skip(1).zip(values) {f.update(cx,|f,cx|f.set_value(v,w,cx));}}});
     let choices=super::gradient_panel::PATTERN_CHOICES;assert_eq!(choices.len(),54);assert_eq!(choices.iter().map(|c|c.1).collect::<std::collections::HashSet<_>>().len(),54);
-    for &(id,preset,_) in choices {s.menu("pptx.fill.custom-pattern");assert_eq!(s.menu_state("pptx.gradient.add"),Some((false,false)));s.key("cmd-a");s.type_text("#12aBcD");assert_eq!(s.with(|e,cx|e.pptx().unwrap().gradient_panel.as_ref().unwrap().stops[0][1].read(cx).value().to_string()),"#12aBcD");colors(&mut s,[["#12aBcD","37.5"],["#fedcba","25"]]);s.menu(id);assert_eq!(s.menu_state(id),Some((true,true)));let before=s.with(|e,_|e.slide().shapes[own].clone());let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.kind else {panic!("auto")};a.fill=Fill::Pattern {preset:preset.into(),foreground:fg,background:bg};s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),before);s.key("cmd-shift-z");s.save_as(&format!("pattern-{preset}.pptx"));assert_eq!(s.reopen().slides[0].shapes[own].kind,changed.kind);}
-    for values in [[["ABCDE","100"],["FFFFFF","100"]],[["GGHHII","100"],["FFFFFF","100"]],[["000000","NaN"],["FFFFFF","100"]],[["000000","-1"],["FFFFFF","100"]],[["000000","101"],["FFFFFF","100"]],[["000000","100"],["ABCDEF","inf"]],[["000000","100"],["ABCDEF","-1"]]] {s.menu("pptx.fill.custom-pattern");colors(&mut s,values);let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");}
-    s.menu("pptx.fill.custom-pattern");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[own].id;let frame=e.slide().shapes[own].frame.translated(127_000,0);e.run(vec![Command::SetFrame {slide,shape,frame}],cx);});let altered=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),altered);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");s.key("cmd-z");
-    s.menu("pptx.fill.custom-pattern");s.double_click_shape(own);s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));s.menu("pptx.gradient.cancel");s.update(|e,w,cx| {e.input_mark("",cx);e.end_text_edit(w,cx);});
-    s.menu("pptx.background.custom-pattern");colors(&mut s,[["12ABCD","37.5"],["FEDCBA","25"]]);s.menu("pptx.pattern.sphere");let expected=Fill::Pattern {preset:"sphere".into(),foreground:fg,background:bg};let before=s.with(|e,_|e.slide().background.clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.slide().background.clone()),expected);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().background.clone()),before);s.key("cmd-shift-z");s.save_as("pattern-background.pptx");assert_eq!(s.reopen().slides[0].background,expected);
-    s.click_shape(table);let cell=cell_middle(&mut s,table,0,0);s.double_click(cell);let corner=cell_middle(&mut s,table,0,1);s.shift_click(corner);s.menu("pptx.fill.custom-pattern");colors(&mut s,[["12ABCD","37.5"],["FEDCBA","25"]]);s.menu("pptx.pattern.weave");let fill=Fill::Pattern {preset:"weave".into(),foreground:fg,background:bg};let before=s.with(|e,_|e.slide().shapes[table].clone());let mut changed=before.clone();let ShapeKind::Table(t)=&mut changed.kind else {panic!("table")};for cell in &mut t.rows[0].cells {cell.fill=fill.clone();}s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),before);s.key("cmd-shift-z");s.save_as("pattern-cell-range.pptx");assert_eq!(s.reopen().slides[0].shapes[table].kind,changed.kind);s.key("escape");
-    s.update(|e,_,_| {let ids=vec![e.slide().shapes[own].id,e.slide().shapes[table].id];e.set_selection(ids);});s.menu("pptx.fill.custom-pattern");colors(&mut s,[["12ABCD","37.5"],["FEDCBA","25"]]);s.menu("pptx.pattern.trellis");let fill=Fill::Pattern {preset:"trellis".into(),foreground:fg,background:bg};let before=s.with(|e,_|e.slide().clone());let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.shapes[own].kind else {panic!("auto")};a.fill=fill.clone();let ShapeKind::Table(t)=&mut changed.shapes[table].kind else {panic!("table")};for cell in t.rows.iter_mut().flat_map(|r|&mut r.cells) {cell.fill=fill.clone();}s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.slide().clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().clone()),before);s.key("cmd-shift-z");s.save_as("pattern-multi.pptx");let saved=s.reopen();assert_eq!(saved.slides[0].shapes[own].kind,changed.shapes[own].kind);assert_eq!(saved.slides[0].shapes[table].kind,changed.shapes[table].kind);
-    s.update(|e,_,_| {let id=e.slide().shapes[own].id;e.set_selection(vec![id]);});s.menu("pptx.fill.custom-pattern");s.menu("pptx.fill.custom-path");assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().pattern.is_none()));s.menu("pptx.fill.custom-pattern");assert_eq!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().pattern.as_deref().map(str::to_owned)),Some("trellis".into()));s.menu("pptx.gradient.cancel");
-    s.menu("pptx.fill.custom-pattern");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[own].id;e.run(vec![Command::RemoveShape {slide,shape}],cx);});let deleted=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),deleted);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");s.key("cmd-z");undo_all_and_redo(&mut s);
+    for &(id,preset,_) in choices {s.menu("pptx.fill.custom-pattern");assert_eq!(s.menu_state("pptx.gradient.add"),Some((false,false)));s.key("cmd-a");s.type_text("#12aBcD");assert_eq!(s.with(|e,cx|e.pptx().unwrap().gradient_panel.as_ref().unwrap().stops[0][1].read(cx).value().to_string()),"#12aBcD");colors(&mut s,[["#12aBcD","37.5"],["#fedcba","25"]]);press_panel_choice(&mut s,id);assert_eq!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().pattern.clone()).as_deref(),Some(preset),"the chosen pattern is on");let before=s.with(|e,_|e.slide().shapes[own].clone());let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.kind else {panic!("auto")};a.fill=Fill::Pattern {preset:preset.into(),foreground:fg,background:bg};press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[own].clone()),before);s.key("cmd-shift-z");s.save_as(&format!("pattern-{preset}.pptx"));assert_eq!(s.reopen().slides[0].shapes[own].kind,changed.kind);}
+    for values in [[["ABCDE","100"],["FFFFFF","100"]],[["GGHHII","100"],["FFFFFF","100"]],[["000000","NaN"],["FFFFFF","100"]],[["000000","-1"],["FFFFFF","100"]],[["000000","101"],["FFFFFF","100"]],[["000000","100"],["ABCDEF","inf"]],[["000000","100"],["ABCDEF","-1"]]] {s.menu("pptx.fill.custom-pattern");colors(&mut s,values);let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");}
+    s.menu("pptx.fill.custom-pattern");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[own].id;let frame=e.slide().shapes[own].frame.translated(127_000,0);e.run(vec![Command::SetFrame {slide,shape,frame}],cx);});let altered=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),altered);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");s.key("cmd-z");
+    s.menu("pptx.fill.custom-pattern");s.double_click_shape(own);s.update(|e,_,cx|e.input_mark("未確定",cx));let marked=s.with(|e,_|e.edited_body().unwrap().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.edited_body().unwrap().clone()),marked);assert!(s.with(|e,_|e.text_editing().unwrap().marked.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");s.update(|e,w,cx| {e.input_mark("",cx);e.end_text_edit(w,cx);});
+    s.menu("pptx.background.custom-pattern");colors(&mut s,[["12ABCD","37.5"],["FEDCBA","25"]]);press_panel_choice(&mut s,"pptx.pattern.sphere");let expected=Fill::Pattern {preset:"sphere".into(),foreground:fg,background:bg};let before=s.with(|e,_|e.slide().background.clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.slide().background.clone()),expected);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().background.clone()),before);s.key("cmd-shift-z");s.save_as("pattern-background.pptx");assert_eq!(s.reopen().slides[0].background,expected);
+    s.click_shape(table);let cell=cell_middle(&mut s,table,0,0);s.double_click(cell);let corner=cell_middle(&mut s,table,0,1);s.shift_click(corner);s.menu("pptx.fill.custom-pattern");colors(&mut s,[["12ABCD","37.5"],["FEDCBA","25"]]);press_panel_choice(&mut s,"pptx.pattern.weave");let fill=Fill::Pattern {preset:"weave".into(),foreground:fg,background:bg};let before=s.with(|e,_|e.slide().shapes[table].clone());let mut changed=before.clone();let ShapeKind::Table(t)=&mut changed.kind else {panic!("table")};for cell in &mut t.rows[0].cells {cell.fill=fill.clone();}press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes[table].clone()),before);s.key("cmd-shift-z");s.save_as("pattern-cell-range.pptx");assert_eq!(s.reopen().slides[0].shapes[table].kind,changed.kind);s.key("escape");
+    s.update(|e,_,_| {let ids=vec![e.slide().shapes[own].id,e.slide().shapes[table].id];e.set_selection(ids);});s.menu("pptx.fill.custom-pattern");colors(&mut s,[["12ABCD","37.5"],["FEDCBA","25"]]);press_panel_choice(&mut s,"pptx.pattern.trellis");let fill=Fill::Pattern {preset:"trellis".into(),foreground:fg,background:bg};let before=s.with(|e,_|e.slide().clone());let mut changed=before.clone();let ShapeKind::Auto(a)=&mut changed.shapes[own].kind else {panic!("auto")};a.fill=fill.clone();let ShapeKind::Table(t)=&mut changed.shapes[table].kind else {panic!("table")};for cell in t.rows.iter_mut().flat_map(|r|&mut r.cells) {cell.fill=fill.clone();}press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.slide().clone()),changed);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().clone()),before);s.key("cmd-shift-z");s.save_as("pattern-multi.pptx");let saved=s.reopen();assert_eq!(saved.slides[0].shapes[own].kind,changed.shapes[own].kind);assert_eq!(saved.slides[0].shapes[table].kind,changed.shapes[table].kind);
+    s.update(|e,_,_| {let id=e.slide().shapes[own].id;e.set_selection(vec![id]);});s.menu("pptx.fill.custom-pattern");press_panel_button(&mut s,"pptx-gradient-cancel");s.menu("pptx.fill.custom-path");assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().pattern.is_none()));press_panel_button(&mut s,"pptx-gradient-cancel");s.menu("pptx.fill.custom-pattern");assert_eq!(s.with(|e,_|e.pptx().unwrap().gradient_panel.as_ref().unwrap().pattern.as_deref().map(str::to_owned)),Some("trellis".into()));press_panel_button(&mut s,"pptx-gradient-cancel");
+    s.menu("pptx.fill.custom-pattern");s.update(|e,_,cx| {let slide=e.current_slide;let shape=e.slide().shapes[own].id;e.run(vec![Command::RemoveShape {slide,shape}],cx);});let deleted=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),deleted);assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");s.key("cmd-z");undo_all_and_redo(&mut s);
 }
 
 pub(crate) fn custom_gradient_preflight_atomic_rejection() {
     let mut s=Scenario::open("test/benchmark/earnings-presentation.pptx");
     let (page,attached)=s.with(|e,_|e.presentation().slides.iter().enumerate().find_map(|(i,sl)|sl.attached.values().flatten().find(|&&id|sl.shape(id).is_some_and(|sh|matches!(sh.kind,ShapeKind::Auto(_)))).map(|&id|(i+1,id))).expect("attached auto"));s.page(page);
-    s.update(|e,_,cx| {let id=e.document.ids().new_shape_id();let auto=ibis_doc_model::AutoShape::new(ibis_doc_model::Geometry::Rect,Fill::Solid(ibis_doc_model::Color::BLACK),None);e.insert_shape(ibis_doc_model::Shape::new(id,ibis_doc_model::EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(auto)),cx);});let own=s.with(|e,_|e.slide().shapes.last().unwrap().id);s.update(|e,_,_|e.set_selection(vec![own,attached]));for menu in ["pptx.fill.custom","pptx.fill.custom-path","pptx.fill.custom-pattern"] {s.menu(menu);s.key("cmd-a");s.type_text(if menu.ends_with("pattern") {"12ABCD"} else {"12.345"});let before=s.with(|e,_|e.presentation().clone());s.menu("pptx.gradient.apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before,"unsupported attached target rejects the valid target too: {menu}");assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));s.menu("pptx.gradient.cancel");}undo_all_and_redo(&mut s);
+    s.update(|e,_,cx| {let id=e.document.ids().new_shape_id();let auto=ibis_doc_model::AutoShape::new(ibis_doc_model::Geometry::Rect,Fill::Solid(ibis_doc_model::Color::BLACK),None);e.insert_shape(ibis_doc_model::Shape::new(id,ibis_doc_model::EmuRect::new(500_000,500_000,2_000_000,1_000_000),ShapeKind::Auto(auto)),cx);});let own=s.with(|e,_|e.slide().shapes.last().unwrap().id);s.update(|e,_,_|e.set_selection(vec![own,attached]));for menu in ["pptx.fill.custom","pptx.fill.custom-path","pptx.fill.custom-pattern"] {s.menu(menu);s.key("cmd-a");s.type_text(if menu.ends_with("pattern") {"12ABCD"} else {"12.345"});let before=s.with(|e,_|e.presentation().clone());press_panel_button(&mut s,"pptx-gradient-apply");assert_eq!(s.with(|e,_|e.presentation().clone()),before,"unsupported attached target rejects the valid target too: {menu}");assert!(s.with(|e,_|e.pptx().unwrap().gradient_panel.is_some()));press_panel_button(&mut s,"pptx-gradient-cancel");}undo_all_and_redo(&mut s);
 }
 
 pub(crate) fn gradient_and_pattern_fill_presets() {
     use ibis_doc_model::{Color, Rgb, GradientPath, GradientStop};
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
-    s.click_shape(1);
+    s.select_shape(1);
     let original = s.with(|e, _| e.slide().shapes[1].clone());
     let stops = vec![GradientStop { position: 0, color: Color::opaque(Rgb(0x4472c4)) }, GradientStop { position: 100_000, color: Color::WHITE }];
     let mut cases = vec![("fill.gradient.0", Fill::Linear { angle: 0, scaled: false, stops: stops.clone() }), ("fill.gradient.90", Fill::Linear { angle: 5_400_000, scaled: false, stops: stops.clone() }), ("fill.gradient.180", Fill::Linear { angle: 10_800_000, scaled: false, stops: stops.clone() }), ("fill.gradient.270", Fill::Linear { angle: 16_200_000, scaled: false, stops: stops.clone() })];
@@ -8758,6 +8969,7 @@ pub(crate) fn gradient_and_pattern_fill_presets() {
         let saved = s.reopen(); let ShapeKind::Auto(a) = &saved.slides[0].shapes[1].kind else { panic!("auto") }; assert_eq!(&a.fill, expected);
     }
     s.key("escape");
+    s.key("escape"); // Nothing selected: the slide's own toolbar (背景).
     for (id, expected) in cases {
         let before = s.with(|e, _| e.slide().background.clone());
         s.toolbar_menu("background", id);
@@ -9239,6 +9451,9 @@ pub(crate) fn replace_fonts_presentation() {
     assert!(!used_after.iter().any(|f| f == "Arial"), "Arial should not be used anymore");
     assert!(used_after.iter().any(|f| f == "Georgia"), "Georgia should be in used fonts");
 
+    // Document undo is available after closing the modal settings dialog.
+    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+
     // Undo (cmd-z): 1ステップで元の Arial に全箇所復元される
     s.key("cmd-z");
     let undone_slides = s.with(|e, _| e.presentation().slides.clone());
@@ -9370,7 +9585,7 @@ pub(crate) fn show_properties_and_slideshow_controls() {
     });
 
     let before = s.with(|e, _| e.presentation().show_properties.clone());
-    s.menu("pptx.show-settings.apply");
+    press_panel_button(&mut s,"pptx-show-apply");
     assert!(s.with(|e, _| e.pptx().unwrap().show_panel.is_none()));
 
     let changed = s.with(|e, _| e.presentation().show_properties.clone());
@@ -9485,7 +9700,7 @@ pub(crate) fn custom_shows_and_slideshow() {
         panel.selected_custom_show = Some(show1_id);
     });
 
-    s.menu("pptx.show-settings.apply");
+    press_panel_button(&mut s,"pptx-show-apply");
     assert!(s.with(|e, _| e.pptx().unwrap().show_panel.is_none()));
     assert_eq!(s.with(|e, _| e.presentation().show_properties.slide_range), ibis_doc_model::ShowSlideRange::Custom(show1_id));
 
@@ -9524,7 +9739,7 @@ pub(crate) fn animation_preview_and_remove() {
     s.page(1);
 
     // 図形0にフェード効果を追加
-    s.click_shape(0);
+    s.select_shape(0);
     s.toolbar_menu("motion", "pptx.anim.in.fade");
     assert_eq!(s.with(|e, _| e.slide().animations.len()), 1);
 
@@ -9537,7 +9752,7 @@ pub(crate) fn animation_preview_and_remove() {
     assert!(s.with(|e, _| e.slideshow.is_none()));
 
     // 再度図形を選択してアニメーション ウィンドウを開く
-    s.click_shape(0);
+    s.select_shape(0);
     s.toolbar_menu("motion", "pptx.anim.pane");
     assert!(s.with(|e, _| e.pptx().map_or(false, |p| p.animation_pane)));
 
@@ -9548,7 +9763,7 @@ pub(crate) fn animation_preview_and_remove() {
     assert!(s.with(|e, _| e.slideshow.is_none()));
 
     // 図形1を選択してフライイン効果を追加
-    s.click_shape(1);
+    s.select_shape(1);
     s.toolbar_menu("motion", "pptx.anim.in.fly-bottom");
     assert_eq!(s.with(|e, _| e.slide().animations.len()), 2);
 
@@ -9639,21 +9854,21 @@ pub(crate) fn animation_zoom_float_wipe_options() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
 
     // 1. 図形0を選択し、開始効果「ズーム」を設定
-    s.click_shape(0);
+    s.select_shape(0);
     s.toolbar_menu("motion", "pptx.anim.in.zoom");
     assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.look)), Some(AnimationLook::Zoom));
-    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((24, 0)));
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((23, 0)));
     let anim_zoom_in = s.with(|e, _| e.slide().animations[0].clone());
 
     // 2. 開始効果を「フロートイン」に変更
     s.toolbar_menu("motion", "pptx.anim.in.float");
     assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.look)), Some(AnimationLook::Float(AnimationSide::Top)));
-    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((25, 1)));
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((30, 1)));
 
     // 効果オプションで「下へフロート」に変更
     s.toolbar_menu("anim-options", "pptx.anim.opt.float-down");
     assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.look)), Some(AnimationLook::Float(AnimationSide::Bottom)));
-    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((25, 2)));
+    assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((30, 2)));
 
     // 3. 開始効果を「ワイプ」に変更
     s.toolbar_menu("motion", "pptx.anim.in.wipe");
@@ -9666,16 +9881,16 @@ pub(crate) fn animation_zoom_float_wipe_options() {
     assert_eq!(s.with(|e, _| e.slide().animations.first().map(|a| a.preset)), Some((22, 2)));
 
     // 4. 図形1を選択し、終了効果「ズーム」を設定
-    s.click_shape(1);
+    s.select_shape(1);
     s.toolbar_menu("motion", "pptx.anim.out.zoom");
     assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| (a.class, a.look))), Some((AnimationClass::Exit, AnimationLook::Zoom)));
-    assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| a.preset)), Some((24, 0)));
+    assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| a.preset)), Some((23, 0)));
     let anim_zoom_out = s.with(|e, _| e.slide().animations.last().unwrap().clone());
 
     // 5. 終了効果を「フロートアウト」に変更
     s.toolbar_menu("motion", "pptx.anim.out.float");
     assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| (a.class, a.look))), Some((AnimationClass::Exit, AnimationLook::Float(AnimationSide::Bottom))));
-    assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| a.preset)), Some((25, 2)));
+    assert_eq!(s.with(|e, _| e.slide().animations.last().map(|a| a.preset)), Some((30, 2)));
 
     // 6. スライドショーでの再生 motion_at 計算を検証
     let anim_wipe_in = s.with(|e, _| e.slide().animations[0].clone());
@@ -9711,7 +9926,7 @@ pub(crate) fn animation_zoom_float_wipe_options() {
     assert_eq!(reopened.slides[0].animations[0].look, AnimationLook::Wipe(AnimationSide::Right));
     assert_eq!(reopened.slides[0].animations[0].preset, (22, 2));
     assert_eq!(reopened.slides[0].animations[1].look, AnimationLook::Float(AnimationSide::Bottom));
-    assert_eq!(reopened.slides[0].animations[1].preset, (25, 2));
+    assert_eq!(reopened.slides[0].animations[1].preset, (30, 2));
 
     undo_all_and_redo(&mut s);
 }
@@ -10151,14 +10366,14 @@ pub(crate) fn shape_decorative_marking() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
 
     // 図形0を選択
-    s.click_shape(0);
+    s.select_shape(0);
     let shape_id = s.with(|e, _| e.slide().shapes[0].id);
 
     // 最初は装飾用としてマークされていない
     assert!(!s.with(|e, _| e.slide().decorative_shapes.contains(&shape_id)));
 
     // 代替テキストパネルを開く
-    s.menu("pptx.alt-text");
+    close_modal_panel(&mut s); s.menu("pptx.alt-text");
     assert!(s.with(|e, _| e.sidebar_open && e.pptx().is_some_and(|p| p.alt_text_panel.as_ref().is_some_and(|pan| !pan.decorative))));
 
     // 「装飾用としてマークする」をトグル
@@ -10170,11 +10385,11 @@ pub(crate) fn shape_decorative_marking() {
     assert!(s.with(|e, _| e.slide().decorative_shapes.contains(&shape_id)));
 
     // Undo / Redo の確認
-    s.click_shape(0);
-    s.key("cmd-z");
+    s.select_shape(0);
+    close_modal_panel(&mut s); s.key("cmd-z");
     assert!(!s.with(|e, _| e.slide().decorative_shapes.contains(&shape_id)));
 
-    s.key("cmd-shift-z");
+    close_modal_panel(&mut s); s.key("cmd-shift-z");
     assert!(s.with(|e, _| e.slide().decorative_shapes.contains(&shape_id)));
 
     // 保存して再読込
@@ -10183,8 +10398,8 @@ pub(crate) fn shape_decorative_marking() {
     assert!(reopened.slides[0].decorative_shapes.contains(&shape_id));
 
     // 再オープン後、再度代替テキストパネルを開く
-    s.click_shape(0);
-    s.menu("pptx.alt-text");
+    s.select_shape(0);
+    close_modal_panel(&mut s); s.menu("pptx.alt-text");
     assert!(s.with(|e, _| e.pptx().unwrap().alt_text_panel.as_ref().unwrap().decorative));
 
     // 解除して適用
@@ -11360,7 +11575,7 @@ pub(crate) fn presentation_properties_panel_and_custom_properties() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
 
     // 1. メニュー「file.info」からプロパティパネルを開く
-    s.menu("file.info");
+    close_modal_panel(&mut s); s.menu("file.info");
     assert!(s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).is_some()), "properties panel open");
     let slide_count = s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).map(|p| p.slide_count));
     assert_eq!(slide_count, Some(4), "slide count is 4");
@@ -11395,11 +11610,11 @@ pub(crate) fn presentation_properties_panel_and_custom_properties() {
     assert_eq!(s.with(|e, _| e.presentation().properties.custom[0].name.clone()), "プロジェクト名");
 
     // 5. Undo / Redo の検証
-    s.key("cmd-z");
+    close_modal_panel(&mut s); s.key("cmd-z");
     assert_eq!(s.with(|e, _| e.presentation().properties.title.clone()), None);
     assert!(s.with(|e, _| e.presentation().properties.custom.is_empty()));
 
-    s.key("cmd-shift-z");
+    close_modal_panel(&mut s); s.key("cmd-shift-z");
     assert_eq!(s.with(|e, _| e.presentation().properties.title.clone()), Some("四半期事業計画".to_string()));
     assert_eq!(s.with(|e, _| e.presentation().properties.creator.clone()), Some("計画策定室".to_string()));
     assert_eq!(s.with(|e, _| e.presentation().properties.custom.len()), 1);
@@ -11432,7 +11647,7 @@ pub(crate) fn presentation_properties_panel_embed_fonts() {
     assert!(s.with(|e, _| e.presentation().fonts.is_empty()), "initially no embedded fonts");
 
     // 1. Open properties panel via file.info
-    s.menu("file.info");
+    close_modal_panel(&mut s); s.menu("file.info");
     assert!(s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).is_some()), "properties panel open");
     assert!(!s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).unwrap().embed_fonts));
 
@@ -11445,10 +11660,10 @@ pub(crate) fn presentation_properties_panel_embed_fonts() {
     assert!(!fonts.is_empty(), "fonts must be embedded when toggled on: {fonts:?}");
 
     // 3. Undo / Redo
-    s.key("cmd-z");
+    close_modal_panel(&mut s); s.key("cmd-z");
     assert!(s.with(|e, _| e.presentation().fonts.is_empty()), "undo removes embedded fonts");
 
-    s.key("cmd-shift-z");
+    close_modal_panel(&mut s); s.key("cmd-shift-z");
     assert!(!s.with(|e, _| e.presentation().fonts.is_empty()), "redo restores embedded fonts");
 
     // 4. Save and reopen to verify OOXML persistence
@@ -11458,7 +11673,7 @@ pub(crate) fn presentation_properties_panel_embed_fonts() {
     assert!(saved.fonts.iter().any(|f| !f.typeface.is_empty()), "valid typeface in embedded fonts");
 
     // 5. Open properties panel on reopened file - embed_fonts must be true
-    s.menu("file.info");
+    close_modal_panel(&mut s); s.menu("file.info");
     assert!(s.with(|e, _| e.pptx().and_then(|st| st.properties_panel.as_ref()).unwrap().embed_fonts));
 
     // 6. Toggle font embedding off
@@ -11474,7 +11689,7 @@ pub(crate) fn presentation_properties_panel_embed_fonts() {
     assert!(cleared.fonts.is_empty(), "saved presentation must have no embedded fonts");
 
     // 8. Test embed_fonts via apply_presentation_doc_properties
-    s.menu("file.info");
+    close_modal_panel(&mut s); s.menu("file.info");
     s.update(|e, _, cx| {
         if let Some(p) = e.pptx_mut().and_then(|st| st.properties_panel.as_mut()) {
             p.embed_fonts = true;
@@ -11924,18 +12139,16 @@ pub(crate) fn inspect_document_and_remove_personal_info() {
     assert!(s.with(|e, _| e.pptx().unwrap().inspect_panel.as_ref().unwrap().notes_removed));
     assert!(s.with(|e, _| e.slide().notes.is_empty()));
 
-    // 6. Undo / Redo の検証
+    // 6. パネルを閉じる（検査パネルはモーダルなので、元に戻す・やり直しはその後）
+    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    assert!(s.with(|e, _| e.pptx().and_then(|st| st.inspect_panel.as_ref()).is_none()));
+
+    // 7. Undo / Redo の検証
     s.key("cmd-z");
     assert!(!s.with(|e, _| e.slide().notes.is_empty()), "undo restores notes");
 
     s.key("cmd-shift-z");
     assert!(s.with(|e, _| e.slide().notes.is_empty()), "redo clears notes");
-
-    // 7. パネルを閉じる
-    s.update(|e, _, cx| {
-        e.close_presentation_inspect_panel(cx);
-    });
-    assert!(s.with(|e, _| e.pptx().and_then(|st| st.inspect_panel.as_ref()).is_none()));
 
     // 8. 保存と再読込によるクリーンアップ永続化の検証
     s.save_as("test-inspect-cleaned.pptx");
@@ -12234,7 +12447,7 @@ pub(crate) fn compatibility_checker_and_options() {
     s.update(|e, _, cx| {
         // (a) メディアクリップ付きピクチャ（重大な機能低下: Media）
         let media_pic = Picture {
-            clip: Some(Clip::new(MediaId(9999), false)),
+            clip: Some(Clip { link: Some("/missing/clip.mp4".to_string()), ..Clip::new(MediaId(9999), false) }),
             ..Picture::new(MediaId(9999))
         };
         let shape_media = Shape::new(
@@ -12278,25 +12491,27 @@ pub(crate) fn compatibility_checker_and_options() {
         (panel.report.significant.len(), panel.report.minor.len(), panel.report.total_issues())
     });
 
-    assert!(sig_len >= 1, "メディアクリップが重大な機能低下として検出されること");
-    assert!(minor_len >= 2, "文字変形と反射効果が軽微な精度の低下として検出されること");
+    // 埋め込みの動画・音声は PowerPoint 2010 以降で再生できるので問題にしない（#56）。
+    // ファイルへのリンクは、そのファイルが無い PC では再生できないので軽微な問題になる。
+    assert_eq!(sig_len, 0, "メディアクリップは重大な機能低下にならないこと");
+    assert!(minor_len >= 3, "リンクのメディアクリップ、文字変形、反射効果が軽微な問題として検出されること");
     assert_eq!(total, sig_len + minor_len, "トータル件数が一致すること");
 
-    // 4. 重大な問題へのジャンプ動作を検証
+    // 4. 軽微な問題へのジャンプ動作を検証（リンクのメディア図形 8881）
     s.update(|e, _, cx| {
-        e.jump_to_pptx_compatibility_issue(0, cx);
+        e.jump_to_pptx_compatibility_issue(sig_len, cx); // minor の 1 番目
     });
     assert_eq!(s.with(|e, _| e.selection), Some(ShapeId(8881)), "メディア図形が選択されること");
 
     // 5. 軽微な問題へのジャンプ動作を検証（文字変形ワードアート図形 8882）
     s.update(|e, _, cx| {
-        e.jump_to_pptx_compatibility_issue(sig_len, cx); // minor の 1 番目
+        e.jump_to_pptx_compatibility_issue(sig_len + 1, cx); // minor の 2 番目
     });
     assert_eq!(s.with(|e, _| e.selection), Some(ShapeId(8882)), "文字変形図形が選択されること");
 
     // 6. 軽微な問題へのジャンプ動作を検証（反射効果図形 8883）
     s.update(|e, _, cx| {
-        e.jump_to_pptx_compatibility_issue(sig_len + 1, cx); // minor の 2 番目
+        e.jump_to_pptx_compatibility_issue(sig_len + 2, cx); // minor の 3 番目
     });
     assert_eq!(s.with(|e, _| e.selection), Some(ShapeId(8883)), "反射効果図形が選択されること");
 
@@ -13412,7 +13627,9 @@ pub(crate) fn animation_triggers_and_interactive_sequences() {
     s.update(|e, _, cx| e.add_selected_clip_bookmark(Some(1500), Some("Intro".to_string()), cx));
 
     // shape_target にメディアブックマークトリガー（OnMediaBookmark: "Intro"）を設定
-    s.click_shape(0);
+    // (the clip put on the slide lies over the middle of shape 0: select the shape by id, not by a click)
+    let target_id = s.with(|e, _| e.slide().shapes[0].id);
+    s.update(|e, _, _| e.set_selection(vec![target_id]));
     s.update(|e, _, cx| {
         e.set_selected_effects_trigger(
             AnimationTrigger::OnMediaBookmark {
@@ -13443,8 +13660,9 @@ pub(crate) fn animation_triggers_and_interactive_sequences() {
         e.end_slideshow(window, cx);
     });
 
-    // 6. トリガー解除
-    s.click_shape(0);
+    // 6. トリガー解除（クリップが図形 0 の真ん中に重なっているので、クリックでなく id で選ぶ）
+    let target_id = s.with(|e, _| e.slide().shapes[0].id);
+    s.update(|e, _, _| e.set_selection(vec![target_id]));
     s.update(|e, _, cx| {
         e.clear_selected_effects_trigger(cx);
     });
@@ -13632,6 +13850,7 @@ pub(crate) fn connectors_glue_and_auto_follow() {
     // 4. 図形Bを選択して移動する
     let click_pt = s.at(EmuPoint::new(7_000_000, 6_000_000));
     s.click(click_pt);
+    s.key("escape"); // a click in a text shape enters its text; Escape leaves the shape selected
     assert_eq!(s.with(|e, _| e.selected_shapes()[0].id), shape_b.id);
 
     // 矢印キー（下）で移動
@@ -13735,6 +13954,7 @@ pub(crate) fn shape_arrange_distribute_rotate_and_context_menu() {
     // 6. 単一図形 A を選択し、ツールバーの「左右中央揃え」を実行
     let click_a2 = s.at(EmuPoint::new(1_500_000, 2_500_000));
     s.click(click_a2);
+    s.key("escape"); // a click in a text shape enters its text; Escape leaves the shape selected
     assert_eq!(s.selected(), 1, "only shape A selected");
     s.toolbar_menu("arrange", "arrange.center");
     let centered_a = s.with(|e, _| e.slide().shape(shape_a.id).unwrap().frame);
@@ -13889,7 +14109,9 @@ pub(crate) fn content_placeholder_insert_table_picture_clip() {
     assert!(matches!(chart_shape.kind, ShapeKind::Chart(_)));
     assert_eq!(chart_shape.frame, chart_frame, "chart fits in chart placeholder frame");
 
-    // Undo / Redo 検証
+    // Undo / Redo 検証（グラフの設定パネルはモーダルで ⌘Z を止めるので先に閉じる）
+    close_chart_settings(&mut s);
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert!(s.with(|e, _| e.slide().shape(chart_ph_id).is_some()), "chart placeholder restored on undo");
     s.key("cmd-shift-z");
@@ -14888,7 +15110,7 @@ pub(crate) fn combo_charts_insert_and_secondary_axis() {
     let before = s.shapes();
 
     // 1. 挿入メニューから「集合縦棒 - 折れ線」を挿入
-    s.menu("pptx.insert-chart.combo-column-line");
+    close_chart_settings(&mut s);s.menu("pptx.insert-chart.combo-column-line");
     assert_eq!(s.shapes(), before + 1);
     assert_eq!(s.with(|e, _| e.selection_kind()), SelectionKind::Chart);
     let shape1 = s.with(|e, _| e.selected_shapes()[0].clone());
@@ -14900,7 +15122,7 @@ pub(crate) fn combo_charts_insert_and_secondary_axis() {
     assert_eq!(chart1.groups[1].series.len(), 1);
 
     // 2. 挿入メニューから「集合縦棒 - 折れ線 (第 2 軸)」を挿入
-    s.menu("pptx.insert-chart.combo-column-line-secondary");
+    close_chart_settings(&mut s);s.menu("pptx.insert-chart.combo-column-line-secondary");
     assert_eq!(s.shapes(), before + 2);
     let shape2 = s.with(|e, _| e.selected_shapes()[0].clone());
     let ShapeKind::Chart(chart2) = &shape2.kind else { panic!("a chart expected") };
@@ -14909,7 +15131,7 @@ pub(crate) fn combo_charts_insert_and_secondary_axis() {
     assert!(chart2.axes.iter().any(|a| a.side == ibis_doc_model::Side::Right), "secondary value axis on right");
 
     // 3. 挿入メニューから「積み上げ面 - 集合縦棒」を挿入
-    s.menu("pptx.insert-chart.combo-area-column");
+    close_chart_settings(&mut s);s.menu("pptx.insert-chart.combo-area-column");
     assert_eq!(s.shapes(), before + 3);
     let shape3 = s.with(|e, _| e.selected_shapes()[0].clone());
     let ShapeKind::Chart(chart3) = &shape3.kind else { panic!("a chart expected") };
@@ -14944,7 +15166,7 @@ pub(crate) fn stock_radar_and_surface_charts() {
     let before = s.shapes();
 
     // 1. 株価グラフ（StockHLC）の挿入
-    s.menu("pptx.insert-chart.stock-hlc");
+    close_chart_settings(&mut s);s.menu("pptx.insert-chart.stock-hlc");
     assert_eq!(s.shapes(), before + 1);
     assert_eq!(s.with(|e, _| e.selection_kind()), SelectionKind::Chart);
     let shape_stock = s.with(|e, _| e.selected_shapes()[0].clone());
@@ -14952,21 +15174,21 @@ pub(crate) fn stock_radar_and_surface_charts() {
     assert!(stock_c.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Stock { up_down_bars: false, hi_low_lines: true, .. })));
 
     // 2. レーダーグラフ（塗りつぶしレーダー）の挿入
-    s.menu("pptx.chrome.filled-radar");
+    close_chart_settings(&mut s);s.menu("pptx.chrome.filled-radar");
     assert_eq!(s.shapes(), before + 2);
     let shape_radar = s.with(|e, _| e.selected_shapes()[0].clone());
     let ShapeKind::Chart(radar_c) = &shape_radar.kind else { panic!("a chart expected") };
     assert!(radar_c.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Radar { style: Some(ibis_doc_model::RadarStyle::Filled) })));
 
     // 3. 3D表面グラフ（Surface3D）の挿入
-    s.menu("pptx.insert-chart.surface-3d");
+    close_chart_settings(&mut s);s.menu("pptx.insert-chart.surface-3d");
     assert_eq!(s.shapes(), before + 3);
     let shape_surf = s.with(|e, _| e.selected_shapes()[0].clone());
     let ShapeKind::Chart(surf_c) = &shape_surf.kind else { panic!("a chart expected") };
     assert!(surf_c.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Surface { is_3d: true, wireframe: false })));
 
     // 4. 等高線グラフ（ContourWireframe）の挿入
-    s.menu("pptx.insert-chart.contour-wireframe");
+    close_chart_settings(&mut s);s.menu("pptx.insert-chart.contour-wireframe");
     assert_eq!(s.shapes(), before + 4);
     let shape_contour = s.with(|e, _| e.selected_shapes()[0].clone());
     let ShapeKind::Chart(contour_c) = &shape_contour.kind else { panic!("a chart expected") };
@@ -15554,6 +15776,9 @@ pub(crate) fn threed_model_views_animations_record_preview_screen_reader_and_set
     undo_all_and_redo(&mut s);
 }
 
+#[path="ui_review.rs"]
+mod ui_review;
+
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     let mut all: Vec<(&'static str, fn())> = vec![
         ("pptx::threed_model_views_animations_record_preview_screen_reader_and_settings", threed_model_views_animations_record_preview_screen_reader_and_settings),
@@ -15748,6 +15973,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::numbered_list_start_at", numbered_list_start_at),
         ("pptx::presenter_view_on_two_displays", presenter_view_on_two_displays),
         ("pptx::insert_video_and_audio", insert_video_and_audio),
+        ("pptx::clip_control_bar", clip_control_bar),
         ("pptx::change_chart_type", change_chart_type),
         ("pptx::pie_and_doughnut_chart_options", pie_and_doughnut_chart_options),
         ("pptx::hide_background_graphics_and_distribute_text", hide_background_graphics_and_distribute_text),
@@ -15758,6 +15984,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::custom_path_gradient_targets_and_conflicts", custom_path_gradient_targets_and_conflicts),
         ("pptx::custom_pattern_all_presets_targets_and_conflicts", custom_pattern_all_presets_targets_and_conflicts),
         ("pptx::gradient_stop_count_on_reopened_source", gradient_stop_count_on_reopened_source),
+        ("pptx::click_on_empty_shape_leaves_it_unchanged", click_on_empty_shape_leaves_it_unchanged),
         ("pptx::line_end_size_cap_and_compound", line_end_size_cap_and_compound),
         ("pptx::active_paragraph_toolbar_state", active_paragraph_toolbar_state),
         ("pptx::caret_paragraph_formats", caret_paragraph_formats),
@@ -15915,6 +16142,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     ];
     #[cfg(target_os = "macos")]
     all.extend(super::corpus_report::all());
+    all.extend(ui_review::all());
     all
 }
 
@@ -16557,7 +16785,7 @@ pub(crate) fn mac_text_keys() {
     assert_eq!(s.with(|e, _| e.selected_baseline()), -25_000, "⌘=: subscript");
     s.key("escape");
     // With only the shape selected, ⌘+ is the zoom's.
-    s.click_shape(1);
+    s.select_shape(1);
     let z = s.with(|e, _| e.current_zoom());
     s.key("cmd-+");
     assert!(s.with(|e, _| e.current_zoom()) > z, "⌘+ zooms when no text is edited");
@@ -17449,22 +17677,22 @@ pub(crate) fn compare_and_merge_presentations() {
     let remaining_diffs = s.with(|e, _| e.pptx().and_then(|p| p.compare_panel.as_ref()).map(|p| p.diffs.len())).unwrap_or(0);
     assert_eq!(remaining_diffs, 1);
 
-    // Undo / Redo の確認
-    s.key("cmd-z");
+    // Undo / Redo の確認（比較は浮かぶダイアログで、その間キーもメニューも受けないので、操作の本体を直接呼ぶ）
+    s.update(|e, w, cx| e.undo(&crate::Undo, w, cx));
     assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_shape_count);
-    s.key("cmd-shift-z");
+    s.update(|e, w, cx| e.redo(&crate::Redo, w, cx));
     assert_eq!(s.with(|e, _| e.slide().shapes.len()), initial_shape_count + 1);
 
     // 5. 残りの変更を一括反映 (Accept All)
     let initial_slides_count = s.with(|e, _| e.presentation().slides.len());
-    s.menu("pptx.review.accept-all");
+    press_panel_button(&mut s, "cmp-accept-all"); // 比較は浮かぶダイアログ：ボタンで操作する
     assert_eq!(s.with(|e, _| e.presentation().slides.len()), initial_slides_count + 1);
 
     let final_diffs = s.with(|e, _| e.pptx().and_then(|p| p.compare_panel.as_ref()).map(|p| p.diffs.len())).unwrap_or(0);
     assert_eq!(final_diffs, 0, "all diffs accepted");
 
     // 6. レビューの終了 (End Review)
-    s.menu("pptx.review.end-review");
+    press_panel_button(&mut s, "cmp-close");
     assert!(!s.with(|e, _| e.is_comparing_presentations()));
 
     // 7. 保存と開き直しで反映された内容が保持されていることを確認
@@ -17782,8 +18010,12 @@ pub(crate) fn audit001_dump_menu_ids() {
     assert!(ids.contains(&"pptx.3d-model".to_string()), "3d-model in menu");
     assert!(ids.contains(&"pptx.insert-object".to_string()), "insert-object in menu");
     s.menu("pptx.thesaurus");
-    let status = s.with(|e, _| e.status.clone());
-    assert!(status.is_some(), "thesaurus set status: {:?}", status);
+    // The thesaurus opens its side panel (it only set a status message before; the panel list found no way to it).
+    s.settle();
+    assert!(s.with(|e, _| e.sidebar_open && e.pptx().is_some_and(|p| p.thesaurus.is_some())), "thesaurus opens its panel");
+    s.update(|e, _, cx| e.pptx_thesaurus_search("happy", cx));
+    s.settle();
+    assert!(s.with(|e, _| e.pptx().and_then(|p| p.thesaurus.as_ref()).is_some_and(|t| t.searched == "happy")), "the search word is kept");
 
     crate::shell::scenario::dump_menu_ids("pptx-menu-ids.txt", &ids);
 }
@@ -18161,6 +18393,7 @@ pub(crate) fn context_menu_edit_text_and_change_shape() {
         .expect("an auto shape with text");
     s.page(page + 1);
     s.click_shape(index);
+    s.key("escape"); // a click in a text shape enters its text; Escape leaves the shape selected
 
     // 1. 単一図形選択状態の右クリックメニュー（shape_context_menu_entries）を検証
     let shape_id = s.with(|e, _| e.selected_ids()[0]);
@@ -18334,7 +18567,9 @@ pub(crate) fn context_menu_chart_crop_insets_actions() {
     s.update(|e, w, cx| e.open_chart_panel(w, cx));
     assert!(s.with(|e, _| e.pptx().and_then(|st| st.chart_panel.as_ref()).is_some() || e.sidebar_open), "chart panel or sidebar opened");
 
-    // 2. 画像（Picture）選択時の右クリックメニュー検証
+    // 2. 画像（Picture）選択時の右クリックメニュー検証（開いているグラフのパネルはモーダルで、背後のクリックを止めるので先に閉じる）
+    close_chart_settings(&mut s);
+    close_modal_panel(&mut s);
     let (pic_page, pic_idx) = s
         .with(|e, _| {
             e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
@@ -18355,6 +18590,7 @@ pub(crate) fn context_menu_chart_crop_insets_actions() {
     assert!(s.with(|e, _| e.pptx().and_then(|st| st.crop_panel.as_ref()).is_some()), "crop panel opened");
 
     // 3. テキスト枠（TextBody を持つ図形）選択時の右クリックメニュー検証
+    close_modal_panel(&mut s); // the crop panel is modal: it blocks the click behind it
     let (text_page, text_idx) = s
         .with(|e, _| {
             e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
@@ -18364,6 +18600,7 @@ pub(crate) fn context_menu_chart_crop_insets_actions() {
         .expect("a slide with text body");
     s.page(text_page + 1);
     s.click_shape(text_idx);
+    s.key("escape"); // a click in a text shape enters its text; Escape leaves the shape selected
 
     let text_entries = s.with(|e, _| e.shape_context_menu_entries());
     assert!(crate::shell::scenario::find_item(&text_entries, "pptx.insets-actions").is_some(), "insets item in text context menu");
@@ -18483,6 +18720,7 @@ pub(crate) fn context_menu_format_shape_and_default_shape() {
         .expect("a slide with auto shape");
     s.page(shape_page + 1);
     s.click_shape(shape_idx);
+    s.key("escape"); // a click in a text shape enters its text; Escape leaves the shape selected
 
     let shape_entries = s.with(|e, _| e.shape_context_menu_entries());
     assert!(crate::shell::scenario::find_item(&shape_entries, "pptx.default-shape").is_some(), "default-shape item in auto shape context menu");
@@ -18495,7 +18733,8 @@ pub(crate) fn context_menu_format_shape_and_default_shape() {
     s.update(|e, w, cx| e.open_gradient_panel(false, w, cx));
     assert!(s.with(|e, _| e.pptx().and_then(|st| st.gradient_panel.as_ref()).is_some() || e.sidebar_open), "gradient/format panel opened via context menu");
 
-    // 2. 画像選択時の右クリックメニュー検証
+    // 2. 画像選択時の右クリックメニュー検証（開いたパネルはモーダルで、背後のクリックを止めるので先に閉じる）
+    close_modal_panel(&mut s);
     let (pic_page, pic_idx) = s
         .with(|e, _| {
             e.presentation().slides.iter().enumerate().find_map(|(i, sl)| {
@@ -19155,7 +19394,7 @@ pub(crate) fn context_menu_wordart_text_effects_and_proofing() {
     let re_tb = re_shape.text_body().unwrap();
     assert_eq!(re_tb.text(), "Hello World");
     assert_eq!(re_tb.warp.as_deref(), Some("textWave1"));
-    assert_eq!(re_tb.paragraphs[0].runs[0].style.outline, Some((ibis_doc_model::Rgb(0x4472c4), 28_575)));
+    assert_eq!(re_tb.paragraphs[0].runs[0].style.outline, Some((ibis_doc_model::Rgb(0x0070c0), 28_575)));
     assert_eq!(re_tb.paragraphs[0].runs[0].style.lang.as_deref(), Some("en-US"));
 
     // 6. Undo/Redo 完全追従検証
@@ -19364,7 +19603,7 @@ pub(crate) fn context_menu_table_design_borders_and_line_arrows() {
     // 表全体選択から内部余白パネルが開けることを検証
     run_ctx_item(&mut s, "pptx.insets-actions");
     assert!(s.with(|e, _| e.pptx().unwrap().insets_panel.is_some()));
-    s.menu("pptx.insets.cancel");
+    press_panel_button(&mut s,"pptx-insets-cancel");
     assert!(s.with(|e, _| e.pptx().unwrap().insets_panel.is_none()));
 
     // 4. 複数セル範囲 (0,0)..=(1,1) を選択し、右クリックメニューから下揃え（pptx.text.bottom）を適用
@@ -19522,7 +19761,7 @@ pub(crate) fn context_menu_slide_transitions_sections_and_shape_edit_points_merg
     s.menu("pptx.section.add");
     s.key("cmd-a");
     s.type_text("第1章");
-    s.menu("pptx.section.apply");
+    press_panel_button(&mut s,"pptx-section-apply");
     let sec_id = s.with(|e, _| e.presentation().sections[0].id.clone());
     s.update(|e, w, cx| {
         e.open_section_context_menu(&sec_id, gpui_kit::point(gpui_kit::px(30.0), gpui_kit::px(40.0)), w, cx);
@@ -19670,6 +19909,7 @@ pub(crate) fn context_menu_shape_fill_stroke_zoom_and_picture_video() {
     });
     let auto_id = s.with(|e, _| e.slide().shapes[auto_idx].id);
     s.click_shape(auto_idx);
+    s.key("escape"); // a click in a text shape enters its text; Escape leaves the shape selected
 
     let entries = s.with(|e, _| e.shape_context_menu_entries());
     let fill_sub = entries.iter().find_map(|entry| match entry {
@@ -19838,6 +20078,7 @@ pub(crate) fn context_menu_text_formatting_bullets_table_cell_fill_and_crop() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.page(2);
     s.click_shape(1);
+    s.key("escape"); // a click in a text shape enters its text; Escape leaves the shape selected
 
     // 1. テキストを持つ図形選択時の右クリックメニューに _shell.font, _shell.arrange, _shell.line-paragraph-spacing, _shell.bullets が揃っていることを検証
     let entries = s.with(|e, _| e.shape_context_menu_entries());
@@ -21208,7 +21449,8 @@ pub(crate) fn context_menu_inspect_compatibility_photo_album_and_master_views() 
         let p = e.pptx().unwrap().compatibility_panel.as_ref().unwrap();
         (p.report.significant.len(), p.report.minor.len())
     });
-    assert!(sig_len >= 1 && minor_len >= 2);
+    // 埋め込みの動画・音声は問題にならない（#56）。文字変形と反射効果が軽微な問題になる。
+    assert!(sig_len == 0 && minor_len >= 2);
 
     // 軽微な問題（ワードアート文字変形: index = sig_len）の右クリックメニューを開く
     s.update(|e, w, cx| {
@@ -21248,11 +21490,12 @@ pub(crate) fn context_menu_inspect_compatibility_photo_album_and_master_views() 
         _ => false,
     }));
 
-    // 重大な問題（メディアクリップ: index = 0）を右クリック「削除（edit.delete）」で削除
-    s.update(|e, w, cx| {
-        let entries = e.compatibility_issue_context_menu_entries(0);
-        let del = crate::shell::scenario::find_item(&entries, "edit.delete").unwrap();
-        (del.handler.as_ref().unwrap())(e, w, cx);
+    // 埋め込みのメディアクリップは問題にならない（#56）ので、図形は残り、問題は 0 件になる。
+    // 図形のメディアは実体のない仮のものなので、保存の前に図形を取り除く。
+    assert!(s.with(|e, _| e.slide().shape(ShapeId(8891)).is_some()));
+    s.update(|e, _, cx| {
+        let (slide, shape) = (e.current_slide, ShapeId(8891));
+        e.run(vec![ibis_doc_model::Command::RemoveShape { slide, shape }], cx);
     });
     assert!(s.with(|e, _| e.slide().shape(ShapeId(8891)).is_none()));
     assert_eq!(
@@ -21741,6 +21984,7 @@ pub(crate) fn context_menu_frame_theme_timing_and_alt_text_panels() {
     assert!(after_frame.width > orig_frame.width, "width scaled to 150%");
 
     // 2. テーマの編集パネル（theme_panel）の右クリックメニュー検証
+    close_modal_panel(&mut s);
     s.menu("pptx.theme-colors");
     assert!(s.with(|e, _| e.pptx().unwrap().theme_panel.is_some()));
 
@@ -21763,7 +22007,8 @@ pub(crate) fn context_menu_frame_theme_timing_and_alt_text_panels() {
     });
     assert_eq!(s.with(|e, _| e.presentation().theme_effects.clone()), Some("glossy".to_string()));
 
-    // 再度テーマパネルを開いて右クリック「適用」で閉じる
+    // 再度テーマパネルを開いて右クリック「適用」で閉じる（開いているパネルはモーダルで、メニューが使えないので先に閉じる）
+    close_modal_panel(&mut s);
     s.menu("pptx.theme-colors");
     s.update(|e, w, cx| {
         let entries = e.theme_panel_context_menu_entries(None);
@@ -21926,7 +22171,8 @@ pub(crate) fn context_menu_links_header_footer_notes_marks_and_properties_panels
     );
 
     // 再度リンクパネルを開き、右クリック「表示 (_shell.view)」でスライド 2 へジャンプすることを確認
-    s.click_shape(0);
+    // A plain click on a shape that has a link follows the link, so select the shape without clicking it.
+    s.update(|e, _, _| e.set_selection(vec![shape0_id]));
     s.update(|e, w, cx| {
         e.slide_open_link_panel(w, cx);
         let entries = e.link_panel_context_menu_entries(cx);

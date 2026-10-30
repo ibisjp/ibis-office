@@ -14,5 +14,9 @@ path = "src/main.rs"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [[bin]]
+name = "ibis-sidebyside"
+path = "src/sidebyside_main.rs"
+
+[[bin]]
 name = "ibis-grid-diff"
 path = "src/grid_main.rs"

@@ -324,6 +324,7 @@ impl SlideEditor {
 
     /// イマーシブ リーダーを開く / 有効化
     pub(crate) fn open_immersive_reader(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if let Some(s) = self.doc_state_mut() {
             if let Some(st) = s.immersive_reader.as_mut() {
                 st.enabled = true;
@@ -428,22 +429,9 @@ impl SlideEditor {
 
         // 1. 列の幅（非常に狭い / 狭い / 標準 / 広い）
         let width_button = |label_key: &'static str, w: ColumnWidth, active: bool| {
-            let mut btn = div()
-                .id(format!("imm-width-{}", label_key))
-                .px(px(6.))
-                .py(px(2.))
-                .text_size(px(11.))
-                .rounded_sm()
-                .cursor_pointer();
-            if active {
-                btn = btn.bg(rgb(0x0078d4)).text_color(rgb(0xffffff)).font_weight(FontWeight::BOLD);
-            } else {
-                btn = btn.hover(|h| h.bg(rgb(0xe5e5e5))).text_color(rgb(0x333333));
-            }
-            btn.child(text(label_key))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.set_immersive_column_width(w, cx);
-                }))
+            crate::shell::chrome::segment_control::SegmentItem::label(
+                SharedString::from(format!("imm-width-{}",label_key)),text(label_key),active)
+                .on_click(cx.listener(move |e,_,_,cx|e.set_immersive_column_width(w,cx)))
         };
 
         let width_group = h_flex()
@@ -456,11 +444,7 @@ impl SlideEditor {
                     .child(text("docx.immersive.column-width")),
             )
             .child(
-                h_flex()
-                    .gap_1()
-                    .p(px(2.))
-                    .bg(rgb(0xf0f0f0))
-                    .rounded_md()
+                crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
                     .child(width_button("docx.immersive.width.very-narrow", ColumnWidth::VeryNarrow, current_width == ColumnWidth::VeryNarrow))
                     .child(width_button("docx.immersive.width.narrow", ColumnWidth::Narrow, current_width == ColumnWidth::Narrow))
                     .child(width_button("docx.immersive.width.moderate", ColumnWidth::Moderate, current_width == ColumnWidth::Moderate))
@@ -633,9 +617,8 @@ impl SlideEditor {
         };
 
         // 7. 閉じるボタン（✕ イマーシブ リーダーを閉じる）
-        let close_button = Button::new("imm-close-btn")
+        let close_button = crate::shell::chrome::primary_button("imm-close-btn")
             .small()
-            .primary()
             .label(text("docx.immersive.close"))
             .on_click(cx.listener(|this, _, window, cx| {
                 this.close_immersive_reader(window, cx);

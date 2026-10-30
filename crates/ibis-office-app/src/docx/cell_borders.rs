@@ -132,7 +132,7 @@ pub(super) fn menu(editor:&SlideEditor)->Vec<MenuEntry> {
             standard,
             pick: Some(pick),
             more: None,
-            button: None,
+            button: None, current:None,
         })]
     };
     vec![Submenu::tr("docx.cell.border-edge", "border_style",scopes).into(),

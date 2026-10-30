@@ -72,7 +72,7 @@ docx.toc.update	Update Table of Contents
 docx.toc.update-menu	Update Table of Contents
 docx.toc.update-dialog	Update Table of Contents…
 docx.toc.update-dialog.title	Update Table of Contents
-docx.toc.update-dialog.prompt	Word is updating the table of contents. Select one of the following options:
+docx.toc.update-dialog.prompt	Word is updating the table of contents. Select one of the following options
 docx.toc.update-page-numbers-only	Update page numbers only
 docx.toc.update-entire-table	Update entire table
 docx.toc.update-ok	OK
@@ -340,8 +340,8 @@ docx.paragraph-panel.line-spacing-multiple	Line Spacing (Multiple)
 docx.paragraph-panel.line-spacing-pt	Line Spacing (pt)
 docx.paragraph-panel.blank-means-mixed-only-changed	Blank means mixed. Only changed items are applied.
 docx.picture-panel.check-picture-selection-value	Check the picture selection and a value between 0.01 and 1584 pt. With the aspect ratio locked, change either width or height.
-docx.picture-panel.width-pt	Width (pt)
-docx.picture-panel.height-pt	Height (pt)
+docx.picture-panel.width-pt	Width
+docx.picture-panel.height-pt	Height
 docx.picture-panel.lock-aspect-ratio	Lock Aspect Ratio
 docx.picture-panel.picture-size	Picture Size
 docx.common.color	Color
@@ -350,8 +350,8 @@ docx.style-panel.justify	Justify
 docx.style-panel.update-match-selection	Update to Match Selection
 docx.table-size-panel.check-table-selection-values-width	Check the table selection and values (width/height 0.05-1584 pt; 0 for automatic height).
 docx.table-size-panel.changes-width-column-where	Changes the width of the column where the selected cell starts and the height of its row.
-docx.table-size-panel.column-width-pt	Column Width (pt)
-docx.table-size-panel.row-height-pt	Row Height (pt)
+docx.table-size-panel.column-width-pt	Column Width
+docx.table-size-panel.row-height-pt	Row Height
 docx.table-size-panel.table-column-width-row-height	Table Column Width and Row Height
 docx.toolbar.subtitle	Subtitle
 docx.toolbar.heading-1	Heading 1
@@ -467,7 +467,7 @@ docx.toolbar.under-dot	Under Dot
 docx.toolbar.phonetic-guide	Phonetic Guide…
 docx.ruby-panel.phonetic-guide	Phonetic Guide
 docx.ruby-panel.ruby-text	Ruby text
-docx.ruby-panel.remove-ruby	Remove Ruby
+docx.ruby-panel.remove-ruby	Delete ruby
 docx.ruby-panel.select-text-add-phonetic-guide	Select the text to add a phonetic guide to
 xlsx.table-to-range	Convert to Range
 xlsx.conditional-menu	Conditional Formatting
@@ -971,14 +971,14 @@ docx.toolbar.show-formatting-marks-8	Show Formatting Marks (⌘8)
 docx.track.change-user-name	Change User Name...
 docx.options.user-info	User Information...
 docx.user-info.title	User Information
-docx.user-info.description	Personalize your copy of Microsoft Office (User name and Initials)
-docx.user-info.name	User name:
-docx.user-info.initials	Initials:
+docx.user-info.description	User details recorded in documents (name and initials)
+docx.user-info.name	User name
+docx.user-info.initials	Initials
 docx.user-info.name-placeholder	Enter user name
 docx.user-info.initials-placeholder	Enter initials
 docx.user-info.apply	Apply
 docx.user-info.cancel	Cancel
-docx.user-info.reset-default	Reset to System Default
+docx.user-info.reset-default	Reset defaults
 docx.print-options	Print Options
 docx.options.print.update-fields	Update fields before printing
 docx.options.print.update-links	Update linked data before printing
@@ -987,7 +987,7 @@ docx.options.print.hidden-text	Print hidden text
 docx.options.print.markup	Print Markup
 docx.go-to	Go To…
 docx.goto.title	Go To
-docx.goto.what	Go to what:
+docx.goto.what	Go to what
 docx.goto.page	Page
 docx.goto.section	Section
 docx.goto.line	Line
@@ -1002,16 +1002,16 @@ docx.goto.btn-jump	Go To
 docx.goto.btn-prev	Previous
 docx.goto.btn-next	Next
 docx.goto.btn-close	Close
-docx.goto.enter-page	Enter page number:
-docx.goto.enter-section	Enter section number:
-docx.goto.enter-line	Enter line number:
-docx.goto.enter-bookmark	Enter or select bookmark name:
-docx.goto.enter-comment	Enter comment number:
-docx.goto.enter-footnote	Enter footnote number:
-docx.goto.enter-endnote	Enter endnote number:
-docx.goto.enter-heading	Enter heading number or select:
-docx.goto.enter-table	Enter table number:
-docx.goto.enter-graphic	Enter graphic number:
+docx.goto.enter-page	Enter page number
+docx.goto.enter-section	Enter section number
+docx.goto.enter-line	Enter line number
+docx.goto.enter-bookmark	Enter or select bookmark name
+docx.goto.enter-comment	Enter comment number
+docx.goto.enter-footnote	Enter footnote number
+docx.goto.enter-endnote	Enter endnote number
+docx.goto.enter-heading	Enter heading number or select
+docx.goto.enter-table	Enter table number
+docx.goto.enter-graphic	Enter graphic number
 docx.goto.placeholder	Enter number or name (e.g. 2, +1, -1)
 docx.goto.not-found	The specified target was not found.
 docx.find.next	Find Next
@@ -1090,8 +1090,8 @@ docx.infobar.viewing.message	This document is in viewing mode. Switch to editing
 docx.infobar.viewing.edit	Switch to Editing
 docx.interaction.locked-warning	Track changes is locked. Cannot switch to editing mode.
 docx.find.format.toggle	Format
-docx.find.format.find-label	Find Format:
-docx.find.format.replace-label	Replace Format:
+docx.find.format.find-label	Find Format
+docx.find.format.replace-label	Replace Format
 docx.find.format.bold	Bold
 docx.find.format.italic	Italic
 docx.find.format.underline	Underline
@@ -1114,8 +1114,8 @@ docx.language.ar	Arabic
 docx.language.he	Hebrew
 docx.language.set-default	Set as Default Language…
 docx.language.default-set	Default language has been set
-docx.text-box-panel.left-pt	Left (pt)
-docx.text-box-panel.top-pt	Top (pt)
+docx.text-box-panel.left-pt	Left
+docx.text-box-panel.top-pt	Top
 docx.text-box-panel.font-size	Font size
 docx.text-box-panel.text-color	Text color
 docx.outline.promote	Promote Heading
@@ -1131,7 +1131,7 @@ docx.outline.expand-all	Expand All Headings
 docx.style-panel.automatically-update-style	Automatically update style
 docx.text-box-panel.fill-color	Fill color
 docx.text-box-panel.outline-color	Outline color
-docx.text-box-panel.line-width-pt	Line width (pt)
+docx.text-box-panel.line-width-pt	Line width
 docx.shape.line	Line
 docx.shape.arrow	Arrow
 docx.shape.elbow	Elbow Connector
@@ -1179,14 +1179,14 @@ docx.kinsoku.menu	Line Break Characters…
 docx.kinsoku.mode	Kinsoku Rule Mode
 docx.kinsoku.mode.normal	Normal
 docx.kinsoku.mode.strict	Strict
-docx.kinsoku.rule_label	Kinsoku Presets:
+docx.kinsoku.rule_label	Kinsoku Presets
 docx.kinsoku.rule_normal	Normal (Allow Small Kana)
 docx.kinsoku.rule_strict	Strict (Standard JIS)
 docx.kinsoku.rule_custom	(Custom Defined)
 docx.kinsoku.title	Line Break Characters
 docx.kinsoku.description	Characters a line may not start or end with (whole document). Empty restores the standard ones
-docx.kinsoku.start	Not at the start of a line:
-docx.kinsoku.end	Not at the end of a line:
+docx.kinsoku.start	Not at the start of a line
+docx.kinsoku.end	Not at the end of a line
 docx.kinsoku.apply	Apply
 docx.kinsoku.cancel	Close
 docx.kinsoku.reset	Restore Standard
@@ -1269,21 +1269,21 @@ _docx.dotted	Dotted
 _docx.cannot-accept-or-reject-changes-because-track-ch	Cannot accept or reject changes because Track Changes is locked.
 _docx.enter-a-field-code	Enter a field code.
 _docx.caption-text	Caption text
-_docx.caption-text-2	Caption text:
+_docx.caption-text-2	Caption text
 _docx.count-results	{count} results
 _docx.in-line-with-text	In Line with Text
-_docx.tab-stop-position-pt	Tab Stop Position (pt)
+_docx.tab-stop-position-pt	Tab Stop Position
 _docx.distribute-horizontally	Distribute Horizontally
 _docx.no-accessibility-issues-were-found-in-the-docume	No accessibility issues were found in the document.
-_docx.existing-bookmarks	Existing Bookmarks:
+_docx.existing-bookmarks	Existing Bookmarks
 _docx.enter-a-label	Enter a label.
-_docx.number-format	Number Format:
+_docx.number-format	Number Format
 _docx.change-picture	Change Picture…
 _docx.enter-a-number-for-the-tab-position	Enter a number for the tab position.
 _docx.leader	Leader
 _docx.distribute-vertically	Distribute Vertically
-_docx.headings-in-document	Headings in document:
-_docx.field-codes	Field codes:
+_docx.headings-in-document	Headings in document
+_docx.field-codes	Field codes
 _docx.insert-caption	Insert Caption
 _docx.exclude-label-from-caption	Exclude label from caption
 _docx.shapes-and-pictures-n	Shapes and Pictures ({n})
@@ -1293,7 +1293,7 @@ _docx.align-to-margin	Align to Margin
 _docx.track-changes-is-locked-so-it-can-t-be-turned-of	Track Changes is locked, so it can't be turned off.
 _docx.field-code	Field Code
 _docx.label	Label
-_docx.label-2	Label:
+_docx.label-2	Label
 _docx.include-chapter-number	Include chapter number
 _docx.floating	Floating
 _docx.the-document-has-changed-reopen-the-tabs-setting	The document has changed. Reopen the Tabs settings.
@@ -1355,14 +1355,14 @@ _docx.toa-passim	passim
 _docx.no-toa-entries-found	No table of authorities entries found.
 docx.outline.to-heading	Make Body Text a Heading
 docx.outline.to-body	Make Heading Body Text
-docx.merge-panel.new-field-name	Field name
+docx.merge-panel.new-field-name	Column name
 docx.merge-panel.go-to-number	Number
 docx.merge-panel.find-recipient-placeholder	Text to find a recipient by
 docx.merge-panel.recipient-not-found	No recipient has that text
 docx.merge-panel.add-recipient	Add Recipient
 docx.merge-panel.select-all	Select All
 docx.merge-panel.select-none	Clear All
-docx.merge-panel.add-field	Add Field
+docx.merge-panel.add-field	Add column
 docx.merge-panel.go-to	Go
 docx.merge-panel.find-recipient	Find
 docx.merge-panel.document-type	Document type
@@ -1819,7 +1819,7 @@ docx.print-panel.nup.16	16 pages per sheet
 docx.print-panel.page-border	Draw page borders
 docx.print-panel.section.options	Print Options
 docx.print-panel.summary	{pages} of {total} pages ({copies} copies)
-docx.print-panel.print	Print…
+docx.print-panel.print	Print
 docx.print-panel.no-pages-selected	No pages selected for printing.
 docx.print-panel.invalid-range-token	Invalid page specification: '{token}'
 docx.print-panel.section-not-found	Specified section not found: '{section}'
@@ -1836,18 +1836,18 @@ docx.source-manager.edit	Edit…
 docx.source-manager.delete	Delete
 docx.source-manager.insert-citation	Insert Citation
 docx.source-manager.preview-title	Preview
-docx.source-manager.citation-preview	Citation:
-docx.source-manager.bib-preview	Bibliography:
+docx.source-manager.citation-preview	Citation
+docx.source-manager.bib-preview	Bibliography
 docx.source-manager.form.new-title	Create Source
 docx.source-manager.form.edit-title	Edit Source
-docx.source-manager.form.tag	Tag Name:
-docx.source-manager.form.type	Type of Source:
-docx.source-manager.form.author	Author:
-docx.source-manager.form.title	Title:
-docx.source-manager.form.year	Year:
-docx.source-manager.form.publisher	Publisher:
-docx.source-manager.form.city	City:
-docx.source-manager.form.url	URL:
+docx.source-manager.form.tag	Tag Name
+docx.source-manager.form.type	Type of Source
+docx.source-manager.form.author	Author
+docx.source-manager.form.title	Title
+docx.source-manager.form.year	Year
+docx.source-manager.form.publisher	Publisher
+docx.source-manager.form.city	City
+docx.source-manager.form.url	URL
 docx.source-manager.form.save	Save
 docx.source-manager.filter-placeholder	Search (tag, author, title)…
 docx.reference.source.type.book	Book
@@ -1932,10 +1932,10 @@ docx.edit.select-word	When Selecting, Automatically Select Entire Word
 docx.file.repair	Open and Repair Document…
 docx.repair.title	Repair Document
 docx.repair.desc	Automatically repairs XML syntax, missing parts, and document structures of damaged Word documents (.docx).
-docx.repair.file-label	Document to Repair:
+docx.repair.file-label	Document to Repair
 docx.repair.browse-btn	Browse…
 docx.repair.prompt-file	Select Damaged Word Document
-docx.repair.mode-label	Repair Mode:
+docx.repair.mode-label	Repair Mode
 docx.repair.mode-repair	Open and Repair (Standard)
 docx.repair.mode-repair-desc	Fixes XML tag balance and reconstructs missing parts while preserving formatting.
 docx.repair.mode-recover-text	Recover Text from Any File
@@ -1955,10 +1955,10 @@ docx.repair.banner-close	Dismiss
 docx.template.attach	Templates and Add-ins…
 docx.template.title	Templates and Add-ins
 docx.template.desc	Attach a document template to automatically update styles.
-docx.template.current_status	Current Template:
+docx.template.current_status	Current Template
 docx.template.attached_file	Attached
 docx.template.normal_template	Normal template (default)
-docx.template.path_label	Template Path (.dotx, .dotm, .docx):
+docx.template.path_label	Template Path (.dotx, .dotm, .docx)
 docx.template.path_placeholder	Enter file path
 docx.template.apply	Attach
 docx.template.detach	Detach
@@ -1973,18 +1973,18 @@ docx.template.no_path	Please specify a template file path
 docx.template.close	Close
 docx.list.define-style	Define New List Style…
 docx.list.define-style.title	Define New List Style
-docx.list.define-style.name	Name:
+docx.list.define-style.name	Name
 docx.list.define-style.name-placeholder	List style name
-docx.list.define-style.level	Level to modify:
-docx.list.define-style.format	Number style for this level:
-docx.list.define-style.prefix	Prefix:
-docx.list.define-style.suffix-text	Suffix:
-docx.list.define-style.start-at	Start at:
-docx.list.define-style.align	Alignment:
-docx.list.define-style.follow-number	Follow number with:
-docx.list.define-style.indent-left	Left indent (pt):
-docx.list.define-style.indent-hanging	Hanging indent (pt):
-docx.list.define-style.ok	OK
+docx.list.define-style.level	Level to modify
+docx.list.define-style.format	Number style for this level
+docx.list.define-style.prefix	Prefix
+docx.list.define-style.suffix-text	Suffix
+docx.list.define-style.start-at	Start at
+docx.list.define-style.align	Alignment
+docx.list.define-style.follow-number	Follow number with
+docx.list.define-style.indent-left	Left indent
+docx.list.define-style.indent-hanging	Hanging indent
+docx.list.define-style.add	Add
 docx.list.define-style.cancel	Cancel
 docx.list.styles	List Styles
 docx.list.styles.empty	(No list styles)
@@ -2036,7 +2036,7 @@ docx.picture.wrap-points.add-vertex	Add Vertex
 docx.master-doc	Master Document
 docx.master-doc.panel	Master Document & Subdocuments…
 docx.master-doc.title	Master Document & Subdocuments
-docx.master-doc.target-label	Subdocument File Path (.docx):
+docx.master-doc.target-label	Subdocument File Path (.docx)
 docx.master-doc.insert	Insert Subdocument
 docx.master-doc.create-from-heading	Create Subdocument from Heading
 docx.master-doc.toggle-expand	Expand / Collapse Subdocuments
@@ -2094,10 +2094,10 @@ docx.convert.format.txt	Plain Text (.txt)
 docx.convert.format.html	Web Page (.html)
 docx.convert.format.odt	OpenDocument Text (.odt)
 docx.convert.export-title	Export to Another Format
-docx.convert.export-path	Output file path:
+docx.convert.export-path	Output file path
 docx.convert.export-btn	Export
 docx.convert.import-title	Import & Convert from External Format or PDF
-docx.convert.import-desc	Source file path (.doc / .rtf / .txt / .html / .odt / .pdf):
+docx.convert.import-desc	Source file path (.doc / .rtf / .txt / .html / .odt / .pdf)
 docx.convert.import-btn	Convert & Open
 docx.convert.exported	Exported document
 docx.convert.imported	Imported and converted document
@@ -2131,8 +2131,8 @@ docx.read-aloud.voice.kyoko	Kyoko (Japanese, Female)
 docx.read-aloud.voice.otoya	Otoya (Japanese, Male)
 docx.read-aloud.voice.samantha	Samantha (English, Female)
 docx.read-aloud.voice.alex	Alex (English, Male)
-docx.customize-toolbar	Customize Ribbon & Quick Access…
-docx.customize.title	Customize Ribbon & Quick Access
+docx.customize-toolbar	Customize Toolbar & Quick Access…
+docx.customize.title	Customize Toolbar & Quick Access
 docx.customize.ribbon-groups	Toolbar (Ribbon) Groups
 docx.customize.qat-commands	Quick Access Toolbar Commands
 docx.customize.reset	Reset All Customizations
@@ -2185,3 +2185,179 @@ docx.template.no-word-data	The template has no Word document data.
 docx.template.no-document	No document is open.
 docx.template.updated-count	{title} ({n})
 docx.view.view-mode	View Mode
+docx.color-panel.text-color	Font Color
+
+docx.ruler.horizontal	Horizontal ruler
+docx.compress.target	Target
+docx.compress.entire-file	Entire file
+docx.compress.selected-picture	Selected picture
+docx.paragraph-panel.line-type	Line spacing type
+docx.tab-panel.registered-stops	Registered tab stops
+docx.tab-panel.no-stops	Enter a position and choose Set to add a tab stop
+color.editor.palette	Palette
+color.editor.current	Current color
+color.editor.previous	Previous color
+color.editor.hue	Hue
+color.editor.saturation	Saturation
+color.editor.brightness	Brightness
+color.editor.red	Red
+color.editor.green	Green
+color.editor.blue	Blue
+
+docx.tab-panel.operation-help	Set registers the position, alignment and leader together, replacing any stop at the same position. Select a row and Clear to delete it. Apply commits the list to the document.
+merge.flow.title	Create merged documents
+merge.flow.recipients	Recipients
+merge.flow.compose	Compose
+merge.flow.preview	Preview
+merge.flow.output	Output
+merge.flow.start-title	Prepare recipients
+merge.flow.start-help	Create a personalized document for each recipient in a list.
+merge.flow.load	Load recipient file…
+merge.flow.formats	Formats: XLSX, CSV, TSV, XLS, XLSM
+merge.flow.equation	Recipient list + this document → personalized letters
+merge.flow.edit-recipients	Edit recipients…
+merge.flow.count	{n} selected / {total} total
+merge.flow.target-count	{n} recipients selected
+merge.flow.new-list	Create a recipient list…
+merge.flow.name	Name
+merge.flow.company	Company
+merge.flow.address	Address
+merge.flow.compose-title	Insert fields into the document
+merge.flow.compose-help	Click an insertion point in the document, then choose a field below.
+merge.flow.advanced	Address, greeting and conditions
+merge.flow.condition	Insert conditional text…
+merge.flow.preview-title	Review the results
+merge.flow.preview-help	Switch recipients to review the personalized document.
+merge.flow.fields	Fields
+merge.flow.result	Results
+merge.flow.output-title	Create or print
+merge.flow.output-help	Choose an output method, then set the recipients to include.
+merge.flow.document	Create document
+merge.flow.pdf	Save as PDF
+merge.flow.print	Print
+merge.flow.back	Back
+merge.flow.next-compose	Compose
+merge.flow.next-preview	Review
+merge.flow.next-output	Output
+merge.flow.settings	Output settings
+merge.flow.recipient-help	Checked recipients will be included. Drag the three-line handle to reorder.
+merge.flow.filter	Filter recipients…
+merge.flow.columns	Edit columns…
+merge.flow.confirm-recipients	OK
+merge.flow.import-title	Review recipient file
+merge.flow.import-help	Check the sheet and header row. The preview shows the first five records.
+merge.flow.sheet	Sheet to import
+merge.flow.header	Use the first row as column names
+merge.flow.import-confirm	Import
+merge.flow.columns-help	Add or remove columns. Fields already inserted into the document remain unchanged.
+merge.flow.recipient-draft	Changes are committed when you confirm the recipient list.
+merge.flow.filter-help	Use Column=Value for an exact match or Column~Value for a partial match. Leave blank to clear.
+merge.flow.condition-help	Insert different text depending on a field value.
+merge.flow.condition-field	Field to test
+merge.flow.equals	When the value equals
+merge.flow.yes	Text when matched
+merge.flow.no	Text otherwise
+merge.flow.kind-help	Choose a document type. Envelopes and labels also change the document layout.
+merge.flow.combine	Document grouping
+merge.flow.one-file	Combine into one file
+merge.flow.separate-file	Create a file per recipient
+merge.flow.output-location	Choose a save location or printer in the next dialog.
+merge.flow.column-number	Column {n}
+merge.flow.data	Data
+merge.flow.unsupported	Choose an XLSX, CSV, TSV, XLS or XLSM recipient file.
+merge.flow.invalid-data	Column names must be unique and nonempty, with at least one recipient.
+merge.flow.filter-simple-help	Choose a field and comparison, then enter a value. Leave blank to clear.
+merge.flow.contains	Contains
+merge.flow.exact	Equals
+merge.flow.filter-value	Value to match
+merge.review.fields-list	Merge fields to insert
+merge.review.row-number	Recipient {n}
+merge.review.no-issues	No merge field issues found.
+merge.review.issue-count	{n} items need review
+merge.review.empty-field	{name}: {field} is empty
+merge.review.missing-field	Field “{field}” is missing from the recipient list
+merge.review.more-issues	More empty fields remain. Review the recipient list.
+merge.review.continue-empty	Output with empty fields
+merge.review.fix-missing	Select an item to inspect the document and correct the field or recipient list.
+merge.review.actual-output	This output: {n} recipients
+merge.review.more-recipients	and {n} more
+merge.review.invalid-range	Enter a valid start and end position within the selected recipient list.
+merge.review.output-range	Recipients to output (positions in the target list)
+merge.review.current-recipient	Current recipient: {name}
+merge.review.all-view	Show all
+merge.review.targets-view	Targets only
+merge.review.filtered-out	Filtered out
+merge.review.included	Included
+merge.review.excluded	Excluded
+merge.review.target	Target
+merge.review.edit-row	Edit this recipient
+merge.review.delete-row	Delete this recipient
+merge.review.move-up	Move recipient up
+merge.review.move-down	Move recipient down
+merge.review.drag-row	Drag to reorder recipients
+merge.review.recipient-help	Checked recipients will be output. Clear the filter to restore recipients excluded by its conditions.
+merge.review.recipients-title	Edit recipient list
+merge.review.clear-filter	Clear filter
+merge.review.list-counts	Shown {shown} · Targets {target} · Total {total}
+merge.review.select-visible	Include shown recipients
+merge.review.clear-visible	Exclude shown targets
+merge.review.header-row	Use the first row of the import range as headers
+merge.review.import-advanced	Change range and headers…
+merge.review.import-range-help	Rows and columns use 1-based source positions. Apply the range to update the preview.
+merge.review.start-row	First row
+merge.review.end-row	Last row
+merge.review.start-column	First column
+merge.review.end-column	Last column
+merge.review.apply-range	Apply range
+merge.review.rename-headers	Edit header names
+merge.review.invalid-headers	Correct empty or duplicate header names.
+merge.review.invalid-import-range	Enter a valid row and column range within the file.
+merge.review.save-list	Save recipient list as XLSX…
+merge.review.copy-help	You are editing an imported copy. The source file is unchanged.
+merge.review.resume-help	Save edited recipients as XLSX and load it next time. All row values are saved; filters and inclusion choices are not.
+merge.review.list-saved	Recipient list saved as XLSX.
+merge.review.kind-help	Choose a document type. Envelopes and labels replace the current document body.
+merge.review.replace-warning	This removes the entire current body and replaces it with the envelope or label layout. It does not just change the paper size. You can undo after applying.
+merge.review.replace-ack	Replace the current document body
+merge.review.replace-action	Replace body and apply
+merge.review.resume-short	Recipients are not stored in the document. Save as XLSX and load it to resume later.
+merge.review.select-all-header	Select all shown recipients
+
+docx.list.define-style.text-example	For example, prefix Chapter and suffix : produce Chapter 1:, Chapter 2:, and so on.
+
+shape.effects.basic	Basic
+shape.effects.decoration	Decoration
+shape.effects.gradient-angle	Angle
+shape.effects.stop-position	Stop position
+shape.effects.stop-color	Stop color
+shape.effects.shadow-color	Color
+shape.effects.shadow-transparency	Transparency
+shape.effects.shadow-size	Size
+shape.effects.shadow-blur	Blur
+shape.effects.shadow-angle	Angle
+shape.effects.shadow-distance	Distance
+shape.effects.glow-color	Color
+shape.effects.glow-transparency	Transparency
+shape.effects.glow-size	Size
+shape.effects.soft-size	Width
+shape.effects.reflection-transparency	Transparency
+shape.effects.reflection-size	Size
+shape.effects.reflection-blur	Blur
+shape.effects.reflection-distance	Distance
+shape.effects.remove-stop	Remove stop
+shape.effects.enable-0	Enable gradient
+shape.effects.enable-1	Enable shadow
+shape.effects.enable-2	Enable glow
+shape.effects.enable-3	Enable soft edges
+shape.effects.enable-4	Enable reflection
+
+docx.find.replace-next	Replace the current match and find next
+docx.quick-parts.tab.parts	Parts
+docx.quick-parts.tab.properties	Properties
+docx.quick-parts.tab.fields	Fields
+docx.selection-pane.object-number	Object {number}
+docx.selection-pane.object-name	Object
+
+docx.fit-text.title	Fit Text
+docx.fit-text.width	Width
+docx.fit-text.characters	ch

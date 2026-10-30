@@ -7,7 +7,7 @@
 //! name); メモの削除 and コメントとメモのクリア take them off the selected
 //! cells. Shown by the cell's red mark and its card (comment_card.rs).
 //! Threaded comments are another feature (the xlsx owner's).
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::input::{Textarea, TextareaState};
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::*;
@@ -43,7 +43,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.note = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -104,30 +104,27 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
         let (column, row) = p.cell;
         let body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_size(px(13.)).child(crate::shell::i18n::format("note.cell", &[("cell", &ibis_doc_model::cell_name(column, row))])))
+            .p_0().child(div().text_sm().child(crate::shell::i18n::format("note.cell", &[("cell", &ibis_doc_model::cell_name(column, row))])))
             .child(mark("text", div().h(px(140.)).border_1().border_color(rgb(0xD0D0D0)).rounded_md().p_1().child(Textarea::new(&p.state).appearance(false).size_full()).into_any_element()))
-            .child(mark(
-                "save",
-                Button::new("note-save")
-                    .primary()
-                    .small()
+            ;
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("save", crate::shell::chrome::ActionDefinition::new("note-save", "", crate::shell::chrome::ActionButtonKind::Primary)
                     .label(text("_shell.save"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.save_note(cx);
                         this.focus_handle.focus(window, cx);
-                    }))
-                    .into_any_element(),
-            ))
-            .child(mark(
-                "delete",
-                Button::new("note-delete")
-                    .small()
-                    .ghost()
+                    })))).action(mark_action("delete", crate::shell::chrome::ActionDefinition::new("note-delete", "", crate::shell::chrome::ActionButtonKind::Destructive)
                     .label(text("fix.notes.delete-note"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         let slide = this.current_slide;
@@ -137,22 +134,7 @@ impl SlideEditor {
                         this.wb_mut().panels.note = None;
                         this.focus_handle.focus(window, cx);
                         cx.notify();
-                    }))
-                    .into_any_element(),
-            ))
-            .child(mark(
-                "close",
-                Button::new("note-close")
-                    .small()
-                    .ghost()
-                    .label(text("_shell.close"))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.wb_mut().panels.note = None;
-                        this.focus_handle.focus(window, cx);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ));
-        Some(SidebarPanel { title: "pptx.notes.note".into(), body: body.into_any_element() })
+                    }))));
+        Some(SidebarPanel::with_footer("pptx.notes.note", body.into_any_element(), panel_terminal_actions))
     }
 }

@@ -3,9 +3,9 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! ノートと配布資料のヘッダーとフッター (挿入 > ノートのヘッダーとフッター…):
 //! the header, date, footer and page number the notes pages carry.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Command, NotesDate, NotesMarks};
@@ -192,19 +192,17 @@ impl SlideEditor {
                 this.open_notes_marks_context_menu(event.position, window, cx);
             }))
             .child(check("pptx-nm-header", "_shell.header", p.header, "header"))
-            .child(Input::new(&p.header_text).small().cleanable(true))
+            .child(crate::shell::chrome::text_field(&p.header_text).full_width())
             .child(check("pptx-nm-date", "_shell.date-time", p.date, "date"))
             .child(check("pptx-nm-auto", "pptx.notes-marks-panel.update-automatically", p.auto_date, "auto"))
-            .child(Input::new(&p.date_text).small().cleanable(true).disabled(p.auto_date))
+            .child(crate::shell::chrome::text_field(&p.date_text).full_width().disabled(p.auto_date))
             .child(check("pptx-nm-number", "_xlsx.page-number", p.number, "number"))
             .child(check("pptx-nm-footer", "_shell.footer", p.footer, "footer"))
-            .child(Input::new(&p.footer_text).small().cleanable(true))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("pptx-nm-all").primary().small().label(t("pptx.notes-marks-panel.apply-all")).on_click(cx.listener(|e, _, w, cx| e.apply_notes_marks(w, cx))))
-                    .child(Button::new("pptx-nm-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_notes_marks(w, cx)))),
-            );
-        Some(SidebarPanel { title: t("pptx.notes-marks-panel.notes-header-footer"), body: body.into_any_element() })
+            .child(crate::shell::chrome::text_field(&p.footer_text).full_width())
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("pptx-nm-all", t("pptx.notes-marks-panel.apply-all"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_notes_marks(w, cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("pptx-nm-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_notes_marks(w, cx))));
+        Some(SidebarPanel::with_footer(t("pptx.notes-marks-panel.notes-header-footer"), body.into_any_element(), panel_actions))
     }
 }

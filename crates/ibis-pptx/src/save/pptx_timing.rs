@@ -149,7 +149,7 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
         (AnimationClass::Entrance, AnimationLook::Zoom) => {
             let (v, s) = (next(), next());
             (
-                24,
+                23,
                 0,
                 format!(
                     "{}<{p}animScale><{p}cBhvr><{p}cTn id=\"{s}\" dur=\"{dur}\" fill=\"hold\"/>{target}</{p}cBhvr><{p}from x=\"0\" y=\"0\"/><{p}to x=\"100000\" y=\"100000\"/></{p}animScale>",
@@ -160,7 +160,7 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
         (AnimationClass::Exit, AnimationLook::Zoom) => {
             let (s, v) = (next(), next());
             (
-                24,
+                23,
                 0,
                 format!(
                     "<{p}animScale><{p}cBhvr><{p}cTn id=\"{s}\" dur=\"{dur}\" fill=\"hold\"/>{target}</{p}cBhvr><{p}from x=\"100000\" y=\"100000\"/><{p}to x=\"0\" y=\"0\"/></{p}animScale>{}",
@@ -172,7 +172,7 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
             let (v, f) = (next(), next());
             let sub = if side == AnimationSide::Bottom { 2 } else { 1 };
             (
-                25,
+                30,
                 sub,
                 format!(
                     "{}<{p}animEffect transition=\"in\" filter=\"fade\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>",
@@ -184,7 +184,7 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
             let (f, v) = (next(), next());
             let sub = if side == AnimationSide::Bottom { 2 } else { 1 };
             (
-                25,
+                30,
                 sub,
                 format!(
                     "<{p}animEffect transition=\"out\" filter=\"fade\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>{}",
@@ -451,16 +451,20 @@ fn timing_xml(p: &str, animations: &[Animation], spid: &dyn Fn(ShapeId) -> Optio
 pub(crate) fn write_timing(doc: &mut XmlDocument, animations: &[Animation], native: &HashMap<ShapeId, String>) -> Result<(), Error> {
     let root = doc.root_element().ok_or_else(|| Error::new("スライドが空です"))?;
     let old = doc.child(root, "timing");
+    // The playing of videos and audios is not an animation of the model: kept as it is.
+    let media = old.map(|t| super::pptx_media_timing::take(doc, t)).unwrap_or_default();
     if let Some(t) = old
         && !rewritable(doc, t)
     {
+        // Put back what was taken: nothing is changed.
+        super::pptx_media_timing::restore(doc, media)?;
         return Err(unsupported("トリガー・段落ごとの再生・音などのあるアニメーションの変更"));
     }
     if let Some(t) = old {
         doc.detach(t);
     }
     if animations.is_empty() {
-        return Ok(());
+        return super::pptx_media_timing::restore(doc, media);
     }
     let x = Prefixes::at(doc, root);
     let xml = timing_xml(&x.p, animations, &|s| native.get(&s).cloned())?;
@@ -468,7 +472,7 @@ pub(crate) fn write_timing(doc: &mut XmlDocument, animations: &[Animation], nati
     // After the transition (and an AlternateContent holding one), before the extension list.
     let at = doc.children(root).iter().position(|&c| doc.is_element(c) && doc.local_name(c) == "extLst").unwrap_or(doc.children(root).len());
     doc.insert(root, at, timing);
-    Ok(())
+    super::pptx_media_timing::restore(doc, media)
 }
 
 #[cfg(test)]

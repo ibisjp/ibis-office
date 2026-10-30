@@ -171,7 +171,7 @@ fn menus_xlsx_no_dead_items() {
 /// Items of the pptx menus that are made in no state: the intersection of the dead items of nothing selected, a text shape
 /// selected, text being edited, a picture, a chart, a table, and everything selected (an item that only a selection connects is
 /// not dead). Not made yet; take an id out of the list when it is.
-const PPTX_DEAD: &[&str] = &["file.export.svg", "file.language", "help.search", "help.help", "help.shortcuts"];
+const PPTX_DEAD: &[&str] = &["file.export.svg", "file.language", "help.help", "help.shortcuts"];
 /// Items only a state this check does not reach connects: an animation chosen in the animation pane, a vertex selected while the edit
 /// points are on, a character format copied.
 const PPTX_STATE_ONLY: &[&str] = &["pptx.anim.options-dialog", "pptx.edit-points.smooth", "pptx.edit-points.straight", "pptx.edit-points.corner", "edit.paste-format"];

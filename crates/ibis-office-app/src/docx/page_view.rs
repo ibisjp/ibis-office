@@ -29,7 +29,7 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
             Item::Picture { media, x, y, w, h } => {
                 if let Some(image) = res.picture_at_size(*media, w * k, h * k) {
                     front_pictures.push(
-                        img(image).absolute().left(px(x * k)).top(px(y * k)).w(px(w * k)).h(px(h * k)).into_any_element(),
+                        img(image).absolute().left(px(x * k)).top(px(y * k)).w(px(w * k)).h(px(h * k)).object_fit(ObjectFit::Fill).into_any_element(),
                     );
                 }
             }
@@ -139,6 +139,12 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                                 }
                                 let run = TextRun { len: s.len(), font: font.clone(), color: *color, background_color: None, underline: None, strikethrough: None };
                                 let shaped = window.text_system().shape_line(SharedString::from(s.to_string()), px(size_px), &[run], None);
+                                if font.features.tag_value_list().iter().any(|(tag,value)|tag=="vert" && *value==1)
+                                    && let Some(run)=shaped.runs.first()
+                                    && crate::render::vertical_text::paint_glyph(window,point(o.x+px((x+dx)*k),o.y+px(y*k)),run.font_id,c,size_px,*color)
+                                {
+                                    continue;
+                                }
                                 if matches!(c, '☐' | '☑' | '☒') && f32::from(shaped.width) < size_px * 0.85 {
                                     let box_run = TextRun { len: "□".len(), font: font.clone(), color: *color, background_color: None, underline: None, strikethrough: None };
                                     let box_shaped = window.text_system().shape_line(SharedString::from("□"), px(size_px), &[box_run], None);
@@ -164,7 +170,7 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                                 shaped.paint(origin, shaped.ascent + shaped.descent, TextAlign::Left, None, window, cx).ok();
                             }
                         }
-                        Item::Turned { x, y, text, font, size: font_size, color, turns } => {
+                        Item::Turned { x, y, text, font, size: font_size, color, turns, xscale } => {
                             // Each glyph moved where turning the line about its
                             // start takes it, and turned about itself there.
                             let run = TextRun { len: text.len(), font: font.clone(), color: *color, background_color: None, underline: None, strikethrough: None };
@@ -181,6 +187,7 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                                     let transformation = TransformationMatrix::unit()
                                         .translate(pivot)
                                         .rotate(Radians(angle))
+                                        .scale(size(*xscale, 1.0))
                                         .translate(point(ScaledPixels(-pivot.x.0), ScaledPixels(-pivot.y.0)));
                                     let _ = window.paint_glyph_transformed(turned, r.font_id, glyph.id, px(font_size * k), *color, transformation);
                                 }

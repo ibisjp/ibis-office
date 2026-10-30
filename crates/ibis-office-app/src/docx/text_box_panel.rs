@@ -5,7 +5,6 @@
 //! at the caret, and the sidebar panel that edits the text of the text box
 //! at the caret.
 
-use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::component::{ActiveTheme as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -48,6 +47,7 @@ pub(crate) struct TextBoxInfo {
     pub(crate) reflection: bool,
     /// Vertical anchor of the text (top, middle, bottom).
     pub(crate) anchor: ibis_doc_model::VerticalAnchor,
+    pub(crate) effects:super::text_box_effects::EffectModel,
 }
 
 /// The panel's fields, and the text box they edit.
@@ -74,6 +74,7 @@ pub(crate) struct TextBoxState {
     pub(crate) glow: bool,
     pub(crate) soft_edge: bool,
     pub(crate) reflection: bool,
+    pub(crate) effects:super::text_box_effects::EffectEditor,
     pub(crate) anchor: ibis_doc_model::VerticalAnchor,
     /// What was shown when the panel opened or last applied: the changes are those from it.
     pub(crate) initial: TextBoxInfo,
@@ -348,6 +349,7 @@ impl SlideEditor {
                         glow,
                         soft_edge,
                         reflection,
+                        effects:match &shape.kind{ShapeKind::Auto(a)=>super::text_box_effects::EffectModel{fill:a.fill.clone(),shadow:a.shadow.clone(),glow:a.glow,soft:a.soft_edge,reflection:a.reflection.clone()},_=>Default::default()},
                         anchor: text_body.anchor,
                     });
                     if offset == start.offset {
@@ -819,12 +821,7 @@ impl SlideEditor {
         }
         let Some((at, offset, frame)) = self.floating_text_box_at(page, x, y) else { return false };
         let (is_picture, is_inline_picture) = self.is_picture_at(at);
-        let already_in_multi = self.doc_state().is_some_and(|s| s.selected_shapes.len() > 1 && s.selected_shapes.contains(&at));
-        let keep_multi = if already_in_multi {
-            self.doc_state().map(|s| s.selected_shapes.clone()).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let keep_multi = self.doc_state().filter(|s|s.selected_shapes.contains(&at)).map(|s|s.selected_shapes.clone()).unwrap_or_default();
         self.set_caret(at, false, cx);
         if let Some(state) = self.doc_state_mut() {
             state.shape_selected = true;
@@ -878,6 +875,7 @@ impl SlideEditor {
                     typing: false,
                     cell: None,
                     cell_anchor: None,
+            added_body: None,
                 },
                 positions,
                 goal_x: None,
@@ -1189,72 +1187,12 @@ impl SlideEditor {
         let caret_color = theme.foreground;
         let entity = cx.entity();
 
-        let border_strip = |left: Pixels, top: Pixels, width: Option<Pixels>, height: Option<Pixels>, cx: &mut Context<Self>| {
-            let mut d = div()
-                .absolute()
-                .left(left)
-                .top(top)
-                .cursor(CursorStyle::OpenHand)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                        cx.stop_propagation();
-                        let is_top = this.doc_split_active;
-                        let Some((px_pt, py_pt)) = this.page_point_pane(index, event.position, is_top) else { return };
-                        let Some((_, frame, offset)) = this.floating_text_box_frame_of(edit_at) else { return };
-                        let (is_picture, is_inline_picture) = this.is_picture_at(edit_at);
-                        if let Some(state) = this.doc_state_mut() {
-                            state.shape_drag = Some(ShapeDrag {
-                                at: edit_at,
-                                mode: DragMode::Move,
-                                page: index,
-                                frame,
-                                start: (px_pt, py_pt),
-                                delta: (0.0, 0.0),
-                                offset,
-                                keep_aspect_on_corners: is_picture,
-                                is_inline_picture,
-                            });
-                        }
-                        cx.notify();
-                    }),
-                );
-            if let Some(w_px) = width {
-                d = d.w(w_px);
-            } else {
-                d = d.right_0();
-            }
-            if let Some(h_px) = height {
-                d = d.h(h_px);
-            } else {
-                d = d.bottom_0();
-            }
-            d
-        };
-        let bw = px(6.0);
-        let top_strip = border_strip(px(0.0), px(-3.0), None, Some(bw), cx);
-        let bottom_strip = border_strip(px(0.0), px(h * k - 3.0), None, Some(bw), cx);
-        let left_strip = border_strip(px(-3.0), px(0.0), Some(bw), None, cx);
-        let right_strip = border_strip(px(w * k - 3.0), px(0.0), Some(bw), None, cx);
-
         let blue = rgb(0x1a73e8);
         let edit_handle_fill = rgb(0x80d4ff);
-        let handles: Vec<AnyElement> = HANDLES
-            .iter()
-            .copied()
-            .map(|(hx, hy)| {
-                let (cx_pt, cy_pt) = ((hx + 1) as f32 * w / 2.0, (hy + 1) as f32 * h / 2.0);
-                div()
-                    .absolute()
-                    .left(px(cx_pt * k - 3.0))
-                    .top(px(cy_pt * k - 3.0))
-                    .w(px(6.0))
-                    .h(px(6.0))
-                    .bg(edit_handle_fill)
-                    .border_1()
-                    .border_color(blue)
-                    .cursor(handle_cursor(hx, hy))
-                    .on_mouse_down(
+        let points=ibis_doc_model::ResizeHandle::ALL.map(|handle|{let (ax,ay)=handle.anchor();(handle,point(px(ax as f32*w*k/2.),px(ay as f32*h*k/2.)))});
+        let handles:Vec<AnyElement>=crate::shell::selection_handles::group("docx-edit-handles".into(),points,None,Default::default(),blue.into(),edit_handle_fill.into()).into_iter().map(|(handle,element)|{
+            let (ax,ay)=handle.unwrap().anchor();let (hx,hy)=(ax as i8-1,ay as i8-1);
+            element                    .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
                             cx.stop_propagation();
@@ -1390,10 +1328,19 @@ impl SlideEditor {
                         cx.notify();
                     }),
                 )
-                .child(top_strip)
-                .child(bottom_strip)
-                .child(left_strip)
-                .child(right_strip)
+                .child(crate::shell::selection_handles::border_region("docx-edit-frame",Bounds::new(point(px(0.),px(0.)),size(px(w*k),px(h*k))),0,cx.listener(move|this,event:&MouseDownEvent,_window,cx|{
+                    // Dragging the border moves the box while its text stays in edit (a plain click on it ends the edit: the mouse-up).
+                    cx.stop_propagation();
+                    let is_top=this.doc_split_active;
+                    let Some((px_pt,py_pt))=this.page_point_pane(index,event.position,is_top) else { return };
+                    let Some((_,frame,offset))=this.floating_text_box_frame_of(edit_at) else { return };
+                    let (is_picture,is_inline_picture)=this.is_picture_at(edit_at);
+                    if let Some(state)=this.doc_state_mut() {
+                        if let Some(edit)=state.box_edit.as_mut(){edit.edit.is_new=false;}
+                        state.shape_drag=Some(ShapeDrag{at:edit_at,mode:DragMode::Move,page:index,frame,start:(px_pt,py_pt),delta:(0.0,0.0),offset,keep_aspect_on_corners:is_picture,is_inline_picture});
+                    }
+                    cx.notify();
+                })))
                 .children(handles)
                 .into_any_element(),
         )
@@ -1513,23 +1460,10 @@ impl SlideEditor {
             if page != index {
                 continue;
             }
-            out.push(div().absolute().left(px(x * k)).top(px(y * k)).w(px(w * k)).h(px(h * k)).border_1().border_color(blue).into_any_element());
-            for &(hx, hy) in HANDLES {
-                let (cx, cy) = (x + (hx + 1) as f32 * w / 2.0, y + (hy + 1) as f32 * h / 2.0);
-                out.push(
-                    div()
-                        .absolute()
-                        .left(px(cx * k - 3.0))
-                        .top(px(cy * k - 3.0))
-                        .w(px(6.0))
-                        .h(px(6.0))
-                        .bg(rgb(0xffffff))
-                        .border_1()
-                        .border_color(blue)
-                        .cursor(handle_cursor(hx, hy))
-                        .into_any_element(),
-                );
-            }
+            out.push(crate::shell::selection_handles::outline(Bounds::new(point(px(x*k),px(y*k)),size(px(w*k),px(h*k))),blue.into()).into_any_element());
+            out.push(crate::shell::selection_handles::border_region(format!("docx-frame-{x}-{y}"),Bounds::new(point(px(x*k),px(y*k)),size(px(w*k),px(h*k))),0,cx.listener(move|e,event:&MouseDownEvent,w,cx|{if let Some(edit)=e.doc_state_mut().and_then(|s|s.box_edit.as_mut()){edit.edit.is_new=false;}let mut event=event.clone();event.click_count=1;e.on_page_down(index,&event,w,e.doc_split_active,cx);})).into_any_element());
+            let points=ibis_doc_model::ResizeHandle::ALL.map(|handle|{let (ax,ay)=handle.anchor();(handle,point(px((x+ax as f32*w/2.)*k),px((y+ay as f32*h/2.)*k)))});
+            out.extend(crate::shell::selection_handles::group(format!("docx-shape-handles-{x}-{y}").into(),points,None,Default::default(),blue.into(),rgb(0xffffff).into()).into_iter().map(|(_,element)|element.into_any_element()));
         }
         out
     }
@@ -1598,6 +1532,7 @@ impl SlideEditor {
 
     /// 挿入 > テキスト ボックスの文字…: the panel, with the text box at the caret.
     pub(crate) fn open_text_box(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(info) = self.text_box_at_caret() else {
             self.status = Some(crate::shell::i18n::text("docx.text-box-panel.place-cursor-before-after-text"));
             cx.notify();
@@ -1608,6 +1543,7 @@ impl SlideEditor {
 
     /// The panel open (`focus` puts the caret in its text), already for `info`'s text box.
     pub(crate) fn open_text_box_for(&mut self, info: TextBoxInfo, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let text = cx.new(|cx| TextareaState::new(window, cx));
         text.update(cx, |a, cx| {
             a.set_value(info.text.clone(), window, cx);
@@ -1638,6 +1574,8 @@ impl SlideEditor {
             let id = input.entity_id();
             subscriptions.push(cx.subscribe_in(input, window, move |this, _, event: &InputEvent, _, cx| this.text_box_field_event(id, event, cx)));
         }
+        let(effects,effect_subscriptions)=super::text_box_effects::EffectEditor::new(&info.effects,window,cx);
+        subscriptions.extend(effect_subscriptions);
         if let Some(state) = self.doc_state_mut() {
             state.find = None;
             state.link = None;
@@ -1651,6 +1589,7 @@ impl SlideEditor {
             state.ruby = None;
             state.helper = Default::default();
             state.text_box = Some(TextBoxState {
+                effects,
                 text,
                 geometry,
                 font_size,
@@ -1695,6 +1634,14 @@ impl SlideEditor {
         if info.at != shown_at {
             self.open_text_box_for(info, false, window, cx);
         } else {
+            let effects_changed=self.doc_state().and_then(|s|s.text_box.as_ref()).is_some_and(|s|s.initial.effects!=info.effects);
+            if effects_changed {
+                let(editor,subs)=super::text_box_effects::EffectEditor::new(&info.effects,window,cx);
+                if let Some(s)=self.doc_state_mut().and_then(|s|s.text_box.as_mut()){
+                    let tab=s.effects.tab;let open=s.effects.open;s.effects=editor;s.effects.tab=tab;s.effects.open=open;s._subscriptions.extend(subs);
+                    s.gradient=info.gradient;s.shadow=info.shadow;s.glow=info.glow;s.soft_edge=info.soft_edge;s.reflection=info.reflection;
+                }
+            }
             if let Some(state) = self.doc_state_mut().and_then(|s| s.text_box.as_mut()) {
                 state.initial = info.clone();
             }
@@ -1767,7 +1714,7 @@ impl SlideEditor {
         // The fill and the line (an empty colour: none).
         let hex = |t: &str| (t.trim_start_matches('#').len() == 6).then(|| u32::from_str_radix(t.trim_start_matches('#'), 16).ok()).flatten().map(Rgb);
         let (fill_now, line_now, width_now) = (value(&state.fill), value(&state.line), value(&state.line_width));
-        let new_fill = (fill_now != initial.fill).then(|| if fill_now.is_empty() { Some(None) } else { hex(&fill_now).map(Some) }).flatten();
+        let new_fill = (!state.gradient && fill_now != initial.fill).then(|| if fill_now.is_empty() { Some(None) } else { hex(&fill_now).map(Some) }).flatten();
         let width = emu(&width_now).filter(|w| *w > 0).unwrap_or(12_700);
         let new_line = (line_now != initial.line || width_now != initial.line_width).then(|| if line_now.is_empty() { Some(None) } else { hex(&line_now).map(|c| Some((c, width))) }).flatten();
         let (head_now, tail_now) = (state.head, state.tail);
@@ -1799,23 +1746,13 @@ impl SlideEditor {
             stroke.width = width;
             commands.push(FlowCommand::SetShapeStroke { at, stroke: Some(stroke.with_dash(state.dash)) });
         }
-        let effects_changed = state.shadow != initial.shadow || state.glow != initial.glow || state.soft_edge != initial.soft_edge || state.reflection != initial.reflection;
-        if !initial.is_line && (state.gradient != initial.gradient || effects_changed) {
-            let colour = hex(&fill_now).or_else(|| hex(&initial.fill)).unwrap_or(Rgb(0x4472C4));
-            let fill = (state.gradient != initial.gradient).then(|| {
-                if state.gradient {
-                    // From the colour to a lighter one, top to bottom.
-                    let lighter = Rgb(((colour.0 >> 16 & 255) + (255 - (colour.0 >> 16 & 255)) / 2) << 16 | ((colour.0 >> 8 & 255) + (255 - (colour.0 >> 8 & 255)) / 2) << 8 | ((colour.0 & 255) + (255 - (colour.0 & 255)) / 2));
-                    ibis_doc_model::Fill::Linear { angle: 5_400_000, scaled: false, stops: vec![ibis_doc_model::GradientStop { position: 0, color: ibis_doc_model::Color::opaque(colour) }, ibis_doc_model::GradientStop { position: 100_000, color: ibis_doc_model::Color::opaque(lighter) }] }
-                } else {
-                    ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(colour))
-                }
-            });
-            let shadow = (state.shadow != initial.shadow).then(|| state.shadow.then(|| ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: Rgb(0), alpha: 102 }, 50_800, 38_100, 2_700_000)));
-            let glow = (state.glow != initial.glow).then(|| state.glow.then(|| (ibis_doc_model::Color { rgb: colour, alpha: 102 }, 63_500)));
-            let soft_edge = (state.soft_edge != initial.soft_edge).then(|| state.soft_edge.then_some(63_500));
-            let reflection = (state.reflection != initial.reflection).then(|| state.reflection.then(|| ibis_doc_model::Reflection::standard(0, 45_500)));
-            commands.push(FlowCommand::SetShapeEffects { at, fill, shadow, glow, soft_edge, reflection });
+        if !initial.is_line && let Some(effects)=super::text_box_effects::model(state,cx) {
+            if effects!=initial.effects {commands.push(FlowCommand::SetShapeEffects{at,
+                fill:(effects.fill!=initial.effects.fill).then_some(effects.fill),
+                shadow:(effects.shadow!=initial.effects.shadow).then_some(effects.shadow),
+                glow:(effects.glow!=initial.effects.glow).then_some(effects.glow),
+                soft_edge:(effects.soft!=initial.effects.soft).then_some(effects.soft),
+                reflection:(effects.reflection!=initial.effects.reflection).then_some(effects.reflection)});}
         }
         if new_size.is_some() || new_color.is_some() || new_bold.is_some() || new_italic.is_some() {
             commands.push(FlowCommand::SetShapeTextFormat { at, bold: new_bold, italic: new_italic, size: new_size, color: new_color });
@@ -1925,6 +1862,9 @@ impl SlideEditor {
     }
 
     pub(crate) fn text_box_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        let tab=self.doc_state()?.text_box.as_ref()?.effects.tab;
+        let tabs=crate::shell::chrome::tab_control_with_mode([crate::shell::i18n::text("shape.effects.basic"),crate::shell::i18n::text("shape.effects.decoration")],tab,"text-box-tabs",crate::shell::chrome::TabMode::Intrinsic,|e,index,cx|{if let Some(s)=e.doc_state_mut().and_then(|d|d.text_box.as_mut()){s.effects.tab=index;}cx.notify();},cx);
+        if tab==1 {let body=crate::shell::chrome::panel_form().p_0().child(tabs).child(self.text_box_decoration_panel(cx)?);return Some(SidebarPanel{title:crate::shell::i18n::text("_shell.text-box"),body:body.into_any_element()});}
         let state = self.doc_state()?.text_box.as_ref()?;
         let (geometry, font_size, color, floating) = (state.geometry.clone(), state.font_size.clone(), state.color.clone(), state.initial.floating);
         let (fill, line, line_width, has_text, is_line) = (state.fill.clone(), state.line.clone(), state.line_width.clone(), state.initial.has_text, state.initial.is_line);
@@ -1939,7 +1879,7 @@ impl SlideEditor {
                 .gap_2()
                 .items_center()
                 .child(div().flex_shrink_0().text_sm().child(crate::shell::i18n::text(label)))
-                .child(div().w(px(124.)).flex_shrink_0().flex().justify_start().child(field_el))
+                .child(div().w(crate::shell::chrome::FIELD_WIDTH+px(30.)).flex_shrink_0().flex().justify_start().child(field_el))
         };
         let parse_rgb = |input: &Entity<InputState>, cx: &Context<Self>| -> Option<Rgb> {
             let v = input.read(cx).value();
@@ -2001,78 +1941,42 @@ impl SlideEditor {
             crate::shell::color_palette::simple_palette(none_item, Some(&THEME_10), &std_list, current, pick)
         };
 
-        let w_el = div()
-            .w(px(88.))
-            .child(crate::shell::chrome::spinner_field(
-                "tb-w",
-                &geometry[0],
-                crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 9999.0).integer_only(),
-                |this, _, _, cx| this.apply_text_box(cx),
-                cx,
-            ))
+        let w_el = crate::shell::chrome::text_field(&geometry[0])
+            .unit("pt",px(22.))
+            .spinner("tb-w", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 9999.0).integer_only(), cx, |this, _, _, cx| this.apply_text_box(cx))
             .into_any_element();
-        let h_el = div()
-            .w(px(88.))
-            .child(crate::shell::chrome::spinner_field(
-                "tb-h",
-                &geometry[1],
-                crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 9999.0).integer_only(),
-                |this, _, _, cx| this.apply_text_box(cx),
-                cx,
-            ))
+        let h_el = crate::shell::chrome::text_field(&geometry[1])
+            .unit("pt",px(22.))
+            .spinner("tb-h", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 9999.0).integer_only(), cx, |this, _, _, cx| this.apply_text_box(cx))
             .into_any_element();
-        let x_el = div()
-            .w(px(88.))
-            .child(crate::shell::chrome::spinner_field(
-                "tb-x",
-                &geometry[2],
-                crate::shell::chrome::SpinnerSpec::new(1.0).range(-9999.0, 9999.0).integer_only(),
-                |this, _, _, cx| this.apply_text_box(cx),
-                cx,
-            ))
+        let x_el = crate::shell::chrome::text_field(&geometry[2])
+            .unit("pt",px(22.))
+            .spinner("tb-x", crate::shell::chrome::SpinnerSpec::new(1.0).range(-9999.0, 9999.0).integer_only(), cx, |this, _, _, cx| this.apply_text_box(cx))
             .into_any_element();
-        let y_el = div()
-            .w(px(88.))
-            .child(crate::shell::chrome::spinner_field(
-                "tb-y",
-                &geometry[3],
-                crate::shell::chrome::SpinnerSpec::new(1.0).range(-9999.0, 9999.0).integer_only(),
-                |this, _, _, cx| this.apply_text_box(cx),
-                cx,
-            ))
+        let y_el = crate::shell::chrome::text_field(&geometry[3])
+            .unit("pt",px(22.))
+            .spinner("tb-y", crate::shell::chrome::SpinnerSpec::new(1.0).range(-9999.0, 9999.0).integer_only(), cx, |this, _, _, cx| this.apply_text_box(cx))
             .into_any_element();
         const LINE_WIDTH_STEPS: &[f32] = &[0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0];
-        let lw_el = div()
-            .w(px(88.))
-            .child(crate::shell::chrome::spinner_field(
-                "tb-lw",
-                &line_width,
-                crate::shell::chrome::SpinnerSpec::new(0.5).steps(LINE_WIDTH_STEPS).range(0.0, 100.0),
-                |this, _, _, cx| this.apply_text_box(cx),
-                cx,
-            ))
+        let lw_el = crate::shell::chrome::text_field(&line_width)
+            .unit("pt",px(22.))
+            .spinner("tb-lw", crate::shell::chrome::SpinnerSpec::new(0.5).steps(LINE_WIDTH_STEPS).range(0.0, 100.0), cx, |this, _, _, cx| this.apply_text_box(cx))
             .into_any_element();
         const FONT_STEPS: &[f32] = &[6.0, 7.0, 8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 36.0, 48.0, 72.0];
-        let fs_el = div()
-            .w(px(88.))
-            .child(crate::shell::chrome::spinner_field(
-                "tb-fs",
-                &font_size,
-                crate::shell::chrome::SpinnerSpec::new(1.0).steps(FONT_STEPS).range(1.0, 1638.0),
-                |this, _, _, cx| this.apply_text_box(cx),
-                cx,
-            ))
+        let fs_el = crate::shell::chrome::text_field(&font_size)
+            .unit("pt",px(22.))
+            .spinner("tb-fs", crate::shell::chrome::SpinnerSpec::new(1.0).steps(FONT_STEPS).range(1.0, 1638.0), cx, |this, _, _, cx| this.apply_text_box(cx))
             .into_any_element();
         let fill_el = div()
-            .w(px(124.))
+            .w(crate::shell::chrome::FIELD_WIDTH)
             .child(crate::shell::chrome::color_text_field("tb-fill", &fill, fill_rgb, make_palette(fill.clone(), fill_rgb, true), &weak))
             .into_any_element();
         let line_el = div()
-            .w(px(124.))
+            .w(crate::shell::chrome::FIELD_WIDTH)
             .child(crate::shell::chrome::color_text_field("tb-line", &line, line_rgb, make_palette(line.clone(), line_rgb, true), &weak))
             .into_any_element();
         let color_el = div()
-            .w(px(124.))
+            .w(crate::shell::chrome::FIELD_WIDTH)
             .child(crate::shell::chrome::color_text_field("tb-color", &color, color_rgb, make_palette(color.clone(), color_rgb, false), &weak))
             .into_any_element();
 
@@ -2081,10 +1985,10 @@ impl SlideEditor {
         let border_col = theme.border;
         let popover_bg = theme.popover;
         let accent_bg = theme.accent;
-        let mut line_style_wrap = div().relative().w(px(124.));
+        let mut line_style_wrap = div().relative().w(crate::shell::chrome::FIELD_WIDTH+px(30.));
         let combo_btn = h_flex()
             .id("line-dash")
-            .w(px(124.))
+            .w(crate::shell::chrome::FIELD_WIDTH+px(30.))
             .h(px(28.))
             .px_2()
             .items_center()
@@ -2109,7 +2013,7 @@ impl SlideEditor {
         if line_dash_open {
             let mut list_col = v_flex()
                 .id("line-dash-list")
-                .w(px(124.))
+                .w(crate::shell::chrome::FIELD_WIDTH+px(30.))
                 .py_1()
                 .rounded(px(4.))
                 .border_1()
@@ -2168,7 +2072,7 @@ impl SlideEditor {
                             .border_color(border_col)
                             .bg(popover_bg)
                             .shadow_sm()
-                            .text_xs()
+                            .text_sm()
                             .whitespace_nowrap()
                             .child(crate::shell::i18n::text(dash_label(d))),
                     );
@@ -2189,7 +2093,7 @@ impl SlideEditor {
         let line_style_el = line_style_wrap.into_any_element();
 
         let toggle = |id: &'static str, label: &'static str, on: bool, f: fn(&mut TextBoxState)| {
-            Button::new(id).small().label(crate::shell::i18n::text(label)).selected(on).on_click(cx.listener(move |this, _, _, cx| {
+            crate::shell::chrome::checkbox_button(id,crate::shell::i18n::text(label),on,false,cx.listener(move |this, _, _, cx| {
                 if let Some(state) = this.doc_state_mut().and_then(|s| s.text_box.as_mut()) {
                     f(state);
                 }
@@ -2200,23 +2104,21 @@ impl SlideEditor {
         let body = v_flex()
             .gap_2()
             .px(px(18.))
-            .py(px(8.))
-            .child(row_el("docx.picture-panel.width-pt", w_el))
-            .child(row_el("docx.picture-panel.height-pt", h_el))
-            .children(floating.then(|| row_el("docx.text-box-panel.left-pt", x_el)))
-            .children(floating.then(|| row_el("docx.text-box-panel.top-pt", y_el)))
-            .children(floating.then(|| h_flex().flex_wrap().gap_1().children(WRAPS.iter().map(|&(id, label, wrap)| Button::new(id).small().label(crate::shell::i18n::text(label)).on_click(cx.listener(move |this, _, _, cx| this.set_shape_wrap(wrap, cx)))))))
-            .children((!is_line).then(|| row_el("docx.text-box-panel.fill-color", fill_el)))
-            .child(row_el("docx.text-box-panel.outline-color", line_el))
-            .child(row_el("docx.text-box-panel.line-width-pt", lw_el))
-            .child(row_el("docx.text-box-panel.line-style", line_style_el))
-            .children((!is_line).then(|| h_flex().gap_1().child(toggle("shape-gradient", "docx.text-box-panel.gradient", gradient, |s| s.gradient = !s.gradient)).child(toggle("shape-shadow", "docx.text-box-panel.shadow", shadow, |s| s.shadow = !s.shadow))))
-            .children((!is_line).then(|| h_flex().gap_1().child(toggle("shape-glow", "docx.text-box-panel.glow", glow, |s| s.glow = !s.glow)).child(toggle("shape-soft-edge", "docx.text-box-panel.soft-edge", soft_edge, |s| s.soft_edge = !s.soft_edge)).child(toggle("shape-reflection", "docx.text-box-panel.reflection", reflection, |s| s.reflection = !s.reflection))))
+            .py(px(8.)).p_0().child(tabs)
             .children((!is_line).then(|| v_flex().gap_1().child(div().text_sm().child(crate::shell::i18n::text("docx.text-box-panel.shape-styles"))).child(h_flex().gap_1().flex_wrap().children(SHAPE_STYLES.iter().enumerate().map(|(i, &(f, l, _))| {
                 let hex = |c: &str| u32::from_str_radix(c, 16).unwrap_or(0);
                 div().id(("shape-style", i)).w(px(26.)).h(px(20.)).rounded_sm().border_2().border_color(rgb(hex(l))).bg(rgb(hex(f))).cursor_pointer().on_click(cx.listener(move |this, _, window, cx| this.apply_shape_style(i, window, cx)))
             }))))
             )
+            .child(row_el("docx.picture-panel.width-pt", w_el))
+            .child(row_el("docx.picture-panel.height-pt", h_el))
+            .children(floating.then(|| row_el("docx.text-box-panel.left-pt", x_el)))
+            .children(floating.then(|| row_el("docx.text-box-panel.top-pt", y_el)))
+            .children(floating.then(|| h_flex().flex_wrap().gap_1().children(WRAPS.iter().map(|&(id, label, wrap)| crate::shell::chrome::action_button(id).small().label(crate::shell::i18n::text(label)).on_click(cx.listener(move |this, _, _, cx| this.set_shape_wrap(wrap, cx)))))))
+            .children((!is_line).then(|| row_el("docx.text-box-panel.fill-color", fill_el)))
+            .child(row_el("docx.text-box-panel.outline-color", line_el))
+            .child(row_el("docx.text-box-panel.line-width-pt", lw_el))
+            .child(row_el("docx.text-box-panel.line-style", line_style_el))
             .children(is_line.then(|| h_flex().gap_1().child(toggle("line-head", "docx.text-box-panel.arrow-start", head, |s| s.head = !s.head)).child(toggle("line-tail", "docx.text-box-panel.arrow-end", tail, |s| s.tail = !s.tail))))
             .children(has_text.then(|| row_el("docx.text-box-panel.font-size", fs_el)))
             .children(has_text.then(|| row_el("docx.text-box-panel.text-color", color_el)));

@@ -103,7 +103,7 @@ xlsx.split	分割
 xlsx.sort-manage	並べ替えの設定…
 xlsx.remove-duplicates	重複の削除…
 xlsx.goto	ジャンプ…
-xlsx.goto-destination	移動先:
+xlsx.goto-destination	移動先
 xlsx.goto-no-destinations	（名前定義または履歴はありません）
 xlsx.goto-type-name	名前
 xlsx.goto-type-history	履歴
@@ -270,14 +270,10 @@ xlsx.hf.insert-time	時刻 (&T)
 xlsx.hf.insert-file	ファイル名 (&F)
 xlsx.hf.insert-sheet	シート名 (&A)
 xlsx.hf.code-preview	コード
-xlsx.hf.apply-code	コードから反映
 xlsx.hf.diff-first	先頭ページのみ別指定
 xlsx.hf.diff-odd-even	奇数/偶数ページ別指定
 xlsx.hf.scale-with-doc	ドキュメントに合わせて拡大縮小
 xlsx.hf.align-margins	ページ余白に合わせて配置
-xlsx.hf.apply	適用
-xlsx.hf.clear	クリア
-xlsx.hf.back	← ページ設定に戻る
 xlsx.insert-textbox	テキスト ボックス
 xlsx.insert-shape	図形
 xlsx.shape.rect	四角形
@@ -663,12 +659,10 @@ _xlsx.print-area-none-used-range	印刷範囲：なし（使っている範囲�
 _xlsx.insert-delete-above-selected-row	選択した行の上に挿入／削除
 _xlsx.the-reference-is-not-valid	参照が正しくありません。
 _xlsx.go-to	ジャンプ
-_xlsx.reference	参照先:
+_xlsx.reference	参照先
 _xlsx.column-a-b	列（A、B…）
 _xlsx.specify-column-names-within-the-range-each-colum	範囲内の列名を指定してください。同じ列と同じキーは一度だけ指定できます。
 _xlsx.range-to-sort	並べ替える範囲
-_xlsx.my-data-has-headers-on	先頭行は見出し：オン
-_xlsx.my-data-has-headers-off	先頭行は見出し：オフ
 _xlsx.select-column	列を選ぶ
 _xlsx.cell-values	セルの値
 _xlsx.ascending	昇順
@@ -815,9 +809,9 @@ _xlsx.insert-calculated-field	計算フィールドの挿入
 _xlsx.insert-field	フィールドの挿入
 _xlsx.calculated-field-added	計算フィールドを追加しました
 _xlsx.calculated-field-deleted	計算フィールドを削除しました
-_xlsx.name	名前:
-_xlsx.formula	数式:
-_xlsx.fields	フィールド:
+_xlsx.name	名前
+_xlsx.formula	数式
+_xlsx.fields	フィールド
 _xlsx.please-enter-a-field-name	計算フィールドの名前を入力してください
 _xlsx.please-enter-a-formula	計算フィールドの数式を入力してください
 _xlsx.insert-calculated-item	集計アイテムの挿入
@@ -826,7 +820,7 @@ _xlsx.calculated-item-added	集計アイテムを追加しました
 _xlsx.calculated-item-deleted	集計アイテムを削除しました
 _xlsx.please-enter-an-item-name	集計アイテムの名前を入力してください
 _xlsx.please-enter-a-formula-2	集計アイテムの数式を入力してください
-_xlsx.items-2	アイテム:
+_xlsx.items-2	アイテム
 _xlsx.no-fields-available	利用可能なフィールドがありません
 _xlsx.table-or-range	テーブルまたは範囲
 _xlsx.where-to-place-the-pivottable	ピボットテーブルを配置する場所
@@ -917,13 +911,11 @@ _xlsx.column-input-cell	列の入力セル
 _xlsx.select-the-cells-of-the-data-table-including-the	データ テーブルにするセル（上の行と左の列の値を含む）を選んでください。
 _xlsx.an-input-cell-must-be-a-single-cell-on-this-shee	入力セルには、同じシートのセルを 1 つ指定してください。
 _xlsx.specify-a-row-input-cell-a-column-input-cell-or	行の入力セルか列の入力セルを指定してください。
-_xlsx.case-sensitive-on	大文字と小文字を区別：オン
-_xlsx.case-sensitive-off	大文字と小文字を区別：オフ
 _xlsx.list-order	リスト順
 _xlsx.reverse-list-order	リスト逆順
 _xlsx.list-configured	リスト設定中 ▾
 _xlsx.list	リスト…
-_xlsx.custom-list-comma-separated	ユーザー設定リスト（カンマ区切り）：
+_xlsx.custom-list-comma-separated	ユーザー設定リスト（カンマ区切り）
 _xlsx.clear-list-normal-order	リスト解除（通常順序）
 _xlsx.sun-sat	日〜土
 _xlsx.sunday-saturday	日曜日〜土曜日
@@ -984,7 +976,7 @@ _xlsx.monochromatic-4	モノクロ 4
 _xlsx.monochromatic-5	モノクロ 5
 _xlsx.monochromatic-6	モノクロ 6
 _xlsx.properties	プロパティ
-_xlsx.object-positioning	オブジェクトの位置関係:
+_xlsx.object-positioning	オブジェクトの位置関係
 _xlsx.move-and-size-with-cells	セルに合わせて移動やサイズ変更をする
 _xlsx.move-but-don-t-size-with-cells	セルに合わせて移動するがサイズ変更はしない
 _xlsx.don-t-move-or-size-with-cells	セルに合わせて移動やサイズ変更をしない
@@ -1000,9 +992,9 @@ _xlsx.direct-only	直接のみ
 _xlsx.all-levels	すべてのレベル
 _xlsx.no-matching-objects-found	該当するオブジェクトが見つかりません。
 _xlsx.move-chart	グラフの移動
-_xlsx.choose-where-you-want-the-chart-to-be-placed	グラフの配置場所を選択してください:
-_xlsx.new-sheet	新しいシート:
-_xlsx.object-in	オブジェクト:
+_xlsx.choose-where-you-want-the-chart-to-be-placed	グラフの配置場所を選択してください
+_xlsx.new-sheet	新しいシート
+_xlsx.object-in	オブジェクト
 _xlsx.cannot-create-a-new-sheet-because-the-workbook-s	ブックの構造が保護されているため、新しいシートを作成できません。
 _xlsx.invalid-sheet-name	シート名が無効です。
 _xlsx.a-sheet-with-this-name-already-exists	同名のシートが既に存在します。
@@ -1055,7 +1047,7 @@ _xlsx.filter-by-selected-cell-s-font-color	選択したセルのフォントの�
 _xlsx.indent	インデント
 _xlsx.set-size	サイズを設定
 _xlsx.size-points	サイズ（ポイント）
-_xlsx.sample	サンプル：
+_xlsx.sample	サンプル
 _xlsx.set-font	フォントを設定
 _xlsx.font-name	フォント名
 _xlsx.locked	ロック
@@ -1262,9 +1254,9 @@ _xlsx.sheet-count	シート数
 _xlsx.data-cell-count	データセル数
 _xlsx.defined-names-count	定義された名前数
 _xlsx.chart-format	グラフの書式
-_xlsx.apply-to-pages	対象ページ：
-_xlsx.options	オプション：
-_xlsx.insert-field-into-section	フィールドの挿入先セクション：
+_xlsx.apply-to-pages	対象ページ
+_xlsx.options	オプション
+_xlsx.insert-field-into-section	フィールドの挿入（最後に選んだ欄のカーソル位置へ）
 _xlsx.number-2-decimals	数値(小数2桁)
 _xlsx.percentage-2-decimals	パーセンテージ(2桁)
 _xlsx.no-calculation	計算なし
@@ -1347,19 +1339,19 @@ _xlsx.error-amount	誤差量
 _xlsx.show-data-in-hidden-rows-and-columns	非表示の行と列のデータを表示する
 _xlsx.references	参照範囲
 _xlsx.consolidate	統合
-_xlsx.views	ビュー:
+_xlsx.views	ビュー
 _xlsx.hidden-rows-and-columns-and-filter-settings	行と列の非表示、およびフィルター設定
 _xlsx.enter-a-positive-number-for-the-height	高さは正の数値で入力してください
 _xlsx.enter-a-number-for-the-vertical-position	縦位置は数値で入力してください
-_xlsx.name-custom-name	名前（指定した名前）:
-_xlsx.subtotals	小計:
+_xlsx.name-custom-name	名前（指定した名前）
+_xlsx.subtotals	小計
 _xlsx.enter-a-number-greater-than-0	0 より大きい数を入力してください。
 _xlsx.and	と
 _xlsx.quarters	四半期
 _xlsx.grand-total	総計
 _xlsx.layout-format	レイアウトと書式
 _xlsx.allow-multiple-filters-per-field	フィールドごとに複数フィルターを許可する
-_xlsx.row-label-display-name	行ラベルの表示名:
+_xlsx.row-label-display-name	行ラベルの表示名
 _xlsx.refresh-data-when-opening-the-file	ファイルを開くときにデータを更新する
 _xlsx.footer-code	フッター：{code}
 _xlsx.the-reference-cell-range-is-not-valid	参照セル範囲が正しくありません。
@@ -1372,7 +1364,7 @@ _xlsx.show-empty-cells-as	空白セルの表示
 _xlsx.select-at-least-one-column-to-subtotal	集計する列を1つ以上選択してください
 _xlsx.add-subtotal-to	小計を追加する場所
 _xlsx.subtotal	小計
-_xlsx.unhide-workbook	表示するブック:
+_xlsx.unhide-workbook	表示するブック
 _xlsx.to-show-the-workbook-again-choose-unhide-window	「ウィンドウの再表示」を選択すると、ブックを再表示できます。
 _xlsx.enter-the-list-range-correctly-for-example-a1-c1	リスト範囲を正しく入力してください（例: A1:C10）。
 _xlsx.advanced	詳細設定
@@ -1394,13 +1386,13 @@ _xlsx.add-view	ビューの追加
 _xlsx.custom-views	ユーザー設定のビュー
 _xlsx.enter-a-positive-number-for-the-width	幅は正の数値で入力してください
 _xlsx.expanded-the-detail-data	詳細データを展開しました
-_xlsx.summarize-values-by	計算の種類（集計方法）:
+_xlsx.summarize-values-by	計算の種類（集計方法）
 _xlsx.show-subtotals	小計を表示する
 _xlsx.units	単位
 _xlsx.row-labels	行ラベル
 _xlsx.merge-and-center-cells	セルを結合して中央揃えにする
 _xlsx.show-row-grand-totals	行の総計を表示する
-_xlsx.column-labels-caption	列ラベルの表示名:
+_xlsx.column-labels-caption	列ラベルの表示名
 _xlsx.pivottable-options	ピボットテーブル オプション
 _xlsx.text-box-n	テキスト ボックス {n}
 _xlsx.object-n	オブジェクト {n}
@@ -1431,11 +1423,11 @@ _xlsx.consolidation-complete	統合を実行しました。
 _xlsx.no-ranges-have-been-added	（範囲が追加されていません）
 _xlsx.enter-a-name-for-the-view	ビューの名前を入力してください。
 _xlsx.include-print-settings	• 印刷設定を含める
-_xlsx.settings-to-include-in-view	ビューに含める設定:
+_xlsx.settings-to-include-in-view	ビューに含める設定
 _xlsx.failed-to-parse-the-formula	数式の解析に失敗しました。
 _xlsx.enter-the-rotation-as-a-number	回転は数値で入力してください
 _xlsx.select-a-data-cell-in-the-pivottable	ピボットテーブルのデータセルを選んでください
-_xlsx.show-values-as	表示形式:
+_xlsx.show-values-as	表示形式
 _xlsx.show-subtotals-at-top-of-group	グループの先頭に小計を表示
 _xlsx.starting-at	先頭の値
 _xlsx.column-labels	列ラベル
@@ -1471,13 +1463,13 @@ _xlsx.include-hidden-rows-columns-and-filter-settings	• 行・列の非表示�
 _xlsx.print-settings	印刷設定
 _xlsx.enter-a-number-for-the-horizontal-position	横位置は数値で入力してください
 _xlsx.there-are-no-value-fields	値フィールドがありません
-_xlsx.calculation-type-show-values-as	計算の種類（値の表示方法）:
-_xlsx.layout	レイアウト形式:
+_xlsx.calculation-type-show-values-as	計算の種類（値の表示方法）
+_xlsx.layout	レイアウト形式
 _xlsx.field	フィールド
 _xlsx.ending-at	末尾の値
-_xlsx.pivottable-name	ピボットテーブル名:
+_xlsx.pivottable-name	ピボットテーブル名
 _xlsx.preserve-cell-formatting-on-update	更新時にセルの書式を保持する
-_xlsx.grand-total-caption	総計の表示名:
+_xlsx.grand-total-caption	総計の表示名
 _xlsx.enter-a-title	タイトルを入力してください。
 _xlsx.chart-n	グラフ {n}
 _xlsx.enter-a-number-in-the-first-cell	最初のセルに数値を入力してください。
@@ -1493,20 +1485,20 @@ _xlsx.flash-fill-could-not-determine-values	フラッシュ フィルで値を�
 _xlsx.enter-a-scenario-name	シナリオ名を入力してください。
 _xlsx.specify-the-changing-cells	変化させるセルを指定してください。
 _xlsx.specify-the-result-cells	結果セルを指定してください。
-_xlsx.scenarios-colon	シナリオ:
+_xlsx.scenarios-colon	シナリオ
 _xlsx.no-scenarios-defined	（シナリオが登録されていません）
-_xlsx.changing-cells-colon	変化させるセル:
-_xlsx.comment-colon	コメント:
+_xlsx.changing-cells-colon	変化させるセル
+_xlsx.comment-colon	コメント
 _xlsx.edit-ellipsis	編集…
 _xlsx.merge-ellipsis	統合…
 _xlsx.summary-ellipsis	要約…
-_xlsx.scenario-name-colon	シナリオ名:
+_xlsx.scenario-name-colon	シナリオ名
 _xlsx.load-values	値読込
-_xlsx.values-for-each-changing-cell-colon	各セルの値:
+_xlsx.values-for-each-changing-cell-colon	各セルの値
 _xlsx.scenario-summary-report	シナリオの要約レポート
-_xlsx.result-cells-colon	結果セル（カンマ区切りまたは範囲）:
+_xlsx.result-cells-colon	結果セル（カンマ区切りまたは範囲）
 _xlsx.merge-scenarios	シナリオの統合
-_xlsx.select-the-sheet-to-copy-scenarios-from	シナリオをコピーする元のシートを選択してください:
+_xlsx.select-the-sheet-to-copy-scenarios-from	シナリオをコピーする元のシートを選択してください
 _xlsx.no-other-sheets	（他のシートがありません）
 _xlsx.scenario-manager	シナリオの登録と管理
 xlsx.format-pane.custom	ユーザー定義
@@ -1652,7 +1644,7 @@ xlsx.analysis.field.grouped-by	データ方向
 xlsx.analysis.field.labels	先頭行（先頭列）をラベルとして使用
 xlsx.analysis.field.alpha	α
 xlsx.analysis.field.rows-per-sample	標本あたりの行数
-xlsx.analysis.field.confidence-level	信頼度 (%)
+xlsx.analysis.field.confidence-level	信頼度
 xlsx.analysis.field.kth-largest	第 K 位の最大値（空欄：なし）
 xlsx.analysis.field.kth-smallest	第 K 位の最小値（空欄：なし）
 xlsx.analysis.field.hypothesized-diff	仮説平均との差異
@@ -1721,7 +1713,7 @@ xlsx.solver.title	ソルバーのパラメーター
 xlsx.solver.objective	目的セルの設定
 xlsx.solver.goal-max	最大値
 xlsx.solver.goal-min	最小値
-xlsx.solver.goal-value	指定値：
+xlsx.solver.goal-value	指定値
 xlsx.solver.variables	変化させるセル
 xlsx.solver.constraints	制約条件
 xlsx.solver.cell-reference	セル参照
@@ -1797,7 +1789,7 @@ xlsx.forecast.title	予測シート
 xlsx.forecast.field.timeline	タイムラインの範囲
 xlsx.forecast.field.values	値の範囲
 xlsx.forecast.field.end	予測の終了
-xlsx.forecast.field.confidence	信頼区間（%）
+xlsx.forecast.field.confidence	信頼区間
 xlsx.forecast.field.chart	グラフの種類
 xlsx.forecast.chart-line	折れ線
 xlsx.forecast.chart-column	縦棒
@@ -1908,7 +1900,7 @@ xlsx.slicer-settings.select	先にスライサーを選んでください。
 xlsx.slicer-settings.caption	見出し
 xlsx.slicer-settings.show-caption	見出しを表示する
 xlsx.slicer-settings.columns	列数
-xlsx.slicer-settings.height	ボタンの高さ (pt)
+xlsx.slicer-settings.height	ボタンの高さ
 xlsx.slicer-settings.connections	レポートの接続：スライサーで絞り込むピボットテーブル
 xlsx.slicer-settings.bad-number	列数は 1〜20 の整数、高さは 5〜200 pt で入力してください。
 xlsx.slicer-settings.connect-one	ピボットテーブルを 1 つ以上つないでください。
@@ -2516,10 +2508,10 @@ xlsx.size.preset-default-column	8.43 文字 (標準)
 _xlsx.data-validation	データの入力規則
 _xlsx.clear-all	すべてクリア
 _xlsx.remove-duplicates	重複の削除
-xlsx.shape-panel.fill-color	塗りつぶしの色 (RRGGBB、空欄でなし)
-xlsx.shape-panel.outline-color	枠線の色 (RRGGBB、空欄でなし)
-xlsx.shape-panel.outline-width	枠線の太さ (pt)
-xlsx.shape-panel.text-size	文字のサイズ (pt)
+xlsx.shape-panel.fill-color	塗りつぶしの色
+xlsx.shape-panel.outline-color	枠線の色
+xlsx.shape-panel.outline-width	枠線の太さ
+xlsx.shape-panel.text-size	文字のサイズ
 xlsx.shape-panel.title	図形の書式設定
 xlsx.paste-options-button	貼り付けのオプション
 xlsx.qa.button	クイック分析
@@ -2597,3 +2589,95 @@ xlsx.view-mode	ビューモード
 xlsx.insert-cells-menu	挿入
 xlsx.notes-comments-menu	メモ/コメント
 xlsx.recommended-charts.empty	選択範囲に数値データがないため、サンプルデータでグラフを挿入します。
+
+xlsx.range-field.pick	シート上で範囲を選択
+chart.ui.add	追加
+chart.ui.axes-legend	軸・凡例
+chart.ui.overall	全体
+chart.ui.horizontal-axis	横軸
+chart.ui.left-axis	左軸
+chart.ui.right-axis	右軸
+chart.ui.edit-axis	編集する軸
+chart.ui.data	データ
+chart.ui.display	表示
+chart.ui.analysis	分析
+chart.ui.name	系列名
+chart.ui.categories	項目の範囲
+chart.ui.values	値の範囲
+chart.ui.use-axis	使用する軸
+chart.ui.marker-size	マーカーサイズ
+chart.ui.order	次数
+chart.ui.period	区間
+chart.ui.error-value	値
+chart.ui.edit-series	系列を編集
+chart.ui.invalid-series	有効なシート範囲、線の太さ、マーカーサイズを入力してください。
+chart.ui.edit	編集
+chart.ui.ok	OK
+chart.ui.type	グラフの種類
+chart.ui.smooth	線を滑らかにする
+chart.ui.kind-settings	種類に応じた設定
+chart.ui.visible-data	表示するデータ
+chart.ui.template-placement	テンプレート・配置
+chart.ui.horizontal-categories	横軸の項目
+chart.ui.combination	組み合わせ
+chart.ui.left-short	左
+chart.ui.right-short	右
+chart.ui.type-unsupported	この種類の個別変更は未対応
+chart.ui.type-family	種類の系統が異なります
+chart.ui.type-three-d	3Dの種類は全体で変更してください
+chart.ui.type-round-mixed	円とドーナツは混在できません
+chart.ui.type-orientation	軸の方向が異なります
+chart.ui.analysis-unsupported	この種類では近似曲線と誤差範囲を使用できません。
+chart.ui.error-direction	誤差の方向
+chart.ui.left-value-axis	左縦軸
+chart.ui.right-value-axis	右縦軸
+chart.ui.bottom-value-axis	下横軸
+chart.ui.top-value-axis	上横軸
+chart.ui.vertical-categories	縦（項目）軸
+chart.ui.vertical-categories-label	縦軸の項目
+chart.ui.horizontal-values	横軸の値
+chart.ui.horizontal-value-axis	横（値）軸
+chart.ui.bottom-short	下
+chart.ui.top-short	上
+
+chart.ui.axes	軸
+chart.ui.show-title	グラフタイトルの表示
+chart.ui.style-standard	標準
+chart.ui.style-simple	シンプル
+chart.ui.style-framed	枠付き
+chart.ui.style-dark	ダーク
+chart.ui.style-custom	カスタム
+
+xlsx.function.not-found	みつかりませんでした
+
+xlsx.validation.tools	既存データの確認
+
+xlsx.cf.rule	ルール
+xlsx.cf.other-rule	その他のルール
+xlsx.cf.manage-title	条件付き書式ルールの管理
+xlsx.cf.edit-title	条件付き書式ルールを編集
+
+xlsx.cf.move-up	優先順位を上げる
+xlsx.cf.move-down	優先順位を下げる
+
+xlsx.sort-level.edit	並べ替え条件を編集
+
+xlsx.sort.has-header	先頭行を見出しとして使用
+
+xlsx.sort-realtime	リアルタイム更新
+
+text-columns.quote-label	文字列の引用符
+text-columns.column-label	列 {n}
+
+xlsx.sort.key.cell-color	セルの色
+xlsx.sort.key.font-color	文字の色
+xlsx.sort.key.icon	アイコン
+
+xlsx.sparkline.low-point	最小値
+xlsx.watch.invalid-cell	有効なセル参照を入力してください。
+xlsx.shape-panel.height	高さ
+xlsx.shape-panel.width	幅
+xlsx.shape-panel.rotation	回転
+xlsx.shape-panel.horizontal	横位置
+xlsx.shape-panel.vertical	縦位置
+chart.ui.first-cell-name	先頭セルを系列名として使用する

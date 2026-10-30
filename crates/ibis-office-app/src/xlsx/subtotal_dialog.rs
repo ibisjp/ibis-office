@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -49,6 +49,7 @@ pub(crate) struct SubtotalPanel {
     pub(crate) message: String,
     pub(crate) ui: Rc<RefCell<BTreeMap<String, Bounds<Pixels>>>>,
     pub(crate) slide: SlideId,
+    column_scroll: ScrollHandle,
 }
 
 impl SlideEditor {
@@ -120,6 +121,7 @@ impl SlideEditor {
             message: String::new(),
             ui: Default::default(),
             slide: self.current_slide,
+            column_scroll:ScrollHandle::new(),
         };
 
         let state = self.wb_mut();
@@ -131,7 +133,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.subtotal = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -302,6 +304,13 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
         let current_func_label = SUBTOTAL_FUNCTIONS
             .iter()
@@ -320,7 +329,7 @@ impl SlideEditor {
         let page_breaks = p.page_breaks;
         let summary_below = p.summary_below;
 
-        let mut body = v_flex().gap_3().p_3();
+        let mut body = v_flex().gap_3().p_3().p_0();
 
         // 0. 対象範囲
         body = body.child(
@@ -330,20 +339,9 @@ impl SlideEditor {
                     h_flex()
                         .items_center()
                         .justify_between()
-                        .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.range")))
-                        .child(mark(
-                            "xlsx.subtotal.use-selection",
-                            Button::new("subtotal-use-selection")
-                                .xsmall()
-                                .ghost()
-                                .label(text("xlsx.subtotal-use-selection"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.refresh_subtotal_range_from_selection(window, cx);
-                                }))
-                                .into_any_element(),
-                        )),
+                        .child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.range"))),
                 )
-                .child(mark("xlsx.subtotal.range", Input::new(&p.range).small().cleanable(true).into_any_element())),
+                .child(mark("xlsx.subtotal.range", super::range_field::local_range_field(&p.range,"subtotal_dialog-p-range",false,cx).into_any_element())),
         );
 
         // 1. グループの基準 (Group by column)
@@ -351,30 +349,14 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.at-each-change-in")))
+                .child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.at-each-change-in")))
                 .child(mark(
                     "xlsx.subtotal.group-by",
-                    Button::new("subtotal-group-by")
-                        .small()
-                        .label(text(current_group_label))
-                        .dropdown_menu({
-                            let entity = entity.clone();
-                            let columns = p.columns.clone();
-                            move |menu, _, _| {
-                                columns.iter().fold(menu, |menu, &(col, ref lbl)| {
-                                    let entity = entity.clone();
-                                    let lbl_clone = lbl.clone();
-                                    menu.item(PopupMenuItem::new(text(&lbl_clone)).on_click(move |_, _, cx| {
-                                        let _ = entity.update(cx, |this, cx| {
-                                            if let Some(p) = this.wb_mut().panels.subtotal.as_mut() {
-                                                p.group_by_column = col;
-                                            }
-                                            cx.notify();
-                                        });
-                                    }))
-                                })
-                            }
-                        })
+                    crate::shell::chrome::Dropdown::new("subtotal-group-by",text(current_group_label),
+                        p.columns.iter().map(|(column,label)|{let column=*column;
+                            crate::shell::chrome::DropdownItem::new(text(label)).checked(column==p.group_by_column)
+                                .on_select(std::rc::Rc::new(move|e,_,cx|{if let Some(p)=e.wb_mut().panels.subtotal.as_mut(){p.group_by_column=column;}cx.notify();}))
+                        }).collect(),&cx.weak_entity())
                         .into_any_element(),
                 )),
         );
@@ -384,92 +366,34 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.use-function")))
+                .child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.use-function")))
                 .child(mark(
                     "xlsx.subtotal.function",
-                    Button::new("subtotal-function")
-                        .small()
-                        .label(text(current_func_label))
-                        .dropdown_menu({
-                            let entity = entity_fn.clone();
-                            move |menu, _, _| {
-                                SUBTOTAL_FUNCTIONS.iter().fold(menu, |menu, &(code, ja, _)| {
-                                    let entity = entity.clone();
-                                    menu.item(PopupMenuItem::new(text(ja)).on_click(move |_, _, cx| {
-                                        let _ = entity.update(cx, |this, cx| {
-                                            if let Some(p) = this.wb_mut().panels.subtotal.as_mut() {
-                                                p.function_code = code;
-                                            }
-                                            cx.notify();
-                                        });
-                                    }))
-                                })
-                            }
-                        })
+                    crate::shell::chrome::Dropdown::new("subtotal-function",text(current_func_label),
+                        SUBTOTAL_FUNCTIONS.iter().map(|&(code,label,_)|crate::shell::chrome::DropdownItem::new(text(label))
+                            .checked(code==p.function_code).on_select(std::rc::Rc::new(move|e,_,cx|{if let Some(p)=e.wb_mut().panels.subtotal.as_mut(){p.function_code=code;}cx.notify();}))).collect(),&cx.weak_entity())
                         .into_any_element(),
                 )),
         );
 
-        // 3. 小計を追加する場所 (Target columns list)
-        let mut col_list = v_flex().gap_1().p(px(6.)).border_1().border_color(cx.theme().border).rounded_md().max_h(px(140.));
-        for &(col, ref lbl) in &p.columns {
-            let is_checked = p.subtotal_columns.contains(&col);
-            let lbl_str = lbl.clone();
-            col_list = col_list.child(
-                Checkbox::new(ElementId::NamedInteger("subtotal-col".into(), col as u64))
-                    .label(text(&lbl_str))
-                    .checked(is_checked)
-                    .on_click(cx.listener(move |this, on: &bool, _, cx| {
-                        if let Some(p) = this.wb_mut().panels.subtotal.as_mut() {
-                            if *on {
-                                if !p.subtotal_columns.contains(&col) {
-                                    p.subtotal_columns.push(col);
-                                }
-                            } else {
-                                p.subtotal_columns.retain(|&c| c != col);
-                            }
-                        }
-                        cx.notify();
-                    })),
-            );
+        // The header checkbox applies to all target columns; only data rows scroll.
+        let all_checked=!p.columns.is_empty()&&p.columns.iter().all(|(col,_)|p.subtotal_columns.contains(col));
+        let header=crate::shell::chrome::table_row_with_actions(vec![
+            mark("xlsx.subtotal.select-all",crate::shell::chrome::checkbox_button("subtotal-select-all",text("_xlsx.add-subtotal-to"),all_checked,false,
+                cx.listener(move|this,_,_,cx|this.select_all_subtotal_columns(!all_checked,cx))).into_any_element())
+        ],div().into_any_element(),false,px(0.));
+        let mut rows=v_flex();
+        for &(col,ref label) in &p.columns {
+            let checked=p.subtotal_columns.contains(&col);
+            let check=crate::shell::chrome::checkbox_button(("subtotal-column",col as usize),text(label),checked,false,cx.listener(move|this,_,_,cx|{
+                if let Some(p)=this.wb_mut().panels.subtotal.as_mut(){
+                    if checked {p.subtotal_columns.retain(|&c|c!=col);}else{p.subtotal_columns.push(col);}
+                }
+                cx.notify();
+            }));
+            rows=rows.child(crate::shell::chrome::table_row_with_actions(vec![check.into_any_element()],div().into_any_element(),false,px(0.)));
         }
-        body = body.child(
-            v_flex()
-                .gap_1()
-                .child(
-                    h_flex()
-                        .items_center()
-                        .justify_between()
-                        .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.add-subtotal-to")))
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(mark(
-                                    "xlsx.subtotal.select-all",
-                                    Button::new("subtotal-select-all")
-                                        .xsmall()
-                                        .ghost()
-                                        .label(text("xlsx.subtotal-select-all"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.select_all_subtotal_columns(true, cx);
-                                        }))
-                                        .into_any_element(),
-                                ))
-                                .child(mark(
-                                    "xlsx.subtotal.unselect-all",
-                                    Button::new("subtotal-unselect-all")
-                                        .xsmall()
-                                        .ghost()
-                                        .label(text("xlsx.subtotal-unselect-all"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.select_all_subtotal_columns(false, cx);
-                                        }))
-                                        .into_any_element(),
-                                )),
-                        ),
-                )
-                .child(mark("xlsx.subtotal.columns-box", col_list.into_any_element())),
-        );
+        body=body.child(mark("xlsx.subtotal.columns-box",crate::shell::chrome::table("subtotal-columns-table",header.into_any_element(),rows.into_any_element(),p.column_scroll.clone(),px(180.)).into_any_element()));
 
         // 4. オプション (Checkboxes)
         body = body.child(
@@ -518,47 +442,32 @@ impl SlideEditor {
 
         // Message if any
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).text_color(cx.theme().danger).child(p.message.clone()));
+            body = body.child(div().text_sm().text_color(cx.theme().danger).child(p.message.clone()));
         }
 
         // 5. Actions (OK, すべて削除, キャンセル)
-        let mut actions = h_flex().gap_2().pt_2();
-        actions = actions.child(mark(
-            "xlsx.subtotal.ok",
-            Button::new("subtotal-ok")
-                .primary()
-                .small()
+        let mut actions = crate::shell::chrome::action_bar();
+        actions = actions.action(mark_action("xlsx.subtotal.ok", crate::shell::chrome::ActionDefinition::new("subtotal-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
                 .label(text("OK"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.apply_subtotal(cx);
-                }))
-                .into_any_element(),
-        ));
-        actions = actions.child(mark(
-            "xlsx.subtotal.remove-all",
-            Button::new("subtotal-remove-all")
-                .small()
-                .label(text("_xlsx.delete-all"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.remove_subtotal(cx);
-                }))
-                .into_any_element(),
-        ));
-        actions = actions.child(mark(
-            "xlsx.subtotal.cancel",
-            Button::new("subtotal-cancel")
-                .small()
+                }))));
+        actions = actions.action(mark_action("xlsx.subtotal.cancel", crate::shell::chrome::ActionDefinition::new("subtotal-cancel", "", crate::shell::chrome::ActionButtonKind::Normal)
                 .label(text("_shell.cancel"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(s) = this.sheet_state_mut() {
                         s.panels.subtotal = None;
                     }
                     cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        body = body.child(actions);
+                }))));
+        actions = actions.action(mark_action("xlsx.subtotal.remove-all", crate::shell::chrome::ActionDefinition::new("subtotal-remove-all", "", crate::shell::chrome::ActionButtonKind::Destructive)
+                .label(text("_xlsx.delete-all"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.remove_subtotal(cx);
+                }))));
 
-        Some(SidebarPanel { title: text("_xlsx.subtotal").into(), body: body.into_any_element() })
+
+
+        Some(SidebarPanel::with_footer(text("_xlsx.subtotal"), body.into_any_element(), actions))
     }
 }

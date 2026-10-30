@@ -8,9 +8,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::SlideId;
@@ -126,7 +126,7 @@ impl SlideEditor {
         };
 
         if let Some(s) = self.sheet_state_mut() {
-            s.panels.close();
+            s.close_settings();
             s.panels.pivot_options = Some(panel);
         }
         cx.notify();
@@ -217,6 +217,13 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
         let merge_item = p.merge_item;
         let auto_fit_columns = p.auto_fit_columns;
@@ -231,21 +238,21 @@ impl SlideEditor {
         let missing_enabled = p.missing_caption_enabled;
         let error_enabled = p.error_caption_enabled;
 
-        let mut body = v_flex().gap_3().p_3();
+        let mut body = v_flex().gap_3().p_3().p_0();
 
         // 1. ピボットテーブル名
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.pivottable-name")))
-                .child(mark("xlsx.pivot-options.name", Input::new(&p.name).small().cleanable(true).into_any_element())),
+                .child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.pivottable-name")))
+                .child(mark("xlsx.pivot-options.name", crate::shell::chrome::text_field(&p.name).full_width().into_any_element())),
         );
 
         // 2. レイアウトと書式
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.layout-format")))
+                .child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.layout-format")))
                 .child(mark(
                     "xlsx.pivot-options.merge-item",
                     Checkbox::new("pivot-opt-merge")
@@ -304,7 +311,7 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.grand-total")))
+                .child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.grand-total")))
                 .child(mark(
                     "xlsx.pivot-options.row-grand",
                     Checkbox::new("pivot-opt-row-grand")
@@ -348,7 +355,7 @@ impl SlideEditor {
                                 }))
                                 .into_any_element(),
                         ))
-                        .child(div().w(px(120.)).child(mark("xlsx.pivot-options.grand-caption", Input::new(&p.grand_total_caption).small().cleanable(true).into_any_element()))),
+                        .child(div().w(px(120.)).child(mark("xlsx.pivot-options.grand-caption", crate::shell::chrome::text_field(&p.grand_total_caption).full_width().into_any_element()))),
                 ),
         );
 
@@ -356,7 +363,7 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_shell.view")))
+                .child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_shell.view")))
                 .child(
                     h_flex()
                         .gap_2()
@@ -374,7 +381,7 @@ impl SlideEditor {
                                 }))
                                 .into_any_element(),
                         ))
-                        .child(div().w(px(120.)).child(mark("xlsx.pivot-options.row-caption", Input::new(&p.row_header_caption).small().cleanable(true).into_any_element()))),
+                        .child(div().w(px(120.)).child(mark("xlsx.pivot-options.row-caption", crate::shell::chrome::text_field(&p.row_header_caption).full_width().into_any_element()))),
                 )
                 .child(
                     h_flex()
@@ -393,7 +400,7 @@ impl SlideEditor {
                                 }))
                                 .into_any_element(),
                         ))
-                        .child(div().w(px(120.)).child(mark("xlsx.pivot-options.col-caption", Input::new(&p.col_header_caption).small().cleanable(true).into_any_element()))),
+                        .child(div().w(px(120.)).child(mark("xlsx.pivot-options.col-caption", crate::shell::chrome::text_field(&p.col_header_caption).full_width().into_any_element()))),
                 )
                 .child(
                     h_flex()
@@ -412,7 +419,7 @@ impl SlideEditor {
                                 }))
                                 .into_any_element(),
                         ))
-                        .child(div().w(px(100.)).child(mark("xlsx.pivot-options.missing-caption", Input::new(&p.missing_caption).small().cleanable(true).into_any_element()))),
+                        .child(div().w(px(100.)).child(mark("xlsx.pivot-options.missing-caption", crate::shell::chrome::text_field(&p.missing_caption).full_width().into_any_element()))),
                 )
                 .child(
                     h_flex()
@@ -431,7 +438,7 @@ impl SlideEditor {
                                 }))
                                 .into_any_element(),
                         ))
-                        .child(div().w(px(100.)).child(mark("xlsx.pivot-options.error-caption", Input::new(&p.error_caption).small().cleanable(true).into_any_element()))),
+                        .child(div().w(px(100.)).child(mark("xlsx.pivot-options.error-caption", crate::shell::chrome::text_field(&p.error_caption).full_width().into_any_element()))),
                 ),
         );
 
@@ -439,7 +446,7 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("fix.pivot-options.data")))
+                .child(div().text_sm().font_weight(FontWeight::BOLD).child(text("fix.pivot-options.data")))
                 .child(mark(
                     "xlsx.pivot-options.refresh-on-load",
                     Checkbox::new("pivot-opt-refresh")
@@ -456,37 +463,26 @@ impl SlideEditor {
         );
 
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).text_color(cx.theme().danger).child(p.message.clone()));
+            body = body.child(div().text_sm().text_color(cx.theme().danger).child(p.message.clone()));
         }
 
         // 5. Actions (OK, キャンセル)
-        let mut actions = h_flex().gap_2().pt_2();
-        actions = actions.child(mark(
-            "xlsx.pivot-options.ok",
-            Button::new("pivot-opt-ok")
-                .primary()
-                .small()
+        let mut actions = crate::shell::chrome::action_bar();
+        actions = actions.action(mark_action("xlsx.pivot-options.ok", crate::shell::chrome::ActionDefinition::new("pivot-opt-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
                 .label(text("OK"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.apply_pivot_options(cx);
-                }))
-                .into_any_element(),
-        ));
-        actions = actions.child(mark(
-            "xlsx.pivot-options.cancel",
-            Button::new("pivot-opt-cancel")
-                .small()
+                }))));
+        actions = actions.action(mark_action("xlsx.pivot-options.cancel", crate::shell::chrome::ActionDefinition::new("pivot-opt-cancel", "", crate::shell::chrome::ActionButtonKind::Normal)
                 .label(text("_shell.cancel"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(s) = this.sheet_state_mut() {
                         s.panels.pivot_options = None;
                     }
                     cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        body = body.child(actions);
+                }))));
 
-        Some(SidebarPanel { title: text("_xlsx.pivottable-options").into(), body: body.into_any_element() })
+
+        Some(SidebarPanel::with_footer(text("_xlsx.pivottable-options"), body.into_any_element(), actions))
     }
 }

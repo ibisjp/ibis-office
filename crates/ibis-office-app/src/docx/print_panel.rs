@@ -8,9 +8,9 @@
 
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::flow::FlowDocument;
@@ -394,6 +394,7 @@ pub(crate) fn build_print_cli_args(
 
 /// サイドバーパネルの状態
 pub(crate) struct DocxPrintPanelState {
+    pub(crate) copies_input: Entity<InputState>,
     pub(crate) custom_input: Entity<InputState>,
     pub(crate) error: Option<String>,
 }
@@ -437,6 +438,7 @@ impl SlideEditor {
 
     /// 印刷設定パネルを開く (ファイル > 印刷… ⌘P / 印刷の設定…)
     pub(crate) fn open_doc_print_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         self.end_text_edit(window, cx);
         let settings = self.docx_print_settings();
         let custom_input = cx.new(|cx| {
@@ -444,10 +446,17 @@ impl SlideEditor {
                 .default_value(settings.custom_range.clone())
                 .placeholder(text("docx.print-panel.custom-placeholder"))
         });
+        let copies_input=cx.new(|cx|InputState::new(window,cx).default_value(settings.copies.to_string()));
+        cx.subscribe(&copies_input,|e,input,event,cx| {
+            if matches!(event,gpui_kit::component::input::InputEvent::Change) {
+                if let Ok(value)=input.read(cx).value().parse::<u32>() { e.edit_docx_print_settings(|s|s.copies=value.clamp(1,99),cx); }
+            }
+        }).detach();
         let focus = custom_input.clone();
 
         if let Some(s) = self.doc_state_mut() {
             s.print_panel = Some(DocxPrintPanelState {
+                copies_input,
                 custom_input,
                 error: None,
             });
@@ -565,9 +574,8 @@ impl SlideEditor {
         let has_selection = self.selected_flow_pages().is_some();
         let total_pages = self.flow().map(|d| flow_layout::pages(d, &self.resources).pages.len()).unwrap_or(1);
 
-        let mark_radio = |active: bool| if active { "●" } else { "○" };
 
-        let mut body = v_flex().gap_3().p_3();
+        let mut body = v_flex().gap_3().p_3().p_0();
 
         // エラー表示
         if let Some(err) = error {
@@ -580,7 +588,7 @@ impl SlideEditor {
                     .border_color(cx.theme().danger)
                     .child(
                         v_flex()
-                            .child(div().text_xs().text_color(cx.theme().danger).child(err))
+                            .child(div().text_sm().text_color(cx.theme().danger).child(err))
                     ),
             );
         }
@@ -589,52 +597,26 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.print-panel.section.range").to_string()))
+                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.print-panel.section.range").to_string()))
                 .child(
-                    Button::new("docx-print-range-all")
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", mark_radio(settings.range == DocxPrintRange::All), text("docx.print-panel.range.all")))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                    crate::shell::chrome::radio_button("docx-print-range-all", settings.range == DocxPrintRange::All, false, text("docx.print-panel.range.all"), cx.listener(|this, _, _, cx| {
                             this.edit_docx_print_settings(|s| s.range = DocxPrintRange::All, cx);
                         })),
                 )
                 .child(
-                    Button::new("docx-print-range-current")
-                        .small()
-                        .ghost()
-                        .label(format!(
-                            "{} {} ({})",
-                            mark_radio(settings.range == DocxPrintRange::Current),
-                            text("docx.print-panel.range.current"),
-                            current_page
-                        ))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                    crate::shell::chrome::radio_button("docx-print-range-current", settings.range == DocxPrintRange::Current, false, format!("{} ({})", text("docx.print-panel.range.current"), current_page), cx.listener(|this, _, _, cx| {
                             this.edit_docx_print_settings(|s| s.range = DocxPrintRange::Current, cx);
                         })),
                 )
                 .child(
-                    Button::new("docx-print-range-selection")
-                        .small()
-                        .ghost()
-                        .label(format!(
-                            "{} {}{}",
-                            mark_radio(settings.range == DocxPrintRange::Selection),
-                            text("docx.print-panel.range.selection"),
-                            if has_selection { String::new() } else { format!(" ({})", text("docx.print-panel.range.no-selection")) }
-                        ))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                    crate::shell::chrome::radio_button("docx-print-range-selection", settings.range == DocxPrintRange::Selection, false, format!("{}{}", text("docx.print-panel.range.selection"), if has_selection { String::new() } else { format!(" ({})", text("docx.print-panel.range.no-selection")) }), cx.listener(|this, _, _, cx| {
                             if this.selected_flow_pages().is_some() {
                                 this.edit_docx_print_settings(|s| s.range = DocxPrintRange::Selection, cx);
                             }
                         })),
                 )
                 .child(
-                    Button::new("docx-print-range-custom")
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", mark_radio(settings.range == DocxPrintRange::Custom), text("docx.print-panel.range.custom")))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                    crate::shell::chrome::radio_button("docx-print-range-custom", settings.range == DocxPrintRange::Custom, false, text("docx.print-panel.range.custom"), cx.listener(|this, _, _, cx| {
                             this.edit_docx_print_settings(|s| s.range = DocxPrintRange::Custom, cx);
                         })),
                 ),
@@ -646,8 +628,8 @@ impl SlideEditor {
                 v_flex()
                     .pl_4()
                     .gap_1()
-                    .child(Input::new(&input).small().cleanable(true))
-                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(text("docx.print-panel.custom-hint").to_string())),
+                    .child(crate::shell::chrome::text_field(&input).full_width())
+                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child(text("docx.print-panel.custom-hint").to_string())),
             );
         }
 
@@ -655,34 +637,22 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.print-panel.section.subset").to_string()))
+                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.print-panel.section.subset").to_string()))
                 .child(
                     h_flex()
                         .gap_1()
                         .child(
-                            Button::new("docx-print-subset-all")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.subset == DocxPageSubset::All), text("docx.print-panel.subset.all")))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-subset-all", settings.subset == DocxPageSubset::All, false, text("docx.print-panel.subset.all"), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.subset = DocxPageSubset::All, cx);
                                 })),
                         )
                         .child(
-                            Button::new("docx-print-subset-odd")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.subset == DocxPageSubset::OddOnly), text("docx.print-panel.subset.odd")))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-subset-odd", settings.subset == DocxPageSubset::OddOnly, false, text("docx.print-panel.subset.odd"), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.subset = DocxPageSubset::OddOnly, cx);
                                 })),
                         )
                         .child(
-                            Button::new("docx-print-subset-even")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.subset == DocxPageSubset::EvenOnly), text("docx.print-panel.subset.even")))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-subset-even", settings.subset == DocxPageSubset::EvenOnly, false, text("docx.print-panel.subset.even"), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.subset = DocxPageSubset::EvenOnly, cx);
                                 })),
                         ),
@@ -693,36 +663,13 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.print-panel.section.copies-duplex").to_string()))
+                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.print-panel.section.copies-duplex").to_string()))
                 .child(
-                    h_flex()
-                        .items_center()
-                        .justify_between()
-                        .child(div().text_xs().child(text("docx.print-panel.copies").to_string()))
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .items_center()
-                                .child(
-                                    Button::new("docx-print-copies-dec")
-                                        .small()
-                                        .ghost()
-                                        .label("-")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.edit_docx_print_settings(|s| s.copies = s.copies.saturating_sub(1).max(1), cx);
-                                        })),
-                                )
-                                .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(settings.copies.to_string()))
-                                .child(
-                                    Button::new("docx-print-copies-inc")
-                                        .small()
-                                        .ghost()
-                                        .label("+")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.edit_docx_print_settings(|s| s.copies = (s.copies + 1).min(99), cx);
-                                        })),
-                                ),
-                        ),
+                    h_flex().items_center().gap_3()
+                        .child(div().text_sm().child(text("docx.print-panel.copies")))
+                        .child(crate::shell::chrome::text_field(&self.doc_state()?.print_panel.as_ref()?.copies_input)
+                            .spinner("docx-print-copies",crate::shell::chrome::SpinnerSpec::new(1.).range(1.,99.).integer_only(),cx,
+                                |e,value,_,cx|e.edit_docx_print_settings(|s|s.copies=value as u32,cx)))
                 )
                 .child(
                     Checkbox::new("docx-print-collate")
@@ -736,20 +683,12 @@ impl SlideEditor {
                     h_flex()
                         .gap_1()
                         .child(
-                            Button::new("docx-print-duplex-one")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.duplex == DocxDuplex::OneSided), text("docx.print-panel.duplex.one-sided")))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-duplex-one", settings.duplex == DocxDuplex::OneSided, false, text("docx.print-panel.duplex.one-sided"), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.duplex = DocxDuplex::OneSided, cx);
                                 })),
                         )
                         .child(
-                            Button::new("docx-print-duplex-long")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.duplex == DocxDuplex::BothSidesLongEdge), text("docx.print-panel.duplex.both-long")))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-duplex-long", settings.duplex == DocxDuplex::BothSidesLongEdge, false, text("docx.print-panel.duplex.both-long"), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.duplex = DocxDuplex::BothSidesLongEdge, cx);
                                 })),
                         ),
@@ -758,20 +697,12 @@ impl SlideEditor {
                     h_flex()
                         .gap_1()
                         .child(
-                            Button::new("docx-print-duplex-short")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.duplex == DocxDuplex::BothSidesShortEdge), text("docx.print-panel.duplex.both-short")))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-duplex-short", settings.duplex == DocxDuplex::BothSidesShortEdge, false, text("docx.print-panel.duplex.both-short"), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.duplex = DocxDuplex::BothSidesShortEdge, cx);
                                 })),
                         )
                         .child(
-                            Button::new("docx-print-duplex-manual")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.duplex == DocxDuplex::Manual), text("docx.print-panel.duplex.manual")))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-duplex-manual", settings.duplex == DocxDuplex::Manual, false, text("docx.print-panel.duplex.manual"), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.duplex = DocxDuplex::Manual, cx);
                                 })),
                         ),
@@ -794,34 +725,22 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.print-panel.section.nup").to_string()))
+                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.print-panel.section.nup").to_string()))
                 .child(
                     h_flex()
                         .gap_1()
                         .child(
-                            Button::new("docx-print-nup-1")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.pages_per_sheet.is_none()), nup_label(None)))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-nup-1", settings.pages_per_sheet.is_none(), false, nup_label(None), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.pages_per_sheet = None, cx);
                                 })),
                         )
                         .child(
-                            Button::new("docx-print-nup-2")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.pages_per_sheet == Some(2)), nup_label(Some(2))))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-nup-2", settings.pages_per_sheet == Some(2), false, nup_label(Some(2)), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.pages_per_sheet = Some(2), cx);
                                 })),
                         )
                         .child(
-                            Button::new("docx-print-nup-4")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.pages_per_sheet == Some(4)), nup_label(Some(4))))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-nup-4", settings.pages_per_sheet == Some(4), false, nup_label(Some(4)), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.pages_per_sheet = Some(4), cx);
                                 })),
                         ),
@@ -830,29 +749,17 @@ impl SlideEditor {
                     h_flex()
                         .gap_1()
                         .child(
-                            Button::new("docx-print-nup-6")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.pages_per_sheet == Some(6)), nup_label(Some(6))))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-nup-6", settings.pages_per_sheet == Some(6), false, nup_label(Some(6)), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.pages_per_sheet = Some(6), cx);
                                 })),
                         )
                         .child(
-                            Button::new("docx-print-nup-8")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.pages_per_sheet == Some(8)), nup_label(Some(8))))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-nup-8", settings.pages_per_sheet == Some(8), false, nup_label(Some(8)), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.pages_per_sheet = Some(8), cx);
                                 })),
                         )
                         .child(
-                            Button::new("docx-print-nup-16")
-                                .small()
-                                .ghost()
-                                .label(format!("{} {}", mark_radio(settings.pages_per_sheet == Some(16)), nup_label(Some(16))))
-                                .on_click(cx.listener(|this, _, _, cx| {
+                            crate::shell::chrome::radio_button("docx-print-nup-16", settings.pages_per_sheet == Some(16), false, nup_label(Some(16)), cx.listener(|this, _, _, cx| {
                                     this.edit_docx_print_settings(|s| s.pages_per_sheet = Some(16), cx);
                                 })),
                         ),
@@ -875,7 +782,7 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.print-panel.section.options").to_string()))
+                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.print-panel.section.options").to_string()))
                 .child(
                     Checkbox::new("docx-print-opt-markup")
                         .label(text("docx.options.print.markup"))
@@ -921,39 +828,25 @@ impl SlideEditor {
             String::new()
         };
 
-        body = body.child(div().text_xs().text_color(cx.theme().muted_foreground).child(summary_text));
+        body = body.child(div().text_sm().text_color(cx.theme().muted_foreground).child(summary_text));
 
         // アクションボタン
-        let footer = h_flex()
-            .gap_2()
-            .p_3()
-            .border_t_1()
-            .border_color(cx.theme().border)
-            .child(
-                Button::new("docx-print-apply")
-                    .primary()
-                    .small()
-                    .label(text("docx.print-panel.print"))
+        let footer = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("docx-print-apply", text("docx.print-panel.print"), crate::shell::chrome::ActionButtonKind::Primary)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.apply_docx_print_panel(window, cx);
                     })),
             )
-            .child(
-                Button::new("docx-print-cancel")
-                    .ghost()
-                    .small()
-                    .label(text("_shell.cancel"))
+            .action(
+                crate::shell::chrome::ActionDefinition::new("docx-print-cancel", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.close_doc_print_panel(cx);
                     })),
             );
 
-        body = body.child(footer);
-
-        Some(SidebarPanel {
-            title: text("docx.print-panel.title").into(),
-            body: body.into_any_element(),
-        })
+        let panel_terminal_actions = footer;
+        Some(SidebarPanel::with_footer(text("docx.print-panel.title"), body.into_any_element(), panel_terminal_actions))
     }
 }
 

@@ -1,3 +1,5 @@
+# 行末は LF にそろえる（Windows でコミットしても LF。2026-10-23 ユーザー決定。CRLF の scripts/corpus が Mac で動かなかった）
+* text=auto eol=lf
 # 規格書のデータは改変せずに同梱する（改行も変えない）
 crates/ibis-pptx/data/** -text
 *.docx binary

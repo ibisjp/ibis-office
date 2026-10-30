@@ -2863,6 +2863,9 @@ pub struct FlowDocument {
     /// 約物を詰める (`w:characterSpacingControl` compressPunctuation): a line that is a little too long fits by squeezing its
     /// stops and brackets to half an em.
     pub compress_punctuation: bool,
+    /// The typefaces of the file's font table (`word/fontTable.xml`) with their `w:family` (`roman`, `swiss`, ... or empty): Word draws a
+    /// typeface that is not installed with Cambria if the table says `roman` or does not list it, and with Calibri if it lists it otherwise.
+    pub font_families: std::collections::BTreeMap<String, String>,
     /// 半角と全角の幅を調整する (`w:balanceSingleByteDoubleByteWidth` compat): a half-width space is half an em, whatever the
     /// font.
     pub balance_single_double_byte_width: bool,
@@ -3711,6 +3714,11 @@ impl FlowStyles {
     pub fn paragraph_base_in(&self, style: Option<&str>, table_style: Option<&str>, regions: &[TableRegion]) -> (ParaFormat, RunFormat) {
         let mut para = self.defaults_para.clone();
         let mut run = self.defaults_run.clone();
+        // Without a size in `w:docDefaults` the text is 10 pt (a style that is not based on Normal does not get Normal's
+        // size; Word's PDF of a document whose style `a3` has no `w:basedOn` shows its 10.5 pt Normal text at 10 pt in it).
+        if run.size.is_none() {
+            run.size = Some(1000);
+        }
         if let Some(id) = table_style {
             let chain = self.chain(id);
             for s in &chain {

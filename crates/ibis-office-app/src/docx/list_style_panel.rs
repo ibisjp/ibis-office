@@ -6,14 +6,13 @@
 //! prefix/suffix, alignment, indents, and suffix spacing, linking styles.xml
 //! (`w:type="numbering"`) and numbering.xml (`w:numStyleLink`).
 
-use gpui_kit::component::button::Button;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
 use ibis_doc_model::{FlowAlign, ListLevel, ListSuffix, ParaFormat, RunFormat};
 
-use crate::shell::chrome::{PRIMARY_BUTTON_BG, SidebarPanel};
+use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
 
@@ -72,6 +71,7 @@ impl ListStyleState {
 impl SlideEditor {
     /// Open the "Define New List Style" sidebar panel.
     pub(crate) fn open_define_list_style_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if let Some(state) = self.doc_state_mut() {
             state.list_style = Some(ListStyleState::new(window, cx));
             self.sidebar_open = true;
@@ -154,6 +154,7 @@ impl SlideEditor {
     }
 
     /// Render the "Define New List Style" sidebar panel.
+    /// Start number and indents (pt) are applied by OK only, so their ▲▼ only change the number.
     pub(crate) fn list_style_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let state = self.doc_state()?;
         let _ = state.list_style.as_ref()?;
@@ -162,29 +163,24 @@ impl SlideEditor {
             .gap_3()
             .p_4()
             .text_sm()
-            .child(
+            .p_0().child(
                 v_flex()
                     .gap_1()
                     .child(div().font_weight(FontWeight::BOLD).child(text("docx.list.define-style.name").to_string()))
                     .child({
                         let state = self.doc_state().unwrap();
                         let ls = state.list_style.as_ref().unwrap();
-                        Input::new(&ls.name).small().cleanable(true)
+                        crate::shell::chrome::text_field(&ls.name).full_width()
                     }),
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().font_weight(FontWeight::BOLD).child(text("docx.list.define-style.level").to_string()))
-                    .child(
-                        h_flex()
-                            .gap_1()
+                                        .child(
+                        crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).label(text("docx.list.define-style.level"))
                             .children((0..9).map(|lvl| {
                                 let is_active = self.doc_state().unwrap().list_style.as_ref().unwrap().level == lvl;
-                                Button::new(format!("lvl-{lvl}"))
-                                    .label(format!("{}", lvl + 1))
-                                    .small()
-                                    .selected(is_active)
+                                crate::shell::chrome::segment_control::SegmentItem::label(format!("lvl-{lvl}"),format!("{}",lvl+1),is_active)
                                     .on_click(cx.listener(move |this, _, _window, cx| {
                                         if let Some(state) = this.doc_state_mut() {
                                             if let Some(ls) = &mut state.list_style {
@@ -201,28 +197,13 @@ impl SlideEditor {
                     .gap_1()
                     .child(div().font_weight(FontWeight::BOLD).child(text("docx.list.define-style.format").to_string()))
                     .child(
-                        v_flex()
-                            .gap_1()
-                            .children(super::list_formats::LIBRARY.iter().enumerate().take(6).map(|(idx, &(_, label, _, _))| {
-                                let is_active = self.doc_state().unwrap().list_style.as_ref().unwrap().format_idx == idx;
-                                let label_str = if label.starts_with("fix.") {
-                                    text(label).to_string()
-                                } else {
-                                    label.to_string()
-                                };
-                                Button::new(format!("fmt-{idx}"))
-                                    .label(label_str)
-                                    .small()
-                                    .selected(is_active)
-                                    .on_click(cx.listener(move |this, _, _window, cx| {
-                                        if let Some(state) = this.doc_state_mut() {
-                                            if let Some(ls) = &mut state.list_style {
-                                                ls.format_idx = idx;
-                                                cx.notify();
-                                            }
-                                        }
-                                    }))
-                            }))
+                        {
+                            use crate::shell::chrome::{MenuItem,MenuEntry};
+                            let current=self.doc_state().unwrap().list_style.as_ref().unwrap().format_idx;
+                            let labels=super::list_formats::LIBRARY.iter().take(6).map(|(_,label,_,_)|if label.starts_with("fix."){text(label)}else{(*label).into()}).collect::<Vec<SharedString>>();
+                            let entries=labels.iter().enumerate().map(|(idx,label)|MenuEntry::from(MenuItem::new("docx.list.format-choice",label.clone()).on(move |e,_,cx|{if let Some(ls)=e.doc_state_mut().and_then(|s|s.list_style.as_mut()){ls.format_idx=idx;}cx.notify();}))).collect();
+                            crate::shell::chrome::Dropdown::from_entries("list-style-format",labels.get(current).cloned().unwrap_or_default(),entries,true,0,&cx.weak_entity()).into_any_element()
+                        }
                     ),
             )
             .child(
@@ -232,36 +213,37 @@ impl SlideEditor {
                         v_flex()
                             .flex_1()
                             .gap_1()
-                            .child(div().text_xs().child(text("docx.list.define-style.prefix").to_string()))
+                            .child(div().text_sm().child(text("docx.list.define-style.prefix").to_string()))
                             .child({
                                 let state = self.doc_state().unwrap();
                                 let ls = state.list_style.as_ref().unwrap();
-                                Input::new(&ls.prefix).small().cleanable(true)
+                                crate::shell::chrome::text_field(&ls.prefix).width(crate::shell::chrome::FIELD_WIDTH * 0.6)
                             })
                     )
                     .child(
                         v_flex()
                             .flex_1()
                             .gap_1()
-                            .child(div().text_xs().child(text("docx.list.define-style.suffix-text").to_string()))
+                            .child(div().text_sm().child(text("docx.list.define-style.suffix-text").to_string()))
                             .child({
                                 let state = self.doc_state().unwrap();
                                 let ls = state.list_style.as_ref().unwrap();
-                                Input::new(&ls.suffix_text).small().cleanable(true)
+                                crate::shell::chrome::text_field(&ls.suffix_text).width(crate::shell::chrome::FIELD_WIDTH * 0.6)
                             })
                     )
-                    .child(
+            .child(
                         v_flex()
                             .flex_1()
                             .gap_1()
-                            .child(div().text_xs().child(text("docx.list.define-style.start-at").to_string()))
+                            .child(div().text_sm().child(text("docx.list.define-style.start-at").to_string()))
                             .child({
                                 let state = self.doc_state().unwrap();
                                 let ls = state.list_style.as_ref().unwrap();
-                                Input::new(&ls.start).small().cleanable(true)
+                                crate::shell::chrome::text_field(&ls.start).full_width().spinner("list-style-start", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 32767.0).integer_only(), cx, |_, _, _, _| {})
                             })
                     )
             )
+            .child(div().text_sm().child(text("docx.list.define-style.text-example")))
             .child(
                 h_flex()
                     .gap_2()
@@ -269,15 +251,11 @@ impl SlideEditor {
                         v_flex()
                             .flex_1()
                             .gap_1()
-                            .child(div().text_xs().child(text("docx.list.define-style.align").to_string()))
+                            .child(div().text_sm().child(text("docx.list.define-style.align").to_string()))
                             .child(
-                                h_flex()
-                                    .gap_1()
+                                crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
                                     .child(
-                                        Button::new("align-left")
-                                            .label(text("docx.align.left").to_string())
-                                            .small()
-                                            .selected(self.doc_state().unwrap().list_style.as_ref().unwrap().align == FlowAlign::Left)
+                                        crate::shell::chrome::segment_control::SegmentItem::label("align-left",text("docx.align.left").to_string(),self.doc_state().unwrap().list_style.as_ref().unwrap().align == FlowAlign::Left)
                                             .on_click(cx.listener(|this, _, _window, cx| {
                                                 if let Some(s) = this.doc_state_mut() {
                                                     if let Some(ls) = &mut s.list_style {
@@ -288,10 +266,7 @@ impl SlideEditor {
                                             }))
                                     )
                                     .child(
-                                        Button::new("align-center")
-                                            .label(text("docx.align.center").to_string())
-                                            .small()
-                                            .selected(self.doc_state().unwrap().list_style.as_ref().unwrap().align == FlowAlign::Center)
+                                        crate::shell::chrome::segment_control::SegmentItem::label("align-center",text("docx.align.center").to_string(),self.doc_state().unwrap().list_style.as_ref().unwrap().align == FlowAlign::Center)
                                             .on_click(cx.listener(|this, _, _window, cx| {
                                                 if let Some(s) = this.doc_state_mut() {
                                                     if let Some(ls) = &mut s.list_style {
@@ -302,10 +277,7 @@ impl SlideEditor {
                                             }))
                                     )
                                     .child(
-                                        Button::new("align-right")
-                                            .label(text("docx.align.right").to_string())
-                                            .small()
-                                            .selected(self.doc_state().unwrap().list_style.as_ref().unwrap().align == FlowAlign::Right)
+                                        crate::shell::chrome::segment_control::SegmentItem::label("align-right",text("docx.align.right").to_string(),self.doc_state().unwrap().list_style.as_ref().unwrap().align == FlowAlign::Right)
                                             .on_click(cx.listener(|this, _, _window, cx| {
                                                 if let Some(s) = this.doc_state_mut() {
                                                     if let Some(ls) = &mut s.list_style {
@@ -321,15 +293,11 @@ impl SlideEditor {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().child(text("docx.list.define-style.follow-number").to_string()))
+                    .child(div().text_sm().child(text("docx.list.define-style.follow-number").to_string()))
                     .child(
-                        h_flex()
-                            .gap_1()
+                        crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
                             .child(
-                                Button::new("suff-tab")
-                                    .label(text("docx.list.suffix-tab").to_string())
-                                    .small()
-                                    .selected(self.doc_state().unwrap().list_style.as_ref().unwrap().suffix == ListSuffix::Tab)
+                                crate::shell::chrome::segment_control::SegmentItem::label("suff-tab",text("docx.list.suffix-tab").to_string(),self.doc_state().unwrap().list_style.as_ref().unwrap().suffix == ListSuffix::Tab)
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         if let Some(s) = this.doc_state_mut() {
                                             if let Some(ls) = &mut s.list_style {
@@ -340,10 +308,7 @@ impl SlideEditor {
                                     }))
                             )
                             .child(
-                                Button::new("suff-space")
-                                    .label(text("docx.list.suffix-space").to_string())
-                                    .small()
-                                    .selected(self.doc_state().unwrap().list_style.as_ref().unwrap().suffix == ListSuffix::Space)
+                                crate::shell::chrome::segment_control::SegmentItem::label("suff-space",text("docx.list.suffix-space").to_string(),self.doc_state().unwrap().list_style.as_ref().unwrap().suffix == ListSuffix::Space)
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         if let Some(s) = this.doc_state_mut() {
                                             if let Some(ls) = &mut s.list_style {
@@ -354,10 +319,7 @@ impl SlideEditor {
                                     }))
                             )
                             .child(
-                                Button::new("suff-none")
-                                    .label(text("docx.list.suffix-none").to_string())
-                                    .small()
-                                    .selected(self.doc_state().unwrap().list_style.as_ref().unwrap().suffix == ListSuffix::Nothing)
+                                crate::shell::chrome::segment_control::SegmentItem::label("suff-none",text("docx.list.suffix-none").to_string(),self.doc_state().unwrap().list_style.as_ref().unwrap().suffix == ListSuffix::Nothing)
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         if let Some(s) = this.doc_state_mut() {
                                             if let Some(ls) = &mut s.list_style {
@@ -376,52 +338,40 @@ impl SlideEditor {
                         v_flex()
                             .flex_1()
                             .gap_1()
-                            .child(div().text_xs().child(text("docx.list.define-style.indent-left").to_string()))
+                            .child(div().text_sm().child(text("docx.list.define-style.indent-left").to_string()))
                             .child({
                                 let state = self.doc_state().unwrap();
                                 let ls = state.list_style.as_ref().unwrap();
-                                Input::new(&ls.indent_left).small().cleanable(true)
+                                crate::shell::chrome::text_field(&ls.indent_left).spinner("list-style-indent-left", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 1584.0), cx, |_, _, _, _| {}).unit("pt", px(24.))
                             })
                     )
                     .child(
                         v_flex()
                             .flex_1()
                             .gap_1()
-                            .child(div().text_xs().child(text("docx.list.define-style.indent-hanging").to_string()))
+                            .child(div().text_sm().child(text("docx.list.define-style.indent-hanging").to_string()))
                             .child({
                                 let state = self.doc_state().unwrap();
                                 let ls = state.list_style.as_ref().unwrap();
-                                Input::new(&ls.indent_hanging).small().cleanable(true)
+                                crate::shell::chrome::text_field(&ls.indent_hanging).spinner("list-style-indent-hanging", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 1584.0), cx, |_, _, _, _| {}).unit("pt", px(24.))
                             })
                     )
             )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .pt_2()
-                    .child(
-                        Button::new("apply-list-style")
-                            .label(text("docx.list.define-style.ok").to_string())
-                            .small()
-                            .bg(rgb(PRIMARY_BUTTON_BG))
-                            .text_color(crate::shell::palette::doc(0xffffff))
+            ;
+
+        let panel_terminal_actions = crate::shell::chrome::action_bar()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("apply-list-style", text("docx.list.define-style.add").to_string(), crate::shell::chrome::ActionButtonKind::Primary)
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.apply_list_style_panel(true, cx);
                             }))
                     )
-                    .child(
-                        Button::new("cancel-list-style")
-                            .label(text("docx.list.define-style.cancel").to_string())
-                            .small()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("cancel-list-style", text("docx.list.define-style.cancel").to_string(), crate::shell::chrome::ActionButtonKind::Normal)
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 this.close_list_style_panel(cx);
                             }))
-                    )
-            );
-
-        Some(SidebarPanel {
-            title: text("docx.list.define-style.title").into(),
-            body: body.into_any_element(),
-        })
+                    );
+        Some(SidebarPanel::with_footer(text("docx.list.define-style.title"), body.into_any_element(), panel_terminal_actions))
     }
 }

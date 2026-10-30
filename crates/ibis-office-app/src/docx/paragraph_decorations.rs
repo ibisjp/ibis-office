@@ -168,7 +168,7 @@ pub(super) fn menu(editor:&SlideEditor)->Vec<MenuEntry> {
             standard,
             pick: Some(pick),
             more: None,
-            button: None,
+            button: None, current:None,
         })]
     };
     let mut types:Vec<MenuEntry>=BORDERS.iter().zip(BORDER_IDS).map(|(&(_,style),&id)|MenuItem::new(id,crate::shell::i18n::text(border_label(style))).disabled(!enabled)
@@ -215,7 +215,7 @@ pub(super) fn menu(editor:&SlideEditor)->Vec<MenuEntry> {
             standard,
             pick: Some(pick),
             more: None,
-            button: None,
+            button: None, current:None,
         })]
     };
     vec![Submenu::tr("docx.paragraph.border-edge", "border_style",scopes).into(),

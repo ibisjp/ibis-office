@@ -4,8 +4,8 @@
 //! 挿入 > オーディオ > オーディオの録音… (PPTX-AUDIO-002):
 //! Record sound from microphone / audio input and insert it as an audio clip onto the slide.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Clip, Command, EmuRect, MediaFormat, Picture, Shape, ShapeId, ShapeKind};
@@ -182,21 +182,21 @@ impl SlideEditor {
         let body = v_flex()
             .gap_3()
             .p_3()
-            .child(
+            .p_0().child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).text_color(cx.theme().muted_foreground).child(text("pptx.audio.sound-name")))
-                    .child(Input::new(&name_input).small().cleanable(true)),
+                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child(text("pptx.audio.sound-name")))
+                    .child(crate::shell::chrome::text_field(&name_input).full_width()),
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(12.)).text_color(cx.theme().muted_foreground).child(text("pptx.audio.total-sound-length")))
+                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child(text("pptx.audio.total-sound-length")))
                     .child(div().text_size(px(20.)).child(SharedString::from(time_str))),
             )
             .child(
                 div()
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(if is_recording { cx.theme().danger } else { cx.theme().muted_foreground })
                     .child(SharedString::from(status_text)),
             )
@@ -204,19 +204,19 @@ impl SlideEditor {
                 h_flex()
                     .gap_2()
                     .child(
-                        Button::new("audio-record-start")
+                        crate::shell::chrome::action_button("audio-record-start")
                             .small()
-                            .ghost()
+
                             .disabled(is_recording)
-                            .label(format!("● {}", text("pptx.audio.record")))
+                            .child(h_flex().items_center().gap_1().child(div().text_color(rgb(0xd93025)).child("●")).child(text("pptx.audio.record")))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.start_audio_recording(cx);
                             })),
                     )
                     .child(
-                        Button::new("audio-record-stop")
+                        crate::shell::chrome::action_button("audio-record-stop")
                             .small()
-                            .ghost()
+
                             .disabled(!is_recording)
                             .label(format!("■ {}", text("pptx.audio.stop")))
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -224,34 +224,22 @@ impl SlideEditor {
                             })),
                     ),
             )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("audio-record-insert")
-                            .primary()
-                            .small()
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("audio-record-insert", text("pptx.audio.insert-to-slide"), crate::shell::chrome::ActionButtonKind::Primary)
                             .disabled(is_recording)
-                            .label(text("pptx.audio.insert-to-slide"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 let name = name_input.read(cx).value().to_string();
                                 this.insert_recorded_audio(&name, duration, cx);
                             })),
                     )
-                    .child(
-                        Button::new("audio-record-cancel")
-                            .small()
-                            .ghost()
-                            .label(text("_shell.cancel"))
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("audio-record-cancel", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.close_audio_record_panel(cx);
                             })),
-                    ),
-            );
-
-        Some(SidebarPanel {
-            title: text("pptx.audio.record-title"),
-            body: body.into_any_element(),
-        })
+                    );
+        Some(SidebarPanel::with_footer(text("pptx.audio.record-title"), body.into_any_element(), panel_actions))
     }
 }

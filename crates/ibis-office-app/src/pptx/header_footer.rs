@@ -8,9 +8,9 @@
 //! are the layout's (the file's reading of them, when there is a file).
 //! すべてに適用 also marks the presentation (see `HeaderFooterMarks`).
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{AutoShape, Command, Fill, Geometry, Run, RunStyle, Shape, ShapeKind, Slide, SlideId, SlidePlaceholder, TextBody, TextField};
@@ -316,18 +316,16 @@ impl SlideEditor {
             }))
             .child(check("pptx-hf-date", "_shell.date-time", p.date, "date"))
             .child(check("pptx-hf-auto", "pptx.notes-marks-panel.update-automatically", p.auto_date, "auto"))
-            .child(Input::new(&p.date_text).small().cleanable(true).disabled(p.auto_date))
+            .child(crate::shell::chrome::text_field(&p.date_text).full_width().disabled(p.auto_date))
             .child(check("pptx-hf-number", "pptx.header-footer.slide-number", p.number, "number"))
             .child(check("pptx-hf-footer", "_shell.footer", p.footer, "footer"))
-            .child(Input::new(&p.footer_text).small().cleanable(true))
+            .child(crate::shell::chrome::text_field(&p.footer_text).full_width())
             .child(check("pptx-hf-title", "pptx.header-footer.don-t-show-title-slide", p.not_on_title, "title"))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("pptx-hf-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_header_footer(false, w, cx))))
-                    .child(Button::new("pptx-hf-all").primary().small().label(t("pptx.notes-marks-panel.apply-all")).on_click(cx.listener(|e, _, w, cx| e.apply_header_footer(true, w, cx))))
-                    .child(Button::new("pptx-hf-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_header_footer(w, cx)))),
-            );
-        Some(SidebarPanel { title: t("_shell.header-footer"), body: body.into_any_element() })
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("pptx-hf-apply", t("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_header_footer(false, w, cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("pptx-hf-all", t("pptx.notes-marks-panel.apply-all"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_header_footer(true, w, cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("pptx-hf-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_header_footer(w, cx))));
+        Some(SidebarPanel::with_footer(t("_shell.header-footer"), body.into_any_element(), panel_actions))
     }
 }

@@ -4,7 +4,7 @@
 //! ドキュメントの検査 (Inspect Document: DOCX-SEC-011):
 //! 文書内の個人情報、プロパティ、コメント、変更履歴、ヘッダー・フッター、隠し文字を検査し、一括削除する。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::flow::{DocProperties, FlowDocument};
@@ -129,6 +129,7 @@ pub(crate) struct DocInspectState {
 impl SlideEditor {
     /// ドキュメント検査パネルを開く
     pub(crate) fn open_doc_inspect_panel(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(doc) = self.flow() else { return };
         let inspection = inspect_document(doc);
         let panel = DocInspectState {
@@ -276,7 +277,7 @@ impl SlideEditor {
             .gap_1()
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(text("docx.inspect-panel.inspect-hint").to_string()),
             );
@@ -293,10 +294,9 @@ impl SlideEditor {
             };
 
             let remove_btn = (found && !props_removed).then(|| {
-                Button::new("inspect-remove-props")
+                crate::shell::chrome::destructive_button("inspect-remove-props",cx)
                     .label(text("docx.inspect.remove-all"))
                     .small()
-                    .danger()
                     .on_click(cx.listener(|this, _, _, cx| this.doc_inspect_remove_all_properties(cx)))
             });
 
@@ -321,7 +321,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(if found && !props_removed { cx.theme().danger } else { cx.theme().muted_foreground })
                         .child(status_text),
                 )
@@ -339,10 +339,9 @@ impl SlideEditor {
             };
 
             let remove_btn = (found && !comments_removed).then(|| {
-                Button::new("inspect-remove-comments")
+                crate::shell::chrome::destructive_button("inspect-remove-comments",cx)
                     .label(text("docx.inspect.remove-all"))
                     .small()
-                    .danger()
                     .on_click(cx.listener(|this, _, _, cx| this.doc_inspect_remove_all_comments(cx)))
             });
 
@@ -367,7 +366,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(if found && !comments_removed { cx.theme().danger } else { cx.theme().muted_foreground })
                         .child(status_text),
                 )
@@ -385,10 +384,9 @@ impl SlideEditor {
             };
 
             let remove_btn = (found && !revisions_removed).then(|| {
-                Button::new("inspect-remove-revisions")
+                crate::shell::chrome::destructive_button("inspect-remove-revisions",cx)
                     .label(text("docx.inspect.remove-all"))
                     .small()
-                    .danger()
                     .on_click(cx.listener(|this, _, _, cx| this.doc_inspect_remove_all_revisions(cx)))
             });
 
@@ -413,7 +411,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(if found && !revisions_removed { cx.theme().danger } else { cx.theme().muted_foreground })
                         .child(status_text),
                 )
@@ -431,10 +429,9 @@ impl SlideEditor {
             };
 
             let remove_btn = (found && !headers_removed).then(|| {
-                Button::new("inspect-remove-headers-footers")
+                crate::shell::chrome::destructive_button("inspect-remove-headers-footers",cx)
                     .label(text("docx.inspect.remove-all"))
                     .small()
-                    .danger()
                     .on_click(cx.listener(|this, _, _, cx| this.doc_inspect_remove_all_headers_footers(cx)))
             });
 
@@ -459,7 +456,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(if found && !headers_removed { cx.theme().danger } else { cx.theme().muted_foreground })
                         .child(status_text),
                 )
@@ -477,10 +474,9 @@ impl SlideEditor {
             };
 
             let remove_btn = (found && !hidden_removed).then(|| {
-                Button::new("inspect-remove-hidden-text")
+                crate::shell::chrome::destructive_button("inspect-remove-hidden-text",cx)
                     .label(text("docx.inspect.remove-all"))
                     .small()
-                    .danger()
                     .on_click(cx.listener(|this, _, _, cx| this.doc_inspect_remove_all_hidden_text(cx)))
             });
 
@@ -505,7 +501,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(if found && !hidden_removed { cx.theme().danger } else { cx.theme().muted_foreground })
                         .child(status_text),
                 )
@@ -515,43 +511,36 @@ impl SlideEditor {
         let message_box = (!msg.is_empty()).then(|| {
             div()
                 .p_2()
-                .text_xs()
+                .text_sm()
                 .rounded_md()
                 .bg(cx.theme().primary.opacity(0.1))
                 .text_color(cx.theme().primary)
                 .child(msg)
         });
 
-        let footer = h_flex()
-            .gap_2()
-            .justify_end()
-            .child(
-                Button::new("inspect-recheck")
-                    .label(text("docx.inspect-panel.reinspect"))
-                    .outline()
+        let footer = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("inspect-recheck", text("docx.inspect-panel.reinspect"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| this.recheck_doc_inspection(cx))),
             )
-            .child(
-                Button::new("inspect-close")
-                    .label(text("_shell.close"))
+            .action(
+                crate::shell::chrome::ActionDefinition::new("inspect-close", text("_shell.close"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| this.close_doc_inspect_panel(cx))),
             );
 
         let body = v_flex()
             .p_4()
             .gap_3()
-            .child(header)
+            .p_0().child(header)
             .children(message_box)
             .child(prop_item)
             .child(comment_item)
             .child(revision_item)
             .child(header_footer_item)
             .child(hidden_text_item)
-            .child(footer);
+            ;
 
-        Some(SidebarPanel {
-            title: text("docx.inspect-panel.title").into(),
-            body: body.into_any_element(),
-        })
+        let panel_terminal_actions = footer;
+        Some(SidebarPanel::with_footer(text("docx.inspect-panel.title"), body.into_any_element(), panel_terminal_actions))
     }
 }

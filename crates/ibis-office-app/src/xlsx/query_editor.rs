@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 use crate::xlsx::query_ops::{self, Kind, QOp, Values, TABS};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -155,7 +155,7 @@ impl SlideEditor {
             ui: Default::default(),
         };
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.query_editor = Some(editor);
         self.query_recompute();
         let steps = self.sheet_state().and_then(|s| s.panels.query_editor.as_ref()).map_or(0, |q| q.query.steps.len());
@@ -362,7 +362,7 @@ impl SlideEditor {
     pub(crate) fn open_queries_panel(&mut self, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.queries = Some(QueriesPanel { message: String::new(), ui: Default::default() });
         self.sidebar_open = true;
         cx.notify();
@@ -423,7 +423,13 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+        let mark_action = |id: String, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
         if queries.is_empty() {
             body = body.child(crate::shell::i18n::text("query.none"));
         }
@@ -435,28 +441,24 @@ impl SlideEditor {
             };
             body = body
                 .child(div().font_weight(FontWeight::BOLD).child(SharedString::from(q.name.clone())))
-                .child(div().text_size(px(12.)).child(SharedString::from(crate::shell::i18n::format("query.summary", &[("source", &source), ("steps", &q.steps.len())]))))
+                .child(div().text_sm().child(SharedString::from(crate::shell::i18n::format("query.summary", &[("source", &source), ("steps", &q.steps.len())]))))
                 .child(
                     h_flex()
                         .gap_1()
                         .flex_wrap()
-                        .child(mark(format!("edit-{i}"), Button::new(SharedString::from(format!("query-edit-{i}"))).small().label(crate::shell::i18n::text("query.edit")).on_click(cx.listener(move |this, _, window, cx| this.edit_query(i, window, cx))).into_any_element()))
-                        .child(mark(format!("refresh-{i}"), Button::new(SharedString::from(format!("query-refresh-{i}"))).small().label(crate::shell::i18n::text("query.refresh")).on_click(cx.listener(move |this, _, _, cx| this.refresh_query(i, cx))).into_any_element()))
-                        .child(mark(format!("delete-{i}"), Button::new(SharedString::from(format!("query-delete-{i}"))).small().label(crate::shell::i18n::text("query.delete")).on_click(cx.listener(move |this, _, _, cx| this.delete_query(i, cx))).into_any_element())),
+                        .child(mark(format!("edit-{i}"), crate::shell::chrome::action_button(SharedString::from(format!("query-edit-{i}"))).small().label(crate::shell::i18n::text("query.edit")).on_click(cx.listener(move |this, _, window, cx| this.edit_query(i, window, cx))).into_any_element()))
+                        .child(mark(format!("refresh-{i}"), crate::shell::chrome::action_button(SharedString::from(format!("query-refresh-{i}"))).small().label(crate::shell::i18n::text("query.refresh")).on_click(cx.listener(move |this, _, _, cx| this.refresh_query(i, cx))).into_any_element()))
+                        .child(mark(format!("delete-{i}"), crate::shell::chrome::destructive_button(SharedString::from(format!("query-delete-{i}")),cx).small().label(crate::shell::i18n::text("query.delete")).on_click(cx.listener(move |this, _, _, cx| this.delete_query(i, cx))).into_any_element())),
                 );
         }
-        body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone()))).child(mark(
-            "close".into(),
-            Button::new("queries-close")
-                .small()
+        body = body.children(crate::shell::chrome::panel_message(&p.message));
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("close".into(), crate::shell::chrome::ActionDefinition::new("queries-close", "", crate::shell::chrome::ActionButtonKind::Normal)
                 .label(crate::shell::i18n::text("_shell.close"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.wb_mut().panels.queries = None;
                     cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        Some(SidebarPanel { title: crate::shell::i18n::text("query.queries-title").into(), body: body.into_any_element() })
+                }))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("query.queries-title"), body.into_any_element(), panel_terminal_actions))
     }
 
     // ------------------------------------------------------------------- the editor's window
@@ -476,6 +478,12 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: String, action: crate::shell::chrome::ActionDefinition| {
+            let ui = ed.ui.clone();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
         let text = |key: &str| crate::shell::i18n::text(key);
 
         // The title row.
@@ -488,10 +496,10 @@ impl SlideEditor {
             .border_b_1()
             .border_color(theme.border)
             .child(div().font_weight(FontWeight::BOLD).child(text("query.editor-title")))
-            .child(div().w(px(220.)).child(mark("name".into(), Input::new(&ed.name).small().cleanable(true).into_any_element())))
+            .child(div().w(px(220.)).child(mark("name".into(), crate::shell::chrome::text_field(&ed.name).full_width().into_any_element())))
             .child(div().flex_1())
-            .child(mark("load".into(), Button::new("query-load").primary().small().label(text("query.close-and-load")).on_click(cx.listener(|this, _, window, cx| this.query_close_and_load(window, cx))).into_any_element()))
-            .child(mark("cancel".into(), Button::new("query-cancel").small().label(text("query.cancel")).on_click(cx.listener(|this, _, _, cx| this.query_cancel(cx))).into_any_element()));
+            .child(mark("load".into(), crate::shell::chrome::primary_button("query-load").small().label(text("query.close-and-load")).on_click(cx.listener(|this, _, window, cx| this.query_close_and_load(window, cx))).into_any_element()))
+            .child(mark("cancel".into(), crate::shell::chrome::action_button("query-cancel").small().label(text("query.cancel")).on_click(cx.listener(|this, _, _, cx| this.query_cancel(cx))).into_any_element()));
 
         // The ribbon: tabs, then the operations of the tab.
         let mut tabs = h_flex().w_full().px_3().gap_1().pt_1();
@@ -521,7 +529,7 @@ impl SlideEditor {
             .child(div().flex_1())
             .child(mark(
                 "code".into(),
-                Button::new("query-code").small().ghost().label(text("query.advanced-editor")).on_click(cx.listener(|this, _, _, cx| {
+                crate::shell::chrome::action_button("query-code").small().label(text("query.advanced-editor")).on_click(cx.listener(|this, _, _, cx| {
                     if let Some(ed) = this.query_editor_mut() {
                         ed.side = if ed.side == Side::Code { Side::Form } else { Side::Code };
                     }
@@ -530,7 +538,7 @@ impl SlideEditor {
             ))
             .child(mark(
                 "parameters".into(),
-                Button::new("query-parameters").small().ghost().label(text("query.manage-parameters")).on_click(cx.listener(|this, _, _, cx| {
+                crate::shell::chrome::action_button("query-parameters").small().label(text("query.manage-parameters")).on_click(cx.listener(|this, _, _, cx| {
                     if let Some(ed) = this.query_editor_mut() {
                         ed.side = if ed.side == Side::Parameters { Side::Form } else { Side::Parameters };
                     }
@@ -542,7 +550,7 @@ impl SlideEditor {
             let id = op.id();
             ribbon = ribbon.child(mark(
                 format!("op-{id}"),
-                Button::new(SharedString::from(format!("query-op-{id}"))).small().label(text(&format!("query.op.{id}"))).on_click(cx.listener(move |this, _, window, cx| this.query_run_op(op, window, cx))).into_any_element(),
+                crate::shell::chrome::action_button(SharedString::from(format!("query-op-{id}"))).small().label(text(&format!("query.op.{id}"))).on_click(cx.listener(move |this, _, window, cx| this.query_run_op(op, window, cx))).into_any_element(),
             ));
         }
 
@@ -674,12 +682,12 @@ impl SlideEditor {
                 }
                 side = side
                     .child(div().text_size(px(12.)).child(text("query.field.parameter-name")))
-                    .child(mark("parameter-name".into(), Input::new(&ed.parameter_name).small().cleanable(true).into_any_element()))
+                    .child(mark("parameter-name".into(), crate::shell::chrome::text_field(&ed.parameter_name).full_width().into_any_element()))
                     .child(div().text_size(px(12.)).child(text("query.field.parameter-value")))
-                    .child(mark("parameter-value".into(), Input::new(&ed.parameter_value).small().cleanable(true).into_any_element()))
+                    .child(mark("parameter-value".into(), crate::shell::chrome::text_field(&ed.parameter_value).full_width().into_any_element()))
                     .child(mark(
                         "parameter-set".into(),
-                        Button::new("query-parameter-set").small().label(text("query.set-parameter")).on_click(cx.listener(|this, _, _, cx| this.query_set_parameter(cx))).into_any_element(),
+                        crate::shell::chrome::action_button("query-parameter-set").small().label(text("query.set-parameter")).on_click(cx.listener(|this, _, _, cx| this.query_set_parameter(cx))).into_any_element(),
                     ));
             }
             (Side::Form, Some(form)) => {
@@ -689,7 +697,7 @@ impl SlideEditor {
                     match f.kind {
                         Kind::Text => {
                             if let Some((_, state)) = form.inputs.iter().find(|(id, _)| *id == f.id) {
-                                side = side.child(mark(format!("field-{}", f.id), Input::new(state).small().cleanable(true).into_any_element()));
+                                side = side.child(mark(format!("field-{}", f.id), crate::shell::chrome::text_field(state).full_width().into_any_element()));
                             }
                         }
                         Kind::Choice(options) => {
@@ -698,7 +706,7 @@ impl SlideEditor {
                             let count = options.len();
                             side = side.child(mark(
                                 format!("field-{id}"),
-                                Button::new(SharedString::from(format!("query-field-{id}")))
+                                crate::shell::chrome::action_button(SharedString::from(format!("query-field-{id}")))
                                     .small()
                                     .label(text(options[current]))
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -729,16 +737,13 @@ impl SlideEditor {
                     }
                 }
                 side = side
-                    .child(h_flex().gap_1().child(mark("apply".into(), Button::new("query-apply").primary().small().label(text("query.ok")).on_click(cx.listener(|this, _, _, cx| this.query_apply_form(cx))).into_any_element())).child(mark(
-                        "form-cancel".into(),
-                        Button::new("query-form-cancel").small().label(text("query.cancel")).on_click(cx.listener(|this, _, _, cx| {
+                    .child(crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar().action(mark_action("apply".into(), crate::shell::chrome::ActionDefinition::new("query-apply", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("query.ok")).on_click(cx.listener(|this, _, _, cx| this.query_apply_form(cx))))).action(mark_action("form-cancel".into(), crate::shell::chrome::ActionDefinition::new("query-form-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("query.cancel")).on_click(cx.listener(|this, _, _, cx| {
                             if let Some(ed) = this.query_editor_mut() {
                                 ed.form = None;
                                 ed.message.clear();
                             }
                             cx.notify();
-                        })).into_any_element(),
-                    )));
+                        })))))));
             }
             (Side::Form, None) => {
                 side = side.child(div().text_size(px(12.)).child(text("query.hint")));

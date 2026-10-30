@@ -837,11 +837,47 @@ impl SlideEditor {
     }
 }
 
+/// Whether this is a test run (it must not open a PDF app, nor a print dialog), told by the headless switch or by the program's name
+/// (the app is `ibisOffice[.exe]`; a test binary is named after its crate or file). Not by the arguments: a file named `latest.docx` is
+/// an argument too (issue #19: the PDF app did not start for it).
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn running_under_test() -> bool {
+    if std::env::var_os("IBIS_HEADLESS").is_some() {
+        return true;
+    }
+    let exe = std::env::current_exe().ok();
+    let name = exe.as_deref().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("");
+    is_test_binary_name(name)
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn is_test_binary_name(name: &str) -> bool {
+    !name.starts_with("ibisOffice")
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod running_under_test_tests {
+    use super::is_test_binary_name;
+
+    #[test]
+    fn the_app_is_not_a_test_binary_whatever_file_it_opens() {
+        // The program's name is the app's; its arguments (a file named latest.docx, a folder named test) are not looked at.
+        for name in ["ibisOffice.exe", "ibisOffice", "ibisOffice-debug.exe"] {
+            assert!(!is_test_binary_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn test_binaries_are_told_by_their_name() {
+        for name in ["ibis_office_app-0123456789abcdef.exe", "scenarios-0123456789abcdef", "clock_rule-1a2b3c.exe"] {
+            assert!(is_test_binary_name(name), "{name}");
+        }
+    }
+}
+
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn open_pdf_in_default_app(pdf: &std::path::Path, cx: &mut App) -> Result<(), String> {
-    if std::env::var_os("IBIS_HEADLESS").is_some()
-        || std::env::args().any(|a| a.contains("test") || a.contains("scenarios"))
-    {
+    if running_under_test() {
         let _ = (pdf, cx);
         return Ok(());
     }

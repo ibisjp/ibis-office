@@ -431,7 +431,7 @@ impl Decimal {
     }
 }
 
-/// General, in at most `width` characters (11 in a cell), as Excel shows
+/// General, in at most `width` characters excluding the minus sign (11 in a cell), as Excel shows
 /// it: plain digits, rounded to fit, or the exponent form for numbers too
 /// large or small.
 pub fn general(v: f64, width: usize) -> String {
@@ -440,7 +440,9 @@ pub fn general(v: f64, width: usize) -> String {
         return "0".into();
     }
     let negative = v < 0.0;
-    let room = width - usize::from(negative);
+    // ECMA-376 numFmt / General floating-point rule excludes the minus sign.
+    // https://learn.microsoft.com/dotnet/api/documentformat.openxml.spreadsheet.numberingformat
+    let room = width;
     let sign = if negative { "-" } else { "" };
     // Plain digits, rounded to fit: the text and the significant digits it shows.
     let plain = (d.point <= room as i32).then(|| {
@@ -845,7 +847,7 @@ fn general_section(value: f64, section: &Section, out: &mut Formatted) -> String
             // Too long to show in digits: the exponent form, as it is.
             if plain.len() > 255 { general(value.abs(), 11) } else { dbnum::general(&plain, level) }
         }
-        None => general(value.abs(), 11 - usize::from(value < 0.0)),
+        None => general(value.abs(), 11),
     };
     if value < 0.0 && digits.chars().any(|c| c != '0' && c != '〇' && c != '０' && c != '.') {
         text.push('-');
@@ -1404,6 +1406,9 @@ mod tests {
     #[test]
     fn generals() {
         assert_eq!(general(0.3333333333333333, 11), "0.333333333");
+        assert_eq!(general(1234567890.0,11),"1234567890");
+        assert_eq!(general(12345678901.0,11),"12345678901");
+        assert_eq!(general(-12345678901.0,11),"-12345678901");
         assert_eq!(general(123456789012.0, 11), "1.23457E+11");
         assert_eq!(general(1230000000000000.0, 11), "1.23E+15");
         assert_eq!(general(1e-10, 11), "1E-10");

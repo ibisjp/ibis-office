@@ -98,6 +98,8 @@ pub enum RunChange {
     Spacing(Option<Emu>),
     /// Character horizontal scale in percent (`w:w`), or `None` to reset to standard.
     Scale(Option<u32>),
+    /// Fit a contiguous group of characters to (twips, group id).
+    FitText(Option<(u32,u32)>),
     /// 傍点 (`w:em`).
     Emphasis(crate::flow::EmphasisMark),
     /// 組み文字 (`w:eastAsianLayout w:combine`), or none.
@@ -199,6 +201,7 @@ impl RunChange {
             RunChange::Position(v) => f.position = Some(*v),
             RunChange::Spacing(v) => f.spacing = *v,
             RunChange::Scale(v) => f.scale = *v,
+            RunChange::FitText(v) => f.fit_text = Some(*v),
             RunChange::Emphasis(v) => f.emphasis = Some(*v),
             RunChange::Combine(v) => f.combine = Some(*v),
             RunChange::TateChuYoko(v) => f.tate_chu_yoko = Some(*v),
@@ -2037,7 +2040,12 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
-            let (mut format, char_style, style) = old.format_at(at.offset);
+            let (mut format, mut char_style, style) = old.format_at(at.offset);
+            // Range markers are paragraph-level XML nodes, outside w:r; they
+            // cannot carry inherited run properties such as w:rFonts/@w:hint.
+            if matches!(kind,FlowRunKind::CommentStart(_)|FlowRunKind::CommentEnd(_)) {
+                format=RunFormat::default();char_style=None;
+            }
             // A text content control's prompt is grey.
             if matches!(kind, FlowRunKind::RichText { placeholder: true, .. } | FlowRunKind::PlainText { placeholder: true, .. } | FlowRunKind::BuildingBlockGallery { placeholder: true, .. } | FlowRunKind::Group { placeholder: true, .. })
                 || matches!(&kind, FlowRunKind::RepeatingSection { items, selected, .. } if items.get(*selected).is_some_and(|s| s == crate::flow::DEFAULT_REPEATING_SECTION_ITEM_PROMPT)) {

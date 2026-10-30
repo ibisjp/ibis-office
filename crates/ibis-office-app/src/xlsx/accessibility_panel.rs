@@ -6,7 +6,7 @@
 //! 既定のシート名、表の見出し行の未設定、不明瞭なハイパーリンク等）をスキャン・検出し、
 //! 該当セルやオブジェクトへのフォーカスや修正を支援する。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -219,7 +219,7 @@ impl SlideEditor {
         };
 
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.accessibility = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -312,7 +312,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(text("xlsx.accessibility.passed-sub").to_string()),
                 )
@@ -347,7 +347,7 @@ impl SlideEditor {
                 cx.theme().background
             };
 
-            let item = v_flex()
+            let item = v_flex().w_full().min_w_0().overflow_hidden()
                 .p_2()
                 .gap_1()
                 .rounded_md()
@@ -361,7 +361,7 @@ impl SlideEditor {
                         .child(
                             div()
                                 .font_weight(FontWeight::SEMIBOLD)
-                                .text_sm()
+                                .flex_1().min_w_0().truncate().text_sm()
                                 .text_color(if is_error {
                                     cx.theme().danger
                                 } else if is_warning {
@@ -372,7 +372,7 @@ impl SlideEditor {
                                 .child(title),
                         )
                         .child(
-                            Button::new(("jump-issue", ix))
+                            crate::shell::chrome::action_button(("jump-issue", ix))
                                 .label(text("_shell.view"))
                                 .small()
                                 .on_click(cx.listener(move |this, _, _window, cx| {
@@ -382,42 +382,32 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child(desc),
+                        .min_w_0().overflow_hidden().child(desc),
                 );
 
             issues_list = issues_list.child(item);
         }
 
-        let bottom_actions = h_flex()
-            .gap_2()
-            .justify_end()
-            .child(
-                Button::new("access-recheck")
+        let bottom_actions = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("access-recheck", "", crate::shell::chrome::ActionButtonKind::Normal)
                     .label(text("xlsx.accessibility.recheck"))
-                    .small()
                     .on_click(cx.listener(|this, _, _, cx| this.recheck_xlsx_accessibility(cx))),
-            )
-            .child(
-                Button::new("access-close")
-                    .label(text("_shell.close"))
-                    .small()
-                    .primary()
-                    .on_click(cx.listener(|this, _, _, cx| this.close_xlsx_accessibility_panel(cx))),
             );
 
         let content = v_flex()
             .p_4()
             .gap_3()
-            .child(header)
+            .p_0().child(header)
             .when(!msg.is_empty(), |el| {
                 el.child(
                     div()
                         .p_2()
                         .rounded_md()
                         .bg(cx.theme().primary.opacity(0.1))
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().primary)
                         .child(msg),
                 )
@@ -425,11 +415,9 @@ impl SlideEditor {
             .children(clean_box)
             .child(issues_list)
             .child(div().h_2())
-            .child(bottom_actions);
+            ;
 
-        Some(SidebarPanel {
-            title: text("xlsx.accessibility.title").into(),
-            body: content.into_any_element(),
-        })
+        let panel_terminal_actions = bottom_actions;
+        Some(SidebarPanel::with_footer(text("xlsx.accessibility.title"), content.into_any_element(), panel_terminal_actions))
     }
 }

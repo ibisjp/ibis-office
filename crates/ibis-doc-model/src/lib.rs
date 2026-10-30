@@ -91,7 +91,7 @@ pub use form_control::{ControlHit, ControlKind, FormControl};
 pub use shape_geometry::{FormulaGeometry, GeometryDef, GeometryPath, Guide, Outline, PathFill, PathOp, Subpath};
 pub use sheet::{
     cell_name, CellImage, ExternalBook, ExternalSheet, CalculationCompatibilityVersion, CalcMode, Border, BorderLine, CellUnderline, CellAlign, CellError, CellGradient, CellKind, CellRange, CellStyle, CellValue, CellVerticalAlign, CustomCellStyle, DefinedName, Sheet,
-    SheetCell, CellRun, DataTable, ConsolidateFunction, DataConsolidate, SubtotalParams, ScenarioInputCell, SheetScenario, SheetScenarios, SheetComment, ThemeColor, SheetHeaderFooter, SheetPrint, SheetProtection, ProtectedRange, WorkbookProtection, PasswordHash, ProtectionAllowed, SheetState, Workbook, WorkbookSheet, SheetFloat, ConditionalFormat, CfRule, CfKind, CfValue, CfStyle, CfIcon, DataBarAxisPosition, DataBarDirection, Validation, Hyperlink, AutoFilter, ColumnFilter, DateGroup, SheetTable, TableStyleInfo, TableTotal, ThreadPost, ThreadedComment, Sparkline, SparklineAxis, SparklineEmpty, SparklineGroup, SparklineKind,
+    SheetCell, CellRun, DataTable, ConsolidateFunction, DataConsolidate, SubtotalParams, ScenarioInputCell, SheetScenario, SheetScenarios, SheetComment, ThemeColor, Unsaved, SheetHeaderFooter, SheetPrint, SheetProtection, ProtectedRange, WorkbookProtection, PasswordHash, ProtectionAllowed, SheetState, Workbook, WorkbookSheet, SheetFloat, ConditionalFormat, CfRule, CfKind, CfValue, CfStyle, CfIcon, DataBarAxisPosition, DataBarDirection, Validation, Hyperlink, AutoFilter, ColumnFilter, DateGroup, SheetTable, TableStyleInfo, TableTotal, ThreadPost, ThreadedComment, Sparkline, SparklineAxis, SparklineEmpty, SparklineGroup, SparklineKind,
     CustomWorkbookView, CustomSheetView,
     PhoneticType, PhoneticAlignment, PhoneticProperties,
 };
@@ -99,7 +99,7 @@ pub use pivot::{DateGroupBy, PivotAxis, PivotDataField, PivotDetails, PivotField
 pub use sheet_calc::{BookView, ensure_calc_index, warmup_calc_index_ahead};
 pub use table::{CellBorders, Table, TableCell, TableRow, TableStyleOptions};
 pub use text::{KernMin, NumberScheme, AutoNumber, 
-    Bullet, FONT_SIZE_STEPS, FontAlign, FontSet, CharacterFormat, ListKind, ParagraphFormat, ThemeFonts, is_east_asian, Insets, LineSpacing, Paragraph, Run, RunStyle, TextAlign, TextAutofit, TextBody,
-    SlideLink, TextField, TextStyle, VerticalAnchor, step_font_size, Strike, Caps, Underline, VerticalKind,
+    Bullet, SymbolBullet, FONT_SIZE_STEPS, FontAlign, FontSet, CharacterFormat, ListKind, ParagraphFormat, ThemeFonts, is_east_asian, Insets, LineSpacing, Paragraph, Run, RunStyle, TextAlign, TextAutofit, TextBody,
+    SlideLink, TextField, TextStyle, VerticalAnchor, step_font_size, autofit_font_size_pt, Strike, Caps, Underline, VerticalKind,
     TextTabAlign, TextTabStop,
 };

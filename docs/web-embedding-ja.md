@@ -72,6 +72,39 @@ window.addEventListener('message', (e) => {
 
 メッセージは `origin=` / `targetOrigin` で指定した origin に送ります。指定が無ければ `document.referrer`（組み込んだページ）の origin を使います。どちらも分からないときは**何も送りません**（警告をログに出します）。知らないページにファイルを送らないためです。どのページにも届けたいときだけ、`origin=*`（または `targetOrigin: '*'`）を指定してください。
 
+## 版を固定して取り、確かめる
+
+リリースごとに、ブラウザー版をまとめたアーカイブを添付します。配る版を固定でき、取ってきたファイルが壊れていないか・差し替えられていないかを SHA-256 で確かめられます。中身は playground の `app/` と同じです（`index.html`・`main.js`・`license.md`・`pkg/`・`assets/`。アーカイブの直下に並びます）。
+
+| ファイル（`<版>` は `0.8.5` など） | 内容 |
+|---|---|
+| `ibisOffice-<版>-Web.zip` | ブラウザー版 |
+| `ibisOffice-<版>-Web.zip.sha256` | アーカイブの SHA-256 |
+| `ibisOffice-<版>-Web.files.sha256` | アーカイブの中の各ファイルのパスと SHA-256 |
+
+3 つとも、リリースのページ `https://github.com/ibisjp/ibis-office/releases/tag/v<版>` にあります。取ってきて、アーカイブを照合し、展開して、ファイルごとに照合します。
+
+```sh
+V=0.8.5
+BASE=https://github.com/ibisjp/ibis-office/releases/download/v$V
+curl -LO $BASE/ibisOffice-$V-Web.zip
+curl -LO $BASE/ibisOffice-$V-Web.zip.sha256
+curl -LO $BASE/ibisOffice-$V-Web.files.sha256
+
+shasum -a 256 -c ibisOffice-$V-Web.zip.sha256        # macOS（Linux は sha256sum -c ...）
+mkdir app && unzip -q ibisOffice-$V-Web.zip -d app
+(cd app && shasum -a 256 -c ../ibisOffice-$V-Web.files.sha256)   # すべての行が OK になること
+```
+
+Linux では同じファイルを `sha256sum -c` に渡せます。Windows の PowerShell では、`(Get-FileHash ibisOffice-$V-Web.zip -Algorithm SHA256).Hash` の値を `.sha256` ファイルのハッシュと比べます（大文字小文字は区別しません）。実際に配るファイルを確かめるには、最後のコマンドを配備するフォルダーの中で実行してください。
+
+補足：
+
+- 公開したリリースのファイルは、後から変わりません。確かめた版はずっと同じです。アーカイブの SHA-256 を自分のリポジトリに控えておき、取るたびに比べると確実です。
+- アーカイブには `license.md`（ブラウザー版の第三者ライセンス表示）と `assets/artborders/ECMA-NOTICE.txt` が入っています。配るときも一緒に置いてください。
+- フォルダーはそのまま配ってください。`.wasm` は大きい（約 65 MB）ので、圧縮して送るサーバーだと転送が大幅に小さくなります。
+- デスクトップ版はこのファイルを使いません（自動更新は別の仕組みです）。
+
 ## 補足
 
 - デスクトップ版には影響しません。

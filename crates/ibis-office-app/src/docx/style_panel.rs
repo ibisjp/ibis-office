@@ -6,8 +6,8 @@
 //! 箇所に合わせて更新, which gives the caret's paragraph style the
 //! paragraph's own formatting. Every paragraph of the style changes with it.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::flow_command;
@@ -81,6 +81,7 @@ impl SlideEditor {
 
     /// スタイルの変更…: the panel, for the caret's paragraph style.
     pub(crate) fn open_style_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(id) = self.caret_style() else { return };
         let Some(doc) = self.flow() else { return };
         let Some(style) = doc.styles.styles.get(&id).cloned() else { return };
@@ -189,9 +190,28 @@ impl SlideEditor {
         let (font, size, color, before, after) = (edit.font.clone(), edit.size.clone(), edit.color.clone(), edit.before.clone(), edit.after.clone());
         let (bold, italic, align, auto_update) = (edit.bold, edit.italic, edit.align, edit.auto_update);
         let title = crate::shell::i18n::format("docx.style-panel.modify-style-name", &[("name", &edit.name)]);
-        let row = |label: &'static str, input: &Entity<InputState>| h_flex().gap_2().child(div().w(px(64.)).text_sm().child(crate::shell::i18n::text(label))).child(Input::new(input).small().cleanable(true));
+        let current_font = font.read(cx).value().to_string();
+        let font_input = font.clone();
+        let font_entries = crate::shell::font_list::build_font_menu_entries("docx-style-font-list", Vec::new(), Some(&current_font), move |name, _, window, cx| {
+            font_input.update(cx, |s, cx| s.set_value(name.to_string(), window, cx)); cx.notify();
+        });
+        let current_color = u32::from_str_radix(color.read(cx).value().trim_start_matches('#'), 16).ok().map(ibis_doc_model::Rgb);
+        let color_input = color.clone();
+        let pick: crate::shell::color_palette::PickColor = std::rc::Rc::new(move |this, chosen, window, cx| {
+            if let Some(c) = chosen { this.note_recent_color(c); color_input.update(cx, |s, cx| s.set_value(format!("{:06X}", c.0), window, cx)); }
+            cx.notify();
+        });
+        let standard_colors: Vec<_> = super::toolbar::COLORS.iter().map(|&(id, label, rgb)| (crate::shell::i18n::text(label), ibis_doc_model::Rgb(rgb), id)).collect();
+        let color_entries = crate::shell::color_palette::simple_palette(None, Some(&super::toolbar::THEME_10), &standard_colors, current_color, pick);
+        let weak = cx.weak_entity();
+        // Size and spacing (pt): applied by 適用 only (Enter does not apply them), so ▲▼ only change the number.
+        const FONT_STEPS: &[f32] = &[8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 36.0, 48.0, 72.0];
+        let field_cx = &*cx;
+        let spin_row = |label: &'static str, input: &Entity<InputState>, id: &'static str, spec: crate::shell::chrome::SpinnerSpec| {
+            h_flex().gap_2().child(div().w(px(64.)).flex_none().text_sm().child(crate::shell::i18n::text(label))).child(crate::shell::chrome::text_field(input).full_width().spinner(id, spec, field_cx, |_, _, _, _| {}).unit("pt",px(24.)))
+        };
         let toggle = |id: &'static str, label: &'static str, on: bool, f: fn(&mut StyleEditState)| {
-            Button::new(id).small().label(crate::shell::i18n::text(label)).selected(on).on_click(cx.listener(move |this, _, _, cx| {
+            crate::shell::chrome::checkbox_button(id, crate::shell::i18n::text(label), on, false, cx.listener(move |this, _, _, cx| {
                 if let Some(edit) = this.doc_state_mut().and_then(|s| s.style_edit.as_mut()) {
                     f(edit);
                 }
@@ -199,7 +219,7 @@ impl SlideEditor {
             }))
         };
         let align_button = |id: &'static str, label: &'static str, a: FlowAlign| {
-            Button::new(id).small().label(crate::shell::i18n::text(label)).selected(align == a).on_click(cx.listener(move |this, _, _, cx| {
+            crate::shell::chrome::radio_button(id, align == a, false, crate::shell::i18n::text(label), cx.listener(move |this, _, _, cx| {
                 if let Some(edit) = this.doc_state_mut().and_then(|s| s.style_edit.as_mut()) {
                     edit.align = a;
                 }
@@ -210,27 +230,25 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(row("_shell.font", &font))
-            .child(row("_shell.size", &size))
-            .child(row("docx.common.color", &color))
+            .p_0().child(h_flex().items_center().gap_2().child(div().w(px(64.)).flex_none().text_sm().child(crate::shell::i18n::text("_shell.font"))).child(div().w(crate::shell::chrome::FONT_DROPDOWN_WIDTH).flex_none().child(crate::shell::chrome::font_dropdown("docx-style-font-list", &current_font, font_entries, 0, &weak))))
+            .child(spin_row("_shell.size", &size, "style-size", crate::shell::chrome::SpinnerSpec::new(1.0).steps(FONT_STEPS).range(1.0, 1638.0)))
+            .child(h_flex().gap_2().child(div().w(px(64.)).flex_none().text_sm().child(crate::shell::i18n::text("docx.common.color"))).child(div().w(crate::shell::chrome::FIELD_WIDTH).flex_none().child(crate::shell::chrome::color_text_field("style-color", &color, current_color, color_entries, &weak))))
             .child(h_flex().gap_1().child(toggle("style-bold", "_shell.bold", bold, |e| e.bold = !e.bold)).child(toggle("style-italic", "docx.common.italic", italic, |e| e.italic = !e.italic)))
             .child(
-                h_flex()
-                    .gap_1()
+                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                     .child(align_button("style-left", "_shell.left", FlowAlign::Left))
                     .child(align_button("style-center", "_shell.center", FlowAlign::Center))
                     .child(align_button("style-right", "_shell.right", FlowAlign::Right))
                     .child(align_button("style-justify", "docx.style-panel.justify", FlowAlign::Justify)),
             )
             .child(toggle("style-auto-update", "docx.style-panel.automatically-update-style", auto_update, |e| e.auto_update = !e.auto_update))
-            .child(row("docx.paragraph-panel.before", &before))
-            .child(row("docx.paragraph-panel.after", &after))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("style-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_style_edit(cx))))
-                    .child(Button::new("style-match").small().ghost().label(crate::shell::i18n::text("docx.style-panel.update-match-selection")).on_click(cx.listener(|this, _, _, cx| this.update_style_to_match(cx)))),
-            );
-        Some(SidebarPanel { title: title.into(), body: body.into_any_element() })
+            .child(spin_row("docx.paragraph-panel.before", &before, "style-before", crate::shell::chrome::SpinnerSpec::new(6.0).range(0.0, 1584.0)))
+            .child(spin_row("docx.paragraph-panel.after", &after, "style-after", crate::shell::chrome::SpinnerSpec::new(6.0).range(0.0, 1584.0)))
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("style-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, _, cx| this.apply_style_edit(cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("style-match", crate::shell::i18n::text("docx.style-panel.update-match-selection"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|this, _, _, cx| this.update_style_to_match(cx))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(title, body.into_any_element(), panel_actions))
     }
 }

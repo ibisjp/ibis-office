@@ -7,7 +7,7 @@
 //! Until updated, the formulas calculate from the values the file cached.
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use crate::shell::icons::Material;
 use gpui_kit::*;
@@ -31,7 +31,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.external_links = Some(ExternalLinksPanel { message: String::new(), ui: Default::default() });
         self.sidebar_open = true;
         cx.notify();
@@ -320,9 +320,9 @@ impl SlideEditor {
                     h_flex()
                         .items_center()
                         .gap_1()
-                        .child(Button::new("links-banner-update").small().ghost().label(crate::shell::i18n::text("xlsx.links-banner.update")).on_click(cx.listener(|this, _, _, cx| this.update_all_links(cx))))
-                        .child(Button::new("links-banner-edit").small().ghost().label(crate::shell::i18n::text("xlsx.links-banner.edit")).on_click(cx.listener(|this, _, window, cx| this.open_external_links_panel(window, cx))))
-                        .child(Button::new("links-banner-close").small().ghost().label(crate::shell::i18n::text("xlsx.links-banner.close")).on_click(cx.listener(|this, _, _, cx| this.dismiss_links_banner(cx)))),
+                        .child(crate::shell::chrome::action_button("links-banner-update").small().ghost().label(crate::shell::i18n::text("xlsx.links-banner.update")).on_click(cx.listener(|this, _, _, cx| this.update_all_links(cx))))
+                        .child(crate::shell::chrome::action_button("links-banner-edit").small().ghost().label(crate::shell::i18n::text("xlsx.links-banner.edit")).on_click(cx.listener(|this, _, window, cx| this.open_external_links_panel(window, cx))))
+                        .child(crate::shell::chrome::action_button("links-banner-close").small().label(crate::shell::i18n::text("xlsx.links-banner.close")).on_click(cx.listener(|this, _, _, cx| this.dismiss_links_banner(cx)))),
                 )
                 .into_any_element(),
         )
@@ -387,7 +387,13 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+        let mark_action = |id: String, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
         if books.is_empty() {
             body = body.child(crate::shell::i18n::text("_xlsx.this-workbook-has-no-links"));
         }
@@ -395,39 +401,35 @@ impl SlideEditor {
             let sheets = book.sheets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ");
             body = body
                 .child(div().font_weight(FontWeight::BOLD).child(SharedString::from(book.name.clone())))
-                .child(div().text_size(px(12.)).child(SharedString::from(ibis_pptx::link_display(&book.path))))
-                .child(div().text_size(px(12.)).child(crate::shell::i18n::format("external-links.sheets", &[("sheets", &sheets)])))
+                .child(div().text_sm().child(SharedString::from(ibis_pptx::link_display(&book.path))))
+                .child(div().text_sm().child(crate::shell::i18n::format("external-links.sheets", &[("sheets", &sheets)])))
                 .child(
                     h_flex()
                         .gap_1()
                         .flex_wrap()
-                        .child(mark(format!("update-{index}"), Button::new(SharedString::from(format!("external-update-{index}"))).small().label(crate::shell::i18n::text("_xlsx.update-values")).on_click(cx.listener(move |this, _, _, cx| this.refresh_external_book(index, cx))).into_any_element()))
-                        .child(mark(format!("pick-{index}"), Button::new(SharedString::from(format!("external-pick-{index}"))).small().label(crate::shell::i18n::text("_xlsx.update-from-file")).on_click(cx.listener(move |this, _, window, cx| this.refresh_external_book_picked(index, window, cx))).into_any_element()))
-                        .child(mark(format!("change-{index}"), Button::new(SharedString::from(format!("external-change-{index}"))).small().label(crate::shell::i18n::text("xlsx.external.change-source")).on_click(cx.listener(move |this, _, window, cx| this.change_external_book_source_picked(index, window, cx))).into_any_element()))
-                        .child(mark(format!("break-{index}"), Button::new(SharedString::from(format!("external-break-{index}"))).small().label(crate::shell::i18n::text("_xlsx.break-link")).on_click(cx.listener(move |this, _, _, cx| this.break_external_link(index, cx))).into_any_element())),
+                        .child(mark(format!("update-{index}"), crate::shell::chrome::action_button(SharedString::from(format!("external-update-{index}"))).small().label(crate::shell::i18n::text("_xlsx.update-values")).on_click(cx.listener(move |this, _, _, cx| this.refresh_external_book(index, cx))).into_any_element()))
+                        .child(mark(format!("pick-{index}"), crate::shell::chrome::action_button(SharedString::from(format!("external-pick-{index}"))).small().label(crate::shell::i18n::text("_xlsx.update-from-file")).on_click(cx.listener(move |this, _, window, cx| this.refresh_external_book_picked(index, window, cx))).into_any_element()))
+                        .child(mark(format!("change-{index}"), crate::shell::chrome::action_button(SharedString::from(format!("external-change-{index}"))).small().label(crate::shell::i18n::text("xlsx.external.change-source")).on_click(cx.listener(move |this, _, window, cx| this.change_external_book_source_picked(index, window, cx))).into_any_element()))
+                        .child(mark(format!("break-{index}"), crate::shell::chrome::destructive_button(SharedString::from(format!("external-break-{index}")),cx).small().label(crate::shell::i18n::text("_xlsx.break-link")).on_click(cx.listener(move |this, _, _, cx| this.break_external_link(index, cx))).into_any_element())),
                 );
         }
         body = body.child(
             mark(
                 "add-link".into(),
-                Button::new("external-add-link")
+                crate::shell::chrome::action_button("external-add-link")
                     .small()
                     .label(crate::shell::i18n::text("xlsx.external.add-link"))
                     .on_click(cx.listener(|this, _, window, cx| this.add_external_link_picked(window, cx)))
                     .into_any_element(),
             ),
         );
-        body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone()))).child(mark(
-            "close".into(),
-            Button::new("external-links-close")
-                .small()
+        body = body.children(crate::shell::chrome::panel_message(&p.message));
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("close".into(), crate::shell::chrome::ActionDefinition::new("external-links-close", "", crate::shell::chrome::ActionButtonKind::Normal)
                 .label(crate::shell::i18n::text("_shell.close"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.wb_mut().panels.external_links = None;
                     cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        Some(SidebarPanel { title: crate::shell::i18n::text("_xlsx.workbook-links").into(), body: body.into_any_element() })
+                }))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("_xlsx.workbook-links"), body.into_any_element(), panel_terminal_actions))
     }
 }

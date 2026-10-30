@@ -6,8 +6,8 @@
 //! whether it can be deleted and its content edited (`w:alias`, `w:tag`,
 //! `w:lock`).
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{ControlInfo, ControlLock, FlowCommand, FlowPos};
@@ -57,6 +57,7 @@ impl SlideEditor {
 
     /// 表示形式 > コントロールのプロパティ…: the panel, with the control's.
     pub(crate) fn open_control_properties(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some((para, at, info, gallery_meta, repeating_meta)) = self.control_at_caret() else {
             self.status = Some(crate::shell::i18n::text("docx.control-panel.select-control"));
             cx.notify();
@@ -131,7 +132,7 @@ impl SlideEditor {
         let (title, tag, lock, gallery_fields, repeating_fields) = (state.title.clone(), state.tag.clone(), state.lock, state.gallery_fields.clone(), state.repeating_fields.clone());
         let text = crate::shell::i18n::text;
         let choice = |id: &'static str, label: &'static str, value: ControlLock, cx: &mut Context<Self>| {
-            Button::new(id).small().label(text(label)).selected(lock == value).on_click(cx.listener(move |this, _, _, cx| {
+            crate::shell::chrome::radio_button(id, lock == value, false, text(label), cx.listener(move |this, _, _, cx| {
                 if let Some(state) = this.doc_state_mut().and_then(|s| s.control.as_mut()) {
                     state.lock = value;
                 }
@@ -142,24 +143,24 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_size(px(13.)).child(text("docx.control-panel.title")))
-            .child(Input::new(&title).small().cleanable(true))
-            .child(div().text_size(px(13.)).child(text("docx.control-panel.tag")))
-            .child(Input::new(&tag).small().cleanable(true));
+            .p_0().child(div().text_sm().child(text("docx.control-panel.title")))
+            .child(crate::shell::chrome::text_field(&title).full_width())
+            .child(div().text_sm().child(text("docx.control-panel.tag")))
+            .child(crate::shell::chrome::text_field(&tag).full_width());
 
         if let Some((gallery_in, category_in)) = gallery_fields {
             body = body
-                .child(div().text_size(px(13.)).child(text("docx.control-panel.gallery")))
-                .child(Input::new(&gallery_in).small().cleanable(true))
-                .child(div().text_size(px(13.)).child(text("docx.control-panel.category")))
-                .child(Input::new(&category_in).small().cleanable(true));
+                .child(div().text_sm().child(text("docx.control-panel.gallery")))
+                .child(crate::shell::chrome::text_field(&gallery_in).full_width())
+                .child(div().text_sm().child(text("docx.control-panel.category")))
+                .child(crate::shell::chrome::text_field(&category_in).full_width());
         }
 
         if let Some((section_title_in, no_edit)) = repeating_fields {
             body = body
-                .child(div().text_size(px(13.)).child(text("docx.control-panel.section-title")))
-                .child(Input::new(&section_title_in).small().cleanable(true))
-                .child(Button::new("control-repeating-no-insert-delete").small().label(text("docx.control-panel.no-insert-delete")).selected(no_edit).on_click(cx.listener(move |this, _, _, cx| {
+                .child(div().text_sm().child(text("docx.control-panel.section-title")))
+                .child(crate::shell::chrome::text_field(&section_title_in).full_width())
+                .child(crate::shell::chrome::checkbox_button("control-repeating-no-insert-delete", text("docx.control-panel.no-insert-delete"), no_edit, false, cx.listener(move |this, _, _, cx| {
                     if let Some(state) = this.doc_state_mut().and_then(|s| s.control.as_mut()) {
                         if let Some((_, ref mut flag)) = state.repeating_fields {
                             *flag = !*flag;
@@ -170,22 +171,20 @@ impl SlideEditor {
         }
 
         body = body
-            .child(div().text_size(px(13.)).child(text("docx.control-panel.lock")))
+            .child(div().text_sm().child(text("docx.control-panel.lock")))
             .child(choice("control-lock-none", "docx.control-panel.lock-none", ControlLock::None, cx))
             .child(choice("control-lock-control", "docx.control-panel.lock-control", ControlLock::Control, cx))
             .child(choice("control-lock-content", "docx.control-panel.lock-content", ControlLock::Content, cx))
             .child(choice("control-lock-both", "docx.control-panel.lock-both", ControlLock::Both, cx))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("control-apply").primary().small().label(text("_shell.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_control_properties(cx))))
-                    .child(Button::new("control-cancel").small().ghost().label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| {
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("control-apply", text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, _, cx| this.apply_control_properties(cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("control-cancel", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|this, _, _, cx| {
                         if let Some(state) = this.doc_state_mut() {
                             state.control = None;
                         }
                         cx.notify();
-                    }))),
-            );
-        Some(SidebarPanel { title: text("docx.control-panel.panel-title"), body: body.into_any_element() })
+                    })));
+        Some(SidebarPanel::with_footer(text("docx.control-panel.panel-title"), body.into_any_element(), panel_actions))
     }
 }

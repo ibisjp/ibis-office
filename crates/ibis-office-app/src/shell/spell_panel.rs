@@ -41,39 +41,39 @@ pub(crate) struct SpellView<'a> {
 
 pub(crate) fn sidebar(view: SpellView, actions: SpellActions, cx: &mut Context<SlideEditor>) -> SidebarPanel {
     let t = crate::shell::i18n::text;
-    let heading = |label: &str| div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(t(label));
+    let heading = |label: &str| div().text_sm().font_weight(FontWeight::BOLD).child(t(label));
     let id = |name: &str| ElementId::Name(format!("{}-{name}", view.prefix).into());
-    let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+    let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
     if !crate::spelling::available() && view.total == 0 {
-        body = body.child(div().text_size(px(12.)).child(t("pptx.spelling-panel.spell-checking-not-available")));
+        body = body.child(div().text_sm().child(t("pptx.spelling-panel.spell-checking-not-available")));
     } else if let (Some(word), true) = (view.word, view.total > 0) {
         body = body
-            .child(div().text_size(px(12.)).text_color(rgb(0x888888)).child(crate::shell::i18n::format("_pptx.n-of-total", &[("n", &(view.current + 1)), ("total", &view.total)])))
+            .child(div().text_sm().text_color(rgb(0x888888)).child(crate::shell::i18n::format("_pptx.n-of-total", &[("n", &(view.current + 1)), ("total", &view.total)])))
             .child(div().text_size(px(16.)).font_weight(FontWeight::BOLD).text_color(rgb(0xb3261e)).child(word.to_string()))
             .child(heading("pptx.spelling-panel.suggestions"));
         if view.suggestions.is_empty() {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0x888888)).child(t("pptx.spelling-panel.no-suggestions")));
+            body = body.child(div().text_sm().text_color(rgb(0x888888)).child(t("pptx.spelling-panel.no-suggestions")));
         }
         for (i, s) in view.suggestions.iter().enumerate() {
             let text = s.clone();
-            body = body.child(Button::new(id(&format!("suggestion-{i}"))).small().ghost().label(s.clone()).on_click(cx.listener(move |e, _, w, cx| (actions.change)(e, &text, false, w, cx))));
+            body = body.child(crate::shell::chrome::action_button(id(&format!("suggestion-{i}"))).small().label(s.clone()).on_click(cx.listener(move |e, _, w, cx| (actions.change)(e, &text, false, w, cx))));
         }
         let first = view.suggestions.first().cloned();
         let (first_one, first_all) = (first.clone(), first);
         body = body
             .child(h_flex().gap_1().flex_wrap()
-                .child(Button::new(id("change")).small().label(t("_xlsx.change")).on_click(cx.listener(move |e, _, w, cx| if let Some(s) = &first_one { (actions.change)(e, s, false, w, cx) })))
-                .child(Button::new(id("change-all")).small().label(t("pptx.spelling-panel.change-all")).on_click(cx.listener(move |e, _, w, cx| if let Some(s) = &first_all { (actions.change)(e, s, true, w, cx) }))))
+                .child(crate::shell::chrome::action_button(id("change")).small().label(t("_xlsx.change")).on_click(cx.listener(move |e, _, w, cx| if let Some(s) = &first_one { (actions.change)(e, s, false, w, cx) })))
+                .child(crate::shell::chrome::action_button(id("change-all")).small().label(t("pptx.spelling-panel.change-all")).on_click(cx.listener(move |e, _, w, cx| if let Some(s) = &first_all { (actions.change)(e, s, true, w, cx) }))))
             .child(h_flex().gap_1().flex_wrap()
-                .child(Button::new(id("ignore")).small().ghost().label(t("pptx.spelling-panel.ignore")).on_click(cx.listener(move |e, _, w, cx| (actions.ignore)(e, false, w, cx))))
-                .child(Button::new(id("ignore-all")).small().ghost().label(t("pptx.spelling-panel.ignore-all")).on_click(cx.listener(move |e, _, w, cx| (actions.ignore)(e, true, w, cx))))
-                .child(Button::new(id("learn")).small().ghost().label(t("pptx.spelling-panel.add-dictionary")).on_click(cx.listener(move |e, _, w, cx| (actions.learn)(e, w, cx)))))
+                .child(crate::shell::chrome::action_button(id("ignore")).small().label(t("pptx.spelling-panel.ignore")).on_click(cx.listener(move |e, _, w, cx| (actions.ignore)(e, false, w, cx))))
+                .child(crate::shell::chrome::action_button(id("ignore-all")).small().label(t("pptx.spelling-panel.ignore-all")).on_click(cx.listener(move |e, _, w, cx| (actions.ignore)(e, true, w, cx))))
+                .child(crate::shell::chrome::action_button(id("learn")).small().label(t("pptx.spelling-panel.add-dictionary")).on_click(cx.listener(move |e, _, w, cx| (actions.learn)(e, w, cx)))))
             .child(h_flex().gap_1()
-                .child(Button::new(id("previous")).small().ghost().label(t("_shell.previous")).on_click(cx.listener(move |e, _, w, cx| (actions.step)(e, false, w, cx))))
-                .child(Button::new(id("next")).small().ghost().label(t("_shell.next")).on_click(cx.listener(move |e, _, w, cx| (actions.step)(e, true, w, cx)))));
+                .child(crate::shell::chrome::action_button(id("previous")).small().label(t("_shell.previous")).on_click(cx.listener(move |e, _, w, cx| (actions.step)(e, false, w, cx))))
+                .child(crate::shell::chrome::action_button(id("next")).small().label(t("_shell.next")).on_click(cx.listener(move |e, _, w, cx| (actions.step)(e, true, w, cx)))));
     } else {
-        body = body.child(div().text_size(px(13.)).child(t("pptx.spelling-panel.no-spelling-errors-found")));
+        body = body.child(div().text_sm().child(t("pptx.spelling-panel.no-spelling-errors-found")));
     }
-    body = body.child(Button::new(id("close")).small().ghost().label(t("_shell.close")).on_click(cx.listener(move |e, _, w, cx| (actions.close)(e, w, cx))));
-    SidebarPanel { title: t("pptx.spelling-panel.spelling"), body: body.into_any_element() }
+    let panel_terminal_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new(id("close"), t("_shell.close"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(move |e, _, w, cx| (actions.close)(e, w, cx))));
+        SidebarPanel::with_footer(t("pptx.spelling-panel.spelling"), body.into_any_element(), panel_terminal_actions)
 }

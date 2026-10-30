@@ -9,8 +9,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -24,6 +24,7 @@ use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::{format, text};
 
 pub(crate) struct ForecastPanel {
+    subscriptions:Vec<Subscription>,
     /// The timeline's cells (a column; a heading above is taken as its name).
     pub(crate) timeline: Entity<InputState>,
     /// The values' cells.
@@ -87,7 +88,7 @@ impl SlideEditor {
             state.update(cx, |i, cx| i.set_value(v, window, cx));
             state
         };
-        let panel = ForecastPanel {
+        let mut panel = ForecastPanel {subscriptions:vec![],
             timeline: make(&timeline_text, window, cx),
             values: make(&values_text, window, cx),
             start: make("", window, cx),
@@ -102,6 +103,7 @@ impl SlideEditor {
             message: String::new(),
             ui: Default::default(),
         };
+        panel.subscriptions.push(cx.subscribe_in(&panel.timeline,window,|e,input,event:&gpui_kit::component::input::InputEvent,w,cx|{if matches!(event,gpui_kit::component::input::InputEvent::Change){let value=input.read(cx).value().to_string();e.refresh_forecast_bounds_from_timeline(&value,w,cx);}}));
         let state = self.wb_mut();
         state.custom_format = None;
         state.page_setup = false;
@@ -111,7 +113,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.forecast = Some(panel);
         self.sidebar_open = true;
         // The start and end of the forecast: when the timeline is regular.
@@ -411,15 +413,18 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let caption = |id: &str| div().text_size(px(13.)).child(text(id));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let caption = |id: &str| div().text_sm().child(text(id));
         let toggle = |id: &'static str, on: bool, label: &'static str, set: Rc<dyn Fn(&mut ForecastPanel)>| {
             mark(
                 id,
-                Button::new(id)
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if on { "◉" } else { "○" }, text(label)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::radio_button(id, on, false, text(label), cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.wb_mut().panels.forecast.as_mut() {
                             set(p);
                         }
@@ -428,44 +433,28 @@ impl SlideEditor {
                     .into_any_element(),
             )
         };
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
         body = body
             .child(
                 h_flex()
                     .items_center()
                     .justify_between()
-                    .child(caption("xlsx.forecast.field.timeline"))
-                    .child(mark(
-                        "forecast-use-timeline",
-                        Button::new("forecast-use-timeline")
-                            .small()
-                            .ghost()
-                            .label(text("xlsx.subtotal-use-selection"))
-                            .on_click(cx.listener(|this, _, window, cx| this.set_forecast_range_from_selection(false, window, cx)))
-                            .into_any_element(),
-                    )),
+                    .child(caption("xlsx.forecast.field.timeline")),
             )
-            .child(mark("timeline", Input::new(&p.timeline).small().cleanable(true).into_any_element()));
+            .child(mark("timeline", super::range_field::local_range_field(&p.timeline,"forecast_sheet-p-timeline",false,cx).into_any_element()));
         body = body
             .child(
                 h_flex()
                     .items_center()
                     .justify_between()
-                    .child(caption("xlsx.forecast.field.values"))
-                    .child(mark(
-                        "forecast-use-values",
-                        Button::new("forecast-use-values")
-                            .small()
-                            .ghost()
-                            .label(text("xlsx.subtotal-use-selection"))
-                            .on_click(cx.listener(|this, _, window, cx| this.set_forecast_range_from_selection(true, window, cx)))
-                            .into_any_element(),
-                    )),
+                    .child(caption("xlsx.forecast.field.values")),
             )
-            .child(mark("values", Input::new(&p.values).small().cleanable(true).into_any_element()));
-        body = body.child(caption("xlsx.forecast.field.start")).child(mark("start", Input::new(&p.start).small().cleanable(true).into_any_element()));
-        body = body.child(caption("xlsx.forecast.field.end")).child(mark("end", Input::new(&p.end).small().cleanable(true).into_any_element()));
-        body = body.child(caption("xlsx.forecast.field.confidence")).child(mark("confidence", Input::new(&p.confidence).small().cleanable(true).into_any_element()));
+            .child(mark("values", super::range_field::local_range_field(&p.values,"forecast_sheet-p-values",false,cx).into_any_element()));
+        // The sheet is made by its 作成 button, not on Enter: the ▲▼ only change the boxes. 開始・終了 are timeline values (dates or
+        // numbers) and have none.
+        body = body.child(caption("xlsx.forecast.field.start")).child(mark("start", crate::shell::chrome::text_field(&p.start).full_width().into_any_element()));
+        body = body.child(caption("xlsx.forecast.field.end")).child(mark("end", crate::shell::chrome::text_field(&p.end).full_width().into_any_element()));
+        body = body.child(caption("xlsx.forecast.field.confidence")).child(mark("confidence", crate::shell::chrome::text_field(&p.confidence).unit("%",px(20.)).spinner("forecast-confidence-spin", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 99.0), cx, |_, _, _, _| {}).into_any_element()));
 
         // 季節性
         body = body.child(caption("xlsx.forecast.field.seasonality")).child(
@@ -475,7 +464,7 @@ impl SlideEditor {
                 .child(toggle("seasonality-manual", p.seasonality_manual, "xlsx.forecast.seasonality-manual", Rc::new(|p| p.seasonality_manual = true))),
         );
         if p.seasonality_manual {
-            body = body.child(mark("seasonality", Input::new(&p.seasonality).small().cleanable(true).into_any_element()));
+            body = body.child(mark("seasonality", crate::shell::chrome::text_field(&p.seasonality).full_width().spinner("forecast-seasonality-spin", crate::shell::chrome::SpinnerSpec::new(1.0).min(0.0).integer_only(), cx, |_, _, _, _| {}).into_any_element()));
         }
 
         // 欠損ポイントの補完
@@ -496,41 +485,9 @@ impl SlideEditor {
             7 => "xlsx.forecast.agg-sum",
             _ => "xlsx.forecast.agg-average",
         };
-        let entity = cx.entity().clone();
-        body = body.child(caption("xlsx.forecast.field.aggregation")).child(mark(
-            "aggregation",
-            Button::new("forecast-agg")
-                .small()
-                .label(text(agg_id))
-                .dropdown_menu({
-                    let entity = entity.clone();
-                    move |menu, _, _| {
-                        const AGGS: [(u32, &str); 7] = [
-                            (1, "xlsx.forecast.agg-average"),
-                            (2, "xlsx.forecast.agg-count"),
-                            (3, "xlsx.forecast.agg-counta"),
-                            (4, "xlsx.forecast.agg-max"),
-                            (5, "xlsx.forecast.agg-median"),
-                            (6, "xlsx.forecast.agg-min"),
-                            (7, "xlsx.forecast.agg-sum"),
-                        ];
-                        AGGS.iter().fold(menu, |menu, &(agg, id)| {
-                            let entity = entity.clone();
-                            menu.item(PopupMenuItem::new(text(id)).on_click(move |_, _, cx| {
-                                entity.update(cx, |this, cx| {
-                                    if let Some(p) = this.wb_mut().panels.forecast.as_mut() {
-                                        p.aggregation = agg;
-                                    }
-                                    cx.notify();
-                                });
-                            }))
-                        })
-                    }
-                })
-                .into_any_element(),
-        ));
+        let choices=[(1,"xlsx.forecast.agg-average"),(2,"xlsx.forecast.agg-count"),(3,"xlsx.forecast.agg-counta"),(4,"xlsx.forecast.agg-max"),(5,"xlsx.forecast.agg-median"),(6,"xlsx.forecast.agg-min"),(7,"xlsx.forecast.agg-sum")].into_iter().map(|(agg,label)|crate::shell::chrome::MenuItem::new("forecast-aggregation-choice",text(label)).checked(agg==p.aggregation).on(move|this,_,cx|{if let Some(p)=this.wb_mut().panels.forecast.as_mut(){p.aggregation=agg;}cx.notify();}).into()).collect();
+        body=body.child(crate::shell::chrome::dropdown_row(text("xlsx.forecast.field.aggregation"),mark("aggregation",div().w(crate::shell::chrome::FIELD_WIDTH).child(crate::shell::chrome::Dropdown::from_entries("forecast-agg",text(agg_id),choices,true,0,&cx.weak_entity()).into_any_element()).into_any_element())));
 
-        // グラフの種類
         body = body.child(caption("xlsx.forecast.field.chart")).child(
             h_flex()
                 .gap_1()
@@ -540,11 +497,7 @@ impl SlideEditor {
         let on = p.statistics;
         body = body.child(mark(
             "statistics",
-            Button::new("forecast-statistics")
-                .small()
-                .ghost()
-                .label(format!("{} {}", if on { "☑" } else { "☐" }, text("xlsx.forecast.field.statistics")))
-                .on_click(cx.listener(|this, _, _, cx| {
+            crate::shell::chrome::checkbox_button("forecast-statistics", text("xlsx.forecast.field.statistics"), on, false, cx.listener(|this, _, _, cx| {
                     if let Some(p) = this.wb_mut().panels.forecast.as_mut() {
                         p.statistics = !p.statistics;
                     }
@@ -553,20 +506,10 @@ impl SlideEditor {
                 .into_any_element(),
         ));
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+            body = body.children(crate::shell::chrome::panel_message(&p.message));
         }
-        body = body.child(mark("apply", Button::new("forecast-apply").primary().small().label(text("xlsx.forecast.create")).on_click(cx.listener(|this, _, window, cx| this.apply_forecast_panel(window, cx))).into_any_element()));
-        body = body.child(mark(
-            "close",
-            Button::new("forecast-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.forecast = None;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        Some(SidebarPanel { title: text("xlsx.forecast.title").into(), body: body.into_any_element() })
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("forecast-apply", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("xlsx.forecast.create")).on_click(cx.listener(|this, _, window, cx| this.apply_forecast_panel(window, cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("xlsx.forecast.title"), body.into_any_element(), panel_terminal_actions))
     }
 }

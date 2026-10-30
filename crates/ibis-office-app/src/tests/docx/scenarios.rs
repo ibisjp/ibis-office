@@ -413,6 +413,9 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::sec013_015_016_print_settings_panel", sec013_015_016_print_settings_panel),
         ("docx::ref016_source_manager", ref016_source_manager),
         ("docx::style018_building_blocks_and_autotext", style018_building_blocks_and_autotext),
+        ("docx::ui_review_quick_parts_tabs", ui_review_quick_parts_tabs),
+        ("docx::ui_review_shared_equation_editor", ui_review_shared_equation_editor),
+        ("docx::ui_review_selection_table_reorder", ui_review_selection_table_reorder),
         ("docx::enter_preserves_formatting", enter_preserves_formatting),
         ("docx::review019_thesaurus", review019_thesaurus),
         ("docx::access010_immersive_reader", access010_immersive_reader),
@@ -544,9 +547,10 @@ fn a6_character_formatting() {
     let doc = s.document();
     let p = para(&doc, id);
     let styled: Vec<_> = p.runs.iter().filter(|r| r.style.bold).collect();
-    assert_eq!(styled.len(), 1);
-    assert_eq!(styled[0].style.color.0, 0xff0000);
-    assert!(styled[0].style.italic);
+    // The CJK characters and the space carry different East Asian hints, so they stay two runs: the selection
+    // (3 characters) is what is bold, italic and red.
+    assert_eq!(styled.iter().map(|r| r.len()).sum::<usize>(), 3);
+    assert!(styled.iter().all(|r| r.style.color.0 == 0xff0000 && r.style.italic));
     s.screenshot("formatted");
     // Undo the colour: bold and italic stay.
     s.key("cmd-z");
@@ -936,7 +940,7 @@ fn i8_english_ui() {
             for entry in entries {
                 match entry {
                     MenuEntry::Item(i) => {
-                        let own = ["docx.font.", "docx.style.doc.", "docx.cstyle.", "docx.xref.", "docx.date.0", "docx.date.1", "docx.date.2", "docx.date.3", "docx.date.4", "docx.date.5", "docx.date.6", "docx.date.7", "file.recent."].iter().any(|p| i.id.starts_with(p));
+                        let own = ["docx.font.", "docx.style.doc.", "docx.cstyle.", "docx.xref.", "docx.date.0", "docx.date.1", "docx.date.2", "docx.date.3", "docx.date.4", "docx.date.5", "docx.date.6", "docx.date.7", "file.recent.", "window.open."].iter().any(|p| i.id.starts_with(p));
                         if !own {
                             out.push(format!("{}={}", i.id, i18n::text(&i.label)));
                         }
@@ -1080,11 +1084,11 @@ fn b9_enclosed_character() {
     s.key("shift-right");
     s.menu("docx.text.enclose.circle");
     let field = |doc: &FlowDocument| para(doc, p.id).runs.iter().find_map(|r| if let FlowRunKind::Field { instruction, .. } = &r.kind { Some(instruction.clone()) } else { None });
-    assert_eq!(field(&s.document()), Some(format!("eq \\o\\ac(○,{first})")));
+    assert_eq!(field(&s.document()), Some(format!("EQ \\o\\ac(○,{first})")));
 
     // 2. Change enclosure directly from circle to square.
     s.menu("docx.text.enclose.square");
-    assert_eq!(field(&s.document()), Some(format!("eq \\o\\ac(□,{first})")));
+    assert_eq!(field(&s.document()), Some(format!("EQ \\o\\ac(□,{first})")));
 
     // 3. Clear enclosed character: returns to plain text.
     s.menu("docx.text.enclose.none");
@@ -1096,7 +1100,7 @@ fn b9_enclosed_character() {
     s.key("shift-right");
     s.key("shift-right");
     s.menu("docx.text.enclose.circle");
-    assert_eq!(field(&s.document()), Some(format!("eq \\o\\ac(○,{two})")), "2 characters enclosed");
+    assert_eq!(field(&s.document()), Some(format!("EQ \\o\\ac(○,{two})")), "2 characters enclosed");
 
     let drawn = s.with(|e, _| {
         let doc = e.presentation().flow.clone().unwrap();
@@ -1107,7 +1111,7 @@ fn b9_enclosed_character() {
     s.screenshot("enclosed");
     s.save_as("b9-enclosed.docx");
     let saved = s.reopen();
-    assert_eq!(field(flow(&saved)), Some(format!("eq \\o\\ac(○,{two})")), "read back");
+    assert_eq!(field(flow(&saved)), Some(format!("EQ \\o\\ac(○,{two})")), "read back");
 
     // 5. Undo restores plain text.
     s.key("cmd-z");
@@ -1687,6 +1691,8 @@ fn h3_changing_a_style() {
     }
     assert_eq!(size_of(&doc, plain), plain_before, "the body text did not change");
     s.screenshot("style-changed");
+    // Close the modal settings dialog before operating on the document again.
+    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
     // One heading centred, then the style updated to match it.
     s.click_text(FlowPos::new(h1, 1));
     s.key("cmd-e");
@@ -2743,6 +2749,22 @@ fn paragraph_field(s: &mut Scenario, index: usize, value: &str) {
     s.type_text(value);
 }
 
+/// Several-field forms submit with Cmd+Enter (`shell/panel_dialog/form.rs`).
+fn paragraph_submit(s: &mut Scenario) { s.key("cmd-enter"); }
+
+/// A modal panel blocks the menu bar and the page: close it first, as the user must.
+fn menu_closing(s: &mut Scenario, id: &str) { close_modal(s); s.menu(id); }
+fn click_closing(s: &mut Scenario, pos: FlowPos) { close_modal(s); s.click_text(pos); }
+
+fn close_modal(s: &mut Scenario) {
+    if s.with(|e, _| e.panel_dialog_is_modal()) { s.update(|e, w, cx| e.close_panel_dialog(w, cx)); }
+}
+
+/// The line-type radio button of the paragraph panel.
+fn paragraph_rule(s: &mut Scenario, rule: super::paragraph_panel::LineRule) {
+    s.update(|e, w, cx| e.choose_paragraph_line_rule(rule, w, cx));
+}
+
 fn paragraph_metrics(p: &FlowParagraph) -> (i64, i64, i64, i64, i64, LineHeight) {
     (p.space_before, p.space_after, p.left, p.right, p.first_line, p.line)
 }
@@ -2755,14 +2777,14 @@ fn a9_paragraph_details() {
     s.menu("docx.paragraph.details");
     for (i, value) in ["17", "13", "24", "18", "-12", "1.5"].into_iter().enumerate() { paragraph_field(&mut s, i, value); }
     assert_eq!(s.document(), before, "input alone does not change document formatting");
-    s.key("enter");
+    paragraph_submit(&mut s);
     let after = s.document();
     let expected = (17 * 12_700, 13 * 12_700, 24 * 12_700, 18 * 12_700, -12 * 12_700, LineHeight::Auto(360));
     assert_eq!(paragraph_metrics(para(&after, id)), expected);
     for p in body(&before).into_iter().filter(|p| p.id != id) { assert_eq!(para(&after, p.id), p); }
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert_eq!(s.document(), before, "six changes are one undo step");
-    s.key("cmd-shift-z");
+    close_modal(&mut s);s.key("cmd-shift-z");
     assert_eq!(s.document(), after);
     s.save_as("a9-paragraph-details.docx");
     let saved = s.reopen();
@@ -2771,19 +2793,20 @@ fn a9_paragraph_details() {
     s.screenshot("paragraph-details");
     // The deterministic 1200x720 headless window: the fixed-value choice and
     // Apply button are clicked at their rendered positions in the sidebar.
-    s.click((1055., 393.));
+    s.menu("docx.paragraph.details");
+    paragraph_rule(&mut s, super::paragraph_panel::LineRule::Exact);
     assert!(s.with(|e, _| e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().rule == super::paragraph_panel::LineRule::Exact));
     paragraph_field(&mut s, 5, "16");
     s.update(|e, window, cx| e.apply_paragraph_edit(window, cx));
     assert_eq!(para(&s.document(), id).line, LineHeight::Exact(16 * 12_700));
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert_eq!(s.document(), after);
 
     s.toolbar_menu("align", "align.distribute");
     assert_eq!(para(&s.document(), id).align, FlowAlign::Distribute);
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert_eq!(s.document(), after);
-    s.key("cmd-shift-z");
+    close_modal(&mut s);s.key("cmd-shift-z");
     s.save_as("a9-distribute.docx");
     let saved = s.reopen();
     assert!(body(flow(&saved)).iter().any(|p| p.text() == para(&after, id).text() && p.align == FlowAlign::Distribute));
@@ -2791,7 +2814,7 @@ fn a9_paragraph_details() {
     assert_eq!(para(&s.document(), id).space_before, 12 * 12_700);
     s.toolbar_menu("line-spacing", "docx.spacing.after-remove");
     assert_eq!(para(&s.document(), id).space_after, 0);
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert_eq!(para(&s.document(), id).space_after, 13 * 12_700);
 }
 
@@ -2807,13 +2830,13 @@ fn a9_line_rules() {
         let before = s.document();
         s.menu(menu);
         paragraph_field(&mut s, 5, value);
-        s.key("enter");
+        paragraph_submit(&mut s);
         let after = s.document();
         assert_eq!(para(&after, id).line, expected);
         assert_eq!((para(&after, id).space_before, para(&after, id).left), (para(&before, id).space_before, para(&before, id).left));
-        s.key("cmd-z");
+        close_modal(&mut s);s.key("cmd-z");
         assert_eq!(s.document(), before);
-        s.key("cmd-shift-z");
+        close_modal(&mut s);s.key("cmd-shift-z");
         assert_eq!(s.document(), after);
         s.save_as(&format!("a9-line-{name}.docx"));
         let saved = s.reopen();
@@ -2834,13 +2857,13 @@ fn a9_paragraph_invalid() {
     paragraph_field(&mut s, 0, "20");
     for invalid in ["-1", "NaN", "inf", "1585", "text"] {
         paragraph_field(&mut s, 1, invalid);
-        s.key("enter");
+        paragraph_submit(&mut s);
         assert_eq!(s.document(), before, "invalid input rejects the whole transaction: {invalid}");
     }
     paragraph_field(&mut s, 1, "20");
-    s.key("enter");
+    paragraph_submit(&mut s);
     assert_eq!((para(&s.document(), id).space_before, para(&s.document(), id).space_after), (20 * 12_700, 20 * 12_700));
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert_eq!(s.document(), before);
     s.save_as("a9-invalid-undone.docx");
     let saved = s.reopen();
@@ -2862,7 +2885,7 @@ fn a9_paragraph_range() {
     let before = s.document();
     s.toolbar_menu("line-spacing", "docx.paragraph.details");
     paragraph_field(&mut s, 0, "21.5");
-    s.key("enter");
+    paragraph_submit(&mut s);
     let after = s.document();
     for id in [first, second] {
         assert_eq!(para(&after, id).space_before, 430 * 635);
@@ -2870,9 +2893,9 @@ fn a9_paragraph_range() {
             (para(&before, id).space_after, para(&before, id).left, para(&before, id).line));
     }
     assert_eq!(para(&after, third), para(&before, third));
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert_eq!(s.document(), before);
-    s.key("cmd-shift-z");
+    close_modal(&mut s);s.key("cmd-shift-z");
     assert_eq!(s.document(), after);
     s.save_as("a9-paragraph-range.docx");
     let saved = s.reopen();
@@ -2891,7 +2914,7 @@ fn para004_char_unit_indents() {
     paragraph_field(&mut s, 2, "2字");
     paragraph_field(&mut s, 3, "1.5字");
     paragraph_field(&mut s, 4, "-1字");
-    s.key("enter");
+    paragraph_submit(&mut s);
     let after = s.document();
     let p_after = para(&after, id);
     assert_eq!(p_after.left_chars, Some(200));
@@ -2899,9 +2922,9 @@ fn para004_char_unit_indents() {
     assert_eq!(p_after.first_line_chars, Some(-100));
 
     // Undo / Redo
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert_eq!(s.document(), before, "undo restores previous indents");
-    s.key("cmd-shift-z");
+    close_modal(&mut s);s.key("cmd-shift-z");
     assert_eq!(s.document(), after, "redo restores character unit indents");
 
     // Save and reopen
@@ -2913,17 +2936,18 @@ fn para004_char_unit_indents() {
     assert_eq!(p_saved.first_line_chars, Some(-100));
 
     // Switch unit to pt and edit
+    s.menu("docx.paragraph.details");
     s.update(|e, window, cx| {
         e.choose_paragraph_indent_unit(super::paragraph_panel::IndentUnit::Pt, window, cx);
     });
     paragraph_field(&mut s, 2, "18");
-    s.key("enter");
+    paragraph_submit(&mut s);
     let doc_pt = s.document();
     let p_pt = para(&doc_pt, id);
     assert_eq!(p_pt.left, 18 * 12_700);
     assert_eq!(p_pt.left_chars, None);
 
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert_eq!(s.document(), after);
 }
 
@@ -3709,57 +3733,26 @@ fn picture_field(s:&mut Scenario,index:usize,value:&str) {
     s.key("cmd-a");if value.is_empty() {s.key("backspace");} else {s.type_text(value); }
 }
 fn c7_picture_size() {
+    use crate::shell::scenario::button_probe as buttons;
+    use gpui_kit::component::input::InputEvent;
+    let _probe=buttons::Probe::new();
     let mut s=Scenario::open(REPORT);
-    let (id,offset,media,initial)=s.with(|e,_| {
-        for p in body(flow(e.presentation())) {
-            let mut offset=0;
-            for r in &p.runs {
-                if let FlowRunKind::Picture {media,size,..}=r.kind {return (p.id,offset,media,size);}
-                offset+=r.len();
-            }
-        }
-        panic!("a picture");
-    });
-    s.click_text(FlowPos::new(id,offset));
-    assert_eq!(s.menu_state("docx.picture.size"),Some((true,false)));
-    s.menu("docx.picture.size");
-    let before=s.document();
-    picture_field(&mut s,0,"90");s.key("enter");
+    let(id,offset,initial)=s.with(|e,_|body(flow(e.presentation())).into_iter().find_map(|p|{let mut offset=0;for r in &p.runs{if let FlowRunKind::Picture{size,..}=r.kind{return Some((p.id,offset,size));}offset+=r.len();}None}).unwrap());
+    s.click_text(FlowPos::new(id,offset));let before=s.document();let undo_before=s.with(|e,_|e.document.undo_len());
+    s.menu("docx.picture.size");picture_field(&mut s,0,"90");
     let expected=ibis_doc_model::EmuSize::new(90*12700,(90.*12700.*initial.height as f64/initial.width as f64).round() as i64);
-    assert_eq!(s.with(|e,_|e.picture_at_caret().unwrap()),(FlowPos::new(id,offset),media,expected));
-    let after=s.document();
-    for p in body(&before) {if p.id!=id {assert_eq!(para(&after,p.id),p);}}
-    assert_eq!(para(&after,id).text(),para(&before,id).text());
-    s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
-    s.save_as("c7-picture-ratio.docx");
-    let saved=s.reopen();
-    assert!(body(flow(&saved)).iter().any(|p|p.runs.iter().any(|r|matches!(r.kind,FlowRunKind::Picture {size,..} if size==expected))));
-    s.screenshot("picture-size");
-    s.menu("docx.picture.ratio");assert_eq!(s.menu_state("docx.picture.ratio"),Some((true,false)));
-    picture_field(&mut s,0,"72");picture_field(&mut s,1,"48");s.update(|e,window,cx|e.apply_picture_edit(window,cx));
-    let expected=ibis_doc_model::EmuSize::new(72*12700,48*12700);
-    let before=after;let after=s.document();
-    assert_eq!(s.with(|e,_|e.picture_at_caret().unwrap().2),expected);
-    s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
-    s.save_as("c7-picture-unlocked.docx");
-    let saved=s.reopen();assert!(body(flow(&saved)).iter().any(|p|p.runs.iter().any(|r|matches!(r.kind,FlowRunKind::Picture {size,..} if size==expected))));
+    assert_eq!(s.with(|e,_|e.picture_at_caret().unwrap().2),expected,"each typed character updates the picture without rounding its aspect ratio repeatedly");
+    let after=s.document();let steps=s.with(|e,_|e.document.undo_len())-undo_before;
+    s.screenshot("picture-size-live");s.click_text(FlowPos::new(id,offset));
+    for _ in 0..steps{s.key("cmd-z");}assert_eq!(s.document(),before);
+    for _ in 0..steps{s.key("cmd-shift-z");}assert_eq!(s.document(),after);
+    s.save_as("c7-picture-ratio.docx");let saved=s.reopen();assert!(body(flow(&saved)).iter().any(|p|p.runs.iter().any(|r|matches!(r.kind,FlowRunKind::Picture{size,..}if size==expected))));
+    s.menu("docx.picture.size");buttons::click(&mut s,"picture-ratio");picture_field(&mut s,0,"72");picture_field(&mut s,1,"48");
+    assert_eq!(s.with(|e,_|e.picture_at_caret().unwrap().2),ibis_doc_model::EmuSize::new(72*12700,48*12700));
     for value in ["0","-1","NaN","inf","1585","abc"] {
-        s.menu("docx.picture.size");let before=s.document();
-        picture_field(&mut s,0,value);s.key("enter");assert_eq!(s.document(),before,"{value} accepted");
+        let before=s.document();s.update(|e,w,cx|{let f=e.doc_state().unwrap().picture_edit.as_ref().unwrap().fields[0].clone();f.update(cx,|i,cx|{i.set_value(value,w,cx);cx.emit(InputEvent::Change);});});assert_eq!(s.document(),before,"invalid pasted size must preserve the last valid picture: {value}");
     }
-    s.menu("docx.picture.size");let before=s.document();
-    picture_field(&mut s,0,"100");picture_field(&mut s,1,"100");s.key("enter");
-    assert_eq!(s.document(),before,"inconsistent locked ratio accepted");
-    s.menu("docx.picture.size");picture_field(&mut s,1,"36");s.key("enter");
-    let after=s.document();let expected=ibis_doc_model::EmuSize::new(54*12700,36*12700);
-    assert_eq!(s.with(|e,_|e.picture_at_caret().unwrap().2),expected);
-    s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
-    s.save_as("c7-picture-height.docx");let saved=s.reopen();
-    assert!(body(flow(&saved)).iter().any(|p|p.runs.iter().any(|r|matches!(r.kind,FlowRunKind::Picture {size,..} if size==expected))));
-    s.menu("docx.picture.size");let before=s.document();picture_field(&mut s,0,"100");
-    let (other,_) = s.paragraph(0);
-    s.click_text(FlowPos::new(other,0));
-    s.update(|e,window,cx|e.apply_picture_edit(window,cx));assert_eq!(s.document(),before,"stale selection applied");
+    s.save_as("c7-picture-unlocked.docx");let saved=s.reopen();assert!(body(flow(&saved)).iter().any(|p|p.runs.iter().any(|r|matches!(r.kind,FlowRunKind::Picture{size,..}if size==ibis_doc_model::EmuSize::new(72*12700,48*12700)))));
 }
 
 fn table_size_field(s:&mut Scenario,index:usize,value:&str) {
@@ -3776,34 +3769,34 @@ fn c2_table_dimensions() {
     let table=|s:&mut Scenario|s.document().body.into_iter().find_map(|b|if let Block::Table(t)=b && t.id==table_id {Some(t)}else{None}).unwrap();
     s.click_text(FlowPos::new(para_id,0));
     for (name,height) in [("minimum",ibis_doc_model::RowHeight::AtLeast(30*12700)),("exact",ibis_doc_model::RowHeight::Exact(24*12700)),("auto",ibis_doc_model::RowHeight::Auto)] {
-        s.menu("docx.table.size");s.menu(&format!("docx.table.height.{name}"));
+        s.menu("docx.table.size");{let rule=match name {"minimum"=>super::table_size_panel::HeightRule::AtLeast,"exact"=>super::table_size_panel::HeightRule::Exact,_=>super::table_size_panel::HeightRule::Auto};s.update(|e,w,cx|e.choose_table_height(rule,w,cx));}
         let before=s.document();let old=table(&mut s);
         table_size_field(&mut s,0,"56.5");
         if name!="auto" {table_size_field(&mut s,1,if name=="minimum" {"30"}else{"24"});}
-        s.key("enter");let after=s.document();let t=table(&mut s);
+        paragraph_submit(&mut s);let after=s.document();let t=table(&mut s);
         assert_eq!(t.columns[0],(56.5*12700.) as i64);assert_eq!(t.rows[0].height,height);
         assert_eq!(t.rows[0].cells,old.rows[0].cells);assert_eq!(t.rows[1..],old.rows[1..]);
         assert_eq!(t.rows[0].header,old.rows[0].header);assert_eq!(t.rows[0].cant_split,old.rows[0].cant_split);assert_eq!(t.columns[1..],old.columns[1..]);
         for p in body(&before) {assert_eq!(para(&after,p.id),p);}
-        s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
+        close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
         s.save_as(&format!("c2-table-{name}.docx"));let saved=s.reopen();
         let t=flow(&saved).body.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();
         assert_eq!(t.columns[0],(56.5*12700.) as i64);assert_eq!(t.rows[0].height,height);
     }
     s.menu("docx.table.size");s.screenshot("table-size");
-    let before=s.document();s.click((1055.,265.));
+    let before=s.document();s.update(|e,w,cx|e.choose_table_height(super::table_size_panel::HeightRule::Exact,w,cx));
     assert!(s.with(|e,_|e.doc_state().unwrap().table_size.as_ref().unwrap().rule==super::table_size_panel::HeightRule::Exact));
-    table_size_field(&mut s,0,"84");table_size_field(&mut s,1,"18");s.click((1050.,329.));
+    table_size_field(&mut s,0,"84");table_size_field(&mut s,1,"18");paragraph_submit(&mut s);
     let after=s.document();assert_eq!(table(&mut s).rows[0].height,ibis_doc_model::RowHeight::Exact(18*12700));assert_eq!(table(&mut s).columns[0],84*12700);
-    s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
+    close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
     s.save_as("c2-table-buttons.docx");let saved=s.reopen();
     let t=flow(&saved).body.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();
     assert_eq!(t.rows[0].height,ibis_doc_model::RowHeight::Exact(18*12700));assert_eq!(t.columns[0],84*12700);
     for (index,value) in [(0,"0"),(0,"-1"),(0,"NaN"),(0,"1585"),(1,"inf"),(1,"abc")] {
-        s.menu("docx.table.size");let before=s.document();table_size_field(&mut s,index,value);s.key("enter");assert_eq!(s.document(),before);
+        s.menu("docx.table.size");let before=s.document();table_size_field(&mut s,index,value);paragraph_submit(&mut s);assert_eq!(s.document(),before);close_modal(&mut s);
     }
     s.menu("docx.table.size");let before=s.document();table_size_field(&mut s,0,"100");
-    let (other,_)=s.paragraph(0);s.click_text(FlowPos::new(other,0));
+    let (other,_)=s.paragraph(0);s.update(|e,_,cx|e.set_caret(FlowPos::new(other,0),false,cx));
     s.update(|e,window,cx|e.apply_table_size(window,cx));assert_eq!(s.document(),before);
 }
 
@@ -3981,31 +3974,31 @@ fn a6_custom_colors() {
     use ibis_doc_model::Rgb;
     let mut s=Scenario::open(REPORT);
     let (_,id,text)=text_paragraph(&mut s,12);
-    s.click_text(FlowPos::new(id,1));for _ in 0..3 {s.key("shift-right");}
     let selected:String=text.chars().skip(1).take(3).collect();
     for underline in [false,true] {
+        s.click_text(FlowPos::new(id,1));for _ in 0..3 {s.key("shift-right");}
         if underline {s.menu("docx.underline.custom");} else {s.toolbar_menu("text-color","docx.color.custom");}
         let before=s.document();
         for invalid in ["", "12345", "1234567", "GG0000", "0x123456", "-12345"] {
-            custom_color_field(&mut s,invalid);s.key("enter");assert_eq!(s.document(),before);
+            custom_color_field(&mut s,invalid);s.key("cmd-enter");assert!(s.document()==before);
             assert!(s.with(|e,_|e.doc_state().unwrap().color_edit.as_ref().unwrap().error.is_some()));
         }
-        custom_color_field(&mut s,"#2a7fc1");s.key("enter");
-        let after=s.document();assert_ne!(after,before);
+        custom_color_field(&mut s,"#2a7fc1");s.key("cmd-enter");
+        let after=s.document();assert!(after!=before);
         let p=para(&after,id);let run=p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t==&selected)).unwrap();
         if underline {assert_eq!(run.style.underline_color,Some(Rgb(0x2a7fc1)));assert!(run.style.underline);} else {assert_eq!(run.style.color,Rgb(0x2a7fc1));}
         assert_eq!(p.text(),text);assert_eq!(p.runs[0].style,para(&before,id).runs[0].style);
         for p in body(&before) {if p.id!=id {assert_eq!(para(&after,p.id),p);}}
-        s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
+        custom_color_field(&mut s,"2A7FC1");s.key("cmd-enter");assert!(s.document()==after);
+        let selection_before=s.selection();s.click_text(FlowPos::new(id,8));
+        assert_eq!(s.selection(),selection_before,"the modal color form preserves its frozen target");
+        // A modal form blocks document Undo; close it before checking document history.
+        s.key("escape");s.key("cmd-z");assert!(s.document()==before);
+        s.key("cmd-shift-z");assert!(s.document()==after);
         s.save_as(if underline {"a6-custom-underline.docx"} else {"a6-custom-text.docx"});
         let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==text).unwrap();
         let run=p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t==&selected)).unwrap();
         if underline {assert_eq!(run.style.underline_color,Some(Rgb(0x2a7fc1)));} else {assert_eq!(run.style.color,Rgb(0x2a7fc1));}
-        custom_color_field(&mut s,"2A7FC1");s.key("enter");s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
-        s.key("cmd-z");assert_eq!(s.document(),before);custom_color_field(&mut s,"2A7FC1");s.key("enter");assert_eq!(s.document(),after);
-        s.click_text(FlowPos::new(id,8));custom_color_field(&mut s,"ABCDEF");s.key("enter");assert_eq!(s.document(),after);
-        assert!(s.with(|e,_|e.doc_state().unwrap().color_edit.as_ref().unwrap().error.is_some()));
-        s.click_text(FlowPos::new(id,1));for _ in 0..3 {s.key("shift-right");}
     }
 }
 
@@ -4282,34 +4275,36 @@ fn c4_wrapped_split_preserved() {
     assert!(changed.contains(&format!("<w:sdt>{wrapped}</w:sdt>")));assert_eq!(changed.matches("<w:sdt>").count(),original.matches("<w:sdt>").count());
 }
 
+/// The font panel's three fields are chosen from font dropdowns: set what a menu entry sets.
 fn custom_font_field(s:&mut Scenario,index:usize,value:&str) {
-    s.update(|e,window,cx| {let field=e.doc_state().unwrap().font_edit.as_ref().unwrap().fields[index].clone();field.update(cx,|i,cx|i.focus(window,cx));});s.key("cmd-a");if value.is_empty() {s.key("backspace");} else {s.type_text(value); }
+    s.update(|e,window,cx| {let field=e.doc_state().unwrap().font_edit.as_ref().unwrap().fields[index].clone();field.update(cx,|i,cx|i.set_value(value.to_string(),window,cx));});
 }
+fn font_apply(s:&mut Scenario) { s.update(|e,w,cx|e.apply_font_edit(w,cx)); }
 fn a6_custom_fonts() {
     let mut s=Scenario::open(REPORT);let (_,id,text)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,1));for _ in 0..3 {s.key("shift-right");}
     let selected:String=text.chars().skip(1).take(3).collect();
     s.toolbar_menu("font","docx.font.custom");let before=s.document();
     let initial=s.with(|e,cx|e.doc_state().unwrap().font_edit.as_ref().unwrap().fields.clone().map(|field|field.read(cx).value().to_string()));
     let nonempty=initial.iter().position(|value|!value.is_empty()).unwrap();
-    custom_font_field(&mut s,nonempty,"");custom_font_field(&mut s,1-nonempty,"Arial");assert_eq!(s.with(|e,cx|e.doc_state().unwrap().font_edit.as_ref().unwrap().fields[nonempty].read(cx).value().to_string()),"");s.key("enter");assert_eq!(s.document(),before);assert!(s.with(|e,_|e.doc_state().unwrap().font_edit.as_ref().unwrap().error.is_some()));
+    custom_font_field(&mut s,nonempty,"");custom_font_field(&mut s,1-nonempty,"Arial");assert_eq!(s.with(|e,cx|e.doc_state().unwrap().font_edit.as_ref().unwrap().fields[nonempty].read(cx).value().to_string()),"");font_apply(&mut s);assert_eq!(s.document(),before);assert!(s.with(|e,_|e.doc_state().unwrap().font_edit.as_ref().unwrap().error.is_some()));
     for i in 0..2 {custom_font_field(&mut s,i,&initial[i]);}
-    custom_font_field(&mut s,1,&initial[1]);custom_font_field(&mut s,0,&"X".repeat(129));s.key("enter");assert_eq!(s.document(),before);
+    custom_font_field(&mut s,1,&initial[1]);custom_font_field(&mut s,0,&"X".repeat(129));font_apply(&mut s);assert_eq!(s.document(),before);
     for (index,name) in [(0,"Arial"),(1,"Yu Gothic")] {
-        let before=s.document();custom_font_field(&mut s,index,name);s.key("enter");let after=s.document();assert_ne!(after,before);
+        let before=s.document();if s.with(|e,_|e.doc_state().unwrap().font_edit.is_none()) {s.toolbar_menu("font","docx.font.custom");}custom_font_field(&mut s,index,name);font_apply(&mut s);let after=s.document();assert_ne!(after,before);
         let p=para(&after,id);let run=p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t==&selected)).unwrap();
         if index==0 {assert_eq!(run.style.font.as_deref(),Some(name));} else {assert_eq!(run.style.east_asian_font.as_deref(),Some(name));}
         assert_eq!(p.text(),text);assert_eq!(p.runs[0].style,para(&before,id).runs[0].style);
         for p in body(&before) {if p.id!=id {assert_eq!(para(&after,p.id),p);}}
-        s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
+        close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);
         s.save_as(&format!("a6-custom-font-{index}.docx"));let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==text).unwrap();let r=p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t==&selected)).unwrap();assert_eq!(r.style,run.style);
-        custom_font_field(&mut s,index,name);s.key("enter");s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
+        s.toolbar_menu("font","docx.font.custom");custom_font_field(&mut s,index,name);font_apply(&mut s);close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);
     }
-    let before=s.document();s.click_text(FlowPos::new(id,8));custom_font_field(&mut s,0,"Calibri");s.key("enter");assert_eq!(s.document(),before);assert!(s.with(|e,_|e.doc_state().unwrap().font_edit.as_ref().unwrap().error.is_some()));
-    s.toolbar_menu("font","docx.font.custom");let before=s.document();
-    custom_font_field(&mut s,0,"Times New Roman");custom_font_field(&mut s,1,"Yu Gothic");s.key("enter");assert_eq!(s.document(),before);
-    s.type_text("Z");let after=s.document();let expected=format!("{}Z{}",text.chars().take(8).collect::<String>(),text.chars().skip(8).collect::<String>());
+    let before=s.document();s.toolbar_menu("font","docx.font.custom");s.update(|e,_,cx|e.set_caret(FlowPos::new(id,8),false,cx));custom_font_field(&mut s,0,"Calibri");font_apply(&mut s);assert_eq!(s.document(),before);assert!(s.with(|e,_|e.doc_state().unwrap().font_edit.as_ref().unwrap().error.is_some()));
+    close_modal(&mut s);s.toolbar_menu("font","docx.font.custom");let before=s.document();
+    custom_font_field(&mut s,0,"Times New Roman");custom_font_field(&mut s,1,"Yu Gothic");font_apply(&mut s);assert_eq!(s.document(),before);
+    close_modal(&mut s);s.type_text("Z");let after=s.document();let expected=format!("{}Z{}",text.chars().take(8).collect::<String>(),text.chars().skip(8).collect::<String>());
     let p=para(&after,id);assert_eq!(p.text(),expected);let r=p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t=="Z")).unwrap();assert_eq!(r.style.font.as_deref(),Some("Times New Roman"));assert_eq!(r.style.east_asian_font.as_deref(),Some("Yu Gothic"));
-    s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
+    close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);
     s.save_as("a6-custom-font-pending.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==expected).unwrap();let r=p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t=="Z")).unwrap();assert_eq!(r.style.font.as_deref(),Some("Times New Roman"));assert_eq!(r.style.east_asian_font.as_deref(),Some("Yu Gothic"));
 
 }
@@ -4336,16 +4331,16 @@ fn a6_mixed_fonts() {
     s.click_text(FlowPos::new(id,1));for _ in 0..3 {s.key("shift-right");}
     s.toolbar_menu("font","docx.font.custom");
     assert_eq!(s.with(|e,cx|e.doc_state().unwrap().font_edit.as_ref().unwrap().fields[0].read(cx).value().to_string()),"");
-    let before=s.document();custom_font_field(&mut s,0,"Arial");s.key("enter");let after=s.document();assert_ne!(after,before);
+    let before=s.document();custom_font_field(&mut s,0,"Arial");font_apply(&mut s);let after=s.document();assert_ne!(after,before);
     let selected:String=text.chars().skip(1).take(3).collect();let p=para(&after,id);let run=p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t==&selected)).unwrap();assert_eq!(run.style.font.as_deref(),Some("Arial"));
     assert_eq!(p.text(),text);assert_eq!(p.runs[0].style,para(&before,id).runs[0].style);
-    s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
+    close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);
     s.save_as("a6-mixed-fonts.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==text).unwrap();assert_eq!(p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t==&selected)).unwrap().style.font.as_deref(),Some("Arial"));
     s.click_text(FlowPos::new(id,1));s.key("shift-right");s.update(|e,_,cx|{e.apply_run_change(ibis_doc_model::RunChange::EastAsianFont("Yu Gothic".into()),cx);});
     s.click_text(FlowPos::new(id,1));for _ in 0..3 {s.key("shift-right");}s.toolbar_menu("font","docx.font.custom");
     assert_eq!(s.with(|e,cx|e.doc_state().unwrap().font_edit.as_ref().unwrap().fields[1].read(cx).value().to_string()),"");
-    let before=s.document();custom_font_field(&mut s,1,"Yu Gothic");s.key("enter");let after=s.document();let p=para(&after,id);let r=p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t==&selected)).unwrap();assert_eq!(r.style.east_asian_font.as_deref(),Some("Yu Gothic"));assert_eq!(r.style.font.as_deref(),Some("Arial"));
-    assert_eq!(p.runs[0].style,para(&before,id).runs[0].style);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
+    let before=s.document();custom_font_field(&mut s,1,"Yu Gothic");font_apply(&mut s);let after=s.document();let p=para(&after,id);let r=p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t==&selected)).unwrap();assert_eq!(r.style.east_asian_font.as_deref(),Some("Yu Gothic"));assert_eq!(r.style.font.as_deref(),Some("Arial"));
+    assert_eq!(p.runs[0].style,para(&before,id).runs[0].style);close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);
     s.save_as("a6-mixed-east-asian-fonts.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==text).unwrap();let r=p.runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t==&selected)).unwrap();assert_eq!(r.style.east_asian_font.as_deref(),Some("Yu Gothic"));assert_eq!(r.style.font.as_deref(),Some("Arial"));
 
 }
@@ -4384,12 +4379,12 @@ fn a9_nested_table_decorations() {
 
 fn a6_font_table_selection() {
     let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-font-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
-    let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.toolbar_menu("font","docx.font.custom");custom_font_field(&mut s,0,"Arial");s.key("enter");let after=s.document();assert_ne!(after,before);
+    let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.toolbar_menu("font","docx.font.custom");custom_font_field(&mut s,0,"Arial");font_apply(&mut s);let after=s.document();assert_ne!(after,before);
     let table=after.body.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();let nested=table.rows[0].cells[0].blocks.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();
     for t in [table,nested] {for row in &t.rows {for cell in &row.cells {for block in &cell.blocks {if let Block::Paragraph(p)=block {assert_eq!(p.mark.font.as_deref(),Some("Arial"));for run in &p.runs {assert_eq!(run.style.font.as_deref(),Some("Arial"));}}}}}}
     let old=before.body.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();assert_eq!(table.columns,old.columns);assert_eq!(table.borders,old.borders);
     assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
-    s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("a6-font-table-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);
+    close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("a6-font-table-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),data);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);
     s.save_as("a6-font-table.docx");let saved=s.reopen();let table=flow(&saved).body.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();let nested=table.rows[0].cells[0].blocks.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();for t in [table,nested] {for row in &t.rows {for cell in &row.cells {for b in &cell.blocks {if let Block::Paragraph(p)=b {for r in &p.runs {assert_eq!(r.style.font.as_deref(),Some("Arial"));}}}}}}
 }
 
@@ -4418,10 +4413,10 @@ fn h9_table_format_rejection() {
 
 fn h9_table_font_rejection() {
     let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-track-font-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
-    s.menu("docx.track.record");let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.toolbar_menu("font","docx.font.custom");custom_font_field(&mut s,0,"Arial");custom_font_field(&mut s,1,"Yu Gothic");s.key("enter");let after=s.document();
+    s.menu("docx.track.record");let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.toolbar_menu("font","docx.font.custom");custom_font_field(&mut s,0,"Arial");custom_font_field(&mut s,1,"Yu Gothic");font_apply(&mut s);let after=s.document();
     fn check(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>for run in &p.runs {assert_eq!(run.style.font.as_deref(),Some("Arial"));assert_eq!(run.style.east_asian_font.as_deref(),Some("Yu Gothic"));assert!(matches!(run.revision.as_ref().map(|r|&r.kind),Some(ibis_doc_model::RevisionKind::Format(_))));},Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks);}}}}}
-    check(&after.body);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("h9-table-font.docx");let saved=s.reopen();check(&flow(&saved).body);
-    s.menu("docx.track.reject-all");let rejected=s.document();assert!(rejected.body==before.body,"reject restores all selected paragraph and table content/format");assert_eq!(rejected.header,before.header);assert_eq!(rejected.footer,before.footer);s.key("cmd-z");assert_eq!(s.document(),after);s.key("cmd-shift-z");assert_eq!(s.document(),rejected);s.save_as("h9-table-font-rejected.docx");let saved=s.reopen();
+    check(&after.body);close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("h9-table-font.docx");let saved=s.reopen();check(&flow(&saved).body);
+    s.menu("docx.track.reject-all");let rejected=s.document();assert!(rejected.body==before.body,"reject restores all selected paragraph and table content/format");assert_eq!(rejected.header,before.header);assert_eq!(rejected.footer,before.footer);close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),after);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),rejected);s.save_as("h9-table-font-rejected.docx");let saved=s.reopen();
     fn plain(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>for r in &p.runs {assert!(r.revision.is_none());},Block::Table(t)=>for row in &t.rows {for cell in &row.cells {plain(&cell.blocks);}}}}}plain(&flow(&saved).body);
 }
 
@@ -4438,18 +4433,18 @@ fn a9_table_alignment_and_spacing() {
 
 fn a9_table_paragraph_details() {
     let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-details-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
-    let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.menu("docx.paragraph.details");s.click((940.,393.));for (i,value) in ["17","13","24","18","-12","1.5"].into_iter().enumerate() {paragraph_field(&mut s,i,value);}assert_eq!(s.document(),before);s.key("enter");let after=s.document();
+    let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.menu("docx.paragraph.details");paragraph_rule(&mut s,super::paragraph_panel::LineRule::Multiple);for (i,value) in ["17","13","24","18","-12","1.5"].into_iter().enumerate() {paragraph_field(&mut s,i,value);}assert_eq!(s.document(),before);paragraph_submit(&mut s);let after=s.document();
     fn check(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>assert_eq!(paragraph_metrics(p),(17*12_700,13*12_700,24*12_700,18*12_700,-12*12_700,LineHeight::Auto(360))),Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks);}}}}}check(&after.body);
     assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
-    s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("a9-table-details-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("a9-table-details.docx");let saved=s.reopen();check(&flow(&saved).body);
+    close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("a9-table-details-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),data);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("a9-table-details.docx");let saved=s.reopen();check(&flow(&saved).body);
 }
 
 fn a9_mixed_paragraph_details() {
     let mut s=Scenario::open(REPORT);let doc=s.document();let ps=body(&doc);let first=ps[0].id;let second=ps[1].id;
-    for (id,value) in [(first,"17"),(second,"25")] {s.click_text(FlowPos::new(id,0));s.menu("docx.paragraph.details");paragraph_field(&mut s,0,value);s.key("enter");}
-    s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.menu("docx.paragraph.details");assert_eq!(s.with(|e,cx|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().fields[0].read(cx).value().to_string()),"");paragraph_field(&mut s,0,"17");s.key("enter");let after=s.document();
+    for (id,value) in [(first,"17"),(second,"25")] {s.click_text(FlowPos::new(id,0));s.menu("docx.paragraph.details");paragraph_field(&mut s,0,value);paragraph_submit(&mut s);close_modal(&mut s);}
+    s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.menu("docx.paragraph.details");assert_eq!(s.with(|e,cx|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().fields[0].read(cx).value().to_string()),"");paragraph_field(&mut s,0,"17");paragraph_submit(&mut s);let after=s.document();
     fn check(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>assert_eq!(p.space_before,17*12_700),Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks);}}}}}check(&after.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
-    s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("a9-mixed-paragraph-details.docx");let saved=s.reopen();check(&flow(&saved).body);
+    close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("a9-mixed-paragraph-details.docx");let saved=s.reopen();check(&flow(&saved).body);
 }
 
 fn h9_full_paragraph_format_rejection() {
@@ -4460,10 +4455,10 @@ fn h9_full_paragraph_format_rejection() {
 
 fn a9_mixed_line_rules() {
     let mut s=Scenario::open(REPORT);let doc=s.document();let ps=body(&doc);let first=ps[0].id;let second=ps[1].id;
-    for (id,x,value) in [(first,940.,"1"),(second,1055.,"16")] {s.click_text(FlowPos::new(id,0));s.menu("docx.paragraph.details");s.click((x,393.));paragraph_field(&mut s,5,value);s.key("enter");}
+    for (id,x,value) in [(first,940.,"1"),(second,1055.,"16")] {s.click_text(FlowPos::new(id,0));s.menu("docx.paragraph.details");paragraph_rule(&mut s,if x==940. {super::paragraph_panel::LineRule::Multiple} else {super::paragraph_panel::LineRule::Exact});paragraph_field(&mut s,5,value);paragraph_submit(&mut s);close_modal(&mut s);}
     s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.menu("docx.paragraph.details");assert!(s.with(|e,_|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().rule_mixed));assert_eq!(s.with(|e,cx|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().fields[5].read(cx).value().to_string()),"");
-    paragraph_field(&mut s,5,"1");s.key("enter");assert_eq!(s.document(),before,"a mixed line rule must be chosen before changing its number");s.click((940.,393.));assert!(!s.with(|e,_|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().rule_mixed));paragraph_field(&mut s,5,"1");s.key("enter");let after=s.document();
-    fn check(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>assert_eq!(p.line,LineHeight::Auto(240)),Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks);}}}}}check(&after.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("a9-mixed-line-rules.docx");let saved=s.reopen();check(&flow(&saved).body);
+    paragraph_field(&mut s,5,"1");paragraph_submit(&mut s);assert_eq!(s.document(),before,"a mixed line rule must be chosen before changing its number");paragraph_rule(&mut s,super::paragraph_panel::LineRule::Multiple);assert!(!s.with(|e,_|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().rule_mixed));paragraph_field(&mut s,5,"1");paragraph_submit(&mut s);let after=s.document();
+    fn check(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>assert_eq!(p.line,LineHeight::Auto(240)),Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks);}}}}}check(&after.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("a9-mixed-line-rules.docx");let saved=s.reopen();check(&flow(&saved).body);
 }
 
 fn h9_hidden_native_format() {
@@ -4637,10 +4632,11 @@ fn b7_unicode_lowercase_offsets() {
 }
 
 fn a9_stale_paragraph_details() {
-    let mut s=Scenario::open(REPORT);let (_,id,text)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,1));let before=s.document();s.menu("docx.paragraph.details");paragraph_field(&mut s,0,"17");s.key("enter");let after=s.document();assert_eq!(para(&after,id).space_before,17*12_700);s.key("cmd-z");assert_eq!(s.document(),before);
-    for value in ["17","19"] {paragraph_field(&mut s,0,value);s.key("enter");assert_eq!(s.document(),before,"stale document rejects without mutation");assert!(s.with(|e,_|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().error.is_some()),"stale panel must explain reopening instead of silently doing nothing");}
-    let guarded=s.save_as("a9-stale-paragraph-guard.docx");assert_eq!(std::fs::read(guarded).unwrap(),std::fs::read(crate::shell::scenario::repo_root().join(REPORT)).unwrap());s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-shift-z");assert_eq!(s.document(),after,"rejections preserve redo stack");
-    s.menu("docx.paragraph.details");paragraph_field(&mut s,0,"19");s.key("enter");let recovered=s.document();assert_eq!(para(&recovered,id).space_before,19*12_700);assert!(s.with(|e,_|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().error.is_none()));assert_eq!(recovered.header,before.header);assert_eq!(recovered.footer,before.footer);assert_eq!(recovered.styles,before.styles);s.key("cmd-z");assert_eq!(s.document(),after);s.key("cmd-shift-z");assert_eq!(s.document(),recovered);s.save_as("a9-stale-paragraph-recovered.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==text).unwrap();assert_eq!(paragraph_metrics(p),paragraph_metrics(para(&recovered,id)));
+    let mut s=Scenario::open(REPORT);let (_,id,text)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,1));let before=s.document();s.menu("docx.paragraph.details");paragraph_field(&mut s,0,"17");paragraph_submit(&mut s);let after=s.document();assert_eq!(para(&after,id).space_before,17*12_700);// The modal blocks Cmd+Z; the document changes underneath it as it would from another window.
+    s.update(|e,w,cx|e.undo(&crate::Undo,w,cx));assert_eq!(s.document(),before);
+    for value in ["17","19"] {paragraph_field(&mut s,0,value);paragraph_submit(&mut s);assert_eq!(s.document(),before,"stale document rejects without mutation");assert!(s.with(|e,_|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().error.is_some()),"stale panel must explain reopening instead of silently doing nothing");}
+    let guarded=s.save_as("a9-stale-paragraph-guard.docx");assert_eq!(std::fs::read(guarded).unwrap(),std::fs::read(crate::shell::scenario::repo_root().join(REPORT)).unwrap());s.update(|e,w,cx|e.focus_handle.focus(w,cx));close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after,"rejections preserve redo stack");
+    s.menu("docx.paragraph.details");paragraph_field(&mut s,0,"19");paragraph_submit(&mut s);let recovered=s.document();assert_eq!(para(&recovered,id).space_before,19*12_700);assert!(s.with(|e,_|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().error.is_none()));assert_eq!(recovered.header,before.header);assert_eq!(recovered.footer,before.footer);assert_eq!(recovered.styles,before.styles);close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),after);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),recovered);s.save_as("a9-stale-paragraph-recovered.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==text).unwrap();assert_eq!(paragraph_metrics(p),paragraph_metrics(para(&recovered,id)));
 }
 
 fn b7_first_even_story_search() {
@@ -4714,8 +4710,10 @@ fn e1_note_links() {
     let input=root.join("target/scenario-input/docx-note-links-ui-base.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();s.save_as(input.to_str().unwrap());drop(s);let data=std::fs::read(&input).unwrap();let mut s=Scenario::open("target/scenario-input/docx-note-links-ui-base.docx");let initial=s.document();let mut ids=Vec::new();for notes in [&initial.footnotes,&initial.endnotes]{let p=match &notes[0].blocks[0]{Block::Paragraph(p)=>p,_=>panic!("note paragraph")};ids.push(p.id);}
     for (&id,url) in ids.iter().zip(["https://example.com/ui-foot","https://example.com/ui-end"]){let before=s.document();s.click_text(FlowPos::new(id,2));for _ in 0..9{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(id,2),FlowPos::new(id,11))));s.key("cmd-k");s.type_text(url);s.key("enter");let after=s.document();assert!(flow_command::paragraph(&after,id).unwrap().runs.iter().any(|r|r.link==Some(ibis_doc_model::Link::Url(url.into()))));assert_eq!(after.body,before.body);let mut after_styles=(*after.styles).clone();after_styles.styles.remove("Hyperlink");let mut before_styles=(*before.styles).clone();before_styles.styles.remove("Hyperlink");assert_eq!(after_styles,before_styles);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);}
     let after=s.document();let fixed=root.join("target/scenario-input/docx-note-links-ui-linked.docx");let file=s.save_as(fixed.to_str().unwrap());let bytes=std::fs::read(&file).unwrap();for part in ["word/document.xml","word/settings.xml","word/numbering.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&data,part),ibis_pptx::test_files::part_text(&bytes,part));}assert!(ibis_pptx::test_files::part_text(&bytes,"word/styles.xml").unwrap().contains("Hyperlink"));let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,after.footnotes[0].blocks);assert_eq!(flow(&saved).endnotes[0].blocks,after.endnotes[0].blocks);drop(s);
-    let mut s=Scenario::open("target/scenario-input/docx-note-links-ui-linked.docx");let before=s.document();let id=match &before.footnotes[0].blocks[0]{Block::Paragraph(p)=>p.id,_=>panic!("note")};s.click_text(FlowPos::new(id,2));for _ in 0..9{s.key("shift-right");}s.key("cmd-k");s.key("cmd-a");s.type_text("https://example.com/ui-foot-changed");s.key("enter");let changed=s.document();assert_eq!(changed.endnotes,before.endnotes);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("e1-note-link-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),bytes);s.key("cmd-shift-z");assert_eq!(s.document(),changed);let file=s.save_as("e1-note-link-changed.docx");let out=std::fs::read(file).unwrap();for part in ["word/document.xml","word/endnotes.xml","word/_rels/endnotes.xml.rels","word/styles.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&out,part),ibis_pptx::test_files::part_text(&bytes,part));}let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,changed.footnotes[0].blocks);
-    s.click_text(FlowPos::new(id,2));for _ in 0..9{s.key("shift-right");}s.key("cmd-k");s.key("cmd-a");s.key("backspace");s.key("enter");let removed=s.document();assert!(flow_command::paragraph(&removed,id).unwrap().runs.iter().all(|r|r.link.is_none()));s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),changed);s.key("cmd-shift-z");assert_eq!(s.document(),removed);s.save_as("e1-note-link-removed.docx");let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,removed.footnotes[0].blocks);assert_eq!(flow(&saved).endnotes[0].blocks,removed.endnotes[0].blocks);
+    let _probe=crate::shell::scenario::button_probe::Probe::new();let mut s=Scenario::open("target/scenario-input/docx-note-links-ui-linked.docx");let before=s.document();let id=match &before.footnotes[0].blocks[0]{Block::Paragraph(p)=>p.id,_=>panic!("note")};
+    // An ordinary click on a link follows it (hyperlinks.rs), so the caret is put in the linked note text directly.
+    s.update(|e,_,cx|e.set_caret(FlowPos::new(id,2),false,cx));for _ in 0..9{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(id,2),FlowPos::new(id,11))));s.key("cmd-k");s.key("cmd-a");s.type_text("https://example.com/ui-foot-changed");s.key("enter");let changed=s.document();assert_eq!(changed.endnotes,before.endnotes);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("e1-note-link-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),bytes);s.key("cmd-shift-z");assert_eq!(s.document(),changed);let file=s.save_as("e1-note-link-changed.docx");let out=std::fs::read(file).unwrap();for part in ["word/document.xml","word/endnotes.xml","word/_rels/endnotes.xml.rels","word/styles.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&out,part),ibis_pptx::test_files::part_text(&bytes,part));}let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,changed.footnotes[0].blocks);
+    s.update(|e,_,cx|e.set_caret(FlowPos::new(id,2),false,cx));for _ in 0..9{s.key("shift-right");}s.key("cmd-k");crate::shell::scenario::button_probe::click(&mut s,"link-remove");let removed=s.document();assert!(flow_command::paragraph(&removed,id).unwrap().runs.iter().all(|r|r.link.is_none()));s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),changed);s.key("cmd-shift-z");assert_eq!(s.document(),removed);s.save_as("e1-note-link-removed.docx");let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,removed.footnotes[0].blocks);assert_eq!(flow(&saved).endnotes[0].blocks,removed.endnotes[0].blocks);
 }
 
 fn h9_note_original_history() {
@@ -5041,6 +5039,10 @@ fn paste_original_history_cases(tracked: bool) {
             }
             if r.format.tate_chu_yoko == Some(false) {
                 r.format.tate_chu_yoko = None;
+            }
+            // "no fit-text" is saved as nothing.
+            if r.format.fit_text == Some(None) {
+                r.format.fit_text = None;
             }
         }
         assert_eq!(reread.runs, expected_runs);
@@ -6640,8 +6642,17 @@ fn page_setup_click(s: &mut Scenario, id: &str) {
     let b = s.with(|e, _| *e.doc_state().unwrap().helper.page_setup.as_ref().expect("the panel").ui.borrow().get(&id).unwrap_or_else(|| panic!("{id}")));
     s.click((f32::from(b.origin.x + b.size.width / 2.0), f32::from(b.origin.y + b.size.height / 2.0)));
 }
+/// Focus the page setup panel's input `which` (the row's centre is not the input).
+fn page_setup_focus(s: &mut Scenario, which: &str) {
+    s.update(|e, window, cx| {
+        let p = e.doc_state().unwrap().helper.page_setup.as_ref().expect("the panel");
+        let f = match which { "line-pitch" => p.line_pitch.clone(), "char-space" => p.char_space.clone(), "chars" => p.chars.clone(), "lines" => p.lines.clone(), _ => p.start.clone() };
+        f.update(cx, |i, cx| i.focus(window, cx));
+    });
+}
 fn page_setup_field(s: &mut Scenario, i: usize, text: &str) {
-    page_setup_click(s, &format!("field-{i}"));
+    // The row's centre is not the input any more (a label and a spinner share the row): focus the input itself.
+    s.update(|e, window, cx| { let f = e.doc_state().unwrap().helper.page_setup.as_ref().expect("the panel").fields[i].clone(); f.update(cx, |i, cx| i.focus(window, cx)); });
     s.key("cmd-a");
     s.type_text(text);
 }
@@ -6695,7 +6706,7 @@ fn page003_direction_and_start() {
     s.size(1200.0, 1000.0);
     s.menu("docx.page.setup");
     page_setup_click(&mut s, "direction-vertical");
-    page_setup_click(&mut s, "start");
+    s.update(|e, window, cx| { let f = e.doc_state().unwrap().helper.page_setup.as_ref().expect("the panel").start.clone(); f.update(cx, |i, cx| i.focus(window, cx)); });
     s.key("cmd-a");
     s.type_text("5");
     page_setup_click(&mut s, "apply");
@@ -6713,7 +6724,7 @@ fn page003_direction_and_start() {
     let saved = s.reopen();
     let page = flow(&saved).page;
     assert_eq!((page.direction, page.first_page), (ibis_doc_model::CellDirection::TbRl, 5));
-    s.menu("docx.page.setup");
+    menu_closing(&mut s, "docx.page.setup");
     page_setup_click(&mut s, "direction-across");
     page_setup_click(&mut s, "apply");
     assert_eq!(s.with(|e, _| flow(e.presentation()).page.direction), ibis_doc_model::CellDirection::LrTb);
@@ -6785,7 +6796,8 @@ fn ref008_bookmarks() {
     s.type_text("見出し1");
     bookmark_click(&mut s, "add");
     assert!(marks(&mut s).contains(&("見出し1".into(), a)));
-    s.click_text(FlowPos::new(b, 1));
+    // The bookmark dialog is modal: the caret moves without the mouse.
+    s.update(|e, _, cx| e.set_caret(FlowPos::new(b, 1), false, cx));
     bookmark_click(&mut s, "add");
     let now = marks(&mut s);
     let msg = s.with(|e, _| (e.doc_state().unwrap().helper.bookmarks.as_ref().map(|p| p.message.clone()), e.ordered_selection().map(|(p, _)| p.para)));
@@ -6797,7 +6809,7 @@ fn ref008_bookmarks() {
     assert!(marks(&mut s).contains(&("Temp_2".into(), b)));
     bookmark_click(&mut s, "delete");
     assert!(!marks(&mut s).iter().any(|(n, _)| n == "Temp_2"));
-    s.click_text(FlowPos::new(a, 3));
+    s.update(|e, _, cx| e.set_caret(FlowPos::new(a, 3), false, cx));
     bookmark_click(&mut s, "item-見出し1");
     bookmark_click(&mut s, "jump");
     assert_eq!(s.with(|e, _| e.ordered_selection().map(|(p, _)| p.para)), Some(b), "jumped to 見出し1");
@@ -6840,6 +6852,7 @@ fn page019_watermark() {
     });
     assert!(!firsts.is_empty() && firsts.iter().all(|&f| f), "behind every page: {firsts:?}");
     s.screenshot("page019-watermark.png");
+    s.update(|e,w,cx|e.close_panel_dialog(w,cx));
     let file = s.save_as("page019.docx");
     assert!(!parts_with(&file, "PowerPlusWaterMarkObject").is_empty(), "in a header");
     let saved = s.reopen();
@@ -6860,6 +6873,7 @@ fn page019_watermark() {
     s.menu("file.new.document");
     assert!(s.with(|e, _| e.flow().is_some_and(|d| d.header.is_empty())));
     s.menu("docx.watermark");
+    watermark_click(&mut s, "custom");
     watermark_click(&mut s, "text");
     s.key("cmd-a");
     s.type_text("DRAFT");
@@ -6908,6 +6922,7 @@ fn style005_new_style() {
     s.type_text("要点");
     new_style_click(&mut s, "create");
     assert_eq!(s.with(|e, _| flow(e.presentation()).styles.styles.values().filter(|st| st.name == "要点").count()), 1);
+    s.update(|e,w,cx|e.close_panel_dialog(w,cx));
     // A character style on three characters of another paragraph.
     s.click_text(FlowPos::new(b, 1));
     for _ in 0..3 {
@@ -7004,7 +7019,7 @@ fn style003_hyperlink_style() {
                 .runs
                 .iter()
                 .find(|r| r.link == Some(ibis_doc_model::Link::Url("https://ibis.inc/".into())))
-                .map(|r| (r.char_style.clone(), r.style.color, r.style.underline, r.len()))
+                .map(|r| (r.char_style.clone(), r.style.color, r.style.underline, para(flow(e.presentation()), id).runs.iter().filter(|r|r.link==Some(ibis_doc_model::Link::Url("https://ibis.inc/".into()))).map(|r|r.len()).sum::<usize>()))
         })
     };
     let info = run_info(&mut s).expect("linked run exists");
@@ -7041,8 +7056,8 @@ fn style003_hyperlink_style() {
     assert_eq!(saved_run.style.color, ibis_doc_model::Rgb(0x0563C1));
     assert!(saved_run.style.underline);
 
-    // Remove link clears Hyperlink character style and format
-    s.click_text(FlowPos::new(id, 2));
+    // Select linked text with the caret API; ordinary clicking now opens its URL.
+    s.update(|e,_,cx|e.set_caret(FlowPos::new(id,2),false,cx));
     for _ in 0..4 {
         s.key("shift-right");
     }
@@ -9915,9 +9930,12 @@ fn ref010_cross_reference_dialog() {
     assert!(!initial_targets.is_empty(), "headings should exist in REPORT");
 
     // 3. 見出しへの相互参照を挿入（REF _Ref... \h）
+    // The dialog is modal: the text is typed with it closed, and it is opened again to insert.
+    close_modal(&mut s);
     s.key("cmd-down");
     s.key("enter");
     s.type_text("参照先：");
+    s.menu("docx.xref.dialog");
     s.update(|e, _, cx| e.apply_cross_reference(cx));
 
     let doc = s.document();
@@ -9935,8 +9953,10 @@ fn ref010_cross_reference_dialog() {
         }], cx);
     });
 
+    close_modal(&mut s);
     s.key("enter");
     s.type_text("ページ：");
+    s.menu("docx.xref.dialog");
     s.update(|e, _, cx| {
         e.choose_cross_reference_type(ibis_doc_model::CrossReferenceType::Bookmark, cx);
         e.choose_cross_reference_kind(ibis_doc_model::CrossReferenceKind::PageNumber, cx);
@@ -9954,6 +9974,7 @@ fn ref010_cross_reference_dialog() {
     assert!(p_page.runs.iter().any(|r| matches!(&r.kind, FlowRunKind::Field { instruction, .. } if instruction.contains("PAGEREF")) || matches!(&r.kind, FlowRunKind::PageRef { .. })), "PAGEREF field inserted");
 
     // 5. 脚注を追加し、脚注への相互参照（NOTEREF \h）を挿入
+    close_modal(&mut s);
     s.key("enter");
     s.type_text("注記：");
     s.update(|e, _, cx| {
@@ -9995,6 +10016,7 @@ fn ref010_cross_reference_dialog() {
     assert!(p_note_saved.runs.iter().any(|r| matches!(&r.kind, FlowRunKind::Field { instruction, shown } if instruction.contains("NOTEREF") && shown == "1")));
 
     // 7. Undo/Redo 検証
+    close_modal(&mut s);
     s.key("cmd-z");
     s.key("cmd-z");
     s.key("cmd-shift-z");
@@ -10170,22 +10192,30 @@ fn ref011_cross_reference_relative_and_captions() {
     });
 
     // 4. 「上の位置/下の位置」を選択して挿入（下から上への参照なので「上」）
+    // The dialog is modal: the text is typed with it closed, and it is opened again to insert.
+    close_modal(&mut s);
     s.type_text(" (位置: ");
-    s.update(|e, _, cx| {
-        e.choose_cross_reference_kind(ibis_doc_model::CrossReferenceKind::RelativePosition, cx);
-        e.apply_cross_reference(cx);
-    });
-    s.type_text(")");
-
-    // 5. ドキュメント先頭から相互参照を挿入（上から下への参照なので「下」）
-    s.key("cmd-up");
-    s.type_text("下記参照 (位置: ");
+    s.menu("docx.xref.dialog");
     s.update(|e, _, cx| {
         e.choose_cross_reference_type(ibis_doc_model::CrossReferenceType::Caption, cx);
         e.choose_cross_reference_kind(ibis_doc_model::CrossReferenceKind::RelativePosition, cx);
         e.select_cross_reference_item(0, cx);
         e.apply_cross_reference(cx);
     });
+    close_modal(&mut s);
+    s.type_text(")");
+
+    // 5. ドキュメント先頭から相互参照を挿入（上から下への参照なので「下」）
+    s.key("cmd-up");
+    s.type_text("下記参照 (位置: ");
+    s.menu("docx.xref.dialog");
+    s.update(|e, _, cx| {
+        e.choose_cross_reference_type(ibis_doc_model::CrossReferenceType::Caption, cx);
+        e.choose_cross_reference_kind(ibis_doc_model::CrossReferenceKind::RelativePosition, cx);
+        e.select_cross_reference_item(0, cx);
+        e.apply_cross_reference(cx);
+    });
+    close_modal(&mut s);
     s.type_text(")");
 
     // 6. 検証
@@ -10215,6 +10245,7 @@ fn ref011_cross_reference_relative_and_captions() {
     assert_eq!(rel_count, 2, "both relative position cross-references preserved");
 
     // 8. Undo/Redo 検証
+    close_modal(&mut s);
     s.key("cmd-z");
     s.key("cmd-shift-z");
 }
@@ -11044,7 +11075,7 @@ fn ja015_doc_grid_and_line_pitch() {
 
     // 2. 「行数のみ」を選択し、行送りに 36 pt を指定
     page_setup_click(&mut s, "grid-lines");
-    page_setup_click(&mut s, "grid-line-pitch");
+    page_setup_focus(&mut s, "line-pitch");
     s.key("cmd-a");
     s.type_text("36");
     page_setup_click(&mut s, "apply");
@@ -11072,7 +11103,7 @@ fn ja015_doc_grid_and_line_pitch() {
     // 5. ページ設定パネルで「文字数と行数」を選択し、字送りに 5 pt を指定
     s.menu("docx.page.setup");
     page_setup_click(&mut s, "grid-lines-chars");
-    page_setup_click(&mut s, "grid-char-space");
+    page_setup_focus(&mut s, "char-space");
     s.key("cmd-a");
     s.type_text("5");
     page_setup_click(&mut s, "apply");
@@ -11137,11 +11168,11 @@ fn font001_complex_script_font() {
     custom_font_field(&mut s, 0, "Calibri");
     custom_font_field(&mut s, 1, "MS Mincho");
     custom_font_field(&mut s, 2, "Traditional Arabic");
-    s.key("enter");
+    font_apply(&mut s);close_modal(&mut s);
 
     let after = s.document();
     let p = para(&after, id);
-    let run = p.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let run = p.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert_eq!(run.style.font.as_deref(), Some("Calibri"));
     assert_eq!(run.style.east_asian_font.as_deref(), Some("MS Mincho"));
     assert_eq!(run.style.cs_font.as_deref(), Some("Traditional Arabic"));
@@ -11163,7 +11194,7 @@ fn font001_complex_script_font() {
     s.save_as("test-font001-complex-script-font.docx");
     let saved = s.reopen();
     let p_saved = body(flow(&saved)).into_iter().find(|p| p.text() == text).unwrap();
-    let r_saved = p_saved.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r_saved = p_saved.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert_eq!(r_saved.style.font.as_deref(), Some("Calibri"));
     assert_eq!(r_saved.style.east_asian_font.as_deref(), Some("MS Mincho"));
     assert_eq!(r_saved.style.cs_font.as_deref(), Some("Traditional Arabic"));
@@ -11174,7 +11205,7 @@ fn font001_complex_script_font() {
     s.click_text(FlowPos::new(id2, 8));
     s.toolbar_menu("font", "docx.font.custom");
     custom_font_field(&mut s, 2, "Arial Unicode MS");
-    s.key("enter");
+    font_apply(&mut s);close_modal(&mut s);
     s.type_text("مرحبا");
     let doc_typed = s.document();
     let p_typed = para(&doc_typed, id2);
@@ -11728,7 +11759,7 @@ fn ref006_note_position() {
     s.type_text("ページの途中で終わる短い本文");
 
     // 1. 脚注を挿入
-    s.menu("docx.footnote");
+    menu_closing(&mut s,"docx.footnote");
     s.type_text("脚注テキスト本文直後テスト");
 
     // デフォルト（PageBottom）での最後のページの脚注区切り線の位置を取得
@@ -11752,7 +11783,7 @@ fn ref006_note_position() {
     assert!(default_sep_y > 600.0, "default separator should be near page bottom, got {default_sep_y}");
 
     // 2. 「脚注と文末脚注の設定…」を開き、脚注の配置を「本文の直後」に変更して適用
-    s.menu("docx.notes.settings");
+    menu_closing(&mut s,"docx.notes.settings");
     notes_click(&mut s, "pos-1"); // pos-1: 本文の直後 (BeneathText)
     notes_click(&mut s, "apply");
 
@@ -11778,7 +11809,7 @@ fn ref006_note_position() {
     assert!(beneath_sep_y < default_sep_y - 200.0, "beneathText separator should be placed directly under text, got {beneath_sep_y} vs default {default_sep_y}");
 
     // 4. 文末脚注の配置を「セクションの最後」に変更して適用
-    s.menu("docx.notes.settings");
+    menu_closing(&mut s,"docx.notes.settings");
     notes_click(&mut s, "kind-end"); // 文末脚注タブに切替
     notes_click(&mut s, "pos-0"); // pos-0: セクションの最後 (SectionEnd)
     notes_click(&mut s, "apply");
@@ -12557,14 +12588,14 @@ fn para018_suppress_auto_hyphens() {
     let mut s = Scenario::open(REPORT);
     let doc = s.document();
     let p = body(&doc).into_iter().find(|p| p.text().chars().count() > 6).unwrap().clone();
-    s.click_text(FlowPos::new(p.id, 0));
+    click_closing(&mut s,FlowPos::new(p.id, 0));
 
     // 1. 初期状態: false
     assert!(!s.with(|e, _| e.caret_suppress_auto_hyphens()));
     assert!(!para(&s.document(), p.id).suppress_auto_hyphens);
 
     // 2. メニューから「単語の途中で改行しない（ハイフネーションを行わない）」を実行
-    s.menu("docx.para.suppress-auto-hyphens");
+    menu_closing(&mut s,"docx.para.suppress-auto-hyphens");
     assert!(s.with(|e, _| e.caret_suppress_auto_hyphens()));
     assert!(para(&s.document(), p.id).suppress_auto_hyphens);
     assert_eq!(para(&s.document(), p.id).direct.suppress_auto_hyphens, Some(true));
@@ -12584,17 +12615,17 @@ fn para018_suppress_auto_hyphens() {
     assert_eq!(para(&s.document(), p.id).direct.suppress_auto_hyphens, Some(false));
 
     // 5. 再度メニューから true に切り替え
-    s.menu("docx.para.suppress-auto-hyphens");
+    menu_closing(&mut s,"docx.para.suppress-auto-hyphens");
     assert!(s.with(|e, _| e.caret_suppress_auto_hyphens()));
     assert!(para(&s.document(), p.id).suppress_auto_hyphens);
 
     // 6. Undo
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert!(!s.with(|e, _| e.caret_suppress_auto_hyphens()));
     assert!(!para(&s.document(), p.id).suppress_auto_hyphens);
 
     // 7. Redo
-    s.key("cmd-shift-z");
+    close_modal(&mut s);s.key("cmd-shift-z");
     assert!(s.with(|e, _| e.caret_suppress_auto_hyphens()));
     assert!(para(&s.document(), p.id).suppress_auto_hyphens);
 
@@ -13981,7 +14012,10 @@ fn file018_custom_properties() {
             p.new_custom_val.update(cx, |inp, cx| inp.set_value("NextOffice", w, cx));
         }
         e.add_doc_custom_property(w, cx);
-
+    });
+    // The inputs are cleared by the first add; the second pair is entered in a later frame.
+    s.settle();
+    s.update(|e, w, cx| {
         if let Some(p) = e.doc_state_mut().and_then(|st| st.helper.properties.as_mut()) {
             p.new_custom_name.update(cx, |inp, cx| inp.set_value("Department", w, cx));
             p.new_custom_val.update(cx, |inp, cx| inp.set_value("Development", w, cx));
@@ -14036,11 +14070,11 @@ fn file018_custom_properties() {
     assert!(!custom_xml_removed.contains(r#"name="Department""#));
 
     // 6. Undo / Redo 検証
-    s.key("cmd-z"); // Undo remove
+    close_modal(&mut s);s.key("cmd-z"); // Undo remove
     assert_eq!(s.document().properties.custom.len(), 2);
     assert_eq!(s.document().properties.custom[1].name, "Department");
 
-    s.key("cmd-shift-z"); // Redo remove
+    close_modal(&mut s);s.key("cmd-shift-z"); // Redo remove
     assert_eq!(s.document().properties.custom.len(), 1);
     assert_eq!(s.document().properties.custom[0].name, "ProjectName");
 }
@@ -14454,64 +14488,36 @@ fn find008_format_and_style_find_replace() {
     assert!(saved_p2.text().contains("First ReplacedMulti and second ReplacedMulti."));
 }
 
+/// Clicks the control `id` of the ruler settings pane (表示 > ルーラー opens it): the centre of where it was drawn.
+fn ruler_setting_click(s: &mut Scenario, id: &str) {
+    let bounds = s.with(|e, _| *e.ruler_settings_ui.borrow().get(id).unwrap_or_else(|| panic!("missing ruler UI {id}")));
+    s.click((f32::from(bounds.origin.x + bounds.size.width / 2.), f32::from(bounds.origin.y + bounds.size.height / 2.)));
+    s.settle();
+}
+
 fn view012_vertical_ruler() {
     let mut s = Scenario::open(REPORT);
 
-    // 1. Initial State: ruler_open and vertical_ruler_open are both true.
+    // 1. Initial State: ruler_open and vertical_ruler_open are both true. The rulers are settings of the right pane now:
+    // the menu item opens it (enabled, no check).
     assert!(s.with(|e, _| e.ruler_open && e.vertical_ruler_open), "both rulers should be open initially");
-    assert_eq!(
-        s.menu_state("docx.ruler"),
-        Some((true, true)),
-        "docx.ruler menu item should be enabled and checked"
-    );
-    assert_eq!(
-        s.menu_state("docx.vertical-ruler"),
-        Some((true, true)),
-        "docx.vertical-ruler menu item should be enabled and checked"
-    );
+    assert_eq!(s.menu_state("docx.ruler"), Some((true, false)), "docx.ruler opens the pane");
+    s.menu("docx.ruler");
+    assert!(s.with(|e, _| e.ruler_settings_open && e.sidebar_open));
 
-    // 2. Toggle vertical ruler off via menu
-    s.menu("docx.vertical-ruler");
+    // 2. Switch the vertical ruler off in the pane
+    ruler_setting_click(&mut s, "ruler-vertical");
     assert!(s.with(|e, _| e.ruler_open && !e.vertical_ruler_open), "vertical ruler should be toggled off");
-    assert_eq!(
-        s.menu_state("docx.vertical-ruler"),
-        Some((true, false)),
-        "docx.vertical-ruler should now be unchecked"
-    );
-    assert_eq!(
-        s.menu_state("docx.ruler"),
-        Some((true, true)),
-        "horizontal ruler should remain checked"
-    );
 
-    // 3. Toggle vertical ruler back on
-    s.menu("docx.vertical-ruler");
+    // 3. Switch the vertical ruler back on
+    ruler_setting_click(&mut s, "ruler-vertical");
     assert!(s.with(|e, _| e.ruler_open && e.vertical_ruler_open), "vertical ruler should be back on");
-    assert_eq!(
-        s.menu_state("docx.vertical-ruler"),
-        Some((true, true)),
-        "docx.vertical-ruler should be checked again"
-    );
 
-    // 4. Toggle master ruler off: disables vertical ruler in menu
-    s.menu("docx.ruler");
+    // 4. Switch the horizontal ruler off, then on again
+    ruler_setting_click(&mut s, "ruler-horizontal");
     assert!(s.with(|e, _| !e.ruler_open), "ruler should be turned off");
-    assert_eq!(
-        s.menu_state("docx.ruler"),
-        Some((true, false)),
-        "docx.ruler should be unchecked"
-    );
-    assert_eq!(
-        s.menu_state("docx.vertical-ruler"),
-        Some((false, true)),
-        "docx.vertical-ruler should be disabled when ruler is off"
-    );
-
-    // 5. Toggle master ruler back on: vertical ruler re-enabled and checked
-    s.menu("docx.ruler");
+    ruler_setting_click(&mut s, "ruler-horizontal");
     assert!(s.with(|e, _| e.ruler_open && e.vertical_ruler_open));
-    assert_eq!(s.menu_state("docx.ruler"), Some((true, true)));
-    assert_eq!(s.menu_state("docx.vertical-ruler"), Some((true, true)));
 
     // 6. Navigate / scroll pages and verify stable rendering
     s.page(2);
@@ -14530,57 +14536,32 @@ fn view013_ruler_units() {
 
     let mut s = Scenario::open(REPORT);
 
-    // 1. Initial State: Centimeters is default, menu checked and enabled
+    // 1. Initial State: Centimeters is default. The units are radio buttons of the ruler pane (表示 > ルーラー).
     assert_eq!(s.with(|e, _| e.ruler_unit()), RulerUnit::Centimeters);
-    assert_eq!(s.menu_state("docx.ruler-unit.cm"), Some((true, true)));
-    assert_eq!(s.menu_state("docx.ruler-unit.mm"), Some((true, false)));
-    assert_eq!(s.menu_state("docx.ruler-unit.inch"), Some((true, false)));
-    assert_eq!(s.menu_state("docx.ruler-unit.point"), Some((true, false)));
-    assert_eq!(s.menu_state("docx.ruler-unit.pica"), Some((true, false)));
+    s.menu("docx.ruler");
+    assert!(s.with(|e, _| e.ruler_settings_open && e.sidebar_open));
 
-    // 2. Switch to Millimeters
-    s.menu("docx.ruler-unit.mm");
-    assert_eq!(s.with(|e, _| e.ruler_unit()), RulerUnit::Millimeters);
-    assert_eq!(s.menu_state("docx.ruler-unit.mm"), Some((true, true)));
-    assert_eq!(s.menu_state("docx.ruler-unit.cm"), Some((true, false)));
-
-    // 3. Switch to Inches
-    s.menu("docx.ruler-unit.inch");
-    assert_eq!(s.with(|e, _| e.ruler_unit()), RulerUnit::Inches);
-    assert_eq!(s.menu_state("docx.ruler-unit.inch"), Some((true, true)));
-    assert_eq!(s.menu_state("docx.ruler-unit.mm"), Some((true, false)));
-
-    // 4. Switch to Points
-    s.menu("docx.ruler-unit.point");
-    assert_eq!(s.with(|e, _| e.ruler_unit()), RulerUnit::Points);
-    assert_eq!(s.menu_state("docx.ruler-unit.point"), Some((true, true)));
-    assert_eq!(s.menu_state("docx.ruler-unit.inch"), Some((true, false)));
-
-    // 5. Switch to Picas
-    s.menu("docx.ruler-unit.pica");
-    assert_eq!(s.with(|e, _| e.ruler_unit()), RulerUnit::Picas);
-    assert_eq!(s.menu_state("docx.ruler-unit.pica"), Some((true, true)));
-    assert_eq!(s.menu_state("docx.ruler-unit.point"), Some((true, false)));
+    // 2-5. Switch to Millimeters, Inches, Points and Picas
+    for (id, unit) in [("docx.ruler-unit.mm", RulerUnit::Millimeters), ("docx.ruler-unit.inch", RulerUnit::Inches), ("docx.ruler-unit.point", RulerUnit::Points), ("docx.ruler-unit.pica", RulerUnit::Picas)] {
+        ruler_setting_click(&mut s, id);
+        assert_eq!(s.with(|e, _| e.ruler_unit()), unit);
+    }
 
     // 6. Cycle ruler unit (Picas -> Centimeters -> Millimeters)
     s.update(|e, _, cx| e.cycle_ruler_unit(cx));
     assert_eq!(s.with(|e, _| e.ruler_unit()), RulerUnit::Centimeters);
-    assert_eq!(s.menu_state("docx.ruler-unit.cm"), Some((true, true)));
-
     s.update(|e, _, cx| e.cycle_ruler_unit(cx));
     assert_eq!(s.with(|e, _| e.ruler_unit()), RulerUnit::Millimeters);
-    assert_eq!(s.menu_state("docx.ruler-unit.mm"), Some((true, true)));
 
-    // 7. Master ruler OFF: submenu items become disabled while preserving check state
-    s.menu("docx.ruler");
+    // 7. Ruler OFF: the unit is kept
+    ruler_setting_click(&mut s, "ruler-horizontal");
     assert!(s.with(|e, _| !e.ruler_open));
-    assert_eq!(s.menu_state("docx.ruler-unit.mm"), Some((false, true)));
-    assert_eq!(s.menu_state("docx.ruler-unit.cm"), Some((false, false)));
+    assert_eq!(s.with(|e, _| e.ruler_unit()), RulerUnit::Millimeters);
 
-    // 8. Master ruler ON: submenu items re-enabled
-    s.menu("docx.ruler");
+    // 8. Ruler ON again
+    ruler_setting_click(&mut s, "ruler-horizontal");
     assert!(s.with(|e, _| e.ruler_open));
-    assert_eq!(s.menu_state("docx.ruler-unit.mm"), Some((true, true)));
+    assert_eq!(s.with(|e, _| e.ruler_unit()), RulerUnit::Millimeters);
 
     // 9. Unit conversion and abbreviation consistency
     assert_eq!(RulerUnit::Centimeters.abbreviation(), "cm");
@@ -15302,12 +15283,13 @@ fn view018_new_window_for_same_document() {
     assert_eq!(title1, "docx-report.docx:2");
 
     // 3. Independent view: zoom on window 1
+    let zoom0 = s.with(|e, _| e.zoom);
     s.update_in(windows[1], &ed1, |e, window, cx| {
         e.set_zoom(Some(1.5), window, cx);
     });
 
     // Verify window 0 zoom is untouched, window 1 zoom is 1.5
-    assert_eq!(s.with(|e, _| e.zoom), Some(1.0));
+    assert_eq!(s.with(|e, _| e.zoom), zoom0, "the other window's zoom is untouched");
     let zoom1 = s.with(|_, app| ed1.read(app).zoom);
     assert_eq!(zoom1, Some(1.5));
 
@@ -17437,7 +17419,7 @@ fn ja018_complex_script_font_and_size() {
     s.toolbar_menu("font", "docx.font.custom");
     custom_font_field(&mut s, 0, "Calibri");
     custom_font_field(&mut s, 2, "Traditional Arabic");
-    s.key("enter");
+    font_apply(&mut s);close_modal(&mut s);
     s.type_text("Docxمرحبا");
 
     let doc_mixed = s.document();
@@ -17476,7 +17458,7 @@ fn font017_text_effects_outline_shadow_emboss() {
     assert_eq!(s.menu_state("docx.text.outline"), Some((true, true)));
     let doc_outline = s.document();
     let p_outline = para(&doc_outline, id);
-    let r_outline = p_outline.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r_outline = p_outline.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert!(r_outline.style.outline);
     assert!(!r_outline.style.shadow);
 
@@ -17486,7 +17468,7 @@ fn font017_text_effects_outline_shadow_emboss() {
     assert_eq!(s.menu_state("docx.text.shadow"), Some((true, true)));
     let doc_both = s.document();
     let p_both = para(&doc_both, id);
-    let r_both = p_both.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r_both = p_both.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert!(r_both.style.outline);
     assert!(r_both.style.shadow);
 
@@ -17505,7 +17487,7 @@ fn font017_text_effects_outline_shadow_emboss() {
     s.save_as("test-font017-text-effects.docx");
     let saved = s.reopen();
     let p_saved = body(flow(&saved)).into_iter().find(|p| p.text() == text).unwrap();
-    let r_saved = p_saved.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r_saved = p_saved.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert_eq!(r_saved.format.outline, Some(true));
     assert_eq!(r_saved.format.shadow, Some(true));
     assert!(r_saved.style.outline);
@@ -17525,7 +17507,7 @@ fn font017_text_effects_outline_shadow_emboss() {
     assert_eq!(s.menu_state("docx.text.shadow"), Some((true, false)));
     let doc_emboss = s.document();
     let p_emboss = para(&doc_emboss, id);
-    let r_emboss = p_emboss.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r_emboss = p_emboss.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert!(r_emboss.style.emboss);
     assert!(!r_emboss.style.outline);
     assert!(!r_emboss.style.shadow);
@@ -17536,7 +17518,7 @@ fn font017_text_effects_outline_shadow_emboss() {
     assert_eq!(s.menu_state("docx.text.emboss"), Some((true, false)));
     let doc_imprint = s.document();
     let p_imprint = para(&doc_imprint, id);
-    let r_imprint = p_imprint.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r_imprint = p_imprint.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert!(r_imprint.style.imprint);
     assert!(!r_imprint.style.emboss);
 
@@ -17545,7 +17527,7 @@ fn font017_text_effects_outline_shadow_emboss() {
     assert_eq!(s.menu_state("docx.text.imprint"), Some((true, false)));
     let doc_cleared = s.document();
     let p_cleared = para(&doc_cleared, id);
-    let r_cleared = p_cleared.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r_cleared = p_cleared.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert!(!r_cleared.style.imprint);
     assert!(!r_cleared.style.emboss);
 }
@@ -17589,7 +17571,7 @@ fn font016_opentype_features() {
     assert_eq!(s.menu_state("docx.text.opentype.ligatures.standard-contextual"), Some((true, true)));
     let doc1 = s.document();
     let p1 = para(&doc1, id);
-    let r1 = p1.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r1 = p1.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert_eq!(r1.style.ligatures, ibis_doc_model::Ligatures::StandardContextual);
 
     // (b) 数字の間隔: tabular
@@ -17598,7 +17580,7 @@ fn font016_opentype_features() {
     assert_eq!(s.menu_state("docx.text.opentype.num-spacing.tabular"), Some((true, true)));
     let doc2 = s.document();
     let p2 = para(&doc2, id);
-    let r2 = p2.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r2 = p2.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert_eq!(r2.style.num_spacing, ibis_doc_model::NumberSpacing::Tabular);
 
     // (c) 数字のスタイル: old-style
@@ -17607,7 +17589,7 @@ fn font016_opentype_features() {
     assert_eq!(s.menu_state("docx.text.opentype.num-form.old-style"), Some((true, true)));
     let doc3 = s.document();
     let p3 = para(&doc3, id);
-    let r3 = p3.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r3 = p3.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert_eq!(r3.style.num_form, ibis_doc_model::NumberForm::OldStyle);
 
     // (d) コンテキスト代替: true
@@ -17615,7 +17597,7 @@ fn font016_opentype_features() {
     assert_eq!(s.menu_state("docx.text.opentype.cntxt-alts"), Some((true, true)));
     let doc4 = s.document();
     let p4 = para(&doc4, id);
-    let r4 = p4.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r4 = p4.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert!(r4.style.contextual_alternates);
 
     // 4. 1ステップ Undo / Redo 検証
@@ -17631,7 +17613,7 @@ fn font016_opentype_features() {
     s.save_as("test-font016-opentype-features.docx");
     let saved = s.reopen();
     let p_saved = body(flow(&saved)).into_iter().find(|p| p.text() == text).unwrap();
-    let r_saved = p_saved.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
+    let r_saved = p_saved.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty() && selected.starts_with(t.as_str()))).unwrap();
     assert_eq!(r_saved.format.ligatures, Some(ibis_doc_model::Ligatures::StandardContextual));
     assert_eq!(r_saved.format.num_spacing, Some(ibis_doc_model::NumberSpacing::Tabular));
     assert_eq!(r_saved.format.num_form, Some(ibis_doc_model::NumberForm::OldStyle));
@@ -17971,7 +17953,9 @@ fn image015_drag_text_box() {
     assert!(s.with(|e, _| e.text_box_at_caret().is_some()), "the box is selected");
     assert_eq!(s.document(), before, "a click changes nothing");
     // Dragged 40 points right and 20 down.
-    s.drag(center, (center.0 + 40.0 * k, center.1 + 20.0 * k));
+    // A press inside the box now puts the caret in its text (as PowerPoint does), so the box is dragged by its border.
+    let border = (f32::from(origin.x) + (frame.0 + frame.2 * 0.3) * k, f32::from(origin.y) + frame.1 * k); // away from the top middle handle
+    s.drag(border, (border.0 + 40.0 * k, border.1 + 20.0 * k));
     let moved = offset_of(&s.document());
     assert!((pt(moved.0 - start.0) - 40.0).abs() < 1.0 && (pt(moved.1 - start.1) - 20.0).abs() < 1.0, "moved by the drag: {start:?} -> {moved:?}");
     s.menu("edit.undo");
@@ -19371,10 +19355,10 @@ fn merge001_mail_merge() {
     std::fs::create_dir_all(&dir).unwrap();
     let csv = dir.join("merge-list.csv");
     std::fs::write(&csv, "\u{feff}会社,担当\n株式会社テスト,佐藤\n").unwrap();
-    s.update(|e, window, cx| e.read_merge_file(&csv, window, cx));
+    s.update(|e, window, cx| {e.read_merge_file(&csv, window, cx);e.confirm_merge_import(window,cx);});
     assert_eq!(s.with(|e, _| e.doc_state().unwrap().merge.as_ref().map(|m| (m.fields.clone(), m.records.clone()))), Some((vec!["会社".to_string(), "担当".to_string()], vec![vec!["株式会社テスト".to_string(), "佐藤".to_string()]])));
     let xlsx = crate::shell::scenario::repo_root().join("test/editing/xlsx-compatibility-v1.xlsx");
-    s.update(|e, window, cx| e.read_merge_file(&xlsx, window, cx));
+    s.update(|e, window, cx| {e.read_merge_file(&xlsx, window, cx);e.confirm_merge_import(window,cx);});
     assert!(s.with(|e, _| e.doc_state().unwrap().merge.as_ref().is_some_and(|m| !m.fields.is_empty())), "the sheet's first row gives fields");
     // Back to the typed list.
     s.update(|e, window, cx| {
@@ -19915,6 +19899,8 @@ fn file014_autorecover() {
         e.save_autorecover_settings(cx);
     });
     assert_eq!(load_autorecover_config().interval_minutes, 15);
+    // The settings panel is modal: it is closed before the document is edited.
+    close_modal(&mut s);
 
     // The timer's look: nothing without edits, nothing before the interval, a snapshot after it.
     let files = |dir: &std::path::Path| std::fs::read_dir(dir).unwrap().filter_map(|f| f.ok()).map(|f| f.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
@@ -20505,7 +20491,8 @@ fn math_structures_convert_and_quick_parts() {
     assert!(s.with(|e, _| e.doc_state().and_then(|s| s.docx_math.as_ref()).is_some()));
 
     // 2. Insert math structure (fraction)
-    s.menu("docx.math.struct.fraction");
+    s.update(|e,_,cx|e.insert_docx_math_structure("fraction",cx));
+    s.update(|e,w,cx|e.close_panel_dialog(w,cx));
     let has_math = s.with(|e, _| {
         e.flow().unwrap().body.iter().any(|b| {
             matches!(b, ibis_doc_model::flow::Block::Paragraph(p) if p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Math { .. })))
@@ -21661,10 +21648,10 @@ fn options011_image_quality_and_compression() {
     assert_eq!(s.menu_state("docx.options.image.res-print"), Some((true, false)));
 
     // Undo / Redo for options
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert_eq!(s.menu_state("docx.options.image.res-hd"), Some((true, false)));
     assert_eq!(s.menu_state("docx.options.image.res-print"), Some((true, true)));
-    s.key("cmd-shift-z");
+    close_modal(&mut s);s.key("cmd-shift-z");
     assert_eq!(s.menu_state("docx.options.image.res-hd"), Some((true, true)));
     assert_eq!(s.menu_state("docx.options.image.res-print"), Some((true, false)));
 
@@ -21732,11 +21719,11 @@ fn options011_image_quality_and_compression() {
     assert_ne!(new_media, orig_media, "media id replaced with compressed picture");
 
     // 5. Test 1-step Undo & Redo for compression
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     let restored_media = s.with(|e, _| e.picture_at_caret().expect("picture restored").1);
     assert_eq!(restored_media, orig_media, "original media restored on undo");
 
-    s.key("cmd-shift-z");
+    close_modal(&mut s);s.key("cmd-shift-z");
     let redone_media = s.with(|e, _| e.picture_at_caret().expect("picture redone").1);
     assert_eq!(redone_media, new_media, "compressed media restored on redo");
 
@@ -21985,25 +21972,25 @@ fn page006_multiple_pages_and_book_fold() {
     assert!(!s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
 
     // 2. Menu selection: Mirror Margins
-    s.menu("docx.page.multiple-pages.mirror-margins");
+    menu_closing(&mut s,"docx.page.multiple-pages.mirror-margins");
     assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::MirrorMargins);
     assert!(s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
 
     // 1-step Undo / Redo
-    s.menu("edit.undo");
+    menu_closing(&mut s,"edit.undo");
     assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::Normal);
     assert!(!s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
-    s.menu("edit.redo");
+    menu_closing(&mut s,"edit.redo");
     assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::MirrorMargins);
     assert!(s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
 
     // 3. Menu selection: Reverse Book Fold
-    s.menu("docx.page.multiple-pages.reverse-book-fold");
+    menu_closing(&mut s,"docx.page.multiple-pages.reverse-book-fold");
     assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::ReverseBookFold);
     assert!(s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
 
     // 4. Menu selection: Two On One (2 pages per sheet)
-    s.menu("docx.page.multiple-pages.two-on-one");
+    menu_closing(&mut s,"docx.page.multiple-pages.two-on-one");
     assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::TwoOnOne);
     assert!(!s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
 
@@ -22040,7 +22027,7 @@ fn page006_multiple_pages_and_book_fold() {
     assert!(!xml.contains("<w:mirrorMargins"), "mirrorMargins should not be present: {xml}");
 
     // 7. Reset to Normal
-    s.menu("docx.page.multiple-pages.normal");
+    menu_closing(&mut s,"docx.page.multiple-pages.normal");
     assert_eq!(s.with(|e, _| e.caret_multiple_pages()), ibis_doc_model::MultiplePages::Normal);
     assert!(!s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
 
@@ -22063,7 +22050,7 @@ fn doc_properties_embed_fonts() {
     assert!(!s.with(|e, _| e.is_embed_system_fonts()));
 
     // 1. Open properties panel via file.info
-    s.menu("file.info");
+    menu_closing(&mut s,"file.info");
     assert!(s.with(|e, _| e.sidebar_open && e.doc_state().is_some_and(|st| st.helper.properties.is_some())), "properties panel is open");
     let initial_props = s.with(|e, _| {
         let p = e.doc_state().and_then(|st| st.helper.properties.as_ref()).unwrap();
@@ -22093,19 +22080,19 @@ fn doc_properties_embed_fonts() {
 
     // 4. Undo / Redo verification
     // 3 steps undo
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert!(!s.with(|e, _| e.is_embed_system_fonts()));
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert!(!s.with(|e, _| e.is_save_subset_fonts()));
-    s.key("cmd-z");
+    close_modal(&mut s);s.key("cmd-z");
     assert!(!s.with(|e, _| e.is_embed_true_type_fonts()));
 
     // 3 steps redo
-    s.key("cmd-shift-z");
+    close_modal(&mut s);s.key("cmd-shift-z");
     assert!(s.with(|e, _| e.is_embed_true_type_fonts()));
-    s.key("cmd-shift-z");
+    close_modal(&mut s);s.key("cmd-shift-z");
     assert!(s.with(|e, _| e.is_save_subset_fonts()));
-    s.key("cmd-shift-z");
+    close_modal(&mut s);s.key("cmd-shift-z");
     assert!(s.with(|e, _| e.is_embed_system_fonts()));
 
     // 5. Save and reopen to verify settings.xml round-trip
@@ -22124,7 +22111,7 @@ fn doc_properties_embed_fonts() {
     assert!(settings_xml.contains("embedSystemFonts"), "embedSystemFonts in settings.xml");
 
     // 6. Open properties panel on reopened file - verify panel fields reflect the document
-    s.menu("file.info");
+    menu_closing(&mut s,"file.info");
     assert!(s.with(|e, _| e.sidebar_open && e.doc_state().is_some_and(|st| st.helper.properties.is_some())));
     let reopened_props = s.with(|e, _| {
         let p = e.doc_state().and_then(|st| st.helper.properties.as_ref()).unwrap();
@@ -23273,11 +23260,11 @@ fn merge020_check_errors() {
     s.menu("edit.undo");
     let res = s.update(|e, _, cx| e.check_merge_errors(cx));
     assert_eq!(res.missing_fields.is_empty(), true);
-    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "差し込み印刷のエラーは見つかりませんでした（3 件のレコード、2 個のフィールド）。");
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "差し込み印刷のエラーは見つかりませんでした（2 件のレコード、2 個のフィールド）。");
 
     // 10. Check menu action docx.merge.check-errors executes cleanly
     s.menu("docx.merge.check-errors");
-    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "差し込み印刷のエラーは見つかりませんでした（3 件のレコード、2 個のフィールド）。");
+    assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "差し込み印刷のエラーは見つかりませんでした（2 件のレコード、2 個のフィールド）。");
 }
 
 fn shape002_picture_and_shape_tools() {
@@ -23864,15 +23851,15 @@ fn comment002_ux_improvements() {
 fn math003_builtin_equations_and_structures() {
     let mut s = Scenario::open(REPORT);
     let (id, _) = s.paragraph(2);
-    s.click_text(FlowPos::new(id, 0));
+    click_closing(&mut s,FlowPos::new(id, 0));
 
     // 1. Open math panel via insert.equation
-    s.menu("insert.equation");
+    menu_closing(&mut s,"insert.equation");
     assert!(s.with(|e, _| e.sidebar_open));
     assert!(s.with(|e, _| e.doc_state().and_then(|st| st.docx_math.as_ref()).is_some()));
 
     // 2. Insert built-in quadratic formula
-    s.menu("docx.math.builtin.quadratic");
+    menu_closing(&mut s,"docx.math.builtin.quadratic");
     let has_quadratic = s.with(|e, _| {
         e.flow().unwrap().body.iter().any(|b| {
             matches!(b, Block::Paragraph(p) if p.runs.iter().any(|r| {
@@ -23888,8 +23875,8 @@ fn math003_builtin_equations_and_structures() {
     assert!(has_quadratic, "inserted built-in quadratic formula exists in document");
 
     // 3. Insert built-in binomial theorem equation
-    s.click_text(FlowPos::new(id, 0));
-    s.menu("docx.math.builtin.binomial");
+    click_closing(&mut s,FlowPos::new(id, 0));
+    menu_closing(&mut s,"docx.math.builtin.binomial");
     let has_binomial = s.with(|e, _| {
         e.flow().unwrap().body.iter().any(|b| {
             matches!(b, Block::Paragraph(p) if p.runs.iter().any(|r| {
@@ -23905,8 +23892,8 @@ fn math003_builtin_equations_and_structures() {
     assert!(has_binomial, "inserted built-in binomial formula exists in document");
 
     // 4. Insert accent structure (\vec{v})
-    s.click_text(FlowPos::new(id, 0));
-    s.menu("docx.math.struct.accent");
+    click_closing(&mut s,FlowPos::new(id, 0));
+    menu_closing(&mut s,"docx.math.struct.accent");
     let has_accent = s.with(|e, _| {
         e.flow().unwrap().body.iter().any(|b| {
             matches!(b, Block::Paragraph(p) if p.runs.iter().any(|r| {
@@ -23922,8 +23909,8 @@ fn math003_builtin_equations_and_structures() {
     assert!(has_accent, "inserted accent structure exists in document");
 
     // 5. Insert limit structure (\lim_{x \to \infty})
-    s.click_text(FlowPos::new(id, 0));
-    s.menu("docx.math.struct.limit");
+    click_closing(&mut s,FlowPos::new(id, 0));
+    menu_closing(&mut s,"docx.math.struct.limit");
     let has_limit = s.with(|e, _| {
         e.flow().unwrap().body.iter().any(|b| {
             matches!(b, Block::Paragraph(p) if p.runs.iter().any(|r| {
@@ -23942,11 +23929,11 @@ fn math003_builtin_equations_and_structures() {
     let autocorrect_math = ibis_doc_model::math::parse_linear(r"\alpha+\beta=\gamma\pm\infty");
     assert_eq!(autocorrect_math.linear(), "α+β=γ±∞");
 
-    s.click_text(FlowPos::new(id, 0));
-    s.menu("docx.math.convert.linear");
-    s.menu("docx.math.convert.display");
-    s.menu("docx.math.convert.inline");
-    s.menu("edit.undo");
+    click_closing(&mut s,FlowPos::new(id, 0));
+    menu_closing(&mut s,"docx.math.convert.linear");
+    menu_closing(&mut s,"docx.math.convert.display");
+    menu_closing(&mut s,"docx.math.convert.inline");
+    menu_closing(&mut s,"edit.undo");
 
     // 7. Save and reopen roundtrip verification
     let saved = s.save_as("test-math-builtin-roundtrip.docx");
@@ -24045,7 +24032,7 @@ fn ref016_source_manager() {
     let mut s = Scenario::open(REPORT);
 
     // 1. Open Source Manager panel via menu
-    s.menu("docx.reference.source-manager");
+    menu_closing(&mut s,"docx.reference.source-manager");
     assert!(s.with(|e, _| e.sidebar_open));
     assert!(s.with(|e, _| e.doc_state().and_then(|st| st.source_manager.as_ref()).is_some()));
 
@@ -24106,7 +24093,8 @@ fn ref016_source_manager() {
 
     // 5. Insert Citation for selected "Turing1936" into document
     let (_, id1, _) = text_paragraph(&mut s, 5);
-    s.click_text(FlowPos::new(id1, 0));
+    // The panel is modal: the caret is moved without the mouse, the panel stays open.
+    s.update(|e, _, cx| e.set_caret(FlowPos::new(id1, 0), false, cx));
     s.update(|e, _, cx| {
         if let Some(mgr) = e.doc_state_mut().and_then(|st| st.source_manager.as_mut()) {
             mgr.active_list = crate::docx::source_manager::ActiveList::Current;
@@ -24121,8 +24109,8 @@ fn ref016_source_manager() {
 
     // 6. Insert Bibliography and verify formatted entry uses source metadata
     let (_, last_id, _) = text_paragraph(&mut s, 15);
-    s.click_text(FlowPos::new(last_id, 0));
-    s.menu("docx.reference.bibliography");
+    click_closing(&mut s,FlowPos::new(last_id, 0));
+    menu_closing(&mut s,"docx.reference.bibliography");
 
     let doc = s.with(|e, _| e.flow().cloned()).unwrap();
     let body_text: String = body(&doc).into_iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
@@ -24139,7 +24127,7 @@ fn ref016_source_manager() {
     assert!(sources_reloaded.iter().any(|s| s.tag == "Ecma376"));
 
     // 8. Re-open source manager and verify current list loaded
-    s.menu("docx.reference.source-manager");
+    menu_closing(&mut s,"docx.reference.source-manager");
     s.with(|e, _| {
         let mgr = e.doc_state().and_then(|st| st.source_manager.as_ref()).unwrap();
         assert!(mgr.current_list.iter().any(|s| s.tag == "Turing1936"));
@@ -24947,6 +24935,8 @@ fn style017_template_attach_and_link_styles() {
         "attached template path set"
     );
 
+    // Close the modal before using document undo.
+    s.update(|e,w,cx|e.close_panel_dialog(w,cx));
     // 3. 1ステップ Undo / Redo
     s.key("cmd-z");
     assert!(s.with(|e, _| e.docx_attached_template().is_none()), "undo clears attached template");
@@ -24957,6 +24947,7 @@ fn style017_template_attach_and_link_styles() {
         "redo restores attached template"
     );
 
+    s.update(|e,w,cx|e.open_docx_template_panel(w,cx));
     // 4. link_styles トグル
     s.update(|e, _, cx| {
         e.toggle_docx_link_styles(cx);
@@ -24992,6 +24983,7 @@ fn style017_template_attach_and_link_styles() {
         "imported styles from external template (before: {styles_count_before}, after: {styles_count_after})"
     );
 
+    s.update(|e,w,cx|e.close_panel_dialog(w,cx));
     // スタイル更新の Undo
     s.key("cmd-z");
     assert_eq!(
@@ -25053,7 +25045,8 @@ fn ja010_kinsoku_strict_and_normal() {
         e.select_normal_kinsoku_panel(window, cx);
     });
     s.settle();
-    assert!(!s.with(|e, _| e.strict_kinsoku()), "selected normal preset in panel");
+    assert!(s.with(|e, _| e.strict_kinsoku()), "preset is staged until Apply");
+    assert!(!s.with(|e, _| e.doc_state().unwrap().helper.kinsoku.as_ref().unwrap().strict), "normal preset is selected in the draft");
     let panel_start_text_norm = s.with(|e, cx| {
         e.doc_state()
             .and_then(|s| s.helper.kinsoku.as_ref())
@@ -25067,7 +25060,8 @@ fn ja010_kinsoku_strict_and_normal() {
         e.select_strict_kinsoku_panel(window, cx);
     });
     s.settle();
-    assert!(s.with(|e, _| e.strict_kinsoku()), "selected strict preset in panel");
+    assert!(s.with(|e, _| e.strict_kinsoku()), "document remains strict before Apply");
+    assert!(s.with(|e, _| e.doc_state().unwrap().helper.kinsoku.as_ref().unwrap().strict), "strict preset is selected in the draft");
     let panel_start_text = s.with(|e, cx| {
         e.doc_state()
             .and_then(|s| s.helper.kinsoku.as_ref())
@@ -26059,7 +26053,7 @@ fn float016_group_and_ungroup_shapes() {
 
 /// DOCX-SEC-019 (旧doc・RTF・テキスト変換), DOCX-FILE-010 (docxと旧docの変換),
 /// DOCX-FILE-012 (ODT・HTML等の変換), DOCX-FILE-013 (PDFから文書への変換)：
-/// 1. メニュー `docx.file.convert-format` で文書形式の変換パネルが開くことを検証。
+/// 1. ファイル > 書き出しに各文書形式が登録され、旧変換ダイアログがないことを検証。
 /// 2. `.doc` (Word 97-2003 OLE2 CFB)、`.rtf`、`.txt`、`.html`、`.odt` の各形式への書き出しと再変換読み込みを検証。
 /// 3. `.pdf` (PDF ストリーム) から Word 文書へのリフロー変換読み込みと `.docx` 保存ラウンドトリップを検証。
 fn file010_012_013_sec019_document_conversions() {
@@ -26067,9 +26061,15 @@ fn file010_012_013_sec019_document_conversions() {
 
     let mut s = Scenario::open(REPORT);
 
-    // 1. Open conversion panel via menu "docx.file.convert-format"
-    s.menu("docx.file.convert-format");
-    assert!(s.with(|e, _| e.is_docx_convert_panel_open()));
+    // Test menu registration without opening a native save dialog.
+    s.with(|e, _| {
+        let menus = e.menus();
+        let items = crate::shell::chrome::collect_searchable_menu_items(&menus);
+        assert!(!items.iter().any(|i| i.id == "docx.file.convert-format"));
+        for id in ["docx.file.export.doc", "docx.file.export.rtf", "docx.file.export.txt", "docx.file.export.html", "docx.file.export.odt"] {
+            assert!(items.iter().any(|i| i.id == id && i.handler.is_some()), "missing export command {id}");
+        }
+    });
 
     let out_dir = crate::shell::scenario::repo_root().join("target/test-docx-conversions");
     let _ = std::fs::create_dir_all(&out_dir);
@@ -26083,14 +26083,14 @@ fn file010_012_013_sec019_document_conversions() {
         DocxConvertFormat::Odt,
     ] {
         let path = out_dir.join(format!("converted_report.{}", fmt.extension()));
-        s.update(|e, window, cx| {
-            e.set_docx_convert_export_format(fmt, window, cx);
-        });
         let written = s
             .update(|e, _, cx| e.export_docx_to_file(fmt, &path, cx))
             .expect("export should succeed");
         assert!(written > 0);
         assert!(path.exists());
+        let opened=crate::read_file(&path).expect("the ordinary OS Open path must import each document format");
+        assert_eq!(ibis_pptx::Kind::of(&opened.presentation),ibis_pptx::Kind::Document);
+        assert!(opened.presentation.flow.is_some(),"external documents open as text documents, not worksheets");
     }
 
     // Verify .doc starts with OLE2 Compound File Binary magic D0 CF 11 E0 A1 B1 1A E1
@@ -26340,11 +26340,15 @@ fn header015_tall_header_pushes_body_down() {
     for (n, pg) in pages.pages.iter().enumerate().take(3) {
         let ys = |header: bool| -> Vec<f32> {
             pg.items.iter().filter_map(|it| match it {
-                super::flow_layout::Item::Text { y, text, .. } if (text.contains("ヘッダーの行") || text.contains("架空商店 社内資料")) == header => Some(*y),
+                super::flow_layout::Item::Text { y, text, .. } if (text.contains("ヘッダーの行") || text.contains("社内資料")) == header => Some(*y),
                 _ => None,
             }).collect()
         };
         let (header, body) = (ys(true), ys(false));
+        // The header's own line is two items (the East Asian hint splits the run); the part before the space is on the header's line.
+        let body: Vec<f32> = body.into_iter().filter(|y| !header.iter().any(|h| (h - y).abs() < 0.5)).collect();
+        // The header's own line is two items now (the East Asian hint splits the run at the space): one line.
+        let mut header = header; header.sort_by(|a, b| a.total_cmp(b)); header.dedup_by(|a, b| (*a - *b).abs() < 0.5);
         assert_eq!(header.len(), 6, "page {n}: the header's own line and the five added");
         let header_last = header.iter().cloned().fold(f32::MIN, f32::max);
         let body_first = body.iter().cloned().fold(f32::MAX, f32::min);
@@ -26510,4 +26514,110 @@ fn image015_inline_text_box_edit() {
     s.key("escape");
     s.menu("edit.undo");
     assert_eq!(s.document(), before, "the whole edit is one step");
+}
+
+
+/// Exercise the three Quick Parts tabs using rendered controls, including field insertion.
+fn ui_review_quick_parts_tabs() {
+    use crate::shell::scenario::button_probe as buttons;
+    let _probe = buttons::Probe::new();
+    let mut s = Scenario::open(REPORT);
+    s.size(1200., 900.);
+    let (_, id, _) = text_paragraph(&mut s, 0);
+    s.click_text(FlowPos::new(id, 0));
+    s.update(|e, w, cx| e.open_quick_parts_panel(w, cx));
+    s.settle();
+    assert!(buttons::bounds("btn-save-selection-as-part").is_none());
+    assert_eq!(s.with(|e, _| e.doc_state().unwrap().quick_parts.as_ref().unwrap().tab), 0);
+    let tab = |index| buttons::all().into_iter().find(|key| key.contains("quick-parts-tabs") && key.ends_with(&format!(", {index})"))).expect("quick-parts tab");
+    buttons::click(&mut s, &tab(1));
+    assert_eq!(s.with(|e, _| e.doc_state().unwrap().quick_parts.as_ref().unwrap().tab), 1);
+    assert!(buttons::bounds("qp-prop-TITLE").is_some());
+    buttons::click(&mut s, &tab(2));
+    assert_eq!(s.with(|e, _| e.doc_state().unwrap().quick_parts.as_ref().unwrap().tab), 2);
+    let before = s.document();
+    buttons::click(&mut s, "qp-field-PAGE");
+    assert_ne!(s.document(), before, "field insertion updates the document");
+    buttons::click(&mut s, &tab(0));
+    assert_eq!(s.with(|e, _| e.doc_state().unwrap().quick_parts.as_ref().unwrap().tab), 0);
+}
+
+
+/// Both format adapters use the same rendered equation controls and Enter lifecycle.
+fn ui_review_shared_equation_editor() {
+    use crate::shell::scenario::button_probe as buttons;
+    use crate::shell::math_editor::MathFormat;
+    use gpui_kit::component::input::InputEvent;
+    let _probe = buttons::Probe::new();
+    for (path, document) in [(REPORT, true), ("test/editing/pptx-math.pptx", false)] {
+        let mut s = Scenario::open(path);
+        s.size(1200., 900.);
+        if document {
+            let (_, id, _) = text_paragraph(&mut s, 0);
+            s.click_text(FlowPos::new(id, 0));
+            s.update(|e, w, cx| e.open_docx_math_panel(w, cx));
+        } else {
+            s.update(|e, w, cx| e.open_pptx_math_panel(w, cx));
+        }
+        s.settle();
+        buttons::click(&mut s, "math-editor-latex");
+        assert_eq!(s.with(|e, _| if document { e.doc_state().unwrap().docx_math.as_ref().unwrap().format } else { e.pptx().unwrap().math_panel.as_ref().unwrap().format }), MathFormat::Latex);
+        let input = s.with(|e, _| if document { e.doc_state().unwrap().docx_math.as_ref().unwrap().input.clone() } else { e.pptx().unwrap().math_panel.as_ref().unwrap().input.clone() });
+        s.update(|_, w, cx| input.update(cx, |i, cx| { i.set_value(r"\frac{a}{b}", w, cx); cx.emit(InputEvent::Change); i.focus(w, cx); }));
+        s.settle();
+        let preview = buttons::bounds("math-editor-preview").expect("shared typeset preview is rendered");
+        // The measured canvas excludes the shared preview frame's 1px top/bottom borders.
+        assert!(preview.size.height + gpui_kit::px(2.) >= gpui_kit::px(80.));
+        s.key("enter");
+        s.settle();
+        assert!(s.with(|e, _| if document { e.doc_state().unwrap().docx_math.is_none() } else { e.pptx().unwrap().math_panel.is_none() }), "Enter inserts and closes the equation dialog");
+        if document {
+            assert!(s.with(|e, _| e.docx_math_at_caret().is_some()));
+        } else {
+            assert!(s.with(|e, _| e.selected_math().is_some()));
+        }
+    }
+}
+
+
+/// Reordering a document object's shared-table row changes Z order, with atomic Undo and Escape cancellation.
+fn ui_review_selection_table_reorder() {
+    use gpui_kit::*;
+    let mut s = Scenario::open(REPORT);
+    s.size(1200., 900.);
+    let (_, id, _) = text_paragraph(&mut s, 0);
+    s.click_text(FlowPos::new(id, 0));
+    s.update(|e, _, cx| {
+        let at = FlowPos::new(id, 0);
+        let commands = (1..=3).map(|n| FlowCommand::InsertTextBox {
+            at, size: ibis_doc_model::EmuSize::new(914400, 457200), text: format!("Layer {n}"),
+        }).collect();
+        e.run_flow(commands, cx);
+        e.open_selection_pane(cx);
+    });
+    s.settle();
+    let snapshot = |s: &mut Scenario| s.with(|e, _| e.document_selection_objects().into_iter().filter_map(|o| o.anchor.map(|a| (o.at, o.name, a.relative_height))).collect::<Vec<_>>());
+    let original = snapshot(&mut s);
+    assert!(original.len() >= 3, "text boxes are included, not only pictures");
+    let row = |s: &mut Scenario, index| s.with(|e, _| e.doc_state().unwrap().selection_reorder.borrow().row_bounds(index)).expect("shared table row is rendered");
+    let first = row(&mut s, 0); let third = row(&mut s, 2);
+    let from = (f32::from(first.right() - px(12.)), f32::from(first.origin.y + first.size.height / 2.));
+    let to = (from.0, f32::from(third.origin.y + third.size.height / 2. + px(2.)));
+    s.drag(from, to);
+    s.settle();
+    let changed = snapshot(&mut s);
+    assert_eq!(changed[2].0, original[0].0, "dragging changes actual object Z order");
+    s.key("cmd-z"); s.settle();
+    assert_eq!(snapshot(&mut s), original, "one Undo restores every object rank");
+    let first = row(&mut s, 0); let third = row(&mut s, 2);
+    let from = point(first.right() - px(12.), first.origin.y + first.size.height / 2.);
+    let to = point(from.x, third.origin.y + third.size.height / 2. + px(2.));
+    s.dispatch(vec![
+        PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: from, click_count: 1, ..Default::default() }),
+        PlatformInput::MouseMove(MouseMoveEvent { position: to, pressed_button: Some(MouseButton::Left), ..Default::default() }),
+    ]);
+    s.key("escape");
+    s.dispatch(vec![PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, click_count: 1, ..Default::default() })]);
+    s.settle();
+    assert_eq!(snapshot(&mut s), original, "Escape cancels the pending drag without touching the document");
 }

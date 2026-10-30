@@ -1256,6 +1256,7 @@ impl SlideEditor {
 
     /// ツール > オートコレクトのオプション…: the panel shared with the workbook's (its settings are the same).
     pub(crate) fn open_doc_autocorrect_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let panel = crate::shell::autocorrect::AutoCorrectPanel::new(window, cx);
         if let Some(state) = self.doc_state_mut() {
             state.find = None;
@@ -1300,12 +1301,14 @@ impl SlideEditor {
 
     /// ツール > 自動回復の設定… (DOCX-FILE-014).
     pub(crate) fn open_doc_autorecover_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         self.close_doc_panels();
         self.open_autorecover_settings(window, cx);
     }
 
     /// ファイル > 未保存のファイルの回復… (DOCX-FILE-015).
     pub(crate) fn open_doc_recover_unsaved(&mut self, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         self.close_doc_panels();
         self.open_recover_unsaved(cx);
     }
@@ -3830,6 +3833,10 @@ impl SlideEditor {
     }
 
     pub(crate) fn copy_text(&mut self, cx: &mut Context<Self>) {
+        if self.doc_state().is_some_and(|s|s.shape_selected && s.box_edit.is_none()){
+            let shapes:Vec<_>=self.all_selected_shapes().into_iter().filter_map(|(_,_,at,_)|self.shape_at(at).cloned()).collect();
+            if self.copy_office_shapes(&shapes,cx){return;}
+        }
         let text = self.selected_text();
         // Several ranges: their text, one range to a line (no formatting).
         if self.has_extra_selections() {
@@ -4086,6 +4093,7 @@ impl SlideEditor {
         if self.has_extra_selections() {
             return self.paste_plain_text(cx);
         }
+        if self.paste_office_shapes(cx) { return; }
         if self.paste_clipboard_image(cx) {
             return;
         }
@@ -5149,6 +5157,8 @@ impl SlideEditor {
 
     /// テーマの色とフォントのカスタマイズ パネルを開く（DOCX-STYLE-012, DOCX-STYLE-013）。
     pub(crate) fn open_docx_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.theme_colors_ui.editing=false;
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         use gpui_kit::component::input::InputState;
         let p = self.presentation();
         let have = p.theme_colors.clone();
@@ -5250,61 +5260,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn docx_theme_panel(&mut self, cx: &mut Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
-        use gpui_kit::component::button::{Button, ButtonVariants as _};
-        use gpui_kit::component::input::Input;
-        use gpui_kit::component::{Sizable as _, h_flex, v_flex};
-        let panel = self.doc_state()?.theme_panel.as_ref()?;
-        let t = crate::shell::i18n::text;
-        let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
-        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.));
-
-        let mut theme_row = h_flex().gap_1().flex_wrap();
-        for theme in &DOCX_DOCUMENT_THEME_PRESETS {
-            let tid = theme.id;
-            let active = self.is_docx_theme_active(tid);
-            let btn = Button::new(format!("docx-theme-preset-{tid}")).small().ghost().label(t(theme.label_key));
-            let btn = if active { btn.border_1() } else { btn };
-            theme_row = theme_row.child(btn.on_click(cx.listener(move |e, _, w, cx| {
-                e.apply_docx_theme(tid, cx);
-                e.open_docx_theme_panel(w, cx);
-            })));
-        }
-        body = body.child(label(&t("docx.design.themes"))).child(theme_row);
-
-        let mut palette_row = h_flex().gap_1().flex_wrap();
-        for preset in &DOCX_THEME_COLORS_PRESETS {
-            let pid = preset.id;
-            let active = self.is_docx_theme_colors_active(pid);
-            let btn = Button::new(format!("docx-color-preset-{pid}")).small().ghost().label(t(preset.label_key));
-            let btn = if active { btn.border_1() } else { btn };
-            palette_row = palette_row.child(btn.on_click(cx.listener(move |e, _, w, cx| {
-                e.apply_docx_theme_colors(pid, cx);
-                e.open_docx_theme_panel(w, cx);
-            })));
-        }
-        body = body.child(label(&t("docx.design.theme-colors"))).child(palette_row);
-
-        for (_, name, input) in &panel.colors {
-            body = body.child(label(&t(name))).child(Input::new(input).small().cleanable(true));
-        }
-        for (name, input) in [
-            ("pptx.theme-panel.heading-font-latin", &panel.fonts[0]),
-            ("pptx.theme-panel.heading-font-east-asian", &panel.fonts[1]),
-            ("pptx.theme-panel.body-font-latin", &panel.fonts[2]),
-            ("pptx.theme-panel.body-font-east-asian", &panel.fonts[3]),
-        ] {
-            body = body.child(label(&t(name))).child(Input::new(input).small().cleanable(true));
-        }
-        if let Some(error) = &panel.error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error.clone()));
-        }
-        let body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("docx-theme-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_docx_theme_panel(w, cx))))
-                .child(Button::new("docx-theme-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_docx_theme_panel(w, cx)))),
-        );
-        Some(crate::shell::chrome::SidebarPanel { title: t("docx.design.theme-colors.customize"), body: body.into_any_element() })
+        self.shared_theme_colors_panel(cx)
     }
 
     /// ドキュメントのテーマ フォントのプリセットID.
@@ -7212,7 +7168,7 @@ impl SlideEditor {
         for run in &p.runs {
             let len = run.len();
             if pos.offset >= at && pos.offset < at + len.max(1) {
-                return matches!(&run.link, Some(ibis_doc_model::Link::Anchor(name)) if find_bookmark(doc, name).is_some());
+                return match &run.link {Some(ibis_doc_model::Link::Url(url))=>!url.is_empty(),Some(ibis_doc_model::Link::Anchor(name))=>find_bookmark(doc,name).is_some(),None=>false};
             }
             at += len;
         }
@@ -7232,6 +7188,7 @@ impl SlideEditor {
             }
             at += len;
         }
+        if let Some(ibis_doc_model::Link::Url(url))=&link {crate::shell::links::open_external_url(url,cx);return true;}
         let Some(ibis_doc_model::Link::Anchor(name)) = link else { return false };
         let Some(target) = find_bookmark(doc, &name) else { return false };
         self.jump_to(target, cx);
@@ -8217,6 +8174,7 @@ impl SlideEditor {
 
     /// マスター文書（サブ文書管理）サイドバーパネルを開く (DOCX-TOC-016).
     pub(crate) fn open_master_doc_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         use gpui_kit::component::input::InputState;
         let default_target = self
             .subdocument_at_caret()
@@ -8249,7 +8207,6 @@ impl SlideEditor {
     /// マスター文書サイドバーパネルを描画 (DOCX-TOC-016).
     pub(crate) fn master_doc_panel(&mut self, cx: &mut Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
         use gpui_kit::component::button::{Button, ButtonVariants as _};
-        use gpui_kit::component::input::Input;
         use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
         let panel = self.doc_state()?.master_doc_panel.as_ref()?;
         let target_input = panel.target_input.clone();
@@ -8261,15 +8218,14 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_sm().child(t("docx.master-doc.target-label")))
-            .child(Input::new(&target_input).small().cleanable(true))
+            .p_0().child(div().text_sm().child(t("docx.master-doc.target-label")))
+            .child(crate::shell::chrome::text_field(&target_input).full_width())
             .child(
                 h_flex()
                     .gap_1()
                     .flex_wrap()
                     .child(
-                        Button::new("master-doc-insert")
-                            .primary()
+                        crate::shell::chrome::primary_button("master-doc-insert")
                             .small()
                             .label(t("docx.master-doc.insert"))
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -8278,7 +8234,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("master-doc-create-heading")
+                        crate::shell::chrome::action_button("master-doc-create-heading")
                             .small()
                             .label(t("docx.master-doc.create-from-heading"))
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -8291,7 +8247,7 @@ impl SlideEditor {
                     .gap_1()
                     .flex_wrap()
                     .child(
-                        Button::new("master-doc-toggle-expand")
+                        crate::shell::chrome::action_button("master-doc-toggle-expand")
                             .small()
                             .label(t("docx.master-doc.toggle-expand"))
                             .disabled(subs.is_empty())
@@ -8300,7 +8256,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("master-doc-lock")
+                        crate::shell::chrome::action_button("master-doc-lock")
                             .small()
                             .label(t("docx.master-doc.lock"))
                             .disabled(caret_sub.is_none())
@@ -8310,7 +8266,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("master-doc-unlink")
+                        crate::shell::chrome::destructive_button("master-doc-unlink",cx)
                             .small()
                             .label(t("docx.master-doc.unlink"))
                             .disabled(caret_sub.is_none())
@@ -8319,7 +8275,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("master-doc-merge")
+                        crate::shell::chrome::action_button("master-doc-merge")
                             .small()
                             .label(t("docx.master-doc.merge"))
                             .disabled(subs.len() < 2)
@@ -8328,7 +8284,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("master-doc-split")
+                        crate::shell::chrome::action_button("master-doc-split")
                             .small()
                             .label(t("docx.master-doc.split"))
                             .disabled(caret_sub.is_none())
@@ -8339,7 +8295,7 @@ impl SlideEditor {
             );
 
         if subs.is_empty() {
-            body = body.child(div().text_xs().text_color(rgb(0x5f6368)).child(t("docx.master-doc.empty")));
+            body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(t("docx.master-doc.empty")));
         } else {
             for (idx, (para_id, sub)) in subs.into_iter().enumerate() {
                 let locked = sub.locked;
@@ -8357,7 +8313,7 @@ impl SlideEditor {
                             div()
                                 .id(("subdoc-title", idx))
                                 .flex_1()
-                                .text_xs()
+                                .text_sm()
                                 .cursor_pointer()
                                 .child(format!(
                                     "{} ({}){}{}",
@@ -8371,7 +8327,7 @@ impl SlideEditor {
                                 })),
                         )
                         .child(
-                            Button::new(("subdoc-lock-btn", idx))
+                            crate::shell::chrome::action_button(("subdoc-lock-btn", idx))
                                 .small()
                                 .label(if locked { "🔒" } else { "🔓" })
                                 .selected(locked)

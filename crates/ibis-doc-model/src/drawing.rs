@@ -282,17 +282,19 @@ pub struct BlipFill {
     pub luminance: Option<(i32, i32)>,
     /// Grey, black and white, one colour, opacity (`a:blip`'s other children).
     pub effects: crate::BlipEffects,
+    /// Whether the picture turns with the shape (`a:blipFill rotWithShape`; `false`: it stays upright and the turned outline cuts it).
+    pub rot_with_shape: bool,
 }
 
 impl BlipFill {
     /// A fill that shows the picture as is.
     pub fn new(media: MediaId) -> Self {
-        Self { media, crop: crate::Crop::default(), fill_rect: None, tile: None, duotone: None, luminance: None, effects: crate::BlipEffects::default() }
+        Self { media, crop: crate::Crop::default(), fill_rect: None, tile: None, duotone: None, luminance: None, effects: crate::BlipEffects::default(), rot_with_shape: true }
     }
 
     /// Whether it is just the picture stretched or tiled (so a [`Fill::Image`] or [`Fill::TileImage`] says it all).
     pub fn is_plain(&self) -> bool {
-        self.crop == crate::Crop::default() && self.fill_rect.is_none() && self.duotone.is_none() && self.luminance.is_none() && self.effects.is_none()
+        self.rot_with_shape && self.crop == crate::Crop::default() && self.fill_rect.is_none() && self.duotone.is_none() && self.luminance.is_none() && self.effects.is_none()
     }
 }
 

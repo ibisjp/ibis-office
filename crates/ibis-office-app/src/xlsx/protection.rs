@@ -8,8 +8,8 @@
 //! not allowed is refused, with Excel's message. Each cell is locked unless
 //! its format says not (表示形式 > セルのロック), and 数式を表示しない
 //! hides its formula from the formula bar while protected.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, Command, ProtectedRange, ProtectionAllowed, SheetCommand, SheetProtection, WorkbookProtection};
@@ -169,7 +169,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.protect = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -228,39 +228,30 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
-        // The buttons first: the list of operations below is long.
-        let buttons = |body: gpui_kit::Div, cx: &mut Context<Self>| {
-            body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-                .child(mark("apply", Button::new("protect-apply").primary().small().label(text(if p.protect { "fix.protection.protect-sheet" } else { "fix.protection.unprotect" })).on_click(cx.listener(|this, _, _, cx| this.apply_protect_panel(cx))).into_any_element()))
-                .child(mark(
-                    "close",
-                    Button::new("protect-close")
-                        .small()
-                        .ghost()
-                        .label(text("_shell.close"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.wb_mut().panels.protect = None;
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ))
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
+        // The actions stay available below the scrollable permissions list.
+        let buttons = |body: crate::shell::chrome::ActionBar, cx: &mut Context<Self>| {
+            body
+                .action(mark_action("apply", (if p.protect { crate::shell::chrome::ActionDefinition::new("protect-apply", "", crate::shell::chrome::ActionButtonKind::Primary) } else { crate::shell::chrome::ActionDefinition::new("protect-apply", "", crate::shell::chrome::ActionButtonKind::Destructive) }).label(text(if p.protect { "fix.protection.protect-sheet" } else { "fix.protection.unprotect" })).on_click(cx.listener(|this, _, _, cx| this.apply_protect_panel(cx)))))
+
         };
         if p.protect {
-            body = body.child(div().text_size(px(13.)).child(text("fix.protection.protect-worksheet-contents-locked"))).child(mark("password", Input::new(&p.password).small().cleanable(true).into_any_element())).child(mark("confirm", Input::new(&p.confirm).small().cleanable(true).into_any_element()));
-            body = buttons(body, cx);
-            body = body.child(div().text_size(px(13.)).child(text("fix.protection.allow-all-users-worksheet")));
+            body = body.child(div().text_sm().child(text("fix.protection.protect-worksheet-contents-locked"))).child(mark("password", crate::shell::chrome::text_field(&p.password).full_width().into_any_element())).child(mark("confirm", crate::shell::chrome::text_field(&p.confirm).full_width().into_any_element()));
+            body = body.child(div().text_sm().child(text("fix.protection.allow-all-users-worksheet")));
             for (i, (label, field)) in FLAGS.iter().enumerate() {
                 let mut a = p.allowed;
                 let on = *field(&mut a);
                 let field = *field;
                 body = body.child(mark(
                     &format!("allow-{i}"),
-                    Button::new(("protect-allow", i))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if on { "☑" } else { "☐" }, text(label)))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    crate::shell::chrome::checkbox_button(("protect-allow", i), text(label), on, false, cx.listener(move |this, _, _, cx| {
                             if let Some(p) = this.wb_mut().panels.protect.as_mut() {
                                 let v = field(&mut p.allowed);
                                 *v = !*v;
@@ -271,10 +262,11 @@ impl SlideEditor {
                 ));
             }
         } else {
-            body = body.child(div().text_size(px(13.)).child(text("fix.protection.unprotect-sheet"))).child(mark("password", Input::new(&p.password).small().cleanable(true).into_any_element()));
-            body = buttons(body, cx);
+            body = body.child(div().text_sm().child(text("fix.protection.unprotect-sheet"))).child(mark("password", crate::shell::chrome::text_field(&p.password).full_width().into_any_element()));
         }
-        Some(SidebarPanel { title: if p.protect { "fix.protection.protect-sheet-2".into() } else { "fix.protection.unprotect-sheet".into() }, body: body.into_any_element() })
+        body = body.children(crate::shell::chrome::panel_message(&p.message));
+        let footer = buttons(crate::shell::chrome::action_bar(),cx).action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(if p.protect { "fix.protection.protect-sheet-2" } else { "fix.protection.unprotect-sheet" }, body.into_any_element(), footer))
     }
 
     /// The current workbook's protection, if it is protected.
@@ -321,7 +313,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.protect_workbook = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -378,39 +370,30 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
-        let buttons = |body: gpui_kit::Div, cx: &mut Context<Self>| {
-            body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-                .child(mark("apply", Button::new("protect-wb-apply").primary().small().label(text(if p.protect { "_xlsx.protect-workbook" } else { "fix.protection.unprotect" })).on_click(cx.listener(|this, _, _, cx| this.apply_protect_workbook_panel(cx))).into_any_element()))
-                .child(mark(
-                    "close",
-                    Button::new("protect-wb-close")
-                        .small()
-                        .ghost()
-                        .label(text("_shell.close"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.wb_mut().panels.protect_workbook = None;
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ))
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
+        let buttons = |body: crate::shell::chrome::ActionBar, cx: &mut Context<Self>| {
+            body
+                .action(mark_action("apply", (if p.protect { crate::shell::chrome::ActionDefinition::new("protect-wb-apply", "", crate::shell::chrome::ActionButtonKind::Primary) } else { crate::shell::chrome::ActionDefinition::new("protect-wb-apply", "", crate::shell::chrome::ActionButtonKind::Destructive) }).label(text(if p.protect { "_xlsx.protect-workbook" } else { "fix.protection.unprotect" })).on_click(cx.listener(|this, _, _, cx| this.apply_protect_workbook_panel(cx)))))
+
         };
         if p.protect {
             body = body
-                .child(div().text_size(px(13.)).child(text("_xlsx.protect-structure-and-windows")))
-                .child(mark("password", Input::new(&p.password).small().cleanable(true).into_any_element()))
-                .child(mark("confirm", Input::new(&p.confirm).small().cleanable(true).into_any_element()));
-            body = buttons(body, cx);
-            body = body.child(div().text_size(px(13.)).child(text("_xlsx.protect")));
+                .child(div().text_sm().child(text("_xlsx.protect-structure-and-windows")))
+                .child(mark("password", crate::shell::chrome::text_field(&p.password).full_width().into_any_element()))
+                .child(mark("confirm", crate::shell::chrome::text_field(&p.confirm).full_width().into_any_element()));
+            body = body.child(div().text_sm().child(text("_xlsx.protect")));
             let lock_structure = p.lock_structure;
             let lock_windows = p.lock_windows;
             body = body.child(mark(
                 "lock-structure",
-                Button::new("protect-wb-structure")
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if lock_structure { "☑" } else { "☐" }, text("_xlsx.structure")))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::checkbox_button("protect-wb-structure", text("_xlsx.structure"), lock_structure, false, cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.wb_mut().panels.protect_workbook.as_mut() {
                             p.lock_structure = !p.lock_structure;
                         }
@@ -420,11 +403,7 @@ impl SlideEditor {
             ));
             body = body.child(mark(
                 "lock-windows",
-                Button::new("protect-wb-windows")
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if lock_windows { "☑" } else { "☐" }, text("_xlsx.windows")))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::checkbox_button("protect-wb-windows", text("_xlsx.windows"), lock_windows, false, cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.wb_mut().panels.protect_workbook.as_mut() {
                             p.lock_windows = !p.lock_windows;
                         }
@@ -434,11 +413,12 @@ impl SlideEditor {
             ));
         } else {
             body = body
-                .child(div().text_size(px(13.)).child(text("_xlsx.unprotect-workbook")))
-                .child(mark("password", Input::new(&p.password).small().cleanable(true).into_any_element()));
-            body = buttons(body, cx);
+                .child(div().text_sm().child(text("_xlsx.unprotect-workbook")))
+                .child(mark("password", crate::shell::chrome::text_field(&p.password).full_width().into_any_element()));
         }
-        Some(SidebarPanel { title: if p.protect { text("_xlsx.workbook-protection") } else { text("_xlsx.unprotect-workbook") }, body: body.into_any_element() })
+        body = body.children(crate::shell::chrome::panel_message(&p.message));
+        let footer = buttons(crate::shell::chrome::action_bar(),cx).action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(if p.protect { text("_xlsx.workbook-protection") } else { text("_xlsx.unprotect-workbook") }, body.into_any_element(), footer))
     }
 
     pub(crate) fn unlock_protected_range(&mut self, name: &str, password: &str) -> bool {
@@ -482,7 +462,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.allow_edit_ranges = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -559,12 +539,19 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
-        body = body.child(div().text_size(px(13.)).child(text("_xlsx.ranges-unlocked-when-sheet-is-protected")));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
+        body = body.child(div().text_sm().child(text("_xlsx.ranges-unlocked-when-sheet-is-protected")));
 
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).text_color(gpui_kit::red()).child(p.message.clone()));
+            body = body.child(div().text_sm().text_color(gpui_kit::red()).child(p.message.clone()));
         }
 
         // List of registered protected ranges
@@ -572,7 +559,7 @@ impl SlideEditor {
             let selected_idx = p.selected;
             let mut list_box = v_flex().gap_1().p(px(6.0)).border_1().rounded_md();
             if sheet.protected_ranges.is_empty() {
-                list_box = list_box.child(div().text_size(px(12.)).child(text("_xlsx.no-ranges-registered")));
+                list_box = list_box.child(div().text_sm().child(text("_xlsx.no-ranges-registered")));
             } else {
                 for (i, pr) in sheet.protected_ranges.iter().enumerate() {
                     let is_sel = selected_idx == Some(i);
@@ -581,9 +568,9 @@ impl SlideEditor {
                     let label = format!("{}: {} ({})", pr.name, range_str, if has_pw { text("_xlsx.password-protected") } else { text("_xlsx.no-password") });
                     let pr_name = pr.name.clone();
                     let pr_sqref = range_str.clone();
-                    let btn = Button::new(SharedString::from(format!("range-{i}")))
+                    let btn = crate::shell::chrome::action_button(SharedString::from(format!("range-{i}")))
                         .small()
-                        .ghost()
+
                         .label(if is_sel { format!("▶ {label}") } else { label })
                         .on_click(cx.listener(move |this, _, window, cx| {
                             if let Some(p) = this.wb_mut().panels.allow_edit_ranges.as_mut() {
@@ -600,31 +587,29 @@ impl SlideEditor {
         }
 
         // Input fields for adding / editing
-        body = body.child(div().text_size(px(12.)).child(text("_shell.title")));
-        body = body.child(mark("title", Input::new(&p.title).small().cleanable(true).into_any_element()));
+        body = body.child(div().text_sm().child(text("_shell.title")));
+        body = body.child(mark("title", crate::shell::chrome::text_field(&p.title).full_width().into_any_element()));
 
-        body = body.child(div().text_size(px(12.)).child(text("_xlsx.refers-to-cells")));
-        body = body.child(mark("sqref", Input::new(&p.sqref).small().cleanable(true).into_any_element()));
+        body = body.child(div().text_sm().child(text("_xlsx.refers-to-cells")));
+        body = body.child(mark("sqref", super::range_field::local_range_field(&p.sqref,"protection-p-sqref",false,cx).into_any_element()));
 
-        body = body.child(div().text_size(px(12.)).child(text("_xlsx.range-password-optional")));
-        body = body.child(mark("password", Input::new(&p.password).small().cleanable(true).into_any_element()));
+        body = body.child(div().text_sm().child(text("_xlsx.range-password-optional")));
+        body = body.child(mark("password", crate::shell::chrome::text_field(&p.password).full_width().into_any_element()));
 
         // Buttons
         let mut btn_row = div().flex().flex_row().gap_2();
         btn_row = btn_row.child(mark(
             "add",
-            Button::new("allow-ranges-add")
+            crate::shell::chrome::action_button("allow-ranges-add")
                 .small()
-                .primary()
-                .label(text("_xlsx.add-apply"))
+                .label(text(if p.selected.is_some(){"_shell.apply"}else{"ui.add"}))
                 .on_click(cx.listener(|this, _, _, cx| this.apply_add_edit_range(cx)))
                 .into_any_element(),
         ));
         btn_row = btn_row.child(mark(
             "delete",
-            Button::new("allow-ranges-delete")
+            crate::shell::chrome::destructive_button("allow-ranges-delete",cx)
                 .small()
-                .secondary()
                 .label(text("_shell.delete"))
                 .on_click(cx.listener(|this, _, _, cx| this.delete_edit_range(cx)))
                 .into_any_element(),
@@ -632,31 +617,15 @@ impl SlideEditor {
         body = body.child(btn_row);
 
         // Sheet protect link button and Close button
-        let mut bottom_row = div().flex().flex_row().gap_2();
-        bottom_row = bottom_row.child(mark(
-            "protect-sheet",
-            Button::new("allow-ranges-protect")
-                .small()
-                .ghost()
-                .label(text("_xlsx.protect-sheet"))
-                .on_click(cx.listener(|this, _, window, cx| this.open_protect_panel(window, cx)))
-                .into_any_element(),
-        ));
-        bottom_row = bottom_row.child(mark(
-            "close",
-            Button::new("allow-ranges-close")
-                .small()
-                .ghost()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.allow_edit_ranges = None;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        body = body.child(bottom_row);
+        let mut bottom_row = crate::shell::chrome::action_bar();
+        bottom_row = bottom_row.action(mark_action("protect-sheet", crate::shell::chrome::ActionDefinition::new("allow-ranges-protect", "", crate::shell::chrome::ActionButtonKind::Primary)
 
-        Some(SidebarPanel { title: text("_xlsx.allow-users-to-edit-ranges"), body: body.into_any_element() })
+                .label(text("_xlsx.protect-sheet"))
+                .on_click(cx.listener(|this, _, window, cx| this.open_protect_panel(window, cx)))));
+        bottom_row = bottom_row.action(crate::shell::chrome::ActionDefinition::new("allow-ranges-close", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.close")).on_click(cx.listener(|e,_,w,cx|e.close_panel_dialog(w,cx))));
+
+
+        Some(SidebarPanel::with_footer(text("_xlsx.allow-users-to-edit-ranges"), body.into_any_element(), bottom_row))
     }
 }
 

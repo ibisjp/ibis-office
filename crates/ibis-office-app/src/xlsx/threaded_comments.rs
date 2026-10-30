@@ -5,8 +5,8 @@
 //! sidebar's panel with the selected cell's thread to write, reply, resolve
 //! and delete.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -80,7 +80,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.threaded_comment = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -224,10 +224,10 @@ impl SlideEditor {
                 .into_any_element()
         };
 
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
         body = body.child(
             div()
-                .text_size(px(13.))
+                .text_sm()
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(crate::shell::i18n::format("comment.cell", &[("cell", &ibis_doc_model::cell_name(column, row))])),
         );
@@ -250,17 +250,17 @@ impl SlideEditor {
                         .child(
                             h_flex()
                                 .justify_between()
-                                .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(12.)).child(post.author.clone()))
-                                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(post_time(&post.date))),
+                                .child(div().font_weight(FontWeight::SEMIBOLD).text_sm().child(post.author.clone()))
+                                .child(div().text_sm().text_color(theme.muted_foreground).child(post_time(&post.date))),
                         )
-                        .child(div().text_size(px(12.)).child(post.text.clone())),
+                        .child(div().text_sm().child(post.text.clone())),
                 );
             }
 
             if done {
                 thread_card = thread_card.child(
                     div()
-                        .text_size(px(11.))
+                        .text_sm()
                         .text_color(theme.muted_foreground)
                         .child(crate::shell::i18n::text("_shell.resolved")),
                 );
@@ -271,9 +271,9 @@ impl SlideEditor {
                 .child(
                     mark(
                         "resolve",
-                        Button::new("comment-resolve")
+                        crate::shell::chrome::action_button("comment-resolve")
                             .small()
-                            .ghost()
+
                             .label(crate::shell::i18n::text(if done { "pptx.comments.reopen" } else { "_shell.resolve" }))
                             .on_click(cx.listener(move |this, _, _, cx| this.resolve_threaded_comment(row, column, !done, cx)))
                             .into_any_element(),
@@ -282,9 +282,8 @@ impl SlideEditor {
                 .child(
                     mark(
                         "delete",
-                        Button::new("comment-delete")
+                        crate::shell::chrome::destructive_button("comment-delete",cx)
                             .small()
-                            .ghost()
                             .label(crate::shell::i18n::text("_shell.delete"))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.delete_threaded_comment(row, column, cx);
@@ -301,14 +300,14 @@ impl SlideEditor {
         // Input field and send button
         let input_area = v_flex()
             .gap_1()
-            .child(mark("input", Input::new(&input).small().cleanable(true).into_any_element()))
+            .child(mark("input", crate::shell::chrome::text_field(&input).full_width().into_any_element()))
             .child(
                 h_flex()
                     .justify_end()
                     .child(
                         mark(
                             "send",
-                            Button::new("comment-send")
+                            crate::shell::chrome::primary_button("comment-send")
                                 .small()
                                 .label(crate::shell::i18n::text(if thread.is_some() { "_shell.reply" } else { "_xlsx.post" }))
                                 .on_click(cx.listener(move |this, _, window, cx| {

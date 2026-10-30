@@ -27,8 +27,8 @@ pub(crate) fn effect(shape: ShapeId, class: C, look: L) -> Animation {
         L::Appear => ((1, 0), 1),
         L::Fade => ((10, 0), 500),
         L::Fly(s) => ((2, side(s)), 500),
-        L::Zoom => ((24, 0), 500),
-        L::Float(s) => ((25, if s == AnimationSide::Bottom { 2 } else { 1 }), 1000),
+        L::Zoom => ((23, 0), 500),
+        L::Float(s) => ((30, if s == AnimationSide::Bottom { 2 } else { 1 }), 1000),
         L::Wipe(s) => ((22, side(s)), 500),
         L::Replay => ((28, 0), 2000),
         L::Spin(_) => ((8, 0), 2000),
@@ -741,7 +741,7 @@ impl SlideEditor {
         let t = crate::shell::i18n::text;
         let slide = self.slide().clone();
         let selected_ids = self.selected_ids();
-        let mut body = v_flex().gap_2().px(px(12.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(12.)).py(px(8.)).p_0();
         if slide.animations.is_empty() {
             body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(t("pptx.animation-ui.there-no-animations-slide")));
             return Some(crate::shell::chrome::SidebarPanel { title: t("pptx.animation-ui.animation-pane"), body: body.into_any_element() });
@@ -752,12 +752,12 @@ impl SlideEditor {
         let scale_sec = scale_ms as f32 / 1000.0;
         let timeline_width = 160.0f32;
 
-        let play_btn = Button::new("anim-play-all")
+        let play_btn = crate::shell::chrome::action_button("anim-play-all")
             .small()
             .label(t("pptx.anim.play-all"))
             .on_click(cx.listener(|e, _, window, cx| e.start_slideshow(window, cx)));
 
-        let mut scale_labels = h_flex().w(px(timeline_width)).justify_between().text_xs().text_color(rgb(0x757575));
+        let mut scale_labels = h_flex().w(px(timeline_width)).justify_between().text_sm().text_color(rgb(0x757575));
         let steps = if scale_sec <= 2.0 { 4 } else if scale_sec <= 5.0 { (scale_sec as usize).max(2) } else { 5 };
         for step in 0..=steps {
             let sec = (scale_sec * step as f32) / steps as f32;
@@ -774,7 +774,7 @@ impl SlideEditor {
             .child(
                 v_flex()
                     .gap_0p5()
-                    .child(div().text_xs().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("_pptx.timeline")))
+                    .child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("_pptx.timeline")))
                     .child(scale_labels),
             );
         body = body.child(header_bar);
@@ -820,6 +820,7 @@ impl SlideEditor {
             let shape_id = a.shape;
             let mut card = v_flex()
                 .id(("anim-card", i))
+                .w_full().min_w_0().overflow_hidden()
                 .gap_1()
                 .p_2()
                 .rounded_md()
@@ -839,14 +840,15 @@ impl SlideEditor {
                         .map(|b| b.text().chars().take(8).collect::<String>())
                         .filter(|t| !t.trim().is_empty())
                         .unwrap_or_else(|| crate::shell::i18n::format("_pptx.shape-n", &[("n", &(slide.shape_index(*trig_shape).map_or(0, |x| x + 1)))]));
-                    Some(div().px_1p5().py_0p5().rounded_sm().bg(rgb(0xfff8e1)).text_xs().text_color(rgb(0xf57f17)).child(format!("⚡️{}", trig_name)))
+                    Some(div().px_1p5().py_0p5().rounded_sm().bg(rgb(0xfff8e1)).text_sm().text_color(rgb(0xf57f17)).child(format!("⚡️{}", trig_name)))
                 }
                 AnimationTrigger::OnMediaBookmark { bookmark, .. } => {
-                    Some(div().px_1p5().py_0p5().rounded_sm().bg(rgb(0xe0f7fa)).text_xs().text_color(rgb(0x00838f)).child(format!("🔖{}", bookmark)))
+                    Some(div().px_1p5().py_0p5().rounded_sm().bg(rgb(0xe0f7fa)).text_sm().text_color(rgb(0x00838f)).child(format!("🔖{}", bookmark)))
                 }
             };
 
             let mut row_top = h_flex()
+                .w_full().min_w_0().flex_wrap()
                 .items_center()
                 .gap_1p5()
                 .child(
@@ -858,14 +860,14 @@ impl SlideEditor {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_xs()
+                        .text_sm()
                         .text_color(rgb(0x424242))
                         .child(format!("{}", i + 1)),
                 )
                 .child(
-                    Button::new(("anim-select", i))
-                        .ghost()
-                        .small()
+                    crate::shell::chrome::action_button(("anim-select", i))
+
+                        .small().max_w_full()
                         .label(name)
                         .on_click(cx.listener(move |e, _, _, cx| {
                             e.set_selection(vec![shape_id]);
@@ -878,7 +880,8 @@ impl SlideEditor {
                         .py_0p5()
                         .rounded_sm()
                         .bg(class_bg)
-                        .text_xs()
+                        .max_w_full().min_w_0().overflow_hidden()
+                        .text_sm()
                         .text_color(class_color)
                         .child(format!("{}・{}", class_name, t(look_id(a.class, a.look)))), // i18n-ok（区切りの「・」だけで、訳す語がない（class と look の間））
                 );
@@ -886,11 +889,10 @@ impl SlideEditor {
                 row_top = row_top.child(tb);
             }
             let row_top = row_top
-                .child(div().flex_1())
-                .child(Button::new(("anim-options-detail", i)).small().ghost().label("⚙️").on_click(cx.listener(move |e, _, _, cx| e.open_animation_options_panel(i, cx))))
-                .child(Button::new(("anim-up", i)).small().ghost().label("↑").disabled(i == 0).on_click(cx.listener(move |e, _, _, cx| e.move_effect(i, true, cx))))
-                .child(Button::new(("anim-down", i)).small().ghost().label("↓").disabled(i + 1 >= count).on_click(cx.listener(move |e, _, _, cx| e.move_effect(i, false, cx))))
-                .child(Button::new(("anim-remove", i)).small().ghost().label(t("_shell.delete")).on_click(cx.listener(move |e, _, _, cx| e.remove_effect(i, cx))));
+                .child(crate::shell::chrome::action_button(("anim-options-detail", i)).small().label("⚙️").on_click(cx.listener(move |e, _, _, cx| e.open_animation_options_panel(i, cx))))
+                .child(crate::shell::chrome::action_button(("anim-up", i)).small().label("↑").disabled(i == 0).on_click(cx.listener(move |e, _, _, cx| e.move_effect(i, true, cx))))
+                .child(crate::shell::chrome::action_button(("anim-down", i)).small().label("↓").disabled(i + 1 >= count).on_click(cx.listener(move |e, _, _, cx| e.move_effect(i, false, cx))))
+                .child(crate::shell::chrome::destructive_button(("anim-remove", i),cx).small().label(t("_shell.delete")).on_click(cx.listener(move |e, _, _, cx| e.remove_effect(i, cx))));
 
             let repeat_label = match a.repeat_count {
                 AnimationRepeat::None => crate::shell::i18n::text("_pptx.once").to_string(),
@@ -914,68 +916,71 @@ impl SlideEditor {
             };
 
             let row_controls = h_flex()
+                .w_full().min_w_0().flex_wrap()
                 .items_center()
                 .gap_2()
                 .child(
-                    Button::new(("anim-start", i))
+                    crate::shell::chrome::action_button(("anim-start", i))
                         .small()
                         .label(start_label)
                         .on_click(cx.listener(move |e, _, _, cx| e.cycle_effect_start_at(i, cx))),
                 )
                 .child(
                     h_flex()
+                        .flex_none().min_w_0()
                         .items_center()
                         .gap_1()
-                        .text_xs()
+                        .text_sm()
                         .text_color(rgb(0x616161))
                         .child(div().child(crate::shell::i18n::text("_pptx.time")))
-                        .child(Button::new(("anim-dur-minus", i)).small().ghost().label("-").on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_duration_at(i, -500, cx))))
+                        .child(crate::shell::chrome::action_button(("anim-dur-minus", i)).small().label("-").on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_duration_at(i, -500, cx))))
                         .child(div().w(px(30.)).text_center().child(format!("{:.1}s", a.duration as f32 / 1000.0)))
-                        .child(Button::new(("anim-dur-plus", i)).small().ghost().label("+").on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_duration_at(i, 500, cx)))),
+                        .child(crate::shell::chrome::action_button(("anim-dur-plus", i)).small().label("+").on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_duration_at(i, 500, cx)))),
                 )
                 .child(
                     h_flex()
+                        .flex_none().min_w_0()
                         .items_center()
                         .gap_1()
-                        .text_xs()
+                        .text_sm()
                         .text_color(rgb(0x616161))
                         .child(div().child(crate::shell::i18n::text("_pptx.delay")))
-                        .child(Button::new(("anim-del-minus", i)).small().ghost().label("-").disabled(a.delay == 0).on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_delay_at(i, -500, cx))))
+                        .child(crate::shell::chrome::action_button(("anim-del-minus", i)).small().label("-").disabled(a.delay == 0).on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_delay_at(i, -500, cx))))
                         .child(div().w(px(30.)).text_center().child(format!("{:.1}s", a.delay as f32 / 1000.0)))
-                        .child(Button::new(("anim-del-plus", i)).small().ghost().label("+").on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_delay_at(i, 500, cx)))),
+                        .child(crate::shell::chrome::action_button(("anim-del-plus", i)).small().label("+").on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_delay_at(i, 500, cx)))),
                 )
                 .child(
-                    Button::new(("anim-repeat", i))
+                    crate::shell::chrome::action_button(("anim-repeat", i))
                         .small()
-                        .ghost()
+
                         .label(repeat_label)
                         .on_click(cx.listener(move |e, _, _, cx| e.cycle_effect_repeat_at(i, cx))),
                 )
                 .child(
-                    Button::new(("anim-autorev", i))
+                    crate::shell::chrome::action_button(("anim-autorev", i))
                         .small()
-                        .ghost()
+
                         .label(autorev_label)
                         .on_click(cx.listener(move |e, _, _, cx| e.toggle_effect_autoreverse_at(i, cx))),
                 )
                 .child(
-                    Button::new(("anim-rewind", i))
+                    crate::shell::chrome::action_button(("anim-rewind", i))
                         .small()
-                        .ghost()
+
                         .label(rewind_label)
                         .on_click(cx.listener(move |e, _, _, cx| e.toggle_effect_rewind_at(i, cx))),
                 )
                 .child(
-                    Button::new(("anim-smooth", i))
+                    crate::shell::chrome::action_button(("anim-smooth", i))
                         .small()
-                        .ghost()
+
                         .label(smooth_label)
                         .on_click(cx.listener(move |e, _, _, cx| e.cycle_effect_smooth_at(i, cx))),
                 )
                 .child(
-                    Button::new(("anim-after", i))
+                    crate::shell::chrome::action_button(("anim-after", i))
                         .small()
-                        .ghost()
+
                         .label(after_label)
                         .on_click(cx.listener(move |e, _, _, cx| e.cycle_effect_after_at(i, cx))),
                 );
@@ -1001,7 +1006,7 @@ impl SlideEditor {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_xs()
+                        .text_sm()
                         .text_color(rgb(0x9e9e9e))
                         .child(format!("+{}", format!("{:.1}s", a.delay as f32 / 1000.0))),
                 );
@@ -1017,17 +1022,18 @@ impl SlideEditor {
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_xs()
+                .text_sm()
                 .text_color(crate::shell::palette::doc(0xffffff))
                 .child(format!("{:.1}s", a.duration as f32 / 1000.0));
             timeline_track = timeline_track.child(bar_element);
 
             let row_timeline = h_flex()
+                .w_full().flex_wrap()
                 .items_center()
                 .justify_end()
                 .gap_2()
                 .pt_1()
-                .child(div().text_xs().text_color(rgb(0x757575)).child(format!("{:.1}s〜{:.1}s", item.start_time_ms as f32 / 1000.0, item.end_time_ms as f32 / 1000.0))) // i18n-ok（範囲の記号）
+                .child(div().text_sm().text_color(rgb(0x757575)).child(format!("{:.1}s〜{:.1}s", item.start_time_ms as f32 / 1000.0, item.end_time_ms as f32 / 1000.0))) // i18n-ok（範囲の記号）
                 .child(timeline_track);
 
             card = card.child(row_top).child(row_controls).child(row_timeline);
@@ -1061,7 +1067,7 @@ impl SlideEditor {
             C::Path => (crate::shell::i18n::text("_pptx.motion-path"), rgb(0x1976d2), rgb(0xe3f2fd)),
         };
 
-        let mut body = v_flex().gap_3().px(px(16.)).py(px(12.));
+        let mut body = v_flex().gap_3().px(px(16.)).py(px(12.)).p_0();
 
         // 1. 対象アニメーション情報バナー
         let banner = h_flex()
@@ -1080,7 +1086,7 @@ impl SlideEditor {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_xs()
+                        .text_sm()
                         .child(format!("{}", p.index + 1)),
                 )
                 .child(
@@ -1089,7 +1095,7 @@ impl SlideEditor {
                         .py_0p5()
                         .rounded_sm()
                         .bg(class_bg)
-                        .text_xs()
+                        .text_sm()
                         .text_color(class_color)
                         .child(format!("{}・{}", class_name, t(look_id(p.class, p.look)))), // i18n-ok（区切りの「・」だけで、訳す語がない）
                 ),
@@ -1122,13 +1128,13 @@ impl SlideEditor {
                 (AnimationSide::Top, crate::shell::i18n::text("transition.dir.up")),
             ];
             let mut dir_row = h_flex().items_center().gap_1().flex_wrap();
-            dir_row = dir_row.child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
+            dir_row = dir_row.child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
             for (s, label) in sides {
                 let is_cur = current_side == s;
                 dir_row = dir_row.child(
-                    Button::new(("anim-fly-side", s as usize))
+                    crate::shell::chrome::action_button(("anim-fly-side", s as usize))
                         .small()
-                        .ghost()
+
                         .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
                         .on_click(cx.listener(move |e, _, _, cx| e.set_panel_fly_side(s, cx))),
                 );
@@ -1143,13 +1149,13 @@ impl SlideEditor {
                 (AnimationSide::Bottom, crate::shell::i18n::text("pptx.anim.opt.float-down")),
             ];
             let mut dir_row = h_flex().items_center().gap_1().flex_wrap();
-            dir_row = dir_row.child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
+            dir_row = dir_row.child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
             for (s, label) in sides {
                 let is_cur = current_side == s;
                 dir_row = dir_row.child(
-                    Button::new(("anim-float-side", s as usize))
+                    crate::shell::chrome::action_button(("anim-float-side", s as usize))
                         .small()
-                        .ghost()
+
                         .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
                         .on_click(cx.listener(move |e, _, _, cx| e.set_panel_float_side(s, cx))),
                 );
@@ -1166,13 +1172,13 @@ impl SlideEditor {
                 (AnimationSide::Top, crate::shell::i18n::text("pptx.anim.opt.wipe-top")),
             ];
             let mut dir_row = h_flex().items_center().gap_1().flex_wrap();
-            dir_row = dir_row.child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
+            dir_row = dir_row.child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
             for (s, label) in sides {
                 let is_cur = current_side == s;
                 dir_row = dir_row.child(
-                    Button::new(("anim-wipe-side", s as usize))
+                    crate::shell::chrome::action_button(("anim-wipe-side", s as usize))
                         .small()
-                        .ghost()
+
                         .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
                         .on_click(cx.listener(move |e, _, _, cx| e.set_panel_wipe_side(s, cx))),
                 );
@@ -1189,13 +1195,13 @@ impl SlideEditor {
                 (0, -25_000, crate::shell::i18n::text("docx.find.dir.up")),
             ];
             let mut motion_row = h_flex().items_center().gap_1().flex_wrap();
-            motion_row = motion_row.child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
+            motion_row = motion_row.child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
             for (idx, (x, y, label)) in dirs.into_iter().enumerate() {
                 let is_cur = cur_x == x && cur_y == y;
                 motion_row = motion_row.child(
-                    Button::new(("anim-motion-dir", idx))
+                    crate::shell::chrome::action_button(("anim-motion-dir", idx))
                         .small()
-                        .ghost()
+
                         .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
                         .on_click(cx.listener(move |e, _, _, cx| e.set_panel_motion_dir(x, y, cx))),
                 );
@@ -1208,25 +1214,25 @@ impl SlideEditor {
             .items_center()
             .gap_2()
             .child(
-                Button::new("anim-opt-smooth-start")
+                crate::shell::chrome::action_button("anim-opt-smooth-start")
                     .small()
-                    .ghost()
+
                     .label(if p.accel > 0 { crate::shell::i18n::text("_pptx.smooth-start") } else { crate::shell::i18n::text("pptx.anim.smooth-start") })
                     .on_click(cx.listener(|e, _, _, cx| e.toggle_panel_smooth_start(cx))),
             )
             .child(
-                Button::new("anim-opt-smooth-end")
+                crate::shell::chrome::action_button("anim-opt-smooth-end")
                     .small()
-                    .ghost()
+
                     .label(if p.decel > 0 { crate::shell::i18n::text("_pptx.smooth-end") } else { crate::shell::i18n::text("pptx.anim.smooth-end") })
                     .on_click(cx.listener(|e, _, _, cx| e.toggle_panel_smooth_end(cx))),
             );
         effect_sec = effect_sec.child(smooth_row);
 
         // 自動反転
-        let autorev_btn = Button::new("anim-opt-autorev")
+        let autorev_btn = crate::shell::chrome::action_button("anim-opt-autorev")
             .small()
-            .ghost()
+
             .label(if p.auto_reverse { crate::shell::i18n::text("_pptx.auto-reverse") } else { crate::shell::i18n::text("_pptx.auto-reverse-2") })
             .on_click(cx.listener(|e, _, _, cx| e.toggle_panel_auto_reverse(cx)));
         effect_sec = effect_sec.child(autorev_btn);
@@ -1241,9 +1247,9 @@ impl SlideEditor {
         let after_row = h_flex()
             .items_center()
             .gap_1p5()
-            .child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.after-animation")))
+            .child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.after-animation")))
             .child(
-                Button::new("anim-opt-after")
+                crate::shell::chrome::action_button("anim-opt-after")
                     .small()
                     .label(after_label)
                     .on_click(cx.listener(|e, _, _, cx| e.cycle_panel_after_effect(cx))),
@@ -1275,13 +1281,13 @@ impl SlideEditor {
             (AnimationStart::AfterPrevious, crate::shell::i18n::text("_pptx.after-previous-2")),
         ];
         let mut start_row = h_flex().items_center().gap_1().flex_wrap();
-        start_row = start_row.child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("pptx.animation-ui.from")));
+        start_row = start_row.child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("pptx.animation-ui.from")));
         for (st, label) in starts {
             let is_cur = p.start == st;
             start_row = start_row.child(
-                Button::new(("anim-opt-start", st as usize))
+                crate::shell::chrome::action_button(("anim-opt-start", st as usize))
                     .small()
-                    .ghost()
+
                     .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
                     .on_click(cx.listener(move |e, _, _, cx| e.set_panel_start(st, cx))),
             );
@@ -1292,20 +1298,20 @@ impl SlideEditor {
         let dur_row = h_flex()
             .items_center()
             .gap_2()
-            .child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.duration")))
-            .child(Button::new("anim-opt-dur-minus").small().ghost().label("-").on_click(cx.listener(|e, _, _, cx| e.adjust_panel_duration(-500, cx))))
-            .child(div().w(px(36.)).text_center().text_xs().child(crate::shell::i18n::format("_pptx.value-s", &[("value", &format!("{:.1}", p.duration_ms as f32 / 1000.0))])))
-            .child(Button::new("anim-opt-dur-plus").small().ghost().label("+").on_click(cx.listener(|e, _, _, cx| e.adjust_panel_duration(500, cx))));
+            .child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.duration")))
+            .child(crate::shell::chrome::action_button("anim-opt-dur-minus").small().label("-").on_click(cx.listener(|e, _, _, cx| e.adjust_panel_duration(-500, cx))))
+            .child(div().w(px(36.)).text_center().text_sm().child(crate::shell::i18n::format("_pptx.value-s", &[("value", &format!("{:.1}", p.duration_ms as f32 / 1000.0))])))
+            .child(crate::shell::chrome::action_button("anim-opt-dur-plus").small().label("+").on_click(cx.listener(|e, _, _, cx| e.adjust_panel_duration(500, cx))));
         timing_sec = timing_sec.child(dur_row);
 
         // 遅延時間
         let del_row = h_flex()
             .items_center()
             .gap_2()
-            .child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.delay")))
-            .child(Button::new("anim-opt-del-minus").small().ghost().label("-").disabled(p.delay_ms == 0).on_click(cx.listener(|e, _, _, cx| e.adjust_panel_delay(-500, cx))))
-            .child(div().w(px(36.)).text_center().text_xs().child(crate::shell::i18n::format("_pptx.value-s", &[("value", &format!("{:.1}", p.delay_ms as f32 / 1000.0))])))
-            .child(Button::new("anim-opt-del-plus").small().ghost().label("+").on_click(cx.listener(|e, _, _, cx| e.adjust_panel_delay(500, cx))));
+            .child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.delay")))
+            .child(crate::shell::chrome::action_button("anim-opt-del-minus").small().label("-").disabled(p.delay_ms == 0).on_click(cx.listener(|e, _, _, cx| e.adjust_panel_delay(-500, cx))))
+            .child(div().w(px(36.)).text_center().text_sm().child(crate::shell::i18n::format("_pptx.value-s", &[("value", &format!("{:.1}", p.delay_ms as f32 / 1000.0))])))
+            .child(crate::shell::chrome::action_button("anim-opt-del-plus").small().label("+").on_click(cx.listener(|e, _, _, cx| e.adjust_panel_delay(500, cx))));
         timing_sec = timing_sec.child(del_row);
 
         // 繰り返し
@@ -1322,9 +1328,9 @@ impl SlideEditor {
         let rep_row = h_flex()
             .items_center()
             .gap_2()
-            .child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.repeat")))
+            .child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.repeat")))
             .child(
-                Button::new("anim-opt-repeat")
+                crate::shell::chrome::action_button("anim-opt-repeat")
                     .small()
                     .label(repeat_label)
                     .on_click(cx.listener(|e, _, _, cx| e.cycle_panel_repeat(cx))),
@@ -1332,9 +1338,9 @@ impl SlideEditor {
         timing_sec = timing_sec.child(rep_row);
 
         // 巻き戻し (Rewind when done playing)
-        let rewind_btn = Button::new("anim-opt-rewind")
+        let rewind_btn = crate::shell::chrome::action_button("anim-opt-rewind")
             .small()
-            .ghost()
+
             .label(if p.rewind { crate::shell::i18n::text("_pptx.rewind-when-done-playing") } else { crate::shell::i18n::text("_pptx.rewind-when-done-playing-2") })
             .on_click(cx.listener(|e, _, _, cx| e.toggle_panel_rewind(cx)));
         timing_sec = timing_sec.child(rewind_btn);
@@ -1364,13 +1370,12 @@ impl SlideEditor {
                 h_flex()
                     .items_center()
                     .gap_1p5()
-                    .child(div().text_xs().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.trigger-2")))
-                    .child(div().text_xs().text_color(rgb(0x212121)).child(trig_desc)),
+                    .child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.trigger-2")))
+                    .child(div().text_sm().text_color(rgb(0x212121)).child(trig_desc)),
             )
             .child(
-                Button::new("anim-opt-trig-clear")
+                crate::shell::chrome::destructive_button("anim-opt-trig-clear",cx)
                     .small()
-                    .ghost()
                     .label(crate::shell::i18n::text("_pptx.clear"))
                     .disabled(!is_trig)
                     .on_click(cx.listener(|e, _, _, cx| e.set_panel_trigger(AnimationTrigger::None, cx))),
@@ -1379,17 +1384,12 @@ impl SlideEditor {
         body = body.child(timing_sec);
 
         // 4. フッターボタン
-        let footer = h_flex()
-            .gap_2()
-            .pt_2()
-            .child(Button::new("pptx-anim-opt-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, _, cx| e.apply_animation_options_panel(cx))))
-            .child(Button::new("pptx-anim-opt-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, _, cx| e.close_animation_options_panel(cx))));
-        body = body.child(footer);
+        let footer = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-anim-opt-apply", t("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, _, cx| e.apply_animation_options_panel(cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-anim-opt-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, _, cx| e.close_animation_options_panel(cx))));
 
-        Some(crate::shell::chrome::SidebarPanel {
-            title: title.into(),
-            body: body.into_any_element(),
-        })
+        let panel_terminal_actions = footer;
+        Some(crate::shell::chrome::SidebarPanel::with_footer(title, body.into_any_element(), panel_terminal_actions))
     }
 
     /// 開始のタイミング of the selected shapes' effects.
@@ -1541,7 +1541,7 @@ impl SlideEditor {
                     }
                     (L::Float(_), L::Float(side)) => {
                         a.look = L::Float(side);
-                        a.preset = (25, if side == AnimationSide::Bottom { 2 } else { 1 });
+                        a.preset = (30, if side == AnimationSide::Bottom { 2 } else { 1 });
                     }
                     (L::Wipe(_), L::Wipe(side)) => {
                         a.look = L::Wipe(side);
@@ -1549,7 +1549,7 @@ impl SlideEditor {
                     }
                     (L::Zoom, L::Zoom) => {
                         a.look = L::Zoom;
-                        a.preset = (24, 0);
+                        a.preset = (23, 0);
                     }
                     (L::Spin(_), L::Spin(by)) => {
                         a.look = L::Spin(by);

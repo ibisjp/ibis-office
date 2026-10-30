@@ -131,6 +131,7 @@ fn read_ex(space: Node, colors: &Colors, legacy_border: bool) -> Option<Chart> {
         let mut chart = crate::chart::read_in(doc.root_element(), colors, legacy_border)?;
         chart.ex = ex;
         chart.ex_format = Some(read_format(plot, region, series, layout, &dims, colors));
+        apply_outer_appearance(&mut chart,space,colors);
         return Some(chart);
     }
     let mut links = Vec::new();
@@ -155,7 +156,16 @@ fn read_ex(space: Node, colors: &Colors, legacy_border: bool) -> Option<Chart> {
     // Read as an old kind of chart, but a new one's (drawn with its padding).
     chart.ex = Some(ibis_doc_model::ChartEx::Synthesized { links });
     chart.ex_format = Some(read_format(plot, region, series, layout, &dims, colors));
+    apply_outer_appearance(&mut chart,space,colors);
     Some(chart)
+}
+
+/// ChartEx's outer shape properties survive conversion to the legacy drawing model.
+/// MS-ODRAWXML 2.24.3.11 CT_ChartSpace assigns cx:spPr to the entire chart.
+fn apply_outer_appearance(chart:&mut Chart,space:Node,colors:&Colors){
+    let (fill,stroke)=crate::chart::shape_props(child(space,"spPr"),colors);
+    if let Some(fill)=fill{chart.background=fill;}
+    if let Some(stroke)=stroke{chart.border=stroke;}
 }
 
 /// What of the chart's format can be changed: the first series' data labels, the value axis' range, the series' fills.

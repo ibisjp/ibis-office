@@ -9,9 +9,12 @@ use crate::shell::scenario::Scenario;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
+        ("shell::shared_radio_group_layouts", shared_radio_group_layouts),
         ("shell::fix72_font_dropdown_preview", fix72_font_dropdown_preview),
         ("shell::fix75_start_window_closes_with_cmd_w", fix75_start_window_closes_with_cmd_w),
         ("shell::issue27_close_button_asks_to_save", issue27_close_button_asks_to_save),
+        ("shell::client_close_button_click_asks_to_save", client_close_button_click_asks_to_save),
+        ("shell::client_close_button_click_saves_then_closes", client_close_button_click_saves_then_closes),
         ("shell::issue27_save_answer_writes_then_closes", issue27_save_answer_writes_then_closes),
         ("shell::issue27_quit_asks_to_save", issue27_quit_asks_to_save),
         ("shell::right_pane_button_follows_the_pane", right_pane_button_follows_the_pane),
@@ -175,27 +178,47 @@ fn open_index(s: &mut Scenario) -> Option<usize> {
 /// #12: with a menu open, the pointer on the next menu's name closes it and
 /// opens that one; a press on the open menu's name closes it.
 fn fix12_menu_bar_hover_switches_menu() {
+    use crate::shell::scenario::button_probe as buttons;
+    let _probe = buttons::Probe::new();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.update(|_, _, cx| cx.notify());
+    s.settle();
+    // The menu names' own positions (the logo's button before them is as wide as the menu bar's items).
+    let at = |name: &str| {
+        let b = buttons::bounds(&format!("menu-button-menu.{name}")).unwrap_or_else(|| panic!("{name}: {:?}", buttons::all()));
+        (f32::from(b.center().x), f32::from(b.center().y))
+    };
+    let (file, edit, view) = (at("file"), at("edit"), at("view"));
     assert_eq!(open_index(&mut s), None);
     // Hovering with no menu open opens nothing.
-    s.hover((133.0, 50.0));
+    s.hover(edit);
     assert_eq!(open_index(&mut s), None);
-    s.click((70.0, 50.0));
+    s.click(file);
     s.screenshot("file-open");
     assert_eq!(open_index(&mut s), Some(0));
-    s.hover((133.0, 50.0));
+    s.hover(edit);
     s.screenshot("edit-by-hover");
     assert_eq!(open_index(&mut s), Some(1));
-    s.hover((176.0, 50.0));
+    s.hover(view);
     assert_eq!(open_index(&mut s), Some(2));
     // Pressing the open menu's name closes it.
-    s.click((176.0, 50.0));
+    s.click(view);
     assert_eq!(open_index(&mut s), None);
     // Pressing another menu's name while one is open switches to it.
-    s.click((70.0, 50.0));
+    s.click(file);
     assert_eq!(open_index(&mut s), Some(0));
     s.click((900.0, 300.0));
     assert_eq!(open_index(&mut s), None);
+}
+
+/// Where the menu bar's button for menu `name` (`edit`, ...) is drawn: the logo before the names moves them, so
+/// a fixed pixel is not the menu.
+fn menu_button_at(s: &mut Scenario, name: &str) -> (f32, f32) {
+    use crate::shell::scenario::button_probe as buttons;
+    s.update(|_, _, cx| cx.notify());
+    s.settle();
+    let b = buttons::bounds(&format!("menu-button-menu.{name}")).unwrap_or_else(|| panic!("{name}: {:?}", buttons::all()));
+    (f32::from(b.center().x), f32::from(b.center().y))
 }
 
 fn menu_start(s: &mut Scenario) -> usize {
@@ -206,8 +229,10 @@ fn menu_start(s: &mut Scenario) -> usize {
 /// hovering ▼ scrolls (on as the time passes), the wheel scrolls, and ▲
 /// scrolls back; a window tall enough shows the whole menu with no rows.
 fn fix15_long_menu_scrolls() {
+    let _probe = crate::shell::scenario::button_probe::Probe::new();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.click((133.0, 50.0));
+    let edit = menu_button_at(&mut s, "edit");
+    s.click(edit);
     assert_eq!(open_index(&mut s), Some(1));
     assert_eq!(menu_start(&mut s), 0);
     s.screenshot("top");
@@ -236,8 +261,9 @@ fn fix15_long_menu_scrolls() {
     assert_eq!(menu_start(&mut s), 0);
     // A tall window: no rows.
     s.size(1200.0, 1500.0);
-    s.click((133.0, 50.0));
-    s.click((133.0, 50.0));
+    let edit = menu_button_at(&mut s, "edit");
+    s.click(edit);
+    s.click(edit);
     assert_eq!(menu_start(&mut s), 0);
     s.screenshot("tall");
 }
@@ -443,6 +469,13 @@ fn fix17_print_is_bound() {
     assert!(bound > 0);
 }
 
+/// Closes the modal command panel (Undo and the menus are the document's, so they come after it).
+fn close_modal_panel(s: &mut Scenario) {
+    if s.with(|e, _| e.panel_dialog_is_modal()) {
+        s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    }
+}
+
 /// DOCX-EDIT-014: 挿入 > 特殊文字… opens the panel of characters; pressing one
 /// puts it at the caret, as one step to undo.
 fn fix_docx_edit014_symbols() {
@@ -477,6 +510,7 @@ fn fix_docx_edit014_symbols() {
     assert_eq!(text_of(&mut s, id), format!("→{before}"));
     s.update(|e, _, cx| e.insert_symbol('€', cx));
     assert_eq!(text_of(&mut s, id), format!("→€{before}"));
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert_eq!(text_of(&mut s, id), format!("→{before}"), "one step undoes one character");
 }
@@ -729,6 +763,7 @@ fn fix_docx_contextual_spacing() {
     assert_eq!(reloaded_contextual, !initial, "contextual spacing preserved by save and reload");
 
     // Undo restores to original
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert_eq!(is_contextual(&mut s, id1), initial, "undo restores original contextual spacing");
 
@@ -854,6 +889,7 @@ fn fix_docx_widow_and_suppress_lines() {
     assert_eq!(reloaded_flags, (!initial_widow, !initial_suppress), "widow_control and suppress_line_numbers preserved by save and reload");
 
     // Undo restores original settings
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert_eq!(flags_of(&mut s), (initial_widow, initial_suppress), "undo restores original settings");
 
@@ -1075,21 +1111,26 @@ fn fix_docx_line_numbers() {
 fn fix_docx_ruler() {
     let mut s = Scenario::open("test/editing/docx-report.docx");
 
-    // 初期状態：ruler_open は true、メニュー docx.ruler はチェック付き
+    // The ruler is a setting of the right pane now (表示 > ルーラー opens it), not a toggle in the menu.
     assert!(s.with(|e, _| e.ruler_open), "ruler should be visible initially");
-    assert_eq!(s.menu_state("docx.ruler"), Some((true, true)), "docx.ruler menu item should be enabled and checked");
+    assert_eq!(s.menu_state("docx.ruler"), Some((true, false)), "docx.ruler opens the pane, so the item is enabled and has no check");
+    s.menu("docx.ruler");
+    assert!(s.with(|e, _| e.ruler_settings_open && e.sidebar_open));
     s.screenshot("docx-ruler-visible");
 
-    // メニューをクリックして非表示にする
-    s.menu("docx.ruler");
-    assert!(!s.with(|e, _| e.ruler_open), "ruler should be hidden after menu click");
-    assert_eq!(s.menu_state("docx.ruler"), Some((true, false)), "docx.ruler menu item should be enabled and unchecked");
+    docx_click_ruler_setting(&mut s, "ruler-horizontal");
+    assert!(!s.with(|e, _| e.ruler_open), "ruler should be hidden after unchecking it");
     s.screenshot("docx-ruler-hidden");
 
-    // 再度メニューをクリックして表示に戻す
-    s.menu("docx.ruler");
-    assert!(s.with(|e, _| e.ruler_open), "ruler should be visible again after second click");
-    assert_eq!(s.menu_state("docx.ruler"), Some((true, true)), "docx.ruler menu item should be enabled and checked again");
+    docx_click_ruler_setting(&mut s, "ruler-horizontal");
+    assert!(s.with(|e, _| e.ruler_open), "ruler should be visible again after checking it");
+}
+
+/// Clicks the control `id` of the ruler settings pane (the center of where it was drawn).
+fn docx_click_ruler_setting(s: &mut Scenario, id: &str) {
+    let bounds = s.with(|e, _| *e.ruler_settings_ui.borrow().get(id).unwrap_or_else(|| panic!("missing ruler UI {id}")));
+    s.click((f32::from(bounds.origin.x + bounds.size.width / 2.), f32::from(bounds.origin.y + bounds.size.height / 2.)));
+    s.settle();
 }
 
 /// XLSX-VIEW-008: ルーラーの表示条件
@@ -1264,21 +1305,18 @@ fn fix_xlsx_save_copy_and_recent() {
 fn fix_docx_gridlines() {
     let mut s = Scenario::open("test/editing/docx-report.docx");
 
-    // 初期状態：gridlines_open は false、メニュー docx.gridlines はチェックなし
+    // Grid lines are a setting of the ruler pane now (not a separate menu item).
     assert!(!s.with(|e, _| e.gridlines_open), "gridlines should be hidden initially");
-    assert_eq!(s.menu_state("docx.gridlines"), Some((true, false)), "docx.gridlines menu item should be enabled and unchecked");
+    assert!(s.menu_state("docx.gridlines").is_none(), "docx.gridlines is no longer a menu item");
+    s.menu("docx.ruler");
     s.screenshot("docx-gridlines-hidden");
 
-    // メニューをクリックして表示にする
-    s.menu("docx.gridlines");
-    assert!(s.with(|e, _| e.gridlines_open), "gridlines should be visible after menu click");
-    assert_eq!(s.menu_state("docx.gridlines"), Some((true, true)), "docx.gridlines menu item should be enabled and checked");
+    docx_click_ruler_setting(&mut s, "ruler-gridlines");
+    assert!(s.with(|e, _| e.gridlines_open), "gridlines should be visible after checking it");
     s.screenshot("docx-gridlines-visible");
 
-    // 再度メニューをクリックして非表示に戻す
-    s.menu("docx.gridlines");
-    assert!(!s.with(|e, _| e.gridlines_open), "gridlines should be hidden again after second click");
-    assert_eq!(s.menu_state("docx.gridlines"), Some((true, false)), "docx.gridlines menu item should be enabled and unchecked again");
+    docx_click_ruler_setting(&mut s, "ruler-gridlines");
+    assert!(!s.with(|e, _| e.gridlines_open), "gridlines should be hidden again after unchecking it");
 }
 
 /// XLSX-VIEW-005: 選択範囲に合わせたズーム（表示 > 選択範囲に合わせて拡大/縮小）
@@ -1580,7 +1618,8 @@ fn fix_xlsx_print_options() {
     assert!(sheet.print.black_and_white, "black_and_white should be persisted");
     assert!(sheet.print.draft, "draft should be persisted");
 
-    // 5. Undo（cmd-z）で直前の操作（draft = true）を取り消し
+    // 5. Undo（cmd-z）で直前の操作（draft = true）を取り消し（ページ設定はモーダルなので、先に閉じる）
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert!(!s.with(|e, _| e.current_print().unwrap().draft));
     assert!(s.with(|e, _| e.current_print().unwrap().black_and_white));
@@ -1604,7 +1643,8 @@ fn fix_xlsx_print_title_columns() {
     assert_eq!(s.with(|e, _| e.print_title_rows()), None);
     assert_eq!(s.with(|e, _| e.print_title_columns()), None);
 
-    // 2. セル B2 を選択し、タイトル列を設定（B列 = column 1）
+    // 2. セル B2 を選択し、タイトル列を設定（B列 = column 1）。ページ設定はモーダルなので、先に閉じる
+    close_modal_panel(&mut s);
     s.click_cell("B2");
     s.update(|e, _, cx| {
         let cols = e.selected_range().map(|r| (r.first_column, r.last_column)).or_else(|| e.current_cell().map(|(c, _)| (c, c)));
@@ -1685,7 +1725,8 @@ fn fix_xlsx_paper_sizes_and_centering() {
     });
     assert_eq!(s.with(|e, _| e.current_print().unwrap().paper), (257 * 36_000, 364 * 36_000));
 
-    // 5. Undo（cmd-z）で「はがき」に戻ることを確認
+    // 5. Undo（cmd-z）で「はがき」に戻ることを確認（ページ設定はモーダルなので、先に閉じる）
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     assert_eq!(s.with(|e, _| e.current_print().unwrap().paper), ibis_doc_model::SheetPrint::HAGAKI);
 
@@ -3330,6 +3371,7 @@ fn fix_xlsx_file017_doc_properties() {
     assert_eq!(wb.properties.category.as_deref(), Some("月次報告"));
 
     // 5. Undo 検証
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     s.with(|e, _| {
         let wb = e.presentation().workbook.as_deref().expect("workbook exists");
@@ -3521,6 +3563,7 @@ fn fix_xlsx_file018_custom_properties() {
     });
 
     // 6. Undo 検証（削除が元に戻り、2件に戻る）
+    close_modal_panel(&mut s);
     s.key("cmd-z");
     s.with(|e, _| {
         let wb = e.presentation().workbook.as_deref().expect("workbook exists");
@@ -5513,13 +5556,21 @@ fn fix23_pptx_thumbnail_scroll_and_sections() {
     s.menu("pptx.section.add");
     s.key("cmd-a");
     s.type_text("第1部");
-    s.menu("pptx.section.apply");
+    {
+        let _probe = crate::shell::scenario::button_probe::Probe::new();
+        s.update(|_, _, cx| cx.notify());
+        crate::shell::scenario::button_probe::click(&mut s, "pptx-section-apply");
+    }
 
     s.page(7);
     s.menu("pptx.section.add");
     s.key("cmd-a");
     s.type_text("第2部");
-    s.menu("pptx.section.apply");
+    {
+        let _probe = crate::shell::scenario::button_probe::Probe::new();
+        s.update(|_, _, cx| cx.notify());
+        crate::shell::scenario::button_probe::click(&mut s, "pptx-section-apply");
+    }
 
     let pres = s.with(|e, _| e.presentation().clone());
     assert_eq!(pres.sections.len(), 2);
@@ -6065,7 +6116,7 @@ fn fix77_save_as_opendocument() {
     }
 }
 
-/// todo-fix #76: スクロール バーを常に表示 is off at first; on, every window's scrollbars are always shown, and it is kept.
+/// todo-fix #76: スクロール バーを常に表示 is on at first; on, every window's scrollbars are always shown, and it is kept.
 fn fix76_scrollbars_always() {
     use gpui_kit::component::scroll::ScrollbarMode;
     use gpui_kit::component::theme::Theme;
@@ -6075,8 +6126,8 @@ fn fix76_scrollbars_always() {
     unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
     let mut s = Scenario::open("test/editing/docx-report.docx");
     let mode = |s: &mut Scenario| s.update(|_, _, cx| Theme::global(cx).scrollbar_mode);
-    assert!(!crate::shell::settings_window::scrollbars_always(), "off by default");
-    assert_eq!(mode(&mut s), ScrollbarMode::Hover);
+    assert!(crate::shell::settings_window::scrollbars_always(), "on by default");
+    assert_eq!(mode(&mut s), ScrollbarMode::Always);
     s.menu("tools.settings");
     s.screenshot("settings");
     crate::shell::settings::set(crate::shell::settings_window::SCROLLBARS_ALWAYS_KEY, "1");
@@ -6211,6 +6262,90 @@ fn issue27_make_edit(s: &mut Scenario, kind: ibis_pptx::Kind) {
             let frame = ibis_doc_model::EmuRect::new(0, 0, 914_400, 914_400);
             e.execute(vec![ibis_doc_model::Command::InsertShape { slide, index: 0, shape: ibis_doc_model::Shape::text_box(id, frame, "a") }], cx);
         }),
+    }
+}
+
+/// Click the actual client-drawn cross, not Scenario::press_close_button's
+/// simulated native close callback. This catches a direct remove_window bypass.
+fn click_client_close(s: &mut Scenario) {
+    let at = s.update(|_, window, _| (f32::from(window.viewport_size().width) - 23.0, 18.0));
+    s.click(at);
+}
+
+fn client_close_button_click_asks_to_save() {
+    let _controls = crate::shell::chrome::scenario_client_window_controls();
+    for compact in [false, true] {
+        for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+            let setup = |s: &mut Scenario| {
+                s.size(1280.0, 800.0);
+                s.update(|e, _, cx| {
+                    e.chrome_compact = compact;
+                    e.show_menu_bar = true;
+                    cx.notify();
+                });
+                s.quit_with_last_window();
+            };
+            let mut s = issue27_new(kind);
+            setup(&mut s);
+            click_client_close(&mut s);
+            assert_eq!(s.window_count(), 0, "{kind:?}, compact={compact}: clean cross closes immediately");
+            assert!(s.quit_requested());
+            drop(s);
+
+            let mut s = issue27_new(kind);
+            setup(&mut s);
+            issue27_make_edit(&mut s, kind);
+            assert!(s.with(|e, _| e.is_dirty()));
+            click_client_close(&mut s);
+            assert_eq!(s.window_count(), 1, "{kind:?}, compact={compact}: cross preserves unsaved work");
+            assert!(s.with(|e, _| e.save_confirm_dialog_open && e.close_window_after_confirm));
+            assert!(!s.quit_requested());
+            s.update(|e, _, cx| e.close_save_confirm_dialog(cx));
+            assert!(s.with(|e, _| e.is_dirty() && !e.save_confirm_dialog_open));
+            assert_eq!(s.window_count(), 1, "Cancel keeps the document open");
+            click_client_close(&mut s);
+            assert!(s.with(|e, _| e.save_confirm_dialog_open));
+            s.update(|e, window, cx| e.confirm_discard_and_close(window, cx));
+            assert_eq!(s.window_count(), 0, "{kind:?}, compact={compact}: Discard closes the window");
+            assert!(s.quit_requested());
+        }
+    }
+}
+
+fn client_close_button_click_saves_then_closes() {
+    let _controls = crate::shell::chrome::scenario_client_window_controls();
+    for (kind, extension) in [
+        (ibis_pptx::Kind::Document, "docx"),
+        (ibis_pptx::Kind::Workbook, "xlsx"),
+        (ibis_pptx::Kind::Presentation, "pptx"),
+    ] {
+        let mut s = issue27_new(kind);
+        s.size(1280.0, 800.0);
+        s.quit_with_last_window();
+        let path = s.save_as(&format!("client-close.{extension}"));
+        issue27_make_edit(&mut s, kind);
+        click_client_close(&mut s);
+        assert_eq!(s.window_count(), 1);
+        assert!(s.with(|e, _| e.save_confirm_dialog_open));
+        s.update(|e, window, cx| e.confirm_save_and_close(window, cx));
+        assert_eq!(s.window_count(), 0, "{kind:?}: Save finishes the requested close");
+        assert!(s.quit_requested());
+        let saved = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+        match kind {
+            ibis_pptx::Kind::Workbook => {
+                let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&saved.slides[0]).unwrap();
+                assert_eq!(sheet.cell(0, 0).map(|c| c.value.clone()), Some(ibis_doc_model::CellValue::Text("a".into())), "pending typed cell was saved");
+            }
+            ibis_pptx::Kind::Document => {
+                assert!(saved.flow.as_ref().unwrap().body.iter().any(|block| match block {
+                    ibis_doc_model::Block::Paragraph(p) => p.runs.iter().any(|r| matches!(&r.kind, ibis_doc_model::FlowRunKind::Text(text) if text.contains('a'))),
+                    _ => false,
+                }), "document typing was saved");
+            }
+            ibis_pptx::Kind::Presentation => {
+                assert!(saved.slides.iter().flat_map(|slide| &slide.shapes).any(|shape| shape.text_body().is_some_and(|body| body.paragraphs.iter().flat_map(|p| &p.runs).any(|run| run.text.contains('a')))), "inserted text was saved");
+            }
+        }
     }
 }
 
@@ -7479,8 +7614,10 @@ fn fix_textbox_32_copy_cut_paste_and_select_all_across_docx_xlsx_pptx() {
 /// #97: Long menu scrollbar is visible as soon as the menu opens, and its track
 /// reaches the very top when ▲ is hidden (`start == 0`) and the very bottom when ▼ is hidden.
 fn fix97_menu_scrollbar_visible_and_flush_to_edges() {
+    let _probe = crate::shell::scenario::button_probe::Probe::new();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.click((133.0, 50.0));
+    let edit = menu_button_at(&mut s, "edit");
+    s.click(edit);
     assert_eq!(open_index(&mut s), Some(1));
     assert_eq!(menu_start(&mut s), 0, "starts at top of Edit menu");
     s.screenshot("fix97-menu-top");
@@ -7769,6 +7906,8 @@ fn fix105_106_107_xlsx_side_panels_layout_and_controls() {
     });
     assert!(has_ok && has_link && !has_cancel, "Paste Special has OK and Paste Link, and no Cancel button");
 
+    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+
     // #105a: Custom Views panel — add, select, apply, and delete a custom view.
     s.menu("xlsx.custom-views");
     s.settle();
@@ -7800,6 +7939,8 @@ fn fix105_106_107_xlsx_side_panels_layout_and_controls() {
         "custom view deleted"
     );
 
+    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+
     // #105b: Goto Special panel — radio rows and "選択" button without redundant "閉じる" button.
     s.menu("xlsx.goto-special");
     s.settle();
@@ -7810,6 +7951,8 @@ fn fix105_106_107_xlsx_side_panels_layout_and_controls() {
     assert!(gs_apply && !gs_close, "Goto Special has '選択' button and no redundant '閉じる' button");
     s.update(|e, _, cx| e.apply_goto_special(cx));
     s.settle();
+
+    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
 
     // #106: Arrange Windows panel — radio rows, checkbox, and "実行" button without redundant Cancel button.
     s.menu("xlsx.arrange-all");
@@ -8294,10 +8437,10 @@ fn fix120_toolbar_font_size_pulldown_and_direct_input() {
         s.key("cmd-a");
         s.update(|e, window, cx| e.set_toolbar_font_size(24.0, window, cx));
         s.settle();
-        assert_eq!(s.with(|e, _| e.current_format().and_then(|(f, _)| f.size)), Some(48), "docx 24pt = 48 half-points");
+        assert_eq!(s.with(|e, _| e.current_format().and_then(|(f, _)| f.size)), Some(2400), "docx 24pt = 2400 hundredths of a point");
         s.update(|e, window, cx| e.set_toolbar_font_size(10.5, window, cx));
         s.settle();
-        assert_eq!(s.with(|e, _| e.current_format().and_then(|(f, _)| f.size)), Some(21), "docx 10.5pt = 21 half-points");
+        assert_eq!(s.with(|e, _| e.current_format().and_then(|(f, _)| f.size)), Some(1050), "docx 10.5pt = 1050 hundredths of a point");
     }
     // 2. xlsx
     {
@@ -9644,7 +9787,7 @@ fn fix152_156_xlsx_shape_underline_and_multi_shape_text_format() {
     }
 }
 
-/// #127 / #149: Toolbar font and font-size combo `clearable_text_field` filter, `✕` reset,
+/// #127 / #149: Toolbar font and font-size combo `text_field` filter, `✕` reset,
 /// and keyboard navigation (`↑`, `↓`, `PageUp`, `PageDown`, `Enter`, `Escape`).
 fn fix127_149_toolbar_font_and_font_size_combo_filter_reset_and_keys() {
     use crate::shell::chrome::{
@@ -9722,9 +9865,13 @@ fn fix127_149_toolbar_font_and_font_size_combo_filter_reset_and_keys() {
         "clearing font_size_input restores all font size candidates"
     );
 
-    // Enter "16" in font_size_input and press Enter to apply 16pt (`1600` hundredths) and close.
+    // The size is typed in the toolbar's own field (`font_size_edit_input`); Enter applies it (16pt = `1600` hundredths).
+    // The pulldown (`font_size_input` is its filter) is closed first, as it is when the user goes back to the field.
     s.update(|e, window, cx| {
-        e.font_size_input.update(cx, |input, cx| {
+        e.font_size_menu_open = false;
+        e.font_size_filtering = false;
+        set_current_toolbar_open(false, None);
+        e.font_size_edit_input.update(cx, |input, cx| {
             input.focus(window, cx);
             input.replace_all("16", window, cx);
         });
@@ -9735,13 +9882,13 @@ fn fix127_149_toolbar_font_and_font_size_combo_filter_reset_and_keys() {
     assert_eq!(
         s.with(|e, _| (e.font_size_menu_open, e.font_size_filtering)),
         (false, false),
-        "Enter in font_size_input closes font_size_menu_open"
+        "Enter in font_size_edit_input leaves the pulldown closed"
     );
     s.click_cell("B2");
     assert_eq!(
         s.with(|e, _| e.current_style().font_size),
         1600,
-        "Enter in font_size_input applied 16pt (1600 hundredths) to B2"
+        "Enter in font_size_edit_input applied 16pt (1600 hundredths) to B2"
     );
 
     // --- 2. Font combo (`"font"` searchable dropdown) ---
@@ -9894,13 +10041,15 @@ fn fix136_long_submenu_scrollbar_arrows_and_click_occlusion() {
     // 2. Open a long menu (`編集` in xlsx at (133.0, 50.0)) and verify that:
     //    - clicking the ▼ scroll arrow row scrolls the menu (`menu_start > 0`)
     //    - clicking inside the open menu area or scroll arrow does NOT click through to select the worksheet cell behind it!
+    let _probe = crate::shell::scenario::button_probe::Probe::new();
     let mut sx = Scenario::open("test/editing/xlsx-sales.xlsx");
     sx.click_cell("F10");
     sx.settle();
     let cell_before = sx.with(|e, _| e.current_cell());
     assert_eq!(cell_before, Some((5, 9)), "selected F10 (col=5, row=9) before opening menu");
 
-    sx.click((133.0, 50.0));
+    let edit = menu_button_at(&mut sx, "edit");
+    sx.click(edit);
     sx.settle();
     assert_eq!(open_index(&mut sx), Some(1), "Edit menu is open");
     assert_eq!(menu_start(&mut sx), 0);
@@ -9917,7 +10066,7 @@ fn fix136_long_submenu_scrollbar_arrows_and_click_occlusion() {
     );
 }
 
-/// #150 / #151: Right-pane `clearable_text_field` inputs, vertical alignment of input/unit columns
+/// #150 / #151: Right-pane `text_field` inputs, vertical alignment of input/unit columns
 /// in `doc_page_setup_panel`, and sticky bottom footer (`OK` button stays visible outside scroll).
 fn fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer() {
     use gpui_kit::{point, px};
@@ -9961,24 +10110,27 @@ fn fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer() {
         (collected, f32::from(apply_b.origin.y), f32::from(f0_b.origin.y))
     });
 
-    // Every input box in `doc_page_setup_panel` must have width 96px and the exact same left X coordinate (`origin.x`),
+    // Every input box in `doc_page_setup_panel` must have the same width and the exact same left X coordinate (`origin.x`),
     // ensuring vertical alignment across margins (mm), document grid (行/pt/字), start page, paper size (mm), and header/footer (mm).
     let expected_x = field_bounds[0].1;
+    // Each row's mark covers the standard field (`FIELD_WIDTH`) with its spinner, the gap (8px) and the unit (72px).
+    let field_width = f32::from(crate::shell::chrome::FIELD_WIDTH);
+    let expected_w = field_width + 8.0 + 72.0;
     for (k, x, w) in &field_bounds {
         assert!(
             (*x - expected_x).abs() <= 0.5,
             "input {k} left edge x={x} must align with field-0 x={expected_x}"
         );
         assert!(
-            (*w - 96.0).abs() <= 0.5,
-            "input {k} width w={w} must be 96px"
+            (*w - expected_w).abs() <= 0.5,
+            "input {k} width w={w} must be {expected_w}px (the standard field {field_width}px + the gap and the unit's 72px)"
         );
     }
 
     // 2. Scroll the right-pane body down (`sidebar_scroll`) and verify that `field-0` scrolls up
     // while the sticky footer `apply` ("OK") button stays fixed at the exact same bottom Y coordinate!
     s.update(|e, _, cx| {
-        e.sidebar_scroll.set_offset(point(px(0.0), px(-120.0)));
+        e.panel_dialog.scroll.set_offset(point(px(0.0), px(-120.0)));
         cx.notify();
     });
     s.settle();
@@ -10022,4 +10174,63 @@ fn fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer() {
         (top_emu as f64 / 36_000.0).round() as i64
     });
     assert_eq!(top_mm, 30, "clicking sticky footer OK button applies 30mm top margin");
+}
+
+
+/// Shared radio groups wrap between whole buttons in Flow and put one option per row in Column.
+fn shared_radio_group_layouts() {
+    let center = |b: gpui_kit::Bounds<gpui_kit::Pixels>| (
+        f32::from(b.origin.x + b.size.width / 2.),
+        f32::from(b.origin.y + b.size.height / 2.),
+    );
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    s.update(|e, w, cx| e.open_page_setup_panel(w, cx));
+    s.settle();
+    s.update(|e, _, cx| {
+        e.panel_dialog.bounds.as_mut().unwrap().size.width = gpui_kit::px(320.);
+        cx.notify();
+    });
+    s.settle();
+    let (across, vertical, pages) = s.with(|e, _| {
+        let p = e.doc_state().unwrap().helper.page_setup.as_ref().unwrap();
+        let ui = p.ui.borrow();
+        (ui["direction-across"], ui["direction-vertical"],
+         ["page-normal", "page-mirror", "page-book-fold", "page-reverse-book-fold", "page-two-on-one"]
+            .map(|key| ui[key]))
+    });
+    assert_eq!(across.origin.y, vertical.origin.y, "short options share a flow row");
+    assert!(vertical.origin.x >= across.origin.x + across.size.width, "flow options do not overlap");
+    assert!(pages.iter().any(|b| b.origin.y > pages[0].origin.y), "the page options wrap to another row");
+    for b in pages {
+        assert_eq!(b.size.height, across.size.height, "a radio label never wraps inside its button");
+    }
+    // Bring the direction group into the viewport, then exercise the real shared button's handler.
+    s.update(|e, _, cx| {
+        e.panel_dialog.scroll.set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-300.)));
+        cx.notify();
+    });
+    s.settle();
+    let target = s.with(|e, _| e.doc_state().unwrap().helper.page_setup.as_ref().unwrap().ui.borrow()["direction-vertical"]);
+    s.click(center(target));
+    s.settle();
+    assert!(s.with(|e, _| e.doc_state().unwrap().helper.page_setup.as_ref().unwrap().vertical));
+    s.screenshot("radio-flow");
+    drop(s);
+
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.menu("xlsx.goto-special");
+    s.settle();
+    let rows = s.with(|e, _| {
+        let ui = e.wb().panels.goto_special.as_ref().unwrap().ui.borrow();
+        ["comments", "constants", "formulas", "blanks"].map(|key| ui[key])
+    });
+    for pair in rows.windows(2) {
+        assert_eq!(pair[0].origin.x, pair[1].origin.x, "column options align on the left");
+        assert!(pair[1].origin.y >= pair[0].origin.y + pair[0].size.height, "one option per row");
+    }
+    s.click(center(rows[1]));
+    s.settle();
+    assert!(s.with(|e, _| e.wb().panels.goto_special.as_ref().unwrap().ui.borrow().contains_key("numbers")),
+        "clicking Constants displays its type choices");
+    s.screenshot("radio-column");
 }

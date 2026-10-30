@@ -395,7 +395,7 @@ impl SlideEditor {
     fn header_footer_inputs(&self, index: usize, width: f32, margin_top: f32, margin_bottom: f32) -> Vec<AnyElement> {
         use crate::xlsx::header_footer_edit::HfTarget;
         use gpui_kit::component::input::Input;
-        let Some(panel) = self.sheet_state().and_then(|s| s.header_footer_edit.as_ref()).filter(|p| p.inline_page == Some(index)) else { return Vec::new() };
+        let Some(panel) = self.sheet_state().and_then(|s| s.header_footer_edit.as_ref()).filter(|p| p.inline_page == Some(index) && self.sidebar_open) else { return Vec::new() };
         let header = panel.target == HfTarget::Header;
         let height = if header { margin_top } else { margin_bottom }.clamp(24.0, 60.0);
         let third = (width - 24.0) / 3.0;

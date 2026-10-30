@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::slicer::{Slicer, SlicerSource};
@@ -66,7 +66,7 @@ impl SlideEditor {
         }
         panel.checked = vec![false; panel.fields.len()];
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.slicer_insert = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -136,9 +136,16 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
         if !p.fields.is_empty() {
-            body = body.child(div().text_size(px(13.)).child(text("xlsx.slicer-insert.choose-fields")));
+            body = body.child(div().text_sm().child(text("xlsx.slicer-insert.choose-fields")));
         }
         for (i, field) in p.fields.iter().enumerate() {
             body = body.child(mark(
@@ -160,21 +167,11 @@ impl SlideEditor {
             ));
         }
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+            body = body.children(crate::shell::chrome::panel_message(&p.message));
         }
-        body = body.child(mark("apply", Button::new("slicer-insert-ok").primary().small().label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_slicer_insert_panel(cx))).into_any_element()));
-        body = body.child(mark(
-            "close",
-            Button::new("slicer-insert-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.slicer_insert = None;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        Some(SidebarPanel { title: text("xlsx.slicer-insert.title"), body: body.into_any_element() })
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("slicer-insert-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_slicer_insert_panel(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("xlsx.slicer-insert.title"), body.into_any_element(), panel_terminal_actions))
     }
 }
 

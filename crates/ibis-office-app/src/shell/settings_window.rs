@@ -109,12 +109,12 @@ pub(crate) fn links_warning_enabled() -> bool {
     crate::shell::settings::get(LINKS_WARNING_KEY).as_deref() != Some("0")
 }
 
-/// The key of スクロール バーを常に表示: on when `1` (off by default: the scrollbars show while scrolling or when the pointer is over one).
+/// The key of スクロール バーを常に表示: on when `1` (on by default; an explicitly saved 0 still means hover).
 pub(crate) const SCROLLBARS_ALWAYS_KEY: &str = "view.scrollbars-always";
 
 /// Whether the scrollbars of the windows are always shown.
 pub(crate) fn scrollbars_always() -> bool {
-    crate::shell::settings::get(SCROLLBARS_ALWAYS_KEY).as_deref() == Some("1")
+    crate::shell::settings::get(SCROLLBARS_ALWAYS_KEY).as_deref() != Some("0")
 }
 
 /// The scrollbars' mode of every window as the setting says (at start, and when it is changed).
@@ -144,11 +144,9 @@ impl SettingsWindow {
             .gap_3()
             .items_center()
             .child(div().w(px(80.)).child(i18n::text("settings.language")))
-            .child(Button::new("settings-language").small().label(choice_label(current)).dropdown_menu(move |menu, _, _| {
-                choices.iter().fold(menu, |menu, &choice| {
-                    menu.item(PopupMenuItem::new(choice_label(choice)).checked(choice == current).on_click(move |_, _, cx| choose_language(choice, cx)))
-                })
-            }));
+            .child(crate::shell::chrome::Dropdown::application("settings-language",choice_label(current),
+                choices.into_iter().map(|choice|crate::shell::chrome::DropdownItem::new(choice_label(choice)).checked(choice==current)
+                    .on_app_select(move|_,cx|choose_language(choice,cx))).collect()));
         let detail = v_flex().gap_3().child(language).child(div().text_sm().text_color(theme.muted_foreground).child(i18n::text("settings.language.note")));
         // スクロール バーを常に表示.
         let detail = detail.child(div().mt_3().child(Checkbox::new("settings-scrollbars-always").label(i18n::text("settings.view.scrollbars-always")).checked(scrollbars_always()).on_click(cx.listener(|_, checked: &bool, _, cx| {
@@ -332,7 +330,7 @@ impl SettingsWindow {
         }
 
         let e_reset = entity.clone();
-        let reset_btn = Button::new("settings-qat-reset")
+        let reset_btn = crate::shell::chrome::action_button("settings-qat-reset")
             .small()
             .label(i18n::text("settings.qat.reset"))
             .on_click(move |_, _, cx| {

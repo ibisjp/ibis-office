@@ -21,3 +21,5 @@ pub(crate) mod table_view;
 pub(crate) mod web_image;
 
 pub(crate) use shape_view::ColorMode;
+
+pub(crate) mod vertical_text;

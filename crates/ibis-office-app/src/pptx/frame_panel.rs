@@ -5,8 +5,8 @@
 //! typed as numbers (cm, % and degrees), as PowerPoint's 図形の書式設定 >
 //! サイズとプロパティ. The place is the frame's top-left corner from the
 //! slide's, before rotation, as PowerPoint shows it.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -69,7 +69,7 @@ fn scale(value: &str) -> Option<f64> {
     (s.is_finite() && s > 0.0 && s <= 10_000.0).then_some(s)
 }
 
-fn cm(emu: i64) -> String {
+pub(super) fn cm(emu: i64) -> String {
     let v = format!("{:.2}", emu as f64 / 360_000.);
     v.trim_end_matches('0').trim_end_matches('.').to_string()
 }
@@ -388,28 +388,30 @@ impl SlideEditor {
         ];
         for (label, idx) in labels {
             if let Some(field) = fields.get(idx) {
-                body = body.child(div().text_size(px(13.)).child(crate::shell::i18n::text(label))).child(Input::new(field).small().cleanable(true));
+                // Size and position (cm), scale (%), rotation (degrees); applied with 適用, so ▲▼ only change the field.
+                use crate::shell::chrome::SpinnerSpec;
+                let spec = match idx {
+                    0 | 1 => SpinnerSpec::new(0.1).min(0.0),
+                    5 | 6 => SpinnerSpec::new(1.0).min(1.0),
+                    2 => SpinnerSpec::new(1.0).range(-360.0, 360.0),
+                    _ => SpinnerSpec::new(0.1),
+                };
+                let unit = match idx { 2 => "°", 5 | 6 => "%", _ => "cm" };
+                body = body.child(crate::shell::chrome::text_field_row(crate::shell::i18n::text(label), crate::shell::chrome::text_field(field).unit(unit, px(24.)).spinner(format!("pptx-frame-field-{idx}"), spec, cx, |_, _, _, _| {})));
             }
         }
         body = body.child(
-            Button::new("pptx-frame-lock")
-                .small()
-                .when(!locked, |b| b.ghost())
-                .label(format!("{} {}", if locked { "☑" } else { "☐" }, crate::shell::i18n::text("pptx.frame-panel.lock-aspect-ratio")))
-                .on_click(cx.listener(|e, _, _, cx| {
+            crate::shell::chrome::checkbox_button("pptx-frame-lock", crate::shell::i18n::text("pptx.frame-panel.lock-aspect-ratio"), locked, false, cx.listener(|e, _, _, cx| {
                     e.toggle_frame_panel_lock(cx);
                 })),
         );
         if let Some(error) = error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error));
+            body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));
         }
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("pptx-frame-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_frame_panel(w, cx))))
-                .child(Button::new("pptx-frame-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_frame_panel(w, cx)))),
-        );
-        Some(SidebarPanel { title: crate::shell::i18n::text("pptx.frame-panel.size-position"), body: body.into_any_element() })
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-frame-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_frame_panel(w, cx))))
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-frame-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_frame_panel(w, cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("pptx.frame-panel.size-position"), body.into_any_element(), panel_actions))
     }
 }
 

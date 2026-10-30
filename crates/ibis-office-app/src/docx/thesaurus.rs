@@ -11,7 +11,7 @@
 //! - 日英の豊富なビジネス・学術・日常語彙を内包（クリーンルーム実装）
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -456,6 +456,7 @@ pub(crate) struct ThesaurusState {
 impl SlideEditor {
     /// 校閲 > 類義語辞典 (Shift+F7 / docx.review.thesaurus) を開く
     pub(crate) fn open_thesaurus_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         self.end_text_edit(window, cx);
 
         // 1. 選択中のテキストがあるか調べる
@@ -693,8 +694,8 @@ impl SlideEditor {
                     .items_center()
                     .gap_2()
                     .child(
-                        Button::new("thesaurus-back")
-                            .ghost()
+                        crate::shell::chrome::action_button("thesaurus-back")
+
                             .xsmall()
                             .disabled(!can_back)
                             .label("←")
@@ -710,8 +711,7 @@ impl SlideEditor {
                     ),
             )
             .child(
-                Button::new("thesaurus-close")
-                    .ghost()
+                crate::shell::chrome::action_button("thesaurus-close")
                     .xsmall()
                     .label("✕")
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -724,10 +724,9 @@ impl SlideEditor {
             .gap_2()
             .items_center()
             .pt(px(8.))
-            .child(div().flex_1().child(Input::new(&query_input)))
+            .child(div().flex_1().child(crate::shell::chrome::text_field(&query_input).full_width()))
             .child(
-                Button::new("thesaurus-search-btn")
-                    .primary()
+                crate::shell::chrome::primary_button("thesaurus-search-btn")
                     .small()
                     .label(text("docx.thesaurus.search-btn"))
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -748,7 +747,7 @@ impl SlideEditor {
                 .rounded_sm()
                 .bg(rgb(0xe6f4ea))
                 .text_color(rgb(0x137333))
-                .text_size(px(11.))
+                .text_sm()
                 .child(m)
         });
 
@@ -763,13 +762,13 @@ impl SlideEditor {
                 .py(px(4.))
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(format!("「{}」", res.query)), // i18n-ok（類語辞書のデータ）
                 )
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_sm()
                         .text_color(rgb(0x666666))
                         .child(format!("{groups_len} 分類 / {total_words} 語")), // i18n-ok（類語辞書のデータ）
                 );
@@ -786,7 +785,7 @@ impl SlideEditor {
                     .child(group.category);
 
                 let meaning_text = div()
-                    .text_size(px(11.))
+                    .text_sm()
                     .text_color(rgb(0x555555))
                     .child(group.meaning);
 
@@ -805,8 +804,8 @@ impl SlideEditor {
                         .rounded_sm()
                         .hover(|s| s.bg(rgb(0xf1f3f4)))
                         .child(
-                            Button::new(("thesaurus-w", item_id))
-                                .ghost()
+                            crate::shell::chrome::action_button(("thesaurus-w", item_id))
+
                                 .small()
                                 .label(word)
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -818,8 +817,8 @@ impl SlideEditor {
                                 .gap_1()
                                 .items_center()
                                 .child(
-                                    Button::new(("thesaurus-ins", item_id))
-                                        .ghost()
+                                    crate::shell::chrome::action_button(("thesaurus-ins", item_id))
+
                                         .xsmall()
                                         .tooltip(text("docx.thesaurus.insert-tooltip"))
                                         .label(text("docx.thesaurus.insert"))
@@ -828,8 +827,8 @@ impl SlideEditor {
                                         })),
                                 )
                                 .child(
-                                    Button::new(("thesaurus-copy", item_id))
-                                        .ghost()
+                                    crate::shell::chrome::action_button(("thesaurus-copy", item_id))
+
                                         .xsmall()
                                         .tooltip(text("docx.thesaurus.copy-tooltip"))
                                         .label("📋")
@@ -838,8 +837,8 @@ impl SlideEditor {
                                         })),
                                 )
                                 .child(
-                                    Button::new(("thesaurus-lookup", item_id))
-                                        .ghost()
+                                    crate::shell::chrome::action_button(("thesaurus-lookup", item_id))
+
                                         .xsmall()
                                         .tooltip(text("docx.thesaurus.lookup-tooltip"))
                                         .label("🔍")
@@ -882,7 +881,7 @@ impl SlideEditor {
                 .items_center()
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_sm()
                         .text_color(rgb(0x777777))
                         .child(crate::shell::i18n::format(
                             "docx.thesaurus.no-results",
@@ -891,7 +890,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_size(px(11.))
+                        .text_sm()
                         .text_color(rgb(0x999999))
                         .child(text("docx.thesaurus.hint")),
                 )
@@ -903,7 +902,7 @@ impl SlideEditor {
                 .items_center()
                 .child(
                     div()
-                        .text_size(px(12.))
+                        .text_sm()
                         .text_color(rgb(0x777777))
                         .child(text("docx.thesaurus.empty-prompt")),
                 )
@@ -913,7 +912,7 @@ impl SlideEditor {
         let view = v_flex()
             .p(px(12.))
             .gap_2()
-            .child(header)
+            .p_0().child(header)
             .child(search_bar)
             .children(msg_view)
             .child(

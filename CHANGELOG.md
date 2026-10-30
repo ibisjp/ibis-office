@@ -5,6 +5,71 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-10-30
+
+### Added
+
+#### All apps
+
+- Recent files: a "..." button appears at the right of a row on hover (or right-click the row) with "Remove from list". Only the history entry is removed, never the file (#61).
+- A new file is added to the recent files list as soon as it is saved for the first time (#61).
+- The menu bar shows the ibisOffice logo at its left; clicking it opens the Start window. It is hidden when the window is too narrow.
+- Number fields in the right-pane panels have up/down arrows that step the value and keep its unit (cm, pt, %, and so on), for example paragraph spacing and indents, picture and shape size, rotation and position, table row height and column width, page setup, durations and the chart's gap, overlap and 3-D rotation. Text fields share one look, one width and a clear (x) button.
+- A color picker dialog (hue wheel) opens from "More Colors..." at the end of every color palette and from the color code fields.
+- The caret blinks the same way in cells, text, shapes and the formula bar.
+- A shape or text box with text is edited with a single click, also right after it is inserted; dragging several selected shapes keeps the selection, and the rotation and square handles follow the shape's angle.
+
+#### Documents (.docx)
+
+- Fit Text (distribute characters evenly): a dialog sets the width per character with OK, Cancel and remove; the target shows a light-blue underline at the caret; the setting is saved, reloaded and undone (#53).
+
+#### Spreadsheets (.xlsx)
+
+- Data validation lists: the choices narrow as you type, Enter confirms, and a rejected entry is cleared with the error shown in a dialog (#33).
+- Ctrl+: enters the current time (#34).
+- F4 repeats the last action (formatting, inserting rows and so on) on the current selection, also when several formats were applied together (#35).
+- Formula entry: function name completion, picking references with the arrow keys (also with Shift and Cmd/Ctrl+Shift), seven reference colors, an animated dashed outline, dragging the corners of a reference, automatic closing parentheses, and Enter, Tab and Esc (#52).
+- Long formulas wrap in the cell and in the formula bar. In the formula bar, Up/Down move by display line (or by one page of width in a single line), Home/End go to the start/end of the line, Ctrl/Cmd+Home/End go to the start/end of the whole formula, and Ctrl/Cmd+Shift+Left/Right select by word (#65).
+- A typed value that starts with a sign (for example `+1+2`) is read as a formula, while negative numbers and percentages stay numbers and a leading apostrophe stays text (#52).
+- Entering a number widens a column that was not sized by hand so the number fits (a column is never narrowed, and an automatic width is not saved, as in Microsoft Excel) (#64).
+- Pasting shapes copied from Microsoft Office gives editable shapes with their text; copying offers the native shapes, a picture and the text (#41).
+- A cut source keeps its dashed outline while the selection moves.
+- Sort is a pane at the right instead of a dialog: levels can be copied, edited and reordered, a level can sort by cell color, font color or icon, "Use the first row as headers" replaces the on/off labels, and "Update in real time" (on by default) applies changes as you edit.
+- Header and Footer editing in Page Layout view uses a pane at the right, with the left, center and right boxes on the paper, instead of a dialog over the paper.
+- The Watch Window no longer blocks the sheet; you can keep working in the workbook while it is open.
+- The Scenario Manager has a Close button.
+- Charts: a background color field under the legend, "use the first cell as the series name", the source range is kept when it is edited, and whether the first row or column is a header is decided from the data types (#43).
+- A sheet tab that is partly hidden scrolls into view with room for its neighbours.
+
+#### Presentations (.pptx)
+
+- Video and audio: the play timing is saved (`p:cMediaNode`, `mediacall`, `togglePause`) so Microsoft PowerPoint plays the clip, volume, loop and the other settings are written where Microsoft PowerPoint reads them, and the animation is kept after editing it (#62).
+- A control bar under a selected video or audio shape in editing view: seek bar, back to start, play/pause, mute, volume and the time (#62).
+- The compatibility check reports video and audio that are linked and not embedded (#62).
+- Audio and video play on Windows, with the play position and the end of the clip; video frames are drawn in the slide (#62).
+- Ctrl+M adds a slide; Ctrl+D duplicates the selected shape, or the slide when no shape is selected (#62).
+- Pictures cropped to a custom shape are clipped to that shape (#62).
+
+#### Web version
+
+- The release now attaches the Web build for embedding: `ibisOffice-<version>-Web.zip` (the same files as the playground's `app/`), with `ibisOffice-<version>-Web.zip.sha256` (the archive's SHA-256) and `ibisOffice-<version>-Web.files.sha256` (the SHA-256 of every file in it), so you can pin a version and check what you fetched. See docs/web-embedding.md (#76).
+
+### Changed
+
+- The Start window's logo moved from the title row to above "Please support us".
+- Standard-format numbers: the minus sign is no longer counted in the 11 characters shown before switching to scientific notation (#64).
+- The Header and Footer, Sort and Watch panels no longer block the document (see Added). Dialogs that ask a question stay modal.
+
+### Fixed
+
+- All apps: dragging a scroll bar keeps hold of it when the mouse leaves the bar (#39); drop-down lists are sized by their content.
+- .docx: vertical text uses the font's vertical forms (`vert`/`vrt2`) for punctuation, brackets, quotation marks, units and symbols, and turns characters that have none by 90 degrees as Unicode (UAX #50) specifies; text being composed with an input method is drawn vertically in its color; line spacing set as a multiple of a large font size follows the multiple (#54, #60).
+- .xlsx: Filter on a sheet of about 40,000 rows no longer freezes (#37, #49); changing a spill of a million cells no longer hangs, and `SEQUENCE` checks its size limits before allocating (#44); `TAKE` and `IF` keep the reference they return, and `TAKE` evaluates its input once (#45, #50); `LAMBDA` accepts an optional last parameter such as `[b]` (#46); Trace Precedents arrows no longer remain on other sheets (#42); headers and cells stay aligned far from the origin when zoomed (#47); furigana rows keep room for the text and can be edited again (#40); editing a cell range keeps the data validation rules outside it; renaming a sheet by double-click needs both clicks on the same tab, also after the tabs scrolled.
+- .pptx: text in rotated shapes with two or more lines rotates about the center of the whole shape, so lines no longer collapse or overlap at 90, 180 and 270 degrees (#48); the Zoom and Float entrance animations use the right preset numbers, and Microsoft PowerPoint's own Zoom (preset 53) is read as Zoom, not Fade (#62); a new layout drops empty placeholders it has no counterpart for and keeps filled ones (#62); the slide background is inherited from the layout and master, white when none is set, and `useBgFill` shapes take the slide background (#62); the glow of text starts at the outside edge of the glyph outline (#62); "Start from Presenter View" no longer crashes with several displays (#51).
+- Cropped pictures keep the resolution they need instead of looking blurred (#55).
+- Windows: bold and italic that DirectWrite simulates are kept in PDF export and printing (#57).
+- Shapes and charts keep their native drawing and chart editing data across saves.
+
 ## [0.8.4] - 2026-10-23
 
 ### Added
@@ -232,7 +297,8 @@ The first public release.
 - The user interface in English and Japanese.
 - Dual licensing: AGPL-3.0-only, or a commercial license from ibis inc.
 
-[Unreleased]: https://github.com/ibisjp/ibis-office/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/ibisjp/ibis-office/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/ibisjp/ibis-office/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/ibisjp/ibis-office/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/ibisjp/ibis-office/compare/v0.8.1...v0.8.3
 [0.8.1]: https://github.com/ibisjp/ibis-office/compare/v0.8.0...v0.8.1

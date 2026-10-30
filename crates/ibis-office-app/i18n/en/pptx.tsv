@@ -295,10 +295,10 @@ pptx.chrome.fill-line	Fill & Line
 pptx.chrome.slide-size	Slide Size
 pptx.crop-panel.enter-finite-numbers-left-right	Enter finite numbers; the left and right totals, and the top and bottom totals, must each be under 100%.
 pptx.crop-panel.keeps-picture-frame-negative	Keeps the picture frame. Negative values add margins.
-pptx.crop-panel.left-percent	Left (%)
-pptx.crop-panel.top-percent	Top (%)
-pptx.crop-panel.right-percent	Right (%)
-pptx.crop-panel.bottom-percent	Bottom (%)
+pptx.crop-panel.left-percent	Left
+pptx.crop-panel.top-percent	Top
+pptx.crop-panel.right-percent	Right
+pptx.crop-panel.bottom-percent	Bottom
 pptx.crop-panel.crop-picture	Crop Picture
 pptx.editing.click-drag-place-text-box	Click or drag to place a text box (Esc to cancel)
 pptx.editing.drag-place-shape-shift-square	Drag to place a shape (Shift for square/circle, Esc to cancel)
@@ -307,13 +307,13 @@ pptx.editing.group	Group
 pptx.find.match-case	✓ Match case
 pptx.find.whole-words	✓ Whole words
 pptx.frame-panel.height-width-must-0-1584	Height and width must be 0-1584 cm, position -1584 to 1584 cm, and rotation an angle in degrees.
-pptx.frame-panel.height-cm	Height (cm)
-pptx.frame-panel.width-cm	Width (cm)
-pptx.frame-panel.scale-height-percent	Scale Height (%)
-pptx.frame-panel.scale-width-percent	Scale Width (%)
-pptx.frame-panel.rotation-degrees	Rotation (°)
-pptx.frame-panel.horizontal-position-cm-top-left	Horizontal Position (cm, from top left)
-pptx.frame-panel.vertical-position-cm-top-left	Vertical Position (cm, from top left)
+pptx.frame-panel.height-cm	Height
+pptx.frame-panel.width-cm	Width
+pptx.frame-panel.scale-height-percent	Height scale
+pptx.frame-panel.scale-width-percent	Width scale
+pptx.frame-panel.rotation-degrees	Rotation
+pptx.frame-panel.horizontal-position-cm-top-left	Horizontal position
+pptx.frame-panel.vertical-position-cm-top-left	Vertical position
 pptx.frame-panel.size-position	Size & Position
 pptx.glow-panel.target-shape-has-changed-reopen	The target shape has changed. Reopen the settings.
 pptx.glow-panel.enter-radius-0-169093-20055118	Enter a radius of 0-169093.20055118 pt, a 6-digit RGB color, and an intensity of 0-100%.
@@ -382,21 +382,21 @@ pptx.insets-panel.enter-finite-number-0-more	Enter a finite number of 0 or more 
 pptx.paragraph-panel.target-text-has-changed-confirm	The target text has changed. Confirm your input and reopen the panel.
 pptx.insets-panel.enter-text-scale-1-100	Enter a text scale of 1-100%, or leave it blank to keep the current value.
 pptx.insets-panel.text-scale-cannot-changed-target	The text scale cannot be changed for this target. The settings were not applied.
-pptx.insets-panel.left-cm	Left (cm)
-pptx.insets-panel.top-cm	Top (cm)
-pptx.insets-panel.right-cm	Right (cm)
-pptx.insets-panel.bottom-cm	Bottom (cm)
-pptx.insets-panel.text-zoom-percent-blank-keep	Text Zoom (%, blank to keep)
+pptx.insets-panel.left-cm	Left
+pptx.insets-panel.top-cm	Top
+pptx.insets-panel.right-cm	Right
+pptx.insets-panel.bottom-cm	Bottom
+pptx.insets-panel.text-zoom-percent-blank-keep	Text scale
 pptx.insets-panel.internal-margins-text-zoom	Internal Margins and Text Zoom
 pptx.mod.fit-slide-window	Fit Slide to Window
 pptx.notes.click-add-notes	Click to add notes
 pptx.misc.enter-line-spacing-multiple	Enter a line spacing multiple greater than 0 (up to 10) or in pt, and spacing before/after of 0-4000 pt.
 pptx.paragraph-panel.default-line-spacing	Default Line Spacing
-pptx.paragraph-panel.exactly-pt	Exactly (pt)
-pptx.paragraph-panel.alignment-mixed-font-sizes-keep	Alignment of mixed font sizes (keep if not selected)
+pptx.paragraph-panel.exactly-pt	Exactly
+pptx.paragraph-panel.alignment-mixed-font-sizes-keep	Mixed font alignment
 pptx.paragraph-panel.line-spacing-value	Line Spacing Value
-pptx.paragraph-panel.before-pt	Before (pt)
-pptx.paragraph-panel.after-pt	After (pt)
+pptx.paragraph-panel.before-pt	Before
+pptx.paragraph-panel.after-pt	After
 pptx.paragraph-panel.start-at	Start At Number
 pptx.paragraph-panel.invalid-start-at	Start at number must be an integer between 1 and 32767
 pptx.misc.line-paragraph-spacing	Line and Paragraph Spacing
@@ -421,12 +421,12 @@ pptx.slideshow.no-notes	(No notes)
 pptx.timing-panel.enter-finite-numbers-duration-0	Enter finite numbers: duration 0-4294967.295 s, auto-advance 0-2147483.647 s.
 pptx.timing-panel.target-slide-transition-settings	The target slide or transition settings have changed. Reopen the panel.
 pptx.timing-panel.timing-deleted-slide	Timing of Deleted Slide
-pptx.timing-panel.transition-duration-s	Transition Duration (s)
+pptx.timing-panel.transition-duration-s	Transition duration
 pptx.timing-panel.mouse-click	✓ On Mouse Click
 pptx.timing-panel.mouse-click-2	On Mouse Click
 pptx.timing-panel.after	✓ After
 pptx.timing-panel.after-2	After
-pptx.timing-panel.advance-after-s	Advance After (s)
+pptx.timing-panel.advance-after-s	Advance after
 pptx.chrome.strikethrough	Strikethrough
 pptx.goto.section	Section
 pptx.chrome.add-stop	Add Stop
@@ -1140,9 +1140,9 @@ pptx.notes-page-view	Notes Page
 pptx.thumbnails-view	Thumbnails
 pptx.outline.untitled	(Untitled Slide)
 pptx.replace-fonts	Replace Fonts…
-pptx.replace-fonts.with	With:
-pptx.replace-fonts.replace	Replace with:
-pptx.replace-fonts.fonts-used-presentation	Fonts used in presentation:
+pptx.replace-fonts.with	With
+pptx.replace-fonts.replace	Replace with
+pptx.replace-fonts.fonts-used-presentation	Fonts used in presentation
 pptx.replace-fonts.replaced-fonts-n-location-s	Replaced fonts in {n} location(s)
 pptx.replace-fonts.font-replace-was-not-found	Font to replace was not found
 pptx.table-style-options	Table Style Options
@@ -1186,27 +1186,27 @@ pptx.show-settings.cancel	Cancel
 pptx.show-panel.set-up-slide-show	Set Up Slide Show
 pptx.show.type	Show type
 pptx.show-panel.presented-speaker-full-screen	● Presented by a speaker (full screen)
-pptx.show-panel.presented-speaker-full-screen-2	○ Presented by a speaker (full screen)
+pptx.show-panel.presented-speaker-full-screen-2	Presented by a speaker (full screen)
 pptx.show-panel.browsed-individual-window	● Browsed by an individual (window)
-pptx.show-panel.browsed-individual-window-2	○ Browsed by an individual (window)
+pptx.show-panel.browsed-individual-window-2	Browsed by an individual (window)
 pptx.show-panel.browsed-kiosk-full-screen	● Browsed at a kiosk (full screen)
-pptx.show-panel.browsed-kiosk-full-screen-2	○ Browsed at a kiosk (full screen)
+pptx.show-panel.browsed-kiosk-full-screen-2	Browsed at a kiosk (full screen)
 pptx.show-panel.show-slides	Show slides
 pptx.show-panel.all	● All
-pptx.show-panel.all-2	○ All
-pptx.show-panel.from	● From:
-pptx.show-panel.from-2	○ From:
-pptx.animation-ui.from	From:
-pptx.show-panel.to	To:
+pptx.show-panel.all-2	All
+pptx.show-panel.from	● From
+pptx.show-panel.from-2	From
+pptx.animation-ui.from	From
+pptx.show-panel.to	To
 pptx.show-panel.show-options	Show options
 pptx.show-panel.loop-continuously-until-esc	☑ Loop continuously until 'Esc'
-pptx.show-panel.loop-continuously-until-esc-2	☐ Loop continuously until 'Esc'
+pptx.show-panel.loop-continuously-until-esc-2	Loop continuously until 'Esc'
 pptx.show-panel.show-without-animation	☑ Show without animation
-pptx.show-panel.show-without-animation-2	☐ Show without animation
+pptx.show-panel.show-without-animation-2	Show without animation
 pptx.show-panel.show-without-narration	☑ Show without narration
-pptx.show-panel.show-without-narration-2	☐ Show without narration
+pptx.show-panel.show-without-narration-2	Show without narration
 pptx.show-panel.use-timings	☑ Use timings
-pptx.show-panel.use-timings-2	☐ Use timings
+pptx.show-panel.use-timings-2	Use timings
 pptx.show-panel.please-enter-valid-slide-number	Please enter a valid slide number (1 or greater)
 pptx.misc.pause	Pause
 pptx.slideshow.reset	Reset
@@ -1367,6 +1367,14 @@ pptx.chrome.table-styles	Table Styles
 pptx.chrome.table-style-options	Table Style Options
 pptx.clip.playback	Playback
 pptx.clip.play	Play/Pause
+pptx.clip.bar.play	Play
+pptx.clip.bar.pause	Pause
+pptx.clip.bar.seek	Seek
+pptx.clip.bar.back	Back to Start
+pptx.clip.bar.mute	Mute
+pptx.clip.bar.unmute	Unmute
+pptx.clip.bar.volume	Volume
+pptx.clip.bar.time	{current} / {total}
 pptx.clip.start	Start
 pptx.clip.start.on-click	On Click
 pptx.clip.start.auto	Automatically
@@ -1527,8 +1535,8 @@ pptx.compat.no-issues	No compatibility issues found.
 pptx.compat.clean-desc	This presentation is fully compatible with earlier versions of PowerPoint.
 pptx.compat.significant-loss	Significant loss of functionality
 pptx.compat.minor-loss	Minor loss of fidelity
-pptx.compat.media-title	Embedded Media (Video/Audio)
-pptx.compat.media-desc	Media will not play in earlier versions of PowerPoint and may appear as a static placeholder.
+pptx.compat.media-title	Linked Media (Video/Audio)
+pptx.compat.media-desc	Media will not play on a computer that does not have the linked file. Embed it to carry it with the presentation.
 pptx.compat.svg-title	SVG Graphic
 pptx.compat.svg-desc	SVG images are not supported in PowerPoint 2016 and earlier and will be converted to raster images or lost.
 pptx.compat.advanced-chart-title	Modern Chart Type
@@ -1677,7 +1685,7 @@ pptx.notes-format.notes-could-not-saved-error	The notes could not be saved: {err
 pptx.notes-format.notes-formatting-closed-undo	Notes formatting closed (the undo history was cleared)
 pptx.notes-format.select-notes-text-set-bold	Select the notes text and set bold, color, size, bullets and more as you do for slide text.
 pptx.notes-format.notes-formatting	Notes Formatting
-pptx.notes-format.close-notes-formatting	Close Notes Formatting
+pptx.notes-format.close-notes-formatting	Exit formatting mode
 pptx.notes.edit-notes-formatting	Edit Notes Formatting
 pptx.anim.path.custom	Custom Path
 pptx.path-draw.custom-path-click-slide-place	Custom path: click the slide to place points; double-click or press Enter to finish (Esc cancels)
@@ -1690,7 +1698,7 @@ pptx.handout-master	Handout Master
 pptx.notes-format.handout-master-undo-history	Handout master: the undo history is cleared when you close it
 pptx.notes-format.handout-master-closed-undo-history	Handout master closed (the undo history was cleared)
 pptx.notes-format.move-resize-boxes-set-size	Move and resize the boxes, and set the size, colour and alignment of their text (header top left, date top right, footer bottom left, page number bottom right). Printed handouts use them.
-pptx.notes-format.close-handout-master	Close Handout Master
+pptx.notes-format.close-handout-master	Exit formatting mode
 pptx.notes-format.handout-master	Handout Master
 pptx.print-panel.notes-pages-1-slide-its	Notes Pages (1 slide with its notes per page)
 pptx.modify-password	Password to Modify…
@@ -1713,8 +1721,8 @@ pptx.insert-chart.histogram	Histogram
 pptx.insert-chart.pareto	Pareto
 pptx.insert-chart.funnel	Funnel
 table.cell-size	Cell Size…
-pptx.cell-size-panel.row-height-cm	Row Height (cm)
-pptx.cell-size-panel.column-width-cm	Column Width (cm)
+pptx.cell-size-panel.row-height-cm	Row height
+pptx.cell-size-panel.column-width-cm	Column width
 pptx.cell-size-panel.cell-size	Cell Size
 pptx.cell-size-panel.height-width-must-numbers-0	Height and width must be numbers from 0.25 to 1584 cm
 pptx.align.to-slide	Align to Slide
@@ -1797,29 +1805,29 @@ _pptx.hold	⏹️ Hold
 _pptx.hide	👻 Hide
 _pptx.dim	🔅 Dim
 _pptx.hide-on-next-click	⏭️ Hide on Next Click
-_pptx.time	Time:
-_pptx.delay	Delay:
-_pptx.direction	Direction:
+_pptx.time	Time
+_pptx.delay	Delay
+_pptx.direction	Direction
 _pptx.smooth-start	✓ Smooth Start
 _pptx.smooth-end	✓ Smooth End
 _pptx.auto-reverse	✓ Auto Reverse
 _pptx.auto-reverse-2	Auto Reverse
 _pptx.don-t-hide	Don't Hide
 _pptx.dim-2	Dim
-_pptx.after-animation	After Animation:
+_pptx.after-animation	After Animation
 _pptx.with-previous-2	With Previous
 _pptx.after-previous-2	After Previous
-_pptx.duration	Duration:
+_pptx.duration	Duration
 _pptx.2-times	2 Times
 _pptx.3-times	3 Times
 _pptx.5-times	5 Times
 _pptx.10-times	10 Times
 _pptx.multiple-times	Multiple Times
-_pptx.repeat	Repeat:
+_pptx.repeat	Repeat
 _pptx.rewind-when-done-playing	✓ Rewind When Done Playing
 _pptx.rewind-when-done-playing-2	Rewind When Done Playing
 _pptx.normal-click-or-auto	Normal (Click or Auto)
-_pptx.trigger-2	Trigger:
+_pptx.trigger-2	Trigger
 _pptx.clear	Clear
 _pptx.give-each-slide-a-title-so-screen-reader-users-c	Give each slide a title so screen reader users can move between slides.
 _pptx.add-alternative-text-so-people-with-low-vision-c	Add alternative text so people with low vision can understand images and charts, or mark them as decorative.
@@ -1841,14 +1849,14 @@ _pptx.slide-n	Slide {n}
 _pptx.poster-image	Poster Image
 _pptx.kind-background	{kind} Background
 _pptx.slide-n-of-total	Slide {n} of {total}
-_pptx.left-indent-pt	Left Indent (pt)
+_pptx.left-indent-pt	Left indent
 _pptx.outer-shadow-count-shapes	Outer Shadow ({count} shapes)
 _pptx.100	100%
 _pptx.items	items
 _pptx.kind-count-shapes	{kind} ({count} shapes)
 _pptx.return-to-normal-view	Return to Normal View
-_pptx.first-line-indent-pt	First line indent (pt)
-_pptx.custom-show	● Custom Show
+_pptx.first-line-indent-pt	First line indent
+_pptx.custom-show	Custom Show
 _pptx.add-captions	Add Captions
 _pptx.n-of-total	{n} of {total}
 _pptx.type-label	Type: {label}
@@ -1872,7 +1880,7 @@ pptx.notes-master	Notes Master
 pptx.notes-format.notes-master-undo-history	Notes Master: the undo history is cleared when you close it
 pptx.notes-format.notes-master-closed-undo-history	Notes Master closed (the undo history was cleared)
 pptx.notes-format.notes-master-help	Move and resize the slide image, notes, header, date, footer and page number boxes, and change their text format. The notes’ text styles by level are not changed
-pptx.notes-format.close-notes-master	Close Notes Master
+pptx.notes-format.close-notes-master	Exit formatting mode
 pptx.notes-format.notes-master	Notes Master
 pptx.slideshow.notes-smaller	Smaller Text
 pptx.slideshow.notes-larger	Larger Text
@@ -1916,24 +1924,24 @@ pptx.ink.effect.bronze	Bronze
 pptx.replace-fonts.substitute	Set as Substitute
 pptx.replace-fonts.substitute-success	Set substitute font for "{target}" to "{substitute}"
 pptx.replace-fonts.substitute-removed	Removed substitute font for "{target}"
-pptx.replace-fonts.substitutions-title	Active Font Substitutions:
-pptx.replace-fonts.missing-fonts-title	Missing Fonts (Substitution or Embedding Recommended):
-pptx.replace-fonts.embedded-fonts-title	Fonts Embedded in File:
+pptx.replace-fonts.substitutions-title	Active Font Substitutions
+pptx.replace-fonts.missing-fonts-title	Missing Fonts (Substitution or Embedding Recommended)
+pptx.replace-fonts.embedded-fonts-title	Fonts Embedded in File
 pptx.replace-fonts.embed-button	Embed Font
 pptx.replace-fonts.embed-success	Embedded font "{name}" into presentation
 pptx.replace-fonts.remove-embed	Remove Embedding
 pptx.replace-fonts.remove-embed-success	Removed embedded font "{name}"
 pptx.photo-album	Photo Album...
 pptx.photo-album.title	Photo Album
-pptx.photo-album.pictures-in-album	Pictures in album:
+pptx.photo-album.pictures-in-album	Pictures in album
 pptx.photo-album.move-up	Move Up
 pptx.photo-album.move-down	Move Down
 pptx.photo-album.remove	Remove
 pptx.photo-album.picture-options	Picture options
 pptx.photo-album.bw-on	☑ All pictures black and white
-pptx.photo-album.bw-off	☐ All pictures black and white
+pptx.photo-album.bw-off	All pictures black and white
 pptx.photo-album.captions-on	☑ Captions below all pictures
-pptx.photo-album.captions-off	☐ Captions below all pictures
+pptx.photo-album.captions-off	Captions below all pictures
 pptx.photo-album.album-layout	Album layout
 pptx.photo-album.layout.fit-to-slide	Fit to slide
 pptx.photo-album.layout.1pic	1 picture
@@ -2019,8 +2027,8 @@ pptx.audio.record	Record
 pptx.audio.stop	Stop
 pptx.audio.record-title	Record Audio
 pptx.audio.recorded-sound-default	Recorded Sound
-pptx.audio.sound-name	Name:
-pptx.audio.total-sound-length	Total sound length:
+pptx.audio.sound-name	Name
+pptx.audio.total-sound-length	Total sound length
 pptx.audio.status-ready	Ready
 pptx.audio.status-recording	Recording...
 pptx.audio.status-recorded	Recorded
@@ -2064,9 +2072,9 @@ pptx.3d-model.view.iso-bottom-left	Isometric (Bottom Left)
 pptx.3d-model.view.iso-bottom-right	Isometric (Bottom Right)
 pptx.3d-model.view.front-ortho	Orthographic (Front)
 pptx.3d-model.rotation	3-Axis Rotation (X / Y / Z)
-pptx.3d-model.rot-x	X Rotation (°)
-pptx.3d-model.rot-y	Y Rotation (°)
-pptx.3d-model.rot-z	Z Rotation (°)
+pptx.3d-model.rot-x	X Rotation
+pptx.3d-model.rot-y	Y Rotation
+pptx.3d-model.rot-z	Z Rotation
 pptx.3d-model.pan-zoom	Pan & Zoom
 pptx.3d-model.pan-left	← Pan Left
 pptx.3d-model.pan-right	Pan Right →
@@ -2097,10 +2105,10 @@ pptx.3d-model.anim.leave	Leave
 pptx.3d-model.web-note	Desktop supports local 3D model insertion and full editing. Web supports viewing, 3-axis rotation, view switching, and resizing existing models.
 pptx.record-preview	Recording Preview…
 pptx.record-preview.title	Recording Preview
-pptx.record-preview.play	Preview Play
+pptx.record-preview.play	Play
 pptx.record-preview.pause	Pause
-pptx.record-preview.prev-slide	Previous Slide
-pptx.record-preview.next-slide	Next Slide
+pptx.record-preview.prev-slide	Previous
+pptx.record-preview.next-slide	Next
 pptx.record-preview.clear-timing	Clear Current Slide Timing
 pptx.record-preview.set-5s	Set Slide Timing to 5s
 pptx.record-preview.start-show	Start Show from Current Slide
@@ -2118,8 +2126,8 @@ pptx.screen-reader.filter.table	Tables
 pptx.screen-reader.filter.chart	Charts
 pptx.screen-reader.filter.media	Pictures & Media
 pptx.screen-reader.filter.notes	Notes & Comments
-pptx.customize-ribbon	Customize Ribbon & Quick Access…
-pptx.customize-ribbon.title	Customize Ribbon & Quick Access
+pptx.customize-ribbon	Customize Toolbar & Quick Access…
+pptx.customize-ribbon.title	Customize Toolbar & Quick Access
 pptx.customize-ribbon.groups	Toolbar Group Visibility
 pptx.customize-ribbon.group.slides	Slides
 pptx.customize-ribbon.group.font	Font
@@ -2188,3 +2196,11 @@ pptx.chart.legend.trendline.poly	Poly. ({series})
 pptx.chart.legend.trendline.power	Power ({series})
 pptx.chart.legend.trendline.moving-avg	{period} per. Mov. Avg. ({series})
 pptx.tools.word-count	Slides: {slides}, Words: {words}, Characters (no spaces): {chars}
+
+chart.data.add-row	Add row
+chart.data.add-series	Add series
+pptx.common.automatic	Automatic
+pptx.common.seconds-unit	s
+pptx.paragraph-panel.keep-existing	Keep current
+pptx.smartart.add-item-short	Add
+pptx.3d-model.zoom	Zoom

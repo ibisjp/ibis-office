@@ -212,6 +212,8 @@ impl SlideEditor {
         let name: SharedString = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into();
         window.set_window_title(&format!("{name} - ibisOffice"));
         self.file_name = Some(name);
+        // A newly created file becomes recent as soon as its first save succeeds.
+        self.recent_files = crate::shell::recent_files::add(&path);
         self.set_file_path(Some(path));
         self.document.mark_clean();
         if self.is_workbook() || self.is_presentation() || self.is_document() {

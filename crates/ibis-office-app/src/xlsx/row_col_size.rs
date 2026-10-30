@@ -3,8 +3,8 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! 行の高さ・列の幅（Row Height & Column Width）の数値指定パネル・コマンド.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -160,17 +160,22 @@ impl SlideEditor {
             Axis::Columns => format!("{} {}-{}", text("_xlsx.column"), column_name(first), column_name(last)),
         };
         let message = p.message.clone();
+        // Row height in points (0–409), column width in characters (0–255), as `apply_row_col_size` clamps them.
+        let spec = match axis {
+            Axis::Rows => crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 409.0),
+            Axis::Columns => crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 255.0),
+        };
 
-        let mut body = v_flex().gap(px(12.))
-            .child(div().text_size(px(12.)).text_color(cx.theme().muted_foreground).child(span_text))
+        let mut body = crate::shell::chrome::panel_form().gap(px(12.))
+            .p_0().child(div().text_sm().text_color(cx.theme().muted_foreground).child(span_text))
             .child(
                 v_flex().gap(px(4.))
-                    .child(div().text_size(px(12.)).font_weight(FontWeight::MEDIUM).child(label))
-                    .child(Input::new(&p.value).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(label))
+                    .child(crate::shell::chrome::text_field(&p.value).full_width().spinner("row-col-size-value", spec, cx, |this, _, _, cx| this.apply_row_col_size(cx))),
             );
 
         if !message.is_empty() {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0x107c41)).child(message));
+            body = body.child(div().text_sm().text_color(rgb(0x107c41)).child(message));
         }
 
         let presets = match axis {
@@ -186,7 +191,7 @@ impl SlideEditor {
         let mut preset_row = h_flex().gap(px(6.)).flex_wrap();
         for (name, val) in presets {
             preset_row = preset_row.child(
-                Button::new(format!("preset-{val}"))
+                crate::shell::chrome::action_button(format!("preset-{val}"))
                     .small()
                     .label(name)
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -198,28 +203,15 @@ impl SlideEditor {
             );
         }
 
-        body = body.child(v_flex().gap(px(4.)).child(div().text_size(px(11.)).text_color(cx.theme().muted_foreground).child(text("_xlsx.presets"))).child(preset_row));
-
-        body = body.child(
-            h_flex().gap(px(8.))
-                .child(
-                    Button::new("row-col-size-apply")
-                        .primary()
-                        .small()
+        body = body.child(v_flex().gap(px(4.)).child(div().text_sm().text_color(cx.theme().muted_foreground).child(text("_xlsx.presets"))).child(preset_row));
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(
+                    crate::shell::chrome::ActionDefinition::new("row-col-size-apply", "", crate::shell::chrome::ActionButtonKind::Primary)
                         .label(text("_xlsx.apply"))
                         .on_click(cx.listener(|this, _, _, cx| this.apply_row_col_size(cx))),
                 )
-                .child(
-                    Button::new("row-col-size-close")
-                        .small()
-                        .label(text("_shell.close"))
-                        .on_click(cx.listener(|this, _, _, cx| this.close_row_col_size_panel(cx))),
-                ),
-        );
 
-        Some(SidebarPanel {
-            title: title.into(),
-            body: body.into_any_element(),
-        })
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(title, body.into_any_element(), panel_actions))
     }
 }

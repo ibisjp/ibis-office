@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Color, Command, EmuRect, Geometry, LineCap, LineJoin, PathOp, Rgb, Shape, ShapeId, ShapeKind, Stroke};
@@ -557,7 +557,7 @@ impl SlideEditor {
         self.commit_cell_edit(cx);
         let panel = InkPanel { pen: PenKind::Pen, lasso: false, color: Rgb(COLORS[0]), effect: None, width: WIDTHS[1], mouse: true, stroke: None, message: String::new(), ui: Default::default() };
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.ink = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -853,190 +853,40 @@ impl SlideEditor {
         )
     }
 
-    pub(crate) fn ink_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let p = self.sheet_state()?.panels.ink.as_ref()?;
-        let mark = |id: &str, child: AnyElement| {
-            let ui = p.ui.clone();
-            let id = id.to_string();
-            div()
-                .relative()
-                .child(child)
-                .child(canvas(|_, _, _| {}, move |bounds, _, _, _| {
-                    ui.borrow_mut().insert(id.clone(), bounds);
-                }).absolute().top_0().left_0().size_full())
-                .into_any_element()
-        };
-        let caption = |id: &str| div().text_size(px(13.)).child(text(id));
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
-        let pen_button = |id: &'static str, kind: PenKind, is_lasso: bool, label: &'static str| {
-            let active = if is_lasso { p.lasso } else { p.pen == kind && !p.lasso };
-            mark(
-                id,
-                Button::new(id)
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if active { "◉" } else { "○" }, text(label)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(p) = this.wb_mut().panels.ink.as_mut() {
-                            p.pen = kind;
-                            p.lasso = is_lasso;
-                            // A highlighter starts in yellow, a pencil in gray, a pen in black, as Excel's do.
-                            p.color = match kind {
-                                PenKind::Highlighter => Rgb(COLORS[3]),
-                                PenKind::Pencil => Rgb(COLORS[1]),
-                                PenKind::Pen if p.color == Rgb(COLORS[3]) || p.color == Rgb(COLORS[1]) => Rgb(COLORS[0]),
-                                _ => p.color,
-                            };
-                            if kind == PenKind::Highlighter || kind == PenKind::Pencil {
-                                p.effect = None;
-                            }
-                            p.width = match kind {
-                                PenKind::Highlighter => WIDTHS[2],
-                                PenKind::Pencil => WIDTHS[0],
-                                _ => WIDTHS[1],
-                            };
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            )
-        };
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .flex_wrap()
-                .child(pen_button("ink-pen", PenKind::Pen, false, "xlsx.ink.pen"))
-                .child(pen_button("ink-pencil", PenKind::Pencil, false, "xlsx.ink.pencil"))
-                .child(pen_button("ink-highlighter", PenKind::Highlighter, false, "xlsx.ink.highlighter"))
-                .child(pen_button("ink-eraser", PenKind::Eraser, false, "xlsx.ink.eraser"))
-                .child(pen_button("ink-lasso", PenKind::Select, true, "xlsx.ink.lasso"))
-                .child(pen_button("ink-select", PenKind::Select, false, "xlsx.ink.select")),
-        );
-        let drawing_pen = matches!(p.pen, PenKind::Pen | PenKind::Pencil | PenKind::Highlighter) && !p.lasso;
-        if drawing_pen {
-            body = body.child(caption("xlsx.ink.color"));
-            let mut swatches = h_flex().gap_1().flex_wrap();
-            for (i, c) in COLORS.iter().enumerate() {
-                let on = p.color == Rgb(*c) && p.effect.is_none();
-                let c = *c;
-                swatches = swatches.child(mark(
-                    &format!("ink-color-{i}"),
-                    div()
-                        .id(SharedString::from(format!("ink-color-{i}")))
-                        .size(px(22.))
-                        .rounded_sm()
-                        .bg(rgb(c))
-                        .border_2()
-                        .border_color(if on { cx.theme().foreground } else { cx.theme().border })
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(p) = this.wb_mut().panels.ink.as_mut() {
-                                p.color = Rgb(c);
-                                p.effect = None;
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ));
-            }
-            body = body.child(swatches);
-
-            if p.pen == PenKind::Pen {
-                body = body.child(caption("xlsx.ink.effects"));
-                let mut effects = h_flex().gap_1().flex_wrap();
-                for effect in InkEffect::ALL {
-                    let on = p.effect == Some(effect);
-                    let label = effect.label_key();
-                    let id = effect.id();
-                    effects = effects.child(mark(
-                        id,
-                        Button::new(id)
-                            .small()
-                            .ghost()
-                            .label(format!("{} {}", if on { "◉" } else { "○" }, text(label)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(p) = this.wb_mut().panels.ink.as_mut() {
-                                    p.effect = Some(effect);
-                                    if let Some(first) = effect.stops().first() {
-                                        p.color = first.color.rgb;
-                                    }
-                                }
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    ));
+    pub(crate) fn ink_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel>{
+        use crate::shell::ink_panel::{InkChoice,InkToggle,InkCommand,InkRow,InkSection,InkPanelSpec};
+        let p=self.sheet_state()?.panels.ink.as_ref()?;
+        let bounds=|id:&str|{let ui=p.ui.clone();let id=id.to_string();move|b|{ui.borrow_mut().insert(id.clone(),b);}};
+        let tools=[("ink-pen","xlsx.ink.pen",PenKind::Pen,false),("ink-pencil","xlsx.ink.pencil",PenKind::Pencil,false),("ink-highlighter","xlsx.ink.highlighter",PenKind::Highlighter,false),("ink-eraser","xlsx.ink.eraser",PenKind::Eraser,false),("ink-lasso","xlsx.ink.lasso",PenKind::Select,true),("ink-select","xlsx.ink.select",PenKind::Select,false)].into_iter().map(|(id,label,kind,lasso)|{
+            InkChoice::new(id,text(label),if lasso{p.lasso}else{p.pen==kind&&!p.lasso},move|e,_,cx|{
+                if let Some(p)=e.wb_mut().panels.ink.as_mut(){
+                    p.pen=kind;p.lasso=lasso;
+                    p.color=match kind{PenKind::Highlighter=>Rgb(COLORS[3]),PenKind::Pencil=>Rgb(COLORS[1]),PenKind::Pen if p.color==Rgb(COLORS[3])||p.color==Rgb(COLORS[1])=>Rgb(COLORS[0]),_=>p.color};
+                    if matches!(kind,PenKind::Highlighter|PenKind::Pencil){p.effect=None;}
+                    p.width=match kind{PenKind::Highlighter=>WIDTHS[2],PenKind::Pencil=>WIDTHS[0],_=>WIDTHS[1]};
                 }
-                body = body.child(effects);
-            }
-
-            body = body.child(caption("xlsx.ink.width"));
-            let mut widths = h_flex().gap_1().flex_wrap();
-            for (i, w) in WIDTHS.iter().enumerate() {
-                let on = (p.width - *w).abs() < 0.01;
-                let w = *w;
-                widths = widths.child(mark(
-                    &format!("ink-width-{i}"),
-                    Button::new(SharedString::from(format!("ink-width-{i}")))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if on { "◉" } else { "○" }, format("xlsx.ink.width-pt", &[("pt", &w)])))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(p) = this.wb_mut().panels.ink.as_mut() {
-                                p.width = w;
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ));
-            }
-            body = body.child(widths);
-        }
-        body = body.child(mark(
-            "ink-mouse",
-            super::toggle::toggle_row(
-                "ink-mouse",
-                p.mouse,
-                text("xlsx.ink.mouse"),
-                cx.listener(|this, _, _, cx| {
-                    if let Some(p) = this.wb_mut().panels.ink.as_mut() {
-                        p.mouse = !p.mouse;
-                    }
-                    cx.notify();
-                }),
-            )
-            .into_any_element(),
-        ));
-        let hide_ink = self.current_sheet().map(|(_, s)| s.hide_ink).unwrap_or(false);
-        body = body.child(mark(
-            "ink-hide",
-            super::toggle::toggle_row(
-                "ink-hide",
-                hide_ink,
-                text("xlsx.hide-ink"),
-                cx.listener(|this, _, _, cx| {
-                    this.toggle_hide_ink(cx);
-                }),
-            )
-            .into_any_element(),
-        ));
-        let selected_is_ink = self.selected_ids().into_iter().any(|id| self.slide().shape(id).is_some_and(|s| stroke_points(s).is_some()));
-        body = body.child(mark("ink-to-shape", Button::new("ink-to-shape").small().disabled(!selected_is_ink).label(text("xlsx.ink.to-shape")).on_click(cx.listener(|this, _, _, cx| this.ink_to_shape(cx))).into_any_element()));
-        if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
-        }
-        body = body.child(mark(
-            "close",
-            Button::new("ink-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.ink = None;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        Some(SidebarPanel { title: text("xlsx.ink.title"), body: body.into_any_element() })
+                cx.notify();
+            }).on_bounds(bounds(id))
+        }).collect();
+        let widths=WIDTHS.into_iter().enumerate().map(|(i,width)|{
+            let id=format!("ink-width-{i}");InkChoice::new(id.clone(),format("xlsx.ink.width-pt",&[("pt",&width)]),(p.width-width).abs()<0.01,move|e,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.width=width;}cx.notify();}).on_bounds(bounds(&id))
+        }).collect();
+        let mut effects=vec![InkChoice::new("ink-effect-none",text("docx.ink.effect.none"),p.effect.is_none(),|e,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.effect=None;}cx.notify();})];
+        effects.extend(InkEffect::ALL.into_iter().map(|effect|InkChoice::new(effect.id(),text(effect.label_key()),p.effect==Some(effect),move|e,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.effect=Some(effect);if let Some(stop)=effect.stops().first(){p.color=stop.color.rgb;}}cx.notify();}).on_bounds(bounds(effect.id()))));
+        let selected=self.selected_ids().into_iter().any(|id|self.slide().shape(id).is_some_and(|s|stroke_points(s).is_some()));
+        let hide=self.current_sheet().map(|(_,s)|s.hide_ink).unwrap_or(false);
+        let section=InkSection{title:None,rows:vec![
+            InkRow::Toggle(InkToggle::new("ink-hide",text("xlsx.hide-ink"),hide,|e,_,cx|e.toggle_hide_ink(cx)).on_bounds(bounds("ink-hide"))),
+            InkRow::Commands(vec![InkCommand::new("ink-to-shape",text("xlsx.ink.to-shape"),selected,|e,_,cx|e.ink_to_shape(cx)).on_bounds(bounds("ink-to-shape"))]),
+        ]};
+        Some(crate::shell::ink_panel::panel(InkPanelSpec{
+            color_id:"xlsx-ink-color-field",tools,widths,drawing:matches!(p.pen,PenKind::Pen|PenKind::Pencil|PenKind::Highlighter)&&!p.lasso,color:p.color,
+            change_color:Rc::new(|e,color,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.color=color;p.effect=None;}cx.notify();}),effects,
+            mouse:InkToggle::new("ink-mouse",text("ink.panel.mouse"),p.mouse,|e,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.mouse=!p.mouse;}cx.notify();}).on_bounds(bounds("ink-mouse")),
+            sections:vec![section],message:p.message.clone(),context_menu:None,
+        },cx))
     }
+
 }
 
 /// The stroke a pen draws: round ends, a highlighter half see-through.

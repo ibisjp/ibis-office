@@ -141,8 +141,10 @@ impl SlideEditor {
         let zoom = self.current_zoom();
         // A little slack, so a zoom rounded onto a limit still counts as there.
         let (at_min, at_max) = (zoom <= MIN_ZOOM * 1.001, zoom >= MAX_ZOOM * 0.999);
+        let bounds = self.zoom_controls_bounds.clone();
         h_flex()
             .relative()
+            .child(crate::shell::editor::bounds_observer(move |b, _, _| bounds.set(Some(b))))
             .gap_1()
             .items_center()
             .child(
@@ -193,15 +195,9 @@ impl SlideEditor {
                 let (hover, muted) = (theme.accent, theme.muted_foreground);
                 // A row of the list, with a check mark if it is the zoom shown.
                 let row = |id: ElementId, checked: bool| {
-                    h_flex()
-                        .id(id)
-                        .h(px(24.))
-                        .px_2()
-                        .gap_2()
-                        .items_center()
-                        .rounded_sm()
-                        .text_sm()
-                        .child(div().w(px(12.)).child(if checked { "✓" } else { "" }))
+                    crate::shell::chrome::dropdown_list::option(id,checked,false,true)
+                        .h(px(24.)).px_2().gap_2().text_sm()
+                        .child(div().w(px(12.)).children(crate::shell::chrome::dropdown_list::checkmark(checked,true,crate::shell::palette::rgb(0x1f1f1f).into())))
                 };
                 let choose = |zoom: Option<f32>| {
                     let editor = editor.clone();

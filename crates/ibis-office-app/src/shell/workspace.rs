@@ -99,6 +99,7 @@ impl SlideEditor {
                     window.on_next_frame(move |window, _| window.refresh());
                 }
             }))
+            .when(self.panel_dialog_is_modal(), |d| d.child(crate::shell::panel_dialog::viewport_shield()))
             .map(|d| {
                 if self.split_panes().is_some() && !self.page_layout_shown()
                     && let Some(content) = content
@@ -489,7 +490,7 @@ impl SlideEditor {
                 }
             }
             return place(div().id(("shape", id.0)), frame, scale)
-                .when(self.tool == Tool::Select, |d| d.cursor(CursorStyle::Crosshair))
+                .when(self.tool == Tool::Select, |d| d.cursor(CursorStyle::Arrow))
                 .on_mouse_down(MouseButton::Left, cx.listener(Self::on_sheet_down))
                 .on_mouse_down(MouseButton::Right, cx.listener(Self::on_sheet_right_down))
                 .child(shape_element(shape, EmuRect { x: 0, y: 0, ..frame }, scale, &self.resources, None))
@@ -703,31 +704,13 @@ impl SlideEditor {
         let theme = cx.theme();
         let (primary, background) = (theme.primary, theme.background);
 
-        let outline = place(div(), frame, scale)
-            .border_1()
-            .border_color(primary)
-            .when(editing, |d| d.border_dashed());
+        let outline=super::selection_handles::outline(Bounds::new(point(px(frame.x as f32*scale),px(frame.y as f32*scale)),size(px(frame.width as f32*scale),px(frame.height as f32*scale))),primary).when(editing,|d|d.border_dashed());
+        let others=self.selected_shapes().into_iter().filter(|s|s.id!=id).map(|shape|{let f=self.display_frame(shape);super::selection_handles::outline(Bounds::new(point(px(f.x as f32*scale),px(f.y as f32*scale)),size(px(f.width as f32*scale),px(f.height as f32*scale))),primary)}).collect::<Vec<_>>();
 
-        let handles = ResizeHandle::ALL.map(|handle| {
-            let (ax, ay) = handle.anchor();
-            let x = frame.x as f32 * scale + frame.width as f32 * scale * ax as f32 / 2.0;
-            let y = frame.y as f32 * scale + frame.height as f32 * scale * ay as f32 / 2.0;
-            div()
-                .id(("resize-handle", handle as u64))
-                .absolute()
-                .left(px(x - HANDLE_SIZE / 2.0))
-                .top(px(y - HANDLE_SIZE / 2.0))
-                .size(px(HANDLE_SIZE))
-                .border_1()
-                .border_color(primary)
-                .bg(if editing { rgb(0x80d4ff).into() } else { background })
-                .map(|d| match handle {
-                    ResizeHandle::TopLeft | ResizeHandle::BottomRight => d.cursor_nwse_resize(),
-                    ResizeHandle::TopRight | ResizeHandle::BottomLeft => d.cursor_nesw_resize(),
-                    ResizeHandle::Top | ResizeHandle::Bottom => d.cursor_ns_resize(),
-                    ResizeHandle::Left | ResizeHandle::Right => d.cursor_ew_resize(),
-                })
-                .on_mouse_down(
+        let points=ResizeHandle::ALL.map(|handle|{let (ax,ay)=handle.anchor();(handle,point(px((frame.x as f32+frame.width as f32*ax as f32/2.)*scale),px((frame.y as f32+frame.height as f32*ay as f32/2.)*scale)))});
+        let handles=super::selection_handles::group("workspace-selection-handles".into(),points,None,Default::default(),primary,if editing{rgb(0x80d4ff).into()}else{background}).into_iter().map(|(handle,element)|{
+            let handle=handle.unwrap();
+            element                .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, event, window, cx| {
                         this.on_handle_down(id, handle, event, window, cx)
@@ -757,6 +740,7 @@ impl SlideEditor {
 
         // The outline is a sibling of the handles, so it never takes clicks
         // meant for the shape beneath it.
-        Some(div().absolute().size_full().top_0().left_0().child(outline).children(handles))
+        let border=super::selection_handles::border_region("workspace-frame",Bounds::new(point(px(frame.x as f32*scale),px(frame.y as f32*scale)),size(px(frame.width as f32*scale),px(frame.height as f32*scale))),shape.rotation,cx.listener(move|e,event:&MouseDownEvent,w,cx|{if let Some(edit)=e.editing.as_mut(){edit.edit.is_new=false;}e.commit_edit(w,cx);let mut event=event.clone();event.click_count=1;e.on_shape_down(id,&event,w,cx);}));
+        Some(div().absolute().size_full().top_0().left_0().child(outline).children(others).child(border).children(handles))
     }
 }

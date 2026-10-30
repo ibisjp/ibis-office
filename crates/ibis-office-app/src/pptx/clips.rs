@@ -24,6 +24,16 @@ pub(crate) struct Playing {
     pub(crate) passed_bookmarks: std::collections::HashSet<String>,
 }
 
+/// The volume a clip is saved with (the ribbon's 音量), 0 to 1.
+pub(crate) fn volume_of(clip: &Clip) -> f32 {
+    match clip.options.volume {
+        MediaVolume::High => 1.0,
+        MediaVolume::Medium => 0.66,
+        MediaVolume::Low => 0.33,
+        MediaVolume::Mute => 0.0,
+    }
+}
+
 /// How often the frames of the video playing are taken.
 const FRAME_MS: u64 = 33;
 
@@ -98,24 +108,39 @@ impl SlideEditor {
 
     /// 再生・一時停止: the clip of `shape` of the slide shown played, or paused.
     pub(crate) fn toggle_clip(&mut self, shape: ShapeId, cx: &mut Context<Self>) {
+        if !self.prepare_clip(shape, true, cx) {
+            return;
+        }
         let slide = self.current_slide;
         if let Some(playing) = self.pptx_mut().and_then(|s| s.clips.iter().find(|c| c.slide == slide && c.shape == shape)) {
             if playing.player.is_playing() { playing.player.pause() } else { playing.player.play() }
-            return cx.notify();
         }
-        let Some(clip) = self.slide().shape(shape).and_then(Self::clip_of) else { return };
+        cx.notify();
+    }
+
+    /// The player of the clip of `shape` opened (paused at the start of its trim) if it is not yet, so its
+    /// length and position can be shown and sought (`report`: say in the status bar when it cannot). Whether the clip has a player now.
+    pub(crate) fn prepare_clip(&mut self, shape: ShapeId, report: bool, cx: &mut Context<Self>) -> bool {
+        let slide = self.current_slide;
+        if self.pptx().is_some_and(|s| s.clips.iter().any(|c| c.slide == slide && c.shape == shape)) {
+            return true;
+        }
+        let Some(clip) = self.slide().shape(shape).and_then(Self::clip_of) else { return false };
         #[cfg(not(target_family = "wasm"))]
         let base = self.path.as_deref().and_then(Path::parent).map(Path::to_path_buf);
         #[cfg(target_family = "wasm")]
         let base: Option<PathBuf> = None;
         let Some(path) = clip_file(self.presentation(), clip.media, clip.link.as_deref(), base.as_deref()) else {
-            if let Some(link) = &clip.link {
-                return self.set_status(crate::shell::i18n::format("pptx.clips.linked-file-was-not-found", &[("path", &link)]), cx);
+            if let Some(link) = clip.link.as_ref().filter(|_| report) {
+                self.set_status(crate::shell::i18n::format("pptx.clips.linked-file-was-not-found", &[("path", &link)]), cx);
             }
-            return;
+            return false;
         };
         let Some(player) = Player::open(Path::new(&path), !clip.audio) else {
-            return self.set_status(crate::shell::i18n::text("pptx.clips.cannot-played-here").to_string(), cx);
+            if report {
+                self.set_status(crate::shell::i18n::text("pptx.clips.cannot-played-here").to_string(), cx);
+            }
+            return false;
         };
         let volume_f32 = match clip.options.volume {
             MediaVolume::High => 1.0,
@@ -127,8 +152,8 @@ impl SlideEditor {
             player.seek_to_ms(clip.options.trim_start_ms);
         }
         let initial_volume = if clip.options.fade_in_ms > 0 { 0.0 } else { volume_f32 };
-        player.set_volume(initial_volume);
-        player.play();
+        let factor = self.pptx().and_then(|s| s.clip_volume.get(&shape)).map_or(1.0, |v| v.factor());
+        player.set_volume(initial_volume * factor);
         let first = self.pptx().is_some_and(|s| s.clips.is_empty());
         if let Some(s) = self.pptx_mut() {
             s.clips.push(Playing { slide, shape, clip, player, passed_bookmarks: std::collections::HashSet::new() });
@@ -136,7 +161,7 @@ impl SlideEditor {
         if first {
             self.run_clip_loop(cx);
         }
-        cx.notify();
+        true
     }
 
     /// Everything stops (the show ended, the slide changed).
@@ -189,6 +214,7 @@ impl SlideEditor {
         let mut frames = Vec::new();
         let mut gone = Vec::new();
         let mut triggered_bookmarks = Vec::new();
+        let factors = self.pptx().map(|s| s.clip_volume.clone()).unwrap_or_default();
         let left = if let Some(state) = self.pptx_mut() {
             state.clips.retain_mut(|c| {
                 if c.slide != shown && !c.clip.options.play_across_slides {
@@ -236,6 +262,8 @@ impl SlideEditor {
                     }
                 }
 
+                // The bar's volume (clip_bar.rs) on top of the clip's own, fades included.
+                let bar_factor = factors.get(&c.shape).map_or(1.0, |v| v.factor());
                 if base_volume > 0.0 && (c.clip.options.fade_in_ms > 0 || c.clip.options.fade_out_ms > 0) {
                     let mut vol_scale = 1.0f32;
                     let elapsed_from_start = current_ms.saturating_sub(trim_start);
@@ -248,7 +276,9 @@ impl SlideEditor {
                             vol_scale = vol_scale.min(remaining as f32 / c.clip.options.fade_out_ms as f32);
                         }
                     }
-                    c.player.set_volume(base_volume * vol_scale.clamp(0.0, 1.0));
+                    c.player.set_volume(base_volume * vol_scale.clamp(0.0, 1.0) * bar_factor);
+                } else {
+                    c.player.set_volume(base_volume * bar_factor);
                 }
                 if let Some(frame) = c.player.frame() {
                     frames.push((c.clip.media, frame));
@@ -262,7 +292,8 @@ impl SlideEditor {
         for (shape, bmk_name) in triggered_bookmarks {
             self.trigger_animations_for_media_bookmark(shape, &bmk_name, cx);
         }
-        let changed = !frames.is_empty() || !gone.is_empty();
+        // The control bar's time moves while a clip plays.
+        let changed = !frames.is_empty() || !gone.is_empty() || self.pptx().is_some_and(|s| s.clips.iter().any(|c| c.player.is_playing()));
         for (media, frame) in frames {
             self.resources.set_live_frame(media, Some(frame));
         }

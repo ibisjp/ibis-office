@@ -180,12 +180,14 @@ fn corpus_report_xlsx_x7a_column_width_in_windows_pixels() {
 }
 
 #[test]
-fn corpus_report_xlsx_x7c_unknown_paper_size_is_letter() {
+fn corpus_report_xlsx_x7c_unknown_paper_size_is_the_machines_paper() {
     // X7c `paperSize` が知らない番号（257 など）のシートを A4 にするが、Excel for the web は Letter にする。
-    // 151（paperSize="257"）の正解の用紙は 612×792pt。
+    // Windows の Excel は、その PC の既定の用紙に印刷する（151（paperSize="257"）の Windows の Excel の正解は A4 595.3×841.9pt、
+    // 日本の PC）。既定の用紙は地域の設定（locale_paper）から取る。
     let p = open("paper-size-257.xlsx");
     let paper = first_sheet(&p).1.print.paper;
-    assert_eq!((points(paper.0), points(paper.1)), (612.0, 792.0), "用紙（Excel は Letter 612×792pt）");
+    let want = if ibis_pptx::locale_paper::default_paper_size() == 9 { (595.3, 841.9) } else { (612.0, 792.0) };
+    assert!((points(paper.0) - want.0).abs() < 1.0 && (points(paper.1) - want.1).abs() < 1.0, "用紙 {} x {} pt", points(paper.0), points(paper.1));
 }
 
 #[test]
@@ -213,4 +215,104 @@ fn corpus_report_xlsx_x8b_ole_object_preview_is_shown() {
     let area = cells_rect(slide, (2, 1), (8, 3));
     let shown = slide.shown_shapes().any(|s| matches!(s.kind, ShapeKind::Picture(_)) && overlaps(s.frame, area));
     assert!(shown, "B3:D9 に OLE の表示用の絵が無い（見えている図形：{:?}）", slide.shown_shapes().map(|s| (&s.kind, s.frame)).filter(|(k, _)| !matches!(k, ShapeKind::Sheet(_))).map(|(_, f)| f).collect::<Vec<_>>());
+}
+
+#[test]
+fn corpus_report_xlsx_rows_of_only_a_height_are_not_printed() {
+    // 050 の最後の 2 行（647・648 行）や 066 の 20〜119 行のように、`<row ht=.. customHeight/>` だけでセルの無い行は、
+    // Excel の PDF にページを作らない（印刷の範囲はセルのある所まで）。1 行目だけに文字があり、2〜40 行目は高さだけの行。
+    let p = open("print-extent-height-only-rows.xlsx");
+    let height = points(p.slides[0].size.expect("a sheet size").height);
+    // 20 pt の行は Windows の Excel では 26 画素（19.5 pt）。
+    assert!((height - 19.5).abs() < 0.01, "セルの無い行が印刷の範囲に入っている（高さ {height} pt、1 行目だけなら 19.5 pt）");
+}
+
+#[test]
+fn corpus_report_xlsx_custom_row_heights_keep_their_pixels() {
+    // Excel for Windows keeps a custom row to a whole pixel (0.75 pt), not a whole point: rows stored 37.5, 39.75 and
+    // 13.5 pt are those heights, 5.85 pt (7.8 px) is 7 px = 5.25 pt (a page of 118's rows came out 1.8 % short, and a page too few, when they were floored).
+    let p = open("custom-row-height-in-pixels.xlsx");
+    let (_, sheet) = first_sheet(&p);
+    let heights: Vec<f64> = sheet.rows.iter().take(4).map(|h| points(*h)).collect();
+    for (got, want) in heights.iter().zip([37.5, 39.75, 13.5, 5.25]) {
+        assert!((got - want).abs() < 0.01, "行の高さ {got} pt（保存は {want} pt）: {heights:?}");
+    }
+}
+
+#[test]
+fn corpus_report_xlsx_line_feeds_in_a_drawing_run_break_lines() {
+    // A text box of a worksheet's drawing whose one `a:t` holds "first\r\nsecond\r\nthird": Excel for Windows' PDF puts
+    // each on its own line (a run is shaped without a newline; 061 asserted in debug while laying it out).
+    let p = open("drawing-text-line-feeds.xlsx");
+    let text = p.slides[0]
+        .shapes
+        .iter()
+        .find_map(|s| match &s.kind {
+            ShapeKind::Auto(a) => a.text.as_ref().filter(|t| t.paragraphs.iter().any(|p| p.runs.iter().any(|r| r.text.contains("first")))),
+            _ => None,
+        })
+        .expect("the text box");
+    let lines: Vec<String> = text.paragraphs.iter().map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>()).collect();
+    assert_eq!(lines, ["first", "second", "third"], "改行が行の区切りになっていない: {lines:?}");
+}
+
+#[test]
+fn corpus_report_xlsx_page_setup_without_paper_size_prints_on_the_regions_paper() {
+    // `<pageSetup orientation="portrait"/>` with no `paperSize`: Excel for Windows prints on the machine's default paper (A4
+    // in the corpus' PDFs, from a Japanese PC), not on the format's Letter. The region's paper is asked of Windows
+    // (`LOCALE_IPAPERSIZE`: 9 A4, 1 Letter), so this holds on whichever PC it runs on.
+    let p = open("page-setup-without-paper-size.xlsx");
+    let (_, sheet) = first_sheet(&p);
+    let (w, h) = sheet.print.page_size();
+    let (want_w, want_h) = if ibis_pptx::locale_paper::default_paper_size() == 9 { (595.3, 841.9) } else { (612.0, 792.0) };
+    assert!((points(w) - want_w).abs() < 1.0 && (points(h) - want_h).abs() < 1.0, "用紙 {} x {} pt（地域の既定の用紙 {}）", points(w), points(h), ibis_pptx::locale_paper::default_paper_size());
+}
+
+#[test]
+fn corpus_report_xlsx_letter_named_sheet_prints_on_the_a4_of_an_a4_printer() {
+    // `paperSize="1"` (Letter) or none prints on A4 in Excel for Windows' PDFs of the pagesetup probes (MediaBox 595.32 x 841.92;
+    // Legal, A3 and A5 print on their own). (The region's paper is asked of Windows (`locale_paper`).)
+    let a4 = ibis_pptx::locale_paper::default_paper_size() == 9;
+    for (name, want_a4) in [("pagesetup-probe-orientation.xlsx", a4), ("pagesetup-probe-paper1.xlsx", a4), ("pagesetup-probe-paper9.xlsx", true), ("pagesetup-probe-paper5.xlsx", false)] {
+        let p = ibis_pptx::read(&std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/corpus-report/xlsx/pagesetup-probe").join(name)).unwrap()).unwrap();
+        let (_, sheet) = first_sheet(&p);
+        assert_eq!(sheet.print.paper == ibis_doc_model::SheetPrint::A4, want_a4, "{name}: 用紙");
+    }
+}
+
+#[test]
+fn corpus_report_xlsx_a_sheet_naming_letter_is_laid_out_on_letter_and_drawn_on_a4() {
+    // paperSize none or 1 (Letter) on an A4 printer: Excel for Windows breaks the pages where Letter's would and draws them on
+    // the A4 paper smaller (letter-a4 probes: 49 rows a page of 200 rows against A4's 52; columns, rows and text at 0.95 of the
+    // scale, rounded down to a whole percent); not when the sheet is fitted to pages (paper1fit prints as paper9). The region's
+    // paper is asked of Windows (`locale_paper`), so on a Letter PC nothing changes.
+    let a4 = ibis_pptx::locale_paper::default_paper_size() == 9;
+    for (name, letter) in [("pagesetup-probe-orientation.xlsx", true), ("pagesetup-probe-paper1.xlsx", true), ("pagesetup-probe-scale82.xlsx", true), ("pagesetup-probe-paper9.xlsx", false), ("pagesetup-probe-paper1fit.xlsx", false), ("pagesetup-probe-paper5.xlsx", false)] {
+        let p = ibis_pptx::read(&std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/corpus-report/xlsx/pagesetup-probe").join(name)).unwrap()).unwrap();
+        let (_, sheet) = first_sheet(&p);
+        assert_eq!(sheet.print.letter_on_a4, letter && a4, "{name}");
+    }
+}
+
+#[test]
+fn corpus_report_xlsx_default_column_width_is_a_multiple_of_8_pixels() {
+    // A column without `defaultColWidth` is 8 digits and 5 pixels wide, rounded up to a multiple of 8 pixels (ECMA-376 on
+    // `baseColWidth`; Excel for Windows' PDF of 041: a default column of a ＭＳ Ｐゴシック 11 workbook is 72 px, 49.7 pt, where
+    // 8 × 8 + 5 = 69 px made 47.6 pt). Calibri 11 (7 px digits): 61 -> 64 px.
+    let p = open("default-column-width-multiple-of-8.xlsx");
+    let (_, sheet) = first_sheet(&p);
+    let px = points(sheet.default_column) / 0.75;
+    assert!((px % 8.0).abs() < 1e-6 || (8.0 - px % 8.0).abs() < 1e-6, "既定の列 {px} px は 8 の倍数");
+}
+
+#[test]
+fn corpus_report_xlsx_rows_excel_measures_are_marked_and_wrapped_rows_are_not() {
+    // 高さが自動の行（customHeight なし）は Microsoft Excel が書体から測り直すので印を付ける（アプリが書体の式で置き換える）。
+    // 折り返しのある行は印を付けず、保存の高さのまま。X6a の注記 4 行（ＭＳ 明朝、折り返し、ht=13.5）は印なし。
+    let p = open("X6a-merged-wrap-note-refit.xlsx");
+    let sheet = first_sheet(&p).1;
+    for row in 40..44u32 {
+        assert!(!sheet.measured_rows.contains(&row), "折り返しのある行 {} に印が付いている", row + 1);
+    }
+    assert!(!sheet.measured_rows.is_empty(), "折り返しの無い行に印が付かない");
 }

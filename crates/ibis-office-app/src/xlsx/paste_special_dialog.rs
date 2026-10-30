@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -19,7 +19,8 @@ use crate::shell::palette::rgb;
 use super::clipboard::{PasteOp, PasteSpecialOptions, PasteType};
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
-use crate::xlsx::toggle::{radio_row, toggle_row};
+use crate::xlsx::toggle::toggle_row;
+use crate::shell::chrome::{radio_button, radio_group};
 
 pub(crate) struct PasteSpecialDialog {
     pub(crate) paste_type: PasteType,
@@ -65,7 +66,7 @@ impl SlideEditor {
         self.commit_cell_edit(cx);
         let skip_blanks = self.sheet_state().is_some_and(|s| s.panels.skip_blanks);
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.paste_special_dialog = Some(PasteSpecialDialog {
             paste_type: PasteType::All,
             operation: PasteOp::None,
@@ -105,31 +106,45 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: String, action: crate::shell::chrome::ActionDefinition| {
+            let ui = d.ui.clone();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
         let current_pt = d.paste_type;
         let current_op = d.operation;
         let skip_blanks = d.skip_blanks;
         let transpose = d.transpose;
 
-        let mut body = v_flex().gap_2().px(px(14.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(14.)).py(px(8.)).p_0();
 
         // Group 1: 貼り付け (Paste Type)
-        body = body.child(
-            div()
-                .text_size(px(12.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(0x1a73e8))
-                .child(crate::shell::i18n::text("_xlsx.paste")),
-        );
-        let mut pt_group = v_flex().gap_0p5();
+        let mut pt_group = radio_group();
         for (i, &(pt, key)) in PASTE_TYPE_OPTIONS.iter().enumerate() {
+            // Only use bundled symbols whose meaning matches the paste mode. Values have no
+            // suitable existing symbol; reserve the same slot instead of implying plain text.
+            let icon_name = match pt {
+                PasteType::All => Some("content_paste"),
+                PasteType::Formulas | PasteType::FormulasAndNumberFormats => Some("functions"),
+                PasteType::Formats => Some("format_paint"),
+                PasteType::Comments => Some("comment"),
+                PasteType::Validation => Some("rule"),
+                PasteType::AllExceptBorders => Some("border_clear"),
+                PasteType::ColumnWidths => Some("view_column"),
+                PasteType::Values | PasteType::ValuesAndNumberFormats => None,
+            };
+            let icon_slot = div().w(px(16.)).h(px(16.)).flex_none()
+                .children(icon_name.map(|name| crate::shell::chrome::icon(name, 16., rgb(0x5f6368).into())));
+            let label = crate::shell::i18n::text(key);
             pt_group = pt_group.child(mark(
                 format!("paste-type-{i}"),
-                radio_row(
+                radio_button(
                     SharedString::from(format!("pt-row-{i}")),
                     current_pt == pt,
                     false,
-                    crate::shell::i18n::text(key),
+                    "",
                     cx.listener(move |this, _, _, cx| {
                         if let Some(d) = this.sheet_state_mut().and_then(|s| s.panels.paste_special_dialog.as_mut()) {
                             d.paste_type = pt;
@@ -137,25 +152,22 @@ impl SlideEditor {
                         cx.notify();
                     }),
                 )
+                .aria_label(label.clone())
+                .gap_0()
+                .child(div().w(px(8.)).flex_none())
+                .child(icon_slot)
+                .child(div().pl(px(8.)).text_sm().child(label))
                 .into_any_element(),
             ));
         }
-        body = body.child(pt_group);
+
 
         // Group 2: 演算 (Operation)
-        body = body.child(
-            div()
-                .text_size(px(12.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(0x1a73e8))
-                .pt_1()
-                .child(crate::shell::i18n::text("xlsx.paste-operation")),
-        );
-        let mut op_group = v_flex().gap_0p5();
+        let mut op_group = radio_group();
         for (i, &(op, key)) in PASTE_OP_OPTIONS.iter().enumerate() {
             op_group = op_group.child(mark(
                 format!("paste-op-{i}"),
-                radio_row(
+                radio_button(
                     SharedString::from(format!("op-row-{i}")),
                     current_op == op,
                     false,
@@ -170,14 +182,16 @@ impl SlideEditor {
                 .into_any_element(),
             ));
         }
-        body = body.child(op_group);
+        body=body.child(h_flex().w_full().gap_3().items_start()
+            .child(v_flex().flex_1().min_w_0().gap_2().child(crate::shell::i18n::text("_xlsx.paste")).child(pt_group))
+            .child(v_flex().flex_1().min_w_0().gap_2().child(crate::shell::i18n::text("xlsx.paste-operation")).child(op_group)));
 
         // Group 3: オプション (Options)
         body = body.child(
             div()
-                .text_size(px(12.))
+                .text_sm()
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(0x1a73e8))
+                .text_color(rgb(0x1f1f1f))
                 .pt_1()
                 .child(crate::shell::i18n::text("xlsx.paste-options")),
         );
@@ -215,37 +229,20 @@ impl SlideEditor {
         body = body.child(opt_group);
 
         // Group 4: Buttons (OK, Paste Link)
-        body = body.child(
-            h_flex()
-                .gap_2()
-                .pt_2()
-                .child(mark(
-                    "ok".into(),
-                    Button::new("paste-special-ok")
-                        .primary()
-                        .small()
+
+        let panel_terminal_actions = crate::shell::chrome::action_bar()
+                .action(mark_action("ok".into(), crate::shell::chrome::ActionDefinition::new("paste-special-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
                         .label(crate::shell::i18n::text("query.ok"))
-                        .on_click(cx.listener(|this, _, _, cx| this.apply_paste_special_dialog(cx)))
-                        .into_any_element(),
-                ))
-                .child(mark(
-                    "paste-link".into(),
-                    Button::new("paste-special-link")
-                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.apply_paste_special_dialog(cx)))))
+                .action(crate::shell::chrome::dialog_cancel_definition(cx))
+                .action(mark_action("paste-link".into(), crate::shell::chrome::ActionDefinition::new("paste-special-link", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .label(crate::shell::i18n::text("_xlsx.paste-link"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(state) = this.sheet_state_mut() {
                                 state.panels.paste_special_dialog = None;
                             }
                             this.paste_link_special(cx);
-                        }))
-                        .into_any_element(),
-                )),
-        );
-
-        Some(SidebarPanel {
-            title: crate::shell::i18n::text("xlsx.paste-special").into(),
-            body: body.into_any_element(),
-        })
+                        }))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("xlsx.paste-special"), body.into_any_element(), panel_terminal_actions))
     }
 }

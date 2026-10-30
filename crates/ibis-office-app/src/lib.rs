@@ -18,6 +18,7 @@ pub(crate) use clock::debug_timing;
 mod docx;
 mod linux_desktop;
 mod media_player;
+mod native_shape_clipboard;
 #[cfg(windows)]
 mod open_with;
 mod pptx;
@@ -39,6 +40,10 @@ mod ui_snapshot;
 
 pub use shell::editor::SlideEditor;
 
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/shell/native_quit.rs"]
+mod native_quit_scenarios;
+
 /// Run the scenario tests (`tests/scenarios.rs`; see `shell/scenario.rs`).
 #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 pub fn run_scenarios(filter: &[String]) -> i32 {
@@ -56,6 +61,8 @@ use gpui_kit::*;
 actions!(
     ibis_office,
     [
+        AddPresentationSlide,
+        DuplicatePresentationSelection,
         /// Undo the last edit.
         Undo,
         /// Redo the last undone edit.
@@ -196,7 +203,9 @@ actions!(
 
 /// Register components, theme and key bindings. Call once, before opening a window.
 pub fn init(cx: &mut App) {
+    shell::settings::migrate_on_startup();
     gpui_kit::init(cx);
+    shell::panel_dialog::init(cx);
     // Questions drawn as ibisOffice's dialogs where the system has none (Linux).
     linux_desktop::install_prompts(cx);
     // The metafile pictures put their text by the metrics of the fonts.
@@ -270,6 +279,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new(&secondary("shift-left"), sheet_ui::ExtendJumpLeft, Some(editor::SHEET_CONTEXT)),
         KeyBinding::new(&secondary("shift-right"), sheet_ui::ExtendJumpRight, Some(editor::SHEET_CONTEXT)),
         KeyBinding::new("home", sheet_ui::SelectRowStart, Some(editor::SHEET_CONTEXT)),
+        KeyBinding::new("end", sheet_ui::SelectRowEnd, Some(editor::SHEET_CONTEXT)),
+        KeyBinding::new("shift-end", sheet_ui::ExtendRowEnd, Some(editor::SHEET_CONTEXT)),
         KeyBinding::new("shift-home", sheet_ui::ExtendRowStart, Some(editor::SHEET_CONTEXT)),
         KeyBinding::new("ctrl-home", sheet_ui::SelectFirstCell, Some(editor::SHEET_CONTEXT)),
         KeyBinding::new("ctrl-shift-home", sheet_ui::ExtendFirstCell, Some(editor::SHEET_CONTEXT)),
@@ -374,10 +385,20 @@ pub fn init(cx: &mut App) {
         KeyBinding::new(&secondary("q"), Quit, None),
         KeyBinding::new(&secondary(","), OpenSettings, None),
     ]);
+    if is_mac(){cx.bind_keys([
+        KeyBinding::new("ctrl-shift-up",sheet_ui::ExtendJumpUp,Some(editor::SHEET_CONTEXT)),
+        KeyBinding::new("ctrl-shift-down",sheet_ui::ExtendJumpDown,Some(editor::SHEET_CONTEXT)),
+        KeyBinding::new("ctrl-shift-left",sheet_ui::ExtendJumpLeft,Some(editor::SHEET_CONTEXT)),
+        KeyBinding::new("ctrl-shift-right",sheet_ui::ExtendJumpRight,Some(editor::SHEET_CONTEXT)),
+    ]);}
     // A document's text keys (the document担当's, in `docx/editing.rs`).
     cx.bind_keys(docx::key_bindings());
     cx.bind_keys(xlsx::key_bindings());
     cx.on_action(|_: &Quit, cx| quit_asking_to_save(cx));
+    // The Dock's Quit bypasses the app menu's Quit action. macOS asks before stopping its
+    // event loop; other platform layers currently call on_quit only after their loop has ended.
+    #[cfg(any(target_os = "macos", feature = "scenarios"))]
+    cx.on_quit_requested(native_quit_allowed).detach();
     cx.on_action(|_: &OpenSettings, cx| crate::shell::settings_window::open(cx));
     cx.on_action(|_: &OpenAbout, cx| crate::shell::about_window::open(cx));
     cx.on_action(|_: &OpenStartWindow, cx| crate::open_editor(None, None, cx));
@@ -400,6 +421,30 @@ pub(crate) fn quit_if_last_window_closed(cx: &mut App) {
 
 #[cfg(feature = "scenarios")]
 pub(crate) static QUIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A native quit request must not destroy windows before their save questions are answered.
+/// Once all documents have been saved/discarded, the next request is allowed synchronously.
+pub(crate) fn native_quit_allowed(cx: &mut App) -> bool {
+    let mut unsaved = false;
+    for handle in cx.windows() {
+        let Some(root) = handle.downcast::<Root>() else { continue };
+        let editor = root.update(cx, |root, _, _| root.view().clone().downcast::<SlideEditor>().ok());
+        match editor {
+            Ok(Some(editor)) => unsaved |= editor.read(cx).is_dirty(),
+            Ok(None) => {},
+            // A borrowed window must never be mistaken for a clean window.
+            Err(_) => unsaved = true,
+        }
+    }
+    if unsaved {
+        // The Dock can ask while the app is inactive; bring its save question into view.
+        cx.activate(true);
+        quit_asking_to_save(cx);
+        false
+    } else {
+        true
+    }
+}
 
 /// ibisOffice > 終了 (⌘Q): the windows with edits not saved stay and ask whether to save them (each goes once
 /// answered); the others close. The app ends with its last window (`quit_if_last_window_closed`), or at once when
@@ -471,7 +516,21 @@ fn is_mac() -> bool {
 
 /// Open the editor window on `document` (a presentation and its file name),
 /// showing slide number `slide` (1-based), or on the start view without one.
+#[derive(Default)]
+struct StartWindows(std::collections::HashMap<gpui_kit::EntityId,(gpui_kit::AnyWindowHandle,bool)>);
+impl gpui_kit::Global for StartWindows {}
+/// Keep start-view identity outside an editor borrow, so its own command can reuse it.
+pub(crate) fn track_start_window(id:gpui_kit::EntityId,handle:Option<gpui_kit::AnyWindowHandle>,start:bool,cx:&mut App){
+    if cx.try_global::<StartWindows>().is_none(){cx.set_global(StartWindows::default());}
+    cx.update_global::<StartWindows,_>(|windows,_|{if let Some(handle)=handle{windows.0.insert(id,(handle,start));}else if let Some((_,state))=windows.0.get_mut(&id){*state=start;}});
+}
 pub fn open_editor(document: Option<(ibis_doc_model::Presentation, SharedString)>, slide: Option<usize>, cx: &mut App) {
+    if document.is_none(){
+        let alive=cx.windows();
+        if cx.try_global::<StartWindows>().is_some(){cx.update_global::<StartWindows,_>(|s,_|s.0.retain(|_,(w,_)|alive.contains(w)));}
+        let existing=cx.try_global::<StartWindows>().and_then(|s|s.0.values().find(|(w,start)|*start&&alive.contains(w)).map(|(w,_)|*w));
+        if let Some(handle)=existing{let _=handle.update(cx,|_,w,_|w.activate_window());cx.activate(true);return;}
+    }
     // A start window is as wide as its view (shell/start_view.rs).
     let width = if document.is_none() { shell::start_view::START_WINDOW_WIDTH } else { 1280. };
     open_window_sized(width, cx, move |editor, window, cx| {
@@ -730,7 +789,11 @@ pub(crate) fn read_file_with(path: &std::path::Path, password: Option<&str>) -> 
         used = Some(password.to_string());
     }
     let open_t0 = crate::clock::Instant::now();
-    let (opened, csv_stream) = ibis_pptx::open_progressive(data, 100_000).map_err(|e| {
+    let external_document_format=ibis_pptx::docx_convert::DocxConvertFormat::from_path(path);
+    let open_result=if let Some(format)=external_document_format {
+        ibis_pptx::docx_convert::import_docx_format(&data,format).map(|opened|(opened,None))
+    } else {ibis_pptx::open_progressive(data,100_000)};
+    let (opened, csv_stream) = open_result.map_err(|e| {
         xlsx::repair::note_open_failed(path);
         docx::repair::note_open_failed(path);
         e.to_string()

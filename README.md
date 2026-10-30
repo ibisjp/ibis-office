@@ -28,32 +28,32 @@ Our aim is simple: a document made in Microsoft Office should look the same when
 <table>
   <tr>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-Windows.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-Windows.zip">
         <img src="asset/download-windows.svg" alt="Download for Windows" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-Windows.zip"><code>ibisOffice-0.8.4-Windows.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-Windows.zip"><code>ibisOffice-0.8.5-Windows.zip</code></a><br>
       <small>Windows 10 / 11 (64-bit)</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-macOS.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-macOS.zip">
         <img src="asset/download-mac.svg" alt="Download for Mac" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-macOS.zip"><code>ibisOffice-0.8.4-macOS.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-macOS.zip"><code>ibisOffice-0.8.5-macOS.zip</code></a><br>
       <small>macOS 11 or later (Apple silicon)</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-Linux.AppImage">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-Linux.AppImage">
         <img src="asset/download-linux.svg" alt="Download for Linux" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-Linux.AppImage"><code>ibisOffice-0.8.4-Linux.AppImage</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-Linux.AppImage"><code>ibisOffice-0.8.5-Linux.AppImage</code></a><br>
       <small>Linux x86_64</small>
     </td>
   </tr>
 </table>
 
-- **Windows**: download and unzip `ibisOffice-0.8.4-Windows.zip`, then run `ibisOffice.exe` in the `ibisOffice` folder.
-- **macOS**: download and unzip `ibisOffice-0.8.4-macOS.zip`, then move `ibisOffice.app` to your Applications folder.
-- **Linux**: download `ibisOffice-0.8.4-Linux.AppImage`, allow it to run as a program (`chmod +x`), and double-click. Runs on major desktop Linux distributions (glibc 2.31 or later: Ubuntu, Debian, Fedora, Arch Linux, etc.). No installation or FUSE is needed.
+- **Windows**: download and unzip `ibisOffice-0.8.5-Windows.zip`, then run `ibisOffice.exe` in the `ibisOffice` folder.
+- **macOS**: download and unzip `ibisOffice-0.8.5-macOS.zip`, then move `ibisOffice.app` to your Applications folder.
+- **Linux**: download `ibisOffice-0.8.5-Linux.AppImage`, allow it to run as a program (`chmod +x`), and double-click. Runs on major desktop Linux distributions (glibc 2.31 or later: Ubuntu, Debian, Fedora, Arch Linux, etc.). No installation or FUSE is needed.
 - **Try the web version**: open the [playground](https://ibisjp.github.io/ibis-office/) in your browser — no installation (a browser with WebGPU). Open the sample Word, Excel and PowerPoint documents and try it right away.
 - **Changelog**: see [CHANGELOG.md](CHANGELOG.md) for release notes and recent updates.
 - **Watch the video**: an introduction to ibisOffice (YouTube).

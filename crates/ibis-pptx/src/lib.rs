@@ -51,6 +51,7 @@ mod docx;
 pub mod docx_convert;
 pub(crate) mod drawing_table_style;
 pub mod geometry;
+pub mod shape_clipboard;
 pub mod math_xml;
 mod new_file;
 mod package;
@@ -90,6 +91,7 @@ pub mod handout_master;
 pub mod notes_page;
 mod xls_formula;
 pub mod font_digit;
+pub mod locale_paper;
 mod xlsx;
 pub use xlsx::{EXCEL_METRICS, ExcelMetrics};
 mod xlsx_external;
@@ -157,7 +159,7 @@ pub use geometry::text_warp as text_warp_geometry;
 pub use new_file::new_presentation;
 pub use save::{CsvProgressiveChunk, ForeignSlide, NewChartKind, Opened, SaveOptions, Source, open, open_progressive};
 pub use reader::script_pieces;
-pub use save::pptx_chart_data::{ChartData, SeriesRefs, bubble_refs_for_range, chart_from_data, sheet_chart_from_data, format_ref, grown_refs, parse_ref, quote_sheet, refs_for_range, refs_range, scatter_refs_for_range, sheet_of, stock_refs_for_range};
+pub use save::pptx_chart_data::{ChartData, SeriesRefs, bubble_refs_for_range, chart_from_data, sheet_chart_from_data, format_ref, grown_refs, parse_ref, quote_sheet, refs_for_range, preferred_series_columns, refs_range, scatter_refs_for_range, sheet_of, stock_refs_for_range};
 pub use svg_convert::convert_svg_to_shapes;
 
 /// Why a file could not be read. The message is for the user.

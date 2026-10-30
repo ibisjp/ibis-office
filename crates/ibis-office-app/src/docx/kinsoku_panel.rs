@@ -3,8 +3,9 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! 表示形式 > 禁則文字の設定…: the characters a line may not start with and may not end with (Word's 禁則文字の設定),
 //! for the whole document; the standard ones until they are changed.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::FlowCommand;
@@ -15,6 +16,7 @@ use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
 
 pub(crate) struct KinsokuPanel {
+    pub(crate) strict: bool,
     pub(crate) start: Entity<InputState>,
     pub(crate) end: Entity<InputState>,
 }
@@ -72,8 +74,10 @@ impl SlideEditor {
     }
 
     pub(crate) fn open_kinsoku_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let (start, end) = self.kinsoku_lists();
         let panel = KinsokuPanel {
+            strict: self.strict_kinsoku(),
             start: cx.new(|cx| InputState::new(window, cx).default_value(start)),
             end: cx.new(|cx| InputState::new(window, cx).default_value(end)),
         };
@@ -113,32 +117,19 @@ impl SlideEditor {
         let start_cleaned = clean(start);
         let end_cleaned = clean(end);
 
-        let mut commands = Vec::new();
-        if start_cleaned.is_empty() || start_cleaned == super::flow_layout::STRICT_NO_LINE_START {
-            commands.push(FlowCommand::SetStrictFirstAndLastChars(true));
-            commands.push(FlowCommand::SetKinsokuLists {
-                start: None,
-                end: if end_cleaned.is_empty() || end_cleaned == super::flow_layout::NO_LINE_END { None } else { Some(end_cleaned) },
-            });
-        } else if start_cleaned == super::flow_layout::NORMAL_NO_LINE_START {
-            commands.push(FlowCommand::SetStrictFirstAndLastChars(false));
-            commands.push(FlowCommand::SetKinsokuLists {
-                start: None,
-                end: if end_cleaned.is_empty() || end_cleaned == super::flow_layout::NO_LINE_END { None } else { Some(end_cleaned) },
-            });
-        } else {
-            commands.push(FlowCommand::SetKinsokuLists {
-                start: Some(start_cleaned),
-                end: if end_cleaned.is_empty() || end_cleaned == super::flow_layout::NO_LINE_END { None } else { Some(end_cleaned) },
-            });
-        }
+        let strict=p.strict;
+        let default=if strict {super::flow_layout::STRICT_NO_LINE_START}else{super::flow_layout::NORMAL_NO_LINE_START};
+        let commands=vec![FlowCommand::SetStrictFirstAndLastChars(strict),FlowCommand::SetKinsokuLists {
+            start:if start_cleaned.is_empty()||start_cleaned==default{None}else{Some(start_cleaned)},
+            end:if end_cleaned.is_empty()||end_cleaned==super::flow_layout::NO_LINE_END{None}else{Some(end_cleaned)},
+        }];
         self.run_flow(commands, cx);
         self.close_kinsoku_panel(cx);
     }
 
     /// 「標準」プリセットを入力欄に反映し適用.
     pub(crate) fn select_normal_kinsoku_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_kinsoku_preset(false, cx);
+        if let Some(p)=self.doc_state_mut().and_then(|s|s.helper.kinsoku.as_mut()){p.strict=false;}
         let (start, end) = (super::flow_layout::NORMAL_NO_LINE_START.to_string(), super::flow_layout::NO_LINE_END.to_string());
         if let Some(p) = self.doc_state().and_then(|s| s.helper.kinsoku.as_ref()) {
             p.start.update(cx, |i, cx| i.set_value(&start, window, cx));
@@ -149,7 +140,7 @@ impl SlideEditor {
 
     /// 「厳密」プリセットを入力欄に反映し適用.
     pub(crate) fn select_strict_kinsoku_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_kinsoku_preset(true, cx);
+        if let Some(p)=self.doc_state_mut().and_then(|s|s.helper.kinsoku.as_mut()){p.strict=true;}
         let (start, end) = (super::flow_layout::STRICT_NO_LINE_START.to_string(), super::flow_layout::NO_LINE_END.to_string());
         if let Some(p) = self.doc_state().and_then(|s| s.helper.kinsoku.as_ref()) {
             p.start.update(cx, |i, cx| i.set_value(&start, window, cx));
@@ -166,53 +157,34 @@ impl SlideEditor {
     pub(crate) fn kinsoku_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.doc_state()?.helper.kinsoku.as_ref()?;
         let theme = cx.theme();
-        let strict = self.strict_kinsoku();
-        let is_custom = self.flow().and_then(|d| d.no_line_start.as_ref()).is_some();
-        let label = |key: &'static str| div().text_size(px(12.)).text_color(theme.muted_foreground).child(text(key));
+        let strict = p.strict;
+        let expected=if strict{super::flow_layout::STRICT_NO_LINE_START}else{super::flow_layout::NORMAL_NO_LINE_START};
+        let is_custom=p.start.read(cx).value().as_ref()!=expected || p.end.read(cx).value().as_ref()!=super::flow_layout::NO_LINE_END;
+        let editor=cx.entity().downgrade();
+        let label = |key: &'static str| div().text_sm().text_color(theme.muted_foreground).child(text(key));
         let body = v_flex()
             .gap_3()
             .p_3()
-            .child(label("docx.kinsoku.description"))
+            .p_0().child(label("docx.kinsoku.description"))
             .child(
                 v_flex()
                     .gap_1()
                     .child(label("docx.kinsoku.rule_label"))
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("kinsoku-preset-normal")
-                                    .small()
-                                    .label(text("docx.kinsoku.rule_normal"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.select_normal_kinsoku_panel(window, cx))),
-                            )
-                            .child(
-                                Button::new("kinsoku-preset-strict")
-                                    .small()
-                                    .label(text("docx.kinsoku.rule_strict"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.select_strict_kinsoku_panel(window, cx))),
-                            ),
-                    )
-                    .child(
-                        div().text_size(px(11.)).text_color(theme.muted_foreground).child(text(if is_custom {
-                            "docx.kinsoku.rule_custom"
-                        } else if strict {
-                            "docx.kinsoku.mode.strict"
-                        } else {
-                            "docx.kinsoku.mode.normal"
-                        })),
-                    ),
+                    .child(crate::shell::chrome::Dropdown::new("kinsoku-preset",text(if is_custom{"docx.kinsoku.rule_custom"}else if strict{"docx.kinsoku.rule_strict"}else{"docx.kinsoku.rule_normal"}),vec![
+                        crate::shell::chrome::DropdownItem::new(text("docx.kinsoku.rule_normal")).checked(!is_custom&&!strict).on_select(std::rc::Rc::new(|e,w,cx|e.select_normal_kinsoku_panel(w,cx))),
+                        crate::shell::chrome::DropdownItem::new(text("docx.kinsoku.rule_strict")).checked(!is_custom&&strict).on_select(std::rc::Rc::new(|e,w,cx|e.select_strict_kinsoku_panel(w,cx))),
+                    ],&cx.weak_entity())),
             )
-            .child(v_flex().gap_1().child(label("docx.kinsoku.start")).child(Input::new(&p.start).small().cleanable(true)))
-            .child(v_flex().gap_1().child(label("docx.kinsoku.end")).child(Input::new(&p.end).small().cleanable(true)))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(Button::new("kinsoku-apply").primary().small().label(text("docx.kinsoku.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_kinsoku_panel(cx))))
-                    .child(Button::new("kinsoku-cancel").ghost().small().label(text("docx.kinsoku.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_kinsoku_panel(cx)))),
-            )
-            .child(Button::new("kinsoku-reset").ghost().small().label(text("docx.kinsoku.reset")).on_click(cx.listener(|this, _, window, cx| this.reset_kinsoku_panel(window, cx))));
-        Some(SidebarPanel { title: text("docx.kinsoku.title").into(), body: body.into_any_element() })
+            .child(v_flex().gap_1().child(label("docx.kinsoku.start")).child(crate::shell::chrome::text_field(&p.start).full_width()))
+            .child(v_flex().gap_1().child(label("docx.kinsoku.end")).child(crate::shell::chrome::text_field(&p.end).full_width()))
+
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("kinsoku-apply", text("docx.kinsoku.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, _, cx| this.apply_kinsoku_panel(cx))))
+                    .action(crate::shell::chrome::dialog_cancel_definition(cx))
+                    .action(crate::shell::chrome::ActionDefinition::new("kinsoku-reset", text("docx.kinsoku.reset"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|this, _, window, cx| this.reset_kinsoku_panel(window, cx))))
+                    ;
+        Some(SidebarPanel::with_footer(text("docx.kinsoku.title"), body.into_any_element(), panel_actions))
     }
 }
 

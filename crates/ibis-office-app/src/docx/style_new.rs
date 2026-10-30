@@ -7,8 +7,8 @@
 //! caret (the font, size, bold, italic and colour shown, changeable), and
 //! applied to the selection. And 基準にするスタイル of the caret's
 //! paragraph style changed.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{FlowCommand, FlowStyle, FlowStyles, ParaChange, StyleKind, flow_command};
@@ -75,6 +75,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn open_new_style_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some((start, _)) = self.ordered_selection() else { return };
         let Some(doc) = self.flow() else { return };
         let Some(p) = flow_command::paragraph(doc, start.para) else { return };
@@ -263,15 +264,18 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let row = |id: &str, label: &str, input: &Entity<InputState>| h_flex().gap_2().child(div().w(px(120.)).text_sm().child(text(label))).child(div().flex_1().child(mark(id, Input::new(input).small().cleanable(true).into_any_element())));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let row = |id: &str, label: &str, input: &Entity<InputState>| h_flex().gap_2().child(div().w(px(120.)).text_sm().child(text(label))).child(div().flex_1().child(mark(id, crate::shell::chrome::text_field(input).full_width().into_any_element())));
         let toggle = |id: &'static str, label: &str, on: bool, f: fn(&mut NewStylePanel)| {
             mark(
                 id,
-                Button::new(SharedString::from(format!("new-style-{id}")))
-                    .small()
-                    .label(text(label))
-                    .selected(on)
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::checkbox_button(SharedString::from(format!("new-style-{id}")),text(label),on,false,cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.new_style.as_mut()) {
                             f(p);
                         }
@@ -280,30 +284,35 @@ impl SlideEditor {
                     .into_any_element(),
             )
         };
-        let mut body = v_flex()
-            .gap_2()
-            .px(px(18.))
-            .py(px(8.))
-            .child(mark("create", Button::new("new-style-create").primary().small().label(text("_xlsx.create")).on_click(cx.listener(|this, _, _, cx| this.create_style(cx))).into_any_element()))
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
+        let style_names:Vec<String>=self.flow()?.styles.styles.values().map(|s|super::toolbar::style_display_name(&s.name)).collect();
+        let mut body = crate::shell::chrome::panel_form()
+            .p_0().children(crate::shell::chrome::panel_message(&p.message))
             .child(row("name", "_shell.name", &p.name))
-            .child(h_flex().gap_1().child(toggle("paragraph", "fix.style-new.paragraph", !p.character, |p| p.character = false)).child(toggle("character", "fix.goto-special.text", p.character, |p| p.character = true)))
-            .child(row("base", "fix.style-new.style-based", &p.base));
+            .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("new-style-paragraph",text("fix.style-new.paragraph"),!p.character).on_click(cx.listener(|e,_,_,cx|{if let Some(p)=e.doc_state_mut().and_then(|s|s.helper.new_style.as_mut()){p.character=false;}cx.notify();})).on_bounds({let ui=p.ui.clone();move|bounds|{ui.borrow_mut().insert("paragraph".to_string(),bounds);}}))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("new-style-character",text("fix.goto-special.text"),p.character).on_click(cx.listener(|e,_,_,cx|{if let Some(p)=e.doc_state_mut().and_then(|s|s.helper.new_style.as_mut()){p.character=true;}cx.notify();})).on_bounds({let ui=p.ui.clone();move|bounds|{ui.borrow_mut().insert("character".to_string(),bounds);}})))
+            .child(h_flex().gap_2().items_center().child(div().w(px(120.)).text_sm().child(text("fix.style-new.style-based"))).child(crate::shell::chrome::input_dropdown("new-style-base",&p.base,style_names.clone(),cx)));
         if !p.character {
-            body = body.child(row("next", "fix.style-new.style-following-paragraph", &p.next));
+            body = body.child(h_flex().gap_2().items_center().child(div().w(px(120.)).text_sm().child(text("fix.style-new.style-following-paragraph"))).child(crate::shell::chrome::input_dropdown("new-style-next",&p.next,style_names.clone(),cx)));
         }
         body = body
-            .child(row("font", "_shell.font", &p.font))
-            .child(row("size", "_shell.size", &p.size))
-            .child(row("color", "docx.common.color", &p.color))
+            .child(h_flex().gap_2().items_center().child(div().w(px(120.)).text_sm().child(text("_shell.font"))).child(mark("font",crate::shell::chrome::panel_font_dropdown("panel-font-new-style",&p.font,cx))))
+            // The size (pt): applied by 作成 only, so ▲▼ only change the number.
+            .child(h_flex().gap_2().child(div().w(px(120.)).text_sm().child(text("_shell.size"))).child(div().w(crate::shell::chrome::FIELD_WIDTH).flex_none().child(mark("size", crate::shell::chrome::text_field(&p.size).full_width().spinner("new-style-size", crate::shell::chrome::SpinnerSpec::new(1.0).steps(FONT_STEPS).range(1.0, 1638.0), cx, |_, _, _, _| {}).into_any_element()))))
+            .child(h_flex().gap_2().child(div().w(px(120.)).text_sm().child(text("docx.common.color"))).child(div().w(crate::shell::chrome::FIELD_WIDTH).flex_none().child(mark("color", crate::shell::chrome::panel_color_field("new-style-color",&p.color,cx)))))
             .child(h_flex().gap_1().child(toggle("bold", "_shell.bold", p.bold, |p| p.bold = !p.bold)).child(toggle("italic", "docx.common.italic", p.italic, |p| p.italic = !p.italic)))
             .child(div().h(px(8.)))
-            .child(div().text_size(px(13.)).child(crate::shell::i18n::format("fix.style-new.style-name-based", &[("name", &caret)])))
-            .child(mark("rebase", Input::new(&p.rebase).small().cleanable(true).into_any_element()))
-            .child(mark("rebase-apply", Button::new("new-style-rebase").small().ghost().label(text("fix.style-new.change-base")).on_click(cx.listener(|this, _, _, cx| this.rebase_caret_style(cx))).into_any_element()));
-        Some(SidebarPanel { title: text("fix.style-new.new-style"), body: body.into_any_element() })
+            .child(div().text_sm().child(crate::shell::i18n::format("fix.style-new.style-name-based", &[("name", &caret)])))
+            .child(mark("rebase", crate::shell::chrome::input_dropdown("new-style-rebase",&p.rebase,style_names.clone(),cx)))
+            ;
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("create", crate::shell::chrome::ActionDefinition::new("new-style-create", text("_xlsx.create"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,_,cx|e.create_style(cx))))).action(mark_action("rebase-apply", crate::shell::chrome::ActionDefinition::new("new-style-rebase", text("fix.style-new.change-base"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|this, _, _, cx| this.rebase_caret_style(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("fix.style-new.new-style"), body.into_any_element(), panel_terminal_actions))
     }
 }
+
+/// Word's font sizes, the steps of the size's ▲▼.
+const FONT_STEPS: &[f32] = &[8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 36.0, 48.0, 72.0];
 
 /// The menu ids of the document's character styles offered.
 const CHAR_STYLE_IDS: [&str; 30] = [

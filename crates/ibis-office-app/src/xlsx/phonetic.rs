@@ -6,8 +6,8 @@
 //! セルのふりがな文字列を設定・編集するパネル (`PhoneticPanel`)、
 //! およびふりがなの表示/非表示トグル (`toggle_show_phonetic`).
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Command, SheetCommand};
@@ -32,7 +32,7 @@ impl SlideEditor {
         let sheet = s.and_then(ibis_doc_model::sheet_calc::sheet_of_slide);
         let existing = sheet
             .and_then(|sh| sh.cell(row, col))
-            .and_then(|c| c.phonetic.as_deref().or(Some(&c.text)))
+            .and_then(|c| c.phonetic.as_deref())
             .unwrap_or("")
             .to_string();
 
@@ -46,8 +46,8 @@ impl SlideEditor {
             cell_name,
         };
 
+        self.begin_sheet_settings();
         let wb = self.wb_mut();
-        wb.panels.close();
         wb.panels.phonetic = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -69,6 +69,7 @@ impl SlideEditor {
         };
         let _ = self.document.execute(vec![Command::Sheet(cmd)]);
         self.wb_mut().panels.phonetic = None;
+        self.sidebar_open = false;
         cx.notify();
     }
 
@@ -86,6 +87,7 @@ impl SlideEditor {
         };
         let _ = self.document.execute(vec![Command::Sheet(cmd)]);
         self.wb_mut().panels.phonetic = None;
+        self.sidebar_open = false;
         cx.notify();
     }
 
@@ -115,43 +117,27 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(
+            .p_0().child(
                 div()
-                    .text_size(px(13.))
+                    .text_sm()
                     .child(format!("{}: {}", text("fix.phonetic.cell"), cell_label)),
             )
-            .child(div().text_size(px(13.)).child(text("fix.phonetic.furigana")))
-            .child(Input::new(&p.input).small().cleanable(true))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("phonetic-apply")
-                            .small()
-                            .primary()
+            .child(div().text_sm().child(text("fix.phonetic.furigana")))
+            .child(crate::shell::chrome::text_field(&p.input).full_width())
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("phonetic-apply", "", crate::shell::chrome::ActionButtonKind::Primary)
                             .label(text("_shell.apply"))
                             .on_click(cx.listener(|this, _, _, cx| this.apply_phonetic(cx))),
                     )
-                    .child(
-                        Button::new("phonetic-clear")
-                            .small()
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("phonetic-clear", "", crate::shell::chrome::ActionButtonKind::Destructive)
                             .label(text("_shell.delete"))
                             .on_click(cx.listener(|this, _, _, cx| this.clear_phonetic(cx))),
-                    )
-                    .child(
-                        Button::new("phonetic-close")
-                            .small()
-                            .ghost()
-                            .label(text("_shell.close"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.wb_mut().panels.phonetic = None;
-                                cx.notify();
-                            })),
-                    ),
-            );
-        Some(SidebarPanel {
-            title: text("fix.phonetic.edit-furigana").to_string().into(),
-            body: body.into_any_element(),
-        })
+                    );
+        Some(SidebarPanel::with_footer(text("fix.phonetic.edit-furigana").to_string(), body.into_any_element(), panel_actions))
     }
 }

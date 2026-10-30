@@ -724,7 +724,7 @@ _shell.exporting-png	PNG に書き出しています…
 _shell.exporting-gif	GIF に書き出しています…
 shell.autorecover.settings-title	自動回復の設定
 shell.autorecover.enable	自動回復用データを定期的に保存する
-shell.autorecover.minutes	保存の間隔（分、1〜120）
+shell.autorecover.minutes	保存の間隔
 shell.autorecover.keep	保存しないで閉じたとき、最後の自動回復を残す
 shell.autorecover.location	自動回復の保存先
 shell.autorecover.reset-location	既定の場所に戻す
@@ -824,3 +824,53 @@ window.open-in-excel	Excelで開く
 window.open-in-powerpoint	PowerPointで開く
 window.open-in-office.confirm-title	確認
 window.open-in-office.specify-path	{app}のパスを指定してください。
+
+_shell.find	検索
+
+ui.custom	カスタム
+ui.caption-label	ラベル
+ui.merge-row	宛先の編集
+ui.add	追加
+
+ui.tab-duplicate	同じタブ位置が登録されています。別の位置を指定してください。
+ui.merge-add-column	列（差し込みフィールド）を追加
+ui.merge-csv	CSVファイル読み込み
+ui.merge-manual	手動入力
+ui.merge-recipient	宛先
+
+field.browse	参照…
+field.minutes	分
+
+autocorrect.entry-title	置換ルールの編集
+autocorrect.entry-required	修正前を入力してください。
+autocorrect.entry-duplicate	同じ修正前のルールがあります。既存のルールを編集してください。
+
+hyperlink.menu	ハイパーリンク
+hyperlink.open	リンクを開く
+hyperlink.edit	リンクを編集…
+hyperlink.remove	リンクを削除
+
+autocorrect.tab.settings	設定
+autocorrect.tab.dictionary	補正辞書
+theme.custom-editor	カスタム配色の編集
+theme.palette-list	配色
+math.editor.title	数式
+math.editor.hint	数式（UnicodeMath または LaTeX）を入力
+ink.panel.title	描画（インク）
+ink.panel.tools	描画ツール
+ink.panel.width	太さ
+ink.panel.color	色
+ink.panel.effects	インク効果
+theme.custom-scheme	カスタム配色
+ink.panel.mouse	マウスで描画する
+
+shell.action.ok	OK
+
+start.recent.remove	解除
+shell.row.actions	その他の操作
+
+color.palette.more	その他の色...
+color.dialog.title	色選択
+color.dialog.invalid	色は6桁の16進数で指定してください
+
+shell.start-window	スタートウィンドウ

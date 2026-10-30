@@ -7,8 +7,8 @@
 //! it), 日付 (by days, weekdays, months or years), stopping at the stop
 //! value if one is given. With one cell selected and a stop value, the
 //! series runs on from it until the stop value.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellEdit, CellInput, CellRange, CellValue, Command, SheetCommand};
@@ -157,7 +157,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.series = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -399,15 +399,18 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
         type Set = fn(&mut SeriesPanel);
         let radio = |id: &'static str, on: bool, label: &str, set: Set| {
             mark(
                 id,
-                Button::new(id)
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if on { "◉" } else { "○" }, text(label)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::radio_button(id, on, false, text(label), cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.wb_mut().panels.series.as_mut() {
                             set(p);
                         }
@@ -419,11 +422,7 @@ impl SlideEditor {
         let toggle = |id: &'static str, on: bool, label: &str, set: Set| {
             mark(
                 id,
-                Button::new(id)
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if on { "☑" } else { "☐" }, text(label)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::checkbox_button(id, text(label), on, false, cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.wb_mut().panels.series.as_mut() {
                             set(p);
                         }
@@ -436,23 +435,19 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_size(px(13.)).child(text("_shell.range")))
-            .child(h_flex().gap_1().child(radio("series-rows", !p.columns, "_xlsx.row", |p| p.columns = false)).child(radio("series-columns", p.columns, "_xlsx.column", |p| p.columns = true)))
-            .child(div().text_size(px(13.)).child(text("fix.series.type")))
+            .p_0().child(div().text_sm().child(text("_shell.range")))
+            .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow).child(radio("series-rows", !p.columns, "_xlsx.row", |p| p.columns = false)).child(radio("series-columns", p.columns, "_xlsx.column", |p| p.columns = true)))
+            .child(div().text_sm().child(text("fix.series.type")))
             .child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
+                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                     .child(radio("series-linear", p.kind == Kind::Linear, "_xlsx.add", |p| p.kind = Kind::Linear))
                     .child(radio("series-growth", p.kind == Kind::Growth, "_xlsx.multiply", |p| p.kind = Kind::Growth))
                     .child(radio("series-date", p.kind == Kind::Date, "_xlsx.short-date", |p| p.kind = Kind::Date))
                     .child(radio("series-autofill", p.kind == Kind::AutoFill, "_xlsx.auto-fill", |p| p.kind = Kind::AutoFill)),
             );
         if !p.trend && p.kind == Kind::Date {
-            body = body.child(div().text_size(px(13.)).child(text("fix.series.date-unit"))).child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
+            body = body.child(div().text_sm().child(text("fix.series.date-unit"))).child(
+                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                     .child(radio("unit-day", p.unit == DateUnit::Day, "fix.series.day", |p| p.unit = DateUnit::Day))
                     .child(radio("unit-weekday", p.unit == DateUnit::Weekday, "fix.series.weekday", |p| p.unit = DateUnit::Weekday))
                     .child(radio("unit-month", p.unit == DateUnit::Month, "fix.series.month", |p| p.unit = DateUnit::Month))
@@ -463,28 +458,18 @@ impl SlideEditor {
             body = body.child(toggle("series-trend", p.trend, "_xlsx.trend", |p| p.trend = !p.trend));
             if !p.trend {
                 body = body
-                    .child(div().text_size(px(13.)).child(text("fix.series.step-value")))
-                    .child(mark("step", Input::new(&p.step).small().cleanable(true).into_any_element()))
-                    .child(div().text_size(px(13.)).child(text("fix.series.stop-value")))
-                    .child(mark("stop", Input::new(&p.stop).small().cleanable(true).into_any_element()));
+                    .child(div().text_sm().child(text("fix.series.step-value")))
+                    .child(mark("step", crate::shell::chrome::text_field(&p.step).full_width().into_any_element()))
+                    .child(div().text_sm().child(text("fix.series.stop-value")))
+                    .child(mark("stop", crate::shell::chrome::text_field(&p.stop).full_width().into_any_element()));
             }
         }
         body = body
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-            .child(mark("apply", Button::new("series-apply").primary().small().label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_series_panel(cx))).into_any_element()))
-            .child(mark(
-                "close",
-                Button::new("series-close")
-                    .small()
-                    .ghost()
-                    .label(text("_shell.close"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.wb_mut().panels.series = None;
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ));
-        Some(SidebarPanel { title: "fix.series.series".into(), body: body.into_any_element() })
+            .children(crate::shell::chrome::panel_message(&p.message))
+            ;
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("series-apply", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_series_panel(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer("fix.series.series", body.into_any_element(), panel_terminal_actions))
     }
 }
 

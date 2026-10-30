@@ -72,7 +72,7 @@ docx.toc.update	目次の更新
 docx.toc.update-menu	目次の更新
 docx.toc.update-dialog	目次の更新…
 docx.toc.update-dialog.title	目次の更新
-docx.toc.update-dialog.prompt	目次を更新しています。次のいずれかのオプションを選択してください:
+docx.toc.update-dialog.prompt	目次を更新しています。次のいずれかのオプションを選択してください
 docx.toc.update-page-numbers-only	ページ番号だけを更新する
 docx.toc.update-entire-table	目次をすべて更新する
 docx.toc.update-ok	OK
@@ -658,7 +658,7 @@ docx.table-formula-panel.formula-2	計算式 (Formula)
 docx.table-formula-panel.insert-formula-into-table-cell	計算式を入力して表のセルに挿入します。
 docx.table-formula-panel.please-enter-formula	計算式を入力してください。
 docx.table-formula-panel.paste-function	関数の貼り付け
-docx.table-formula-panel.direction-keywords	方向キーワード
+docx.table-formula-panel.direction-keywords	参照する方向
 docx.toolbar.sort-ascending-header-row	昇順で並べ替え（タイトル行を除く）
 docx.toolbar.sort-descending-header-row	降順で並べ替え（タイトル行を除く）
 docx.toolbar.sort-ascending-no-header-row	昇順で並べ替え（タイトル行を含める）
@@ -702,14 +702,14 @@ docx.toolbar.show-formatting-marks-8	編集記号の表示（⌘8）
 docx.track.change-user-name	ユーザー名の変更…
 docx.options.user-info	ユーザー情報の設定…
 docx.user-info.title	ユーザー情報
-docx.user-info.description	Microsoft Office のユーザー設定（ユーザー名と頭文字）
-docx.user-info.name	ユーザー名:
-docx.user-info.initials	頭文字:
+docx.user-info.description	文書に記録するユーザー設定（ユーザー名と頭文字）
+docx.user-info.name	ユーザー名
+docx.user-info.initials	頭文字
 docx.user-info.name-placeholder	ユーザー名を入力
 docx.user-info.initials-placeholder	頭文字を入力
 docx.user-info.apply	適用
 docx.user-info.cancel	キャンセル
-docx.user-info.reset-default	システム既定に戻す
+docx.user-info.reset-default	既定に戻す
 docx.print-options	印刷オプション
 docx.options.print.update-fields	印刷前にフィールドを更新する
 docx.options.print.update-links	印刷前にリンクされたデータを更新する
@@ -718,7 +718,7 @@ docx.options.print.hidden-text	隠し文字を印刷する
 docx.options.print.markup	変更履歴とコメントを印刷する
 docx.go-to	ジャンプ…
 docx.goto.title	ジャンプ
-docx.goto.what	移動先:
+docx.goto.what	移動先
 docx.goto.page	ページ
 docx.goto.section	セクション
 docx.goto.line	行
@@ -733,16 +733,16 @@ docx.goto.btn-jump	ジャンプ
 docx.goto.btn-prev	前へ
 docx.goto.btn-next	次へ
 docx.goto.btn-close	閉じる
-docx.goto.enter-page	ページ番号を入力してください:
-docx.goto.enter-section	セクション番号を入力してください:
-docx.goto.enter-line	行番号を入力してください:
-docx.goto.enter-bookmark	ブックマーク名を選択または入力してください:
-docx.goto.enter-comment	コメント番号を入力してください:
-docx.goto.enter-footnote	脚注番号を入力してください:
-docx.goto.enter-endnote	文末脚注番号を入力してください:
-docx.goto.enter-heading	見出し番号を入力または選択してください:
-docx.goto.enter-table	表番号を入力してください:
-docx.goto.enter-graphic	図の番号を入力してください:
+docx.goto.enter-page	ページ番号を入力してください
+docx.goto.enter-section	セクション番号を入力してください
+docx.goto.enter-line	行番号を入力してください
+docx.goto.enter-bookmark	ブックマーク名を選択または入力してください
+docx.goto.enter-comment	コメント番号を入力してください
+docx.goto.enter-footnote	脚注番号を入力してください
+docx.goto.enter-endnote	文末脚注番号を入力してください
+docx.goto.enter-heading	見出し番号を入力または選択してください
+docx.goto.enter-table	表番号を入力してください
+docx.goto.enter-graphic	図の番号を入力してください
 docx.goto.placeholder	番号または名前を入力 (例: 2, +1, -1)
 docx.goto.not-found	指定された移動先が見つかりません。
 docx.find.next	次を検索
@@ -821,8 +821,8 @@ docx.infobar.viewing.message	この文書は閲覧モードです。変更を加
 docx.infobar.viewing.edit	編集に切り替える
 docx.interaction.locked-warning	変更履歴の記録がロックされているため、編集モードへの切替はできません。
 docx.find.format.toggle	書式指定
-docx.find.format.find-label	検索書式:
-docx.find.format.replace-label	置換書式:
+docx.find.format.find-label	検索書式
+docx.find.format.replace-label	置換書式
 docx.find.format.bold	太字
 docx.find.format.italic	斜体
 docx.find.format.underline	下線
@@ -864,14 +864,14 @@ docx.kinsoku.menu	禁則文字の設定…
 docx.kinsoku.mode	禁則処理の方式
 docx.kinsoku.mode.normal	標準
 docx.kinsoku.mode.strict	厳密
-docx.kinsoku.rule_label	禁則文字のプリセット:
+docx.kinsoku.rule_label	禁則文字のプリセット
 docx.kinsoku.rule_normal	標準（小書き仮名を許容）
 docx.kinsoku.rule_strict	厳密（JIS X 4051 準拠）
 docx.kinsoku.rule_custom	（カスタム設定中）
 docx.kinsoku.title	禁則文字の設定
 docx.kinsoku.description	行頭・行末に置かない文字（文書全体）。空にすると標準に戻ります
-docx.kinsoku.start	行頭禁則文字:
-docx.kinsoku.end	行末禁則文字:
+docx.kinsoku.start	行頭禁則文字
+docx.kinsoku.end	行末禁則文字
 docx.kinsoku.apply	適用
 docx.kinsoku.cancel	閉じる
 docx.kinsoku.reset	標準に戻す
@@ -929,8 +929,8 @@ docx.paragraph-panel.line-spacing-multiple	行間（倍）
 docx.paragraph-panel.line-spacing-pt	行間（pt）
 docx.paragraph-panel.blank-means-mixed-only-changed	空欄は混在。変更した項目のみ適用します。
 docx.picture-panel.check-picture-selection-value	画像の選択と0.01〜1584ptの数値を確認してください。縦横比固定では幅か高さの一方を変更します。
-docx.picture-panel.width-pt	幅（pt）
-docx.picture-panel.height-pt	高さ（pt）
+docx.picture-panel.width-pt	幅
+docx.picture-panel.height-pt	高さ
 docx.picture-panel.lock-aspect-ratio	縦横比を固定
 docx.picture-panel.picture-size	画像のサイズ
 docx.common.color	色
@@ -939,8 +939,8 @@ docx.style-panel.justify	両端
 docx.style-panel.update-match-selection	選択箇所に合わせて更新
 docx.table-size-panel.check-table-selection-values-width	表の選択と数値を確認してください（幅/高さ0.05〜1584pt、自動の高さは0）。
 docx.table-size-panel.changes-width-column-where	選択セルが始まる列の幅と、その行の高さを変更します。
-docx.table-size-panel.column-width-pt	列幅（pt）
-docx.table-size-panel.row-height-pt	行高（pt）
+docx.table-size-panel.column-width-pt	列幅
+docx.table-size-panel.row-height-pt	行高
 docx.table-size-panel.table-column-width-row-height	表の列幅と行高
 docx.toolbar.subtitle	サブタイトル
 docx.toolbar.heading-1	見出し 1
@@ -1056,7 +1056,7 @@ docx.toolbar.under-dot	下に点
 docx.toolbar.phonetic-guide	ルビ…
 docx.ruby-panel.phonetic-guide	ルビ
 docx.ruby-panel.ruby-text	ルビ（ふりがな）
-docx.ruby-panel.remove-ruby	ルビを解除
+docx.ruby-panel.remove-ruby	ルビの削除
 docx.ruby-panel.select-text-add-phonetic-guide	ルビを付ける文字を選択してください
 docx.conditional-quick.text-contains	文字列…
 docx.conditional-quick.duplicate-values	重複する値
@@ -1138,8 +1138,8 @@ docx.help-panels.please-enter-positive-number-line	行送りまたは行数に�
 docx.paragraph-panel.characters	字
 docx.toolbar.shape-text-box-format	図形・テキスト ボックスの書式…
 docx.text-box-panel.place-cursor-before-after-text	テキスト ボックスの前後にカーソルを置いてください
-docx.text-box-panel.left-pt	左（pt）
-docx.text-box-panel.top-pt	上（pt）
+docx.text-box-panel.left-pt	左
+docx.text-box-panel.top-pt	上
 docx.text-box-panel.font-size	文字サイズ
 docx.text-box-panel.text-color	文字色
 docx.outline-ops.cannot-move-any-further	これ以上移動できません
@@ -1148,7 +1148,7 @@ docx.outline-ops.heading-level-cannot-changed-any	見出しのレベルをこれ
 docx.style-panel.automatically-update-style	スタイルを自動更新
 docx.text-box-panel.fill-color	塗りの色
 docx.text-box-panel.outline-color	図形の線の色
-docx.text-box-panel.line-width-pt	線の太さ（pt）
+docx.text-box-panel.line-width-pt	線の太さ
 docx.text-box-panel.arrow-start	始点に矢印
 docx.text-box-panel.arrow-end	終点に矢印
 docx.text-box-panel.apply-selection	選択した文字だけに適用
@@ -1260,21 +1260,21 @@ _docx.dotted	点線
 _docx.cannot-accept-or-reject-changes-because-track-ch	変更履歴の記録がロックされているため、変更を承諾または却下できません。
 _docx.enter-a-field-code	フィールド コードを入力してください。
 _docx.caption-text	キャプションの文字列
-_docx.caption-text-2	キャプション文字列:
+_docx.caption-text-2	キャプション文字列
 _docx.count-results	{count} 件の結果
 _docx.in-line-with-text	行内
-_docx.tab-stop-position-pt	タブ位置 (pt)
+_docx.tab-stop-position-pt	タブ位置
 _docx.distribute-horizontally	左右に整列（水平方向に均等配置）
 _docx.no-accessibility-issues-were-found-in-the-docume	文書内にアクセシビリティ上の問題は見つかりませんでした。
-_docx.existing-bookmarks	登録済みブックマーク:
+_docx.existing-bookmarks	登録済みブックマーク
 _docx.enter-a-label	ラベルを入力してください。
-_docx.number-format	番号書式:
+_docx.number-format	番号書式
 _docx.change-picture	画像の変更…
 _docx.enter-a-number-for-the-tab-position	タブ位置の数値を入力してください。
 _docx.leader	リーダー
 _docx.distribute-vertically	上下に整列（垂直方向に均等配置）
-_docx.headings-in-document	文書内の見出し:
-_docx.field-codes	フィールド コード:
+_docx.headings-in-document	文書内の見出し
+_docx.field-codes	フィールド コード
 _docx.insert-caption	図表番号の挿入
 _docx.exclude-label-from-caption	ラベルを図表番号から除外
 _docx.shapes-and-pictures-n	図形と画像 ({n})
@@ -1284,7 +1284,7 @@ _docx.align-to-margin	余白に合わせて配置
 _docx.track-changes-is-locked-so-it-can-t-be-turned-of	変更履歴の記録がロックされているため解除できません。
 _docx.field-code	フィールド コード
 _docx.label	ラベル
-_docx.label-2	ラベル:
+_docx.label-2	ラベル
 _docx.include-chapter-number	章番号を含める
 _docx.floating	浮動
 _docx.the-document-has-changed-reopen-the-tabs-setting	文書が変わりました。タブ設定を開き直してください。
@@ -1346,14 +1346,14 @@ _docx.toa-passim	随所
 _docx.no-toa-entries-found	引用文献の登録がありません。
 docx.outline.to-heading	本文を見出しにする
 docx.outline.to-body	見出しを本文にする
-docx.merge-panel.new-field-name	項目名
+docx.merge-panel.new-field-name	列目
 docx.merge-panel.go-to-number	番号
 docx.merge-panel.find-recipient-placeholder	宛先を検索する文字
 docx.merge-panel.recipient-not-found	その文字を含む宛先が見つかりません
 docx.merge-panel.add-recipient	宛先を追加
 docx.merge-panel.select-all	すべて選択
 docx.merge-panel.select-none	すべて解除
-docx.merge-panel.add-field	項目を追加
+docx.merge-panel.add-field	列追加
 docx.merge-panel.go-to	移動
 docx.merge-panel.find-recipient	検索
 docx.merge-panel.document-type	文書の種類
@@ -1810,7 +1810,7 @@ docx.print-panel.nup.16	16 ページ/枚
 docx.print-panel.page-border	ページの境界線を描画
 docx.print-panel.section.options	印刷オプション
 docx.print-panel.summary	{pages} / {total} ページ ({copies} 部)
-docx.print-panel.print	印刷…
+docx.print-panel.print	印刷
 docx.print-panel.no-pages-selected	印刷対象のページがありません。
 docx.print-panel.invalid-range-token	無効なページ指定です: '{token}'
 docx.print-panel.section-not-found	指定されたセクションが見つかりません: '{section}'
@@ -1827,18 +1827,18 @@ docx.source-manager.edit	編集…
 docx.source-manager.delete	削除
 docx.source-manager.insert-citation	引用文献を挿入
 docx.source-manager.preview-title	プレビュー
-docx.source-manager.citation-preview	引用文献:
-docx.source-manager.bib-preview	文献目録:
+docx.source-manager.citation-preview	引用文献
+docx.source-manager.bib-preview	文献目録
 docx.source-manager.form.new-title	新規文献の作成
 docx.source-manager.form.edit-title	資料文献の編集
-docx.source-manager.form.tag	タグ名:
-docx.source-manager.form.type	文献の種類:
-docx.source-manager.form.author	著者名:
-docx.source-manager.form.title	タイトル:
-docx.source-manager.form.year	年:
-docx.source-manager.form.publisher	発行元:
-docx.source-manager.form.city	都市:
-docx.source-manager.form.url	URL:
+docx.source-manager.form.tag	タグ名
+docx.source-manager.form.type	文献の種類
+docx.source-manager.form.author	著者名
+docx.source-manager.form.title	タイトル
+docx.source-manager.form.year	年
+docx.source-manager.form.publisher	発行元
+docx.source-manager.form.city	都市
+docx.source-manager.form.url	URL
 docx.source-manager.form.save	保存
 docx.source-manager.filter-placeholder	検索（タグ・著者・タイトル）…
 docx.reference.source.type.book	書籍
@@ -1923,10 +1923,10 @@ docx.edit.select-word	単語単位で自動選択する
 docx.file.repair	破損文書の修復…
 docx.repair.title	破損文書の修復
 docx.repair.desc	破損した Word 文書（.docx）の構文や構造、欠損パーツを自動修復して開きます。
-docx.repair.file-label	修復するファイル:
+docx.repair.file-label	修復するファイル
 docx.repair.browse-btn	参照…
 docx.repair.prompt-file	修復する Word 文書を選択
-docx.repair.mode-label	修復モード:
+docx.repair.mode-label	修復モード
 docx.repair.mode-repair	開いて修復（標準）
 docx.repair.mode-repair-desc	XMLタグの整合性や欠損パーツを補完し、文書の書式・構造を保持して復旧します。
 docx.repair.mode-recover-text	テキストの回復
@@ -1946,10 +1946,10 @@ docx.repair.banner-close	閉じる
 docx.template.attach	テンプレートとアドイン…
 docx.template.title	テンプレートとアドイン
 docx.template.desc	文書にテンプレートを添付してスタイルを自動更新します。
-docx.template.current_status	現在のテンプレート:
+docx.template.current_status	現在のテンプレート
 docx.template.attached_file	添付ファイル
 docx.template.normal_template	Normal テンプレート (既定)
-docx.template.path_label	テンプレートのパス (.dotx, .dotm, .docx):
+docx.template.path_label	テンプレートのパス (.dotx, .dotm, .docx)
 docx.template.path_placeholder	ファイルパスを入力
 docx.template.apply	添付
 docx.template.detach	解除
@@ -1964,18 +1964,18 @@ docx.template.no_path	テンプレートファイルのパスを指定してく�
 docx.template.close	閉じる
 docx.list.define-style	新しいリスト スタイルの定義…
 docx.list.define-style.title	新しいリスト スタイルの定義
-docx.list.define-style.name	名前:
+docx.list.define-style.name	名前
 docx.list.define-style.name-placeholder	リスト スタイル名
-docx.list.define-style.level	変更するレベル:
-docx.list.define-style.format	番号の種類:
-docx.list.define-style.prefix	番号の前:
-docx.list.define-style.suffix-text	番号の後:
-docx.list.define-style.start-at	開始番号:
-docx.list.define-style.align	配置:
-docx.list.define-style.follow-number	番号に続く空白:
-docx.list.define-style.indent-left	左インデント (pt):
-docx.list.define-style.indent-hanging	ぶら下げ (pt):
-docx.list.define-style.ok	OK
+docx.list.define-style.level	変更するレベル
+docx.list.define-style.format	番号の種類
+docx.list.define-style.prefix	番号の前
+docx.list.define-style.suffix-text	番号の後
+docx.list.define-style.start-at	開始番号
+docx.list.define-style.align	配置
+docx.list.define-style.follow-number	番号に続く空白
+docx.list.define-style.indent-left	左インデント
+docx.list.define-style.indent-hanging	ぶら下げ
+docx.list.define-style.add	追加
 docx.list.define-style.cancel	キャンセル
 docx.list.styles	リスト スタイル
 docx.list.styles.empty	(リスト スタイルはありません)
@@ -2027,7 +2027,7 @@ docx.picture.wrap-points.add-vertex	頂点を追加
 docx.master-doc	マスター文書
 docx.master-doc.panel	マスター文書とサブ文書…
 docx.master-doc.title	マスター文書とサブ文書
-docx.master-doc.target-label	サブ文書のファイルパス (.docx):
+docx.master-doc.target-label	サブ文書のファイルパス (.docx)
 docx.master-doc.insert	サブ文書の挿入
 docx.master-doc.create-from-heading	見出しからサブ文書を作成
 docx.master-doc.toggle-expand	サブ文書の展開 / 折りたたみ
@@ -2085,10 +2085,10 @@ docx.convert.format.txt	書式なし (プレーン テキスト) (.txt)
 docx.convert.format.html	Web ページ (.html)
 docx.convert.format.odt	OpenDocument テキスト (.odt)
 docx.convert.export-title	別形式で書き出し
-docx.convert.export-path	出力先ファイルパス:
+docx.convert.export-path	出力先ファイルパス
 docx.convert.export-btn	書き出し
 docx.convert.import-title	外部形式・PDF から変換して開く
-docx.convert.import-desc	読み込み元ファイルパス (.doc / .rtf / .txt / .html / .odt / .pdf):
+docx.convert.import-desc	読み込み元ファイルパス (.doc / .rtf / .txt / .html / .odt / .pdf)
 docx.convert.import-btn	変換して開く
 docx.convert.exported	文書を書き出しました
 docx.convert.imported	文書を変換して読み込みました
@@ -2122,9 +2122,9 @@ docx.read-aloud.voice.kyoko	Kyoko（日本語・女性）
 docx.read-aloud.voice.otoya	Otoya（日本語・男性）
 docx.read-aloud.voice.samantha	Samantha（英語・女性）
 docx.read-aloud.voice.alex	Alex（英語・男性）
-docx.customize-toolbar	リボンとクイックアクセスのカスタマイズ…
-docx.customize.title	リボンとクイックアクセス
-docx.customize.ribbon-groups	ツールバー（リボン）グループの表示
+docx.customize-toolbar	ツールバーとクイックアクセスのカスタマイズ…
+docx.customize.title	ツールバーとクイックアクセス
+docx.customize.ribbon-groups	ツールバーのグループ表示
 docx.customize.qat-commands	クイックアクセス ツールバーのコマンド
 docx.customize.reset	すべて既定値に戻す
 docx.customize.group.styles	スタイル
@@ -2176,3 +2176,179 @@ docx.template.no-word-data	テンプレートに Word 文書データがあり�
 docx.template.no-document	文書が開かれていません
 docx.template.updated-count	{title} ({n} 件)
 docx.view.view-mode	ビューモード
+docx.color-panel.text-color	文字の色
+
+docx.ruler.horizontal	水平ルーラー
+docx.compress.target	対象
+docx.compress.entire-file	ファイル全体
+docx.compress.selected-picture	選択されている画像
+docx.paragraph-panel.line-type	行間タイプ
+docx.tab-panel.registered-stops	登録済みのタブ位置
+docx.tab-panel.no-stops	タブ位置を入力して「設定」で追加します
+color.editor.palette	パレット
+color.editor.current	現在の色
+color.editor.previous	変更前の色
+color.editor.hue	色相
+color.editor.saturation	彩度
+color.editor.brightness	明度
+color.editor.red	赤
+color.editor.green	緑
+color.editor.blue	青
+
+docx.tab-panel.operation-help	位置・配置・リーダーを選び「設定」で登録します。同じ位置は上書きします。行を選んで「クリア」で削除し、最後に「適用」で本文へ反映します。
+merge.flow.title	差し込み文書を作成
+merge.flow.recipients	宛先
+merge.flow.compose	本文
+merge.flow.preview	確認
+merge.flow.output	出力
+merge.flow.start-title	宛先を用意する
+merge.flow.start-help	宛先の一覧を使って、相手ごとに内容の違う文書を作ります。
+merge.flow.load	宛先ファイルを読み込む…
+merge.flow.formats	対応形式：XLSX・CSV・TSV・XLS・XLSM
+merge.flow.equation	宛先の一覧 ＋ この文書 → 宛先ごとの案内状
+merge.flow.edit-recipients	宛先を編集…
+merge.flow.count	対象 {n}件 ／ 全{total}件
+merge.flow.target-count	対象の宛先 {n}件
+merge.flow.new-list	宛先を新しく作る…
+merge.flow.name	氏名
+merge.flow.company	会社名
+merge.flow.address	住所
+merge.flow.compose-title	本文に項目を入れる
+merge.flow.compose-help	本文で挿入する場所をクリックし、下の項目を選んでください。
+merge.flow.advanced	住所・あいさつ文・条件の設定
+merge.flow.condition	条件に応じて文字を変える…
+merge.flow.preview-title	仕上がりを確認する
+merge.flow.preview-help	宛先を切り替え、本文に情報が入った状態を確認します。
+merge.flow.fields	差し込み項目
+merge.flow.result	仕上がり
+merge.flow.output-title	作成・印刷する
+merge.flow.output-help	作成方法を選び、次の画面で出力対象を指定します。
+merge.flow.document	文書を作成
+merge.flow.pdf	PDFに保存
+merge.flow.print	印刷
+merge.flow.back	戻る
+merge.flow.next-compose	本文へ
+merge.flow.next-preview	確認へ
+merge.flow.next-output	出力へ
+merge.flow.settings	出力設定
+merge.flow.recipient-help	チェックを付けた宛先に文書を作ります。三本線をドラッグすると順序を変えられます。
+merge.flow.filter	対象を絞る…
+merge.flow.columns	列を編集…
+merge.flow.confirm-recipients	OK
+merge.flow.import-title	宛先ファイルの確認
+merge.flow.import-help	シートと先頭行を確認してください。一覧には最初の5件を表示します。
+merge.flow.sheet	読み込むシート
+merge.flow.header	先頭行を項目名として使う
+merge.flow.import-confirm	読み込む
+merge.flow.columns-help	列を追加・削除できます。文書中の差し込み項目は削除されません。
+merge.flow.recipient-draft	宛先一覧の確定で反映されます。
+merge.flow.filter-help	項目名=値（完全一致）、項目名~値（含む）で指定します。空欄で絞り込みを解除します。
+merge.flow.condition-help	選んだ項目の値によって、挿入する文字を変えます。
+merge.flow.condition-field	判定する項目
+merge.flow.equals	次の値と一致する場合
+merge.flow.yes	一致したときの文字
+merge.flow.no	それ以外の文字
+merge.flow.kind-help	作成する文書の種類を選びます。封筒とラベルは本文のレイアウトも変更します。
+merge.flow.combine	文書のまとめ方
+merge.flow.one-file	1つのファイルにまとめる
+merge.flow.separate-file	宛先ごとにファイルを分ける
+merge.flow.output-location	保存先または印刷先は次の画面で指定します。
+merge.flow.column-number	項目{n}
+merge.flow.data	データ
+merge.flow.unsupported	対応している宛先ファイルを選んでください（XLSX・CSV・TSV・XLS・XLSM）。
+merge.flow.invalid-data	項目名は空欄や重複がないようにし、宛先を1件以上含めてください。
+merge.flow.filter-simple-help	項目と条件を選んで値を入力します。空欄で絞り込みを解除します。
+merge.flow.contains	含む
+merge.flow.exact	完全一致
+merge.flow.filter-value	検索する値
+merge.review.fields-list	挿入する差し込み項目
+merge.review.row-number	宛先{n}
+merge.review.no-issues	差し込み項目に問題はありません。
+merge.review.issue-count	確認が必要な項目 {n}件
+merge.review.empty-field	{name}：{field} が未入力
+merge.review.missing-field	項目「{field}」が宛先一覧にありません
+merge.review.more-issues	ほかにも未入力があります。宛先一覧で確認してください。
+merge.review.continue-empty	未入力のまま出力する
+merge.review.fix-missing	項目をクリックして本文を確認し、項目または宛先一覧を修正してください。
+merge.review.actual-output	今回の出力：{n}件
+merge.review.more-recipients	ほか {n}件
+merge.review.invalid-range	対象一覧内の順番で、開始・終了を指定してください。
+merge.review.output-range	出力する宛先（対象一覧内の順番）
+merge.review.current-recipient	現在の宛先：{name}
+merge.review.all-view	すべて表示
+merge.review.targets-view	出力対象のみ
+merge.review.filtered-out	条件外
+merge.review.included	対象
+merge.review.excluded	除外
+merge.review.target	出力対象
+merge.review.edit-row	この宛先を編集
+merge.review.delete-row	この宛先を削除
+merge.review.move-up	宛先を1つ上へ
+merge.review.move-down	宛先を1つ下へ
+merge.review.drag-row	宛先の順序をドラッグで変更
+merge.review.recipient-help	チェック付きの宛先が出力対象です。条件外の宛先は、絞り込みを解除すると再び対象になります。
+merge.review.recipients-title	宛先一覧を編集
+merge.review.clear-filter	絞り込みを解除
+merge.review.list-counts	表示 {shown}件 ・ 出力対象 {target}件 ・ 全{total}件
+merge.review.select-visible	表示中を対象にする
+merge.review.clear-visible	表示中の対象を解除
+merge.review.header-row	読み込み範囲の先頭行を項目名にする
+merge.review.import-advanced	範囲・項目名を変更
+merge.review.import-range-help	行・列は元ファイルの1から始まる番号です。「範囲を反映」で一覧を更新します。
+merge.review.start-row	開始行
+merge.review.end-row	終了行
+merge.review.start-column	開始列
+merge.review.end-column	終了列
+merge.review.apply-range	範囲を反映
+merge.review.rename-headers	項目名を修正
+merge.review.invalid-headers	項目名の空欄・重複を修正してください。
+merge.review.invalid-import-range	ファイル内の有効な行・列の範囲を指定してください。
+merge.review.save-list	宛先一覧をXLSXに保存…
+merge.review.copy-help	取り込んだコピーを編集中です。元ファイルは変更されません。
+merge.review.resume-help	宛先は開いている間だけ保持します。編集した一覧はXLSXに保存し、次回読み込んでください（全件の値を保存、絞り込み・チェックは保存しません）。
+merge.review.list-saved	宛先一覧をXLSXに保存しました。
+merge.review.kind-help	文書の種類を選びます。封筒・ラベルは現在の本文を置き換える操作です。
+merge.review.replace-warning	現在の本文をすべて削除し、選んだ封筒・ラベルの内容に置き換えます。用紙だけを変更する操作ではありません。適用後は「元に戻す」で戻せます。
+merge.review.replace-ack	現在の本文を置き換える
+merge.review.replace-action	本文を置き換えて適用
+merge.review.resume-short	宛先は文書には保存されません。再開用にXLSXへ保存し、次回読み込んでください。
+merge.review.select-all-header	表示中の宛先を一括選択
+
+docx.list.define-style.text-example	例：番号の前を「第」、番号の後を「章」にすると、第1章、第2章…になります。
+
+shape.effects.basic	基本
+shape.effects.decoration	装飾
+shape.effects.gradient-angle	角度
+shape.effects.stop-position	色点の位置
+shape.effects.stop-color	色点の色
+shape.effects.shadow-color	色
+shape.effects.shadow-transparency	透明度
+shape.effects.shadow-size	サイズ
+shape.effects.shadow-blur	ぼかし
+shape.effects.shadow-angle	角度
+shape.effects.shadow-distance	距離
+shape.effects.glow-color	色
+shape.effects.glow-transparency	透明度
+shape.effects.glow-size	サイズ
+shape.effects.soft-size	幅
+shape.effects.reflection-transparency	透明度
+shape.effects.reflection-size	サイズ
+shape.effects.reflection-blur	ぼかし
+shape.effects.reflection-distance	距離
+shape.effects.remove-stop	色点を削除
+shape.effects.enable-0	グラデーションを有効にする
+shape.effects.enable-1	影を有効にする
+shape.effects.enable-2	光彩を有効にする
+shape.effects.enable-3	ぼかしを有効にする
+shape.effects.enable-4	反射を有効にする
+
+docx.find.replace-next	現在の一致を置換して次へ
+docx.quick-parts.tab.parts	パーツ一覧
+docx.quick-parts.tab.properties	プロパティ
+docx.quick-parts.tab.fields	フィールド
+docx.selection-pane.object-number	オブジェクト {number}
+docx.selection-pane.object-name	オブジェクト
+
+docx.fit-text.title	文字の均等割り付け
+docx.fit-text.width	割付幅
+docx.fit-text.characters	字

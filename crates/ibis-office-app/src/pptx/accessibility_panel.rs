@@ -6,7 +6,7 @@
 //! スライドタイトルの欠落、表の見出し行の未設定等）をスキャン・検出し、
 //! 該当オブジェクトへのフォーカスや修正を支援する。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -685,7 +685,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(text("pptx.accessibility-panel.all-images-have-alternative-text").to_string()),
                 )
@@ -753,7 +753,7 @@ impl SlideEditor {
                                 .items_center()
                                 .when(matches!(issue.fix_type, IssueFixType::AddAltText | IssueFixType::MarkDecorative), |el| {
                                     el.child(
-                                        Button::new(("mark-decorative", ix))
+                                        crate::shell::chrome::action_button(("mark-decorative", ix))
                                             .label(text("pptx.alt-text.decorative"))
                                             .small()
                                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -764,7 +764,7 @@ impl SlideEditor {
                                 .when(matches!(issue.fix_type, IssueFixType::AddSlideTitle | IssueFixType::AddHiddenTitle), |el| {
                                     let s_id = issue.slide_id;
                                     el.child(
-                                        Button::new(("add-hidden-title", ix))
+                                        crate::shell::chrome::action_button(("add-hidden-title", ix))
                                             .label(text("pptx.accessibility-panel.add-hidden-title"))
                                             .small()
                                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -775,7 +775,7 @@ impl SlideEditor {
                                 })
                                 .when(issue.fix_type == IssueFixType::EnableTableHeader, |el| {
                                     el.child(
-                                        Button::new(("enable-table-header", ix))
+                                        crate::shell::chrome::action_button(("enable-table-header", ix))
                                             .label(text("pptx.table.first-row"))
                                             .small()
                                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -786,7 +786,7 @@ impl SlideEditor {
                                 .when(issue.fix_type == IssueFixType::CheckReadingOrder, |el| {
                                     let s_id = issue.slide_id;
                                     el.child(
-                                        Button::new(("check-reading-order", ix))
+                                        crate::shell::chrome::action_button(("check-reading-order", ix))
                                             .label(text("pptx.accessibility-panel.check-reading-order"))
                                             .small()
                                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -799,7 +799,7 @@ impl SlideEditor {
                                     let s_id = issue.slide_id;
                                     let sh_id = issue.shape_id;
                                     el.child(
-                                        Button::new(("add-media-captions", ix))
+                                        crate::shell::chrome::action_button(("add-media-captions", ix))
                                             .label(text("_pptx.add-captions"))
                                             .small()
                                             .on_click(cx.listener(move |this, _, _window, cx| {
@@ -816,7 +816,7 @@ impl SlideEditor {
                                     )
                                 })
                                 .child(
-                                    Button::new(("jump-issue", ix))
+                                    crate::shell::chrome::action_button(("jump-issue", ix))
                                         .label(text("_shell.view"))
                                         .small()
                                         .on_click(cx.listener(move |this, _, _window, cx| {
@@ -827,7 +827,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(desc),
                 );
@@ -836,46 +836,33 @@ impl SlideEditor {
         }
 
         let is_hc = self.is_high_contrast();
-        let bottom_actions = h_flex()
-            .gap_2()
-            .justify_end()
-            .child(
-                Button::new("access-toggle-high-contrast")
-                    .label(if is_hc {
+        let bottom_actions = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("access-toggle-high-contrast", if is_hc {
                         text("pptx.accessibility-panel.color-view")
                     } else {
                         text("pptx.accessibility-panel.high-contrast")
-                    })
-                    .small()
+                    }, crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.toggle_high_contrast(cx);
                     })),
             )
-            .child(
-                Button::new("access-recheck")
-                    .label(text("pptx.inspect-panel.reinspect"))
-                    .small()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("access-recheck", text("pptx.inspect-panel.reinspect"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| this.recheck_pptx_accessibility(cx))),
-            )
-            .child(
-                Button::new("access-close")
-                    .label(text("_shell.close"))
-                    .small()
-                    .primary()
-                    .on_click(cx.listener(|this, _, _, cx| this.close_pptx_accessibility_panel(cx))),
             );
 
         let content = v_flex()
             .p_4()
             .gap_3()
-            .child(header)
+            .p_0().child(header)
             .when(!msg.is_empty(), |el| {
                 el.child(
                     div()
                         .p_2()
                         .rounded_md()
                         .bg(cx.theme().primary.opacity(0.1))
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().primary)
                         .child(msg),
                 )
@@ -883,12 +870,10 @@ impl SlideEditor {
             .children(clean_box)
             .child(issues_list)
             .child(div().h_2())
-            .child(bottom_actions);
+            ;
 
-        Some(SidebarPanel {
-            title: text("pptx.accessibility-panel.accessibility").into(),
-            body: content.into_any_element(),
-        })
+        let panel_terminal_actions = bottom_actions;
+        Some(SidebarPanel::with_footer(text("pptx.accessibility-panel.accessibility"), content.into_any_element(), panel_terminal_actions))
     }
 }
 

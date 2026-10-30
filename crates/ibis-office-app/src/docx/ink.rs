@@ -3,7 +3,6 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Word の手描き注釈・インク描画・インク エディター（DOCX-IMAGE-019, DOCX-INK-001〜007, DOCX-INK-010）。
 
-use gpui_kit::component::button::Button;
 use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{
@@ -160,6 +159,7 @@ pub(crate) fn build_ink_geometry(points_pt: &[(f32, f32)]) -> Option<((i64, i64)
 impl SlideEditor {
     /// 描画（インク）サイドバーパネルを開く。
     pub(crate) fn open_docx_ink_panel(&mut self, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if let Some(s) = self.doc_state_mut() {
             if s.docx_ink.is_none() {
                 s.docx_ink = Some(DocxInkState::default());
@@ -1250,288 +1250,40 @@ impl SlideEditor {
     }
 
     #[inline(never)]
-    fn render_docx_ink_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let ink = self.doc_state()?.docx_ink.clone()?;
-        let selected_count = self.target_docx_ink_positions().len();
-
-        let pen_btn = |id: &'static str, label_key: &'static str, kind: PenKind, cx: &mut Context<Self>| {
-            Button::new(id)
-                .small()
-                .label(crate::shell::i18n::text(label_key))
-                .selected(ink.pen == kind)
-                .on_click(cx.listener(move |this, _, _, cx| this.set_docx_ink_pen(kind, cx)))
-        };
-
-        let effects: [(Option<InkEffect>, &'static str, &'static str); 9] = [
-            (None, "docx-ink-eff-none", "docx.ink.effect.none"),
-            (Some(InkEffect::Rainbow), "docx-ink-eff-rainbow", "docx.ink.effect.rainbow"),
-            (Some(InkEffect::Galaxy), "docx-ink-eff-galaxy", "docx.ink.effect.galaxy"),
-            (Some(InkEffect::Lava), "docx-ink-eff-lava", "docx.ink.effect.lava"),
-            (Some(InkEffect::Ocean), "docx-ink-eff-ocean", "docx.ink.effect.ocean"),
-            (Some(InkEffect::RoseGold), "docx-ink-eff-rosegold", "docx.ink.effect.rosegold"),
-            (Some(InkEffect::Gold), "docx-ink-eff-gold", "docx.ink.effect.gold"),
-            (Some(InkEffect::Silver), "docx-ink-eff-silver", "docx.ink.effect.silver"),
-            (Some(InkEffect::Bronze), "docx-ink-eff-bronze", "docx.ink.effect.bronze"),
-        ];
-
-        let body = v_flex()
-            .gap_3()
-            .px(px(16.))
-            .py(px(10.))
-            // 1. 描画ツール（ペン・鉛筆・蛍光ペン・消しゴム・なげなわ選択）
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .child(crate::shell::i18n::text("docx.ink.tools")),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .flex_wrap()
-                            .child(pen_btn("docx-ink-pen", "docx.ink.pen", PenKind::Pen, cx))
-                            .child(pen_btn("docx-ink-pencil", "docx.ink.pencil", PenKind::Pencil, cx))
-                            .child(pen_btn(
-                                "docx-ink-highlighter",
-                                "docx.ink.highlighter",
-                                PenKind::Highlighter,
-                                cx,
-                            ))
-                            .child(pen_btn("docx-ink-eraser", "docx.ink.eraser", PenKind::Eraser, cx))
-                            .child(pen_btn("docx-ink-lasso", "docx.ink.lasso", PenKind::Select, cx)),
-                    ),
-            )
-            // 2. タッチ・マウス描画切替、インクを図形に変換、インク エディター
-            .child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
-                    .child(
-                        Button::new("docx-ink-mouse-toggle")
-                            .small()
-                            .label(crate::shell::i18n::text("docx.ink.draw-with-mouse"))
-                            .selected(ink.mouse)
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_docx_ink_mouse(cx))),
-                    )
-                    .child(
-                        Button::new("docx-ink-to-shape-mode")
-                            .small()
-                            .label(crate::shell::i18n::text("docx.ink.ink-to-shape"))
-                            .selected(ink.ink_to_shape_mode)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.toggle_docx_ink_to_shape_mode(cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("docx-ink-editor-mode")
-                            .small()
-                            .label(crate::shell::i18n::text("docx.ink.ink-editor"))
-                            .selected(ink.ink_editor_mode)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.toggle_docx_ink_editor_mode(cx)
-                            })),
-                    ),
-            )
-            // 3. ペンの太さ（DOCX-INK-002）
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .child(crate::shell::i18n::text("docx.ink.thickness")),
-                    )
-                    .child(
-                        h_flex().gap_1().children(INK_WIDTHS.iter().enumerate().map(|(i, &w)| {
-                            Button::new(("docx-ink-width", i))
-                                .small()
-                                .label(format!("{w} pt"))
-                                .selected((ink.width - w).abs() < 0.05)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.set_docx_ink_width(w, cx)
-                                }))
-                        })),
-                    ),
-            )
-            // 4. ペンの色（DOCX-INK-002）
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .child(crate::shell::i18n::text("docx.ink.color")),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .flex_wrap()
-                            .children(INK_COLORS.iter().enumerate().map(|(i, &hex)| {
-                                let selected = ink.effect.is_none() && ink.color.0 == hex;
-                                div()
-                                    .id(("docx-ink-color", i))
-                                    .w(px(20.))
-                                    .h(px(20.))
-                                    .rounded_full()
-                                    .bg(rgb(hex))
-                                    .border_2()
-                                    .border_color(if selected {
-                                        rgb(0x1a73e8)
-                                    } else {
-                                        rgb(0xd0d0d0)
-                                    })
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.set_docx_ink_color(Rgb(hex), cx)
-                                    }))
-                            })),
-                    ),
-            )
-            // 5. インク効果（DOCX-INK-002）
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .child(crate::shell::i18n::text("docx.ink.effects")),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .flex_wrap()
-                            .children(effects.into_iter().map(|(eff, id, label)| {
-                                Button::new(id)
-                                    .small()
-                                    .label(crate::shell::i18n::text(label))
-                                    .selected(ink.effect == eff)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.set_docx_ink_effect(eff, cx)
-                                    }))
-                            })),
-                    ),
-            )
-            // 6. 選択・消去・移動・サイズ変更・図形変換アクション（DOCX-INK-003, 004, 005, 007）
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::BOLD)
-                            .child(format!(
-                                "{} ({})",
-                                crate::shell::i18n::text("docx.ink.actions"),
-                                selected_count
-                            )),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .flex_wrap()
-                            .child(
-                                Button::new("docx-ink-select-all")
-                                    .small()
-                                    .label(crate::shell::i18n::text("docx.ink.select-all"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.select_all_docx_ink(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("docx-ink-convert-selected")
-                                    .small()
-                                    .label(crate::shell::i18n::text("docx.ink.convert-now"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.docx_ink_to_shape(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("docx-ink-erase-selected")
-                                    .small()
-                                    .label(crate::shell::i18n::text("docx.ink.erase-selected"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.erase_selected_docx_ink(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("docx-ink-erase-all")
-                                    .small()
-                                    .label(crate::shell::i18n::text("docx.ink.erase-all"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.erase_all_docx_ink(cx);
-                                    })),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .flex_wrap()
-                            .child(
-                                Button::new("docx-ink-move-left")
-                                    .small()
-                                    .label("←")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.move_selected_docx_ink(-12.0, 0.0, cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("docx-ink-move-right")
-                                    .small()
-                                    .label("→")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.move_selected_docx_ink(12.0, 0.0, cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("docx-ink-move-up")
-                                    .small()
-                                    .label("↑")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.move_selected_docx_ink(0.0, -12.0, cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("docx-ink-move-down")
-                                    .small()
-                                    .label("↓")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.move_selected_docx_ink(0.0, 12.0, cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("docx-ink-scale-up")
-                                    .small()
-                                    .label(crate::shell::i18n::text("docx.ink.scale-up"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.resize_selected_docx_ink(1.25, 1.25, cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("docx-ink-scale-down")
-                                    .small()
-                                    .label(crate::shell::i18n::text("docx.ink.scale-down"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.resize_selected_docx_ink(0.8, 0.8, cx);
-                                    })),
-                            ),
-                    ),
-            )
-            .children((!ink.message.is_empty()).then(|| {
-                div()
-                    .text_xs()
-                    .text_color(rgb(0x1a73e8))
-                    .child(ink.message.clone())
-            }));
-
-        Some(SidebarPanel {
-            title: crate::shell::i18n::text("docx.ink.title"),
-            body: body.into_any_element(),
-        })
+    fn render_docx_ink_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel>{
+        use crate::shell::ink_panel::{InkChoice,InkToggle,InkCommand,InkRow,InkSection,InkPanelSpec};
+        let ink=self.doc_state()?.docx_ink.clone()?;
+        let selected_count=self.target_docx_ink_positions().len();
+        let tr=crate::shell::i18n::text;
+        let tools=[("docx-ink-pen","docx.ink.pen",PenKind::Pen),("docx-ink-pencil","docx.ink.pencil",PenKind::Pencil),("docx-ink-highlighter","docx.ink.highlighter",PenKind::Highlighter),("docx-ink-eraser","docx.ink.eraser",PenKind::Eraser),("docx-ink-lasso","docx.ink.lasso",PenKind::Select)].into_iter().map(|(id,label,kind)|InkChoice::new(id,tr(label),ink.pen==kind,move|e,_,cx|e.set_docx_ink_pen(kind,cx))).collect();
+        let widths=INK_WIDTHS.into_iter().enumerate().map(|(i,width)|InkChoice::new(("docx-ink-width",i),format!("{width} pt"),(ink.width-width).abs()<0.01,move|e,_,cx|e.set_docx_ink_width(width,cx))).collect();
+        let mut effects=vec![InkChoice::new("docx-ink-eff-none",tr("docx.ink.effect.none"),ink.effect.is_none(),|e,_,cx|e.set_docx_ink_effect(None,cx))];
+        effects.extend(InkEffect::ALL.into_iter().map(|effect|InkChoice::new(effect.id(),tr(effect.label_key()),ink.effect==Some(effect),move|e,_,cx|e.set_docx_ink_effect(Some(effect),cx))));
+        let options=InkSection{title:None,rows:vec![
+            InkRow::Toggle(InkToggle::new("docx-ink-to-shape-mode",tr("docx.ink.ink-to-shape"),ink.ink_to_shape_mode,|e,_,cx|e.toggle_docx_ink_to_shape_mode(cx))),
+            InkRow::Toggle(InkToggle::new("docx-ink-editor-mode",tr("docx.ink.ink-editor"),ink.ink_editor_mode,|e,_,cx|e.toggle_docx_ink_editor_mode(cx))),
+        ]};
+        let actions=InkSection{title:Some(format!("{} ({selected_count})",tr("docx.ink.actions")).into()),rows:vec![
+            InkRow::Commands(vec![
+                InkCommand::new("docx-ink-select-all",tr("docx.ink.select-all"),true,|e,_,cx|{e.select_all_docx_ink(cx);}),
+                InkCommand::new("docx-ink-convert-selected",tr("docx.ink.convert-now"),selected_count>0,|e,_,cx|{e.docx_ink_to_shape(cx);}),
+                InkCommand::new("docx-ink-erase-selected",tr("docx.ink.erase-selected"),selected_count>0,|e,_,cx|{e.erase_selected_docx_ink(cx);}).destructive(),
+                InkCommand::new("docx-ink-erase-all",tr("docx.ink.erase-all"),true,|e,_,cx|{e.erase_all_docx_ink(cx);}).destructive(),
+            ]),
+            InkRow::Commands(vec![
+                InkCommand::new("docx-ink-move-left","←",selected_count>0,|e,_,cx|{e.move_selected_docx_ink(-12.,0.,cx);}),
+                InkCommand::new("docx-ink-move-right","→",selected_count>0,|e,_,cx|{e.move_selected_docx_ink(12.,0.,cx);}),
+                InkCommand::new("docx-ink-move-up","↑",selected_count>0,|e,_,cx|{e.move_selected_docx_ink(0.,-12.,cx);}),
+                InkCommand::new("docx-ink-move-down","↓",selected_count>0,|e,_,cx|{e.move_selected_docx_ink(0.,12.,cx);}),
+                InkCommand::new("docx-ink-scale-up",tr("docx.ink.scale-up"),selected_count>0,|e,_,cx|{e.resize_selected_docx_ink(1.25,1.25,cx);}),
+                InkCommand::new("docx-ink-scale-down",tr("docx.ink.scale-down"),selected_count>0,|e,_,cx|{e.resize_selected_docx_ink(0.8,0.8,cx);}),
+            ]),
+        ]};
+        Some(crate::shell::ink_panel::panel(InkPanelSpec{
+            color_id:"docx-ink-color-field",tools,widths,drawing:matches!(ink.pen,PenKind::Pen|PenKind::Pencil|PenKind::Highlighter),color:ink.color,
+            change_color:std::rc::Rc::new(|e,color,_,cx|e.set_docx_ink_color(color,cx)),effects,
+            mouse:InkToggle::new("docx-ink-mouse-toggle",tr("ink.panel.mouse"),ink.mouse,|e,_,cx|e.toggle_docx_ink_mouse(cx)),
+            sections:vec![options,actions],message:ink.message,context_menu:None,
+        },cx))
     }
 }

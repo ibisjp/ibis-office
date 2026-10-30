@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -36,6 +36,7 @@ pub(crate) struct FunctionPanel {
     /// The function chosen, and the boxes of its arguments.
     pub(crate) chosen: Option<&'static FunctionInfo>,
     pub(crate) args: Vec<Entity<InputState>>,
+    scroll:ScrollHandle,
     subscriptions: Vec<Subscription>,
     pub(crate) message: String,
     pub(crate) ui: Rc<RefCell<BTreeMap<String, Bounds<Pixels>>>>,
@@ -87,12 +88,16 @@ impl SlideEditor {
         self.commit_cell_edit(cx);
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(text("xlsx.function.search")));
         search.update(cx, |i, cx| i.focus(window, cx));
-        let sub = cx.subscribe_in(&search, window, |_, _, event: &InputEvent, _, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.notify();
+        let sub = cx.subscribe_in(&search, window, |e, _, event: &InputEvent, w, cx| {
+            match event {
+                InputEvent::Change=>{if let Some(p)=e.wb_mut().panels.function.as_mut(){p.scroll.set_offset(Point::default());}cx.notify();}
+                InputEvent::PressEnter{..}=>{
+                    let first=e.wb().panels.function.as_ref().and_then(|p|matching(&p.search.read(cx).value()).first().map(|f|f.name));
+                    if let Some(name)=first{e.function_choose(name,w,cx);e.function_ok(w,cx);}
+                },_=>{}
             }
         });
-        let panel = FunctionPanel { search, chosen: None, args: Vec::new(), subscriptions: vec![sub], message: String::new(), ui: Default::default() };
+        let panel = FunctionPanel { scroll:ScrollHandle::new(),search, chosen: None, args: Vec::new(), subscriptions: vec![sub], message: String::new(), ui: Default::default() };
         let s = self.wb_mut();
         s.custom_format = None;
         s.page_setup = false;
@@ -102,7 +107,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.function = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -241,31 +246,32 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
-        let mut list = v_flex().gap_0().max_h(px(120.)).overflow_hidden();
-        for info in matching(&query) {
-            let name = info.name;
-            let selected = chosen.is_some_and(|c| c.name == name);
-            list = list.child(
-                div()
-                    .id(SharedString::from(format!("function-{name}")))
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .when(selected, |d| d.bg(theme.accent))
-                    .hover(|d| d.bg(theme.accent))
-                    .text_size(px(12.))
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| this.function_choose(name, window, cx)))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(SharedString::from(name)))
-                    .children(description(info).map(|d| div().text_color(theme.muted_foreground).child(SharedString::from(d)))),
-            );
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                            ui.borrow_mut().insert(id.clone(), bounds);
+                        })
+        };
+        let mut list=v_flex().w_full();
+        let matches=matching(&query);
+        if matches.is_empty(){list=list.child(div().p_3().text_color(theme.muted_foreground).child(text("xlsx.function.not-found")));}
+        for (index,info) in matches.into_iter().enumerate(){
+            let name=info.name;
+            let highlighted=chosen.is_some_and(|c|c.name==name)||(index==0&&chosen.is_none());
+            list=list.child(h_flex().id(SharedString::from(format!("function-{name}"))).h(px(28.)).px_2().gap_2().items_center().cursor_pointer().text_sm()
+                .when(highlighted,|d|d.bg(theme.accent)).hover(|d|d.bg(theme.accent))
+                .on_mouse_down(MouseButton::Left,cx.listener(move |e,_,w,cx|e.function_choose(name,w,cx)))
+                .child(div().w(px(132.)).flex_none().font_weight(FontWeight::MEDIUM).child(name))
+                .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_color(theme.muted_foreground).child(description(info).unwrap_or_default())));
         }
-        let mut body = v_flex()
+        let list=crate::shell::chrome::table_list("function-list",list.into_any_element(),p.scroll.clone());
+        let mut body = v_flex().h_full().min_h_0()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_size(px(13.)).child(text("xlsx.function.pick")))
-            .child(mark("xlsx.function.search", Input::new(&p.search).small().cleanable(true).into_any_element()))
+            .p_0().child(div().text_sm().child(text("xlsx.function.pick")))
+            .child(mark("xlsx.function.search", crate::shell::chrome::text_field(&p.search).full_width().into_any_element()))
             .child(mark("xlsx.function.list", list.into_any_element()));
         if let Some(info) = chosen {
             let count = match (info.min_args, info.max_args) {
@@ -274,8 +280,8 @@ impl SlideEditor {
                 (a, b) => format("_xlsx.min-to-max-arguments", &[("min", &a), ("max", &b)]),
             };
             body = body
-                .child(div().border_t_1().border_color(theme.border).pt_2().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(format!("{}  ({count})", info.name)))
-                .children(description(info).map(|d| div().text_size(px(12.)).text_color(theme.muted_foreground).child(SharedString::from(d))));
+                .child(div().border_t_1().border_color(theme.border).pt_2().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("{}  ({count})", info.name)))
+                .children(description(info).map(|d| div().text_sm().text_color(theme.muted_foreground).child(SharedString::from(d))));
             for (i, arg) in p.args.iter().enumerate() {
                 let optional = i >= info.min_args as usize;
                 let mut label = format("xlsx.function.argument", &[("n", &(i + 1))]);
@@ -283,38 +289,29 @@ impl SlideEditor {
                     label.push_str(&text("xlsx.function.optional"));
                 }
                 body = body
-                    .child(div().text_size(px(12.)).child(SharedString::from(label)))
-                    .child(mark(&format!("xlsx.function.arg-{}", i + 1), Input::new(arg).small().cleanable(true).into_any_element()));
+                    .child(div().text_sm().child(SharedString::from(label)))
+                    .child(mark(&format!("xlsx.function.arg-{}", i + 1), crate::shell::chrome::text_field(arg).full_width().into_any_element()));
             }
             if p.args.len() < info.max_args as usize {
                 body = body.child(mark(
                     "xlsx.function.add",
-                    Button::new("function-add").xsmall().ghost().label(text("xlsx.function.add-argument")).on_click(cx.listener(|this, _, window, cx| this.function_add_argument(window, cx))).into_any_element(),
+                    crate::shell::chrome::action_button("function-add").label(text("xlsx.function.add-argument")).on_click(cx.listener(|this, _, window, cx| this.function_add_argument(window, cx))).into_any_element(),
                 ));
             }
-            body = body.child(div().text_size(px(12.)).child(format("xlsx.function.result", &[("value", &preview.clone().unwrap_or_default())])));
-            body = body.child(div().text_size(px(12.)).text_color(gpui::red()).child(SharedString::from(p.message.clone())));
+            body = body.child(div().text_sm().child(format("xlsx.function.result", &[("value", &preview.clone().unwrap_or_default())])));
+            body = body.child(div().text_sm().text_color(gpui::red()).child(SharedString::from(p.message.clone())));
         }
-        body = body.child(
-            h_flex()
-                .gap_2()
+        let panel_actions = crate::shell::chrome::action_bar()
                 .when(chosen.is_some(), |r| {
-                    r.child(mark("xlsx.function.ok", Button::new("function-ok").primary().small().label(text("xlsx.function.ok")).on_click(cx.listener(|this, _, window, cx| this.function_ok(window, cx))).into_any_element()))
+                    r.action(mark_action("xlsx.function.ok", crate::shell::chrome::ActionDefinition::new("function-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("xlsx.function.ok")).on_click(cx.listener(|this, _, window, cx| this.function_ok(window, cx)))))
                 })
-                .child(mark(
-                    "xlsx.function.close",
-                    Button::new("function-close")
-                        .small()
-                        .ghost()
-                        .label(text("_shell.cancel"))
+                .action(mark_action("xlsx.function.close", crate::shell::chrome::ActionDefinition::new("function-close", "", crate::shell::chrome::ActionButtonKind::Normal)
+                        .label(text("_shell.close"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.wb_mut().panels.function = None;
                             cx.notify();
-                        }))
-                        .into_any_element(),
-                )),
-        );
-        Some(SidebarPanel { title: text("xlsx.function.title").to_string().into(), body: body.into_any_element() })
+                        }))));
+        Some(SidebarPanel::with_footer(text("xlsx.function.title").to_string(), body.into_any_element(), panel_actions))
     }
 }
 

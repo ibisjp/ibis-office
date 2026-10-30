@@ -67,6 +67,9 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
     // coverage suite's generated charts have none, and openpyxl writes a bare
     // `c:style` (its 10 pt titles are measured in a user's private workbook).
     let excel_wrote = space.descendants().any(|n| n.is_element() && n.tag_name().name() == "AlternateContent" && n.descendants().any(|m| m.is_element() && m.tag_name().name() == "style"));
+    // A slide's chart that names its style (PowerPoint's `c14:style` 102 / `c:style` 2) has that style's formats: lines of the theme's text colour tinted 75%, bold titles
+    // (PowerPoint 16.0.20527.20088's PDF of a chart with no `c:spPr` anywhere; one that names no style has black lines and titles of regular weight).
+    let powerpoint_styled = legacy && !legacy_border && excel_wrote;
     // Its text is in the theme's body fonts (MS P Gothic for Japanese when
     // the theme names no East Asian font).
     let default_text = if legacy {
@@ -244,6 +247,9 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
                 rot_y: get("rotY").unwrap_or(20.0) as i32,
                 right_angle_axes: view.and_then(|v| val_bool(v, "rAngAx")).unwrap_or(true),
                 depth_percent: get("depthPercent").unwrap_or(100.0).clamp(20.0, 2000.0) as u32,
+                height_percent: get("hPercent").map(|v| v.clamp(5.0, 500.0) as u32),
+                series_in_depth: val(node, "grouping") == Some("standard"),
+                gap_depth: val_f64(node, "gapDepth").map_or(150, |v| v.clamp(0.0, 500.0) as u32),
             }
         });
         groups.push(ChartGroup { kind, of_pie, grouping: grouping(node), series, axes, three_d });
@@ -254,7 +260,7 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
 
     let mut axes: Vec<Axis> = elements(plot)
         .filter(|n| n.tag_name().namespace() == Some(CHART_NS) && matches!(n.tag_name().name(), "catAx" | "valAx" | "dateAx" | "serAx"))
-        .map(|n| read_axis(n, &base, colors, legacy, legacy_border && excel_wrote))
+        .map(|n| read_axis(n, &base, colors, legacy, legacy_border && excel_wrote, powerpoint_styled))
         .collect();
     // A category axis of several levels (`c:multiLvlStrRef`): the outer levels, over the labels of the innermost.
     if let Some(axis) = axes.iter_mut().find(|a| a.kind == AxisKind::Category && !a.deleted) {
@@ -424,7 +430,7 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
 
     // The title: its own text, or the only series' name.
     let title = child(chart, "title").filter(|_| !val_bool(chart, "autoTitleDeleted").unwrap_or(false)).and_then(|t| {
-        let title_default = if legacy { ChartText { size: 1800, bold: true, ..base.clone() } } else { ChartText { size: 1400, ..base.clone() } };
+        let title_default = if legacy { ChartText { size: 1800, bold: legacy_border || excel_wrote, ..base.clone() } } else { ChartText { size: 1400, ..base.clone() } };
         let mut style = text_style(child(t, "txPr"), &title_default, colors);
         let rich = path(t, &["tx", "rich"]);
         if let Some(def) = rich.and_then(|r| r.descendants().find(|n| n.is_element() && n.tag_name().name() == "defRPr")) {
@@ -471,7 +477,9 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
         (true, None) if legacy_border => Some(Some(Stroke::solid(Color::opaque(ibis_doc_model::Rgb(0x868686)), 9_525))),
         (_, border) => border,
     };
-    let background = background.or(legacy.then_some(Fill::Solid(Color::WHITE)));
+    // A chart area with no format of its own is white on a sheet (and in a document), clear in a slide (PowerPoint's PDF of a 3-D chart over a
+    // shape: the shape shows through; PowerPoint 16.0.20527.20088).
+    let background = background.or((legacy && legacy_border).then_some(Fill::Solid(Color::WHITE)));
 
     let (plot_background, plot_border) = shape_props(child(plot, "spPr"), colors);
     let plot_border = plot_border.flatten();
@@ -497,6 +505,15 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
         .and_then(|ps| child(ps, "name"))
         .and_then(|n| n.text().map(|t| t.to_string()));
     let groups_len: usize = groups.iter().map(|g| g.series.len()).sum();
+    // A trendline with no format of its own: a thin solid line in the text colour (the PDF of a chart that names style 2: 0.75pt, black).
+    if powerpoint_styled {
+        let text = colors.scheme("tx1").unwrap_or(ibis_doc_model::Rgb::BLACK);
+        for series in groups.iter_mut().flat_map(|g| g.series.iter_mut()) {
+            if let Some(trendline) = series.trendline.as_mut().filter(|t| t.stroke.is_none()) {
+                trendline.stroke = Some(Stroke::solid(Color::opaque(text), 9_525));
+            }
+        }
+    }
     Some(Chart {
         groups,
         axes,
@@ -519,6 +536,7 @@ pub(crate) fn read_in(space: Node, colors: &Colors, legacy_border: bool) -> Opti
         ex: None,
         ex_format: None,
         excel_layout: false,
+        word_layout: false,
         cell_refs: cell_refs(plot, &groups_len),
         ex_source: None,
     })
@@ -572,7 +590,7 @@ fn manual_rect(layout: Node) -> Option<FractionRect> {
 }
 
 /// Fill and outline from `c:spPr`. The outer `None`s mean "not stated".
-fn shape_props(sp_pr: Option<Node>, colors: &Colors) -> (Option<Fill>, Option<Option<Stroke>>) {
+pub(crate) fn shape_props(sp_pr: Option<Node>, colors: &Colors) -> (Option<Fill>, Option<Option<Stroke>>) {
     let Some(sp_pr) = sp_pr else { return (None, None) };
     let fill = elements(sp_pr).find_map(|n| fill(n, colors));
     let stroke = child(sp_pr, "ln").map(|ln| stroke(ln, colors));
@@ -1139,14 +1157,23 @@ fn ser_marker_unformatted(ser: Node) -> bool {
     child(ser, "marker").is_some_and(|m| child(m, "spPr").is_none_or(|p| child(p, "solidFill").is_none() && child(p, "ln").and_then(|l| child(l, "solidFill")).is_none()))
 }
 
-fn read_axis(node: Node, base: &ChartText, colors: &Colors, legacy: bool, legacy_border: bool) -> Axis {
+/// The theme's text colour tinted 75% (`a:schemeClr tx1` with `a:tint 75000`): the lines (gridlines, axes, tick marks) of PowerPoint's chart style 2
+/// (0x898989 on black text: the 0.537 gray of PowerPoint 16.0.20527.20088's PDF of a chart that names style 2).
+fn styled_line_color(colors: &Colors) -> Color {
+    let xml = r#"<a:schemeClr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" val="tx1"><a:tint val="75000"/></a:schemeClr>"#;
+    roxmltree::Document::parse(xml).ok().and_then(|doc| colors.resolve(doc.root_element(), None)).unwrap_or(Color::opaque(ibis_doc_model::Rgb(0x898989)))
+}
+
+fn read_axis(node: Node, base: &ChartText, colors: &Colors, legacy: bool, legacy_border: bool, powerpoint_styled: bool) -> Axis {
     let scaling = child(node, "scaling");
     // Lines with no format: black in a chart of the old defaults.
     // Excel draws them grey (measured on the same file: gridlines and axis
     // line match the chart border's 0x868686).
     let plain = if legacy && legacy_border { ibis_doc_model::Rgb(0x868686) } else if legacy { ibis_doc_model::Rgb::BLACK } else { ibis_doc_model::Rgb(0xd9d9d9) };
+    let styled_line = powerpoint_styled.then(|| styled_line_color(colors));
+    let plain_color = styled_line.unwrap_or(Color::opaque(plain));
     let gridlines = child(node, "majorGridlines").map(|g| {
-        path(g, &["spPr", "ln"]).map(|ln| stroke(ln, colors)).unwrap_or_else(|| Some(Stroke::solid(Color::opaque(plain), 9_525)))
+        path(g, &["spPr", "ln"]).map(|ln| stroke(ln, colors)).unwrap_or_else(|| Some(Stroke::solid(plain_color, 9_525)))
     });
     let minor_gridlines = child(node, "minorGridlines").map(|g| {
         path(g, &["spPr", "ln"])
@@ -1198,8 +1225,8 @@ fn read_axis(node: Node, base: &ChartText, colors: &Colors, legacy: bool, legacy
         line: match child(node, "spPr") {
             // (A vertical value axis of the old defaults has no line of its own; Word and Excel draw the
             // horizontal axis only: measured against Word with DCHT.)
-            None if legacy && node.has_tag_name((CHART_NS, "valAx")) && matches!(val(node, "axPos"), Some("l" | "r")) => None,
-            None if legacy => Some(Stroke::solid(Color::opaque(if legacy_border { ibis_doc_model::Rgb(0x868686) } else { ibis_doc_model::Rgb::BLACK }), 9_525)),
+            None if legacy && !powerpoint_styled && node.has_tag_name((CHART_NS, "valAx")) && matches!(val(node, "axPos"), Some("l" | "r")) => None,
+            None if legacy => Some(Stroke::solid(if powerpoint_styled { plain_color } else { Color::opaque(if legacy_border { ibis_doc_model::Rgb(0x868686) } else { ibis_doc_model::Rgb::BLACK }) }, 9_525)),
             sp => shape_props(sp, colors).1.flatten(),
         },
         gridlines: gridlines.flatten(),
@@ -1207,7 +1234,7 @@ fn read_axis(node: Node, base: &ChartText, colors: &Colors, legacy: bool, legacy
         minor_unit: val_f64(node, "minorUnit").filter(|u| *u > 0.0).map(Number),
         text: text_style(child(node, "txPr"), base, colors),
         title: child(node, "title").and_then(|t| {
-            let title_default = ChartText { size: 1000, ..base.clone() };
+            let title_default = ChartText { size: 1000, bold: powerpoint_styled, ..base.clone() };
             let mut style = text_style(child(t, "txPr"), &title_default, colors);
             let rich = path(t, &["tx", "rich"]);
             if let Some(def) = rich.and_then(|r| r.descendants().find(|n| n.is_element() && n.tag_name().name() == "defRPr")) {

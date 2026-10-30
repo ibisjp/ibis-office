@@ -8,8 +8,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Selectable as _, Sizable as _, v_flex, h_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -63,7 +63,7 @@ impl SlideEditor {
     /// 開発 > XML > ソース: open the XML Source panel.
     pub(crate) fn open_xml_source(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         let mut maps = Vec::new();
         // If no XML map exists, seed a default Map1 for user management.
         maps.push(XmlMapInfo::default());
@@ -89,7 +89,7 @@ impl SlideEditor {
         name_state.update(cx, |inp, cx| inp.set_value(map.name.clone(), window, cx));
 
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.xml_map_properties = Some(XmlMapPropertiesPanel {
             map_index,
             name: name_state,
@@ -135,36 +135,27 @@ impl SlideEditor {
     pub(crate) fn xml_source_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.wb().panels.xml_source.as_ref()?;
         let ui = p.ui.clone();
-        let mark = |id: &str, child: AnyElement| {
+
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
             let ui = ui.clone();
             let id = id.to_string();
-            div()
-                .relative()
-                .child(child)
-                .child(
-                    canvas(|_, _, _| {}, move |bounds, _, _, _| {
+            action.on_bounds(move |bounds, _, _| {
                         ui.borrow_mut().insert(id.clone(), bounds);
                     })
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full(),
-                )
-                .into_any_element()
         };
 
-        let mut body = v_flex().gap_2().p(px(8.));
+        let mut body = v_flex().gap_2().p(px(8.)).p_0();
 
-        body = body.child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("xlsx.xml-source.maps-in-workbook")));
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("xlsx.xml-source.maps-in-workbook")));
 
         if p.maps.is_empty() {
-            body = body.child(div().text_size(px(11.)).text_color(rgb(0x888888)).child(text("xlsx.xml-source.no-maps")));
+            body = body.child(div().text_sm().text_color(rgb(0x888888)).child(text("xlsx.xml-source.no-maps")));
         } else {
             for (i, m) in p.maps.iter().enumerate() {
                 let is_sel = p.selected == Some(i);
                 let label = format!("{} ({}: {})", m.name, text("xlsx.xml-map-properties.root-element"), m.root_element);
                 body = body.child(
-                    Button::new(ElementId::Name(format!("xml-map-{i}").into()))
+                    crate::shell::chrome::action_button(ElementId::Name(format!("xml-map-{i}").into()))
                         .small()
                         .label(label)
                         .selected(is_sel)
@@ -178,26 +169,12 @@ impl SlideEditor {
             }
         }
 
-        body = body.child(h_flex().gap_2().pt(px(6.)).child(
-            mark("xml-map-props-btn", Button::new("xml-map-props-btn")
-                .small()
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(
+            mark_action("xml-map-props-btn", crate::shell::chrome::ActionDefinition::new("xml-map-props-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                 .label(text("xlsx.xml-map-properties.title"))
-                .on_click(cx.listener(|this, _, window, cx| this.open_xml_map_properties(window, cx)))
-                .into_any_element())
-        ).child(
-            Button::new("xml-source-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.xml_source = None;
-                    cx.notify();
-                }))
-        ));
-
-        Some(SidebarPanel {
-            title: text("xlsx.xml-source.title"),
-            body: body.into_any_element(),
-        })
+                .on_click(cx.listener(|this, _, window, cx| this.open_xml_map_properties(window, cx))))
+        );
+        Some(SidebarPanel::with_footer(text("xlsx.xml-source.title"), body.into_any_element(), panel_terminal_actions))
     }
 
     /// Render the XML Map Properties sidebar panel.
@@ -221,26 +198,29 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                        ui.borrow_mut().insert(id.clone(), bounds);
+                    })
+        };
 
-        let check = |on: bool, label: &str| format!("{} {}", if on { "☑" } else { "☐" }, text(label));
         let validate = p.validate;
         let overwrite = p.overwrite;
         let root = p.root_element.clone();
         let schema = p.schema.clone();
 
-        let mut body = v_flex().gap_2().p(px(8.));
+        let mut body = v_flex().gap_2().p(px(8.)).p_0();
 
-        body = body.child(div().text_size(px(11.)).font_weight(FontWeight::BOLD).child(text("xlsx.xml-map-properties.name")));
-        body = body.child(mark("xml-map-name-input", Input::new(&p.name).small().cleanable(true).into_any_element()));
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("xlsx.xml-map-properties.name")));
+        body = body.child(mark("xml-map-name-input", crate::shell::chrome::text_field(&p.name).full_width().into_any_element()));
 
-        body = body.child(div().text_size(px(11.)).text_color(rgb(0x666666)).child(format!("{}: {}", text("xlsx.xml-map-properties.root-element"), root)));
-        body = body.child(div().text_size(px(11.)).text_color(rgb(0x666666)).child(format!("{}: {}", text("xlsx.xml-map-properties.schema"), schema)));
+        body = body.child(div().text_sm().text_color(rgb(0x666666)).child(format!("{}: {}", text("xlsx.xml-map-properties.root-element"), root)));
+        body = body.child(div().text_sm().text_color(rgb(0x666666)).child(format!("{}: {}", text("xlsx.xml-map-properties.schema"), schema)));
 
         body = body.child(
-            Button::new("xml-map-validate-toggle")
-                .small()
-                .label(check(validate, "xlsx.xml-map-properties.validate"))
-                .on_click(cx.listener(|this, _, _, cx| {
+            crate::shell::chrome::checkbox_button("xml-map-validate-toggle", crate::shell::i18n::text("xlsx.xml-map-properties.validate"), validate, false, cx.listener(|this, _, _, cx| {
                     if let Some(p) = this.wb_mut().panels.xml_map_properties.as_mut() {
                         p.validate = !p.validate;
                     }
@@ -249,10 +229,7 @@ impl SlideEditor {
         );
 
         body = body.child(
-            Button::new("xml-map-overwrite-toggle")
-                .small()
-                .label(check(overwrite, "xlsx.xml-map-properties.overwrite"))
-                .on_click(cx.listener(|this, _, _, cx| {
+            crate::shell::chrome::checkbox_button("xml-map-overwrite-toggle", crate::shell::i18n::text("xlsx.xml-map-properties.overwrite"), overwrite, false, cx.listener(|this, _, _, cx| {
                     if let Some(p) = this.wb_mut().panels.xml_map_properties.as_mut() {
                         p.overwrite = !p.overwrite;
                     }
@@ -261,29 +238,14 @@ impl SlideEditor {
         );
 
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(11.)).text_color(rgb(0xD9534F)).child(SharedString::from(p.message.clone())));
+            body = body.child(div().text_sm().text_color(rgb(0xD9534F)).child(SharedString::from(p.message.clone())));
         }
-
-        body = body.child(h_flex().gap_2().pt(px(6.)).child(
-            mark("xml-map-ok-btn", Button::new("xml-map-ok-btn")
-                .primary()
-                .small()
+        let panel_actions = crate::shell::chrome::action_bar().action(
+            mark_action("xml-map-ok-btn", crate::shell::chrome::ActionDefinition::new("xml-map-ok-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                 .label(text("OK"))
-                .on_click(cx.listener(|this, _, _, cx| this.apply_xml_map_properties(cx)))
-                .into_any_element())
-        ).child(
-            Button::new("xml-map-close-btn")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.xml_map_properties = None;
-                    cx.notify();
-                }))
-        ));
-
-        Some(SidebarPanel {
-            title: text("xlsx.xml-map-properties.title"),
-            body: body.into_any_element(),
-        })
+                .on_click(cx.listener(|this, _, _, cx| this.apply_xml_map_properties(cx))))
+        )
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("xlsx.xml-map-properties.title"), body.into_any_element(), panel_actions))
     }
 }

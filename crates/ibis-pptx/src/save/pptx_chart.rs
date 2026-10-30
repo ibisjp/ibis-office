@@ -380,6 +380,10 @@ pub(crate) fn write_solid_fill(doc: &mut XmlDocument, parent: NodeId, color: ibi
 
 pub(crate) fn write_series_marker(doc: &mut XmlDocument, ser: NodeId, marker: Option<&ibis_doc_model::chart::Marker>, c: &str, a: &str) -> Result<(), Error> {
     use ibis_doc_model::chart::MarkerSymbol;
+    // ECMA-376 dml-chart.xsd: marker belongs to Line/Scatter/Radar series (Stock uses LineSer).
+    if marker.is_some() && !doc.parent(ser).is_some_and(|p|matches!(doc.local_name(p),"lineChart"|"line3DChart"|"scatterChart"|"radarChart"|"stockChart")) {
+        return Err(unsupported("この種類のグラフのマーカー"));
+    }
     let existing = doc.child(ser, "marker");
     match marker {
         None => {
@@ -651,7 +655,7 @@ pub(crate) fn write_chart(package: &mut Package, part: &str, old: &Chart, new: &
                 write_series_stroke(doc, ser, t.stroke.as_ref(), &c_prefix, &a_prefix)?;
             }
             if s.marker != t.marker {
-                write_series_marker(doc, ser, t.marker.as_ref(), &c_prefix, &a_prefix)?;
+                write_series_marker(doc, ser, if retyped && !b.kind.supports_markers() { None } else { t.marker.as_ref() }, &c_prefix, &a_prefix)?;
             }
             if s.labels != t.labels {
                 write_labels(doc, ser, s.labels.as_ref(), t.labels.as_ref())?;

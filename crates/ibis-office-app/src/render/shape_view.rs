@@ -35,6 +35,11 @@ pub(crate) enum ColorMode {
     HighContrast,
 }
 
+#[cfg(all(windows,feature="export"))]
+type LiveFrame=Arc<RenderImage>;
+#[cfg(not(all(windows,feature="export")))]
+type LiveFrame=crate::media_player::Frame;
+
 pub(crate) struct Resources {
     /// Color and contrast rendering mode (Color, Grayscale, HighContrast).
     pub(crate) color_mode: ColorMode,
@@ -62,8 +67,13 @@ pub(crate) struct Resources {
     sizes: HashMap<MediaId, (u32, u32)>,
     fonts: Fonts,
     text_system: Arc<TextSystem>,
+    /// Invalidates worksheet layouts when document fonts/resources change.
+    pub(crate) layout_generation: usize,
     /// Ascent, descent and line gap of fonts, in ems.
     metrics: std::cell::RefCell<HashMap<Font, (f32, f32, f32)>>,
+    row_metrics: std::cell::RefCell<HashMap<String, Option<std::rc::Rc<crate::render::font_metrics::WinRowMetrics>>>>,
+    /// Whether the installed font of a family supports the Japanese code page (`font_metrics::font_file_has_japanese`).
+    japanese: std::cell::RefCell<HashMap<String, Option<bool>>>,
     /// Draw as printed: sheets without their grid lines.
     pub(crate) print: bool,
     /// The slide show is drawn: an animated GIF plays (elsewhere it shows its first frame).
@@ -102,7 +112,7 @@ pub(crate) struct Resources {
     /// The document's body font set, for text with no typeface of its own.
     theme_fonts: Option<ibis_doc_model::FontSet>,
     /// The frame of each video playing now, drawn in place of its poster.
-    live: std::cell::RefCell<HashMap<MediaId, crate::media_player::Frame>>,
+    live: std::cell::RefCell<HashMap<MediaId, LiveFrame>>,
     /// Worksheets in the workbook by sheet name (original and lower-case).
     pub(crate) sheets: HashMap<String, Arc<ibis_doc_model::Sheet>>,
     /// Word documents: the text box currently being edited, its recorded `TextPositions`,
@@ -116,6 +126,8 @@ pub(crate) struct Resources {
 
 impl Resources {
     pub(crate) fn new(presentation: &Presentation, cx: &App) -> Self {
+        static NEXT_LAYOUT_GENERATION: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+        let layout_generation = NEXT_LAYOUT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // (The text of metafile pictures is put by the metrics of the fonts: before the pictures are made.)
         crate::render::metafile_fonts::install(cx);
         let t = crate::clock::debug_timing::start();
@@ -142,6 +154,9 @@ impl Resources {
         let t = crate::clock::debug_timing::start();
         let mut fonts = Fonts::new(cx);
         fonts.substitutions = presentation.font_substitutions.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        // A presentation's text; Word's and Excel's draw such a typeface otherwise (`Fonts::family`).
+        fonts.calibri_for_missing = presentation.flow.is_none() && presentation.workbook.is_none();
+        fonts.docx_font_families = presentation.flow.as_ref().map(|f| f.font_families.clone());
         crate::clock::debug_timing::report("resources: Fonts::new", t);
         let t = crate::clock::debug_timing::start();
         fonts.add_embedded(&presentation.fonts, &preload, cx);
@@ -183,7 +198,10 @@ impl Resources {
             sizes,
             fonts,
             text_system,
+            layout_generation,
             metrics: Default::default(),
+            row_metrics: Default::default(),
+            japanese: Default::default(),
             print: false,
             animate_pictures: std::cell::Cell::new(false),
             live_gifs: Default::default(),
@@ -206,6 +224,8 @@ impl Resources {
 
     /// The frame of the video of clip `media` to draw now (`None`: its poster).
     pub(crate) fn set_live_frame(&self, media: MediaId, frame: Option<crate::media_player::Frame>) {
+        #[cfg(all(windows,feature="export"))]
+        let frame=frame.and_then(|f|image::RgbaImage::from_raw(f.width,f.height,(*f.rgba).clone()).map(|rgba|Arc::new(RenderImage::new([image::Frame::new(rgba)]))));
         match frame {
             Some(frame) => self.live.borrow_mut().insert(media, frame),
             None => self.live.borrow_mut().remove(&media),
@@ -217,8 +237,8 @@ impl Resources {
         self.live.borrow().contains_key(&media)
     }
 
-    #[cfg(target_os = "macos")]
-    fn live_frame(&self, media: MediaId) -> Option<crate::media_player::Frame> {
+    #[cfg(any(target_os = "macos",all(windows,feature="export")))]
+    fn live_frame(&self, media: MediaId) -> Option<LiveFrame> {
         self.live.borrow().get(&media).cloned()
     }
 
@@ -286,6 +306,14 @@ impl Resources {
                 Some(ImageSource::Image(image))
             }
         }
+    }
+
+    /// Sample the whole source at the density required by its visible cropped region.
+    pub(crate) fn picture_at_crop_size(&self, media: MediaId, w: f32, h: f32, crop: ibis_doc_model::Crop) -> Option<ImageSource> {
+        let visible_w = 1. - (crop.left as f32 + crop.right as f32) / 100_000.;
+        let visible_h = 1. - (crop.top as f32 + crop.bottom as f32) / 100_000.;
+        if visible_w <= 0. || visible_h <= 0. { return self.picture(media); }
+        self.picture_at_size(media, w / visible_w, h / visible_h)
     }
 
     /// `picture(media)`, averaged down to the drawn size `(w, h)` (logical pixels) when the image is more than twice as
@@ -392,6 +420,10 @@ impl Resources {
         self.fonts.available(name).is_some()
     }
 
+    pub(crate) fn text_system(&self) -> &Arc<TextSystem> {
+        &self.text_system
+    }
+
     /// The width of `text` in `font` at `size` pixels, from the characters'
     /// advances (text is laid out without kerning).
     pub(crate) fn text_width(&self, text: &str, font: &Font, size: f32) -> f32 {
@@ -403,6 +435,41 @@ impl Resources {
                 Err(_) => size * 0.5,
             })
             .sum()
+    }
+
+    /// Whether the font of typeface `name` says it supports the Japanese code page (see `font_metrics::font_file_has_japanese`); `None` when
+    /// the typeface is not installed (another font would stand in for it, and its file says nothing about the typeface).
+    pub(crate) fn is_japanese_typeface(&self, name: &str) -> Option<bool> {
+        if let Some(&v) = self.japanese.borrow().get(name) {
+            return v;
+        }
+        let v = self.fonts.available(name).map(|_| {
+            let font = self.font(&TextStyle { font: Some(name.to_string()), ..TextStyle::default() });
+            let id = self.text_system.resolve_font(&font);
+            self.text_system.font_data(id).is_some_and(|(data, index)| crate::render::font_metrics::font_file_has_japanese(&data, index))
+        });
+        self.japanese.borrow_mut().insert(name.to_string(), v);
+        v
+    }
+
+    /// What Microsoft Excel's row height follows (`font_metrics::WinRowMetrics`) in the file of the
+    /// installed typeface `name`; `None` when it is not installed (a stand-in's file would give the stand-in's rows) or its file
+    /// cannot be read.
+    pub(crate) fn win_row_metrics(&self, name: &str) -> Option<std::rc::Rc<crate::render::font_metrics::WinRowMetrics>> {
+        if let Some(m) = self.row_metrics.borrow().get(name) {
+            return m.clone();
+        }
+        let m = (|| {
+            if !self.has_typeface(name) {
+                return None;
+            }
+            let font = self.font(&TextStyle { font: Some(name.into()), ..TextStyle::default() });
+            let id = self.text_system.resolve_font(&font);
+            let (data, index) = self.text_system.font_data(id)?;
+            crate::render::font_metrics::font_file_win_row_metrics(&data, index).map(std::rc::Rc::new)
+        })();
+        self.row_metrics.borrow_mut().insert(name.to_string(), m.clone());
+        m
     }
 
     /// The ascent, descent and line gap of `font`, in ems.
@@ -537,6 +604,10 @@ struct Fonts {
     /// Used for East Asian typefaces that are not installed.
     east_asian_fallback: Option<SharedString>,
     substitutions: HashMap<String, String>,
+    /// Whether a Latin typeface that is not installed is drawn with Calibri (PowerPoint's choice; see `Fonts::family`).
+    calibri_for_missing: bool,
+    /// A Word document's font table (typeface to `w:family`), where one is read: see `family`.
+    docx_font_families: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// Weight words at the end of a typeface name, such as "Poppins SemiBold"
@@ -616,6 +687,18 @@ pub(crate) fn strip_weight_suffix(name: &str) -> Option<(&str, FontWeight)> {
             return Some((base, weight));
         }
     }
+    // A Japanese typeface's regular and bold faces are named with a hyphen and one letter after the family ("UD デジタル 教科書体 NK-R", "-B"; the font's own
+    // `name` table has the family without it). Looked up only when the name itself is not found (`resolve_font_with_index` tries the name first).
+    if let Some((stem, letter)) = name.rsplit_once('-')
+        && !stem.trim().is_empty()
+        && stem.chars().any(|c| !c.is_ascii())
+    {
+        match letter {
+            "R" => return Some((stem.trim_end(), FontWeight::NORMAL)),
+            "B" => return Some((stem.trim_end(), FontWeight::BOLD)),
+            _ => {}
+        }
+    }
     None
 }
 
@@ -658,6 +741,10 @@ const TYPEFACE_ALIASES: &[(&str, &str)] = &[
     ("ＭＳ ゴシック", "MS Gothic"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
     ("ＭＳ Ｐ明朝", "MS PMincho"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
     ("ＭＳ 明朝", "MS Mincho"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
+    // Windows' FontSubstitutes (HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontSubstitutes): the names it maps to
+    // installed typefaces, which Office follows.
+    ("Helvetica", "Arial"),
+    ("Times", "Times New Roman"),
     // Linux has none of Office's typefaces; the Liberation fonts (Liberation
     // Serif, Sans and Mono: Tinos, Arimo and Cousine under ChromeOS' names)
     // and Caladea have the widths of Times New Roman, Arial, Courier New
@@ -847,6 +934,9 @@ pub(crate) struct OpenTypeFaceInfo {
     pub(crate) weight: u16,
     /// `OS/2` `fsSelection` italic or oblique flag.
     pub(crate) italic: bool,
+    /// For a variable font with a weight axis: the weight its family is regular at (400 kept within the axis' range), which is not
+    /// the weight of the file's default instance (`usWeightClass`; Noto Sans JP's file is its Thin).
+    pub(crate) family_weight: Option<u16>,
 }
 
 #[derive(Clone, Debug)]
@@ -907,11 +997,12 @@ impl OpenTypeIndex {
         } else {
             face.id16_names.clone()
         };
+        let family_weight = face.family_weight.unwrap_or(face.weight);
         for name16 in &face.id16_names {
-            self.insert_candidate(name16, &id16_only, face.weight, face.italic, 0);
+            self.insert_candidate(name16, &id16_only, family_weight, face.italic, 0);
         }
         for name1 in &face.id1_names {
-            self.insert_candidate(name1, &all_families, face.weight, face.italic, 0);
+            self.insert_candidate(name1, &all_families, family_weight, face.italic, 0);
         }
         for name4 in &face.id4_names {
             self.insert_candidate(name4, &all_families, face.weight, face.italic, 1);
@@ -1043,6 +1134,22 @@ fn parse_name_table(name: &[u8]) -> (Vec<String>, Vec<String>, Vec<String>) {
     (id16_names, id1_names, id4_names)
 }
 
+/// The weight a variable font's family is regular at: 400 kept within the range of the `wght` axis of its `fvar` table; `None` for a font with
+/// no weight axis. The file's default instance is not it (Noto Sans JP's default is the Thin, its `usWeightClass` 100).
+fn variable_family_weight(fvar: &[u8]) -> Option<u16> {
+    let u16_at = |at: usize| fvar.get(at..at + 2).map(|b| u16::from_be_bytes([b[0], b[1]]) as usize);
+    let fixed_at = |at: usize| fvar.get(at..at + 4).map(|b| i32::from_be_bytes([b[0], b[1], b[2], b[3]]) as f32 / 65536.0);
+    let (axes_at, count, size) = (u16_at(4)?, u16_at(8)?, u16_at(10)?);
+    for axis in 0..count {
+        let at = axes_at + axis * size;
+        if fvar.get(at..at + 4)? == b"wght" {
+            let (min, max) = (fixed_at(at + 4)?, fixed_at(at + 12)?);
+            return Some(400f32.clamp(min, max.max(min)).round() as u16);
+        }
+    }
+    None
+}
+
 fn parse_opentype_faces<R: std::io::Read + std::io::Seek>(reader: &mut R) -> Vec<OpenTypeFaceInfo> {
     use std::io::SeekFrom;
     let mut hdr = [0u8; 12];
@@ -1076,6 +1183,7 @@ fn parse_opentype_faces<R: std::io::Read + std::io::Seek>(reader: &mut R) -> Vec
         }
         let mut name_span: Option<(u64, usize)> = None;
         let mut os2_span: Option<(u64, usize)> = None;
+        let mut fvar_span: Option<(u64, usize)> = None;
         for rec in dir.chunks_exact(16) {
             let tag = &rec[0..4];
             let off = u64::from(u32::from_be_bytes([rec[8], rec[9], rec[10], rec[11]]));
@@ -1084,6 +1192,8 @@ fn parse_opentype_faces<R: std::io::Read + std::io::Seek>(reader: &mut R) -> Vec
                 name_span = Some((off, len));
             } else if tag == b"OS/2" {
                 os2_span = Some((off, len));
+            } else if tag == b"fvar" {
+                fvar_span = Some((off, len));
             }
         }
         let Some((name_off, name_len)) = name_span else { continue };
@@ -1109,7 +1219,11 @@ fn parse_opentype_faces<R: std::io::Read + std::io::Seek>(reader: &mut R) -> Vec
             }
             _ => (400, false),
         };
-        out.push(OpenTypeFaceInfo { id16_names, id1_names, id4_names, weight, italic });
+        let family_weight = fvar_span.filter(|&(_, len)| (44..=16 * 1024).contains(&len)).and_then(|(off, len)| {
+            let mut fvar = vec![0u8; len];
+            (reader.seek(SeekFrom::Start(off)).is_ok() && reader.read_exact(&mut fvar).is_ok()).then(|| variable_family_weight(&fvar)).flatten()
+        });
+        out.push(OpenTypeFaceInfo { id16_names, id1_names, id4_names, weight, italic, family_weight });
     }
     out
 }
@@ -1476,6 +1590,8 @@ impl Fonts {
             embedded_index: OpenTypeIndex::default(),
             east_asian_fallback,
             substitutions: HashMap::new(),
+            calibri_for_missing: false,
+            docx_font_families: None,
         }
     }
 
@@ -1560,6 +1676,28 @@ impl Fonts {
             },
             // Humanist sans-serifs whose widths match Calibri (`Carlito`) closer than Arial.
             _ if name.starts_with("Meta") && self.installed.contains(BUNDLED_FAMILY) => (BUNDLED_FAMILY.into(), weight),
+            // PowerPoint draws every line of a presentation in a typeface that is not on the PC with Calibri (Calibri-Bold
+            // for bold), whatever the theme's typefaces and the `pitchFamily` and `panose` the run names are (its PDFs of
+            // `missing-font-substitute-*.pptx`, with the themes' typefaces Arial, Calibri and Franklin Gothic Book). Word
+            // draws it with Cambria and Excel with Arial (their PDFs of `missing-font-substitute.docx` and `.xlsx`), so
+            // only a presentation's text. The names Windows' `FontSubstitutes` maps (Helvetica to Arial, Times to Times
+            // New Roman) are in `TYPEFACE_ALIASES`. Carlito (bundled) has Calibri's widths where Calibri is not installed.
+            _ if self.calibri_for_missing && ["Calibri", BUNDLED_FAMILY].iter().any(|f| self.installed.contains(*f)) => {
+                (["Calibri", BUNDLED_FAMILY].into_iter().find(|f| self.installed.contains(*f)).unwrap_or(BUNDLED_FAMILY).into(), weight)
+            }
+            // Word draws a Latin typeface that the PC does not have with Cambria (Cambria-Bold for bold) if the font table of its file
+            // says `w:family` `roman` or does not list it, and with Calibri if the table lists it with another family or none, whatever
+            // its panose and pitch (its PDFs of `missing-font-fonttable-family.docx`: only the `roman` one is Cambria; of
+            // `missing-font-ctx-*.docx`, with and without a font table and theme: four of five typefaces Cambria, "Noto Sans JP", a typeface
+            // Word itself knows, Calibri: not decided here).
+            _ if self.docx_font_families.is_some() => {
+                let listed_other = self.docx_font_families.as_ref().is_some_and(|m| m.get(name).is_some_and(|f| f != "roman"));
+                let wanted: &[&str] = if listed_other { &["Calibri", BUNDLED_FAMILY] } else { &["Cambria"] };
+                match wanted.iter().find(|f| self.installed.contains(**f)) {
+                    Some(found) => ((*found).into(), weight),
+                    None => (if listed_other { "Arial" } else { "Times New Roman" }.into(), weight),
+                }
+            }
             // A Latin typeface that is not installed gives way to a common one of about its width
             // (the system UI font is wider than most: a line takes 13% more room).
             _ => match ["Arial", "Helvetica", "Liberation Sans"].into_iter().find(|f| self.installed.contains(*f)) {
@@ -2000,19 +2138,72 @@ fn paint_pattern_span(
     }
 }
 
+/// A pattern's cell: a pixel of a 96 dpi screen, in points.
+const PATTERN_CELL_POINTS: f32 = 72.0 / 96.0;
+
 /// Paint the foreground cells of pattern `fill` inside the closed polygons
-/// `subpaths` (window pixels, even–odd), its 8 × 8 tile of 1 pt cells
-/// anchored at `origin` (the slide's corner, as PowerPoint anchors it),
+/// `subpaths` (window pixels, even–odd), its 8 × 8 tile of cells of a pixel of a 96 dpi screen
+/// (`PATTERN_CELL_POINTS` = 0.75 pt: PowerPoint on Windows makes the tile a bitmap of 8 × 8 screen pixels, and its PDF tiles it at 6 pt:
+/// `/Matrix [0.375 0 0 0.375 0 540]` with a 16-unit tile, in every PDF of the coverage corpus with a pattern fill) anchored at `origin` (the slide's corner, as PowerPoint anchors it),
 /// `scale` pixels per EMU. Each row of cells is cut to where the row's
 /// middle line crosses the polygons.
 pub(crate) fn paint_pattern(window: &mut Window, fill: &Fill, subpaths: &[Vec<Point<Pixels>>], origin: Point<Pixels>, scale: f32) {
     let Fill::Pattern { preset, foreground, .. } = fill else { return };
     let Some(tile) = ibis_doc_model::pattern_tile(preset) else { return };
-    let cell = ibis_doc_model::EMU_PER_POINT as f32 * scale;
+    let cell = PATTERN_CELL_POINTS * ibis_doc_model::EMU_PER_POINT as f32 * scale;
     if cell <= 0.0 || subpaths.is_empty() {
         return;
     }
     let color = hsla(*foreground);
+    // For a PDF (the window only records): an axis-aligned area is one picture of the tile's cells, a pixel to a cell, which a PDF viewer averages
+    // when it shows the page smaller than the cells (PowerPoint's PDF tiles a picture of the cells likewise); quads of cells smaller than a pixel come out
+    // as a coarse grid there.
+    #[cfg(not(target_family = "wasm"))]
+    if window.is_recording_paints_only()
+        && color.a >= 1.0
+        && let Some((left, top, right, bottom)) = as_axis_aligned_rect(subpaths)
+        && right > left
+        && bottom > top
+    {
+        let (ox, oy) = (f32::from(origin.x), f32::from(origin.y));
+        let (c0, c1) = (((left - ox) / cell).floor() as i64, ((right - ox) / cell).ceil() as i64);
+        let (r0, r1) = (((top - oy) / cell).floor() as i64, ((bottom - oy) / cell).ceil() as i64);
+        let (w, h) = ((c1 - c0) as u32, (r1 - r0) as u32);
+        if w > 0 && h > 0 && (w as u64) * (h as u64) <= 16_000_000 {
+            let rgba: Rgba = color.into();
+            let ink = [(rgba.b * 255.0).round() as u8, (rgba.g * 255.0).round() as u8, (rgba.r * 255.0).round() as u8, 255];
+            let mut bytes = vec![0u8; (w * h * 4) as usize];
+            for row in 0..h as i64 {
+                let bits = tile[(r0 + row).rem_euclid(8) as usize];
+                for col in 0..w as i64 {
+                    if bits & (0x80 >> (c0 + col).rem_euclid(8)) != 0 {
+                        let at = ((row as u32 * w + col as u32) * 4) as usize;
+                        bytes[at..at + 4].copy_from_slice(&ink);
+                    }
+                }
+            }
+            if let Some(buffer) = image::RgbaImage::from_raw(w, h, bytes) {
+                let picture = Arc::new(RenderImage::new([image::Frame::new(buffer)]));
+                let area = Bounds::new(point(px(left), px(top)), size(px(right - left), px(bottom - top)));
+                let whole = Bounds::new(point(px(ox + c0 as f32 * cell), px(oy + r0 as f32 * cell)), size(px(w as f32 * cell), px(h as f32 * cell)));
+                let _ = window.paint_image(area, whole, Corners::default(), picture, 0, false);
+                return;
+            }
+        }
+    }
+    // Cells smaller than a device pixel cannot be drawn as cells (a quad covers whole pixels, so a dotted line of 0.5 px cells comes out a solid line and the
+    // pattern 4 times too dark). Paint the foreground's share of the tile (the set bits of 64) as one translucent fill, what a raster of the pattern averages to.
+    if cell * window.scale_factor() < 1.0 {
+        let share = tile.iter().map(|b| b.count_ones()).sum::<u32>() as f32 / 64.0;
+        let mean = Hsla { a: color.a * share, ..color };
+        let closed: Vec<(Vec<Point<Pixels>>, bool)> = subpaths.iter().map(|p| (p.clone(), true)).collect();
+        if let Some((left, top, right, bottom)) = as_axis_aligned_rect(subpaths) {
+            window.paint_quad(gpui_kit::fill(Bounds::new(point(px(left), px(top)), size(px(right - left), px(bottom - top))), mean));
+        } else if let Some(path) = compound_path(&closed, None) {
+            window.paint_path(path, mean);
+        }
+        return;
+    }
     let (ox, oy) = (f32::from(origin.x), f32::from(origin.y));
 
     // Fast path: axis-aligned rectangle (covers slide background, table cells, and regular rectangular shapes).
@@ -3287,7 +3478,7 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                 .then(|| {
                     let mut pic = Picture::new(*media);
                     pic.geometry = Some(auto.geometry.clone());
-                    rotated_image(shape, &pic, frame, res)
+                    rotated_image(shape, &pic, frame, false, res)
                 })
                 .flatten()
             {
@@ -3319,7 +3510,7 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                     pic.luminance = blip.luminance;
                     pic.effects = blip.effects;
                     pic.geometry = Some(auto.geometry.clone());
-                    rotated_image(shape, &pic, frame, res)
+                    rotated_image(shape, &pic, frame, !blip.rot_with_shape, res)
                 })
                 .flatten()
             {
@@ -3920,25 +4111,20 @@ pub(crate) fn polygon_styled(
     builder.build().ok()
 }
 
-/// Short lines (the dashes of a dashed line, or the dots of a dotted one) stroked `width` wide with butt ends as
-/// one path: one object, in a PDF too, however many there are.
-pub(crate) fn dashes_path(pieces: &[Vec<Point<Pixels>>], width: Pixels) -> Option<Path<Pixels>> {
-    let opts = lyon_tessellation::StrokeOptions::default().with_line_width(f32::from(width)).with_line_cap(lyon_tessellation::LineCap::Butt);
-    let mut builder = PathBuilder::default().with_style(gpui_kit::PathStyle::Stroke(opts));
-    let mut any = false;
-    for piece in pieces {
-        let Some((first, rest)) = piece.split_first() else { continue };
-        if rest.is_empty() {
-            continue;
-        }
-        builder.move_to(*first);
-        for p in rest {
-            builder.line_to(*p);
-        }
-        any = true;
-    }
-    if !any {
+/// A line along `points` stroked `width` wide with butt ends and dashed as `pattern` (the lengths, in pixels, of the
+/// dashes and the gaps in turn) from `phase` into it, as one path: dashes on the screen, and in a PDF one line with
+/// its dash pattern (`d`), however many dashes there are.
+pub(crate) fn dashed_line_path(points: &[Point<Pixels>], width: Pixels, pattern: &[f32], phase: f32) -> Option<Path<Pixels>> {
+    let (first, rest) = points.split_first()?;
+    if rest.is_empty() || pattern.is_empty() || pattern.iter().sum::<f32>() <= 0.0 {
         return None;
+    }
+    let opts = lyon_tessellation::StrokeOptions::default().with_line_width(f32::from(width)).with_line_cap(lyon_tessellation::LineCap::Butt);
+    let lengths: Vec<Pixels> = pattern.iter().map(|l| px(*l)).collect();
+    let mut builder = PathBuilder::default().with_style(gpui_kit::PathStyle::Stroke(opts)).dash_array(&lengths).dash_offset(px(phase));
+    builder.move_to(*first);
+    for p in rest {
+        builder.line_to(*p);
     }
     builder.build().ok()
 }
@@ -4272,14 +4458,18 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
     let outline = picture.stroke.as_ref().map(|stroke| outline_element(stroke, w, h, radius, scale, picture.corner == 0 && picture.geometry.is_none(), at, res.color_mode));
 
     // A video playing: its newest frame, in place of the poster, preserving corner, outline and shadow.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos",all(windows,feature="export")))]
     if let Some(ref clip) = picture.clip
         && let Some(live) = res.live_frame(clip.media)
     {
+        #[cfg(target_os="macos")]
+        let live=gpui::surface(live).absolute().size_full().object_fit(ObjectFit::Fill).into_any_element();
+        #[cfg(all(windows,feature="export"))]
+        let live=img(ImageSource::Render(live)).absolute().size_full().object_fit(ObjectFit::Fill).into_any_element();
         let mut el = container
             .rounded(radius)
             .overflow_hidden()
-            .child(gpui::surface(live).absolute().size_full().object_fit(ObjectFit::Fill))
+            .child(live)
             .children(outline);
         if let Some(s) = picture.shadow {
             let (dx, dy, blur, color) = shadow_parts(s, scale);
@@ -4288,7 +4478,7 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
         return el;
     }
     let turned = shape.rotation.rem_euclid(21_600_000) != 0 || shape.flip_h || shape.flip_v;
-    if turned && let Some((image, bounds)) = rotated_image(shape, picture, frame, res) {
+    if turned && let Some((image, bounds)) = rotated_image(shape, picture, frame, false, res) {
         let geom = picture
             .geometry
             .clone()
@@ -4491,7 +4681,7 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
         Some(image)
     });
     // Recoloured pictures are loaded by GPUI; the picture itself once decoded.
-    let Some(image) = styled.clone().or(recoloured).or(cleared).map(|image| res.svg_picture(image)).or_else(|| res.picture_at_size(picture.media, w, h)) else { return container };
+    let Some(image) = styled.clone().or(recoloured).or(cleared).map(|image| res.svg_picture(image)).or_else(|| res.picture_at_crop_size(picture.media, w, h, picture.crop)) else { return container };
     // (The crop is in the styled picture already.)
     let c = if styled.is_some() { ibis_doc_model::Crop::default() } else { picture.crop };
     let frac = |v: i32| v as f32 / 100_000.0;
@@ -4619,7 +4809,7 @@ fn styled_image(flip_h: bool, flip_v: bool, picture: &Picture, frame: EmuRect, r
     }
     let (encoding, data) = res.source(picture.media)?;
     let rgb = |c: ibis_doc_model::Rgb| (c.r(), c.g(), c.b());
-    let look = crate::render::picture_svg::Look { clear: picture.clear.map(rgb), luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| (rgb(a), rgb(b))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect };
+    let look = crate::render::picture_svg::Look { clear: picture.clear.map(rgb), luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| (rgb(a), rgb(b))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect, fill_rect: None, upright: false };
     // Tiles: a tile is the picture's pixels at one point each, scaled (`a:tile/@sx`, `@sy`); the first sits at
     // the frame's corner `align` names, moved by `tx`, `ty`.
     let tile = picture.tile.and_then(|t| {
@@ -4649,7 +4839,7 @@ fn styled_image(flip_h: bool, flip_v: bool, picture: &Picture, frame: EmuRect, r
 
 /// The picture of `shape` rotated and flipped, with its bounds relative to
 /// the frame's top-left corner; `None` if its format cannot be wrapped.
-fn rotated_image(shape: &Shape, picture: &Picture, frame: EmuRect, res: &Resources) -> Option<(Arc<Image>, EmuRect)> {
+fn rotated_image(shape: &Shape, picture: &Picture, frame: EmuRect, upright: bool, res: &Resources) -> Option<(Arc<Image>, EmuRect)> {
     let (w, h) = (frame.width as f64, frame.height as f64);
     let geom = picture
         .geometry
@@ -4668,6 +4858,7 @@ fn rotated_image(shape: &Shape, picture: &Picture, frame: EmuRect, res: &Resourc
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         (shape.rotation, shape.flip_h, shape.flip_v, picture.crop, frame.width, frame.height, picture.clear, picture.luminance, picture.duotone, picture.effects, picture.soft_edge, picture.artistic_effect).hash(&mut hasher);
+        (upright, picture.fill_rect).hash(&mut hasher);
         for p in subpaths.iter().flatten().flatten() {
             (p.0.to_bits(), p.1.to_bits()).hash(&mut hasher);
         }
@@ -4679,7 +4870,7 @@ fn rotated_image(shape: &Shape, picture: &Picture, frame: EmuRect, res: &Resourc
     let (encoding, data) = res.source(picture.media)?;
     let local = EmuRect { x: 0, y: 0, ..frame };
     let rgb = |c: ibis_doc_model::Rgb| (c.r(), c.g(), c.b());
-    let look = crate::render::picture_svg::Look { clear: picture.clear.map(rgb), luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| (rgb(a), rgb(b))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect };
+    let look = crate::render::picture_svg::Look { clear: picture.clear.map(rgb), luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| (rgb(a), rgb(b))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect, fill_rect: picture.fill_rect, upright };
     let wrapped = crate::render::picture_svg::rotated_picture(&data, encoding, local, shape.rotation, shape.flip_h, shape.flip_v, picture.crop, subpaths.as_deref(), &look);
     let entry = (Arc::new(Image::from_bytes(ImageFormat::Svg, wrapped.svg)), wrapped.bounds);
     res.rotated.borrow_mut().insert(key, entry.clone());
@@ -4731,7 +4922,7 @@ pub(crate) fn text_body_element(
     }
     let px_per_point = scale * EMU_PER_POINT as f32;
     let font_scale = body.font_scale as f32 / 100_000.0;
-    let size_px = |style: &TextStyle| px(style.font_size_pt() * font_scale * px_per_point);
+    let size_px = |style: &TextStyle| px(ibis_doc_model::autofit_font_size_pt(style.font_size_pt(), body.font_scale) * px_per_point);
 
     // The paragraphs are placed together, from their unrounded heights.
     let block = crate::render::rich_text::TextBlock::default();
@@ -4798,7 +4989,14 @@ pub(crate) fn text_body_element(
         };
         // PowerPoint puts no space above the first paragraph of a body, nor
         // below the last (measured: at the bottom of its box).
-        let space_before = if index == 0 { 0 } else { paragraph.space_before };
+        let space_before = if index == 0 {
+            0
+        } else if paragraph.space_before_exact {
+            paragraph.space_before
+        } else {
+            // A space before in points is drawn rounded to a whole point (see `Paragraph::space_before_exact`; a half goes up: 5.5 is 6).
+            (paragraph.space_before + 50) / 100 * 100
+        };
         let space_after = if index + 1 == body.paragraphs.len() { 0 } else { paragraph.space_after };
         // An empty paragraph still takes a line at its mark's size.
         let mark = [ibis_doc_model::Run { text: String::new(), style: paragraph.end_style.clone() }];
@@ -4952,6 +5150,7 @@ pub(crate) fn text_body_element(
                                 underline_kind: r.style.underline_kind,
                                 raise: r.style.baseline as f32 / 100_000.0 * full,
                                 spacing: r.style.spacing as f32 / 100.0 * px_per_point,
+                                synthetic_bold: Default::default(),
                                 highlight: r.style.highlight.filter(|_| !r.style.invisible).map(|c| rgb_hsla_mode(c, res.color_mode)),
                                 outline: r
                                     .style
@@ -5040,7 +5239,10 @@ pub(crate) fn text_body_element(
         let above = px(space_before as f32 / 100.0 * px_per_point);
         let bullet = paragraph.bullet.as_ref().filter(|b| has_text && (b.picture.is_some() || (turn.is_none() && b.auto.is_none() && b.text != "•"))).map(|b| {
             let color = b.color.unwrap_or(first.color);
-            let size = size_px(first) * (b.size as f32 / 100_000.0);
+            // A bullet of a symbol typeface (Wingdings) is drawn with the typeface where it is installed: its own glyph, at the
+            // bullet's size (the size is scaled down for the stand-in character, whose glyph is bigger than Wingdings').
+            let symbol = b.symbol.as_ref().filter(|s| res.fonts.installed.contains(s.font.as_str()));
+            let size = size_px(first) * (b.size as f32 / 100_000.0) * symbol.map_or(1.0, |s| 100.0 / s.stand_in_percent.max(1) as f32);
             let left = px((paragraph.margin_left + paragraph.indent) as f32 * scale);
             match b.picture.and_then(|m| res.picture(m)) {
                 // A picture bullet is a square in the middle of the first line,
@@ -5069,8 +5271,9 @@ pub(crate) fn text_body_element(
                         let font = res.fonts.font(first);
                         d.font_family(font.family.clone()).font_weight(font.weight)
                     })
+                    .when_some(symbol, |d, s| d.font_family(SharedString::from(s.font.clone())))
                     .text_color(rgb_hsla_mode(color, res.color_mode))
-                    .child(SharedString::from(b.text.clone())),
+                    .child(SharedString::from(symbol.map_or_else(|| b.text.clone(), |s| s.code.clone()))),
             }
         });
 
@@ -5172,7 +5375,7 @@ fn vertical_text_element(body: &TextBody, scale: f32, res: &Resources) -> Div {
         for run in &paragraph.runs {
             let style = res.with_theme_font(body.style.with_run(&run.style), &run.text);
             let font = res.font(&style);
-            let size = style.font_size_pt() * font_scale * px_per_point;
+            let size = ibis_doc_model::autofit_font_size_pt(style.font_size_pt(), body.font_scale) * px_per_point;
             let color = rgb_hsla_mode(style.color, res.color_mode);
             for c in run.text.chars() {
                 let (w, h) = if crate::render::rich_text::is_cjk(c) { (1.2857 * size, 1.1657 * size) } else { (1.4229 * size, 1.4229 * size) };
@@ -5291,44 +5494,78 @@ impl Resources {
 }
 
 #[cfg(test)]
-mod dashes_path_tests {
-    use super::dashes_path;
+mod dashed_line_tests {
+    use super::dashed_line_path;
     use gpui_kit::{OutlineVerb, Pixels, Point, point, px};
 
-    fn piece(x0: f32, x1: f32) -> Vec<Point<Pixels>> {
+    fn along(x0: f32, x1: f32) -> Vec<Point<Pixels>> {
         vec![point(px(x0), px(5.0)), point(px(x1), px(5.0))]
     }
 
-    /// The dashes of a dashed line are one path, on the screen (tessellated) and in a PDF (its outline: a line for
-    /// each dash, stroked at the line's width with butt ends), however many there are.
+    /// A dashed line is one path, on the screen (its dashes, tessellated) and in a PDF (its outline: the line whole,
+    /// stroked at the line's width with butt ends and the pattern as the `d` operator has it), however many dashes.
     #[test]
-    fn many_dashes_are_one_stroked_path() {
-        let pieces: Vec<_> = (0..50).map(|k| piece(k as f32 * 3.0, k as f32 * 3.0 + 2.0)).collect();
-        let path = dashes_path(&pieces, px(2.0)).expect("a path");
-        assert!(!path.vertices.is_empty(), "tessellated for the screen");
+    fn a_dashed_line_is_one_path_with_its_pattern_for_a_pdf() {
+        let path = dashed_line_path(&along(0.0, 300.0), px(2.0), &[4.0, 3.0], 1.5).expect("a path");
+        assert!(!path.vertices.is_empty(), "tessellated into dashes for the screen");
         let outline = path.outline.as_ref().expect("an outline for a PDF");
+        assert_eq!(outline.verbs.len(), 2, "the line whole, not its dashes");
+        assert!(matches!(outline.verbs[0], OutlineVerb::MoveTo(p) if p == point(px(0.0), px(5.0))));
+        assert!(matches!(outline.verbs[1], OutlineVerb::LineTo(p) if p == point(px(300.0), px(5.0))));
         let stroke = outline.stroke.expect("stroked");
         assert_eq!(f32::from(stroke.width), 2.0);
         assert!(!stroke.round_caps, "butt ends: a dash is as long as it is said");
-        assert_eq!(outline.verbs.len(), 100, "a move and a line for each dash");
-        assert!(matches!(outline.verbs[0], OutlineVerb::MoveTo(p) if p == point(px(0.0), px(5.0))));
-        assert!(matches!(outline.verbs[1], OutlineVerb::LineTo(p) if p == point(px(2.0), px(5.0))));
+        let dash = stroke.dash.expect("with its dashes");
+        assert_eq!(dash.pattern(), &[4.0, 3.0]);
+        assert_eq!(dash.phase, 1.5);
     }
 
-    /// Nothing to draw is no path; a piece of one point is left out; a bent dash keeps its corner.
+    /// The patterns of every line type fit (the longest has six lengths); a line along a bend keeps its corner.
     #[test]
-    fn empty_and_single_point_pieces_are_left_out_and_a_bend_stays() {
-        assert!(dashes_path(&[], px(1.0)).is_none());
-        assert!(dashes_path(&[vec![point(px(1.0), px(1.0))], vec![]], px(1.0)).is_none());
-        let bent = vec![point(px(0.0), px(0.0)), point(px(4.0), px(0.0)), point(px(4.0), px(4.0))];
-        let path = dashes_path(&[vec![point(px(9.0), px(9.0))], bent], px(1.0)).expect("a path");
-        assert_eq!(path.outline.as_ref().expect("an outline").verbs.len(), 3);
+    fn a_pattern_of_six_lengths_and_a_bend_are_kept() {
+        let bent = vec![point(px(0.0), px(0.0)), point(px(40.0), px(0.0)), point(px(40.0), px(30.0))];
+        let pattern = [4.0, 3.0, 1.0, 3.0, 1.0, 3.0];
+        let path = dashed_line_path(&bent, px(1.0), &pattern, 0.0).expect("a path");
+        let outline = path.outline.as_ref().expect("an outline");
+        assert_eq!(outline.verbs.len(), 3, "a move and two lines");
+        assert_eq!(outline.stroke.and_then(|s| s.dash).map(|d| d.pattern().to_vec()), Some(pattern.to_vec()));
+    }
+
+    /// Nothing to draw is no path: no pattern, one point, or a pattern of no length.
+    #[test]
+    fn nothing_to_dash_is_no_path() {
+        assert!(dashed_line_path(&along(0.0, 10.0), px(1.0), &[], 0.0).is_none());
+        assert!(dashed_line_path(&[point(px(1.0), px(1.0))], px(1.0), &[1.0, 1.0], 0.0).is_none());
+        assert!(dashed_line_path(&along(0.0, 10.0), px(1.0), &[0.0, 0.0], 0.0).is_none());
+    }
+
+    /// Where the line starts in the pattern: a phase of the dash's length starts in the gap, so the screen's dashes begin
+    /// later than the line's start (the PDF's `d` phase is the same number).
+    #[test]
+    fn the_phase_moves_the_dashes_along() {
+        let at_start = dashed_line_path(&along(0.0, 20.0), px(1.0), &[4.0, 4.0], 0.0).expect("a path");
+        let shifted = dashed_line_path(&along(0.0, 20.0), px(1.0), &[4.0, 4.0], 4.0).expect("a path");
+        let left = |p: &gpui_kit::Path<Pixels>| p.vertices.iter().map(|v| f32::from(v.xy_position.x)).fold(f32::MAX, f32::min);
+        assert!(left(&at_start) < 0.5, "a dash starts at the start: {}", left(&at_start));
+        assert!(left(&shifted) > 3.5, "the first dash is a gap in: {}", left(&shifted));
     }
 }
 
 #[cfg(test)]
 mod font_resolution_tests {
     use super::*;
+
+    /// PowerPoint draws a typeface that is not installed with Calibri; Word and Excel do not (Cambria and Arial): only a
+    /// presentation's fonts say so. Windows' FontSubstitutes name (Helvetica) goes to its installed typeface first.
+    #[test]
+    fn a_missing_latin_typeface_is_calibri_in_a_presentation_only() {
+        let installed: HashSet<String> = ["Calibri", "Arial", "Carlito"].iter().map(|s| s.to_string()).collect();
+        let mut fonts = Fonts { installed, embedded_index: OpenTypeIndex::default(), east_asian_fallback: None, substitutions: HashMap::new(), calibri_for_missing: true, docx_font_families: None };
+        assert_eq!(fonts.family("Zzqx Missing Sans").0.as_ref(), "Calibri");
+        assert_eq!(fonts.family("Helvetica").0.as_ref(), "Arial");
+        fonts.calibri_for_missing = false;
+        assert_eq!(fonts.family("Zzqx Missing Sans").0.as_ref(), "Arial");
+    }
     use core::prelude::v1::test;
 
     /// Build a minimal valid TrueType font binary with a `name` table and an `OS/2` table.
@@ -5399,7 +5636,29 @@ mod font_resolution_tests {
     }
 
     #[test]
+    fn a_variable_font_family_is_regular_at_400_not_at_its_default_instance() {
+        let fvar = |min: f32, default: f32, max: f32| {
+            let mut t = vec![0, 1, 0, 0, 0, 16, 0, 2, 0, 1, 0, 20, 0, 0, 0, 0];
+            t.extend_from_slice(b"wght");
+            for v in [min, default, max] {
+                t.extend_from_slice(&((v * 65536.0) as i32).to_be_bytes());
+            }
+            t.extend_from_slice(&[0, 0, 1, 1]);
+            t
+        };
+        assert_eq!(variable_family_weight(&fvar(100.0, 100.0, 900.0)), Some(400)); // Noto Sans JP's file: default Thin
+        assert_eq!(variable_family_weight(&fvar(500.0, 600.0, 900.0)), Some(500));
+        assert_eq!(variable_family_weight(&fvar(100.0, 300.0, 300.0)), Some(300));
+        let mut other = fvar(100.0, 100.0, 900.0);
+        other[16..20].copy_from_slice(b"wdth");
+        assert_eq!(variable_family_weight(&other), None);
+    }
+
+    #[test]
     fn strip_weight_suffix_handles_semilight_and_compound_weights() {
+        assert_eq!(strip_weight_suffix("UD デジタル 教科書体 NK-R"), Some(("UD デジタル 教科書体 NK", FontWeight::NORMAL))); // i18n-ok（フォント名の試験）
+        assert_eq!(strip_weight_suffix("UD デジタル 教科書体 NK-B"), Some(("UD デジタル 教科書体 NK", FontWeight::BOLD))); // i18n-ok（フォント名の試験）
+        assert_eq!(strip_weight_suffix("Foo-R"), None, "only a name with a non-ASCII (Japanese) family");
         assert_eq!(strip_weight_suffix("Segoe UI Semilight"), Some(("Segoe UI", FontWeight(350.0))));
         assert_eq!(strip_weight_suffix("Segoe UI SemiLight"), Some(("Segoe UI", FontWeight(350.0))));
         assert_eq!(strip_weight_suffix("SEGOE UI SEMILIGHT"), Some(("SEGOE UI", FontWeight(350.0))));
@@ -5509,6 +5768,8 @@ mod font_resolution_tests {
             embedded_index: OpenTypeIndex::default(),
             east_asian_fallback: None,
             substitutions: HashMap::new(),
+            calibri_for_missing: false,
+            docx_font_families: None,
         };
 
         assert_eq!(

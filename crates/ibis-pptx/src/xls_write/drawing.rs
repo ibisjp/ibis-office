@@ -158,7 +158,7 @@ fn write_note_text(o: &mut Out, note: &SheetComment, drawing: u32, id: u16) {
     let mut guid = [0u8; 16];
     let seed = (drawing as u64) << 32 | u64::from(id) << 16 | u64::from(note.row ^ note.column.rotate_left(8));
     for (i, b) in guid.iter_mut().enumerate() {
-        *b = (seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(i as u32 * 7) >> 24) as u8 ^ (i as u8 * 31);
+        *b = (seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(i as u32 * 7) >> 24) as u8 ^ (i as u8).wrapping_mul(31);
     }
     obj.extend(guid);
     obj.extend([0u8; 6]);

@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -309,7 +309,7 @@ impl SlideEditor {
                     h_flex()
                         .items_center()
                         .gap_2()
-                        .child(Button::new("autorecover-banner-save-as").primary().xsmall().label(text("shell.autorecover.save-as")).on_click(cx.listener(|this, _, window, cx| this.save_as(&crate::SaveAs, window, cx))))
+                        .child(crate::shell::chrome::primary_button("autorecover-banner-save-as").xsmall().label(text("shell.autorecover.save-as")).on_click(cx.listener(|this, _, window, cx| this.save_as(&crate::SaveAs, window, cx))))
                         .child(Button::new("autorecover-banner-dismiss").ghost().xsmall().label(text("shell.autorecover.discard")).on_click(cx.listener(|this, _, _, cx| this.dismiss_recovery_banner(cx)))),
                 )
                 .into_any_element(),
@@ -381,26 +381,26 @@ impl SlideEditor {
         let (enabled, keep, disable, message) = (panel.enabled, panel.keep_last_unsaved, panel.disable_for_this_file, panel.message.clone());
         let (interval_input, location_input) = (panel.interval_input.clone(), panel.location_input.clone());
         let check = |id: &'static str, on: bool, label: &'static str, set: fn(&mut AutoRecoverSettingsPanel)| {
-            Button::new(id).label(format!("{} {}", if on { "☑" } else { "☐" }, text(label))).on_click(cx.listener(move |this, _, _, cx| {
+            crate::shell::chrome::checkbox_button(id,text(label),on,false,cx.listener(move |this, _, _, cx| {
                 if let Some(p) = this.autorecover_settings.as_mut() {
                     set(p);
                 }
                 cx.notify();
             }))
         };
-        let note = |label: &'static str| div().text_xs().text_color(cx.theme().muted_foreground).child(text(label));
+        let note = |label: &'static str| div().text_sm().text_color(cx.theme().muted_foreground).child(text(label));
         let body = v_flex()
             .gap(px(10.))
             .p(px(12.))
-            .child(check("autorecover-enabled", enabled, "shell.autorecover.enable", |p| p.enabled = !p.enabled))
-            .child(v_flex().gap(px(4.)).child(note("shell.autorecover.minutes")).child(Input::new(&interval_input)))
+            .p_0().child(check("autorecover-enabled", enabled, "shell.autorecover.enable", |p| p.enabled = !p.enabled))
+            .child(v_flex().gap(px(4.)).child(note("shell.autorecover.minutes")).child(crate::shell::chrome::text_field(&interval_input).unit(text("field.minutes"),px(28.)).spinner("autorecover-interval", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 120.0).integer_only(), cx, |_, _, _, _| {})))
             .child(check("autorecover-keep", keep, "shell.autorecover.keep", |p| p.keep_last_unsaved = !p.keep_last_unsaved))
             .child(
                 v_flex()
                     .gap(px(4.))
                     .child(note("shell.autorecover.location"))
-                    .child(Input::new(&location_input))
-                    .child(Button::new("autorecover-reset").small().label(text("shell.autorecover.reset-location")).on_click(cx.listener(|this, _, window, cx| {
+                    .child(crate::shell::chrome::text_field(&location_input).full_width().path_picker("autorecover-browse",crate::shell::chrome::PathMode::Folder,&[],cx,|_,_,_,_|{}))
+                    .child(crate::shell::chrome::action_button("autorecover-reset").small().w(px(160.)).self_start().label(text("shell.autorecover.reset-location")).on_click(cx.listener(|this, _, window, cx| {
                         let default = default_autorecover_dir().to_string_lossy().into_owned();
                         if let Some(p) = this.autorecover_settings.as_ref() {
                             p.location_input.update(cx, |input, cx| input.set_value(default, window, cx));
@@ -409,7 +409,7 @@ impl SlideEditor {
                     }))),
             )
             .child(check("autorecover-disable", disable, "shell.autorecover.disable-file", |p| p.disable_for_this_file = !p.disable_for_this_file))
-            .child(Button::new("autorecover-now").label(text("shell.autorecover.save-now")).on_click(cx.listener(|this, _, _, cx| {
+            .child(crate::shell::chrome::action_button("autorecover-now").w(px(160.)).self_start().label(text("shell.autorecover.save-now")).on_click(cx.listener(|this, _, _, cx| {
                 #[cfg(not(target_family = "wasm"))]
                 let m = match this.write_autorecover_snapshot() {
                     Ok(path) => format!("{} ({})", text("shell.autorecover.now-done"), path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
@@ -422,17 +422,15 @@ impl SlideEditor {
                 }
                 cx.notify();
             })))
-            .when(!message.is_empty(), |el| el.child(div().p(px(8.)).rounded_md().bg(cx.theme().accent.opacity(0.1)).text_xs().text_color(cx.theme().accent).child(message)))
-            .child(
-                h_flex()
-                    .gap(px(8.))
-                    .child(Button::new("autorecover-cancel").label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| {
+            .when(!message.is_empty(), |el| el.child(div().p(px(8.)).rounded_md().bg(cx.theme().accent.opacity(0.1)).text_sm().text_color(cx.theme().accent).child(message)))
+            ;
+        let panel_terminal_actions = crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("autorecover-save", text("shell.autorecover.save"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, _, cx| this.save_autorecover_settings(cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("autorecover-cancel", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|this, _, _, cx| {
                         this.autorecover_settings = None;
                         cx.notify();
-                    })))
-                    .child(Button::new("autorecover-save").primary().label(text("shell.autorecover.save")).on_click(cx.listener(|this, _, _, cx| this.save_autorecover_settings(cx)))),
-            );
-        Some(SidebarPanel { title: text("shell.autorecover.settings-title"), body: body.into_any_element() })
+                    })));
+        Some(SidebarPanel::with_footer(text("shell.autorecover.settings-title"), body.into_any_element(), panel_terminal_actions))
     }
 
     // ---- 未保存のファイルの回復 -----------------------------------------------------------------------------
@@ -493,15 +491,15 @@ impl SlideEditor {
         let body = v_flex()
             .gap(px(12.))
             .p(px(12.))
-            .child(
+            .p_0().child(
                 h_flex()
                     .justify_between()
                     .items_center()
                     .child(div().text_sm().font_weight(FontWeight::BOLD).child(format!("{} ({})", text("shell.autorecover.recover-title"), entries.len())))
-                    .child(Button::new("recover-refresh").small().label(text("shell.autorecover.refresh")).on_click(cx.listener(|this, _, _, cx| this.open_recover_unsaved(cx)))),
+,
             )
-            .when(!message.is_empty(), |el| el.child(div().p(px(8.)).rounded_md().bg(cx.theme().accent.opacity(0.1)).text_xs().text_color(cx.theme().accent).child(message)))
-            .when(entries.is_empty(), |el| el.child(div().p(px(16.)).text_xs().text_color(cx.theme().muted_foreground).child(text("shell.autorecover.empty"))))
+            .when(!message.is_empty(), |el| el.child(div().p(px(8.)).rounded_md().bg(cx.theme().accent.opacity(0.1)).text_sm().text_color(cx.theme().accent).child(message)))
+            .when(entries.is_empty(), |el| el.child(div().p(px(16.)).text_sm().text_color(cx.theme().muted_foreground).child(text("shell.autorecover.empty"))))
             .children(entries.iter().enumerate().map(|(idx, entry)| {
                 v_flex()
                     .id(("recovered-item", idx))
@@ -510,15 +508,21 @@ impl SlideEditor {
                     .border_1()
                     .border_color(cx.theme().border)
                     .gap(px(6.))
-                    .child(div().text_xs().font_weight(FontWeight::BOLD).child(entry.file_name.clone()))
-                    .child(h_flex().justify_between().text_xs().text_color(cx.theme().muted_foreground).child(entry.modified_str.clone()).child(entry.size_str.clone()))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child(entry.file_name.clone()))
+                    .child(h_flex().justify_between().text_sm().text_color(cx.theme().muted_foreground).child(entry.modified_str.clone()).child(entry.size_str.clone()))
                     .child(
                         h_flex()
+                            .justify_end().w_full()
                             .gap(px(6.))
-                            .child(Button::new(("recover-open", idx)).small().primary().label(text("shell.autorecover.open")).on_click(cx.listener(move |this, _, window, cx| this.open_recovered_entry(idx, window, cx))))
-                            .child(Button::new(("recover-delete", idx)).small().ghost().label(text("_shell.delete")).on_click(cx.listener(move |this, _, _, cx| this.delete_recovered_entry(idx, cx)))),
+                            .child(crate::shell::chrome::action_button(("recover-open", idx)).small().label(text("shell.autorecover.open")).on_click(cx.listener(move |this, _, window, cx| this.open_recovered_entry(idx, window, cx))))
+                            .child(crate::shell::chrome::destructive_button(("recover-delete", idx),cx).small().label(text("_shell.delete")).on_click(cx.listener(move |this, _, _, cx| this.delete_recovered_entry(idx, cx)))),
                     )
             }));
-        Some(SidebarPanel { title: text("shell.autorecover.recover-title"), body: body.into_any_element() })
+        let footer = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("recover-refresh", text("shell.autorecover.refresh"), crate::shell::chrome::ActionButtonKind::Normal)
+                .on_click(cx.listener(|this, _, _, cx| this.open_recover_unsaved(cx))))
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("shell.autorecover.recover-title"), body.into_any_element(), footer))
     }
 }

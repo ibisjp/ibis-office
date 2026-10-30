@@ -10,8 +10,8 @@
 //! refresh from the file.)
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputState,InputEvent};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_calc::input::{DateOrder, Typed, parse_date_in_order, parse_input};
@@ -67,6 +67,8 @@ const DELIMITERS: [(Option<char>, &str); 5] = [(None, "_shell.auto"), (Some(',')
 pub(crate) struct ImportTextPanel {
     /// The file's name, and its bytes (read once when picked).
     pub(crate) name: Option<String>,
+    pub(crate) file_path:Entity<InputState>,
+    _path_subscription:Subscription,
     pub(crate) data: Option<Vec<u8>>,
     pub(crate) encoding: TextEncoding,
     pub(crate) delimiter: Option<char>,
@@ -169,8 +171,14 @@ impl SlideEditor {
             input.update(cx, |i, cx| i.set_value(text, window, cx));
             input
         };
+        let file_path=input(String::new(),"_xlsx.no-file-chosen",window,cx);
+        let path_subscription=cx.subscribe_in(&file_path,window,|e,input,event:&InputEvent,w,cx|{
+            if matches!(event,InputEvent::PressEnter{..}){e.load_import_text_path(std::path::PathBuf::from(input.read(cx).value().to_string()),w,cx);}
+        });
         let panel = ImportTextPanel {
             name: None,
+            file_path,
+            _path_subscription:path_subscription,
             data: None,
             encoding: TextEncoding::Auto,
             delimiter: None,
@@ -194,10 +202,23 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.import_text = Some(panel);
         self.sidebar_open = true;
         cx.notify();
+    }
+
+    /// Whether the import dialog's file path field has the focus (Enter there loads the file, as the field's own).
+    pub(crate) fn import_text_path_focused(&self,window:&Window,cx:&App)->bool{
+        self.sheet_state().and_then(|s|s.panels.import_text.as_ref()).is_some_and(|p|p.file_path.read(cx).focus_handle(cx).is_focused(window))
+    }
+
+    fn load_import_text_path(&mut self,path:std::path::PathBuf,w:&mut Window,cx:&mut Context<Self>){
+        if let Some(p)=self.wb_mut().panels.import_text.as_mut(){p.file_path.update(cx,|i,cx|i.set_value(path.to_string_lossy().into_owned(),w,cx));}
+        match std::fs::read(&path){
+            Ok(data)=>{let name=path.file_name().map(|n|n.to_string_lossy().into_owned()).unwrap_or_default();self.set_import_text_data(name,data,cx);},
+            Err(error)=>self.import_text_message(error.to_string(),cx),
+        }
     }
 
     /// Ask for the text file, and read it into the panel.
@@ -213,9 +234,7 @@ impl SlideEditor {
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
-                let Ok(data) = std::fs::read(&path) else { return };
-                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                this.update(cx, |this, cx| this.set_import_text_data(name, data, cx)).ok();
+                this.update_in(cx, |this,w,cx| this.load_import_text_path(path,w,cx)).ok();
             })
             .detach();
         }
@@ -346,11 +365,18 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
         type Change = Box<dyn Fn(&mut ImportTextPanel)>;
         let button = |id: String, label: String, change: Change| {
             mark(
                 &id.clone(),
-                Button::new(SharedString::from(id))
+                crate::shell::chrome::action_button(SharedString::from(id))
                     .small()
                     .label(label)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -363,41 +389,19 @@ impl SlideEditor {
                     .into_any_element(),
             )
         };
-        let file = p.name.clone().unwrap_or_else(|| crate::shell::i18n::text("_xlsx.no-file-chosen").to_string());
-        let encoding = ENCODINGS.iter().find(|(e, _)| *e == p.encoding).map_or("", |(_, n)| *n);
-        let delimiter = DELIMITERS.iter().find(|(d, _)| *d == p.delimiter).map_or("", |(_, n)| *n);
-        let mut body = v_flex()
-            .gap_2()
-            .px(px(18.))
-            .py(px(8.))
-            .child(crate::shell::i18n::format("import-text.file", &[("file", &file)]))
-            .child(mark(
-                "pick",
-                Button::new("import-text-pick").small().label(crate::shell::i18n::text("_xlsx.choose-file")).on_click(cx.listener(|this, _, window, cx| this.pick_import_text_file(window, cx))).into_any_element(),
-            ))
-            .child(button(
-                "import-text-encoding".into(),
-                crate::shell::i18n::format("import-text.encoding", &[("encoding", &crate::shell::i18n::text(encoding))]),
-                Box::new(|p| {
-                    let i = ENCODINGS.iter().position(|(e, _)| *e == p.encoding).unwrap_or(0);
-                    p.encoding = ENCODINGS[(i + 1) % ENCODINGS.len()].0;
-                }),
-            ))
-            .child(button(
-                "import-text-delimiter".into(),
-                crate::shell::i18n::format("import-text.delimiter", &[("delimiter", &crate::shell::i18n::text(delimiter))]),
-                Box::new(|p| {
-                    let i = DELIMITERS.iter().position(|(d, _)| *d == p.delimiter).unwrap_or(0);
-                    p.delimiter = DELIMITERS[(i + 1) % DELIMITERS.len()].0;
-                }),
-            ))
-            .child(button(
-                "import-text-fixed".into(),
-                crate::shell::i18n::text(if p.fixed { "import-text.fixed-on" } else { "import-text.fixed-off" }).to_string(),
-                Box::new(|p| p.fixed = !p.fixed),
-            ))
-            .child(crate::shell::i18n::text("_xlsx.start-at-row"))
-            .child(mark("start-row", Input::new(&p.start_row).small().cleanable(true).into_any_element()))
+        let encoding=ENCODINGS.iter().find(|(e,_)|*e==p.encoding).map_or("",|(_,label)|*label);
+        let delimiter=DELIMITERS.iter().find(|(d,_)|*d==p.delimiter).map_or("",|(_,label)|*label);
+        let encoding_choices=ENCODINGS.into_iter().map(|(encoding,label)|crate::shell::chrome::MenuItem::new("import-encoding-choice",crate::shell::i18n::text(label)).checked(p.encoding==encoding).on(move|e,_,cx|{if let Some(p)=e.wb_mut().panels.import_text.as_mut(){p.encoding=encoding;p.confirm=false;}cx.notify();}).into()).collect();
+        let delimiter_choices=DELIMITERS.into_iter().map(|(delimiter,label)|crate::shell::chrome::MenuItem::new("import-delimiter-choice",crate::shell::i18n::text(label)).checked(p.delimiter==delimiter).on(move|e,_,cx|{if let Some(p)=e.wb_mut().panels.import_text.as_mut(){p.delimiter=delimiter;p.confirm=false;}cx.notify();}).into()).collect();
+        let mode_choices=[(false,"fix.text-columns.delimiters"),(true,"fix.text-columns.fixed-width")].into_iter().map(|(fixed,label)|crate::shell::chrome::MenuItem::new("import-mode-choice",crate::shell::i18n::text(label)).checked(p.fixed==fixed).on(move|e,_,cx|{if let Some(p)=e.wb_mut().panels.import_text.as_mut(){p.fixed=fixed;p.confirm=false;}cx.notify();}).into()).collect();
+        let dropdown=|id:&'static str,label:SharedString,entries|div().w(px(224.)).child(crate::shell::chrome::Dropdown::from_entries(id,label,entries,true,0,&cx.weak_entity()).into_any_element());
+        let encoding_label=crate::shell::i18n::format("import-text.encoding", &[("encoding", &"")]).trim_end_matches(['：',':',' ']).to_string();
+        let mut body=crate::shell::chrome::panel_form().p_0()
+            .child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("_shell.file"),crate::shell::chrome::text_field(&p.file_path).full_width().path_picker("import-text-pick",crate::shell::chrome::PathMode::File,&["csv","tsv","txt"],cx,|e,path,w,cx|e.load_import_text_path(path,w,cx))))
+            .child(crate::shell::chrome::dropdown_row(encoding_label,mark("import-text-encoding",dropdown("import-text-encoding",crate::shell::i18n::text(encoding),encoding_choices).into_any_element())))
+            .child(crate::shell::chrome::dropdown_row(crate::shell::i18n::text("query.field.separator"),mark("import-text-delimiter",dropdown("import-text-delimiter",crate::shell::i18n::text(delimiter),delimiter_choices).into_any_element())))
+            .child(crate::shell::chrome::dropdown_row(crate::shell::i18n::text("fix.series.type"),mark("import-text-fixed",dropdown("import-text-fixed",crate::shell::i18n::text(if p.fixed{"fix.text-columns.fixed-width"}else{"fix.text-columns.delimiters"}),mode_choices).into_any_element())))
+            .child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("_xlsx.start-at-row"),crate::shell::chrome::text_field(&p.start_row).spinner("import-text-start-row",crate::shell::chrome::SpinnerSpec::new(1.).range(1.,1_048_576.).integer_only(),cx,|_,_,_,cx|cx.notify())))
             .child(crate::shell::i18n::text("_xlsx.column-data-format-click-to-change"));
         let shown = preview.iter().map(Vec::len).max().unwrap_or(0).min(8);
         let mut types = h_flex().gap_1().flex_wrap();
@@ -426,7 +430,7 @@ impl SlideEditor {
             ));
         }
         if p.fixed {
-            body = body.child(crate::shell::i18n::text("import-text.breaks")).child(mark("breaks", Input::new(&p.breaks).small().cleanable(true).into_any_element()));
+            body = body.child(crate::shell::i18n::text("import-text.breaks")).child(mark("breaks", crate::shell::chrome::text_field(&p.breaks).full_width().into_any_element()));
         }
         body = body.child(button(
             "import-text-new-sheet".into(),
@@ -434,36 +438,18 @@ impl SlideEditor {
             Box::new(|p| p.new_sheet = !p.new_sheet),
         ));
         if !p.new_sheet {
-            body = body.child(crate::shell::i18n::text("fix.text-columns.destination")).child(mark("destination", Input::new(&p.destination).small().cleanable(true).into_any_element()));
+            body = body.child(crate::shell::i18n::text("fix.text-columns.destination")).child(mark("destination", super::range_field::local_range_field(&p.destination,"import-text-destination",true,cx).into_any_element()));
         }
         body = body.child(crate::shell::i18n::text("fix.text-columns.preview"));
-        // The preview as a table: a cell for each field, the columns the file has (up to 8).
-        let mut grid = v_flex().border_1().border_color(gpui_kit::rgb(0xBFBFBF));
-        for record in preview {
-            let mut line = h_flex();
-            for field in record.iter().take(8) {
-                line = line.child(div().min_w(px(44.)).max_w(px(110.)).px_1().border_1().border_color(gpui_kit::rgb(0xD9D9D9)).text_size(px(12.)).overflow_hidden().child(SharedString::from(field.clone())));
-            }
-            grid = grid.child(line);
-        }
-        body = body.child(grid);
+        // Synthetic spreadsheet headings preserve the first CSV record as data.
+        let column_count=preview.iter().map(Vec::len).max().unwrap_or(0);
+        let fields=(0..column_count).map(|c|super::dedupe_edit::column_name(c as u32)).collect::<Vec<_>>();
+        body=body.child(crate::shell::chrome::sheet_preview("import-text-sheet-preview",&fields,&preview,&self.resources));
         body = body
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-            .child(mark(
-                "apply",
-                Button::new("import-text-apply").primary().small().label(crate::shell::i18n::text(if p.confirm { "fix.text-columns.replace" } else { "_xlsx.import" })).on_click(cx.listener(|this, _, window, cx| this.apply_import_text_panel(window, cx))).into_any_element(),
-            ))
-            .child(mark(
-                "close",
-                Button::new("import-text-close")
-                    .small()
-                    .label(crate::shell::i18n::text("_shell.close"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.wb_mut().panels.import_text = None;
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ));
-        Some(SidebarPanel { title: "_xlsx.from-text-csv".into(), body: body.into_any_element() })
+            .children(crate::shell::chrome::panel_message(&p.message))
+            ;
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("import-text-apply", "", crate::shell::chrome::ActionButtonKind::Primary).label(crate::shell::i18n::text(if p.confirm { "fix.text-columns.replace" } else { "_xlsx.import" })).on_click(cx.listener(|this, _, window, cx| this.apply_import_text_panel(window, cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("_xlsx.from-text-csv"), body.into_any_element(), panel_terminal_actions))
     }
 }

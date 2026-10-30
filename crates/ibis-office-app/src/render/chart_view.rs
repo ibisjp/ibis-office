@@ -45,8 +45,9 @@ impl Area {
 enum Mark {
     Fill(Vec<(f32, f32)>, Background),
     Stroke(Vec<(f32, f32)>, f32, Hsla),
-    /// The dashes of a dashed line, each a short line, drawn as one stroked path (one object in a PDF).
-    Dashes(Vec<Vec<(f32, f32)>>, f32, Hsla),
+    /// A dashed line: its points, width, colour, and the lengths of its dashes and gaps in turn (pixels). One path, and
+    /// in a PDF one line with its dash pattern.
+    Dashed(Vec<(f32, f32)>, f32, Hsla, Vec<f32>),
     /// The marks after this are cut to this rectangle (x, y, w, h), or not
     /// cut (`None`): the series are drawn inside the plot area, as Office
     /// cuts a line past the axis's maximum.
@@ -129,19 +130,16 @@ fn key_line(stroke: Option<&ibis_doc_model::Stroke>, key_w: f32, size: f32, thic
     out
 }
 
-/// A line as marks: one mark, or, of a dashed stroke (`a:prstDash`), all its dashes as one (their lengths in line
-/// widths, as ECMA-376 §20.1.10.48; a line thinner than a pixel dashes as one of a pixel).
+/// A line as a mark: whole, or, of a dashed stroke (`a:prstDash`), dashed as its pattern says (its lengths in line widths,
+/// ECMA-376 §20.1.10.48; a line thinner than a pixel dashes as one of a pixel).
 fn push_stroke(marks: &mut Vec<Mark>, points: Vec<(f32, f32)>, width: f32, stroke: &ibis_doc_model::Stroke) {
-    if stroke.dash == ibis_doc_model::LineDash::Solid || points.len() < 2 {
+    let pattern = stroke.dash.pattern();
+    if pattern.is_empty() || points.len() < 2 {
         marks.push(Mark::Stroke(points, width, hsla(stroke.color)));
         return;
     }
-    let along: Vec<Point<Pixels>> = points.iter().map(|(x, y)| point(px(*x), px(*y))).collect();
-    let pieces: Vec<Vec<(f32, f32)>> = crate::render::shape_view::dash_pieces(&along, false, stroke, width.max(1.0))
-        .into_iter()
-        .map(|piece| piece.iter().map(|p| (f32::from(p.x), f32::from(p.y))).collect())
-        .collect();
-    marks.push(Mark::Dashes(pieces, width, hsla(stroke.color)));
+    let unit = width.max(1.0);
+    marks.push(Mark::Dashed(points, width, hsla(stroke.color), pattern.iter().map(|l| l * unit).collect()));
 }
 
 /// The height of a row of the outer levels of a category axis of several levels: the labels' line, with the room
@@ -404,7 +402,7 @@ impl Scale {
 /// width on a horizontal one), and never more than ten intervals.
 /// (Measured against its PDF output: slide 24's 0–90,000 in steps of
 /// 10,000, slide 12's horizontal bar to 1.5, slide 19's 0–600 in 100s.)
-fn tick_intervals(axis: Option<&Axis>, low: f64, high: f64, length: f32, horizontal: bool, px_per_point: f32, tight: bool) -> f64 {
+fn tick_intervals(axis: Option<&Axis>, low: f64, high: f64, length: f32, horizontal: bool, px_per_point: f32, tight: bool, word: bool) -> f64 {
     let text = axis.map(|a| a.text.clone()).unwrap_or_default();
     let size = text.size as f32 / 100.0 * px_per_point;
     let extent = if horizontal {
@@ -421,6 +419,14 @@ fn tick_intervals(axis: Option<&Axis>, low: f64, high: f64, length: f32, horizon
         return 10.0;
     }
     // (Excel's own charts put the labels of an upright axis closer: 11 steps of -40..180 in a 119 pt plot, 9 pt text.)
+    if !horizontal && !tight && !word {
+        // PowerPoint's upright value axis (the PDFs of a 2-D line chart, automatic axis 0..20, 7, 10, 14 and 18 pt text, plots 10 to 254pt high): the
+        // labels, a line (1.2 em) each, stacked one more than the intervals, fit the axis and half a label over; and at most ten intervals.
+        // `intervals + 1` labels: `(intervals + 1) * line <= length + line / 2`; every one of the 32 axes' step is the smallest of 1, 2 and 5 times
+        // a power of ten that makes at most that many intervals.
+        return (((length / extent) - 0.5).floor() as f64).clamp(1.0, 10.0);
+    }
+    // (A Word chart keeps the earlier factor, 1.4: its automatic intervals are not measured yet.)
     let factor = if horizontal { 1.5 } else if tight { 1.0 } else { 1.4 };
     ((length / (extent * factor)).floor() as f64).clamp(2.0, 10.0)
 }
@@ -431,7 +437,7 @@ fn tick_intervals(axis: Option<&Axis>, low: f64, high: f64, length: f32, horizon
 /// their existing extent estimate until their independent layout is fitted.
 fn bar_tick_intervals(axis: Option<&Axis>, low: f64, high: f64, length: f32, px_per_point: f32) -> f64 {
     let labels = Scale::fit(low, high, axis, 10.0);
-    tick_intervals(axis, labels.min, labels.max, length, true, px_per_point, false)
+    tick_intervals(axis, labels.min, labels.max, length, true, px_per_point, false, false)
 }
 
 /// 1, 2 or 5 times a power of ten, at least `raw`. With a tenth of the
@@ -571,6 +577,87 @@ fn base_value_of(chart: &Chart, group: &ChartGroup, s: &Scale) -> f64 {
     value.clamp(s.min, s.max)
 }
 
+/// Whether a number format shows a percentage with no decimal digits (`0%`, `#0%`, `#,##0%`, `0 %`): its first section has a `%` and no `.` before it. Only `0%` was checked against PowerPoint.
+fn percent_format_without_decimals(format: &str) -> bool {
+    let first = format.split(';').next().unwrap_or("");
+    let quoted_out: String = first.split('"').step_by(2).collect();
+    quoted_out.contains('%') && !quoted_out.contains('.')
+}
+
+/// The whole percentages of a pie's values (those over zero) that add up to 100: each share rounded down, then the 1% that are missing given, one each, to the shares with the largest
+/// fractions (the first of equals first). PowerPoint 16.0.20527.20088's PDF of nine pies (`chart-pie-percent-rounding`, labels `0%`): 8.2 3.2 1.4 1.2 0.9 is 55 22 9 8 6 (plain rounding:
+/// 21 for the second, 99 in all) and three equal values are 34 33 33; a share with a decimal format (`0.0%`) is rounded alone (33.3 33.3 33.3).
+fn whole_percentages(values: &[Option<ibis_doc_model::Number>]) -> Option<Vec<Option<i64>>> {
+    let positive: Vec<f64> = values.iter().map(|v| v.map(|n| n.0).filter(|v| *v > 0.0).unwrap_or(0.0)).collect();
+    let total: f64 = positive.iter().sum();
+    if total <= 0.0 {
+        return None;
+    }
+    let shares: Vec<f64> = positive.iter().map(|v| v / total * 100.0).collect();
+    let mut whole: Vec<i64> = shares.iter().map(|s| (s + 1e-9).floor() as i64).collect();
+    let mut missing = 100 - whole.iter().sum::<i64>();
+    let mut order: Vec<usize> = (0..shares.len()).filter(|i| positive[*i] > 0.0).collect();
+    order.sort_by(|a, b| {
+        let (fa, fb) = (shares[*a] - whole[*a] as f64, shares[*b] - whole[*b] as f64);
+        fb.partial_cmp(&fa).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(b))
+    });
+    for i in order {
+        if missing <= 0 {
+            break;
+        }
+        whole[i] += 1;
+        missing -= 1;
+    }
+    Some(whole.into_iter().zip(positive).map(|(w, v)| (v > 0.0).then_some(w)).collect())
+}
+
+/// Whether a pie's data label, with no `c:separator`, stands on two lines: a category name with the percentage and nothing else (PowerPoint 16.0.20527.20088's PDFs of every
+/// pair and triple of category name, value, percentage and series name, at bestFit, outEnd and ctr: all the others are joined with ", ").
+fn pie_label_on_two_lines(labels: &ibis_doc_model::DataLabels) -> bool {
+    labels.separator.is_none() && labels.show_category && labels.show_percent && !labels.show_value && !labels.show_series_name
+}
+
+/// The front plane and the depth offsets (right, up) of a right-angle 3-D chart's box in a presentation, fitted into the plot area `inner`
+/// (the `inner` manual layout, or the automatic plot area). From PowerPoint 16.0.20527.20088's PDFs of 3-D column charts (the front plane's ticks and
+/// the back wall's edges in the wall bitmap; 25 charts: rotX 0, 15, 30, rotY 0, 20, 40, depth 50, 100, 200 %, hPercent 50 and 200, 1 to 3 series, 6 and 12
+/// categories, gapWidth, gapDepth, `standard` and `clustered` grouping, and the plot area's size):
+/// - the box is a front plane of `n_cat` bands, and a depth `D`; the depth goes right by D x sin(rotY) and up by D x sin(rotX) (0.342, 0.639, 0 of the
+///   band for rotY 20, 40, 0 and 0.259, 0.503, 0 for rotX 15, 30, 0; measured 0.342, 0.639, 0.003 and 0.261, 0.503, 0.002);
+/// - `D` is a band for each series in `standard` grouping (series one behind the other; gapWidth and gapDepth change nothing); in `clustered` grouping (the
+///   series side by side in a row) it is a bar's width x (1 + gapDepth) where a bar's width is the band over (series - (series - 1) x overlap + gapWidth)
+///   (a band for one series with the gaps at 150; 0.714, 0.556 of a band for 2 and 3 series, 0.714 for 3 series at gapWidth 50, 0.333 at gapDepth 50; measured
+///   0.707, 0.547, 0.707, 0.33); times the depth percentage;
+/// - the plane's height is its width times a ratio times the height percentage; when there is none (automatic), the height percentage is 100 x the plot area's
+///   height over its width. For `clustered` grouping the ratio is 1, as ECMA-376 says (`c:hPercent` is the height as a percentage of the width: 0.7096 of the width in a
+///   351.9 x 249.66pt plot area, for 1, 2 and 3 series, whatever the depth; hPercent 50 gives 0.5). For `standard` it is 0.5 (0.3548 of the width; hPercent 50 and 200 give
+///   0.25 and 1.0) for one series, and PowerPoint's is 7/12 from two series on (0.4139 for 2 and for 3 series, 12 categories): the 0.5 and the 7/12 are as measured,
+///   and why is not understood (not the depth: one series at depth 200% is 0.3548 as at 100%, and 2 and 3 series have 2 and 3 bands of depth and the same 0.4139), so only the
+///   0.5 is used;
+/// - the largest box that fits goes in the plot area, centred. (PowerPoint's boxes are about 2pt smaller on each side, 1.6% of the width: the front plane's left
+///   edge is 1.97pt inside the plot area in all the charts, and 0 to 2.7pt short on the right; nothing about the walls' thickness or lines explains it, so it is left out.)
+fn powerpoint_3d_box(inner: Area, view: &ibis_doc_model::View3D, n_cat: usize, n_ser: usize, gap_width: u32, overlap: i32, px_per_point: f32) -> (Area, f32, f32) {
+    let _ = px_per_point;
+    let (avail_w, avail_h) = (inner.w.max(10.0), inner.h.max(10.0));
+    let series = n_ser.max(1) as f32;
+    let depth_bands = if view.series_in_depth {
+        series
+    } else {
+        let bar = 1.0 / (series - (series - 1.0) * overlap as f32 / 100.0 + gap_width as f32 / 100.0);
+        bar * (1.0 + view.gap_depth as f32 / 100.0)
+    } * view.depth_percent as f32 / 100.0;
+    let deep = depth_bands / n_cat.max(1) as f32;
+    let kx = deep * (view.rot_y as f32).to_radians().sin().abs();
+    let ky = deep * (view.rot_x as f32).to_radians().sin().abs();
+    let height_percent = view.height_percent.map_or(100.0 * inner.h / inner.w, |p| p as f32);
+    let ratio = if view.series_in_depth { 0.5 } else { 1.0 };
+    let kh = ratio * height_percent / 100.0;
+    let front_w = (avail_w / (1.0 + kx)).min(avail_h / (kh + ky)).max(10.0);
+    let (dx, dy, front_h) = (kx * front_w, ky * front_w, kh * front_w);
+    let left = inner.x + (inner.w - (front_w + dx)) / 2.0;
+    let top = inner.y + (inner.h - (front_h + dy)) / 2.0 + dy;
+    (Area { x: left, y: top, w: front_w, h: front_h }, dx, dy)
+}
+
 pub(crate) fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Resources) -> Div {
     if frame.width <= 0 || frame.height <= 0 {
         return div();
@@ -613,17 +700,35 @@ pub(crate) fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Res
         }
     }
 
-    // A 3-D chart (right-angle axes, as Excel's defaults): the box's front plane is the plot area
-    // less the depth, which goes up and to the right.
+    // A 3-D chart (right-angle axes). In a worksheet (Excel's defaults) the box's front plane is the
+    // plot area less the depth, which goes up and to the right. In a presentation PowerPoint fits the
+    // box into the plot area (`inner` layout) as `powerpoint_3d_box` says.
     let view3d = chart.groups.iter().find(|g| !is_round(g)).and_then(|g| g.three_d);
+    // The series of a 3-D chart stand one behind the other for `standard` grouping; for `clustered` (in a presentation; a sheet's are as Excel's) side by side in a row.
+    let series_behind_each_other = chart.excel_layout || view3d.is_none_or(|v| v.series_in_depth);
+    let mut powerpoint_front: Option<Area> = None;
     let depth: Option<(f32, f32)> = view3d.map(|v| {
-        let kx = ((v.rot_y as f32).to_radians().sin().abs() / 20f32.to_radians().sin()).clamp(0.3, 3.0);
-        let ky = ((v.rot_x as f32).to_radians().sin().abs() / 15f32.to_radians().sin()).clamp(0.3, 3.0);
-        let base = (0.055 * plot.w).min(0.098 * plot.h) * v.depth_percent as f32 / 100.0;
-        (base * kx, base * ky)
+        if chart.excel_layout || !v.right_angle_axes {
+            let kx = ((v.rot_y as f32).to_radians().sin().abs() / 20f32.to_radians().sin()).clamp(0.3, 3.0);
+            let ky = ((v.rot_x as f32).to_radians().sin().abs() / 15f32.to_radians().sin()).clamp(0.3, 3.0);
+            let base = (0.055 * plot.w).min(0.098 * plot.h) * v.depth_percent as f32 / 100.0;
+            (base * kx, base * ky)
+        } else {
+            let group = chart.groups.iter().find(|g| !is_round(g));
+            let series = group.filter(|g| g.grouping == Grouping::Standard).map_or(1, |g| g.series.len().max(1));
+            let (gap_width, overlap) = match group.map(|g| g.kind) {
+                Some(ChartType::Bar { gap_width, overlap, .. }) => (gap_width, overlap),
+                _ => (150, 0),
+            };
+            let (front, dx, dy) = powerpoint_3d_box(plot, &v, category_count(chart).max(1), series, gap_width, overlap, px_per_point);
+            powerpoint_front = Some(front);
+            (dx, dy)
+        }
     });
     let _box_plot = plot;
-    if let Some((dx, dy)) = depth {
+    if let Some(front) = powerpoint_front {
+        plot = front;
+    } else if let Some((dx, dy)) = depth {
         plot = Area { x: plot.x, y: plot.y + dy, w: (plot.w - dx).max(10.0), h: (plot.h - dy).max(10.0) };
     }
     let mut marks = Vec::new();
@@ -635,18 +740,26 @@ pub(crate) fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Res
         let line_w = 0.75 * scale;
         let (l, r, t, b) = (plot.x, plot.right(), plot.y, plot.bottom());
         let floor = vec![(l, b), (r, b), (r + dx, b - dy), (l + dx, b - dy)];
-        marks.push(Mark::Fill(floor.clone(), hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xF2F2F2))).into()));
-        // (Walls with no fill of their own are Excel's grey.)
-        if let Some(bg) = background(&chart.plot_background).or_else(|| Some(hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xC0C0C0))).into())) {
+        // (The floor is Excel's light grey on a sheet; in a presentation, with no fill of its own, it is clear: PowerPoint's PDF.)
+        if chart.excel_layout {
+            marks.push(Mark::Fill(floor.clone(), hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xF2F2F2))).into()));
+        }
+        // (Walls with no fill of their own are Excel's grey on a sheet; in a presentation a wall with `a:noFill` is clear and has no outline: PowerPoint's PDF of
+        // a chart whose floor and walls are `a:noFill` with no line shows only the bars.)
+        let wall_fill = background(&chart.plot_background).or_else(|| chart.excel_layout.then(|| hsla(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xC0C0C0))).into()));
+        let walls_shown = wall_fill.is_some();
+        if let Some(bg) = wall_fill {
             // The left wall in the same ground as the back wall.
             marks.push(Mark::Fill(vec![(l, t), (l + dx, t - dy), (l + dx, b - dy), (l, b)], bg.clone()));
             marks.push(Mark::Fill(vec![(l + dx, t - dy), (r + dx, t - dy), (r + dx, b - dy), (l + dx, b - dy)], bg));
         }
-        let mut floor_outline = floor;
-        floor_outline.push((l, b));
-        marks.push(Mark::Stroke(floor_outline, line_w, wall));
-        marks.push(Mark::Stroke(vec![(l, b), (l, t), (l + dx, t - dy), (l + dx, b - dy)], line_w, wall));
-        marks.push(Mark::Stroke(vec![(l + dx, t - dy), (r + dx, t - dy)], line_w, wall));
+        if walls_shown || chart.excel_layout {
+            let mut floor_outline = floor;
+            floor_outline.push((l, b));
+            marks.push(Mark::Stroke(floor_outline, line_w, wall));
+            marks.push(Mark::Stroke(vec![(l, b), (l, t), (l + dx, t - dy), (l + dx, b - dy)], line_w, wall));
+            marks.push(Mark::Stroke(vec![(l + dx, t - dy), (r + dx, t - dy)], line_w, wall));
+        }
     } else if let Some(bg) = background(&chart.plot_background) {
         marks.push(Mark::Fill(vec![(plot.x, plot.y), (plot.right(), plot.y), (plot.right(), plot.bottom()), (plot.x, plot.bottom())], bg));
     }
@@ -695,7 +808,7 @@ pub(crate) fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Res
         let intervals = if horizontal {
             bar_tick_intervals(chart.axis(axis_id), low, high, plot.w, px_per_point)
         } else {
-            tick_intervals(chart.axis(axis_id), low, high, plot.h, false, px_per_point, chart.excel_layout)
+            tick_intervals(chart.axis(axis_id), low, high, plot.h, false, px_per_point, chart.excel_layout, chart.word_layout)
         };
         let mut scale = Scale::fit(low, high, chart.axis(axis_id), intervals);
         // 100% stacked goes to 100% exactly (no room above, as PowerPoint and Excel).
@@ -810,7 +923,7 @@ pub(crate) fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Res
         let (low, high) = xs.fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
         let (low, high) = if low > high { (0.0, 1.0) } else { (low, high) };
         let axis = chart.axis(id);
-        let intervals = tick_intervals(axis, low, high, plot.w, true, px_per_point, false);
+        let intervals = tick_intervals(axis, low, high, plot.w, true, px_per_point, false, false);
         x_scales.push((id, Scale::fit(low, high, axis, intervals)));
     }
     for (id, s) in &x_scales {
@@ -986,7 +1099,7 @@ pub(crate) fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Res
                 let s = scale_for(group);
                 let k = group.series.len().max(1) as f32;
                 let stacked = group.grouping != Grouping::Standard;
-                let is_3d_series_depth = depth.is_some() && group.grouping == Grouping::Standard;
+                let is_3d_series_depth = depth.is_some() && group.grouping == Grouping::Standard && series_behind_each_other;
                 let (overlap, gap) = (if stacked { 1.0 } else { overlap as f32 / 100.0 }, gap_width as f32 / 100.0);
                 let lanes = if stacked || is_3d_series_depth { 1.0 } else { k - (k - 1.0) * overlap };
                 let bar = band_len / (lanes + gap);
@@ -1160,7 +1273,7 @@ pub(crate) fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Res
                 let mut stack = vec![0f64; categories];
                 // A 3-D chart of series side by side (not stacked) puts each series in a row of its own
                 // along the depth, the first at the front, drawn from the back; the others share one row.
-                let rows = if depth.is_some() && group.grouping == Grouping::Standard { group.series.len().max(1) } else { 1 };
+                let rows = if depth.is_some() && group.grouping == Grouping::Standard && series_behind_each_other { group.series.len().max(1) } else { 1 };
                 let mut order: Vec<(usize, &Series)> = group.series.iter().enumerate().collect();
                 if rows > 1 {
                     order.reverse();
@@ -1472,9 +1585,10 @@ pub(crate) fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Res
             ChartType::Pie { first_angle } | ChartType::Doughnut { first_angle, .. } => {
                 let ring_count = if matches!(group.kind, ChartType::Doughnut { .. }) { group.series.len() } else { 1 };
                 for (ring, series) in group.series.iter().take(ring_count).enumerate() {
-                    // A pie's label parts stand on lines of their own when the file names no separator.
+                    // With no separator named, PowerPoint joins a pie label's parts with ", " (its PDFs of every pair and triple of category name, value, percentage and series
+                    // name, at bestFit, outEnd and ctr) except a category name with the percentage and nothing else, which stand on two lines.
                     let broken;
-                    let series = if series.labels.as_ref().is_some_and(|l| l.separator.is_none()) {
+                    let series = if series.labels.as_ref().is_some_and(pie_label_on_two_lines) {
                         let mut copy = series.clone();
                         if let Some(l) = copy.labels.as_mut() {
                             l.separator = Some("
@@ -2620,15 +2734,14 @@ fn cached_paths(marks: &[Mark], scale_factor: f32) -> std::rc::Rc<Vec<Painted>> 
             // At least a pixel of the screen (a thin line is a pixel wide, as
             // PowerPoint draws it).
             Mark::Stroke(pts, width, color) => polygon(&to_px(pts), Some(px(width.max(1.0 / scale_factor))), false).map(|p| Painted::Path(p, (*color).into())),
-            Mark::Dashes(pieces, width, color) => {
-                let pieces: Vec<Vec<Point<Pixels>>> = pieces.iter().map(|p| to_px(p)).collect();
-                crate::render::shape_view::dashes_path(&pieces, px(width.max(1.0 / scale_factor))).map(|p| Painted::Path(p, (*color).into()))
+            Mark::Dashed(pts, width, color, pattern) => {
+                crate::render::shape_view::dashed_line_path(&to_px(pts), px(width.max(1.0 / scale_factor)), pattern, 0.0).map(|p| Painted::Path(p, (*color).into()))
             }
             Mark::Clip(r) => Some(Painted::Clip(*r)),
         })
         .collect();
     let painted = std::rc::Rc::new(painted);
-    let weight: usize = marks.iter().map(|m| match m { Mark::Fill(p, _) | Mark::Stroke(p, _, _) => p.len(), Mark::Dashes(pieces, _, _) => pieces.iter().map(|p| p.len()).sum(), Mark::Clip(_) => 1 }).sum();
+    let weight: usize = marks.iter().map(|m| match m { Mark::Fill(p, _) | Mark::Stroke(p, _, _) => p.len(), Mark::Dashed(p, _, _, _) => p.len(), Mark::Clip(_) => 1 }).sum();
     PAINTED.with(|c| {
         let mut c = c.borrow_mut();
         while !c.is_empty() && (c.len() >= CACHED_CHARTS || c.iter().map(|(_, w, _)| *w).sum::<usize>() + weight > CACHED_POINTS) {
@@ -2727,14 +2840,13 @@ fn marks_hash(marks: &[Mark], scale_factor: f32) -> u64 {
                 add(width.to_bits());
                 [color.h, color.s, color.l, color.a].iter().for_each(|v| add(v.to_bits()));
             }
-            Mark::Dashes(pieces, width, color) => {
+            Mark::Dashed(pts, width, color, pattern) => {
                 add(3);
-                add(pieces.len() as u32);
-                for piece in pieces {
-                    points(piece, &mut add);
-                }
+                points(pts, &mut add);
                 add(width.to_bits());
                 [color.h, color.s, color.l, color.a].iter().for_each(|v| add(v.to_bits()));
+                add(pattern.len() as u32);
+                pattern.iter().for_each(|l| add(l.to_bits()));
             }
             Mark::Clip(r) => {
                 add(2);
@@ -3634,10 +3746,15 @@ fn push_label(
             settings.format.as_deref().filter(|f| !(show_percent && f.contains('%'))).unwrap_or(&series.format),
         ),
         // A percentage takes the labels' own format when it is one (`0.0%`).
-        LabelPiece::Percent => format_number(
-            if total != 0.0 { value / total } else { 0.0 },
-            settings.format.as_deref().filter(|f| f.contains('%')).unwrap_or("0%"),
-        ),
+        LabelPiece::Percent => {
+            let format = settings.format.as_deref().filter(|f| f.contains('%')).unwrap_or("0%");
+            let share = if total != 0.0 { value / total } else { 0.0 };
+            // Whole percentages are adjusted to add up to 100% (PowerPoint's PDF of five datasets; with decimals each is rounded alone).
+            match whole_percentages(&series.values).filter(|_| percent_format_without_decimals(format)) {
+                Some(whole) => whole.get(index).copied().flatten().map_or_else(|| format_number(share, format), |p| format_number(p as f64 / 100.0, format)),
+                None => format_number(share, format),
+            }
+        }
         LabelPiece::Category => series.categories.get(index).cloned().unwrap_or_default(),
         LabelPiece::SeriesName => series.name.clone(),
     };
@@ -5149,30 +5266,6 @@ mod shadow_tests {
         assert!((rects[0][0].1 - (20.0 - 3.15 + 1.8)).abs() < 0.05, "{:?}", rects[0]);
         assert!((rects[0][2].1 - (60.0 + 3.15 + 1.8)).abs() < 0.05, "{:?}", rects[0]);
     }
-
-    /// A dashed line (`a:prstDash`) is one mark of its dashes, not a mark for each, and a solid one stays one line.
-    #[test]
-    fn a_dashed_line_is_one_mark_of_its_dashes() {
-        use super::push_stroke;
-        use ibis_doc_model::{Color, LineDash, Rgb, Stroke};
-        let mut stroke = Stroke::solid(Color::opaque(Rgb(0xff0000)), 12_700);
-        let mut marks = Vec::new();
-        push_stroke(&mut marks, vec![(0.0, 0.0), (100.0, 0.0)], 1.0, &stroke);
-        assert!(matches!(marks.as_slice(), [Mark::Stroke(points, ..)] if points.len() == 2));
-        stroke.dash = LineDash::Dash;
-        marks.clear();
-        push_stroke(&mut marks, vec![(0.0, 0.0), (100.0, 0.0)], 1.0, &stroke);
-        // Dashes of 4 line widths and gaps of 3: 100 / 7 = 14.3 of them, in one mark.
-        match marks.as_slice() {
-            [Mark::Dashes(pieces, width, _)] => {
-                assert_eq!(pieces.len(), 15, "{pieces:?}");
-                assert_eq!(*width, 1.0);
-                assert_eq!(pieces[0], vec![(0.0, 0.0), (4.0, 0.0)]);
-                assert_eq!(pieces[1][0], (7.0, 0.0));
-            }
-            other => panic!("one mark of dashes, got {} marks", other.len()),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -5185,66 +5278,137 @@ mod dash_line_tests {
         LineDash::SysDash, LineDash::SysDot, LineDash::SysDashDot, LineDash::SysDashDotDot,
     ];
 
-    fn dashes(dash: LineDash, points: Vec<(f32, f32)>, width: f32) -> Vec<Vec<(f32, f32)>> {
+    /// The marks `push_stroke` makes of a line of `dash` along `points`, `width` wide.
+    fn marks_of(dash: LineDash, points: Vec<(f32, f32)>, width: f32) -> Vec<Mark> {
         let mut stroke = Stroke::solid(Color::opaque(Rgb(0xff0000)), 12_700);
         stroke.dash = dash;
         let mut marks = Vec::new();
         push_stroke(&mut marks, points, width, &stroke);
-        match marks.as_slice() {
-            [Mark::Dashes(pieces, w, _)] => {
-                assert_eq!(*w, width, "{dash:?}: the dashes are as wide as the line");
-                pieces.clone()
-            }
-            other => panic!("{dash:?}: one mark of dashes, got {} marks", other.len()),
-        }
+        marks
     }
 
-    fn length(piece: &[(f32, f32)]) -> f32 {
-        piece.windows(2).map(|w| ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt()).sum()
-    }
-
-    /// Every line type (`a:prstDash`, ECMA-376 §20.1.10.48), at several widths, is one mark whose dashes and gaps are
-    /// the pattern's in line widths, from the start of the line.
+    /// Every line type (`a:prstDash`, ECMA-376 §20.1.10.48), at several widths, is one mark: the whole line with its
+    /// pattern, the lengths of the pattern in line widths (a line thinner than a pixel dashes as one of a pixel).
     #[test]
-    fn every_dash_type_keeps_its_pattern_at_every_width() {
+    fn every_dash_type_is_one_dashed_line_in_its_pattern_at_every_width() {
+        let line = vec![(0.0, 5.0), (400.0, 5.0)];
         for dash in ALL {
-            let pattern = dash.pattern();
-            let (on, off): (Vec<f32>, Vec<f32>) = (pattern.iter().step_by(2).copied().collect(), pattern.iter().skip(1).step_by(2).copied().collect());
-            for width in [1.0f32, 2.0, 3.5] {
-                let pieces = dashes(dash, vec![(0.0, 5.0), (400.0, 5.0)], width);
-                assert!(pieces.len() > 3, "{dash:?} at {width}");
-                assert_eq!(pieces[0][0], (0.0, 5.0), "{dash:?}: starts at the line's start");
-                for (k, piece) in pieces.iter().enumerate().take(pieces.len() - 1) {
-                    let want = on[k % on.len()] * width;
-                    assert!((length(piece) - want).abs() < 1e-3, "{dash:?} at {width}: dash {k} is {} long, not {want}", length(piece));
-                    let gap = pieces[k + 1][0].0 - piece[piece.len() - 1].0;
-                    let want_gap = off[k % off.len()] * width;
-                    assert!((gap - want_gap).abs() < 1e-3, "{dash:?} at {width}: gap {k} is {gap}, not {want_gap}");
+            for width in [0.25f32, 1.0, 2.0, 3.5] {
+                let marks = marks_of(dash, line.clone(), width);
+                match marks.as_slice() {
+                    [Mark::Dashed(points, w, _, pattern)] => {
+                        assert_eq!(points, &line, "{dash:?} at {width}: the line whole");
+                        assert_eq!(*w, width, "{dash:?}: as wide as the line");
+                        let want: Vec<f32> = dash.pattern().iter().map(|l| l * width.max(1.0)).collect();
+                        assert_eq!(pattern, &want, "{dash:?} at {width}: the pattern in line widths");
+                        assert_eq!(pattern.len() % 2, 0, "{dash:?}: dashes and gaps in turn");
+                    }
+                    other => panic!("{dash:?} at {width}: one dashed line, got {} marks", other.len()),
                 }
             }
         }
     }
 
-    /// A line thinner than a pixel dashes as one of a pixel (the dashes would be finer than any screen or page shows),
-    /// still as one mark; a solid line is a line.
+    /// A solid line is a line; a line of one point is left to be a (nothing) line, not dashed; a bend keeps its corner.
     #[test]
-    fn a_thin_line_dashes_as_a_pixel_and_a_solid_line_is_one_line() {
-        let thin = dashes(LineDash::SysDot, vec![(0.0, 0.0), (20.0, 0.0)], 0.25);
-        assert_eq!(thin[0], vec![(0.0, 0.0), (1.0, 0.0)]);
-        assert_eq!(thin[1][0], (2.0, 0.0));
+    fn a_solid_line_is_one_line_and_a_bend_keeps_its_corner() {
+        let solid = Stroke::solid(Color::opaque(Rgb(0)), 3_175);
         let mut marks = Vec::new();
-        push_stroke(&mut marks, vec![(0.0, 0.0), (20.0, 0.0)], 0.25, &Stroke::solid(Color::opaque(Rgb(0)), 3_175));
+        push_stroke(&mut marks, vec![(0.0, 0.0), (20.0, 0.0)], 0.25, &solid);
         assert!(matches!(marks.as_slice(), [Mark::Stroke(points, w, _)] if points.len() == 2 && *w == 0.25));
-    }
-
-    /// The dashes go on round a bend of the line, the pattern unbroken.
-    #[test]
-    fn the_pattern_goes_on_round_a_bend() {
-        let pieces = dashes(LineDash::Dash, vec![(0.0, 0.0), (10.0, 0.0), (10.0, 20.0)], 1.0);
-        let along: f32 = pieces.iter().map(|p| length(p)).sum();
-        // 30 long in dashes of 4 and gaps of 3: four whole dashes and 2 of the fifth (at 28).
-        assert!((along - 18.0).abs() < 1e-3, "{along}");
-        assert!(pieces.iter().any(|p| p.len() == 3), "a dash bends with the line: {pieces:?}");
+        let one = marks_of(LineDash::Dash, vec![(1.0, 1.0)], 1.0);
+        assert!(matches!(one.as_slice(), [Mark::Stroke(points, ..)] if points.len() == 1), "a point is not dashed");
+        let bent = vec![(0.0, 0.0), (10.0, 0.0), (10.0, 20.0)];
+        let marks = marks_of(LineDash::Dash, bent.clone(), 1.0);
+        assert!(matches!(marks.as_slice(), [Mark::Dashed(points, ..)] if *points == bent), "the corner stays");
     }
 }
 
+#[cfg(test)]
+mod powerpoint_chart_tests {
+    use super::{Area, nice_step, percent_format_without_decimals, pie_label_on_two_lines, powerpoint_3d_box, tick_intervals, whole_percentages};
+    use ibis_doc_model::View3D;
+
+    /// PowerPoint's automatic value axis (0..20, 10pt text): the most intervals that fit a plot of each height are `floor(height / (1.2 x size) - 0.5)`, at most
+    /// ten, and the step is the smallest 1, 2 or 5 times a power of ten with so few intervals: in PowerPoint's PDFs the plots 20.4, 44.0, 67.6, 91.3, 122.8 and
+    /// 162.1pt high have 1, 2, 4, 4, 4 and 10 intervals (steps 20, 10, 5, 5, 5 and 2), that is at most 1, 3, 5, 7, 9 and 10.
+    #[test]
+    fn a_value_axis_has_the_intervals_that_one_more_label_fit_in_the_height_and_half_a_label() {
+        let at = |h: f32| tick_intervals(None, 0.0, 20.0, h, false, 1.0, false, false);
+        assert_eq!(at(20.4), 1.0);
+        assert_eq!(at(44.03), 3.0);
+        assert_eq!(at(67.65), 5.0);
+        assert_eq!(at(91.27), 7.0);
+        assert_eq!(at(122.77), 9.0);
+        assert_eq!(at(162.14), 10.0);
+        assert_eq!(at(253.92), 10.0);
+        // the step that follows from them (range 0..20)
+        let step = |n: f64| nice_step(20.0 / n);
+        assert_eq!([at(20.4), at(44.03), at(67.65), at(122.77), at(162.14)].map(step), [20.0, 10.0, 5.0, 5.0, 2.0]);
+    }
+
+    /// PowerPoint's PDF `chart-label-separator-sweep` (pie, no separator): the label of the category name and the percentage is on two lines (`Alpha` over `55%`), the other five
+    /// combinations on one line with commas (`Echo, 0.9`; `8.2, 55%`; `Alpha, 8.2, 55%`; `Series, 8.2`; `Series, Alpha, 8.2`).
+    #[test]
+    fn a_pie_label_is_on_two_lines_only_for_the_category_and_the_percentage() {
+        let labels = |cat: bool, val: bool, pct: bool, ser: bool| ibis_doc_model::DataLabels { show_category: cat, show_value: val, show_percent: pct, show_series_name: ser, ..Default::default() };
+        assert!(pie_label_on_two_lines(&labels(true, false, true, false)));
+        for (cat, val, pct, ser) in [(true, true, false, false), (false, true, true, false), (true, true, true, false), (false, true, false, true), (true, true, false, true)] {
+            assert!(!pie_label_on_two_lines(&labels(cat, val, pct, ser)), "{cat} {val} {pct} {ser}");
+        }
+        let named = ibis_doc_model::DataLabels { separator: Some("; ".into()), ..labels(true, false, true, false) };
+        assert!(!pie_label_on_two_lines(&named), "a separator the file names is used as it is");
+    }
+
+    /// PowerPoint's PDF `chart-pie-percent-rounding` (labels `0%`): the whole percentages add up to 100 (the largest fractions get the missing ones, the first of equals first).
+    #[test]
+    fn whole_percentages_add_up_to_one_hundred() {
+        let n = |v: &[f64]| v.iter().map(|x| Some(ibis_doc_model::Number(*x))).collect::<Vec<_>>();
+        let whole = |v: &[f64]| whole_percentages(&n(v)).unwrap().into_iter().flatten().collect::<Vec<_>>();
+        assert_eq!(whole(&[8.2, 3.2, 1.4, 1.2, 0.9]), [55, 22, 9, 8, 6]);
+        assert_eq!(whole(&[1.0, 1.0, 1.0]), [34, 33, 33]);
+        assert_eq!(whole(&[1.0, 2.0, 3.0]), [17, 33, 50]);
+        assert_eq!(whole(&[1.0, 1.0, 1.0, 1.0]), [25, 25, 25, 25]);
+        assert_eq!(whole(&[1.0, 1.0, 1.0, 1.0, 1.0]), [20, 20, 20, 20, 20]);
+        assert_eq!(whole(&[5.5, 4.5, 3.5, 2.5, 1.5]), [31, 26, 20, 14, 9]);
+        assert!(whole_percentages(&n(&[0.0, 0.0])).is_none());
+        for f in ["0%", "#0%", "#,##0%", "0 %", "0%;-0%"] {
+            assert!(percent_format_without_decimals(f), "{f}");
+        }
+        for f in ["0.0%", "0.00%", "#,##0.0%", "General", "0"] {
+            assert!(!percent_format_without_decimals(f), "{f}");
+        }
+    }
+
+    /// PowerPoint's 3-D box (rotX 15, rotY 20, depth 100%, 12 categories, one series) in a 351.9 x 249.66pt plot area: the front plane is 0.3548 of its width high
+    /// (0.5 x 249.66 / 351.9), the depth goes right by sin(20) and up by sin(15) of a band; an explicit height percentage is half of it times the width.
+    #[test]
+    fn a_3d_box_has_the_depth_of_a_band_and_the_height_of_the_plot_ratio() {
+        let inner = Area { x: 97.0, y: 68.66, w: 351.9, h: 249.66 };
+        let view = View3D::default();
+        let (front, dx, dy) = powerpoint_3d_box(inner, &view, 12, 1, 150, 0, 1.0);
+        let band = front.w / 12.0;
+        assert!((dx / band - 20f32.to_radians().sin()).abs() < 1e-4, "{dx} {band}");
+        assert!((dy / band - 15f32.to_radians().sin()).abs() < 1e-4, "{dy} {band}");
+        assert!((front.h / front.w - 0.5 * 249.66 / 351.9).abs() < 1e-4, "{} {}", front.h, front.w);
+        assert!((front.w + dx - inner.w).abs() < 1e-3, "the box fills the plot area");
+        let half = View3D { height_percent: Some(50), ..view };
+        let (front, ..) = powerpoint_3d_box(inner, &half, 12, 1, 150, 0, 1.0);
+        assert!((front.h / front.w - 0.25).abs() < 1e-4);
+        // hPercent 200 is as high as wide: it is the height that limits the box.
+        let tall = View3D { height_percent: Some(200), ..view };
+        let (front, _, dy) = powerpoint_3d_box(inner, &tall, 12, 1, 150, 0, 1.0);
+        assert!((front.h / front.w - 1.0).abs() < 1e-4);
+        assert!((front.h + dy - inner.h).abs() < 1e-3);
+        // Clustered (side by side): the depth of a bar's slot, a band for one series with the gaps at 150, 0.714 of a band for 2, and the plane is as high as the plot ratio.
+        let clustered = View3D { series_in_depth: false, ..view };
+        let (front, dx1, _) = powerpoint_3d_box(inner, &clustered, 12, 1, 150, 0, 1.0);
+        assert!((dx1 / (front.w / 12.0) - 20f32.to_radians().sin()).abs() < 1e-4);
+        assert!((front.h / front.w - 249.66 / 351.9).abs() < 1e-4);
+        let (front, dx2c, _) = powerpoint_3d_box(inner, &clustered, 12, 2, 150, 0, 1.0);
+        assert!((dx2c / (front.w / 12.0) / 20f32.to_radians().sin() - 2.5 / 3.5).abs() < 1e-4);
+        // Two series: the depth is twice as deep.
+        let (front, dx2, _) = powerpoint_3d_box(inner, &view, 12, 2, 150, 0, 1.0);
+        assert!((dx2 / (front.w / 12.0) - 2.0 * 20f32.to_radians().sin()).abs() < 1e-4);
+    }
+}

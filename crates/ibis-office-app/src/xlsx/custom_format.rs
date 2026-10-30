@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::DropdownMenu as _;
 use gpui_kit::component::{Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -58,11 +58,16 @@ pub(crate) type PaneMenus = Rc<RefCell<BTreeMap<String, Vec<MenuEntry>>>>;
 
 pub(crate) struct FormatPanel {
     pub(crate) code: Entity<InputState>,
+    pub(crate) custom_selected:bool,
     /// The font's name and size (点) typed in フォント.
     pub(crate) font: Entity<InputState>,
     pub(crate) size: Entity<InputState>,
     /// The text rotation angle (度) typed in 配置.
     pub(crate) rotation: Entity<InputState>,
+    pub(crate) indent: Entity<InputState>,
+    pub(crate) font_color:Entity<InputState>,
+    pub(crate) fill_color:Entity<InputState>,
+    pub(crate) pattern_color:Entity<InputState>,
     pub(crate) ui: PaneBounds,
     pub(crate) menus: PaneMenus,
     _subscriptions: Vec<Subscription>,
@@ -85,23 +90,14 @@ impl Pane {
 
     /// A drop-down: the choice now made (with a rounded square of its colour when `chip` has one) and, when
     /// pressed, `menu`.
-    fn select(&self, id: &str, chip: Option<Hsla>, label: SharedString, menu: Vec<MenuEntry>) -> AnyElement {
+    fn select(&self, id: &'static str, chip: Option<Hsla>, label: SharedString, menu: Vec<MenuEntry>) -> AnyElement {
         self.menus.borrow_mut().insert(id.to_string(), menu.clone());
-        let (menu, editor) = (Rc::new(menu), self.editor.clone());
-        let button = Button::new(SharedString::from(id.to_string()))
-            .outline()
-            .small()
-            .w_full()
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap(px(6.))
-                    .items_center()
-                    .when_some(chip, |d, color| d.child(color_chip(color)))
-                    .child(div().flex_1().truncate().text_size(px(13.)).child(label))
-                    .child(Icon::new(Material("arrow_drop_down")).size(px(18.))),
-            )
-            .dropdown_menu(move |m, window, cx| fill_menu(m.min_w(px(240.)), &menu, &editor, window, cx));
+        let button=crate::shell::chrome::dropdown_button(id,
+            h_flex().w_full().gap(px(6.)).items_center().when_some(chip,|d,color|d.child(color_chip(color)))
+                .child(div().flex_1().truncate().text_size(px(13.)).child(label)).into_any_element());
+        let button=if menu.iter().any(|e|matches!(e,MenuEntry::Palette(_))) {
+            crate::shell::chrome::ColorPaletteDropdown::from_palette(id,button,menu,&self.editor).into_any_element()
+        }else{crate::shell::chrome::Dropdown::with_button(id,button,menu,true,0,&self.editor).into_any_element()};
         self.marked(id, button)
     }
 }
@@ -214,6 +210,7 @@ impl SlideEditor {
     }
 
     fn open_cell_format_focus(&mut self, tab: FormatTab, show: bool, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if focus { self.document.begin_repeat_sheet_group(); }
         let style = self.current_style();
         let code = cx.new(|cx| InputState::new(window, cx).placeholder("#,##0"));
         code.update(cx, |i, cx| {
@@ -233,9 +230,28 @@ impl SlideEditor {
             _ => String::new(),
         };
         rotation.update(cx, |i, cx| i.set_value(rot_text, window, cx));
+        let indent=cx.new(|cx|InputState::new(window,cx));
+        indent.update(cx,|i,cx|i.set_value(style.indent.to_string(),window,cx));
+        let on_indent=cx.subscribe_in(&indent,window,|e,i,event:&InputEvent,_,cx|{if matches!(event,InputEvent::Change|InputEvent::PressEnter{..}){if let Ok(n)=i.read(cx).value().parse::<u32>(){e.format_cells(StyleChange::Indent(n.min(250)),cx);}}});
+        let mut color_inputs=Vec::new();
+        let mut color_subscriptions=Vec::new();
+        for (kind,value) in [(0,Some(style.color)),(1,style.fill),(2,style.pattern.as_ref().map(|p|p.1))] {
+            let input=cx.new(|cx|InputState::new(window,cx));
+            input.update(cx,|i,cx|i.set_value(value.map(|c|format!("{:06X}",c.0)).unwrap_or_default(),window,cx));
+            color_subscriptions.push(cx.subscribe_in(&input,window,move|this,input,event:&InputEvent,_,cx|{
+                if !matches!(event,InputEvent::Change|InputEvent::PressEnter{..}) {return;}
+                let value=input.read(cx).value().trim().trim_start_matches('#').to_string();
+                let color=if value.is_empty(){None}else{u32::from_str_radix(&value,16).ok().filter(|_|value.len()==6).map(ibis_doc_model::Rgb)};
+                if !value.is_empty()&&color.is_none(){return;}
+                let change=match kind {0=>StyleChange::Color(color.unwrap_or(ibis_doc_model::Rgb::BLACK)),1=>StyleChange::Fill(color),_=>StyleChange::PatternColor(color.unwrap_or(ibis_doc_model::Rgb::BLACK))};
+                this.format_cells(change,cx);
+            }));
+            color_inputs.push(input);
+        }
+        let font_color=color_inputs.remove(0);let fill_color=color_inputs.remove(0);let pattern_color=color_inputs.remove(0);
         // Enter in the size, the name, or the rotation angle applies it.
         let on_size = cx.subscribe_in(&size, window, |this: &mut Self, input, event: &InputEvent, _, cx| {
-            if let InputEvent::PressEnter { .. } = event {
+            if matches!(event,InputEvent::Change|InputEvent::PressEnter { .. }) {
                 let text = input.read(cx).value().trim().to_string();
                 this.apply_pane_size(&text, cx);
             }
@@ -247,21 +263,17 @@ impl SlideEditor {
             }
         });
         let on_rotation = cx.subscribe_in(&rotation, window, |this: &mut Self, input, event: &InputEvent, _, cx| {
-            if let InputEvent::PressEnter { .. } = event {
+            if matches!(event,InputEvent::Change|InputEvent::PressEnter { .. }) {
                 let text = input.read(cx).value().trim().to_string();
                 this.apply_pane_rotation(&text, cx);
             }
         });
         if let Some(s) = self.sheet_state_mut() {
-            s.names = None;
-            s.validation = None;
-            s.find = None;
-            s.link = None;
-            s.page_setup = false;
+            s.close_settings();
             if show {
                 s.format_open[tab as usize] = true;
             }
-            s.custom_format = Some(FormatPanel { code, font, size, rotation, ui: Default::default(), menus: Default::default(), _subscriptions: vec![on_size, on_font, on_rotation] });
+            s.custom_format = Some(FormatPanel { custom_selected:!super::toolbar::NUMBER_FORMATS.iter().any(|(_,f)|*f==style.number_format),code, font, size, rotation, indent, font_color,fill_color,pattern_color,ui: Default::default(), menus: Default::default(), _subscriptions: {color_subscriptions.extend([on_size,on_font,on_rotation,on_indent]);color_subscriptions} });
         }
         self.sidebar_open = true;
         cx.notify();
@@ -296,23 +308,28 @@ impl SlideEditor {
     pub(crate) fn custom_format_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let panel = self.sheet_state()?.custom_format.as_ref()?;
         let (code, font, size, rotation) = (panel.code.clone(), panel.font.clone(), panel.size.clone(), panel.rotation.clone());
+        let indent=panel.indent.clone();
+        let custom_selected=panel.custom_selected;
         let pane = Pane { ui: panel.ui.clone(), menus: panel.menus.clone(), editor: cx.entity().downgrade() };
         let open = self.wb().format_open;
         pane.menus.borrow_mut().clear();
         let style = self.current_style();
         let text = |s: &str| SharedString::from(crate::shell::i18n::text(s).to_string());
-        let caption = |s: &str| div().text_size(px(12.)).text_color(crate::shell::chrome::text_secondary()).child(text(s));
-        let mark = |on: bool, label: &str| SharedString::from(format!("{} {}", if on { "●" } else { "○" }, crate::shell::i18n::text(label)));
+        let caption = |s: &str| div().text_sm().text_color(crate::shell::chrome::text_secondary()).child(text(s));
         // A button that changes the selected cells' format.
         let change = |id: String, label: SharedString, change: StyleChange, cx: &mut Context<Self>| {
-            pane.marked(&id.clone(), Button::new(SharedString::from(id)).small().label(label).on_click(cx.listener(move |this, _, _, cx| this.format_cells(change.clone(), cx))))
+            pane.marked(&id.clone(), crate::shell::chrome::action_button(SharedString::from(id)).small().label(label).on_click(cx.listener(move |this, _, _, cx| this.format_cells(change.clone(), cx))))
+        };
+        let change_check = |id: String, label: SharedString, checked: bool, change: StyleChange, cx: &mut Context<Self>| {
+            pane.marked(&id.clone(), crate::shell::chrome::checkbox_button(SharedString::from(id), label, checked, false,
+                cx.listener(move |this, _, _, cx| this.format_cells(change.clone(), cx))))
         };
         // A menu item that changes the selected cells' format.
         let choice = |id: &'static str, label: SharedString, on: bool, change: StyleChange| -> MenuEntry {
             MenuItem::new(id, label).checked(on).on(move |this, _, cx| this.format_cells(change.clone(), cx)).into()
         };
 
-        let mut body = v_flex().gap_1().px(px(10.)).py(px(8.));
+        let mut body = v_flex().gap_1().px(px(10.)).py(px(8.)).p_0();
         for (n, tab) in FormatTab::ALL.into_iter().enumerate() {
             let is_open = open[n];
             body = body.child(self.pane_section_header(&pane, n, tab, is_open, cx));
@@ -327,13 +344,14 @@ impl SlideEditor {
                     let sample = self.current_cell().and_then(|(c, r)| self.current_sheet().and_then(|(_, s)| s.cell(r, c).map(|x| x.value.clone()))).map(|v| ibis_calc::numfmt::format(&v, &typed, false).text).unwrap_or_default();
                     let c2 = code.clone();
                     let current = super::toolbar::NUMBER_FORMATS.iter().find(|(_, f)| *f == style.number_format).map(|(name, _)| text(name)).unwrap_or_else(|| text("xlsx.format-pane.custom"));
-                    let items: Vec<MenuEntry> = super::toolbar::NUMBER_FORMATS.iter().map(|&(name, format)| choice("xlsx.number-format", text(name), style.number_format == format, StyleChange::NumberFormat(format.into()))).collect();
+                    let mut items:Vec<MenuEntry>=super::toolbar::NUMBER_FORMATS.iter().map(|&(name,format)|MenuItem::new("xlsx.number-format",text(name)).checked(!custom_selected&&style.number_format==format).on(move |e,_,cx|{if let Some(p)=e.wb_mut().custom_format.as_mut(){p.custom_selected=false;}e.format_cells(StyleChange::NumberFormat(format.into()),cx);}).into()).collect();
+                    items.push(MenuItem::new("xlsx.number-format.custom",text("xlsx.format-pane.custom")).checked(custom_selected).on(|e,_,cx|{if let Some(p)=e.wb_mut().custom_format.as_mut(){p.custom_selected=true;}cx.notify();}).into());
                     section = section
-                        .child(pane.select("cell-format-number", None, current, items))
+                        .child(pane.select("cell-format-number", None, if custom_selected{text("xlsx.format-pane.custom")}else{current}, items))
                         .child(caption("_xlsx.number-format-custom"))
-                        .child(Input::new(&code).small().cleanable(true))
-                        .child(div().text_size(px(12.)).child(SharedString::from(format!("{}{sample}", crate::shell::i18n::text("_xlsx.sample")))))
-                        .child(Button::new("custom-format-apply").primary().small().label(text("_xlsx.apply-to-selection")).on_click(cx.listener(move |this, _, _, cx| {
+                        .child(crate::shell::chrome::text_field(&code).full_width().disabled(!custom_selected))
+                        .child(div().text_sm().child(SharedString::from(format!("{}{sample}", crate::shell::i18n::text("_xlsx.sample")))))
+                        .child(crate::shell::chrome::action_button("custom-format-apply").small().label(text("_xlsx.apply-to-selection")).on_click(cx.listener(move |this, _, _, cx| {
                             let code = c2.read(cx).value().trim().to_string();
                             if !code.is_empty() {
                                 this.format_cells(StyleChange::NumberFormat(code), cx);
@@ -367,7 +385,7 @@ impl SlideEditor {
                             rot_input.update(cx, |i, cx| i.set_value(txt, window, cx));
                         }).into()
                     }).collect();
-                    let r2 = rotation.clone();
+
                     section = section
                         .child(caption("_xlsx.horizontal"))
                         .child(pane.select("cell-format-halign", None, h_label, h_items))
@@ -376,33 +394,21 @@ impl SlideEditor {
                         .child(caption("_xlsx.text-direction"))
                         .child(h_flex().gap_1().items_center()
                             .child(div().flex_1().child(pane.select("cell-format-rotation", None, t_label, t_items)))
-                            .child(div().w(px(56.)).child(pane.marked("cell-format-rotation-input", Input::new(&rotation).small().cleanable(true))))
-                            .child(pane.marked("cell-format-rotation-set", Button::new("cell-format-rotation-set").small().label(text("_xlsx.apply")).on_click(cx.listener(move |this, _, _, cx| {
-                                let val = r2.read(cx).value().trim().to_string();
-                                this.apply_pane_rotation(&val, cx);
-                            })))))
+                            .child(div().flex_none().child(pane.marked("cell-format-rotation-input", crate::shell::chrome::text_field(&rotation).unit("°",px(20.)).spinner(
+                                "cell-format-rotation-spin",
+                                crate::shell::chrome::SpinnerSpec::new(1.0).range(-90.0, 90.0).integer_only(),
+                                cx,
+                                |this, deg, _, cx| this.apply_pane_rotation(&format!("{}", deg as i32), cx),
+                            ))))
+)
                         .child(h_flex().gap_1().flex_wrap()
-                            .child(change("cell-format-wrap".into(), mark(style.wrap, "_xlsx.wrap-text"), StyleChange::Wrap(!style.wrap), cx))
-                            .child(change("cell-format-shrink".into(), mark(style.shrink, "_xlsx.shrink-to-fit"), StyleChange::Shrink(!style.shrink), cx)))
-                        .child(h_flex().gap_1().items_center()
-                            .child(text("_xlsx.indent"))
-                            .child(change("cell-format-indent-less".into(), "−".into(), StyleChange::Indent(style.indent.saturating_sub(1)), cx))
-                            .child(SharedString::from(format!("{}", style.indent)))
-                            .child(change("cell-format-indent-more".into(), "+".into(), StyleChange::Indent(style.indent + 1), cx)));
+                            .child(change_check("cell-format-wrap".into(), text("_xlsx.wrap-text"), style.wrap, StyleChange::Wrap(!style.wrap), cx))
+                            .child(change_check("cell-format-shrink".into(), text("_xlsx.shrink-to-fit"), style.shrink, StyleChange::Shrink(!style.shrink), cx)))
+                        .child(crate::shell::chrome::text_field_row(text("_xlsx.indent"),crate::shell::chrome::text_field(&indent).spinner("cell-indent",crate::shell::chrome::SpinnerSpec::new(1.).range(0.,250.).integer_only(),cx,|e,n,_,cx|e.format_cells(StyleChange::Indent(n as u32),cx))));
                 }
                 FormatTab::Font => {
                     let editor = pane.editor.clone();
                     let f2 = font.clone();
-                    // − [size] + ; the buttons step as the toolbar's.
-                    let step = |id: &'static str, icon: &'static str, tip: &'static str, grow: bool| -> AnyElement {
-                        let size = size.clone();
-                        let handler: Handler = Rc::new(move |this: &mut SlideEditor, window, cx| {
-                            let next = ibis_doc_model::step_font_size(this.current_style().font_size, grow);
-                            this.format_cells(StyleChange::FontSize(next), cx);
-                            size.update(cx, |i, cx| i.set_value(format!("{}", next as f32 / 100.0), window, cx));
-                        });
-                        pane.marked(id, tool_item(&ToolItem::from(ToolButton::new(id, icon, tip).click(move |this, window, cx| handler(this, window, cx))), 3000, &editor))
-                    };
                     // Bold, italic, underline and strike: the toolbar's buttons.
                     let toggle = |id: &'static str, icon: &'static str, tip: &'static str, on: bool, change: StyleChange| -> AnyElement {
                         pane.marked(id, tool_item(&ToolItem::from(ToolButton::new(id, icon, tip).on(on).click(move |this, _, cx| this.format_cells(change.clone(), cx))), 3001, &editor))
@@ -411,24 +417,20 @@ impl SlideEditor {
                     let color_menu = crate::shell::color_palette::mark_current(super::toolbar::cell_color_menu(self, false), color);
                     section = section
                         .child(caption("_xlsx.font-name"))
-                        .child(h_flex().gap_1()
-                            .child(div().flex_1().child(Input::new(&font).small().cleanable(true)))
-                            .child(Button::new("cell-format-font-set").small().label(text("_xlsx.set-font")).on_click(cx.listener(move |this, _, _, cx| {
+                        .child(h_flex().gap_1().flex_wrap()
+                            .child(div().w(crate::shell::chrome::FONT_DROPDOWN_WIDTH).flex_none().child(crate::shell::chrome::panel_font_dropdown("panel-font-xlsx-custom-format-1",&font,cx)))
+                            .child(crate::shell::chrome::action_button("cell-format-font-set").small().label(text("_xlsx.set-font")).on_click(cx.listener(move |this, _, _, cx| {
                                 let name = f2.read(cx).value().trim().to_string();
                                 this.format_cells(StyleChange::Font((!name.is_empty()).then_some(name)), cx);
                             }))))
-                        .child(caption("_xlsx.size-points"))
-                        .child(h_flex().gap_1().items_center()
-                            .child(step("cell-format-size-less", "remove", "_shell.decrease-font-size", false))
-                            .child(div().w(px(72.)).child(Input::new(&size).small().cleanable(true)))
-                            .child(step("cell-format-size-more", "add", "_shell.increase-font-size", true)))
+                        .child(crate::shell::chrome::text_field_row(text("_xlsx.size-points"),crate::shell::chrome::text_field(&size).unit("pt",px(20.)).spinner("cell-format-size-spin",crate::shell::chrome::SpinnerSpec::new(1.).range(1.,409.),cx,|this,n,_,cx|this.apply_pane_size(&n.to_string(),cx))))
                         .child(h_flex().gap_1()
                             .child(toggle("cell-format-bold", "format_bold", "_shell.bold-b", style.bold, StyleChange::Bold(!style.bold)))
                             .child(toggle("cell-format-italic", "format_italic", "_shell.italic-i", style.italic, StyleChange::Italic(!style.italic)))
                             .child(toggle("cell-format-underline", "format_underlined", "_shell.underline-u", style.underline.enabled(), StyleChange::Underline(!style.underline.enabled())))
                             .child(toggle("cell-format-strike", "format_strikethrough", "pptx.chrome.strikethrough", style.strike, StyleChange::Strike(!style.strike))))
                         .child(caption("docx.common.color"))
-                        .child(pane.select("cell-format-color", Some(rgb_hsla(color)), color_name(color, super::toolbar::COLORS), color_menu));
+                        .child(pane.marked("cell-format-color",crate::shell::chrome::panel_color_field("cell-format-color-input",&panel.font_color,cx)));
                     let u_label = |u: ibis_doc_model::CellUnderline| match u {
                         ibis_doc_model::CellUnderline::None => text("_xlsx.no-underline"),
                         ibis_doc_model::CellUnderline::Single => text("_xlsx.single-underline"),
@@ -563,19 +565,19 @@ impl SlideEditor {
                     );
                     section = section
                         .child(caption("_xlsx.background-color"))
-                        .child(pane.select("cell-format-fill", Some(fill.map(rgb_hsla).unwrap_or_else(|| gpui_kit::rgb(0xffffff).into())), label, entries))
+                        .child(pane.marked("cell-format-fill",crate::shell::chrome::panel_color_field("cell-format-fill-input",&panel.fill_color,cx)))
                         .child(caption("xlsx.fill-pattern"))
                         .child(pane.select("cell-format-pattern", None, pat_label, pat_items))
                         .child(caption("xlsx.pattern-color"))
-                        .child(pane.select("cell-format-pattern-color", Some(rgb_hsla(pat_col)), pat_col_label, pat_col_items))
+                        .child(pane.marked("cell-format-pattern-color",crate::shell::chrome::panel_color_field("cell-format-pattern-color-input",&panel.pattern_color,cx)))
                         .child(caption("xlsx.fill-gradient"))
                         .child(pane.select("cell-format-gradient", None, grad_label, grad_items));
                 }
                 FormatTab::Protection => {
                     section = section
-                        .child(change("cell-format-locked".into(), mark(!style.unlocked, "_xlsx.locked"), StyleChange::Locked(style.unlocked), cx))
-                        .child(change("cell-format-hidden".into(), mark(style.formula_hidden, "_xlsx.hidden-hide-the-formula"), StyleChange::FormulaHidden(!style.formula_hidden), cx))
-                        .child(div().text_size(px(12.)).child(text("_xlsx.locked-and-hidden-take-effect-when-the-sheet-is")));
+                        .child(change_check("cell-format-locked".into(), text("_xlsx.locked"), !style.unlocked, StyleChange::Locked(style.unlocked), cx))
+                        .child(change_check("cell-format-hidden".into(), text("_xlsx.hidden-hide-the-formula"), style.formula_hidden, StyleChange::FormulaHidden(!style.formula_hidden), cx))
+                        .child(div().text_sm().child(text("_xlsx.locked-and-hidden-take-effect-when-the-sheet-is")));
                 }
             }
             body = body.child(section);

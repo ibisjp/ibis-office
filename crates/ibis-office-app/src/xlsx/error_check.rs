@@ -213,7 +213,7 @@ impl SlideEditor {
         ensure_rules();
         let panel = ErrorOptionsPanel { rules: ibis_doc_model::error_check::rules(), ui: Default::default() };
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.error_options = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -228,7 +228,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn error_options_panel(&mut self, cx: &mut Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
-        use gpui_kit::component::button::{Button, ButtonVariants as _};
+        use gpui_kit::component::button::{ButtonVariants as _};
         use gpui_kit::component::{Sizable as _, v_flex};
         use crate::shell::i18n::text;
         let p = self.sheet_state()?.panels.error_options.as_ref()?;
@@ -243,7 +243,14 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
         let mut rules = p.rules;
         let values: Vec<bool> = fields(&mut rules).iter().map(|v| **v).collect();
         for (i, on) in values.into_iter().enumerate() {
@@ -267,23 +274,13 @@ impl SlideEditor {
                 .into_any_element(),
             ));
         }
-        body = body.child(mark("reset", Button::new("error-reset").small().label(text("xlsx.error-options.reset-ignored")).on_click(cx.listener(|this, _, _, cx| {
+        body = body.child(mark("reset", crate::shell::chrome::action_button("error-reset").small().label(text("xlsx.error-options.reset-ignored")).on_click(cx.listener(|this, _, _, cx| {
             let slide = this.current_slide;
             this.run_sheet(vec![Command::Sheet(SheetCommand::ResetIgnoredErrors { slide })], cx);
         })).into_any_element()));
-        body = body.child(mark("apply", Button::new("error-ok").primary().small().label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_error_options_panel(cx))).into_any_element()));
-        body = body.child(mark(
-            "close",
-            Button::new("error-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.error_options = None;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        Some(crate::shell::chrome::SidebarPanel { title: text("xlsx.error-options.title"), body: body.into_any_element() })
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("error-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_error_options_panel(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(crate::shell::chrome::SidebarPanel::with_footer(text("xlsx.error-options.title"), body.into_any_element(), panel_terminal_actions))
     }
 }
 

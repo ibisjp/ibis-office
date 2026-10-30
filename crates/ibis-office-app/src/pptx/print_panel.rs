@@ -4,9 +4,9 @@
 //! 印刷の設定 (ファイル > 印刷… の前の側面パネル): which slides (すべて・
 //! 現在のスライド・範囲指定), as slides or as handouts (1・2・3・4・6・9
 //! 枚/ページ), in colour, grey or black and white, with or without a frame.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -206,22 +206,21 @@ impl SlideEditor {
     pub(crate) fn print_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.pptx()?.print_panel.as_ref()?;
         let (settings, custom, error) = (p.settings.clone(), p.custom.clone(), p.error.clone());
-        let mark = |on: bool, label: &str| -> SharedString { format!("{} {}", if on { "●" } else { "○" }, crate::shell::i18n::text(label)).into() };
-        let heading = |label: &str| div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(crate::shell::i18n::text(label));
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+        let heading = |label: &str| div().text_sm().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text(label));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
         body = body
             .child(heading("pptx.print-panel.slides-print"))
-            .child(Button::new("pptx-print-all").small().ghost().label(mark(settings.range == PrintRange::All, "pptx.slideshow.see-all-slides")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.range = PrintRange::All, cx))))
-            .child(Button::new("pptx-print-current").small().ghost().label(mark(settings.range == PrintRange::Current, "pptx.print-panel.current-slide")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.range = PrintRange::Current, cx))))
-            .child(Button::new("pptx-print-custom").small().ghost().label(mark(settings.range == PrintRange::Custom, "pptx.print-panel.custom-range")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.range = PrintRange::Custom, cx))))
-            .child(div().w(px(200.)).child(Input::new(&custom).small().cleanable(true)))
+            .child(crate::shell::chrome::radio_button("pptx-print-all", settings.range == PrintRange::All, false, crate::shell::i18n::text("pptx.slideshow.see-all-slides"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.range = PrintRange::All, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-print-current", settings.range == PrintRange::Current, false, crate::shell::i18n::text("pptx.print-panel.current-slide"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.range = PrintRange::Current, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-print-custom", settings.range == PrintRange::Custom, false, crate::shell::i18n::text("pptx.print-panel.custom-range"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.range = PrintRange::Custom, cx))))
+            .child(div().w(px(200.)).child(crate::shell::chrome::text_field(&custom).full_width()))
             .child(heading("_shell.print-layout"))
-            .child(Button::new("pptx-print-slides").small().ghost().label(mark(settings.handout.is_none() && !settings.notes_pages && !settings.outline, "pptx.print-panel.full-page-slides")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = false; s.outline = false }, cx))))
-            .child(Button::new("pptx-print-notes").small().ghost().label(mark(settings.notes_pages, "pptx.print-panel.notes-pages-1-slide-its")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = true; s.outline = false }, cx))))
-            .child(Button::new("pptx-print-outline").small().ghost().label(mark(settings.outline, "pptx.print-panel.outline")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = false; s.outline = true }, cx))));
+            .child(crate::shell::chrome::radio_button("pptx-print-slides", settings.handout.is_none() && !settings.notes_pages && !settings.outline, false, crate::shell::i18n::text("pptx.print-panel.full-page-slides"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = false; s.outline = false }, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-print-notes", settings.notes_pages, false, crate::shell::i18n::text("pptx.print-panel.notes-pages-1-slide-its"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = true; s.outline = false }, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-print-outline", settings.outline, false, crate::shell::i18n::text("pptx.print-panel.outline"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = false; s.outline = true }, cx))));
         for n in [1u8, 2, 3, 4, 6, 9] {
-            let label: SharedString = format!("{} {}", if settings.handout == Some(n) { "●" } else { "○" }, crate::shell::i18n::format("pptx.print-panel.handouts-n-slides-per-page", &[("n", &n)])).into();
-            body = body.child(Button::new(ElementId::Name(format!("pptx-print-handout-{n}").into())).small().ghost().label(label).on_click(cx.listener(move |e, _, _, cx| e.edit_print_panel(|s| { s.handout = Some(n); s.notes_pages = false; s.outline = false }, cx))));
+            let label = crate::shell::i18n::format("pptx.print-panel.handouts-n-slides-per-page", &[("n", &n)]);
+            body = body.child(crate::shell::chrome::radio_button(ElementId::Name(format!("pptx-print-handout-{n}").into()), settings.handout == Some(n), false, label, cx.listener(move |e, _, _, cx| e.edit_print_panel(|s| { s.handout = Some(n); s.notes_pages = false; s.outline = false }, cx))));
         }
         body = body
             .child(Checkbox::new("pptx-print-landscape").label(crate::shell::i18n::text("pptx.print-panel.landscape-handouts")).checked(settings.landscape).on_click(cx.listener(|e, on: &bool, _, cx| {
@@ -229,20 +228,17 @@ impl SlideEditor {
                 e.edit_print_panel(|s| s.landscape = on, cx)
             })))
             .child(heading("docx.common.color"))
-            .child(Button::new("pptx-print-color").small().ghost().label(mark(settings.color == PrintColorKind::Color, "pptx.print-panel.color")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.color = PrintColorKind::Color, cx))))
-            .child(Button::new("pptx-print-gray").small().ghost().label(mark(settings.color == PrintColorKind::Gray, "pptx.print-panel.grayscale")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.color = PrintColorKind::Gray, cx))))
-            .child(Button::new("pptx-print-bw").small().ghost().label(mark(settings.color == PrintColorKind::BlackWhite, "pptx.print-panel.pure-black-white")).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.color = PrintColorKind::BlackWhite, cx))))
-            .child(Button::new("pptx-print-frame").small().ghost().label(format!("{} {}", if settings.frame { "☑" } else { "☐" }, crate::shell::i18n::text("pptx.print-panel.frame-slides"))).on_click(cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.frame = !s.frame, cx))));
+            .child(crate::shell::chrome::radio_button("pptx-print-color", settings.color == PrintColorKind::Color, false, crate::shell::i18n::text("pptx.print-panel.color"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.color = PrintColorKind::Color, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-print-gray", settings.color == PrintColorKind::Gray, false, crate::shell::i18n::text("pptx.print-panel.grayscale"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.color = PrintColorKind::Gray, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-print-bw", settings.color == PrintColorKind::BlackWhite, false, crate::shell::i18n::text("pptx.print-panel.pure-black-white"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.color = PrintColorKind::BlackWhite, cx))))
+            .child(crate::shell::chrome::checkbox_button("pptx-print-frame", crate::shell::i18n::text("pptx.print-panel.frame-slides"), settings.frame, false, cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.frame = !s.frame, cx))));
         if let Some(error) = error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error));
+            body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));
         }
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("pptx-print-apply").primary().small().label(crate::shell::i18n::text("pptx.print-panel.print")).on_click(cx.listener(|e, _, w, cx| e.apply_print_panel(w, cx))))
-                .child(Button::new("pptx-print-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_print_panel(w, cx)))),
-        );
-        Some(SidebarPanel { title: crate::shell::i18n::text("pptx.print-panel.print"), body: body.into_any_element() })
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-print-apply", crate::shell::i18n::text("pptx.print-panel.print"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_print_panel(w, cx))))
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-print-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_print_panel(w, cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("pptx.print-panel.print"), body.into_any_element(), panel_actions))
     }
 }
 

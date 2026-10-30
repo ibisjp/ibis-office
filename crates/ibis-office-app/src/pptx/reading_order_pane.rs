@@ -18,8 +18,10 @@ use crate::shell::editor::SlideEditor;
 use crate::shell::icons::Material;
 
 /// The Reading Order pane state.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ReadingOrderPane;
+#[derive(Clone, Default)]
+pub(crate) struct ReadingOrderPane {
+    pub(crate) reorder: std::rc::Rc<std::cell::RefCell<crate::shell::chrome::data_table::RowReorder>>,
+}
 
 impl SlideEditor {
     /// 読み上げ順序ペインの開閉トグル
@@ -27,7 +29,7 @@ impl SlideEditor {
         if let Some(s) = self.pptx_mut() {
             s.reading_order_pane = match s.reading_order_pane.take() {
                 Some(_) => None,
-                None => Some(ReadingOrderPane),
+                None => Some(ReadingOrderPane::default()),
             };
         }
         self.sidebar_open = true;
@@ -37,7 +39,7 @@ impl SlideEditor {
     /// 読み上げ順序ペインを開く
     pub(crate) fn open_reading_order_pane(&mut self, cx: &mut Context<Self>) {
         if let Some(s) = self.pptx_mut() {
-            s.reading_order_pane = Some(ReadingOrderPane);
+            s.reading_order_pane = Some(ReadingOrderPane::default());
         }
         self.sidebar_open = true;
         cx.notify();
@@ -184,139 +186,48 @@ impl SlideEditor {
 
     /// 読み上げ順序サイドバーパネルの描画
     pub(crate) fn reading_order_pane(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        self.pptx()?.reading_order_pane?;
+        let reorder = self.pptx()?.reading_order_pane.as_ref()?.reorder.clone();
         let t = crate::shell::i18n::text;
         let slide = self.slide().clone();
         let selected = self.selected_ids();
         let shapes = &slide.shapes;
-        let count = shapes.len();
-
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
-
-        // 説明ヘッダー
-        body = body.child(
-            div()
-                .text_sm()
-                .text_color(rgb(0x5f6368))
-                .child(t("pptx.reading-order-pane.order-which-objects-will-read")),
-        );
-
+        let mut body = v_flex().gap_2()
+            .child(div().text_sm().text_color(rgb(0x5f6368)).child(t("pptx.reading-order-pane.order-which-objects-will-read")));
         if shapes.is_empty() {
             body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(t("pptx.selection-pane.no-shapes-slide")));
-        } else {
-            let mut list = v_flex().gap_1();
-            for (i, shape) in shapes.iter().enumerate() {
-                let id = shape.id;
-                let is_decorative = slide.decorative_shapes.contains(&id);
-                let is_selected = selected.contains(&id);
-
-                // アイコンの選定
-                let ph = slide.placeholders.get(&id).map(|p| p.placeholder.normalized());
-                let icon_name = if ph == Some("title") || ph == Some("ctrTitle") {
-                    "title"
-                } else {
-                    match &shape.kind {
-                        ShapeKind::Auto(a) if a.text.is_some() => "text_fields",
-                        ShapeKind::TextBox(_) => "text_fields",
-                        ShapeKind::Picture(_) => "image",
-                        ShapeKind::Table(_) => "table_chart",
-                        ShapeKind::Chart(_) => "bar_chart",
-                        _ => "shapes",
-                    }
-                };
-
-                let label = self.shape_label(id);
-                let n = id.0 as usize;
-
-                let row = h_flex()
-                    .id(("reading-order-row", n))
-                    .gap_1p5()
-                    .p_1()
-                    .rounded(px(4.))
-                    .cursor_pointer()
-                    .when(is_selected, |d| d.bg(rgb(0xd3e3fd)))
-                    .on_click(cx.listener(move |e, _, _, cx| {
-                        e.set_selection(vec![id]);
-                        cx.notify();
-                    }))
-                    .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        e.open_reading_order_context_menu(id, event.position, window, cx);
-                    }))
-                    // 順番番号バッジ
-                    .child(
-                        div()
-                            .w(px(20.))
-                            .h(px(20.))
-                            .rounded_full()
-                            .bg(if is_selected { rgb(0x1a73e8) } else { rgb(0xe8eaed) })
-                            .text_color(if is_selected { rgb(0xffffff) } else { rgb(0x3c4043) })
-                            .text_xs()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(format!("{}", i + 1)),
-                    )
-                    // アイコン
-                    .child(Icon::new(Material(icon_name)).size(px(16.)).text_color(if is_decorative { rgb(0x9aa0a6) } else { rgb(0x5f6368) }))
-                    // ラベル & 装飾用バッジ
-                    .child(
-                        h_flex()
-                            .flex_1()
-                            .gap_1()
-                            .items_center()
-                            .overflow_hidden()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .truncate()
-                                    .when(is_decorative, |d| d.text_color(rgb(0x9aa0a6)).line_through())
-                                    .child(label),
-                            )
-                            .when(is_decorative, |d| {
-                                d.child(
-                                    div()
-                                        .px_1()
-                                        .rounded(px(2.))
-                                        .bg(rgb(0xf1f3f4))
-                                        .text_color(rgb(0x70757a))
-                                        .text_xs()
-                                        .child(t("pptx.reading-order-pane.decorative-skipped")),
-                                )
-                            }),
-                    )
-                    // 装飾マーク切り替え・↑ / ↓ ボタン
-                    .child(
-                        Button::new(("ro-decorative", n))
-                            .small()
-                            .ghost()
-                            .icon(Icon::new(Material(if is_decorative { "visibility_off" } else { "visibility" })))
-                            .tooltip(t("pptx.alt-text.decorative"))
-                            .on_click(cx.listener(move |e, _, _, cx| e.toggle_shape_decorative(id, cx))),
-                    )
-                    .child(
-                        Button::new(("ro-up", n))
-                            .small()
-                            .ghost()
-                            .label("↑")
-                            .tooltip(t("pptx.reading-order-pane.move-up-read-earlier"))
-                            .disabled(i == 0)
-                            .on_click(cx.listener(move |e, _, _, cx| e.move_reading_order(id, true, cx))),
-                    )
-                    .child(
-                        Button::new(("ro-down", n))
-                            .small()
-                            .ghost()
-                            .label("↓")
-                            .tooltip(t("pptx.reading-order-pane.move-down-read-later"))
-                            .disabled(i + 1 >= count)
-                            .on_click(cx.listener(move |e, _, _, cx| e.move_reading_order(id, false, cx))),
-                    );
-
-                list = list.child(row);
-            }
-            body = body.child(list);
         }
+        let mut rows = Vec::new();
+        for (i, shape) in shapes.iter().enumerate() {
+            let id = shape.id;
+            let n = id.0 as usize;
+            let is_decorative = slide.decorative_shapes.contains(&id);
+            let is_selected = selected.contains(&id);
+            let eye = crate::shell::chrome::action_button(("ro-decorative", n)).small().w(px(28.))
+                .icon(Icon::new(Material(if is_decorative { "visibility_off" } else { "visibility" })))
+                .tooltip(t("pptx.alt-text.decorative"))
+                .on_click(cx.listener(move |e, _, _, cx| {cx.stop_propagation(); e.toggle_shape_decorative(id, cx);}));
+            let row = h_flex().id(("reading-order-row", n)).w_full().h_full().min_w_0().items_center().gap_1().px_1()
+                .on_click(cx.listener(move |e, _, _, cx| {e.set_selection(vec![id]); cx.notify();}))
+                .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation(); e.open_reading_order_context_menu(id, event.position, window, cx);
+                }))
+                .child(crate::shell::chrome::data_table::row_controls(reorder.clone(), n, 0, eye))
+                .child(div().w(px(22.)).h(px(22.)).flex_none().rounded_full().bg(rgb(0xe8eaed)).text_sm().flex().items_center().justify_center().child((i + 1).to_string()))
+                .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_sm()
+                    .when(is_decorative, |d| d.text_color(rgb(0x9aa0a6)).line_through()).child(self.shape_label(id)))
+                .child(crate::shell::chrome::icon("menu", 18., rgb(0x5f6368).into()).cursor_grab());
+            rows.push((n, row.into_any_element(), is_selected));
+        }
+        let table = crate::shell::chrome::data_table::DataTable::new("pptx-reading-order-table", None, rows, cx)
+            .reorderable(reorder, |e, from, to, _, cx| {
+                let shape = ShapeId(from as u64); let target = ShapeId(to as u64);
+                if let Some(index) = e.slide().shape_index(target) {
+                    let slide = e.current_slide;
+                    e.set_selection(vec![shape]);
+                    e.run(vec![Command::MoveShape {slide, shape, index}], cx);
+                }
+            });
+        body = body.child(table);
 
         // アクションバー
         body = body.child(
@@ -324,16 +235,16 @@ impl SlideEditor {
                 .gap_1()
                 .pt_2()
                 .child(
-                    Button::new("ro-auto-order")
+                    crate::shell::chrome::action_button("ro-auto-order")
                         .small()
                         .label(t("pptx.reading-order-pane.auto-order-top-bottom"))
                         .tooltip(t("pptx.reading-order-pane.automatically-orders-reading-order"))
                         .on_click(cx.listener(|e, _, _, cx| e.auto_reading_order(cx))),
                 )
                 .child(
-                    Button::new("ro-to-selection-pane")
+                    crate::shell::chrome::action_button("ro-to-selection-pane")
                         .small()
-                        .ghost()
+
                         .label(t("pptx.reading-order-pane.selection-pane"))
                         .tooltip(t("pptx.reading-order-pane.open-selection-pane-manage-z"))
                         .on_click(cx.listener(|e, _, _, cx| {

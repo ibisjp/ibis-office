@@ -4,7 +4,8 @@
 //! 動画・音声の再生: a clip played by the system's player (AVFoundation's
 //! `AVPlayer` on macOS). A video's frames are taken one by one from an
 //! `AVPlayerItemVideoOutput` as the CoreVideo buffers GPUI draws as a
-//! surface. Other platforms play nothing yet (`Player::open` is `None`).
+//! surface. Windows uses MediaPlayer with D3D11 frame-server surfaces.
+//! Other platforms play nothing yet (`Player::open` is `None`).
 
 #[cfg(target_os = "macos")]
 pub(crate) use mac::{Frame, Player, video_aspect};
@@ -12,8 +13,13 @@ pub(crate) use mac::{Frame, Player, video_aspect};
 #[cfg(all(target_os = "macos", feature = "scenarios"))]
 pub(crate) use mac::run_loop;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos",windows)))]
 pub(crate) use other::{Frame, Player, video_aspect};
+#[cfg(windows)]
+#[path="media_windows.rs"]
+mod windows_player;
+#[cfg(windows)]
+pub(crate) use windows_player::{Frame,Player,video_aspect};
 
 #[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
@@ -179,7 +185,9 @@ mod mac {
         pub(crate) fn seek_to_ms(&self, ms: u32) {
             unsafe {
                 let time = CMTime { value: ms as i64, timescale: 1000, flags: VALID, epoch: 0 };
-                let _: () = msg_send![self.player, seekToTime: time];
+                // Exactly there: the default snaps to a key frame (a clip with one goes back to its start).
+                let zero = CMTime { value: 0, timescale: 1, flags: VALID, epoch: 0 };
+                let _: () = msg_send![self.player, seekToTime: time toleranceBefore: zero toleranceAfter: zero];
             }
         }
 
@@ -191,6 +199,22 @@ mod mac {
                     return 0;
                 }
                 let secs = CMTimeGetSeconds(now);
+                if secs.is_finite() && secs > 0.0 {
+                    (secs * 1000.0) as u32
+                } else {
+                    0
+                }
+            }
+        }
+
+        /// Whole length in milliseconds (0 until the system knows it).
+        pub(crate) fn duration_ms(&self) -> u32 {
+            unsafe {
+                let total: CMTime = msg_send![self.item, duration];
+                if total.flags & VALID == 0 {
+                    return 0;
+                }
+                let secs = CMTimeGetSeconds(total);
                 if secs.is_finite() && secs > 0.0 {
                     (secs * 1000.0) as u32
                 } else {
@@ -262,7 +286,7 @@ mod mac {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos",windows)))]
 mod other {
     use std::path::Path;
 
@@ -288,6 +312,9 @@ mod other {
             0
         }
         pub(crate) fn set_volume(&self, _volume: f32) {}
+        pub(crate) fn duration_ms(&self) -> u32 {
+            0
+        }
         pub(crate) fn is_playing(&self) -> bool {
             false
         }

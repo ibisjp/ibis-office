@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
@@ -66,7 +66,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.word_count = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -98,8 +98,8 @@ impl SlideEditor {
                     .py(px(5.))
                     .border_b_1()
                     .border_color(theme.title_bar_border)
-                    .child(div().text_size(px(13.)).text_color(theme.foreground).child(text(label)))
-                    .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(crate::shell::ribbon::thousands(value)))
+                    .child(div().text_sm().text_color(theme.foreground).child(text(label)))
+                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(crate::shell::ribbon::thousands(value)))
                     .into_any_element(),
             )
         };
@@ -108,29 +108,18 @@ impl SlideEditor {
             .gap_1()
             .px(px(18.))
             .py(px(8.))
-            .child(
+            .p_0().child(
                 h_flex()
                     .justify_between()
                     .items_center()
                     .pb(px(4.))
-                    .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(target))
-                    .child(mark(
-                        "xlsx.word-count.close",
-                        Button::new("sheet-word-count-close")
-                            .small()
-                            .ghost()
-                            .label(text("_shell.close"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.wb_mut().panels.word_count = None;
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    )),
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(target))
+,
             )
             .child(row("xlsx.word-count.cells", "xlsx.word-count.cells", stats.cells))
             .child(row("xlsx.word-count.words", "docx.help-panels.words", stats.words))
             .child(row("xlsx.word-count.chars-no-spaces", "docx.help-panels.characters-no-spaces", stats.characters_no_spaces))
             .child(row("xlsx.word-count.chars-with-spaces", "docx.help-panels.characters-spaces", stats.characters_with_spaces));
-        Some(SidebarPanel { title: text("docx.help-panels.word-count").into(), body: body.into_any_element() })
+        Some(SidebarPanel::with_footer(text("docx.help-panels.word-count"),body.into_any_element(),crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("sheet-word-count-close", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.close")).on_click(cx.listener(|e,_,w,cx|e.close_panel_dialog(w,cx))))))
     }
 }

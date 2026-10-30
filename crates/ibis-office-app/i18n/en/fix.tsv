@@ -110,7 +110,7 @@ fix.protection.edit-scenarios	Edit scenarios
 fix.protection.password-optional	Password (optional)
 fix.protection.reenter-password	Reenter password
 fix.protection.protect-worksheet-contents-locked	Protect worksheet and contents of locked cells
-fix.protection.allow-all-users-worksheet	Allow all users of this worksheet to:
+fix.protection.allow-all-users-worksheet	Allow all users of this worksheet to
 fix.protection.unprotect-sheet	Unprotect Sheet
 fix.protection.protect-sheet	Protect Sheet
 fix.protection.unprotect	Unprotect
@@ -309,11 +309,11 @@ xlsx.autorecover-settings	AutoRecover Settings…
 xlsx.autorecover.settings-title	AutoRecover Settings
 xlsx.autorecover.section-general	General Settings
 xlsx.autorecover.enabled-label	Save AutoRecover information every
-xlsx.autorecover.interval-label	Interval:
+xlsx.autorecover.interval-label	Interval
 xlsx.autorecover.interval-minutes-unit	minutes
 xlsx.autorecover.keep-unsaved-label	Keep the last AutoRecovered version if I close without saving
 xlsx.autorecover.section-location	File Location
-xlsx.autorecover.location-label	AutoRecover file location:
+xlsx.autorecover.location-label	AutoRecover file location
 xlsx.autorecover.reset-location	Reset to Default
 xlsx.autorecover.section-workbook	Current Workbook
 xlsx.autorecover.disable-workbook-label	Disable AutoRecover for this workbook only
@@ -349,13 +349,13 @@ xlsx.backupsave.default-loc-desc	Specify the default folder when saving new work
 xlsx.backupsave.reset-default-loc	Reset to Default
 xlsx.backupsave.section-backup	Create Backup Copy
 xlsx.backupsave.always-backup-label	Always create backup copy when saving
-xlsx.backupsave.backup-format-label	Backup format:
+xlsx.backupsave.backup-format-label	Backup format
 xlsx.backupsave.format-xlk	Excel Compatible (.xlk)
 xlsx.backupsave.format-xlsx	Excel Workbook (.xlsx)
-xlsx.backupsave.backup-location-label	Location:
+xlsx.backupsave.backup-location-label	Location
 xlsx.backupsave.loc-same-folder	Same as original file
 xlsx.backupsave.loc-custom-folder	Dedicated folder
-xlsx.backupsave.custom-folder-label	Backup destination folder:
+xlsx.backupsave.custom-folder-label	Backup destination folder
 xlsx.backupsave.section-workbook	Current Workbook Settings
 xlsx.backupsave.wb-backup-label	Always create backup for this workbook
 xlsx.backupsave.backup-now-btn	Create Backup Now
@@ -371,10 +371,10 @@ xlsx.backupsave.save-settings-btn	Save Settings
 xlsx.open-and-repair	Repair Damaged Workbook…
 xlsx.repair.title	Repair Damaged Workbook
 xlsx.repair.desc	Repair corrupted Excel workbooks or extract formulas and values.
-xlsx.repair.file-label	Workbook to repair:
+xlsx.repair.file-label	Workbook to repair
 xlsx.repair.browse-btn	Browse…
 xlsx.repair.prompt-file	Select workbook to repair
-xlsx.repair.mode-label	Repair options:
+xlsx.repair.mode-label	Repair options
 xlsx.repair.mode-repair	Repair (Recommended)
 xlsx.repair.mode-repair-desc	Recover as much data, formatting, and formulas as possible.
 xlsx.repair.mode-formulas	Extract Data: Recover Formulas
@@ -449,7 +449,7 @@ pptx.insert-chart.contour	Contour
 pptx.insert-chart.contour-wireframe	Wireframe Contour
 xlsx.pivot-chart-insert	PivotChart…
 xlsx.pivot-chart	PivotChart
-xlsx.pivot-chart-source	Connected PivotTable:
+xlsx.pivot-chart-source	Connected PivotTable
 xlsx.pivot-chart-open-fields	PivotTable Fields…
 xlsx.pivot-chart-inserted	PivotChart inserted
 xlsx.phonetic-toggle	Show/Hide Furigana

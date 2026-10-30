@@ -357,6 +357,7 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
     }
     let mut media = MediaParts::default();
     // Where each slide is written (for hyperlinks to slides).
+    let mut created_ids: HashMap<SlideId, HashMap<ShapeId, String>> = HashMap::new();
     let slide_parts = super::pptx_links::slide_parts(current, &targets.iter().map(|t| t.part.clone()).collect::<Vec<_>>());
     for (slide, target) in current.slides.iter().zip(&targets) {
         let same_placeholders = old_slides.get(&slide.id).is_none_or(|o| o.placeholders == slide.placeholders);
@@ -371,8 +372,9 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
             ids.extend(created.clone());
         }
         if let Some(ids) = native_ids.get_mut(&slide.id) {
-            ids.extend(created);
+            ids.extend(created.clone());
         }
+        created_ids.insert(slide.id, created);
     }
     // Last: a new `p:bg` shifts the paths of the shapes after it.
     for (part, old, fill) in &backgrounds {
@@ -417,6 +419,36 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
         let Some(ids) = native_ids.get(&slide.id) else { continue };
         let doc = package.xml_mut(&target.part)?;
         super::pptx_timing::write_timing(doc, &slide.animations, ids)?;
+    }
+    // Videos and audios (動画・音声): how they are played (the timing PowerPoint plays them by).
+    for (slide, target) in current.slides.iter().zip(&targets) {
+        let before = old_slides.get(&slide.id);
+        let mut plays = Vec::new();
+        let mut update = Vec::new();
+        for shape in &slide.shapes {
+            let ShapeKind::Picture(pic) = &shape.kind else { continue };
+            let Some(clip) = &pic.clip else { continue };
+            let old_clip = before.and_then(|b| b.shape(shape.id)).and_then(|s| if let ShapeKind::Picture(p) = &s.kind { p.clip.as_ref() } else { None });
+            if old_clip.is_some_and(|o| o.options == clip.options && o.audio == clip.audio) {
+                continue;
+            }
+            let spid = match created_ids.get(&slide.id).and_then(|ids| ids.get(&shape.id)) {
+                Some(spid) => spid.clone(),
+                None => match drawing_ids(package, map, slide)?.get(&shape.id) {
+                    Some(spid) => spid.clone(),
+                    None => continue,
+                },
+            };
+            let duration_ms = current.media(clip.media).and_then(|m| super::pptx_media_timing::duration_ms(&m.data));
+            let play = super::pptx_media_timing::MediaPlay { spid, audio: clip.audio, options: clip.options.clone(), duration_ms };
+            if old_clip.is_some() { update.push(play) } else { plays.push(play) }
+        }
+        if plays.is_empty() && update.is_empty() {
+            continue;
+        }
+        let doc = package.xml_mut(&target.part)?;
+        super::pptx_media_timing::sync(doc, &plays, false)?;
+        super::pptx_media_timing::sync(doc, &update, true)?;
     }
     // Comments (コメント), last: they add to the slide's extension list.
     for (slide, target) in current.slides.iter().zip(&targets) {

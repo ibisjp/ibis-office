@@ -30,7 +30,8 @@ pub(crate) enum Item {
     /// Characters on a baseline from `x`, `y` turned a quarter (`turns`: 1
     /// clockwise, -1 anticlockwise) about that point (a cell's vertical
     /// text).
-    Turned { x: f32, y: f32, text: SharedString, font: Font, size: f32, color: Hsla, turns: i8 },
+    /// `xscale` squeezes the glyph along its own advance before it is turned (1 when it is not squeezed).
+    Turned { x: f32, y: f32, text: SharedString, font: Font, size: f32, color: Hsla, turns: i8, xscale: f32 },
     /// One character on the baseline `y` from `x`, its glyph `xscale` times
     /// as wide (`w:w`, `w:fitText`).
     Scaled { x: f32, y: f32, text: SharedString, font: Font, size: f32, color: Hsla, xscale: f32 },
@@ -169,6 +170,13 @@ pub(crate) const COMMENT_BUBBLE_BG: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0x
 pub(crate) const COMMENT_BUBBLE_BORDER: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0xf9ab00);
 /// The icon colour inside the comment indicator bubble in the margin.
 pub(crate) const COMMENT_BUBBLE_ICON: ibis_doc_model::Rgb = ibis_doc_model::Rgb(0xd9822b);
+
+/// Whether a unit is the rest of a 組み文字 (a combined run: its first character holds the room of all of them, the others have none): a line
+/// never breaks there, nor does it break back to it, even when the whole is wider than the line (Word's PDF of corpus document 020: a combined
+/// run of eight characters in a 40 pt cell stays whole). Both line breakers (the plain one and the one beside a floating object) use it.
+fn is_combined_rest(p: &FlowParagraph, unit: &Unit, width: f32) -> bool {
+    width == 0.0 && matches!(unit, Unit::Char { style, .. } if *style != LABEL && p.runs.get(*style).is_some_and(|r| r.style.combine.is_some()))
+}
 
 /// A typeface whose characters are one em (full-width) or half an em wide.
 fn fixed_width(name: &str) -> bool {
@@ -374,6 +382,11 @@ fn map_comment_runs(doc: &FlowDocument) -> std::collections::HashMap<(u32, usize
 /// The run index of a list item's number (drawn in `list_style`).
 const LABEL: usize = usize::MAX;
 
+/// The typeface of a list item's number or bullet `c`: the list level's own, else (a bullet in the geometric shapes (●, ■, ◆…) defaults to
+/// Arial in Word's PDF of DWID, not the Japanese font's) the run style's for the character.
+fn label_font_name(style: &FlowRunStyle, c: char) -> Option<&str> {
+    style.font.as_deref().or_else(|| if matches!(c as u32, 0x2022 | 0x25A0..=0x25FF) { Some("Arial") } else { style.font_for(c) })
+}
 #[derive(Clone, Copy)]
 struct UnderlineBox {
     style: UnderlineStyle,
@@ -705,8 +718,7 @@ impl<'r> Layouter<'r> {
                         let name = if cjk { r.style.font.as_deref() } else { r.style.fallback_font.as_deref().or(r.style.font.as_deref()) };
                         let font = self.res.font(&TextStyle { font_size: (size * 100.0) as u32, bold: r.style.bold.unwrap_or(false), italic: r.style.italic.unwrap_or(false), font: name.map(str::to_string), ..TextStyle::default() });
                         let (ascent, line) = self.line_metrics(name, &font, size);
-                        let mincho = name.map(str::trim).is_some_and(|n| n.starts_with("游明朝") || n.starts_with("Yu Mincho") || n.starts_with("YuMincho")); // i18n-ok（フォント名の判定（游明朝）。訳さない）
-                        let lead = if mincho { 0.143 * size } else { self.lead_em(name) * size };
+                        let lead = if paragraph.no_snap_to_grid { self.lead_em(name) } else { Self::grid_lead_em(name) } * size;
                         if line + lead > tall.1 + tall.2 {
                             tall = (ascent, line, lead, size);
                         }
@@ -733,6 +745,27 @@ impl<'r> Layouter<'r> {
                 }
             }
         }
+    }
+
+    /// A floating text box with `spAutoFit` is as high as its text where it keeps the text off the lines (the height the file
+    /// saved can be Word's default for a box, 110 pt, of which the text fills one line: corpus 063, whose date line
+    /// wrapped round the room that is not there).
+    fn fitted_shape_height(&self, shape: &ibis_doc_model::Shape) -> f32 {
+        let h = pt(shape.frame.height);
+        let body = match &shape.kind {
+            ibis_doc_model::ShapeKind::Auto(a) => a.text.as_ref(),
+            ibis_doc_model::ShapeKind::TextBox(body) => Some(body),
+            _ => None,
+        };
+        let Some(body) = body else { return h };
+        if body.autofit != ibis_doc_model::TextAutofit::ResizeShape || body.vertical || body.sideways != 0 || shape.rotation != 0 {
+            return h;
+        }
+        let inner = pt(shape.frame.width) - (body.insets.left + body.insets.right) as f32 / 12_700.0;
+        if inner <= 1.0 {
+            return h;
+        }
+        h.min(self.text_body_height(body, inner) + (body.insets.top + body.insets.bottom) as f32 / 12_700.0)
     }
 
     /// 図形を文字に合わせる (`a:spAutoFit`): Word fits the box to its text (its lines
@@ -781,7 +814,7 @@ impl<'r> Layouter<'r> {
                 let name = r.style.font.as_deref();
                 let font = self.res.font(&TextStyle { font_size: (size * 100.0) as u32, bold: r.style.bold.unwrap_or(false), italic: r.style.italic.unwrap_or(false), font: name.map(str::to_string), ..TextStyle::default() });
                 let (_, line) = self.line_metrics(name, &font, size);
-                tall = tall.max(line + Self::leading(name) * size);
+                tall = tall.max(line + self.lead_em(name) * size);
                 for c in r.text.chars() {
                     any = true;
                     let cw = self.res.text_width(&c.to_string(), &font, size);
@@ -816,7 +849,7 @@ impl<'r> Layouter<'r> {
                     return;
                 }
                 let sw = pt(shape.frame.width);
-                let sh = pt(shape.frame.height);
+                let sh = self.fitted_shape_height(shape);
                 let page_w = pt(self.doc.page.size.width);
                 let margin_l = pt(self.doc.page.left);
                 let margin_r = pt(self.doc.page.right);
@@ -932,7 +965,6 @@ impl<'r> Layouter<'r> {
     /// `type="lines"`: the height rounded up to whole `linePitch`es).
     fn line_height_parts(&self, p: &FlowParagraph, base: f32, lead: f32, in_table: bool) -> (f32, f32) {
         // In a table's cell the lines are on the grid only with `adjustLineHeightInTable`.
-        let in_cell = in_table;
         // Word 2003-era files (compatibility mode below 15) line the cells' lines up on the grid as well.
         let in_table = in_table && !self.doc.adjust_line_height_in_table && self.doc.compat_mode.is_none_or(|m| m >= 15);
         let snapping = !in_table && p.snap_to_grid && self.line_pitch.get().is_some_and(|pitch| pitch > 0) && !matches!(p.line, LineHeight::Exact(_) | LineHeight::AtLeast(0));
@@ -941,7 +973,7 @@ impl<'r> Layouter<'r> {
         let h = match p.line {
             LineHeight::Exact(exact) => return (pt(exact), 0.0),
             LineHeight::AtLeast(min) => pt(min).max(base),
-            LineHeight::Auto(m) => base.max(base * m as f32 / 240.0),
+            LineHeight::Auto(m) => base * m as f32 / 240.0,
         };
         if snapping && let Some(pitch) = self.line_pitch.get() {
             let grid_pitch = pt(pitch);
@@ -958,17 +990,49 @@ impl<'r> Layouter<'r> {
                 // A multiple (1.5 lines) is of the line the grid makes of the text, not rounded up to the grid again.
                 if let LineHeight::Auto(m) = p.line
                     && m != 240
-                    && !in_cell
                 {
-                    let single = ((base + lead - 0.01) / grid_pitch).floor() * grid_pitch + grid_pitch;
-                    let total = single.max(grid_pitch * m as f32 / 240.0);
+                    let single = ((base + lead + 0.001) / grid_pitch).floor() * grid_pitch + grid_pitch;
+                    let total = if h <= single { single } else { single * m as f32 / 240.0 };
                     return (total, total - h);
                 }
-                let snapped = ((needed - 0.01) / grid_pitch).floor() * grid_pitch + grid_pitch;
+                // A line of text that is exactly a grid high takes the next grid too (Word's PDFs: a 14 pt ＭＳ 明朝 line, 9/7 of 14 = 18 pt, on an
+                // 18 pt grid takes two); a line spacing's minimum equal to the grid takes one.
+                let tie = if matches!(p.line, LineHeight::AtLeast(_)) { -0.01 } else { 0.001 };
+                let snapped = ((needed + tie) / grid_pitch).floor() * grid_pitch + grid_pitch;
                 return (snapped, snapped - h);
             }
         }
         (h, 0.0)
+    }
+
+    /// How many times a run's character spacing (`w:spacing`) counts for the character `c`. With `balanceSingleByteDoubleByteWidth` the spacing of a
+    /// double-byte character and of a half-width space counts twice, whatever the document grid and whether the paragraph is on it; digits and Latin
+    /// letters count once; without the setting every character counts once (Word's PDFs, Microsoft 365 16.0.20527: `spacing-charspace-size-probe.docx`
+    /// (no setting), `spacing-charspace-balance-probe.docx`, `spacing-charspace-compress-probe.docx`, `spacing-charspace-balance-compress-probe.docx`:
+    /// +5 and +10 pt on ＭＳ ゴシック digits, Century and ＭＳ ゴシック Latin letters, spaces, かな and 漢字, in nine settings of `w:charSpace`
+    /// (none, 321 ... 6651, -1000, -4096): the digits and letters move 5.0 / 10.0 pt each, the spaces and the かな and 漢字 10.0 / 20.0 pt with the
+    /// setting; `spacing-small-values-*-probe.docx`: -100 to +100 twips, the same ratios (a space 2.0 x); 019: 労働時間 at +7.9 pt is 15.8 pt apart, a digit
+    /// at +5.25 pt 5.25; earlier `spacing-balance-grid-probe.docx`, `spacing-grid-flags-probe.docx`, `gridspacing-halfwidth-probe.docx`).
+    fn spacing_factor(&self, _p: &FlowParagraph, c: char) -> f32 {
+        if self.doc.balance_single_double_byte_width && (is_cjk(c) || c == ' ') { 2.0 } else { 1.0 }
+    }
+
+    /// The room `ms_room` put into the line of the largest of `chars` (ＭＳ 明朝 / ＭＳ ゴシック), or 0.
+    fn ms_room_of<'u>(&self, p: &FlowParagraph, chars: impl Iterator<Item = &'u Unit>) -> f32 {
+        chars
+            .filter_map(|u| {
+                let Unit::Char { c, line, style, size, .. } = u else { return None };
+                // A list item's number or bullet is in the line too (with the typeface `units` gave it).
+                let name = if *style == LABEL { label_font_name(&p.list_style, *c) } else { p.runs.get(*style).and_then(|r| r.style.font_for(*c)) };
+                Some((*line, self.ms_room(name, *size)))
+            })
+            .fold((0.0f32, 0.0f32), |best, x| if x.0 > best.0 { x } else { best })
+            .1
+    }
+
+    /// The room under the text of a line that need not fit the page: the line grid's half of what it adds.
+    fn grid_room_below(&self, p: &FlowParagraph, natural: f32, lead: f32, in_table: bool, _height: f32, _baseline: f32, _text_line: f32, _text_ascent: f32) -> f32 {
+        self.line_height_parts(p, natural, lead, in_table).1 / 2.0
     }
 
     /// Where the baseline is in a line `height` high whose text is
@@ -978,8 +1042,27 @@ impl<'r> Layouter<'r> {
     /// 18 pt); the room the line grid adds is split evenly above and below
     /// (Word's PDF of DBDY.p01: a label of 9 pt Arial and 游ゴシック, 11.58 pt
     /// high, in an 18 pt grid line has its baseline 12.0 pt down).
-    fn baseline_in_line(&self, p: &FlowParagraph, natural: f32, lead: f32, text_line: f32, text_ascent: f32, in_table: bool) -> f32 {
+    fn baseline_in_line(&self, p: &FlowParagraph, natural: f32, lead: f32, text_line: f32, text_ascent: f32, in_table: bool, ms_room: f32) -> f32 {
         let (height, grid) = self.line_height_parts(p, natural, lead, in_table);
+        // An exact line puts its baseline 0.8 of the line down, whatever the typeface and size (Word's PDF of exact-baseline-sweep.docx: Century and
+        // ＭＳ 明朝, 8 / 10.5 / 12 pt text in exact 10 / 12 / 14 / 18 / 24 pt lines: 0.797 to 0.813 of the height; 游ゴシック 10 pt in exact 15 pt: 11.98).
+        if matches!(p.line, LineHeight::Exact(_)) {
+            return height * 0.8;
+        }
+        // A multiple of lines on a line grid: the room the grid line has beyond the text, the extra of the multiple included, is split evenly above
+        // and below the text (Word's PDFs of cellgrid-multiple-10pt-grid290.docx: from a line of 1.15 lines to the next of 1.5 the baselines are
+        // 19.20 pt apart = 16.68 + (21.75 - 16.68) / 2, and so for the other multiples; the first baseline of a line is 10.83 pt down in a
+        // single 14.5 pt line and 11.91 pt in a 1.15 one, half of the 2.18 pt more).
+        // The text's box in the grid line is its 1 em (ascent and descent), not the line `ms_room` makes of it: a single 14.5 pt line of 10 pt ＭＳ ゴシック has its
+        // baseline 10.83 to 10.94 pt down (Word's PDFs of cellgrid-empty-multiple and cellrow-valign-exact: (14.5 - 10) / 2 + 0.87 x 10 = 10.95).
+        if grid > 0.0 && matches!(p.line, LineHeight::Auto(m) if m != 240 || ms_room > 0.0) {
+            return (height - (text_line - ms_room)).max(0.0) * 0.5 + text_ascent;
+        }
+        // Off a grid a single line of ＭＳ 明朝 / ＭＳ ゴシック puts the room `ms_room` adds to the text's 1 em half above and half below it too (Word's PDF of 019: a 10.29 pt line of 8 pt
+        // text has its baseline 8.0 pt down, 0.87 em + 0.143 em, so that the next, an exact 12 pt line, is 11.9 pt under it, not the 12.9 pt of a baseline at 0.87 em).
+        if grid <= 0.0 && ms_room > 0.0 && matches!(p.line, LineHeight::Auto(240)) {
+            return ms_room * 0.5 + text_ascent;
+        }
         // An exact line spacing leaves no room for the leading (DSEC-00011:
         // 10 pt 游ゴシック in an exact 15 pt line).
         let text_line = if grid > 0.0 || matches!(p.line, LineHeight::Exact(_)) { text_line } else { text_line + lead };
@@ -1038,42 +1121,86 @@ impl<'r> Layouter<'r> {
             None => crate::render::font_metrics::office_metrics(&font.family).unwrap_or_else(drawn),
         };
         // ＭＳ 明朝 / ＭＳ ゴシック: Word's lines at 10.5 pt alternate 13.5 and 13.75 pt (mean 13.625, 1.298 em against the 1 em of
-        // their ascent and descent); in a table's cell they stay 1 em (the rows of a form keep their height).
+        // their ascent and descent), in a table's cell as well (see `ms_room`).
         (a * size, (a + d) * size + self.ms_room(name, size))
     }
 
-    /// ＭＳ 明朝 / ＭＳ ゴシック: the room Word leaves in a line of text at 10.5 pt beyond their ascent and descent (not in a table's
-    /// cell, nor for an empty paragraph, which keeps the 1 em).
+    /// ＭＳ 明朝 / ＭＳ ゴシック: the room Word leaves in a line of text beyond their ascent and descent (an empty paragraph has it too).
     ///
-    /// An exception kept until its source is found (user decision 2026-10-21): the 0.2857 em is measured, not derived. Word's PDFs
-    /// (a line of one 10.5 / 12 / 14 pt ＭＳ 明朝 or ＭＳ ゴシック, no grid) give 1.2935 em per line (13.57 / 15.55 / 18.1 pt), where
-    /// the tables of the typeface (hhea 220 / -36 / gap 0 on 256 upm, OS/2 win and typo), DirectWrite (LineSpacing), GDI+
-    /// (GetLineSpacing) and GDI's TEXTMETRIC (height 1 em, external leading 0) all say 1.0 em. Century (1.2021 em) and
+    /// Body text and the cells of a document without a line grid: 2/7 em, an exception kept until its source is found (user decision 2026-10-21;
+    /// A2): the 0.2857 em is measured, not derived. Word's PDFs (a line of one 10.5 / 12 / 14 pt ＭＳ 明朝 or ＭＳ ゴシック, no grid) give 1.2935 em
+    /// per line (13.57 / 15.55 / 18.1 pt), where the tables of the typeface (hhea 220 / -36 / gap 0 on 256 upm, OS/2 win and typo), DirectWrite
+    /// (LineSpacing), GDI+ (GetLineSpacing) and GDI's TEXTMETRIC (height 1 em, external leading 0) all say 1.0 em. Century (1.2021 em) and
     /// Arial Unicode MS (about 1.15 em) agree with the tables; 游明朝 (Word 1.669 em, tables 1.602 em) does not either.
+    ///
+    /// The cells of a document with a line grid whose lines are not on it (no `adjustLineHeightInTable`, mode 15): 0.3 em, the 1.3 times the size
+    /// that `lead_em` gives the other East Asian typefaces (1.3 times the Windows ascent plus descent, 1 em for these). Word's PDFs of
+    /// `smallsize-grid230-mincho-w41453.docx` (ＭＳ 明朝 5.04 / 6.00 / 6.96 / 8.04 / 9.00 / 9.96 pt in a cell of a 11.5 pt grid) have the lines
+    /// 6.48 / 7.68-7.80 / 9.0-9.12 / 10.32-10.44 / 11.64-11.76 / 12.96 pt apart, 1.3 times the size to the pixel they are drawn on; the rules of the
+    /// tables of corpus documents 020, 053, 055 and 062 are then where Word's are (within 0.3 pt).
     fn ms_room(&self, name: Option<&str>, size: f32) -> f32 {
         let ms = name.map(str::trim).is_some_and(|n| fixed_width(n) || proportional_ms(n));
+        // In a table's cell the line is as high as in the body (Word's PDFs: ＭＳ ゴシック 10.5 pt, 13.62 pt in the cell and in the body, in a
+        // document without a line grid and with `w:linePitch` without a type); where the document has a line grid and the cell's lines are not on
+        // it (no `adjustLineHeightInTable`, mode 15) they are 1.3 times the size apart, whatever the size (see above).
         let cell_off_grid = self.current_cell.get().is_some()
-            && !((self.doc.adjust_line_height_in_table || self.doc.compat_mode.is_some_and(|m| m < 15))
-                && self.line_pitch.get().is_some_and(|p| p > 0));
-        if ms && !cell_off_grid { 0.2857 * size } else { 0.0 }
+            && self.line_pitch.get().is_some_and(|p| p > 0)
+            && !(self.doc.adjust_line_height_in_table || self.doc.compat_mode.is_some_and(|m| m < 15));
+        if ms { if cell_off_grid { 0.3 * size } else { 2.0 / 7.0 * size } } else { 0.0 }
     }
 
-    /// The room Word leaves below a line of typeface `name` beyond its
-    /// ascent and descent when the line is not on a line grid, in ems.
-    /// 游ゴシック: its lines are 1.43 em apart, not 1.287 em (its Windows
-    /// ascent and descent), with the baseline at its ascent (measured on
-    /// Word's PDFs: lines of 10 to 20 pt of a section without a grid in
-    /// DSEC, of DBDY with snapToGrid=0 and of DPAR in table cells). On a
-    /// grid the line is centred without it (DBDY-00007).
-    fn lead_em(&self, name: Option<&str>) -> f32 {
-        Self::leading(name)
+    /// The room below the text a line of paragraph `p` in typeface `name` counts, in ems: `lead_em` where the line is not on the line grid, and
+    /// `grid_lead_em` where it is (see `line_height_parts` for when it is). The 1.3 times of `lead_em` is measured off the grid (Word's PDFs
+    /// `lineheight-*-mode15-nogrid-*`); on it Word's lines take no more than 1.667 em of 游明朝 and 游ゴシック (1.2871 em tall): a 36 pt line is 3
+    /// grids of 20 pt, not 4 (issue 54), a 12 pt line of the report one grid of 20 pt (1.673 em would be 20.08 pt), and more than 1.4286 em (a 28 pt
+    /// line of 游ゴシック is 3 grids, 40.04 pt).
+    fn lead_in(&self, p: &FlowParagraph, name: Option<&str>) -> f32 {
+        let in_cell = self.current_cell.get().is_some() && !self.doc.adjust_line_height_in_table && self.doc.compat_mode.is_none_or(|m| m >= 15);
+        let on_grid = !in_cell && p.snap_to_grid && self.line_pitch.get().is_some_and(|pitch| pitch > 0) && !matches!(p.line, LineHeight::Exact(_) | LineHeight::AtLeast(0));
+        if on_grid { Self::grid_lead_em(name) } else { self.lead_em(name) }
     }
 
-    fn leading(name: Option<&str>) -> f32 {
+    /// `lead_em` on the line grid: 游ゴシック 0.143 em (its lines count 1.43 em there: Word's PDF of the editing report's title), the others none.
+    fn grid_lead_em(name: Option<&str>) -> f32 {
         match name.map(str::trim) {
             Some(n) if (n.starts_with("游ゴシック") || n.starts_with("Yu Gothic") || n.starts_with("YuGothic")) && !n.contains("UI") => 0.143, // i18n-ok（フォント名の判定（游ゴシック）。訳さない）
             _ => 0.0,
         }
+    }
+
+    /// The room Word leaves in a line of typeface `name` beyond its ascent and descent when the line is not on a line grid, in ems
+    /// (split evenly above and below the text, see `text_dy`).
+    ///
+    /// Word's lines of an East Asian typeface are 1.3 times its Windows ascent plus descent (`OS/2` usWinAscent + usWinDescent): the 1.3 is
+    /// Word's constant for them. In its PDFs (`lineheight-*-mode15-nogrid-*.docx` and `lineheight2-*`, 8 / 10.5 / 14 pt, in and out of a table's
+    /// cell, kana and Latin letters or Latin letters only; Microsoft 365 16.0.20527.20088) the lines of メイリオ (Windows height 1.5 em) are 1.95 em
+    /// apart, Meiryo UI (1.2701) 1.65, 游ゴシック and 游明朝 (1.2871) 1.673, Yu Gothic UI and Malgun Gothic (1.3301) 1.729, ＭＳ ゴシック,
+    /// HGGothicM and BIZ UDGothic (1.0) 1.3, all within 0.03 pt. Arial, Segoe UI and Century keep their own height. All the typefaces that get it
+    /// say in their font that they support the Japanese code page (`OS/2` ulCodePageRange1 bit 17), Malgun Gothic (a Korean typeface) too, and
+    /// the three that do not get it do not: the font decides, not the text (Latin letters only in Meiryo, 游ゴシック or ＭＳ ゴシック: 1.3 as well).
+    /// In a line of two typefaces the room above and below the text is that of the tallest of each (Segoe UI with ＭＳ 明朝's kana: 1.079 above,
+    /// 0.291 below: 1.370 em; measured 1.372).
+    ///
+    /// A typeface that is not installed (another font stands in for it, whose file says nothing about it) is told by its name, from the list
+    /// of the Japanese typefaces Office ships (AGENTS.md: the fallback table for typefaces the PC lacks). ＭＳ 明朝 and ＭＳ ゴシック keep their
+    /// room in `ms_room` (0.3 em measured 1.297 em in Word for ＭＳ ゴシック 10.5 pt, but it makes 056 and 076 a page longer than Word's).
+    fn lead_em(&self, name: Option<&str>) -> f32 {
+        let Some(n) = name.map(str::trim) else { return 0.0 };
+        if fixed_width(n) || proportional_ms(n) {
+            return 0.0;
+        }
+        let japanese = self.res.is_japanese_typeface(n).unwrap_or_else(|| {
+            ["游ゴシック", "Yu Gothic", "YuGothic", "游明朝", "Yu Mincho", "YuMincho", "メイリオ", "Meiryo"].iter().any(|p| n.starts_with(p)) // i18n-ok（フォント名の判定。訳さない）
+        });
+        if !japanese {
+            return 0.0;
+        }
+        let (a, d) = crate::render::font_metrics::office_metrics(n).unwrap_or_else(|| {
+            let font = self.res.font(&TextStyle { font: Some(n.to_string()), ..TextStyle::default() });
+            let (a, d, _) = self.res.line_metrics(&font);
+            (a, d)
+        });
+        0.3 * (a + d)
     }
 
     /// The page counts and section number for fields where laying out is
@@ -1161,6 +1288,17 @@ impl<'r> Layouter<'r> {
         out
     }
 
+    /// A 組み文字's bracket drawn in the run's East Asian typeface, whatever the bracket is (Word's PDF of 020: the round brackets of a combined
+    /// run are drawn in ＭＳ 明朝 at 14 pt, 7.0 pt wide; the Latin face would give 8.75 pt): the typeface's own advance, which for a fixed-width
+    /// face is its half-width cell.
+    fn bracket_width(&self, s: &FlowRunStyle, ch: char, size: f32) -> f32 {
+        let name = s.font_for('\u{3042}');
+        if name.is_some_and(|n| fixed_width(n.trim())) {
+            return size / 2.0;
+        }
+        self.res.text_width(&ch.to_string(), &self.font(s, name), size)
+    }
+
     /// 組み文字's room: its characters in two lines of half `size` (the
     /// first half, rounded up, on the first), the wider of them, and its
     /// brackets at `size`.
@@ -1168,7 +1306,7 @@ impl<'r> Layouter<'r> {
         let measure = |list: &[char], at: f32| list.iter().map(|ch| self.res.text_width(&ch.to_string(), &self.font(s, s.font_for(*ch)), at)).sum::<f32>();
         let first = chars.len().div_ceil(2);
         let block = measure(&chars[..first], size / 2.0).max(measure(&chars[first..], size / 2.0));
-        block + c.brackets().map_or(0.0, |(a, b)| measure(&[a, b], size))
+        block + c.brackets().map_or(0.0, |(a, b)| self.bracket_width(s, a, size) + self.bracket_width(s, b, size))
     }
 
     /// 組み文字 drawn from `x0` on baseline `y`: the first line's baseline
@@ -1180,28 +1318,30 @@ impl<'r> Layouter<'r> {
         let half = size / 2.0;
         let first = chars.len().div_ceil(2);
         let width = |ch: char, at: f32| self.res.text_width(&ch.to_string(), &self.font(s, s.font_for(ch)), at);
-        let mut out = Vec::new();
         let mut x = x0;
         let line_w = |list: &[char]| list.iter().map(|ch| width(*ch, half)).sum::<f32>();
         let block = line_w(&chars[..first]).max(line_w(&chars[first..]));
-        let mut glyph = |ch: char, x: f32, y: f32, at: f32| {
-            let font = self.font(s, s.font_for(ch));
+        let mut out: Vec<Item> = Vec::new();
+        let mut put = |ch: char, x: f32, y: f32, at: f32, name: Option<&str>| {
+            let font = self.font(s, name);
             out.push(Item::Text { x, y, text: ch.to_string().into(), offsets: Arc::from([0.0f32]), font, size: at, color });
         };
+        // The brackets are drawn in the East Asian typeface, the characters in the typeface of each.
+        let bracket_face = s.font_for('\u{3042}');
         if let Some((open, _)) = c.brackets() {
-            glyph(open, x, y, size);
-            x += width(open, size);
+            put(open, x, y, size, bracket_face);
+            x += self.bracket_width(s, open, size);
         }
         for (list, dy) in [(&chars[..first], -0.517), (&chars[first..], 0.186)] {
             // Each line centred in the block.
             let mut lx = x + (block - line_w(list)) / 2.0;
             for ch in list {
-                glyph(*ch, lx, y + dy * size, half);
+                put(*ch, lx, y + dy * size, half, s.font_for(*ch));
                 lx += width(*ch, half);
             }
         }
         if let Some((_, close)) = c.brackets() {
-            glyph(close, x + block, y, size);
+            put(close, x + block, y, size, bracket_face);
         }
         out
     }
@@ -1502,9 +1642,7 @@ impl<'r> Layouter<'r> {
             for c in label.chars().filter(|_| picture.is_none()) {
                 // A bullet in the geometric shapes (●, ■, ◆…) defaults to Arial in
                 // Word's PDF of DWID (small) if no bullet font was specified, not the Japanese font's.
-                let name = style.font.as_deref().or_else(|| {
-                    if matches!(c as u32, 0x2022 | 0x25A0..=0x25FF) { Some("Arial") } else { style.font_for(c) }
-                });
+                let name = label_font_name(style, c);
                 let font = self.font(style, name);
                 let width = self.res.text_width(&c.to_string(), &font, size);
                 let (mut ascent, mut line) = self.line_metrics(name, &font, size);
@@ -1513,7 +1651,7 @@ impl<'r> Layouter<'r> {
                     ascent += extra * HANGUL_ASCENT_SHARE;
                     line += extra;
                 }
-                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.lead_em(name) * size, auto_space: 0.0, squeeze: 1.0, squeezed: false });
+                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.lead_in(p, name) * size, auto_space: 0.0, squeeze: 1.0, squeezed: false });
                 positions.push((0, false));
             }
             let suffix = self.doc.styles.numbering.level(list.num_id, list.level).map(|l| l.suffix).unwrap_or_default();
@@ -1551,7 +1689,7 @@ impl<'r> Layouter<'r> {
                 let font = self.font(style, name);
                 let width = self.res.text_width(&c.to_string(), &font, size);
                 let (ascent, line) = self.line_metrics(name, &font, size);
-                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.lead_em(name) * size, auto_space: 0.0, squeeze: 1.0, squeezed: false });
+                out.push(Unit::Char { c, width, inset: 0.0, font, size, style: LABEL, line, ascent, lead: self.lead_in(p, name) * size, auto_space: 0.0, squeeze: 1.0, squeezed: false });
                 positions.push((0, false));
             }
         }
@@ -1603,14 +1741,17 @@ impl<'r> Layouter<'r> {
                             actual = box_w;
                         }
                     }
-                    // Word lays a Latin letter out in whole pixels of the printer's resolution, as GDI sets it at 600 dpi (an installed
-                    // typeface; the stand-in's own advance otherwise).
-                    let actual = word_latin_advance(name, installed, c, char_size, style.bold, style.italic, actual);
+                    // A Latin letter's advance is its glyph's own width at the size, not rounded to a pixel: Word's PDFs of
+                    // `glyph-advance-ascii-probe.docx` (Times New Roman and Century, 9 / 10 / 10.5 / 11 / 12 pt, the 93 printable ASCII letters,
+                    // 930 pairs) have the advances within 0.1 px (rms) of hmtx x size and 0.3 px of the same rounded to a 600 dpi pixel (GDI's width,
+                    // which this layout used before, `281e5d53b`); on the 150 corpus documents the pages and the lines that match Word's are the same either way.
                     let (cell, inset) = match name {
                         Some(n) if proportional_ms(n) => {
                             // The installed font's own advance; a stand-in's (the font is not installed) is set to the advance the
                             // font has (`proportional_ms_width`).
-                            let installed = font.family.as_ref() == n;
+                            // `installed` is whether the typeface is installed under the name the file gives (its Japanese name or its English one,
+                            // `has_typeface`): the drawn family is named one or the other by the OS, so it is not compared with the file's name
+                            // (GitHub issue #56).
                             let cell = if installed { actual } else { proportional_ms_width(c, char_size) };
                             (cell, 0.0)
                         }
@@ -1623,16 +1764,45 @@ impl<'r> Layouter<'r> {
                         // A space beside East Asian text (or alone in its run) is half an em; one between two Latin words keeps
                         // its width (Word's PDFs of an English text in a Japanese document).
                         _ if c == ' ' && self.doc.balance_single_double_byte_width && {
-                            let before = all[..at].iter().rev().find(|ch| **ch != ' ');
-                            let after = all[at + 1..].iter().find(|ch| **ch != ' ');
-                            (before.is_none() && after.is_none()) || before.is_some_and(|b| is_cjk(*b)) || after.is_some_and(|a| is_cjk(*a))
+                            let mut before = all[..at].iter().rev().find(|ch| **ch != ' ').copied();
+                            let mut after = all[at + 1..].iter().find(|ch| **ch != ' ').copied();
+                            // Alone in its run (nothing but spaces): what is beside it is in the runs next to it (Word's PDF of corpus 124: a space
+                            // in a run of its own between two English words is 0.25 em, not half an em).
+                            if before.is_none() && after.is_none() {
+                                fn text_of(r: &ibis_doc_model::FlowRun) -> Option<&str> {
+                                    if let FlowRunKind::Text(t) = &r.kind { Some(t.as_str()) } else { None }
+                                }
+                                before = p.runs[..index].iter().rev().filter_map(text_of).find_map(|t| t.chars().rev().find(|ch| *ch != ' '));
+                                after = p.runs[index + 1..].iter().filter_map(text_of).find_map(|t| t.chars().find(|ch| *ch != ' '));
+                            }
+                            (before.is_none() && after.is_none()) || before.is_some_and(is_cjk) || after.is_some_and(is_cjk)
                         } => (char_size / 2.0, 0.0),
                         _ => (actual, 0.0),
                     };
                     // A comment's mark (U+200B) takes no room.
                     // The character grid's pitch (文字数と行数を指定): a full-width character takes the grid's added pitch (Word's PDFs keep the Latin letters of a proportional font as they are, and give those of a fixed-width one (ＭＳ 明朝, ＭＳ ゴシック) the added pitch too: a half-width 8 pt letter 4.0 → 3.0 pt, and the characters in a paragraph on the grid).
-                    let grid_added = if !p.snap_to_grid { 0.0 } else { self.char_space.get().map_or(0.0, |cs| if is_cjk(c) || name.is_some_and(fixed_width) { pt(cs) } else { 0.0 }) };
-                    let width = if c == '\u{200b}' { 0.0 } else { cell * style.scale as f32 / 100.0 + pt(style.spacing) + grid_added };
+                    // A run's character spacing (`w:spacing`) counts twice in a paragraph on the character grid (Word's PDF of
+                    // gridspacing-halfwidth-probe.docx: +0.4 / -0.4 / -1.0 pt moves every character, Latin, digit, space or kana, in a fixed-width
+                    // or proportional face, by +0.8 / -0.8 / -2.0 pt on charSpace +1.624 and -1.0 pt).
+                    let grid_spacing_factor = self.spacing_factor(p, c);
+                    let grid_added = if !p.snap_to_grid {
+                        0.0
+                    } else {
+                        self.char_space.get().map_or(0.0, |cs| {
+                            if is_cjk(c) {
+                                pt(cs)
+                            } else if name.is_some_and(fixed_width) {
+                                // A half-width character of a fixed-width font sits in half a grid cell, so it takes half of the added pitch
+                                // (Word's PDFs: ＭＳ 明朝 8 pt on charSpace +0.503 pt, the digits, brackets and spaces advance 4.25 pt = 4.0 + 0.25
+                                // (103); 11 pt on charSpace -1.0 pt, each space 5.02 pt = 5.52 - 0.5 (121)).
+                                if full_width(c) { pt(cs) } else { pt(cs) / 2.0 }
+                            } else {
+                                0.0
+                            }
+                        })
+                    };
+                    let cell=if self.doc.page.direction.vertical() && crate::render::vertical_text::upright(c){char_size}else{cell};
+                    let width = if c == '\u{200b}' { 0.0 } else { cell * style.scale as f32 / 100.0 + pt(style.spacing) * grid_spacing_factor + grid_added };
                     // A substitute's glyph wider than the cell Word's font gives it is squeezed into it (it would
                     // overlap its neighbour).
                     let fits = if name.is_some_and(|n| fixed_width(n) || proportional_ms(n)) && actual > cell + 0.05 && cell > 0.0 { cell / actual } else { 1.0 };
@@ -1650,7 +1820,7 @@ impl<'r> Layouter<'r> {
                         ascent += 1.2 + pad_v;
                         line += 1.2 + 2.8 + 2.0 * pad_v + 2.0 * extra_bw;
                     }
-                    out.push(Unit::Char { c, width, inset, font, size: char_size, style: index, line, ascent, lead: self.lead_em(name) * base_size, auto_space: 0.0, squeeze: style.scale as f32 / 100.0 * fits, squeezed: false });
+                    out.push(Unit::Char { c, width, inset, font, size: char_size, style: index, line, ascent, lead: self.lead_in(p, name) * base_size, auto_space: 0.0, squeeze: style.scale as f32 / 100.0 * fits, squeezed: false });
                 }
             };
             // Tracked changes visibility: All shows both; Simple and None hide deleted text; Original hides inserted text.
@@ -1766,7 +1936,7 @@ impl<'r> Layouter<'r> {
                                     let font = self.font_for_size(style, name, ring_size);
                                     let width = self.res.text_width(&ring.to_string(), &font, ring_pt);
                                     let (ascent, line) = self.line_metrics(name, &font, ring_pt);
-                                    out.push(Unit::Char { c: ring, width, inset: 0.0, font, size: ring_pt, style: index, line, ascent, lead: Self::leading(name) * ring_pt, auto_space: 0.0, squeeze: 1.0, squeezed: false });
+                                    out.push(Unit::Char { c: ring, width, inset: 0.0, font, size: ring_pt, style: index, line, ascent, lead: self.lead_in(p, name) * ring_pt, auto_space: 0.0, squeeze: 1.0, squeezed: false });
                                 }
                                 None => push_text(&ring.to_string(), &mut out),
                             }
@@ -1905,7 +2075,13 @@ impl<'r> Layouter<'r> {
                     }
                     _ => false,
                 };
-                if !field_boundary
+                // Not beside a character of a 組み文字 (Word's PDF of `combine-neighbours-mincho-w41453.docx`: the brackets of a combined run touch the
+                // text before and after it, Japanese, digits or Latin letters alike). Inside the run Word puts a quarter em of the half size between a
+                // Japanese character and a digit or letter (1.74 pt at 6.96 pt); not done yet: the first character holds the room of the whole run
+                // (`combine_width`), the others have none, so a width added to one of them would give it a place to break the run.
+                let combined = |u: &Unit| matches!(u, Unit::Char { style, .. } if *style != LABEL && p.runs.get(*style).is_some_and(|r| r.style.combine.is_some()));
+                let in_combined = combined(&out[i - 1]) || combined(&out[i]);
+                if !field_boundary && !in_combined
                     && ((japanese(a) && spaced(b)) || (spaced(a) && japanese(b)))
                     && let Unit::Char { width, size, auto_space, .. } = &mut out[i - 1]
                 {
@@ -1953,9 +2129,9 @@ impl<'r> Layouter<'r> {
             let natural: Vec<f32> = out[i..j]
                 .iter()
                 .map(|u| match u {
-                    Unit::Char { width, style, .. } => {
+                    Unit::Char { c, width, style, .. } => {
                         let st = &p.runs[*style].style;
-                        ((*width - pt(st.spacing)) / (st.scale as f32 / 100.0).max(0.01)).max(0.0)
+                        ((*width - pt(st.spacing) * self.spacing_factor(p, *c)) / (st.scale as f32 / 100.0).max(0.01)).max(0.0)
                     }
                     _ => 0.0,
                 })
@@ -1992,18 +2168,39 @@ impl<'r> Layouter<'r> {
             Some(FlowAlign::Center) => label / 2.0,
             _ => 0.0,
         };
-        let first = pt(p.first_line) - shift;
+        // A count of characters (not 0) is the first line's indent, the length beside it ignored: one character is a full-width character of the
+        // paragraph's first text (its size, its character spacing as the line counts it, and on a character grid the grid's added pitch), the
+        // product in whole twips. Word's PDF of `distribute-first-line-chars-probe.docx` (ＭＳ 明朝 10.5 and 12 pt, firstLine 500): firstLineChars 100
+        // and 250 start 1 and 2.5 characters in, 0 or none 25 pt. The lengths Word writes beside the counts in the corpus are that sum: 202 twips
+        // for 100 at 10.5 pt and charSpace -1730 (128: 210 - 8.45 = 201.55), 1053 for 500 at charSpace 117 (062: 5 x 210.57), 180 for 100 in 9 pt
+        // text under a paragraph mark of the default 10.5 pt (021: the first run's size, not the mark's), 640 for 250 at 10 pt with a character
+        // spacing of 1.4 pt counted twice (021: 2.5 x 256).
+        let first_line = match p.first_line_chars {
+            Some(chars) if chars != 0 => {
+                let run = p.runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if !t.is_empty())).map(|r| &r.style);
+                let size = run.map_or(p.mark.size, |s| s.size) as f32 / 100.0;
+                let spacing = run.map_or(0.0, |s| pt(s.spacing)) * self.spacing_factor(p, 'あ'); // i18n-ok（全角の文字）
+                let grid = if p.snap_to_grid { self.char_space.get().map_or(0.0, pt) } else { 0.0 };
+                (chars as f32 / 100.0 * (size + spacing + grid) * 20.0).round() / 20.0
+            }
+            _ => pt(p.first_line),
+        };
+        let first = first_line - shift;
         let tab_default = self.default_tab_pt();
 
         let line_start_x = |first_line: bool| left + if first_line { first } else { 0.0 };
 
         let mark_size = p.mark.size as f32 / 100.0;
         let mark_metrics = {
-            let name = p.mark.font_for('あ');
+            // A header's or a footer's paragraphs are laid out as a cell's (`in_table`), but an empty one of them is as high as in the body (Word's PDFs of
+            // `footer-trailing-empty-probe.docx`: a footer's empty ＭＳ 明朝 10.5 pt line takes 13.6 pt, as its text line does).
+            let in_cell = in_table && self.current_cell.get().is_some();
+            let name = p.mark.font_for(if in_cell { 'あ' } else { 'A' });
             let font = self.font(&p.mark, name);
             let (ascent, line) = self.line_metrics(name, &font, mark_size);
-            let room = if in_table { self.ms_room(name, mark_size) } else { 0.0 };
-            (line - room, ascent, self.lead_em(name) * mark_size)
+            // An empty paragraph is as high as a line of text, in a cell too (Word's PDFs of `emptycell-mincho-w41453.docx` and
+            // `emptysize-*`: ＭＳ 明朝 10.5 pt, 13.62 pt in the cell and in the body).
+            (line, ascent, self.lead_in(p, name) * mark_size)
         };
         let default_line_h = self.resolve_line_height(p, mark_metrics.0, mark_metrics.2, in_table);
 
@@ -2011,7 +2208,7 @@ impl<'r> Layouter<'r> {
             square_shape(p).map(|shape| {
                 let f = shape.floating.as_ref().unwrap();
                 let sw = pt(shape.frame.width);
-                let sh = pt(shape.frame.height);
+                let sh = self.fitted_shape_height(shape);
                 let dl = pt(f.dist_l);
                 let dr = pt(f.dist_r);
                 let dt = pt(f.dist_t);
@@ -2296,13 +2493,14 @@ impl<'r> Layouter<'r> {
                         }
                         let w = unit_width(&units[i]);
                         let c = unit_char(&units[i]);
-                        if i > start {
+                        let combined_rest = is_combined_rest(p, &units[i], w);
+                        if i > start && !combined_rest {
                             let prev = unit_char(&units[i - 1]);
                             if may_break(prev, c, p.kinsoku, p.word_wrap, self.doc) {
                                 last_break = Some(i);
                             }
                         }
-                        if x + w > slot_w + 0.01 && i > start {
+                        if x + w > slot_w + 0.01 && i > start && !combined_rest {
                             if c == Some(' ') {
                                 x += w;
                                 i += 1;
@@ -2361,7 +2559,8 @@ impl<'r> Layouter<'r> {
                 }
                 extras.push(extra_above);
                 skipped.push(None);
-                let (text_line, lead) = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Char { line, lead, .. } = u { Some((*line, *lead)) } else { None }).fold((0.0f32, 0.0f32), |(l, d), (l2, d2)| (l.max(l2), d.max(d2)));
+                let spaces_only = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace()));
+                let (text_line, lead) = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Char { c, line, lead, .. } = u { if spaces_only || !c.is_whitespace() { Some((*line, *lead)) } else { None } } else { None }).fold((0.0f32, 0.0f32), |(l, d), (l2, d2)| (l.max(l2), d.max(d2)));
                 let (text_line, lead) = if text_line > 0.0 { (text_line, lead) } else { (mark_metrics.0, mark_metrics.2) };
                 let picture = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } | Unit::Math { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
                 let natural = text_line.max(picture);
@@ -2384,7 +2583,8 @@ impl<'r> Layouter<'r> {
                 let largest = if largest > 0.0 { largest } else { mark_size };
                 // A superscript or subscript is raised by its full size (DNOTE: a 10.5 pt number is 3.59 pt up = 0.342 em).
                 let largest_raise = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Char { size, style, .. } = u { Some(if p.runs.get(*style).is_some_and(|r| *style != LABEL && r.style.position != VerticalPosition::Baseline) { *size / 0.65 } else { *size }) } else { None }).fold(0.0, f32::max).max(largest);
-                let (text_line, text_ascent, lead) = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Char { c, line, ascent, lead, style, size, .. } = u { let (line, ascent) = mark_room(p, *c, *style, *size, *line, *ascent); Some((line, ascent, *lead)) } else { None }).fold((0.0f32, 0.0f32, 0.0f32), |(l, a, d), (l2, a2, d2)| (l.max(l2), a.max(a2), d.max(d2)));
+                let spaces_only = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace()));
+                let (text_line, text_ascent, lead) = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Char { c, line, ascent, lead, style, size, .. } = u { if !spaces_only && c.is_whitespace() { return None; } let (line, ascent) = mark_room(p, *c, *style, *size, *line, *ascent); Some((line, ascent, *lead)) } else { None }).fold((0.0f32, 0.0f32, 0.0f32), |(l, a, d), (l2, a2, d2)| (l.max(l2), a.max(a2), d.max(d2)));
                 let (text_line, text_ascent, lead) = if text_line > 0.0 { (text_line, text_ascent, lead) } else { mark_metrics };
                 let picture = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } | Unit::Math { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
                 let natural = text_line.max(picture);
@@ -2397,7 +2597,7 @@ impl<'r> Layouter<'r> {
                 };
                 let height = skipped.get(n).copied().flatten().unwrap_or(height + extras.get(n).copied().unwrap_or(0.0));
                 let math_below = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).filter_map(|u| if let Unit::Math { descent, .. } = u { Some(*descent) } else { None }).fold(0.0f32, f32::max);
-                let baseline = if picture > text_line { height - math_below } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table) };
+                let baseline = if picture > text_line { height - math_below } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table, self.ms_room_of(p, phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]))) };
                 let page_break = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).any(|u| matches!(u, Unit::PageBreak));
                 let column_break = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).any(|u| matches!(u, Unit::ColumnBreak));
                 let has_revision = phys_line.iter().flat_map(|seg| &units[seg.s..seg.e]).any(|u| {
@@ -2435,7 +2635,7 @@ impl<'r> Layouter<'r> {
                         }
                     }
                 }
-                let mut line = LineBox { height, baseline, text_dy: if picture > text_line { 0.0 } else { self.text_dy(p, natural, lead, in_table) }, grid_below: if picture > text_line { 0.0 } else { self.line_height_parts(p, natural, lead, in_table).1 / 2.0 }, items: Vec::new(), page_break, column_break, has_revision, comment_marks };
+                let mut line = LineBox { height, baseline, text_dy: if picture > text_line { 0.0 } else { self.text_dy(p, natural, lead, in_table) }, grid_below: if picture > text_line { 0.0 } else { self.grid_room_below(p, natural, lead, in_table, height, baseline, text_line, text_ascent) }, items: Vec::new(), page_break, column_break, has_revision, comment_marks };
 
                 if n == 0 {
                     if let Some((shape, sx, sy, sw, sh, behind_doc)) = &obs.shape_to_emit {
@@ -2463,7 +2663,9 @@ impl<'r> Layouter<'r> {
                     let used: f32 = slice[..visible_end].iter().map(unit_width).sum();
                     let last = (n + 1 == physical_lines.len() && seg_idx + 1 == phys_line.len()) || seg.forced;
                     let justify = match p.align {
-                        FlowAlign::Justify => !last,
+                        // The last line of a paragraph is not spread, but one that took its last word by narrowing its spaces (above) is drawn narrowed (Word's PDF of corpus 124:
+                        // "… The License Original page URL)" ends the paragraph at the right margin, its spaces 0.35 pt short each).
+                        FlowAlign::Justify => !last || used > seg.slot_w + 0.01,
                         FlowAlign::Distribute => true,
                         _ => false,
                     };
@@ -2686,7 +2888,7 @@ impl<'r> Layouter<'r> {
                             }
                             let is_tate = p.runs.get(style).filter(|_| style != LABEL).is_some_and(|r| r.style.tate_chu_yoko);
                             if is_tate {
-                                line.items.push(Item::Turned { x: x0 + s_size * 0.88, y: y_base, text: text.clone().into(), font: font.clone(), size: s_size, color, turns: -1 });
+                                line.items.push(Item::Turned { x: x0 + s_size * 0.88, y: y_base, text: text.clone().into(), font: font.clone(), size: s_size, color, turns: -1, xscale: 1.0 });
                             }
                             let mut offsets = offsets;
                             offsets.pop();
@@ -2801,6 +3003,8 @@ impl<'r> Layouter<'r> {
         let mut x = 0.0;
         let mut i = 0;
         let mut last_break: Option<usize> = None;
+        // The line (its `start`) whose overflowing character was taken in by squeezing stops and brackets (`compress_punctuation`).
+        let mut compressed_line: Option<usize> = None;
         // How far a right-aligned tab stop beyond the right indent lets the line go on (Word sets the text after it there).
         let mut tab_extra = 0.0f32;
         while i < units.len() {
@@ -2863,17 +3067,76 @@ impl<'r> Layouter<'r> {
             }
             let w = unit_width(&units[i]);
             let c = unit_char(&units[i]);
+            let combined_rest = is_combined_rest(p, &units[i], w);
             // A break is allowed before this unit?
-            if i > start {
+            if i > start && !combined_rest {
                 let prev = unit_char(&units[i - 1]);
-                if may_break(prev, c, p.kinsoku, p.word_wrap, self.doc) {
+                // Not before full-width spaces that a closing character follows: they would start the line with it (Word's PDFs of
+                // `spacecap-compat11-mincho-w41453.docx`: the character before the spaces goes down with them).
+                let spaces_then_closer = c == Some('\u{3000}') && {
+                    let mut j = i;
+                    while j < units.len() && unit_char(&units[j]) == Some('\u{3000}') {
+                        j += 1;
+                    }
+                    units.get(j).and_then(unit_char).is_some_and(|ch| "、。，．,）」』】］｝’”".contains(ch)) // i18n-ok（閉じ括弧・句読点の文字の集合。文字の並び）
+                };
+                if may_break(prev, c, p.kinsoku, p.word_wrap, self.doc) && !spaces_then_closer {
                     last_break = Some(i);
                 }
             }
-            if x + w > room + 0.01 && i > start {
+            if x + w > room + 0.01 && i > start && !combined_rest {
                 // 約物を詰める: a line a little too long takes in its stops and brackets (half an em each) before it
                 // breaks.
-                if self.doc.compress_punctuation {
+                // Word squeezes a line to take in one more character than fits (Word's PDF of `compresspunct-mincho-w41453.docx`, with the
+                // stops 、 。, brackets and the dot ・: ＭＳ 明朝 10.5 pt in 414.45 pt, 39 characters fit and the lines of text with stops and
+                // brackets have 40, however many they have, and 41 only when the 41st cannot start a line (、 ） and the like): the squeeze is
+                // shared by all the line's stops and brackets, as much as the line needs. A second overflowing character is taken in only when
+                // it cannot start a line.
+                let must_stay = i > start && !may_break(unit_char(&units[i - 1]), c, p.kinsoku, p.word_wrap, self.doc);
+                // Compatibility mode 15: only in a justified or distributed paragraph (Word's PDFs of `squeezealign-mincho-w41453.docx` and
+                // `squeezedist-mincho-w41453.docx`: the stops are squeezed whatever the line needs, one more character or the one that cannot start a
+                // line; a left aligned line squeezes nothing, in all the grids). Below 15, or without a `compatibilityMode` (Word's PDF of
+                // `squeezenocompat-mincho-w41453.docx` is that of mode 14 and 11), it is left as it was: `squeezecompat14-mincho-w41453.docx` (no grid,
+                // not in a table) squeezes nothing for a kanji, even justified, but the documents of the corpus of that mode (026, 152, 153: in a table's
+                // cell, with a grid) have their justified lines squeezed, and what tells them apart is not known.
+                let squeezes = self.doc.compat_mode.is_none_or(|m| m < 15) || matches!(p.align, FlowAlign::Justify | FlowAlign::Distribute);
+                // Full-width spaces before a closing character that must stay with them (Word's PDFs of `spacehang-compat11/14/15-mincho-w41453.docx`
+                // and `spacecap-compat11/15-…`: "あ"×n, s full-width spaces, "）", a line of 20 ems): the spaces are squeezed so that the closing
+                // character fits inside the line, each down to a quarter of an em and the run as a whole to a whole number of half ems (s = 1, 2: half an em,
+                // 3, 4: one em, 5, 6: one and a half, 7, 8: two); when that is not enough the run is squeezed all the way and the closing character
+                // hangs past the edge (its start is no further than the edge). Where the closing character is squeezed or hangs is up to the hang below.
+                if self.doc.compress_punctuation && squeezes && unit_char(&units[i]) == Some('\u{3000}') && !matches!(&units[i], Unit::Char { squeezed: true, .. }) {
+                    let (mut j0, mut j1) = (i, i);
+                    while j0 > start && unit_char(&units[j0 - 1]) == Some('\u{3000}') {
+                        j0 -= 1;
+                    }
+                    while j1 + 1 < units.len() && unit_char(&units[j1 + 1]) == Some('\u{3000}') {
+                        j1 += 1;
+                    }
+                    let closes = units.get(j1 + 1).and_then(unit_char).is_some_and(|ch| "、。，．,）」』】］｝’”".contains(ch)); // i18n-ok（閉じ括弧・句読点の文字の集合。文字の並び）
+                    let all_spaces = (j0..=j1).all(|k| matches!(&units[k], Unit::Char { style, squeezed: false, .. } if *style != LABEL));
+                    if closes && all_spaces {
+                        let before: f32 = (j0..i).map(|k| unit_width(&units[k])).sum();
+                        let nat: f32 = (j0..=j1).map(|k| unit_width(&units[k])).sum();
+                        let em = unit_width(&units[j0]);
+                        let min_total = ((j1 - j0 + 1) as f32 * 0.5).ceil() * 0.5 * em;
+                        let x_run = x - before;
+                        let need = x_run + nat + unit_width(&units[j1 + 1]) - room;
+                        let amount = need.clamp(0.0, (nat - min_total).max(0.0));
+                        if x_run + nat - amount <= room + 0.01 && amount > 0.01 {
+                            let each = amount / (j1 - j0 + 1) as f32;
+                            for k in j0..=j1 {
+                                if let Unit::Char { width, squeezed, .. } = &mut units[k] {
+                                    *width -= each;
+                                    *squeezed = true;
+                                }
+                            }
+                            x = x_run + (j0..i).map(|k| unit_width(&units[k])).sum::<f32>();
+                            continue;
+                        }
+                    }
+                }
+                if self.doc.compress_punctuation && squeezes && (compressed_line != Some(start) || must_stay) {
                     // A stop or bracket gives up the half em it has beside its glyph, once: one that was squeezed (a kerned pair, or on an
                     // earlier pass of this line) has no more, and one narrower than that half has none to give. List numbering labels (`LABEL`)
                     // are not squeezed (`i1_leftchars_zero_keeps_numbering_indent`).
@@ -2898,10 +3161,51 @@ impl<'r> Layouter<'r> {
                                 *squeezed = true;
                                 if "（「『【〔〈《［｛".contains(*c) { // i18n-ok（始め括弧の文字の集合。文字の並び）
                                     *inset -= half;
+                                } else if *c == '・' {
+                                    // The dot is in the middle of its em: the squeeze takes the same from both sides (Word's PDF).
+                                    *inset -= half / 2.0;
                                 }
                                 left -= half;
                                 if k < i {
                                     before += half;
+                                }
+                            }
+                        }
+                        x -= before;
+                        compressed_line = Some(start);
+                        continue;
+                    }
+                }
+                // A justified or distributed line of mode 15 squeezes the automatic spaces between Japanese and Latin letters or digits to take one more
+                // character, by as much as the line is short, and by the same limit as it narrows its spaces (`justify_overflow_room`) with half of the
+                // automatic spaces in place of a quarter of the spaces: the smaller of half of them all and 0.35 of the last word with the space before it.
+                // Word's PDFs of `justify-autospace-squeeze-{b*-g*,gaps1,gaps3,gaps4}-probe.docx` (ＭＳ ゴシック 10 pt, a line of 「あ」 and 「第…条」 with
+                // 1, 2, 3 and 4 spaces of 2.5 pt, narrowed by 0.5 pt a paragraph, all the same with balance and a grid or not): the last 「条」 is taken
+                // when the line is short by 1.0 (not 1.5), 2.5 (not 3.0), 3.5 (not 4.0) and 4.0 (not 4.5) pt, between min(1.25, 4.375), min(2.5, 4.375),
+                // min(3.75, 4.375) and min(5.0, 4.375) with the last word 「条」 and its space 12.5 pt. The spaces are narrowed by as much as the line is short.
+                // In modes 11 and 14 (`…-compat11-probe.docx`, `…-compat14-…`) Word squeezes nothing: only the line that fits is taken. The 0.35 and the
+                // half are Word's, as those of `justify_overflow_room`; why they are, is not known. 150 corpus documents: 142 +159, 143 +40 lines.
+                if self.doc.compat_mode.is_some_and(|m| m >= 15) && matches!(p.align, FlowAlign::Justify | FlowAlign::Distribute) {
+                    let over = x + w - room;
+                    let gap_of = |k: usize| if let Unit::Char { auto_space, .. } = &units[k] { *auto_space } else { 0.0 };
+                    let gaps: Vec<usize> = (start..=i).filter(|&k| gap_of(k) > 0.0).collect();
+                    let all: f32 = gaps.iter().map(|&k| gap_of(k)).sum();
+                    // The last word: what follows the last space on the line, with that space (the whole line when there is none before it).
+                    let last_word = match (start..i).rev().find(|&k| gap_of(k) > 0.0) {
+                        Some(g) => units[g + 1..=i].iter().enumerate().map(|(n, u)| unit_width(u) - gap_of(g + 1 + n)).sum::<f32>() + gap_of(g),
+                        None => f32::MAX,
+                    };
+                    let limit = (all * 0.5).min(last_word * 0.35);
+                    if all > 0.01 && limit >= over - 0.01 {
+                        let factor = (over / all).clamp(0.0, 1.0);
+                        let mut before = 0.0;
+                        for k in gaps {
+                            if let Unit::Char { width, auto_space, .. } = &mut units[k] {
+                                let cut = *auto_space * factor;
+                                *width -= cut;
+                                *auto_space -= cut;
+                                if k < i {
+                                    before += cut;
                                 }
                             }
                         }
@@ -2922,7 +3226,28 @@ impl<'r> Layouter<'r> {
                     continue;
                 }
                 // Punctuation hangs past the edge if overflow_punct is enabled.
-                if p.overflow_punct && c.is_some_and(|ch| "、。，．,）」』】〕〉》］｝".contains(ch)) && x <= room + 0.01 { // i18n-ok（オーバーフロー句読点・閉じ括弧の文字の集合。文字の並び。Word の PDF では行末の「】」もぶら下がる）
+                // Which characters hang past the edge, and where (Word's PDFs of `hang-line-end-closers-compat14-probe.docx` and `…compat15-probe.docx`, 20
+                // full-width characters fill the line, then one closing character: a line of one such paragraph at a time): ） 」 』 】 ］ ｝ 、 。 ， ． ’ ” hang;
+                // 〕 〉 》 do not (the character before them goes down with them), nor do ー ぁ っ (they may start a line). Below mode 15 a left aligned line
+                // hangs them as well as a justified one; in mode 15 only a justified one does (a left aligned line puts the character, and the one before
+                // it, on the next line, a 、 or 。 too).
+                // (Latin closers in a justified line of mode 15, `justify-hang-closer-compat15-probe.docx`, Times New Roman 10.5 pt, 8 words, the last with one
+                // closer: the largest overflow taken grows by the closer's width for ” ’ . ,; for " ' ) ] } ; : ! ? it does not grow, and 、 。 ） 」 take 12 pt and more.)
+                // Not in a table's cell: its text does not hang past the cell's edge, the closing character takes the one before it down (Word's PDF of corpus 023
+                // page 10: "（※変更箇所の概要及び大学等確認変更届）" in a cell with room for 19 characters breaks before 届, where hanging gave one line). Of 150 corpus
+                // documents, 9 have more lines like Word's with it and none fewer (59 lines), and the page count of 143 is Word's. Only the body (and a text box)
+                // hangs, as the probes (paragraphs of the body) say.
+                let hangs = self.doc.compat_mode.is_none_or(|m| m < 15) || matches!(p.align, FlowAlign::Justify | FlowAlign::Distribute);
+                let hanging = if hangs { "、。，．,.）」』】］｝’”" } else { "" }; // i18n-ok（ぶら下げる文字の集合。文字の並び）
+                // A justified line (mode 15) that took its last word by narrowing its spaces (below) has its closing punctuation hang as well: the
+                // line's own overflow is within what the spaces give (Word's PDF of corpus 124: the curly quote that closes "This Content" ends a line).
+                let hang_allow = if matches!(p.align, FlowAlign::Justify) && self.doc.compat_mode.is_none_or(|m| m >= 15) && p.overflow_punct && c.is_some_and(|ch| hanging.contains(ch)) {
+                    let we = (i..units.len()).find(|&k| unit_char(&units[k]).is_none_or(|ch| ch == ' ')).unwrap_or(units.len());
+                    justify_overflow_room(&units, start, i, we)
+                } else {
+                    0.0
+                };
+                if p.overflow_punct && self.current_cell.get().is_none() && c.is_some_and(|ch| hanging.contains(ch)) && x <= room + 0.01 + hang_allow { // i18n-ok（オーバーフロー句読点・閉じ括弧の文字の集合。文字の並び。Word の PDF では行末の「】」もぶら下がる）
                     x += w;
                     i += 1;
                     continue;
@@ -2944,12 +3269,11 @@ impl<'r> Layouter<'r> {
                         .take_while(|u| !matches!(u, Unit::LineBreak | Unit::PageBreak | Unit::ColumnBreak))
                         .any(|u| unit_char(u).is_some_and(|ch| ch != ' '));
                     let word_rest: f32 = units[i..word_end].iter().map(unit_width).sum();
-                    let space_shrink: f32 = units[start..i]
-                        .iter()
-                        .filter(|u| unit_char(u) == Some(' '))
-                        .map(|u| unit_width(u) * 0.15)
-                        .sum();
-                    if has_more && x + word_rest <= room + space_shrink + 0.01 {
+                    let space_shrink = justify_overflow_room(&units, start, i, word_end);
+                    // Closing punctuation at the word's end hangs past the edge and takes none of the overflow (Word's PDF of corpus 124: a line ends
+                    // with the closing curly quote of "This Content", which is not counted).
+                    let hung: f32 = if p.overflow_punct && hangs { units[i..word_end].iter().rev().take_while(|u| unit_char(u).is_some_and(|ch| hanging.contains(ch))).map(unit_width).sum() } else { 0.0 };
+                    if x + word_rest - hung <= room + space_shrink + 0.01 {
                         x += w;
                         i += 1;
                         continue;
@@ -2984,11 +3308,15 @@ impl<'r> Layouter<'r> {
 
         let mark_size = p.mark.size as f32 / 100.0;
         let mark_metrics = {
-            let name = p.mark.font_for('あ');
+            // A header's or a footer's paragraphs are laid out as a cell's (`in_table`), but an empty one of them is as high as in the body (Word's PDFs of
+            // `footer-trailing-empty-probe.docx`: a footer's empty ＭＳ 明朝 10.5 pt line takes 13.6 pt, as its text line does).
+            let in_cell = in_table && self.current_cell.get().is_some();
+            let name = p.mark.font_for(if in_cell { 'あ' } else { 'A' });
             let font = self.font(&p.mark, name);
             let (ascent, line) = self.line_metrics(name, &font, mark_size);
-            let room = if in_table { self.ms_room(name, mark_size) } else { 0.0 };
-            (line - room, ascent, self.lead_em(name) * mark_size)
+            // An empty paragraph is as high as a line of text, in a cell too (Word's PDFs of `emptycell-mincho-w41453.docx` and
+            // `emptysize-*`: ＭＳ 明朝 10.5 pt, 13.62 pt in the cell and in the body).
+            (line, ascent, self.lead_in(p, name) * mark_size)
         };
         let mut out = Vec::new();
         for (n, &(s, e, forced)) in lines.iter().enumerate() {
@@ -2998,7 +3326,8 @@ impl<'r> Layouter<'r> {
             let largest_raise = slice.iter().filter_map(|u| if let Unit::Char { size, style, .. } = u { Some(if p.runs.get(*style).is_some_and(|r| *style != LABEL && r.style.position != VerticalPosition::Baseline) { *size / 0.65 } else { *size }) } else { None }).fold(0.0, f32::max).max(largest);
             // The line's text height and ascent: the tallest typeface's (the
             // paragraph mark's on an empty line).
-            let (text_line, text_ascent, lead) = slice.iter().filter_map(|u| if let Unit::Char { c, line, ascent, lead, style, size, .. } = u { let (line, ascent) = mark_room(p, *c, *style, *size, *line, *ascent); Some((line, ascent, *lead)) } else { None }).fold((0.0f32, 0.0f32, 0.0f32), |(l, a, d), (l2, a2, d2)| (l.max(l2), a.max(a2), d.max(d2)));
+            let spaces_only = slice.iter().all(|u| !matches!(u, Unit::Char { c, .. } if !c.is_whitespace()));
+            let (text_line, text_ascent, lead) = slice.iter().filter_map(|u| if let Unit::Char { c, line, ascent, lead, style, size, .. } = u { if !spaces_only && c.is_whitespace() { return None; } let (line, ascent) = mark_room(p, *c, *style, *size, *line, *ascent); Some((line, ascent, *lead)) } else { None }).fold((0.0f32, 0.0f32, 0.0f32), |(l, a, d), (l2, a2, d2)| (l.max(l2), a.max(a2), d.max(d2)));
             let (text_line, text_ascent, lead) = if text_line > 0.0 { (text_line, text_ascent, lead) } else { mark_metrics };
             let picture = slice.iter().filter_map(|u| match u { Unit::Picture { h, .. } | Unit::Shape { h, .. } | Unit::Math { h, .. } => Some(*h), _ => None }).fold(0.0, f32::max);
             let natural = text_line.max(picture);
@@ -3006,7 +3335,7 @@ impl<'r> Layouter<'r> {
                 let height = self.line_height_around(p, text_line, picture, natural, lead, in_table);
             // Where Word puts the baseline in a line: see `baseline_in_line`.
             let math_below = slice.iter().filter_map(|u| if let Unit::Math { descent, .. } = u { Some(*descent) } else { None }).fold(0.0f32, f32::max);
-            let baseline = if picture > text_line { height - math_below } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table) };
+            let baseline = if picture > text_line { height - math_below } else { self.baseline_in_line(p, natural, lead, text_line, text_ascent, in_table, self.ms_room_of(p, slice.iter())) };
             let start_x = line_start_x(n == 0);
             let room = width - right - start_x;
             // Width used (without trailing spaces), and the gaps to spread
@@ -3015,7 +3344,9 @@ impl<'r> Layouter<'r> {
             let used: f32 = slice[..visible_end].iter().map(unit_width).sum();
             let last = n + 1 == lines.len() || forced;
             let justify = match p.align {
-                FlowAlign::Justify => !last,
+                // The last line of a paragraph is not spread, but one that took its last word by narrowing its spaces (above) is drawn narrowed (Word's PDF of corpus 124:
+                // "… The License Original page URL)" ends the paragraph at the right margin, its spaces 0.35 pt short each).
+                FlowAlign::Justify => !last || used > room + 0.01,
                 FlowAlign::Distribute => true,
                 _ => false,
             };
@@ -3071,7 +3402,7 @@ impl<'r> Layouter<'r> {
                     }
                 }
             }
-            let mut line = LineBox { height, baseline, text_dy: if picture > text_line { 0.0 } else { self.text_dy(p, natural, lead, in_table) }, grid_below: if picture > text_line { 0.0 } else { self.line_height_parts(p, natural, lead, in_table).1 / 2.0 }, items: Vec::new(), page_break: slice.iter().any(|u| matches!(u, Unit::PageBreak)), column_break: slice.iter().any(|u| matches!(u, Unit::ColumnBreak)), has_revision, comment_marks };
+            let mut line = LineBox { height, baseline, text_dy: if picture > text_line { 0.0 } else { self.text_dy(p, natural, lead, in_table) }, grid_below: if picture > text_line { 0.0 } else { self.grid_room_below(p, natural, lead, in_table, height, baseline, text_line, text_ascent) }, items: Vec::new(), page_break: slice.iter().any(|u| matches!(u, Unit::PageBreak)), column_break: slice.iter().any(|u| matches!(u, Unit::ColumnBreak)), has_revision, comment_marks };
             let mut x = start_x + shift;
             let line_x = x;
             let mut stops: Vec<(usize, f32)> = Vec::new();
@@ -3280,7 +3611,7 @@ impl<'r> Layouter<'r> {
                     }
                     let is_tate = p.runs.get(style).filter(|_| style != LABEL).is_some_and(|r| r.style.tate_chu_yoko);
                     if is_tate {
-                        line.items.push(Item::Turned { x: x0 + s_size * 0.88, y: y_base, text: text.clone().into(), font: font.clone(), size: s_size, color, turns: -1 });
+                        line.items.push(Item::Turned { x: x0 + s_size * 0.88, y: y_base, text: text.clone().into(), font: font.clone(), size: s_size, color, turns: -1, xscale: 1.0 });
                     }
                     let mut offsets = offsets;
                     offsets.pop();
@@ -3432,90 +3763,23 @@ fn has_fields(block: &Block) -> bool {
 /// text, each character's offset (and the end), font, size and run index.
 type OpenRun = (f32, String, Vec<f32>, Font, f32, usize, f32);
 
-/// A Latin letter's advance as Word lays it out, in points: whole pixels of the printer's resolution (600 dpi), as GDI sets it for an
-/// installed typeface (measured on Word's PDFs: 190 of 277 letters of a Times New Roman text are GDI's width to the pixel, the others
-/// within one pixel). `fallback` (the text system's advance) stands for a letter that is not Latin, a typeface that is not installed
-/// (GDI would set the stand-in's), a fixed-width or proportional ＭＳ face (their advances are set by `units()` from the character
-/// grid), and where GDI is not there (macOS, Linux).
-fn word_latin_advance(name: Option<&str>, installed: bool, c: char, size: f32, bold: bool, italic: bool, fallback: f32) -> f32 {
-    let Some(n) = name else { return fallback };
-    if !installed || !c.is_ascii() || c.is_control() || fixed_width(n) || proportional_ms(n) {
-        return fallback;
+/// How far a justified line (mode 15) may run over the edge and still take the word it is at (`units[i]` is in the word, which ends at `word_end`; the line
+/// starts at `start`): the spaces narrow by a quarter at most (of their own width), and the overflow is at most 0.35 of the word and the space before it,
+/// whichever is less. The two constants are Word's, read from its PDFs, not fitted to documents: `justify-shrink-mono2-compat15-probe.docx` (Courier New, 7 pt,
+/// 17 counts of words x words of 3, 6 and 15 letters, the overflow in 0.4 % steps: per space 22 to 25 % of the space for every count of words until the word
+/// cap is reached), `justify-shrink-lastword-compat15-probe.docx` (17 words, the last of 2 to 20 letters, steps of a tenth of a letter: the largest overflow
+/// taken is 0.35 x (the letters + 1) letters, whatever the words before it), `justify-shrink-mono-compat15-probe.docx` (10.5 and 12 pt: the same ratios) and
+/// `justify-shrink-prop-compat15-probe.docx` (Times New Roman and Century 10.5 pt, 8 and 17 words, the last word 2 to 12 letters with and without a bracket
+/// first: a quarter of the spaces alone sorts 8-word lines with no error, and with 0.34 to 0.36 of the last word the 17-word lines to 5 to 8 of 176).
+/// Why a quarter and 0.35, and how the two are one rule in Word, is not known.
+fn justify_overflow_room(units: &[Unit], start: usize, i: usize, word_end: usize) -> f32 {
+    let mut word_start = i;
+    while word_start > start && unit_char(&units[word_start - 1]).is_some_and(|ch| ch != ' ') {
+        word_start -= 1;
     }
-    ibis_pptx::font_digit::char_advance_pt(n, size as f64, bold, italic, c).map_or(fallback, |w| w as f32)
-}
-
-#[cfg(test)]
-mod word_latin_advance_tests {
-    use super::word_latin_advance;
-
-    #[test]
-    fn falls_back_where_gdi_does_not_apply() {
-        // No typeface, one that is not installed, a letter that is not Latin, a control character, the ＭＳ faces: the fallback.
-        assert_eq!(word_latin_advance(None, true, 'a', 10.5, false, false, 4.25), 4.25);
-        assert_eq!(word_latin_advance(Some("Times New Roman"), false, 'a', 10.5, false, false, 4.25), 4.25);
-        assert_eq!(word_latin_advance(Some("Times New Roman"), true, 'あ', 10.5, false, false, 10.5), 10.5);
-        assert_eq!(word_latin_advance(Some("Times New Roman"), true, '\t', 10.5, false, false, 3.0), 3.0);
-        for ms in ["ＭＳ 明朝", "ＭＳ ゴシック", "ＭＳ Ｐ明朝", "ＭＳ Ｐゴシック"] {
-            assert_eq!(word_latin_advance(Some(ms), true, 'a', 10.5, false, false, 5.25), 5.25, "{ms}");
-        }
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn is_the_fallback_without_gdi() {
-        for (font, size) in [("Times New Roman", 10.56), ("Century", 10.5), ("Arial", 11.0), ("Calibri", 11.0)] {
-            for c in ['a', 'T', ' ', '1'] {
-                assert_eq!(word_latin_advance(Some(font), true, c, size, false, false, 1.5), 1.5, "{font} {c:?}");
-            }
-        }
-    }
-
-    /// Whole pixels of 600 dpi for the faces, sizes, weights and slants of Word's documents.
-    #[cfg(windows)]
-    #[test]
-    fn is_whole_600_dpi_pixels_for_installed_faces() {
-        let mut measured = 0;
-        for font in ["Times New Roman", "Century", "Arial", "Calibri", "Courier New", "Verdana"] {
-            for size in [8.0f32, 9.0, 10.0, 10.5, 10.56, 11.0, 12.0, 14.0] {
-                for (bold, italic) in [(false, false), (true, false), (false, true), (true, true)] {
-                    for c in "AWaiMmw .,0123456789()".chars() {
-                        let w = word_latin_advance(Some(font), true, c, size, bold, italic, -1.0);
-                        if w < 0.0 {
-                            continue; // this machine has no such face (GDI gave nothing)
-                        }
-                        let px = w as f64 * 600.0 / 72.0;
-                        assert!((px - px.round()).abs() < 1e-3, "{font} {size} bold {bold} italic {italic} {c:?}: {px} px");
-                        assert!(px >= 1.0 || c == ' ', "{font} {size} {c:?}: {px} px");
-                        measured += 1;
-                    }
-                }
-            }
-        }
-        assert!(measured > 1000, "measured {measured} letters");
-    }
-
-    /// A bigger size is not narrower; a face's bold is not narrower than its regular on the whole (the letters' sum).
-    #[cfg(windows)]
-    #[test]
-    fn grows_with_the_size_and_the_weight() {
-        let sum = |font: &str, size: f32, bold: bool| -> f32 { "The quick brown fox jumps over the lazy dog".chars().map(|c| word_latin_advance(Some(font), true, c, size, bold, false, 0.0)).sum() };
-        for font in ["Times New Roman", "Arial", "Calibri"] {
-            let (a, b, c) = (sum(font, 9.0, false), sum(font, 10.5, false), sum(font, 12.0, false));
-            assert!(a < b && b < c, "{font}: {a} {b} {c}");
-            assert!(sum(font, 10.5, true) >= sum(font, 10.5, false), "{font} bold");
-        }
-    }
-
-    /// The space of a face at 600 dpi: Times New Roman 10.56 pt is 22 px, Century 24 px (measured with GDI on this machine; Word's
-    /// PDF has the same spaces off a justified line).
-    #[cfg(windows)]
-    #[test]
-    fn space_widths_of_the_measured_faces() {
-        let px = |font: &str, size: f32| (word_latin_advance(Some(font), true, ' ', size, false, false, 0.0) as f64 * 600.0 / 72.0).round();
-        assert_eq!(px("Times New Roman", 10.56), 22.0);
-        assert_eq!(px("Century", 10.56), 24.0);
-    }
+    let last_word: f32 = units[word_start..word_end].iter().map(unit_width).sum::<f32>() + if word_start > start { unit_width(&units[word_start - 1]) } else { 0.0 };
+    let spaces: f32 = units[start..i].iter().filter(|u| unit_char(u) == Some(' ')).map(unit_width).sum();
+    (spaces * 0.25).min(last_word * 0.35)
 }
 
 /// Whether a stop or bracket (full width: a half em of glyph and a half em of room beside it) can still give up that half em to
@@ -3523,7 +3787,7 @@ mod word_latin_advance_tests {
 /// pair of them kerned, or an earlier pass of the line, has taken it), and wider than the half em it gives (a narrower one, a
 /// character grid's tight pitch, has no room to give). `em` is the glyph's size with its fitText squeeze.
 fn can_give_up_half(c: char, width: f32, em: f32, squeezed: bool) -> bool {
-    "、。，．（）「」『』【】〔〕〈〉《》［］｛｝".contains(c) && !squeezed && width > em / 2.0 // i18n-ok（約物の文字の集合。文字の並び）
+    "、。，．・（）「」『』【】〔〕〈〉《》［］｛｝".contains(c) && !squeezed && width > em / 2.0 // i18n-ok（約物の文字の集合。文字の並び）
 }
 
 #[cfg(test)]
@@ -3532,7 +3796,7 @@ mod can_give_up_half_tests {
 
     #[test]
     fn a_fresh_stop_or_bracket_gives_up_its_half_em() {
-        for c in "、。，．（）「」『』【】〔〕〈〉《》［］｛｝".chars() {
+        for c in "、。，．・（）「」『』【】〔〕〈〉《》［］｛｝".chars() {
             assert!(can_give_up_half(c, 10.5, 10.5, false), "{c}");
         }
     }
@@ -3767,9 +4031,9 @@ fn turn_cell_text(items: &[Item], direction: ibis_doc_model::CellDirection, anch
     let mut out = Vec::new();
     let single_offset = [0.0f32];
     for it in items {
-        let (x, y, text, offsets, font, size, color) = match it {
-            Item::Text { x, y, text, offsets, font, size, color } => (x, y, text, offsets.as_ref(), font, size, color),
-            Item::Scaled { x, y, text, font, size, color, .. } => (x, y, text, &single_offset[..], font, size, color),
+        let (x, y, text, offsets, font, size, color, xscale) = match it {
+            Item::Text { x, y, text, offsets, font, size, color } => (x, y, text, offsets.as_ref(), font, size, color, &1.0f32),
+            Item::Scaled { x, y, text, font, size, color, xscale } => (x, y, text, &single_offset[..], font, size, color, xscale),
             _ => continue,
         };
         for ((_, c), dx) in text.char_indices().zip(offsets.iter()) {
@@ -3786,18 +4050,25 @@ fn turn_cell_text(items: &[Item], direction: ibis_doc_model::CellDirection, anch
                         CellDirection::TbRl => bx + bw - shift - v,
                         _ => bx + shift + (across - v),
                     };
-                    if is_cjk(c) {
+                    if crate::render::vertical_text::upright(c) {
+                        // OpenType vert/vrt2 selects the font’s vertical glyph.
+                        let font=if crate::render::vertical_text::vertical_glyph(c){crate::render::vertical_text::font(font)}else{font.clone()};
                         // Upright, centred on the line.
                         let mid = line_x + size * 0.35;
                         // 、。 take their vertical forms: the upper right of the box.
-                        let (dx, dy) = if matches!(c, '、' | '。' | '，' | '．') { (size * 0.5, -size * 0.6) } else { (0.0, 0.0) };
-                        out.push(Item::Text { x: mid - size / 2.0 + dx, y: by + u + size * 0.88 + dy, text: s, offsets: Arc::from([0.0f32]), font: font.clone(), size: *size, color: *color });
+                        let (dx, dy) = (0.0, 0.0);
+                        // A squeezed one keeps its squeeze across the line.
+                        if (*xscale - 1.0).abs() > 0.001 {
+                            out.push(Item::Scaled { x: mid - size / 2.0 + dx, y: by + u + size * 0.88 + dy, text: s, font: font.clone(), size: *size, color: *color, xscale: *xscale });
+                        } else {
+                            out.push(Item::Text { x: mid - size / 2.0 + dx, y: by + u + size * 0.88 + dy, text: s, offsets: Arc::from([0.0f32]), font: font.clone(), size: *size, color: *color });
+                        }
                     } else {
-                        out.push(Item::Turned { x: line_x, y: by + u, text: s, font: font.clone(), size: *size, color: *color, turns: 1 });
+                        out.push(Item::Turned { x: line_x, y: by + u, text: s, font: font.clone(), size: *size, color: *color, turns: 1, xscale: *xscale });
                     }
                 }
                 CellDirection::BtLr => {
-                    out.push(Item::Turned { x: bx + shift + v, y: by + bh - u, text: s, font: font.clone(), size: *size, color: *color, turns: -1 });
+                    out.push(Item::Turned { x: bx + shift + v, y: by + bh - u, text: s, font: font.clone(), size: *size, color: *color, turns: -1, xscale: *xscale });
                 }
                 CellDirection::LrTb | CellDirection::LrTbV => {}
             }
@@ -3811,6 +4082,13 @@ fn turn_cell_text(items: &[Item], direction: ibis_doc_model::CellDirection, anch
 fn turn_japanese(items: impl Iterator<Item = Item>) -> Vec<Item> {
     let mut out = Vec::new();
     for it in items {
+        // A squeezed character (a bold fixed-width font, `w:w`, `fitText`) is its own item; it turns like the others.
+        if let Item::Scaled { x, y, text, font, size, color, .. } = &it {
+            if text.chars().next().is_some_and(is_cjk) {
+                out.push(Item::Turned { x: x + size * 0.88, y: y + size * 0.12, text: text.clone(), font: font.clone(), size: *size, color: *color, turns: -1, xscale: 1.0 });
+                continue;
+            }
+        }
         let Item::Text { x, y, text, offsets, font, size, color } = &it else {
             out.push(it);
             continue;
@@ -3820,7 +4098,7 @@ fn turn_japanese(items: impl Iterator<Item = Item>) -> Vec<Item> {
         for ((_, c), dx) in text.char_indices().zip(offsets.iter()) {
             if is_cjk(c) {
                 // Its em box where the upright one's was.
-                out.push(Item::Turned { x: x + dx + size * 0.88, y: y + size * 0.12, text: c.to_string().into(), font: font.clone(), size: *size, color: *color, turns: -1 });
+                out.push(Item::Turned { x: x + dx + size * 0.88, y: y + size * 0.12, text: c.to_string().into(), font: font.clone(), size: *size, color: *color, turns: -1, xscale: 1.0 });
             } else {
                 rest.push(c);
                 rest_offsets.push(*dx);
@@ -3924,6 +4202,15 @@ impl RowSplit {
 }
 
 impl<'r> Layouter<'r> {
+    /// The pieces of a header's or a footer's block: its lines are not on the document's line grid (Word's PDFs: the footer of corpus 142, on a 14.5 pt grid,
+    /// has its two lines 12.74 pt apart; `footer-empty-134-variants-probe.docx`: an empty footer line in a 17.3 pt grid takes about 16 pt, not 17.3).
+    fn header_footer_pieces(&self, block: &Block, width: f32, page_number: u32) -> Vec<Piece> {
+        let saved = self.line_pitch.replace(None);
+        let pieces = self.pieces(block, width, page_number, None, true);
+        self.line_pitch.set(saved);
+        pieces
+    }
+
     /// The pieces of a block `width` wide: a paragraph's lines (the space
     /// before goes with the first, after with the last) or a table's rows.
     /// The pieces of a block, laid out again only when the block (or what
@@ -4094,8 +4381,11 @@ impl<'r> Layouter<'r> {
                             }
                             let page_break = l.page_break || (matches!(p.section_break, SectionBreak::NextPage | SectionBreak::OddPage | SectionBreak::EvenPage) && i + 1 == count);
                             let column_break = l.column_break || (p.section_break == SectionBreak::NextColumn && i + 1 == count);
-                            let height = if p.framed && in_table && self.current_cell.get().is_none() { 0.0 } else { before + above + l.height + below + after };
-                            Piece { height, items, page_break, column_break, keep_with_next: p.keep_with_next && i + 1 == count, header: false, split: None, table_bounds: None, space_before: before, space_after: after, grid_below: if below > 0.0 { 0.0 } else { l.grid_below } }
+                            // An empty paragraph whose mark is hidden takes no room (Word joins it to the next one when hidden text is not shown).
+                            let hidden_mark = p.runs.is_empty() && p.mark.hidden && !(if self.res.print { self.res.print_hidden_text } else { showing_hidden_text() });
+                            let height = if hidden_mark || (p.framed && in_table && self.current_cell.get().is_none()) { 0.0 } else { before + above + l.height + below + after };
+                            let (before, after) = if hidden_mark { (0.0, 0.0) } else { (before, after) };
+                            Piece { height, items, page_break, column_break, keep_with_next: p.keep_with_next && i + 1 == count, header: false, split: None, table_bounds: None, space_before: before, space_after: after, grid_below: if below > 0.0 || hidden_mark { 0.0 } else { l.grid_below } }
                         })
                         .collect();
                 }
@@ -4108,7 +4398,7 @@ impl<'r> Layouter<'r> {
                 let is_even = page_number % 2 == 0;
                 for (si, shape) in top_shapes.iter().enumerate() {
                     let sw = pt(shape.frame.width);
-                    let sh = pt(shape.frame.height);
+                    let sh = self.fitted_shape_height(shape);
                     let f = shape.floating.as_ref().unwrap();
                     let (base_x0, base_w) = match f.relative_h.as_str() {
                         "page" => (0.0, page_w),
@@ -4914,6 +5204,8 @@ impl<'r> Layouter<'r> {
         // the larger of the margin and where the header ends (GitHub issue
         // #10). A negative margin is exact and stays. The header meant is the
         // ones the section's pages show (the default, the even pages' with 奇数/偶数, the first page's).
+        // How far lower (or higher) the body of the first page of a section with its own first page header starts than the other pages' does.
+        let mut first_page_drop = vec![0.0f32; setups.len()];
         for (s, setup) in setups.iter_mut().enumerate() {
             let page = &mut setup.page;
             let (gl, _) = if page.gutter_at_top { (0, page.gutter) } else { (page.gutter, 0) };
@@ -4921,12 +5213,13 @@ impl<'r> Layouter<'r> {
             if width <= 0.0 {
                 continue;
             }
-            // A footer of only empty paragraphs does not push the body when the footer starts inside the bottom margin
-            // (Word's PDFs: an empty footer 49.6 pt from the bottom of a page whose margin is 42.5 pt leaves the body to the margin;
-            // an empty header does push it: 024). Trailing empty/framed paragraphs after footer content do not push the body either.
-            let is_flow_content = |b: &Block| !matches!(b, Block::Paragraph(p) if p.runs.is_empty() || p.framed);
-            let empty = |blocks: &[Block]| page.bottom >= page.footer && blocks.iter().all(|b| matches!(b, Block::Paragraph(p) if p.runs.is_empty()));
-            let measure = |blocks: &[Block]| -> f32 { blocks.iter().flat_map(|b| self.pieces(b, width, 1, None, true)).map(|p| p.height).sum() };
+            // Every paragraph of a footer that is not framed takes its height off the body, an empty one too, also the trailing ones and a footer of
+            // empty paragraphs only (Word's PDFs of `footer-trailing-empty-probe.docx` and `footer-empty-134-variants-probe.docx`: with a text paragraph
+            // and an empty one the body is one line shorter than with the text alone, and an empty footer takes a line, whether its distance from the
+            // edge is more than the bottom margin or less (the footer then does not reach the margin and leaves the body alone)). A header's is the same: 024.
+            // (The empty line of corpus 134 that was taken for the body's last line, 789 pt down, is the footer's own.)
+            let is_flow_content = |b: &Block| !matches!(b, Block::Paragraph(p) if p.framed);
+            let measure = |blocks: &[Block]| -> f32 { blocks.iter().flat_map(|b| self.header_footer_pieces(b, width, 1)).map(|p| p.height).sum() };
             let measure_footer = |blocks: &[Block]| -> f32 {
                 let end = blocks.iter().rposition(is_flow_content).map_or(blocks.len(), |i| i + 1);
                 measure(&blocks[..end])
@@ -4935,24 +5228,37 @@ impl<'r> Layouter<'r> {
             if self.doc.even_and_odd {
                 kinds.push((4, 5));
             }
-            // The first page's own (タイトル ページ) too: the pagination has one top margin
-            // for a section, and an overlap is worse than a little room on the other pages.
-            if setup.title_page {
-                kinds.push((2, 3));
-            }
-            let (mut header_end, mut footer_start) = (0.0f32, 0.0f32);
+            // The pages after the first have the default (and the even pages') header; the first page of a section with
+            // 先頭ページのみ別指定 has its own, so its body starts where that header ends (Word's PDF of 023: a section whose first page header has two
+            // lines and the default header one has the body of its later pages at the margin, 42.5 pt, not 64.3 pt).
+            let first_kinds = if setup.title_page { Some((2usize, 3usize)) } else { None };
+            let (mut header_end, mut footer_start, mut first_header_end, mut first_footer_start) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
             for (h, f) in kinds {
                 if !parts[s][h].is_empty() {
                     header_end = header_end.max(pt(page.header) + measure(&parts[s][h]));
                 }
-                if !parts[s][f].is_empty() && !empty(&parts[s][f]) {
+                if !parts[s][f].is_empty() {
                     footer_start = footer_start.max(pt(page.footer) + measure_footer(&parts[s][f]));
                 }
             }
+            if let Some((h, f)) = first_kinds {
+                if !parts[s][h].is_empty() {
+                    first_header_end = pt(page.header) + measure(&parts[s][h]);
+                }
+                if !parts[s][f].is_empty() {
+                    first_footer_start = pt(page.footer) + measure_footer(&parts[s][f]);
+                }
+            }
             let emu = |v: f32| (v / pt(1)).round() as i64;
+            let margin_top = pt(page.top);
             if page.top > 0 && header_end > pt(page.top) {
                 page.top = emu(header_end);
             }
+            if first_kinds.is_some() && margin_top > 0.0 {
+                first_page_drop[s] = margin_top.max(first_header_end) - pt(page.top);
+            }
+            // The footer of the first page: the bottom margin of the section is the larger of both as before.
+            footer_start = footer_start.max(first_footer_start);
             if page.bottom > 0 && footer_start > pt(page.bottom) {
                 page.bottom = emu(footer_start);
             }
@@ -4987,6 +5293,14 @@ impl<'r> Layouter<'r> {
             Frame { left: text.left + x, width: w, ..text }
         };
         let frame_of = |s: usize| column_frame(s, 0);
+        // The frame of a page of section `s`: the first page of a section with its own first page header starts at that header's end.
+        let frame_for = |s: usize, first: bool| {
+            let mut f = frame_of(s);
+            if first {
+                f.top += first_page_drop[s];
+            }
+            f
+        };
         let page_of = |s: usize, number: u32, first: bool| Page {
             items: Vec::new(),
             body_items_count: 0,
@@ -5067,7 +5381,7 @@ impl<'r> Layouter<'r> {
         };
         let notes_room = |page: &Page| -> f32 { if page.notes.is_empty() { 0.0 } else { separator_h + page.notes.iter().map(|id| note_heights.get(id).copied().unwrap_or(0.0)).sum::<f32>() } };
         let mut pages: Vec<Page> = vec![page_of(0, setups[0].page.first_page, true)];
-        let mut frame = frame_of(0);
+        let mut frame = frame_for(0, true);
         let mut y = frame.top;
         // Where the last piece placed ended (pages so far, column, y) and the
         // space after it that is in it.
@@ -5082,7 +5396,7 @@ impl<'r> Layouter<'r> {
             let first = pages.last().is_some_and(|p| p.section != s) && mid_started.get() != Some(s);
             *number = if first && setups[s].restart_numbering { setups[s].page.first_page } else { *number + 1 };
             pages.push(page_of(s, *number, first));
-            *frame = frame_of(s);
+            *frame = frame_for(s, first);
             *y = frame.top;
         };
         let find_page_obstacle = |s: usize, number: u32, frame: &Frame| -> Option<WrapObstacle> {
@@ -5095,7 +5409,7 @@ impl<'r> Layouter<'r> {
                         let f = shape.floating.as_ref().unwrap();
                         if f.relative_v != "paragraph" && f.relative_v != "line" {
                             let sw = pt(shape.frame.width);
-                            let sh = pt(shape.frame.height);
+                            let sh = self.fitted_shape_height(shape);
                             let dl = pt(f.dist_l);
                             let dr = pt(f.dist_r);
                             let dt = pt(f.dist_t);
@@ -5278,7 +5592,7 @@ impl<'r> Layouter<'r> {
                 let first = true;
                 number = if setups[s].restart_numbering { setups[s].page.first_page } else { number };
                 *pages.last_mut().expect("a page") = page_of(s, number, first);
-                frame = frame_of(s);
+                frame = frame_for(s, first);
                 y = frame.top;
                 active_obstacle = find_page_obstacle(s, number, &frame);
                 (region_s, col, col_top) = (s, 0, y);
@@ -5352,7 +5666,7 @@ impl<'r> Layouter<'r> {
                 if let Some(shape) = square_shape(p) {
                     let f = shape.floating.as_ref().unwrap();
                     let sw = pt(shape.frame.width);
-                    let sh = pt(shape.frame.height);
+                    let sh = self.fitted_shape_height(shape);
                     let dl = pt(f.dist_l);
                     let dr = pt(f.dist_r);
                     let dt = pt(f.dist_t);
@@ -5400,10 +5714,10 @@ impl<'r> Layouter<'r> {
                     let para_top = y + before_pad;
                     let mark_size = p.mark.size as f32 / 100.0;
                     let mark_metrics = {
-                        let name = p.mark.font_for('あ');
+                        let name = p.mark.font_for('A');
                         let font = self.font(&p.mark, name);
                         let (ascent, line) = self.line_metrics(name, &font, mark_size);
-                        (line, ascent, self.lead_em(name) * mark_size)
+                        (line, ascent, self.lead_in(p, name) * mark_size)
                     };
                     let line_h = self.resolve_line_height(p, mark_metrics.0, mark_metrics.2, false);
                     let (base_y0, base_h) = match f.relative_v.as_str() {
@@ -5613,6 +5927,16 @@ impl<'r> Layouter<'r> {
                 continue;
             }
             let mut pieces = self.pieces(block, frame.width, number, obstacle_for_block.as_ref(), false);
+            // An empty paragraph that only carries a continuous section break takes no room: the next section starts on the line under the text before it (Word's PDF
+            // of corpus 020 page 2: 54.0, 65.5, 77.1 where the two break paragraphs' lines (11.5 pt each, the line grid) would have given 54.0, 77.0, 100.0; 150 documents:
+            // only 020 changes, to Word's 2 pages and 15 more lines).
+            if let Block::Paragraph(p) = block && p.section_break == SectionBreak::Continuous && p.runs.is_empty() {
+                for piece in pieces.iter_mut() {
+                    piece.height = 0.0;
+                    piece.space_after = 0.0;
+                    piece.grid_below = 0.0;
+                }
+            }
             // A section ending with the document's last paragraph starts no page.
             if b + 1 == self.doc.body.len()
                 && matches!(block, Block::Paragraph(p) if p.section_break != SectionBreak::None)
@@ -6118,12 +6442,12 @@ impl<'r> Layouter<'r> {
             };
             let mut y = pt(setup.page.header);
             for block in header {
-                for piece in self.pieces(block, frame.width, n, None, true) {
+                for piece in self.header_footer_pieces(block, frame.width, n) {
                     pg.items.extend(piece.items.into_iter().map(|it| offset(it, frame.left, y)));
                     y += piece.height;
                 }
             }
-            let footer: Vec<Piece> = footer.iter().flat_map(|b| self.pieces(b, frame.width, n, None, true)).collect();
+            let footer: Vec<Piece> = footer.iter().flat_map(|b| self.header_footer_pieces(b, frame.width, n)).collect();
             let height: f32 = footer.iter().map(|p| p.height).sum();
             let mut y = pg.height - pt(setup.page.footer) - height;
             for piece in footer {
@@ -6495,7 +6819,7 @@ fn in_cell_shape(item: Item) -> Item {
 fn offset(item: Item, dx: f32, dy: f32) -> Item {
     match item {
         Item::Text { x, y, text, offsets, font, size, color } => Item::Text { x: x + dx, y: y + dy, text, offsets, font, size, color },
-        Item::Turned { x, y, text, font, size, color, turns } => Item::Turned { x: x + dx, y: y + dy, text, font, size, color, turns },
+        Item::Turned { x, y, text, font, size, color, turns, xscale } => Item::Turned { x: x + dx, y: y + dy, text, font, size, color, turns, xscale },
         Item::Scaled { x, y, text, font, size, color, xscale } => Item::Scaled { x: x + dx, y: y + dy, text, font, size, color, xscale },
         Item::Rect { x, y, w, h, color } => Item::Rect { x: x + dx, y: y + dy, w, h, color },
         Item::Art { art, part, x, y, w, h, image_w, image_h, tint } => Item::Art { art, part, x: x + dx, y: y + dy, w, h, image_w, image_h, tint },
@@ -7254,7 +7578,9 @@ fn turn_page_items(items: Vec<Item>, direction: ibis_doc_model::CellDirection, w
     let mut out = Vec::with_capacity(items.len());
     for it in items {
         match it {
-            Item::Text { .. } => out.extend(turn_cell_text(&[it], direction, CellAnchor::Top, (0.0, 0.0, w, h), w)),
+            // A squeezed character (a glyph wider than its cell, as a bold ＭＳ 明朝's, or `w:w`) is turned as the others are, upright at its
+            // cell's size: left as it was, it stayed across at the page's top left (GitHub issue #54, the bold ＭＳ headings of a `tbRl` page).
+            Item::Text { .. } | Item::Scaled { .. } => out.extend(turn_cell_text(&[it], direction, CellAnchor::Top, (0.0, 0.0, w, h), w)),
             Item::Rect { x, y, w: rw, h: rh, color } => {
                 let (x, y, w, h) = rect(x, y, rw, rh);
                 out.push(Item::Rect { x, y, w, h, color });
@@ -7275,13 +7601,13 @@ fn turn_page_items(items: Vec<Item>, direction: ibis_doc_model::CellDirection, w
                 let (x, y, w, h) = rect(x, y, sw, sh);
                 out.push(Item::Shading { pattern, color, x, y, w, h });
             }
-            Item::Turned { x, y, text, font, size, color, turns } => {
+            Item::Turned { x, y, text, font, size, color, turns, xscale } => {
                 let (ax, ay) = at(x, y);
                 let new_turns = if tb { turns + 1 } else { turns - 1 };
                 if new_turns == 0 {
                     out.push(Item::Text { x: ax, y: ay, text, offsets: Arc::from([0.0f32]), font, size, color });
                 } else {
-                    out.push(Item::Turned { x: ax, y: ay, text, font, size, color, turns: new_turns });
+                    out.push(Item::Turned { x: ax, y: ay, text, font, size, color, turns: new_turns, xscale });
                 }
             }
             Item::Line { para, x, y, h: lh, stops, .. } => {
@@ -7295,4 +7621,31 @@ fn turn_page_items(items: Vec<Item>, direction: ibis_doc_model::CellDirection, w
         }
     }
     out
+}
+
+#[cfg(test)]
+mod turn_japanese_tests {
+    use super::{Item, turn_japanese};
+    use std::sync::Arc;
+
+    // `lrTbV` turns its Japanese characters left, including the ones squeezed one by one (bold fixed-width font, `w:w`, `fitText`).
+    #[test]
+    fn a_squeezed_japanese_character_turns_like_the_others() {
+        let scaled = |text: &str| Item::Scaled { x: 10.0, y: 20.0, text: text.to_string().into(), font: gpui_kit::font("Test"), size: 10.0, color: gpui_kit::black(), xscale: 0.5 };
+        let plain = Item::Text { x: 30.0, y: 20.0, text: "和".into(), offsets: Arc::from([0.0f32]), font: gpui_kit::font("Test"), size: 10.0, color: gpui_kit::black() };
+        let out = turn_japanese(vec![scaled("和"), scaled("A"), plain].into_iter());
+        let turned: Vec<_> = out.iter().filter(|i| matches!(i, Item::Turned { turns: -1, .. })).collect();
+        assert_eq!(turned.len(), 2, "both Japanese characters turn");
+        assert!(matches!(&out[0], Item::Turned { x, y, .. } if (*x - 18.8).abs() < 1e-4 && (*y - 21.2).abs() < 1e-4), "the em box where the upright one's was");
+        assert!(out.iter().any(|i| matches!(i, Item::Scaled { text, .. } if text.as_ref() == "A")), "a Latin letter stays across");
+    }
+
+    // A squeezed character of a vertical page (a fixed-width font's Å wider than its half cell) is turned with the
+    // page like the others; left as it was it was drawn across the page, apart from its column (issue 54).
+    #[test]
+    fn a_squeezed_character_of_a_vertical_page_turns_with_the_page() {
+        let scaled = Item::Scaled { x: 10.0, y: 20.0, text: "Å".into(), font: gpui_kit::font("Test"), size: 14.0, color: gpui_kit::black(), xscale: 0.5 };
+        let out = super::turn_page_items(vec![scaled], ibis_doc_model::CellDirection::TbRl, 800.0, 600.0);
+        assert!(matches!(&out[..], [Item::Turned { xscale, .. }] if (*xscale - 0.5).abs() < 1e-6), "{out:?}");
+    }
 }

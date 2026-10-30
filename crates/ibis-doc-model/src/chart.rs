@@ -129,6 +129,19 @@ pub enum ChartType {
     Surface { is_3d: bool, wireframe: bool },
 }
 
+impl ChartType {
+    /// ECMA-376 Part 4, OfficeOpenXML-XMLSchema-Transitional/dml-chart.xsd:
+    /// CT_LineSer (also stockChart), CT_ScatterSer and CT_RadarSer allow c:marker;
+    /// CT_BarSer, CT_AreaSer, CT_BubbleSer, CT_PieSer and CT_SurfaceSer do not.
+    pub fn supports_markers(self) -> bool {
+        matches!(self, Self::Line | Self::Scatter { .. } | Self::Radar { .. } | Self::Stock { .. })
+    }
+    /// The same schema's series types admitting c:trendline and c:errBars.
+    pub fn supports_series_analysis(self) -> bool {
+        matches!(self, Self::Bar { .. } | Self::Line | Self::Area | Self::Scatter { .. } | Self::Bubble { .. } | Self::Stock { .. })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LabelPosition {
     Center,
@@ -485,11 +498,17 @@ pub struct View3D {
     /// Right-angle axes (`c:rAngAx`): an oblique projection, the axes stay upright.
     pub right_angle_axes: bool,
     pub depth_percent: u32,
+    /// `c:hPercent`: the box's height as a percentage of its base (`None`: automatic).
+    pub height_percent: Option<u32>,
+    /// `c:grouping val="standard"` (3-D column): the series stand one behind the other; otherwise (clustered) they stand side by side in one row.
+    pub series_in_depth: bool,
+    /// `c:gapDepth`: the gap behind a bar as a percentage of its depth.
+    pub gap_depth: u32,
 }
 
 impl Default for View3D {
     fn default() -> Self {
-        Self { rot_x: 15, rot_y: 20, right_angle_axes: true, depth_percent: 100 }
+        Self { rot_x: 15, rot_y: 20, right_angle_axes: true, depth_percent: 100, height_percent: None, series_in_depth: true, gap_depth: 150 }
     }
 }
 
@@ -683,6 +702,7 @@ impl Chart {
             ex: None,
             ex_format: None,
             excel_layout: false,
+            word_layout: false,
             cell_refs: Vec::new(),
             ex_source: None,
         }
@@ -726,6 +746,8 @@ pub struct Chart {
     /// Drawn as Excel's engine lays a chart out (a chart of a worksheet or of
     /// Word, not of PowerPoint): the margins and gaps of the plot differ.
     pub excel_layout: bool,
+    /// A chart in a Word document: laid out as Word does (its automatic axis intervals are not yet measured and follow the earlier rule).
+    pub word_layout: bool,
     /// The cells each series takes its name, categories and values from (`c:f`), for a chart of a worksheet: the chart
     /// follows them as the cells change. Empty where the chart holds its data itself.
     pub cell_refs: Vec<SeriesCells>,

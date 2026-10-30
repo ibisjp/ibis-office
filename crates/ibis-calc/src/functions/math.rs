@@ -911,7 +911,9 @@ fn sequence(c: &mut Ctx, a: &[Expr]) -> Value {
     if rows < 1.0 || columns < 1.0 {
         return err(CellError::Value);
     }
-    if rows * columns > 1_048_576.0 * 16_384.0 {
+    // Each dimension must fit a worksheet; a valid product alone would allow
+    // millions of rows in a single column and allocate an unspillable array.
+    if rows > f64::from(crate::formula::MAX_ROW) + 1.0 || columns > f64::from(crate::formula::MAX_COLUMN) + 1.0 {
         return err(CellError::Num);
     }
     let (rows, columns) = (rows as usize, columns as usize);

@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! 代替テキスト (Alt Text): the selected shapes' title and description for accessibility (`cNvPr/@descr`, `@title`).
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{h_flex, v_flex, Selectable as _, Sizable as _};
 use gpui_kit::*;
@@ -258,11 +258,7 @@ impl SlideEditor {
                 }),
             )
             .child(
-                Button::new("alt-text-decorative")
-                    .small()
-                    .label(t("pptx.alt-text.decorative"))
-                    .selected(decorative)
-                    .on_click(cx.listener(|this, _, _, cx| {
+                crate::shell::chrome::checkbox_button("alt-text-decorative",t("pptx.alt-text.decorative"),decorative,false,cx.listener(|this, _, _, cx| {
                         this.toggle_alt_text_decorative(cx);
                     })),
             );
@@ -270,7 +266,7 @@ impl SlideEditor {
         if decorative {
             body = body.child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(rgb(0x5f6368))
                     .child(t("pptx.alt-text.decorative.hint")),
             );
@@ -278,7 +274,7 @@ impl SlideEditor {
             body = body
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(rgb(0x5f6368))
                         .child(t("pptx.alt-text.hint")),
                 )
@@ -286,41 +282,24 @@ impl SlideEditor {
                     v_flex()
                         .gap_1()
                         .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(t("pptx.alt-text.title")))
-                        .child(Input::new(&title_field)),
+                        .child(crate::shell::chrome::text_field(&title_field).full_width()),
                 )
                 .child(
                     v_flex()
                         .gap_1()
                         .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(t("pptx.alt-text.description")))
-                        .child(Input::new(&desc_field)),
+                        .child(crate::shell::chrome::text_field(&desc_field).full_width()),
                 );
         }
-
-        body = body.child(
-            h_flex()
-                .gap_2()
-                .justify_end()
-                .child(
-                    Button::new("alt-text-apply")
-                        .primary()
-                        .label(t("pptx.alt-text.apply"))
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(
+                    crate::shell::chrome::ActionDefinition::new("alt-text-apply", t("pptx.alt-text.apply"), crate::shell::chrome::ActionButtonKind::Primary)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.close_alt_text_panel(window, cx);
                         })),
                 )
-                .child(
-                    Button::new("alt-text-close")
-                        .ghost()
-                        .label(t("_shell.close"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.close_alt_text_panel(window, cx);
-                        })),
-                ),
-        );
 
-        Some(SidebarPanel {
-            title: t("pptx.alt-text"),
-            body: body.into_any_element(),
-        })
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(t("pptx.alt-text"), body.into_any_element(), panel_actions))
     }
 }

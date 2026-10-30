@@ -10,8 +10,8 @@
 //! - 引用文献・文献目録プレビュー (Citation / Bibliography Preview)
 //! - 引用文献のワンクリック挿入 (`CITATION <tag>`)
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{FlowCommand, FlowDocument};
@@ -342,6 +342,7 @@ pub(crate) struct SourceManagerState {
 impl SlideEditor {
     /// 資料文献の管理パネルを開く
     pub(crate) fn open_source_manager_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         self.end_text_edit(window, cx);
         let master = load_master_sources();
         let current = self.flow().map(|d| load_document_sources(d)).unwrap_or_default();
@@ -735,7 +736,7 @@ impl SlideEditor {
             )
         };
 
-        let mut body = v_flex().gap_2().p_3();
+        let mut body = v_flex().gap_2().p_3().p_0();
 
         // 状態メッセージ表示
         if let Some(msg) = message {
@@ -744,7 +745,7 @@ impl SlideEditor {
                     .p_2()
                     .rounded_md()
                     .bg(cx.theme().primary.opacity(0.1))
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().primary)
                     .child(msg),
             );
@@ -767,15 +768,15 @@ impl SlideEditor {
                 .child(div().font_weight(FontWeight::BOLD).text_sm().child(form_title.to_string()));
 
             if let Some(err_msg) = err {
-                form = form.child(div().text_xs().text_color(cx.theme().danger).child(err_msg));
+                form = form.child(div().text_sm().text_color(cx.theme().danger).child(err_msg));
             }
 
             // タグ
             form = form.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.tag").to_string()))
-                    .child(Input::new(&tag_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.tag").to_string()))
+                    .child(crate::shell::chrome::text_field(&tag_in).full_width()),
             );
 
             // 文献の種類切替ボタン
@@ -784,11 +785,7 @@ impl SlideEditor {
                 let is_sel = *t == st;
                 let t_val = *t;
                 type_row = type_row.child(
-                    Button::new(format!("st-{:?}", t_val))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if is_sel { "●" } else { "○" }, text(t_val.label_key())))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    crate::shell::chrome::radio_button(format!("st-{:?}", t_val), is_sel, false, text(t_val.label_key()), cx.listener(move |this, _, _, cx| {
                             if let Some(form) = this.doc_state_mut().and_then(|s| s.source_manager.as_mut()).and_then(|m| m.edit_form.as_mut()) {
                                 form.source_type = t_val;
                             }
@@ -799,7 +796,7 @@ impl SlideEditor {
             form = form.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.type").to_string()))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.type").to_string()))
                     .child(type_row),
             );
 
@@ -807,73 +804,65 @@ impl SlideEditor {
             form = form.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.author").to_string()))
-                    .child(Input::new(&auth_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.author").to_string()))
+                    .child(crate::shell::chrome::text_field(&auth_in).full_width()),
             );
 
             // タイトル
             form = form.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.title").to_string()))
-                    .child(Input::new(&title_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.title").to_string()))
+                    .child(crate::shell::chrome::text_field(&title_in).full_width()),
             );
 
             // 年
             form = form.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.year").to_string()))
-                    .child(Input::new(&yr_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.year").to_string()))
+                    .child(crate::shell::chrome::text_field(&yr_in).full_width()),
             );
 
             // 発行元
             form = form.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.publisher").to_string()))
-                    .child(Input::new(&pub_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.publisher").to_string()))
+                    .child(crate::shell::chrome::text_field(&pub_in).full_width()),
             );
 
             // 都市
             form = form.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.city").to_string()))
-                    .child(Input::new(&city_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.city").to_string()))
+                    .child(crate::shell::chrome::text_field(&city_in).full_width()),
             );
 
             // URL
             form = form.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.url").to_string()))
-                    .child(Input::new(&url_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.form.url").to_string()))
+                    .child(crate::shell::chrome::text_field(&url_in).full_width()),
             );
 
             // フォームアクション
             form = form.child(
-                h_flex()
-                    .gap_2()
-                    .pt_2()
-                    .child(
-                        Button::new("src-form-save")
-                            .primary()
-                            .small()
-                            .label(text("docx.source-manager.form.save"))
+                crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("src-form-save", text("docx.source-manager.form.save"), crate::shell::chrome::ActionButtonKind::Primary)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.source_manager_commit_edit(cx);
                             })),
                     )
-                    .child(
-                        Button::new("src-form-cancel")
-                            .ghost()
-                            .small()
-                            .label(text("_shell.cancel"))
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("src-form-cancel", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.source_manager_cancel_edit(cx);
                             })),
-                    ),
+                    ))),
             );
 
             body = body.child(form);
@@ -887,7 +876,7 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(Input::new(&filter_input).small().cleanable(true)),
+                .child(crate::shell::chrome::text_field(&filter_input).full_width()),
         );
 
         let query = filter_input.read(cx).value().trim().to_lowercase();
@@ -901,7 +890,7 @@ impl SlideEditor {
         let mut master_col = v_flex().gap_1().flex_1();
         master_col = master_col.child(
             div()
-                .text_xs()
+                .text_sm()
                 .font_weight(FontWeight::BOLD)
                 .text_color(if active_list == ActiveList::Master { cx.theme().primary } else { cx.theme().foreground })
                 .child(format!("{} ({})", text("docx.source-manager.master-list"), master_list.len())),
@@ -910,7 +899,7 @@ impl SlideEditor {
         let mut current_col = v_flex().gap_1().flex_1();
         current_col = current_col.child(
             div()
-                .text_xs()
+                .text_sm()
                 .font_weight(FontWeight::BOLD)
                 .text_color(if active_list == ActiveList::Current { cx.theme().primary } else { cx.theme().foreground })
                 .child(format!("{} ({})", text("docx.source-manager.current-list"), current_list.len())),
@@ -926,9 +915,9 @@ impl SlideEditor {
             let author_preview = if entry.author.is_empty() { String::new() } else { format!(" - {}", entry.author) };
 
             master_col = master_col.child(
-                Button::new(format!("master-src-{idx}"))
+                crate::shell::chrome::action_button(format!("master-src-{idx}"))
                     .small()
-                    .ghost()
+
                     .bg(if is_sel { cx.theme().primary.opacity(0.18) } else { cx.theme().background })
                     .border_1()
                     .border_color(if is_sel { cx.theme().primary } else { cx.theme().border })
@@ -955,9 +944,9 @@ impl SlideEditor {
             let author_preview = if entry.author.is_empty() { String::new() } else { format!(" - {}", entry.author) };
 
             current_col = current_col.child(
-                Button::new(format!("current-src-{idx}"))
+                crate::shell::chrome::action_button(format!("current-src-{idx}"))
                     .small()
-                    .ghost()
+
                     .bg(if is_sel { cx.theme().primary.opacity(0.18) } else { cx.theme().background })
                     .border_1()
                     .border_color(if is_sel { cx.theme().primary } else { cx.theme().border })
@@ -983,18 +972,18 @@ impl SlideEditor {
         let copy_row = h_flex()
             .gap_1()
             .child(
-                Button::new("src-copy-to-current")
+                crate::shell::chrome::action_button("src-copy-to-current")
                     .small()
-                    .ghost()
+
                     .label(text("docx.source-manager.copy-to-current"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.source_manager_copy_master_to_current(cx);
                     })),
             )
             .child(
-                Button::new("src-copy-to-master")
+                crate::shell::chrome::action_button("src-copy-to-master")
                     .small()
-                    .ghost()
+
                     .label(text("docx.source-manager.copy-to-master"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.source_manager_copy_current_to_master(cx);
@@ -1016,87 +1005,55 @@ impl SlideEditor {
                 .bg(cx.theme().muted.opacity(0.2))
                 .border_1()
                 .border_color(cx.theme().border)
-                .child(div().font_weight(FontWeight::BOLD).text_xs().child(text("docx.source-manager.preview-title").to_string()))
+                .child(div().font_weight(FontWeight::BOLD).text_sm().child(text("docx.source-manager.preview-title").to_string()))
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.citation-preview").to_string()))
-                        .child(div().text_xs().child(entry.citation_preview())),
+                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.citation-preview").to_string()))
+                        .child(div().text_sm().child(entry.citation_preview())),
                 )
                 .child(
                     v_flex()
                         .gap_1()
-                        .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.bib-preview").to_string()))
-                        .child(div().text_xs().child(entry.bibliography_preview())),
+                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.source-manager.bib-preview").to_string()))
+                        .child(div().text_sm().child(entry.bibliography_preview())),
                 );
             body = body.child(preview_box);
         }
 
         // --- 操作ボタングループ ---
         let active_list_copy = active_list;
-        let actions = h_flex()
-            .gap_1()
-            .flex_wrap()
-            .child(
-                Button::new("src-new")
-                    .small()
-                    .primary()
-                    .label(text("docx.source-manager.new"))
+        let actions = crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("src-new", text("docx.source-manager.new"), crate::shell::chrome::ActionButtonKind::Primary)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.source_manager_start_new(active_list_copy, window, cx);
                     })),
             )
-            .child(
-                Button::new("src-edit")
-                    .small()
-                    .ghost()
-                    .label(text("docx.source-manager.edit"))
+            .action(
+                crate::shell::chrome::ActionDefinition::new("src-edit", text("docx.source-manager.edit"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.source_manager_start_edit(window, cx);
                     })),
             )
-            .child(
-                Button::new("src-delete")
-                    .small()
-                    .ghost()
-                    .label(text("docx.source-manager.delete"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.source_manager_delete_selected(cx);
-                    })),
-            )
-            .child(
-                Button::new("src-insert-citation")
-                    .small()
-                    .ghost()
-                    .label(text("docx.source-manager.insert-citation"))
+            .action(
+                crate::shell::chrome::ActionDefinition::new("src-insert-citation", text("docx.source-manager.insert-citation"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.source_manager_insert_selected_citation(cx);
                     })),
-            );
+            )
+            .action(
+                crate::shell::chrome::ActionDefinition::new("src-delete", text("docx.source-manager.delete"), crate::shell::chrome::ActionButtonKind::Destructive)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.source_manager_delete_selected(cx);
+                    })),
+            )));
 
         body = body.child(actions);
 
         // クローズボタン
-        body = body.child(
-            h_flex()
-                .pt_2()
-                .border_t_1()
-                .border_color(cx.theme().border)
-                .child(
-                    Button::new("src-close")
-                        .small()
-                        .ghost()
-                        .label(text("_shell.close"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.close_source_manager_panel(cx);
-                        })),
-                ),
-        );
 
-        Some(SidebarPanel {
-            title: text("docx.source-manager.title").into(),
-            body: body.into_any_element(),
-        })
+        Some(SidebarPanel {title:text("docx.source-manager.title"),body:body.into_any_element()})
     }
 }
 

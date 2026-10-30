@@ -7,7 +7,7 @@
 //!
 //! A stroke is a freeform shape (a custom geometry of straight pieces) named `インク n`, saved like any shape. The
 //! pens, the colours and the recognizing are those of the worksheet's Draw panel (`xlsx/ink.rs`).
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -910,160 +910,50 @@ impl SlideEditor {
         cx.notify();
     }
 
-    pub(crate) fn pptx_ink_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let p = self.pptx()?.ink.as_ref()?;
-        let caption = |id: &str| div().text_size(px(13.)).child(text(id));
-        let mut body = v_flex()
-            .id("pptx-ink-panel")
-            .gap_2()
-            .px(px(16.))
-            .py(px(8.))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                    this.open_ink_panel_context_menu(event.position, window, cx);
-                }),
-            );
-        let pen_button = |id: &'static str, kind: PenKind, label: &'static str| {
-            Button::new(id)
-                .small()
-                .ghost()
-                .label(format!("{} {}", if p.pen == kind { "◉" } else { "○" }, text(label)))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.select_pptx_ink_pen(kind, cx);
-                }))
-        };
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .flex_wrap()
-                .child(pen_button("ink-pen", PenKind::Pen, "xlsx.ink.pen"))
-                .child(pen_button("ink-pencil", PenKind::Pencil, "xlsx.ink.pencil"))
-                .child(pen_button("ink-highlighter", PenKind::Highlighter, "xlsx.ink.highlighter"))
-                .child(pen_button("ink-eraser", PenKind::Eraser, "xlsx.ink.eraser"))
-                .child(pen_button("ink-select", PenKind::Select, "xlsx.ink.select")),
-        );
-        if matches!(p.pen, PenKind::Pen | PenKind::Pencil | PenKind::Highlighter) {
-            body = body.child(caption("xlsx.ink.color"));
-            let mut swatches = h_flex().gap_1().flex_wrap();
-            for (i, c) in PPTX_INK_COLORS.iter().enumerate() {
-                let on = p.effect == InkEffect::None && p.color == Rgb(*c);
-                let c = *c;
-                swatches = swatches.child(
-                    div()
-                        .id(SharedString::from(format!("ink-color-{i}")))
-                        .size(px(22.))
-                        .rounded_sm()
-                        .bg(rgb(c))
-                        .border_2()
-                        .border_color(if on { cx.theme().foreground } else { cx.theme().border })
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_pptx_ink_color(Rgb(c), cx);
-                        })),
-                );
-            }
-            body = body.child(swatches);
-
-            if p.pen == PenKind::Pen {
-                body = body.child(caption("pptx.ink.effects"));
-                let mut effects_row = h_flex().gap_1().flex_wrap();
-                for effect in PPTX_INK_EFFECTS {
-                    let on = p.effect == *effect;
-                    let eff = *effect;
-                    let label = text(eff.label_id());
-                    effects_row = effects_row.child(
-                        Button::new(SharedString::from(format!("ink-effect-{}", eff.name())))
-                            .small()
-                            .ghost()
-                            .label(format!("{} {}", if on { "◉" } else { "○" }, label))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let new_eff = if this.ink_panel_mut().is_some_and(|p| p.effect == eff) {
-                                    InkEffect::None
-                                } else {
-                                    eff
-                                };
-                                this.set_pptx_ink_effect(new_eff, cx);
-                            })),
-                    );
-                }
-                body = body.child(effects_row);
-            }
-
-            body = body.child(caption("xlsx.ink.width"));
-            let mut widths = h_flex().gap_1().flex_wrap();
-            for (i, w) in PPTX_INK_WIDTHS.iter().enumerate() {
-                let on = (p.width - *w).abs() < 0.01;
-                let w = *w;
-                widths = widths.child(
-                    Button::new(SharedString::from(format!("ink-width-{i}")))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if on { "◉" } else { "○" }, format("xlsx.ink.width-pt", &[("pt", &w)])))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_pptx_ink_width(w, cx);
-                        })),
-                );
-            }
-            body = body.child(widths);
+    pub(crate) fn pptx_ink_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel>{
+        use crate::shell::ink_panel::{InkChoice,InkToggle,InkCommand,InkRow,InkSection,InkPanelSpec};
+        let p=self.pptx()?.ink.as_ref()?;
+        let tools=[("ink-pen","xlsx.ink.pen",PenKind::Pen),("ink-pencil","xlsx.ink.pencil",PenKind::Pencil),("ink-highlighter","xlsx.ink.highlighter",PenKind::Highlighter),("ink-eraser","xlsx.ink.eraser",PenKind::Eraser),("ink-select","xlsx.ink.select",PenKind::Select)].into_iter().map(|(id,label,kind)|InkChoice::new(id,text(label),p.pen==kind,move|e,_,cx|e.select_pptx_ink_pen(kind,cx))).collect();
+        let widths=PPTX_INK_WIDTHS.into_iter().enumerate().map(|(i,width)|InkChoice::new(format!("ink-width-{i}"),format("xlsx.ink.width-pt",&[("pt",&width)]),(p.width-width).abs()<0.01,move|e,_,cx|e.set_pptx_ink_width(width,cx))).collect();
+        let mut effects=vec![InkChoice::new("ink-effect-none",text("docx.ink.effect.none"),p.effect==InkEffect::None,|e,_,cx|e.set_pptx_ink_effect(InkEffect::None,cx))];
+        effects.extend(PPTX_INK_EFFECTS.iter().copied().map(|effect|InkChoice::new(format!("ink-effect-{}",effect.name()),text(effect.label_id()),p.effect==effect,move|e,_,cx|{let chosen=if e.ink_panel_mut().is_some_and(|p|p.effect==effect){InkEffect::None}else{effect};e.set_pptx_ink_effect(chosen,cx);})));
+        let mut ruler_rows=vec![InkRow::Toggle(InkToggle::new("ink-ruler",text("pptx.ink.ruler"),p.ruler.is_some(),|e,_,cx|e.toggle_pptx_ink_ruler(cx)))];
+        if let Some(ruler)=p.ruler{
+            ruler_rows.extend([
+                InkRow::Commands(vec![
+                    InkCommand::new("ink-ruler-left","−15°",true,|e,_,cx|e.pptx_ink_turn_ruler(Some(-15.),cx)),
+                    InkCommand::new("ink-ruler-right","+15°",true,|e,_,cx|e.pptx_ink_turn_ruler(Some(15.),cx)),
+                    InkCommand::new("ink-ruler-level",text("pptx.ink.ruler-level"),true,|e,_,cx|e.pptx_ink_turn_ruler(None,cx)),
+                ]),
+                InkRow::Label(format!("{} {:.0}°",text("pptx.ink.ruler-angle"),ruler.degrees).into()),
+                InkRow::Commands(vec![
+                    InkCommand::new("ink-ruler-left1","−1°",true,|e,_,cx|e.pptx_ink_turn_ruler(Some(-1.),cx)),
+                    InkCommand::new("ink-ruler-right1","+1°",true,|e,_,cx|e.pptx_ink_turn_ruler(Some(1.),cx)),
+                ]),
+                InkRow::Label(format!("{} {:.1} cm",text("pptx.ink.ruler-length"),ruler.length/360_000.).into()),
+                InkRow::Commands(vec![
+                    InkCommand::new("ink-ruler-shorter","−2 cm",true,|e,_,cx|e.pptx_ink_resize_ruler(-720_000.,cx)),
+                    InkCommand::new("ink-ruler-longer","+2 cm",true,|e,_,cx|e.pptx_ink_resize_ruler(720_000.,cx)),
+                ]),
+            ]);
         }
-        body = body.child(
-            Button::new("ink-mouse")
-                .small()
-                .ghost()
-                .label(format!("{} {}", if p.mouse { "☑" } else { "☐" }, text("xlsx.ink.mouse")))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    if let Some(p) = this.ink_panel_mut() {
-                        p.mouse = !p.mouse;
-                    }
-                    cx.notify();
-                })),
-        );
-        body = body.child(
-            Button::new("ink-ruler")
-                .small()
-                .ghost()
-                .label(format!("{} {}", if p.ruler.is_some() { "☑" } else { "☐" }, text("pptx.ink.ruler")))
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_pptx_ink_ruler(cx))),
-        );
-        if p.ruler.is_some() {
-            let turn = |id: &'static str, label: SharedString, by: Option<f32>| {
-                Button::new(id).small().label(label).on_click(cx.listener(move |this, _, _, cx| this.pptx_ink_turn_ruler(by, cx)))
-            };
-            body = body.child(
-                h_flex()
-                    .gap_1()
-                    .child(turn("ink-ruler-left", SharedString::from("−15°"), Some(-15.0)))
-                    .child(turn("ink-ruler-right", SharedString::from("+15°"), Some(15.0)))
-                    .child(turn("ink-ruler-level", text("pptx.ink.ruler-level"), None)),
-            );
-            let degrees = p.ruler.map_or(0.0, |r| r.degrees);
-            let length = p.ruler.map_or(0.0, |r| r.length);
-            let step = |id: &'static str, label: &'static str, by: f32| {
-                Button::new(id).small().label(label).on_click(cx.listener(move |this, _, _, cx| this.pptx_ink_turn_ruler(Some(by), cx)))
-            };
-            let size = |id: &'static str, label: &'static str, by: f64| {
-                Button::new(id).small().label(label).on_click(cx.listener(move |this, _, _, cx| this.pptx_ink_resize_ruler(by, cx)))
-            };
-            body = body
-                .child(div().text_size(px(12.)).child(SharedString::from(format!("{}: {:.0}°", text("pptx.ink.ruler-angle"), degrees))))
-                .child(h_flex().gap_1().child(step("ink-ruler-left1", "−1°", -1.0)).child(step("ink-ruler-right1", "+1°", 1.0)))
-                .child(div().text_size(px(12.)).child(SharedString::from(format!("{}: {:.1} cm", text("pptx.ink.ruler-length"), length / 360_000.0))))
-                .child(h_flex().gap_1().child(size("ink-ruler-shorter", "−2 cm", -720_000.0)).child(size("ink-ruler-longer", "+2 cm", 720_000.0)));
-        }
-        let selected_is_ink = self.selected_shapes().first().is_some_and(|s| stroke_points(s).is_some());
-        let has_ink = self.slide().shapes.iter().any(|s| stroke_points(s).is_some());
-        let message = p.message.clone();
-        body = body.child(Button::new("ink-to-shape").small().disabled(!selected_is_ink).label(text("xlsx.ink.to-shape")).on_click(cx.listener(|this, _, _, cx| this.pptx_ink_to_shape(cx))));
-        body = body.child(Button::new("ink-to-text").small().disabled(!selected_is_ink).label(text("pptx.ink.to-text")).on_click(cx.listener(|this, _, _, cx| this.pptx_ink_to_text(cx))));
-        body = body.child(Button::new("ink-to-math").small().disabled(!selected_is_ink).label(text("pptx.ink.to-math")).on_click(cx.listener(|this, _, _, cx| this.pptx_ink_to_math(cx))));
-        body = body.child(Button::new("ink-replay").small().disabled(!has_ink).label(text("pptx.ink.replay")).on_click(cx.listener(|this, _, _, cx| this.pptx_ink_replay(cx))));
-        if !message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(message)));
-        }
-        body = body.child(Button::new("ink-close").small().label(text("_shell.close")).on_click(cx.listener(|this, _, _, cx| this.close_pptx_ink_panel(cx))));
-        Some(SidebarPanel { title: text("xlsx.ink.title"), body: body.into_any_element() })
+        let selected=self.selected_shapes().first().is_some_and(|s|stroke_points(s).is_some());
+        let has_ink=self.slide().shapes.iter().any(|s|stroke_points(s).is_some());
+        let actions=InkSection{title:None,rows:vec![InkRow::Commands(vec![
+            InkCommand::new("ink-to-shape",text("xlsx.ink.to-shape"),selected,|e,_,cx|e.pptx_ink_to_shape(cx)),
+            InkCommand::new("ink-to-text",text("pptx.ink.to-text"),selected,|e,_,cx|e.pptx_ink_to_text(cx)),
+            InkCommand::new("ink-to-math",text("pptx.ink.to-math"),selected,|e,_,cx|e.pptx_ink_to_math(cx)),
+            InkCommand::new("ink-replay",text("pptx.ink.replay"),has_ink,|e,_,cx|e.pptx_ink_replay(cx)),
+        ])]};
+        Some(crate::shell::ink_panel::panel(InkPanelSpec{
+            color_id:"pptx-ink-color-field",tools,widths,drawing:matches!(p.pen,PenKind::Pen|PenKind::Pencil|PenKind::Highlighter),color:p.color,
+            change_color:std::rc::Rc::new(|e,color,_,cx|e.set_pptx_ink_color(color,cx)),effects,
+            mouse:InkToggle::new("ink-mouse",text("ink.panel.mouse"),p.mouse,|e,_,cx|{if let Some(p)=e.ink_panel_mut(){p.mouse=!p.mouse;}cx.notify();}),
+            sections:vec![InkSection{title:None,rows:ruler_rows},actions],message:p.message.clone(),
+            context_menu:Some(std::rc::Rc::new(|e,position,w,cx|e.open_ink_panel_context_menu(position,w,cx))),
+        },cx))
     }
+
 }
 
 /// Recognizes handwritten characters or fallback text from ink stroke points.

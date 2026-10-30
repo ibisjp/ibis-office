@@ -164,6 +164,8 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
                             columns: vec![content.default_column; content.columns.len()],
                             rows: vec![content.default_row; content.rows.len()],
                             hidden_rows: Default::default(),
+            custom_rows: Default::default(),
+            custom_columns: Default::default(),
                             hidden_columns: Default::default(),
                             spills: Default::default(),
                             validations: Vec::new(),
@@ -853,8 +855,18 @@ impl Writer<'_> {
             styles: Vec::new(),
             columns: Vec::new(),
             rows: Vec::new(),
+            // What the app measured when it opened the sheet, not saved (`Sheet::measured_rows`).
+            default_row: 0,
+            measured_rows: Default::default(),
+            fitted_rows: Default::default(),
+            printed_rows: Default::default(),
+            column_fonts: Default::default(),
+            row_fonts: Default::default(),
+            written_fonts: Default::default(),
             merges: Vec::new(),
             hidden_rows: Default::default(),
+            custom_rows: Default::default(),
+            custom_columns: Default::default(),
             hidden_columns: Default::default(),
             spills: Default::default(),
             frozen: None,
@@ -3476,8 +3488,15 @@ fn chart_refs_of(package: &Package, part: &str, chart: &ibis_doc_model::Chart) -
 }
 
 pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis_doc_model::Chart, new: &ibis_doc_model::Chart) -> Result<(), Error> {
+    if super::chart_topology::differs(old, new) {
+        super::chart_topology::sync(package.xml_mut(part)?, new)?;
+        let base = super::chart_topology::baseline(old, new);
+        return write_chart_settings(package, part, &base, new);
+    }
+
     let mut expected = old.clone();
     expected.title = new.title.clone();
+    expected.background=new.background.clone();expected.border=new.border.clone();expected.plot_border=new.plot_border.clone();
     expected.pivot_source = new.pivot_source.clone();
     expected.legend = match (&old.legend, &new.legend) {
         (Some(o), Some(n)) => Some(ibis_doc_model::Legend {
@@ -3496,6 +3515,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
         return Err(unsupported("グラフの軸の追加・削除"));
     }
     for (e, n) in expected.axes.iter_mut().zip(&new.axes) {
+        e.text=n.text.clone();e.line=n.line.clone();
         e.min = n.min;
         e.max = n.max;
         e.major_unit = n.major_unit;
@@ -3577,6 +3597,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
         }
     };
     let chart = doc.child(root, "chart").ok_or_else(|| unsupported("グラフの XML"))?;
+    if old.background!=new.background || old.border!=new.border {super::chart_format::area(doc,root,Some(&new.background),Some(new.border.as_ref()),&c,&a,&["txPr","externalData","printSettings","userShapes","extLst"])?;}
     let new_el = |doc: &mut XmlDocument, name: &str| detached(doc, &format!("{c}{name}"));
     let valued = |doc: &mut XmlDocument, name: &str, value: &str| {
         let e = detached(doc, &format!("{c}{name}"));
@@ -3722,6 +3743,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                     }
                 };
                 write_chart_title_text(doc, title, &t.text, &a, &c);
+                super::chart_format::text(doc,title,&t.style,&c,&a);
             }
         }
     }
@@ -3744,6 +3766,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                         x
                     }
                 };
+                super::chart_format::text(doc,legend,&l.text,&c,&a);
                 let code = match l.source_position {
                     Some(ibis_doc_model::LegendPosition::Bottom) => "b",
                     Some(ibis_doc_model::LegendPosition::Left) => "l",
@@ -3803,9 +3826,10 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
         }
     }
     let plot = doc.child(chart, "plotArea").ok_or_else(|| unsupported("グラフの XML"))?;
+    if old.plot_border!=new.plot_border {super::chart_format::area(doc,plot,None,Some(new.plot_border.as_ref()),&c,&a,&["txPr","extLst"])?;}
     for (o, n) in old.axes.iter().zip(&new.axes) {
         if (o.min, o.max, o.major_unit, o.minor_unit, o.display_unit, o.log_base, &o.gridlines, &o.minor_gridlines, &o.title, o.reversed, o.crosses, o.crosses_at) == (n.min, n.max, n.major_unit, n.minor_unit, n.display_unit, n.log_base, &n.gridlines, &n.minor_gridlines, &n.title, n.reversed, n.crosses, n.crosses_at)
-            && o.date == n.date
+            && o.date == n.date && o.text==n.text && o.line==n.line
         {
             continue;
         }
@@ -3813,6 +3837,8 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
             matches!(doc.local_name(x), "valAx" | "catAx" | "dateAx" | "serAx") && doc.child(x, "axId").and_then(|i| doc.attr(i, "val")).and_then(|v| v.parse::<u32>().ok()) == n.source_id
         });
         let Some(axis) = axis else { return Err(unsupported("このグラフの軸")) };
+        if o.text!=n.text {super::chart_format::text(doc,axis,&n.text,&c,&a);}
+        if o.line!=n.line {super::chart_format::area(doc,axis,None,Some(n.line.as_ref()),&c,&a,&["txPr","crossAx","crosses","crossesAt","extLst"])?;}
         if o.date != n.date {
             let tag = if n.date { "dateAx" } else { "catAx" };
             doc.rename(axis, &format!("{c}{tag}"));
@@ -3908,6 +3934,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                 _ => {}
             }
         }
+        if o.gridlines!=n.gridlines {if let (Some(node),Some(stroke))=(doc.child(axis,"majorGridlines"),n.gridlines.as_ref()){super::chart_format::area(doc,node,None,Some(Some(stroke)),&c,&a,&[])?;}}
         if o.minor_gridlines.is_some() != n.minor_gridlines.is_some() {
             match (doc.child(axis, "minorGridlines"), n.minor_gridlines.is_some()) {
                 (Some(g), false) => doc.detach(g),
@@ -3938,6 +3965,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                         }
                     };
                     write_chart_title_text(doc, title, &t.text, &a, &c);
+                super::chart_format::text(doc,title,&t.style,&c,&a);
                 }
             }
         }
@@ -4152,6 +4180,7 @@ pub(super) fn write_chart_settings(package: &mut Package, part: &str, old: &ibis
                 }
                 if o.labels != n.labels {
                     crate::save::pptx_chart::write_labels(doc, ser, o.labels.as_ref(), n.labels.as_ref())?;
+                    if let (Some(node),Some(labels))=(doc.child(ser,"dLbls"),n.labels.as_ref()){super::chart_format::text(doc,node,&labels.style,&c,&a);}
                 }
                 if o.marker != n.marker {
                     crate::save::pptx_chart::write_series_marker(doc, ser, n.marker.as_ref(), &c, &a)?;

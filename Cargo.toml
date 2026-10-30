@@ -25,6 +25,7 @@ gpui-kit = "=0.6.6"
 # symbols); gpui-pre-linux and gpui-pre-wgpu (the text system and renderer
 # of Linux and the web) serve the Linux build. They are git submodules under forks/; see AGENTS.md.
 [patch.crates-io]
+gpui-component = { path = "forks/gpui-component" }
 gpui-pre = { path = "forks/gpui-pre" }
 gpui-pre-macos = { path = "forks/gpui-pre-macos" }
 gpui-pre-web = { path = "forks/gpui-pre-web" }

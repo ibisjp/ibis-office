@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -60,7 +60,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.goal_seek = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -181,81 +181,46 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                            ui.borrow_mut().insert(id.clone(), bounds);
+                        })
+        };
         let body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
+            .p_0().child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_sm().child(text("_xlsx.set-cell"))),
+            )
+            .child(mark("xlsx.goal-seek.formula", super::range_field::local_range_field(&p.formula,"goal_seek-p-formula",true,cx).into_any_element()))
+            .child(div().text_sm().child(text("_xlsx.to-value")))
+            .child(mark("xlsx.goal-seek.target", crate::shell::chrome::text_field(&p.target).full_width().into_any_element()))
             .child(
                 h_flex()
                     .items_center()
                     .justify_between()
-                    .child(div().text_size(px(13.)).child(text("_xlsx.set-cell")))
-                    .child(mark(
-                        "xlsx.goal-seek.use-formula",
-                        Button::new("goal-use-formula")
-                            .xsmall()
-                            .ghost()
-                            .label(text("xlsx.use-selected-cell"))
-                            .on_click(cx.listener(|this, _, window, cx| this.set_goal_seek_cell_from_selection(false, window, cx)))
-                            .into_any_element(),
-                    )),
+                    .child(div().text_sm().child(text("_xlsx.by-changing-cell"))),
             )
-            .child(mark("xlsx.goal-seek.formula", Input::new(&p.formula).small().cleanable(true).into_any_element()))
-            .child(div().text_size(px(13.)).child(text("_xlsx.to-value")))
-            .child(mark("xlsx.goal-seek.target", Input::new(&p.target).small().cleanable(true).into_any_element()))
-            .child(
-                h_flex()
-                    .items_center()
-                    .justify_between()
-                    .child(div().text_size(px(13.)).child(text("_xlsx.by-changing-cell")))
-                    .child(mark(
-                        "xlsx.goal-seek.use-changing",
-                        Button::new("goal-use-changing")
-                            .xsmall()
-                            .ghost()
-                            .label(text("xlsx.use-selected-cell"))
-                            .on_click(cx.listener(|this, _, window, cx| this.set_goal_seek_cell_from_selection(true, window, cx)))
-                            .into_any_element(),
-                    )),
-            )
-            .child(mark("xlsx.goal-seek.changing", Input::new(&p.changing).small().cleanable(true).into_any_element()))
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(mark(
-                        "xlsx.goal-seek.run",
-                        Button::new("goal-run")
-                            .primary()
-                            .small()
+            .child(mark("xlsx.goal-seek.changing", super::range_field::local_range_field(&p.changing,"goal_seek-p-changing",true,cx).into_any_element()))
+            .children(crate::shell::chrome::panel_message(&p.message))
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(mark_action("xlsx.goal-seek.run", crate::shell::chrome::ActionDefinition::new("goal-run", "", crate::shell::chrome::ActionButtonKind::Primary)
                             .label(text("_xlsx.run"))
-                            .on_click(cx.listener(|this, _, _, cx| this.run_goal_seek(cx)))
-                            .into_any_element(),
-                    ))
+                            .on_click(cx.listener(|this, _, _, cx| this.run_goal_seek(cx)))))
                     .when(found, |b| {
-                        b.child(mark(
-                            "xlsx.goal-seek.apply",
-                            Button::new("goal-apply")
-                                .small()
-                                .primary()
+                        b.action(mark_action("xlsx.goal-seek.apply", crate::shell::chrome::ActionDefinition::new("goal-apply", "", crate::shell::chrome::ActionButtonKind::Primary)
                                 .label(text("_shell.apply"))
-                                .on_click(cx.listener(|this, _, _, cx| this.apply_goal_seek(cx)))
-                                .into_any_element(),
-                        ))
+                                .on_click(cx.listener(|this, _, _, cx| this.apply_goal_seek(cx)))))
                     })
-                    .child(mark(
-                        "xlsx.goal-seek.close",
-                        Button::new("goal-close")
-                            .small()
-                            .ghost()
-                            .label(text("_shell.close"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.wb_mut().panels.goal_seek = None;
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    )),
-            );
-        Some(SidebarPanel { title: text("_xlsx.goal-seek").to_string().into(), body: body.into_any_element() })
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("_xlsx.goal-seek").to_string(), body.into_any_element(), panel_actions))
     }
 }

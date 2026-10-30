@@ -144,8 +144,11 @@ pub fn char_advance_pt(font: &str, pt: f64, bold: bool, italic: bool, c: char) -
     if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).copied()) {
         return hit;
     }
-    let measured = measure_char(font, pt, bold, italic, c);
-    CACHE.with(|cache| cache.borrow_mut().insert(key, measured));
+    // A measure that failed is asked once more and not remembered (GDI can fail for a moment); only an answer is kept.
+    let measured = measure_char(font, pt, bold, italic, c).or_else(|| measure_char(font, pt, bold, italic, c));
+    if measured.is_some() {
+        CACHE.with(|cache| cache.borrow_mut().insert(key, measured));
+    }
     measured
 }
 

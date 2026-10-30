@@ -72,6 +72,18 @@ fn corpus_report_docx_s3_underline_in_text_box() {
     }
 }
 
+/// A text box's runs take the style's `w:kern` (half points, kerned from that size on) as the renderer's `KernMin` (hundredths of a point, kerned
+/// above it): `w:kern 2` is 1 pt, so 99 (Word's PDF of corpus 127: the pairs of a text box's Century text are kerned as the body's).
+/// `vml-textbox-inner-width-compat15-probe.docx`: Normal has `w:kern 2`.
+#[test]
+fn a_text_boxs_runs_take_the_styles_kerning() {
+    let p = read("vml-textbox-inner-width-compat15-probe.docx");
+    let doc = flow(&p);
+    let body = shapes(doc).into_iter().find_map(|s| s.text_body()).expect("the text box's text");
+    let run = body.paragraphs.iter().flat_map(|p| &p.runs).find(|r| !r.text.trim().is_empty()).expect("a run");
+    assert_eq!(run.style.kern.0, Some(99), "w:kern 2 is kerned from 1 pt on");
+}
+
 /// S3「テキストボックスの中で、下線・タブ・改行が消え、空の段落が詰められる」:
 /// Word は左の箱の空の段落（固定 24pt）を残し、TEXT を1行下に描く。
 #[test]

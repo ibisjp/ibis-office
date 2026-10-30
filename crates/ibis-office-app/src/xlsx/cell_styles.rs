@@ -8,8 +8,8 @@
 use crate::shell::chrome::{MenuEntry, MenuItem, Submenu};
 use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellStyle, Command, SheetCommand};
@@ -165,7 +165,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.new_cell_style = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -223,27 +223,30 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
         let base = &p.base_format;
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
 
-        body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.style-name")));
-        body = body.child(mark("style-name", Input::new(&p.name).small().cleanable(true).into_any_element()));
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.style-name")));
+        body = body.child(mark("style-name", crate::shell::chrome::text_field(&p.name).full_width().into_any_element()));
 
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).text_color(red()).child(SharedString::from(p.message.clone())));
+            body = body.child(div().text_sm().text_color(red()).child(SharedString::from(p.message.clone())));
         }
 
-        body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.style-includes")));
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.style-includes")));
 
         let check_btn = |id: &'static str, btn_id: &'static str, checked: bool, label_text: String| {
             mark(
                 id,
-                Button::new(btn_id)
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if checked { "☑" } else { "☐" }, label_text))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::checkbox_button(btn_id, label_text, checked, false, cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.wb_mut().panels.new_cell_style.as_mut() {
                             match id {
                                 "include-number-format" => p.include_number_format = !p.include_number_format,
@@ -301,18 +304,15 @@ impl SlideEditor {
         let protect_desc = if base.unlocked { crate::shell::i18n::text("_xlsx.unlocked") } else { crate::shell::i18n::text("_xlsx.locked") };
         body = body.child(check_btn("include-protection", "btn-protect", p.include_protection, crate::shell::i18n::format("_xlsx.protection-protect-desc", &[("protect_desc", &protect_desc)])));
 
-        let btn_row = h_flex().gap_2().mt_2()
-            .child(mark("apply", Button::new("cell-style-ok").primary().small().label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_new_cell_style_panel(cx))).into_any_element()))
-            .child(mark("close", Button::new("cell-style-cancel").small().ghost().label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| {
+        let btn_row = crate::shell::chrome::action_bar()
+            .action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("cell-style-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_new_cell_style_panel(cx)))))
+            .action(mark_action("close", crate::shell::chrome::ActionDefinition::new("cell-style-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| {
                 this.wb_mut().panels.new_cell_style = None;
                 cx.notify();
-            })).into_any_element()));
-        body = body.child(btn_row);
+            }))));
 
-        Some(crate::shell::chrome::SidebarPanel {
-            title: text("_xlsx.new-cell-style"),
-            body: body.into_any_element(),
-        })
+        let panel_terminal_actions = btn_row;
+        Some(crate::shell::chrome::SidebarPanel::with_footer(text("_xlsx.new-cell-style"), body.into_any_element(), panel_terminal_actions))
     }
 
     /// The セルのスタイル submenu: custom styles + built-in styles by Excel's groups + "新しいセル スタイル…".

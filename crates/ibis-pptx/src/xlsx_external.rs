@@ -195,8 +195,10 @@ mod tests {
         assert_eq!(book.sheets[0].cells[&(2, 0)], CellValue::Bool(true));
         assert_eq!(book.sheets[0].cells[&(2, 2)], CellValue::Error(CellError::NA));
         assert_eq!(book.sheets[1].cells[&(1, 1)], CellValue::Number(7.0));
-        assert_eq!(link_path("file:///Users/x/%E5%A3%B2.xlsx", None), Some(std::path::PathBuf::from("/Users/x/売.xlsx")));
-        assert_eq!(link_path("sub/b.xlsx", Some(std::path::Path::new("/docs"))), Some(std::path::PathBuf::from("/docs/sub/b.xlsx")));
+        // An absolute path starts with `/` on Unix and with a drive on Windows.
+        let (root, docs) = if cfg!(windows) { ("C:/Users/x", "C:/docs") } else { ("/Users/x", "/docs") };
+        assert_eq!(link_path(&format!("file:///{}/%E5%A3%B2.xlsx", root.trim_start_matches('/')), None), Some(std::path::PathBuf::from(format!("{root}/売.xlsx"))));
+        assert_eq!(link_path("sub/b.xlsx", Some(std::path::Path::new(docs))), Some(std::path::Path::new(docs).join("sub/b.xlsx")));
         assert_eq!(link_path("b.xlsx", None), None);
         assert_eq!(book_name("Book2.xlsx"), "Book2.xlsx");
         assert_eq!(book_name(r"C:\dir\Book 3.xlsx"), "Book 3.xlsx");

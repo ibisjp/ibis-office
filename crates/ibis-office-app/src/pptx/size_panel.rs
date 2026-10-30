@@ -3,8 +3,8 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Custom slide canvas dimensions, and what happens to the contents (kept,
 //! maximized or fitted: 最大化・サイズに合わせて調整).
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -20,6 +20,8 @@ pub(crate) struct SizePanel {
     pub(crate) first: Entity<InputState>,
     error: Option<SharedString>,
     pub(crate) mode: ScaleMode,
+    original_size: EmuSize,
+    initial_dimensions: [String; 2],
 }
 
 /// What a new slide size does to the slides' contents.
@@ -56,12 +58,15 @@ impl SlideEditor {
 
     fn open_slide_size_panel_for(&mut self, size: EmuSize, mode: ScaleMode, window: &mut Window, cx: &mut Context<Self>) {
         self.end_text_edit(window, cx);
-        let width = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("pptx.size-panel.width-cm")).default_value(format!("{:.6}", size.width as f64 / 360_000.)));
-        let height = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("pptx.size-panel.height-cm")).default_value(format!("{:.6}", size.height as f64 / 360_000.)));
+        // Share the size/position panel's cm display precision. Preserve exact imported EMU
+        // dimensions when the displayed field is unchanged, so formatting never changes the model.
+        let initial_dimensions = [super::frame_panel::cm(size.width), super::frame_panel::cm(size.height)];
+        let width = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("pptx.size-panel.width-cm")).default_value(initial_dimensions[0].clone()));
+        let height = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("pptx.size-panel.height-cm")).default_value(initial_dimensions[1].clone()));
         let first = cx.new(|cx| InputState::new(window, cx).default_value(self.presentation().first_slide_number.to_string()));
         if let Some(state) = self.pptx_mut() {
             state.section_panel=None;state.gradient_panel = None; state.shadow_panel = None; state.glow_panel = None; state.paragraph_panel = None; state.timing_panel = None; state.crop_panel = None; state.find = None; state.insets_panel = None; state.frame_panel = None; state.comments = None; state.chart_panel = None; state.header_footer = None;
-            state.size_panel = Some(SizePanel { width: width.clone(), height, first, error: None, mode });
+            state.size_panel = Some(SizePanel { width: width.clone(), height, first, error: None, mode, original_size: size, initial_dimensions });
         }
         self.sidebar_open = true;
         width.update(cx, |s, cx| s.focus(window, cx));
@@ -70,7 +75,11 @@ impl SlideEditor {
 
     pub(crate) fn apply_slide_size_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(panel) = self.pptx().and_then(|s| s.size_panel.as_ref()) else { return };
-        let size = dimension(panel.width.read(cx).value().as_ref()).zip(dimension(panel.height.read(cx).value().as_ref()));
+        let displayed_width = panel.width.read(cx).value();
+        let displayed_height = panel.height.read(cx).value();
+        let width = if displayed_width.trim() == panel.initial_dimensions[0] {Some(panel.original_size.width)} else {dimension(displayed_width.as_ref())};
+        let height = if displayed_height.trim() == panel.initial_dimensions[1] {Some(panel.original_size.height)} else {dimension(displayed_height.as_ref())};
+        let size = width.zip(height);
         let Some((width, height)) = size else {
             if let Some(panel) = self.pptx_mut().and_then(|s| s.size_panel.as_mut()) { panel.error = Some(crate::shell::i18n::text("pptx.size-panel.enter-width-height-between-2").into()); }
             return cx.notify();
@@ -100,31 +109,30 @@ impl SlideEditor {
         let panel = self.pptx()?.size_panel.as_ref()?;
         let (width, height, error, mode, first) = (panel.width.clone(), panel.height.clone(), panel.error.clone(), panel.mode, panel.first.clone());
         let choice = |id: &'static str, label: &'static str, this: ScaleMode| {
-            Button::new(id).small().label(crate::shell::i18n::text(label)).when(mode != this, |b| b.ghost()).on_click(cx.listener(move |e, _, _, cx| {
+            crate::shell::chrome::segment_control::SegmentItem::label(id, crate::shell::i18n::text(label), mode == this).on_click(cx.listener(move |e, _, _, cx| {
                 if let Some(p) = e.pptx_mut().and_then(|s| s.size_panel.as_mut()) { p.mode = this; }
                 cx.notify();
             }))
         };
         let mut body = v_flex().gap_2().px(px(18.)).py(px(8.))
-            .child(div().text_size(px(13.)).child(crate::shell::i18n::text(match mode {
+            .p_0().child(div().text_sm().child(crate::shell::i18n::text(match mode {
                 ScaleMode::Keep => "pptx.size-panel.keeps-position-size-shapes",
                 ScaleMode::Maximize => "pptx.size-panel.shapes-scaled-fill-new-size",
                 ScaleMode::Fit => "pptx.size-panel.shapes-scaled-fit-new-size",
             })))
-            .child(h_flex().gap_1().flex_wrap()
+            .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
                 .child(choice("pptx-size-keep", "pptx.size-panel.keep", ScaleMode::Keep))
                 .child(choice("pptx-size-maximize", "pptx.size-panel.maximize", ScaleMode::Maximize))
                 .child(choice("pptx-size-fit", "pptx.size-panel.ensure-fit", ScaleMode::Fit)))
-            .child(div().text_size(px(13.)).child(crate::shell::i18n::text("pptx.frame-panel.width-cm")))
-            .child(Input::new(&width).small().cleanable(true))
-            .child(div().text_size(px(13.)).child(crate::shell::i18n::text("pptx.frame-panel.height-cm")))
-            .child(Input::new(&height).small().cleanable(true))
-            .child(div().text_size(px(13.)).child(crate::shell::i18n::text("pptx.size-panel.first-slide-number")))
-            .child(Input::new(&first).small().cleanable(true));
-        if let Some(error) = error { body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error)); }
-        let body = body.child(h_flex().gap_1()
-            .child(Button::new("pptx-size-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_slide_size_panel(w, cx))))
-            .child(Button::new("pptx-size-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_slide_size_panel(w, cx)))));
-        Some(SidebarPanel { title: crate::shell::i18n::text("pptx.size-panel.custom-slide-size"), body: body.into_any_element() })
+            .child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("pptx.frame-panel.width-cm"), crate::shell::chrome::text_field(&width).unit("cm", px(24.)).spinner("pptx-size-width", crate::shell::chrome::SpinnerSpec::new(0.1).range(2.54, 142.24), cx, |_, _, _, _| {})))
+            .child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("pptx.frame-panel.height-cm"), crate::shell::chrome::text_field(&height).unit("cm", px(24.)).spinner("pptx-size-height", crate::shell::chrome::SpinnerSpec::new(0.1).range(2.54, 142.24), cx, |_, _, _, _| {})))
+            .child(div().text_sm().child(crate::shell::i18n::text("pptx.size-panel.first-slide-number")))
+            .child(crate::shell::chrome::text_field(&first).full_width().spinner("pptx-size-first", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 9999.0).integer_only(), cx, |_, _, _, _| {}));
+        if let Some(error) = error { body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error)); }
+        let body = body;
+        let panel_actions = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-size-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_slide_size_panel(w, cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-size-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_slide_size_panel(w, cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("pptx.size-panel.custom-slide-size"), body.into_any_element(), panel_actions))
     }
 }

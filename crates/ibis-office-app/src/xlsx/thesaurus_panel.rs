@@ -6,7 +6,7 @@
 //! cell's text (one step to undo).
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, SheetCommand};
@@ -59,7 +59,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.thesaurus = Some(SheetThesaurusPanel { query, result, searched: word, message: String::new(), _subscription: subscription });
         self.sidebar_open = true;
         cx.notify();
@@ -99,24 +99,24 @@ impl SlideEditor {
         let query = p.query.clone();
         let searched = p.searched.clone();
         let message = p.message.clone();
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).child(Input::new(&query).small().cleanable(true));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0().child(crate::shell::chrome::text_field(&query).full_width());
         match &p.result {
             None if searched.is_empty() => {
-                body = body.child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(text("docx.thesaurus.empty-prompt")));
+                body = body.child(div().text_sm().text_color(theme.muted_foreground).child(text("docx.thesaurus.empty-prompt")));
             }
             None => {
                 body = body
-                    .child(div().text_size(px(12.)).child(format("docx.thesaurus.no-results", &[("word", &searched)])))
-                    .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(text("docx.thesaurus.hint")));
+                    .child(div().text_sm().child(format("docx.thesaurus.no-results", &[("word", &searched)])))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(text("docx.thesaurus.hint")));
             }
             Some(result) => {
                 for (g, group) in result.groups.iter().enumerate() {
-                    body = body.child(div().pt_1().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(SharedString::from(format!("{} — {}", group.category, group.meaning))));
+                    body = body.child(div().pt_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(SharedString::from(format!("{} — {}", group.category, group.meaning))));
                     let mut row = h_flex().flex_wrap().gap_1();
                     for (i, synonym) in group.synonyms.iter().enumerate() {
                         let word = synonym.clone();
                         row = row.child(
-                            Button::new(SharedString::from(format!("synonym-{g}-{i}")))
+                            crate::shell::chrome::action_button(SharedString::from(format!("synonym-{g}-{i}")))
                                 .xsmall()
                                 .label(SharedString::from(synonym.clone()))
                                 .on_click(cx.listener(move |this, _, _, cx| this.sheet_thesaurus_replace(&word, cx))),
@@ -126,14 +126,7 @@ impl SlideEditor {
                 }
             }
         }
-        body = body.child(div().text_size(px(12.)).child(SharedString::from(message))).child(
-            h_flex().child(
-                Button::new("sheet-thesaurus-close").small().ghost().label(text("_shell.close")).on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.thesaurus = None;
-                    cx.notify();
-                })),
-            ),
-        );
-        Some(SidebarPanel { title: text("docx.thesaurus.title").into(), body: body.into_any_element() })
+        body = body.child(div().text_sm().child(SharedString::from(message)));
+        Some(SidebarPanel{title:text("docx.thesaurus.title").into(),body:body.into_any_element()})
     }
 }

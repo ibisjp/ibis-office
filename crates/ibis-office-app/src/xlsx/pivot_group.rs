@@ -4,9 +4,9 @@
 //! データ > グループ化… (ピボットテーブルの日付・数値フィールドのグループ化)
 //! Panel to configure date and numeric grouping on a pivot table field.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -206,7 +206,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.pivot_group = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -323,21 +323,15 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(
+            .p_0().child(
                 h_flex()
                     .gap_1()
-                    .child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(format!("{}: {}", text("_xlsx.field"), p.field_name)))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child(format!("{}: {}", text("_xlsx.field"), p.field_name)))
             )
             .child(
-                h_flex()
-                    .gap_2()
+                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                     .child(
-                        Button::new("pivot-group-type-number")
-                            .small()
-                            .when(!is_date, |b| b.primary())
-                            .when(is_date, |b| b.ghost())
-                            .label(text("_xlsx.numbers"))
-                            .on_click(cx.listener(|this, _, _, cx| {
+                        crate::shell::chrome::radio_button("pivot-group-type-number", !is_date, false, text("_xlsx.numbers"), cx.listener(|this, _, _, cx| {
                                 if let Some(p) = this.wb_mut().panels.pivot_group.as_mut() {
                                     p.is_date = false;
                                 }
@@ -345,12 +339,7 @@ impl SlideEditor {
                             }))
                     )
                     .child(
-                        Button::new("pivot-group-type-date")
-                            .small()
-                            .when(is_date, |b| b.primary())
-                            .when(!is_date, |b| b.ghost())
-                            .label(text("_xlsx.short-date"))
-                            .on_click(cx.listener(|this, _, _, cx| {
+                        crate::shell::chrome::radio_button("pivot-group-type-date", is_date, false, text("_xlsx.short-date"), cx.listener(|this, _, _, cx| {
                                 if let Some(p) = this.wb_mut().panels.pivot_group.as_mut() {
                                     p.is_date = true;
                                 }
@@ -361,16 +350,9 @@ impl SlideEditor {
 
         if is_date {
             let by = p.date_by;
-            let date_by_buttons = h_flex()
-                .gap_1()
-                .flex_wrap()
+            let date_by_buttons = crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                 .child(
-                    Button::new("pivot-group-by-years")
-                        .small()
-                        .when(by == DateGroupBy::Years, |b| b.primary())
-                        .when(by != DateGroupBy::Years, |b| b.ghost())
-                        .label(text("fix.series.year"))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                    crate::shell::chrome::radio_button("pivot-group-by-years", by == DateGroupBy::Years, false, text("fix.series.year"), cx.listener(|this, _, _, cx| {
                             if let Some(p) = this.wb_mut().panels.pivot_group.as_mut() {
                                 p.date_by = DateGroupBy::Years;
                             }
@@ -378,12 +360,7 @@ impl SlideEditor {
                         }))
                 )
                 .child(
-                    Button::new("pivot-group-by-quarters")
-                        .small()
-                        .when(by == DateGroupBy::Quarters, |b| b.primary())
-                        .when(by != DateGroupBy::Quarters, |b| b.ghost())
-                        .label(text("_xlsx.quarters"))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                    crate::shell::chrome::radio_button("pivot-group-by-quarters", by == DateGroupBy::Quarters, false, text("_xlsx.quarters"), cx.listener(|this, _, _, cx| {
                             if let Some(p) = this.wb_mut().panels.pivot_group.as_mut() {
                                 p.date_by = DateGroupBy::Quarters;
                             }
@@ -391,12 +368,7 @@ impl SlideEditor {
                         }))
                 )
                 .child(
-                    Button::new("pivot-group-by-months")
-                        .small()
-                        .when(by == DateGroupBy::Months, |b| b.primary())
-                        .when(by != DateGroupBy::Months, |b| b.ghost())
-                        .label(text("fix.series.month"))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                    crate::shell::chrome::radio_button("pivot-group-by-months", by == DateGroupBy::Months, false, text("fix.series.month"), cx.listener(|this, _, _, cx| {
                             if let Some(p) = this.wb_mut().panels.pivot_group.as_mut() {
                                 p.date_by = DateGroupBy::Months;
                             }
@@ -404,12 +376,7 @@ impl SlideEditor {
                         }))
                 )
                 .child(
-                    Button::new("pivot-group-by-days")
-                        .small()
-                        .when(by == DateGroupBy::Days, |b| b.primary())
-                        .when(by != DateGroupBy::Days, |b| b.ghost())
-                        .label(text("fix.series.day"))
-                        .on_click(cx.listener(|this, _, _, cx| {
+                    crate::shell::chrome::radio_button("pivot-group-by-days", by == DateGroupBy::Days, false, text("fix.series.day"), cx.listener(|this, _, _, cx| {
                             if let Some(p) = this.wb_mut().panels.pivot_group.as_mut() {
                                 p.date_by = DateGroupBy::Days;
                             }
@@ -418,14 +385,14 @@ impl SlideEditor {
                 );
 
             body = body
-                .child(div().text_size(px(13.)).child(text("_xlsx.units")))
+                .child(div().text_sm().child(text("_xlsx.units")))
                 .child(date_by_buttons)
-                .child(div().text_size(px(13.)).child(text("_xlsx.starting-at")))
+                .child(div().text_sm().child(text("_xlsx.starting-at")))
                 .child(
                     h_flex()
                         .gap_2()
                         .items_center()
-                        .child(Input::new(&p.date_start).small().cleanable(true))
+                        .child(crate::shell::chrome::text_field(&p.date_start).full_width())
                         .child(
                             Checkbox::new("pivot-group-date-auto-start")
                                 .label(text("_shell.auto"))
@@ -438,12 +405,12 @@ impl SlideEditor {
                                 }))
                         )
                 )
-                .child(div().text_size(px(13.)).child(text("_xlsx.ending-at")))
+                .child(div().text_sm().child(text("_xlsx.ending-at")))
                 .child(
                     h_flex()
                         .gap_2()
                         .items_center()
-                        .child(Input::new(&p.date_end).small().cleanable(true))
+                        .child(crate::shell::chrome::text_field(&p.date_end).full_width())
                         .child(
                             Checkbox::new("pivot-group-date-auto-end")
                                 .label(text("_shell.auto"))
@@ -458,12 +425,12 @@ impl SlideEditor {
                 );
         } else {
             body = body
-                .child(div().text_size(px(13.)).child(text("_xlsx.starting-at")))
+                .child(div().text_sm().child(text("_xlsx.starting-at")))
                 .child(
                     h_flex()
                         .gap_2()
                         .items_center()
-                        .child(Input::new(&p.num_start).small().cleanable(true))
+                        .child(crate::shell::chrome::text_field(&p.num_start).full_width())
                         .child(
                             Checkbox::new("pivot-group-num-auto-start")
                                 .label(text("_shell.auto"))
@@ -476,12 +443,12 @@ impl SlideEditor {
                                 }))
                         )
                 )
-                .child(div().text_size(px(13.)).child(text("_xlsx.ending-at")))
+                .child(div().text_sm().child(text("_xlsx.ending-at")))
                 .child(
                     h_flex()
                         .gap_2()
                         .items_center()
-                        .child(Input::new(&p.num_end).small().cleanable(true))
+                        .child(crate::shell::chrome::text_field(&p.num_end).full_width())
                         .child(
                             Checkbox::new("pivot-group-num-auto-end")
                                 .label(text("_shell.auto"))
@@ -494,40 +461,25 @@ impl SlideEditor {
                                 }))
                         )
                 )
-                .child(div().text_size(px(13.)).child(text("_xlsx.units")))
-                .child(Input::new(&p.num_interval).small().cleanable(true));
+                .child(div().text_sm().child(text("_xlsx.units")))
+                .child(crate::shell::chrome::text_field(&p.num_interval).full_width().spinner("pivot-group-num-interval", crate::shell::chrome::SpinnerSpec::new(1.0).min(1.0), cx, |_, _, _, _| {}));
         }
 
         body = body
-            .child(
-                h_flex()
-                    .gap_2()
-                    .pt_2()
-                    .child(
-                        Button::new("pivot-group-ok")
-                            .small()
-                            .primary()
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("pivot-group-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
                             .label("OK")
                             .on_click(cx.listener(|this, _, _, cx| this.apply_pivot_group(cx)))
                     )
-                    .child(
-                        Button::new("pivot-group-ungroup")
-                            .small()
+                    .action(crate::shell::chrome::dialog_cancel_definition(cx))
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("pivot-group-ungroup", "", crate::shell::chrome::ActionButtonKind::Destructive)
                             .label(text("_shell.ungroup"))
                             .on_click(cx.listener(|this, _, _, cx| this.pivot_ungroup(cx)))
                     )
-                    .child(
-                        Button::new("pivot-group-cancel")
-                            .small()
-                            .ghost()
-                            .label(text("_shell.close"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.wb_mut().panels.pivot_group = None;
-                                cx.notify();
-                            }))
-                    )
-            );
-
-        Some(SidebarPanel { title: text("_shell.group").to_string().into(), body: body.into_any_element() })
+                    ;
+        Some(SidebarPanel::with_footer(text("_shell.group").to_string(), body.into_any_element(), panel_actions))
     }
 }

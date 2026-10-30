@@ -128,6 +128,7 @@ fn suggestions_for(doc: &FlowDocument, issue: &Issue) -> Vec<String> {
 impl SlideEditor {
     /// ツール > スペル > スペルチェック…: the panel, at the first word.
     pub(crate) fn open_doc_spelling(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(doc) = self.flow().cloned() else { return };
         let ignored = HashSet::new();
         let issues = scan(&doc, &ignored);

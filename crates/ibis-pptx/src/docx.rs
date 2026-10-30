@@ -1044,7 +1044,9 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             ..FlowParagraph::default()
         };
         paragraph.resolve(self.styles);
-        debug_assert_eq!(read.atoms.len(), paragraph.len());
+        // One atom for each position the save tells apart (`save::docx::atoms`): a content control that shows text is one, whatever its text's length
+        // (`FlowParagraph::len` counts its characters).
+        debug_assert_eq!(read.atoms.len(), crate::save::docx::atom_count(&paragraph));
         self.sources.paragraphs.insert(id, ParaSource { part: self.part.clone(), path: path.to_vec(), atoms: read.atoms });
         paragraph
     }
@@ -2025,7 +2027,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         let colors = crate::theme::Colors::new(self.theme, None, &[]);
         // As Excel draws a chart of the old defaults (its thin grey border, its
         // 10 pt text): Word draws them so (DCHT).
-        let chart = crate::chart::read(doc.root_element(), &colors)?;
+        let mut chart = crate::chart::read(doc.root_element(), &colors)?;
+        chart.word_layout = true;
         let extent = child(holder, "extent");
         let cx = extent.and_then(|e| e.attribute("cx")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
         let cy = extent.and_then(|e| e.attribute("cy")).and_then(|v| v.parse().ok()).unwrap_or(0i64);
@@ -2883,6 +2886,9 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                 font,
                 fallback_font,
                 border: f.border.flatten(),
+                // `w:kern` is in half points and kerns text of that size and larger; the renderer's `kern` is in hundredths of a point and
+                // kerns text above it (PowerPoint's rule), so one hundredth less makes a run of exactly that size kerned as Word does.
+                kern: ibis_doc_model::KernMin(f.kern.filter(|k| *k > 0).map(|k| k * 50 - 1)),
                 ..Default::default()
             }
         };
@@ -2891,6 +2897,7 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
         let new_paragraph = |line_break: bool| Paragraph {
             align,
             space_before: hundredths(para.before),
+            space_before_exact: true,
             space_after: hundredths(para.after),
             line_spacing,
             end_style: end_style.clone(),
@@ -3947,6 +3954,15 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         let v = rest.find("w:val=\"")? + 7;
         rest[v..].split('"').next()?.parse::<u32>().ok()
     });
+    // The font table's typefaces and their families (`w:font/w:family`).
+    let font_families: std::collections::BTreeMap<String, String> = part_of("/fontTable").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
+        let doc = roxmltree::Document::parse(&xml).ok()?;
+        Some(doc.descendants().filter(|n| n.is_element() && n.tag_name().name() == "font").filter_map(|f| {
+            let name = f.attributes().find(|a| a.name() == "name")?.value().to_string();
+            let family = f.children().find(|c| c.is_element() && c.tag_name().name() == "family").and_then(|c| c.attributes().find(|a| a.name() == "val").map(|a| a.value().to_string())).unwrap_or_default();
+            Some((name, family))
+        }).collect())
+    }).unwrap_or_default();
     // A document with no settings is read as Word does: with the punctuation squeezed.
     let compress_punctuation = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).is_none_or(|xml| xml.contains("characterSpacingControl w:val=\"compressPunctuation"));
     // 文書の既定テーマフォント言語 (w:themeFontLang, DOCX-JA-019, ECMA-376 Part 1 §17.15.1.88).
@@ -4115,6 +4131,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         no_line_end,
         strict_first_and_last_chars,
         compress_punctuation,
+        font_families,
         balance_single_double_byte_width,
         adjust_line_height_in_table,
         do_not_use_html_paragraph_auto_spacing,

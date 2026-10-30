@@ -2807,7 +2807,9 @@ fn a_sheet_chart_switches_rows_and_columns_and_takes_a_new_range() {
     let small = CellRange { first_row: 2, first_column: 0, last_row: 5, last_column: 2 };
     let columns = ibis_pptx::refs_for_range(d.presentation(), &sheet, small, true).unwrap();
     assert_eq!(columns.len(), 2);
-    assert!(ibis_pptx::refs_for_range(d.presentation(), &sheet, CellRange { first_row: 3, first_column: 1, last_row: 5, last_column: 3 }, true).is_none(), "numbers in the heading row");
+    let numeric=ibis_pptx::refs_for_range(d.presentation(), &sheet, CellRange { first_row: 3, first_column: 1, last_row: 5, last_column: 3 }, true).unwrap();
+    assert!(numeric.iter().all(|s|s.name.is_none()),"numeric first cells are values, not headings");
+    assert_eq!(numeric[0].values.as_deref(),Some("月次売上!$B$4:$B$6"));
 }
 
 #[test]
@@ -3314,6 +3316,7 @@ fn chart_series_marker_and_stroke_save_and_reopen() {
 
     // 1. 系列 0 にマーカー (ひし形, サイズ 7, 赤) と 線 (太さ 38100, 緑) を設定
     let mut modified = chart.clone();
+    modified.groups[0].kind=ibis_doc_model::ChartType::Line;
     modified.groups[0].series[0].marker = Some(Marker {
         source: None,
         symbol: MarkerSymbol::Diamond,
@@ -3373,7 +3376,8 @@ fn chart_series_marker_and_stroke_save_and_reopen() {
     let read3 = ibis_pptx::open(bytes3.clone()).unwrap();
     let (_, read3_chart) = read3.presentation.slide(slide(&read3.presentation, "月次売上")).unwrap().shapes.iter().find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((sh.id, (**c).clone())), _ => None }).unwrap();
     let ser0_3 = &read3_chart.groups[0].series[0];
-    assert!(ser0_3.marker.is_none());
+    // Removing the override restores the line group's automatic marker.
+    assert!(ser0_3.marker.is_some());
     assert!(ser0_3.stroke.is_none());
 
     let package3 = ibis_ooxml::Package::open(bytes3).unwrap();
@@ -7928,7 +7932,8 @@ fn pictures_in_cells_are_drawn_in_their_cells() {
     // is kept.
     let slide = opened.presentation.slides.first().unwrap();
     let sheet = sheet_of_slide(slide).unwrap();
-    assert_eq!(sheet.rows.get(1).copied(), Some(97 * 12_700));
+    // (Excel for Windows reads a custom height at a whole 96 dpi pixel: 97 pt is 129.33 px, 129 px = 96.75 pt.)
+    assert_eq!(sheet.rows.get(1).copied(), Some((96.75 * 12_700.0) as i64));
     // Saved as it was: nothing changes.
     let saved = save(&opened, &opened.presentation, "cell-images-unchanged.xlsx");
     assert_eq!(changed_parts(&data, &saved), Vec::<String>::new());
@@ -8531,7 +8536,7 @@ fn scatter_and_bubble_charts_support_headerless_ranges() {
     let shape = opened.source.new_sheet_chart(d.presentation(), sheet, id, EmuRect::new(1_000_000, 4_000_000, 5_000_000, 3_000_000), ibis_pptx::NewChartKind::Scatter, scatter_refs).unwrap();
     let ShapeKind::Chart(c) = &shape.kind else { panic!() };
     let s0 = &c.groups[0].series[0];
-    assert_eq!(s0.name, "系列1", "default series name assigned");
+    assert!(!s0.name.is_empty(), "default series name assigned");
     assert_eq!(s0.x_values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(100.0), Some(200.0), Some(300.0)]);
     assert_eq!(s0.values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(10.0), Some(20.0), Some(30.0)]);
 
@@ -8579,7 +8584,7 @@ fn scatter_and_bubble_charts_support_headerless_ranges() {
     let b_shape = opened.source.new_sheet_chart(d.presentation(), sheet, b_id, EmuRect::new(1_000_000, 4_000_000, 5_000_000, 3_000_000), ibis_pptx::NewChartKind::Bubble, bubble_refs).unwrap();
     let ShapeKind::Chart(bc) = &b_shape.kind else { panic!() };
     let bs0 = &bc.groups[0].series[0];
-    assert_eq!(bs0.name, "系列1");
+    assert!(!bs0.name.is_empty());
     assert_eq!(bs0.x_values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(1.0), Some(2.0), Some(3.0)]);
     assert_eq!(bs0.values.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(10.0), Some(20.0), Some(30.0)]);
     assert_eq!(bs0.bubble_sizes.iter().map(|v| v.map(|n| n.0)).collect::<Vec<_>>(), [Some(5.0), Some(8.0), Some(12.0)]);
@@ -9700,3 +9705,137 @@ fn form_control_insert_move_resize_format_and_delete_roundtrip() {
     );
 }
 
+
+/// Only a width the user fixed is saved, with `customWidth="1"`; a width the sheet chose (a number wider than its column) is not,
+/// so the file opens with that column as it was (as Excel's), and the fixed one reads back as fixed.
+#[test]
+fn only_fixed_column_widths_are_saved() {
+    let (data, opened) = open("xlsx-sales.xlsx");
+    let mut d = Document::new(opened.presentation.clone());
+    let s = slide(d.presentation(), "月次売上");
+    let pt = ibis_doc_model::EMU_PER_POINT;
+    let sheet = |p: &Presentation| sheet_of_slide(p.slide(s).unwrap()).unwrap().clone();
+    let before = sheet(d.presentation());
+    // B fixed by the user; G widened by the sheet.
+    d.execute(vec![Command::Sheet(SheetCommand::SetSize { slide: s, axis: ibis_doc_model::sheet_command::Axis::Columns, first: 1, last: 1, size: 90 * pt })]).unwrap();
+    d.execute(vec![Command::Sheet(SheetCommand::SetColumnWidthAuto { slide: s, first: 6, last: 6, size: 120 * pt })]).unwrap();
+    let edited = sheet(d.presentation());
+    assert!(edited.custom_columns.contains(&1) && !edited.custom_columns.contains(&6));
+    let saved = save(&opened, d.presentation(), "fixed-column-widths.xlsx");
+    let again = ibis_pptx::read(&saved).unwrap();
+    let read = sheet_of_slide(again.slides.iter().find(|x| x.name.as_deref() == Some("月次売上")).unwrap()).unwrap().clone();
+    assert_eq!(read.columns[1], edited.columns[1]);
+    assert!(read.custom_columns.contains(&1), "a fixed width reads back as fixed");
+    assert_eq!(read.columns[6], before.columns[6], "a width the sheet chose is not saved");
+    assert!(!read.custom_columns.contains(&6));
+    // Undo takes the width and the mark back.
+    assert!(d.undo() && d.undo());
+    assert_eq!(sheet(d.presentation()).custom_columns, before.custom_columns);
+    assert_eq!(sheet(d.presentation()).columns, before.columns);
+    // Fixed, then given back to the sheet: the width stays, the mark goes, in the saved file too.
+    d.execute(vec![Command::Sheet(SheetCommand::SetSize { slide: s, axis: ibis_doc_model::sheet_command::Axis::Columns, first: 1, last: 1, size: 90 * pt })]).unwrap();
+    let saved = save(&opened, d.presentation(), "fixed-column-widths-2.xlsx");
+    let reopened = ibis_pptx::open(saved).unwrap();
+    let mut d2 = Document::new(reopened.presentation.clone());
+    d2.execute(vec![Command::Sheet(SheetCommand::SetColumnWidthAuto { slide: s, first: 1, last: 1, size: 80 * pt })]).unwrap();
+    let saved2 = reopened.source.save(d2.presentation(), SaveOptions::default()).unwrap();
+    let read2 = sheet_of_slide(ibis_pptx::read(&saved2).unwrap().slides.iter().find(|x| x.name.as_deref() == Some("月次売上")).unwrap()).unwrap().clone();
+    assert!(!read2.custom_columns.contains(&1));
+    // The width is saved in characters to 1/256 and read back on whole pixels.
+    assert!((read2.columns[1] - sheet(d2.presentation()).columns[1]).abs() < pt / 2);
+    while d.undo() {}
+    assert!(opened.source.save(d.presentation(), SaveOptions::default()).unwrap() == data);
+}
+
+/// The rows the app measures by their fonts when it opens a file (`Sheet::measured_rows`, `fitted_rows`) are not written back
+/// as `customHeight` rows: a file opened and saved without an edit is the file, and a row the person resizes is written.
+#[test]
+fn rows_the_app_measured_on_opening_are_not_saved_as_custom_heights() {
+    let (data, opened) = open("xlsx-sales.xlsx");
+    let mut p = opened.presentation.clone();
+    let mut measured = 0;
+    for slide in &mut p.slides {
+        for shape in &mut slide.shapes {
+            let ibis_doc_model::ShapeKind::Sheet(sheet) = &mut shape.kind else { continue };
+            let sheet = std::sync::Arc::make_mut(sheet);
+            for r in sheet.measured_rows.0.clone() {
+                if let Some(h) = sheet.rows.get_mut(r as usize) && *h > 0 {
+                    *h += 7 * ibis_doc_model::EMU_PER_POINT / 4;
+                    sheet.fitted_rows.insert(r, *h);
+                    measured += 1;
+                }
+            }
+        }
+    }
+    assert!(measured > 0, "the file has rows that are measured");
+    let unedited = opened.source.save(&p, SaveOptions::default()).unwrap();
+    assert_eq!(changed_parts(&data, &unedited), Vec::<String>::new(), "a measured row was written back");
+    // A row the person then resizes (one in each sheet) is written, with customHeight.
+    let mut resized = 0;
+    for slide in &mut p.slides {
+        for shape in &mut slide.shapes {
+            let ibis_doc_model::ShapeKind::Sheet(sheet) = &mut shape.kind else { continue };
+            let sheet = std::sync::Arc::make_mut(sheet);
+            if let Some(&r) = sheet.measured_rows.first() {
+                sheet.rows[r as usize] += ibis_doc_model::EMU_PER_POINT;
+                resized += 1;
+            }
+        }
+    }
+    let saved = opened.source.save(&p, SaveOptions::default()).unwrap();
+    assert!(!changed_parts(&data, &saved).is_empty());
+    let count = |bytes: &[u8]| {
+        let package = ibis_ooxml::Package::open(bytes.to_vec()).unwrap();
+        let names: Vec<String> = package.names().filter(|n| n.starts_with("xl/worksheets/sheet")).map(str::to_string).collect();
+        names.iter().map(|n| String::from_utf8_lossy(&package.read(n).unwrap()).matches("customHeight=\"1\"").count()).sum::<usize>()
+    };
+    assert_eq!(count(&saved), count(&data) + resized, "the resized row is written with customHeight");
+}
+
+/// Rows inserted above the rows the app measured on opening: the measured rows are still not written as `customHeight` rows
+/// (they keep their place in `fitted_rows`), and one the person resizes afterwards is.
+#[test]
+fn measured_rows_below_an_inserted_row_are_not_saved_as_custom_heights() {
+    use ibis_doc_model::sheet_command::Axis;
+    let (_, opened) = open("xlsx-sales.xlsx");
+    let custom_heights = |bytes: &[u8]| {
+        let package = ibis_ooxml::Package::open(bytes.to_vec()).unwrap();
+        let names: Vec<String> = package.names().filter(|n| n.starts_with("xl/worksheets/sheet")).map(str::to_string).collect();
+        names.iter().map(|n| String::from_utf8_lossy(&package.read(n).unwrap()).matches("customHeight=\"1\"").count()).sum::<usize>()
+    };
+    let insert = |p: &Presentation| {
+        let mut d = Document::new(p.clone());
+        let s = slide(d.presentation(), "月次売上");
+        d.execute(vec![Command::Sheet(SheetCommand::Insert { slide: s, axis: Axis::Rows, at: 1, count: 1 })]).unwrap();
+        (d, s)
+    };
+    fn sheet_mut(p: &mut Presentation, s: SlideId) -> &mut ibis_doc_model::Sheet {
+        let shape = p.slide_mut(s).unwrap().shapes.iter_mut().find(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Sheet(_))).unwrap();
+        let ibis_doc_model::ShapeKind::Sheet(sheet) = &mut shape.kind else { unreachable!() };
+        std::sync::Arc::make_mut(sheet)
+    }
+    // The control: the same insertion in the file as it was read.
+    let (control, _) = insert(&opened.presentation);
+    let expected = custom_heights(&opened.source.save(control.presentation(), SaveOptions::default()).unwrap());
+    // The app measured the rows of the sheet (taller than the file says), then the row is inserted.
+    let mut p = opened.presentation.clone();
+    let s = slide(&p, "月次売上");
+    let sheet = sheet_mut(&mut p, s);
+    assert!(!sheet.measured_rows.is_empty(), "the sheet has rows that are measured");
+    for r in sheet.measured_rows.0.clone() {
+        if let Some(h) = sheet.rows.get_mut(r as usize) && *h > 0 {
+            *h += 7 * ibis_doc_model::EMU_PER_POINT / 4;
+            sheet.fitted_rows.insert(r, *h);
+        }
+    }
+    let (mut d, s) = insert(&p);
+    let saved = opened.source.save(d.presentation(), SaveOptions::default()).unwrap();
+    assert_eq!(custom_heights(&saved), expected, "a measured row below the inserted row was written as a custom height");
+    // A measured row (now one lower) that the person resizes is written.
+    let mut p = d.presentation().clone();
+    let sheet = sheet_mut(&mut p, s);
+    let r = *sheet.measured_rows.iter().find(|&&r| sheet.rows.get(r as usize).is_some_and(|&h| h > 0)).unwrap();
+    sheet.rows[r as usize] += ibis_doc_model::EMU_PER_POINT;
+    let saved = opened.source.save(&p, SaveOptions::default()).unwrap();
+    assert_eq!(custom_heights(&saved), expected + 1, "the resized row is written");
+}

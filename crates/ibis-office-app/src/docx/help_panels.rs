@@ -9,14 +9,15 @@
 //! とじしろ and its place (left or top), 見開きページ, the header's and
 //! footer's distance from the edges, the paper's width and height, and the
 //! body's vertical alignment, in millimetres.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::PageVAlign;
 
-use crate::shell::chrome::SidebarPanel;
+use crate::shell::chrome::{SidebarPanel, radio_button, radio_group, RadioGroupLayout};
 use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
 
@@ -59,6 +60,7 @@ pub(crate) enum UpdateTocKind {
 /// 挿入 > 図表番号… (Word's 図表番号 dialog):
 /// ラベル選択・新規ラベル、番号書式、ラベル除外、キャプション文字列の入力。
 pub(crate) struct CaptionPanel {
+    pub custom_label: bool,
     pub(crate) label: Entity<InputState>,
     pub(crate) text: Entity<InputState>,
     pub(crate) format: ibis_doc_model::CaptionNumberFormat,
@@ -84,6 +86,9 @@ pub(crate) const CAPTION_FORMATS: [(ibis_doc_model::CaptionNumberFormat, &str); 
 /// 挿入 > フィールド… / フィールドの編集… (Word's フィールド dialog):
 /// プリセットの選択、コード入力、挿入または更新。
 pub(crate) struct FieldPanel {
+    pub(crate) list_scroll: ScrollHandle,
+    pub query: Entity<InputState>,
+    _query_subscription: Subscription,
     pub(crate) code: Entity<InputState>,
     pub(crate) is_edit: bool,
     pub(crate) target_pos: ibis_doc_model::FlowPos,
@@ -134,6 +139,7 @@ pub(crate) const FIELD_PRESETS: [(&str, &str); 37] = [
 /// デザイン > 透かし… (Word's ユーザー設定の透かし, its テキスト): the text
 /// (or one of Word's), the font, the colour, 半透明 and the layout.
 pub(crate) struct WatermarkPanel {
+    pub custom_text: bool,
     pub(crate) text: Entity<InputState>,
     pub(crate) font: Entity<InputState>,
     pub(crate) color: u32,
@@ -234,6 +240,7 @@ fn pt_str(emu: i64) -> String {
 
 impl SlideEditor {
     pub(crate) fn open_page_setup_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(page) = self.caret_page() else { return };
         let values = [page.top, page.bottom, page.left, page.right, page.gutter, page.header, page.footer, page.size.width, page.size.height].map(mm);
         let fields = values.map(|v| {
@@ -491,15 +498,18 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
         type Set = fn(&mut PageSetupPanel);
         let choice = |id: &'static str, on: bool, label: &str, set: Set| {
             mark(
                 id,
-                Button::new(id)
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if on { "◉" } else { "○" }, text(label)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::radio_button(id, on, false, text(label), cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.page_setup.as_mut()) {
                             set(p);
                         }
@@ -508,39 +518,33 @@ impl SlideEditor {
                     .into_any_element(),
             )
         };
-        let aligned_row = |mark_id: &str, label_text: SharedString, input: &Entity<InputState>, unit_text: SharedString| {
+        // Every field here is a number; the panel applies them with its button, so ▲▼ only change the number.
+        use crate::shell::chrome::SpinnerSpec;
+        let field_cx = &*cx;
+        let aligned_row = |mark_id: &str, label_text: SharedString, input: &Entity<InputState>, unit_text: SharedString, spec: SpinnerSpec| {
             h_flex()
                 .w_full()
                 .items_center()
                 .justify_between()
                 .gap_2()
-                .child(div().text_size(px(12.)).child(label_text))
-                .child(
-                    h_flex()
-                        .flex_none()
-                        .items_center()
-                        .gap_1()
-                        .child(mark(mark_id, div().w(px(96.)).child(crate::shell::chrome::clearable_text_field(input)).into_any_element()))
-                        .child(div().w(px(36.)).text_size(px(12.)).child(unit_text)),
-                )
+                .child(div().text_sm().child(label_text))
+                .child(mark(mark_id,crate::shell::chrome::text_field(input).spinner(format!("page-setup-{mark_id}"),spec,field_cx,|_,_,_,_|{}).unit(unit_text,px(72.)).into_any_element()))
         };
-        let field = |i: usize| aligned_row(&format!("field-{i}"), text(FIELDS[i]), &p.fields[i], "mm".into());
+        let field = |i: usize| aligned_row(&format!("field-{i}"), text(FIELDS[i]), &p.fields[i], "mm".into(), SpinnerSpec::new(1.0).range(if i >= 7 { 1.0 } else { 0.0 }, 558.0));
         let mut body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-            .child(div().text_size(px(13.)).child(text("_shell.margins")));
+            .p_0().children((!p.message.is_empty()).then(||div().text_sm().child(SharedString::from(p.message.clone()))))
+            .child(div().text_sm().child(text("_shell.margins")));
         for i in 0..5 {
             body = body.child(field(i));
         }
         body = body
-            .child(h_flex().gap_1().child(div().text_size(px(12.)).child(text("fix.help-panels.gutter-position"))).child(choice("gutter-left", !p.gutter_at_top, "_shell.left", |p| p.gutter_at_top = false)).child(choice("gutter-top", p.gutter_at_top, "_shell.top", |p| p.gutter_at_top = true)))
-            .child(div().text_size(px(13.)).child(text("docx.page.multiple-pages")))
+            .child(v_flex().gap_1().child(div().text_sm().child(text("fix.help-panels.gutter-position"))).child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow).child(choice("gutter-left", !p.gutter_at_top, "_shell.left", |p| p.gutter_at_top = false)).child(choice("gutter-top", p.gutter_at_top, "_shell.top", |p| p.gutter_at_top = true))))
+            .child(div().text_sm().child(text("docx.page.multiple-pages")))
             .child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
+                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                     .child(choice("page-normal", p.multiple_pages == ibis_doc_model::MultiplePages::Normal, "docx.page.multiple-pages.normal", |p| {
                         p.multiple_pages = ibis_doc_model::MultiplePages::Normal;
                         p.mirror = false;
@@ -568,23 +572,22 @@ impl SlideEditor {
                 text("docx.page.book-fold-sheets"),
                 &p.book_fold_sheets,
                 text("docx.help-panels.book-fold-sheets-hint"),
+                SpinnerSpec::new(4.0).range(0.0, 1024.0).integer_only(),
             ));
         }
         body = body
-            .child(div().text_size(px(13.)).child(text("docx.help-panels.document-grid")))
+            .child(div().text_sm().child(text("docx.help-panels.document-grid")))
             .child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
+                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                     .child(choice("grid-default", p.grid_type == ibis_doc_model::DocGridType::Default, "docx.help-panels.no-grid", |p| p.grid_type = ibis_doc_model::DocGridType::Default))
                     .child(choice("grid-lines", p.grid_type == ibis_doc_model::DocGridType::Lines, "docx.help-panels.lines-only", |p| p.grid_type = ibis_doc_model::DocGridType::Lines))
                     .child(choice("grid-lines-chars", p.grid_type == ibis_doc_model::DocGridType::LinesAndChars, "docx.help-panels.document-grid", |p| p.grid_type = ibis_doc_model::DocGridType::LinesAndChars)),
             )
-            .child(aligned_row("grid-lines-input", text("docx.help-panels.lines"), &p.lines, text("_xlsx.row")))
-            .child(aligned_row("grid-line-pitch", text("docx.help-panels.line-pitch"), &p.line_pitch, "pt".into()))
-            .child(aligned_row("grid-chars", text("docx.help-panels.characters"), &p.chars, text("docx.paragraph-panel.characters")))
-            .child(aligned_row("grid-char-space", text("docx.help-panels.character-pitch"), &p.char_space, "pt".into()));
-        body = body.child(div().text_size(px(13.)).child(text("_shell.vertical-alignment"))).child(
+            .child(aligned_row("grid-lines-input", text("docx.help-panels.lines"), &p.lines, text("_xlsx.row"), SpinnerSpec::new(1.0).range(1.0, 999.0).integer_only()))
+            .child(aligned_row("grid-line-pitch", text("docx.help-panels.line-pitch"), &p.line_pitch, "pt".into(), SpinnerSpec::new(0.5).range(0.0, 1584.0)))
+            .child(aligned_row("grid-chars", text("docx.help-panels.characters"), &p.chars, text("docx.paragraph-panel.characters"), SpinnerSpec::new(1.0).range(1.0, 999.0).integer_only()))
+            .child(aligned_row("grid-char-space", text("docx.help-panels.character-pitch"), &p.char_space, "pt".into(), SpinnerSpec::new(0.5).range(0.0, 1584.0)));
+        body = body.child(div().text_sm().child(text("_shell.vertical-alignment"))).child(
             h_flex()
                 .gap_1()
                 .flex_wrap()
@@ -594,60 +597,44 @@ impl SlideEditor {
                 .child(choice("valign-both", p.v_align == PageVAlign::Both, "_shell.justify", |p| p.v_align = PageVAlign::Both)),
         );
         body = body
-            .child(div().text_size(px(13.)).child(text("docx.chrome.text-direction")))
+            .child(div().text_sm().child(text("docx.chrome.text-direction")))
             .child(
-                h_flex()
-                    .gap_1()
+                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                     .child(choice("direction-across", !p.vertical, "_shell.horizontal", |p| p.vertical = false))
                     .child(choice("direction-vertical", p.vertical, "_shell.vertical", |p| p.vertical = true)),
             )
-            .child(div().text_size(px(13.)).child(text("_xlsx.page-number")))
-            .child(aligned_row("start", text("fix.help-panels.start"), &p.start, text("docx.help-panels.blank-continue")));
-        body = body.child(div().text_size(px(13.)).child(text("_shell.paper-size")));
+            .child(div().text_sm().child(text("_xlsx.page-number")))
+            .child(aligned_row("start", text("fix.help-panels.start"), &p.start, text("docx.help-panels.blank-continue"), SpinnerSpec::new(1.0).range(1.0, 32767.0).integer_only()));
+        body = body.child(div().text_sm().child(text("_shell.paper-size")));
         for i in 7..9 {
             body = body.child(field(i));
         }
-        body = body.child(div().text_size(px(13.)).child(text("fix.help-panels.header-footer-edge")));
+        body = body.child(div().text_sm().child(text("fix.help-panels.header-footer-edge")));
         for i in 5..7 {
             body = body.child(field(i));
         }
-        let footer = h_flex()
-            .w_full()
-            .justify_between()
-            .items_center()
-            .child(mark(
-                "close",
-                div()
-                    .id("page-setup-close-target")
-                    .w(px(2.))
-                    .h(px(2.))
+        let footer = crate::shell::chrome::action_bar()
+            .action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("page-setup-apply", text("OK"), crate::shell::chrome::ActionButtonKind::Primary)
+                    .on_click(cx.listener(|this, _, _, cx| this.apply_page_setup_panel(cx)))))
+            .action(mark_action("close", crate::shell::chrome::ActionDefinition::new("page-setup-close-target", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(s) = this.doc_state_mut() {
                             s.helper.page_setup = None;
                         }
+                        this.sidebar_open = false;
                         cx.notify();
-                    }))
-                    .into_any_element(),
-            ))
-            .child(mark(
-                "apply",
-                Button::new("page-setup-apply")
-                    .primary()
-                    .small()
-                    .label(text("OK"))
-                    .on_click(cx.listener(|this, _, _, cx| this.apply_page_setup_panel(cx)))
-                    .into_any_element(),
-            ));
+                    }))));
         Some(SidebarPanel::with_footer(
             crate::shell::i18n::text("_shell.page-setup"),
             body.into_any_element(),
-            footer.into_any_element(),
+            footer,
         ))
     }
 }
 
 impl SlideEditor {
     pub(crate) fn open_notes_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(page) = self.caret_page() else { return };
         let start = cx.new(|cx| InputState::new(window, cx));
         let first = page.footnotes.start.to_string();
@@ -747,35 +734,28 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
         let radio = |id: String, on: bool, label: &str, f: Box<dyn Fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>)>| {
             let f = std::rc::Rc::new(f);
             mark(
                 &id,
-                Button::new(SharedString::from(id.clone()))
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if on { "◉" } else { "○" }, text(label)))
-                    .on_click(cx.listener(move |this, _, window, cx| f(this, window, cx)))
+                crate::shell::chrome::radio_button(SharedString::from(id.clone()), on, false, text(label),
+                    cx.listener(move |this, _, window, cx| f(this, window, cx)))
                     .into_any_element(),
             )
         };
         let entity = cx.entity().downgrade();
         let format_index = NoteFormat::ALL.iter().position(|f| *f == set.format).unwrap_or(0);
-        let formats = mark(
-            "format",
-            Button::new("notes-format")
-                .small()
-                .label(FORMAT_NAMES[format_index])
-                .dropdown_menu(move |menu, _, _| {
-                    NoteFormat::ALL.iter().enumerate().fold(menu, |menu, (i, &f)| {
-                        let entity = entity.clone();
-                        menu.item(PopupMenuItem::new(FORMAT_NAMES[i]).on_click(move |_, window, cx| {
-                            entity.update(cx, |this, cx| this.edit_notes_panel(|s| s.format = f, window, cx)).ok();
-                        }))
-                    })
-                })
-                .into_any_element(),
-        );
+        let mut formats=crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow);
+        for (i,&format) in NoteFormat::ALL.iter().enumerate() {
+            formats=formats.child(crate::shell::chrome::radio_button(("notes-format",i),set.format==format,false,FORMAT_NAMES[i],cx.listener(move|e,_,w,cx|e.edit_notes_panel(|s|s.format=format,w,cx))));
+        }
         let positions: Vec<(NotePosition, &str)> = if p.endnotes {
             vec![(NotePosition::SectionEnd, "fix.help-panels.end-section"), (NotePosition::DocumentEnd, "fix.help-panels.end-document")]
         } else {
@@ -785,55 +765,40 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
+            .p_0().children((!p.message.is_empty()).then(||div().text_sm().child(SharedString::from(p.message.clone()))))
+
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(mark("apply", Button::new("notes-apply").primary().small().label(text("_shell.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_notes_panel(cx))).into_any_element()))
-                    .child(mark(
-                        "close",
-                        Button::new("notes-close")
-                            .small()
-                            .ghost()
-                            .label(text("_shell.close"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(s) = this.doc_state_mut() {
-                                    s.helper.notes = None;
-                                }
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    )),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
+                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                     .child(radio("kind-foot".into(), !p.endnotes, "fix.goto.footnote", Box::new(|this, w, cx| this.switch_notes_panel(false, w, cx))))
                     .child(radio("kind-end".into(), p.endnotes, "fix.goto.endnote", Box::new(|this, w, cx| this.switch_notes_panel(true, w, cx)))),
             )
-            .child(div().text_size(px(13.)).child(text("fix.help-panels.location")));
-        let mut places = h_flex().gap_1().flex_wrap();
+            .child(div().text_sm().child(text("fix.help-panels.location")));
+        let mut places = crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow);
         for (i, (position, label)) in positions.into_iter().enumerate() {
             places = places.child(radio(format!("pos-{i}"), set.position == position, label, Box::new(move |this, w, cx| this.edit_notes_panel(|s| s.position = position, w, cx))));
         }
         body = body
             .child(places)
-            .child(div().text_size(px(13.)).child(text("fix.help-panels.number-format")))
-            .child(formats)
-            .child(div().text_size(px(13.)).child(text("fix.help-panels.start")))
-            .child(mark("start", Input::new(&p.start).small().cleanable(true).into_any_element()))
-            .child(div().text_size(px(13.)).child(text("fix.help-panels.numbering")));
-        let mut restarts = h_flex().gap_1().flex_wrap();
+            .child(h_flex().items_center().gap_2().child(div().w(px(92.)).text_sm().child(text("fix.help-panels.number-format"))).child(div().flex_1().min_w_0().child(formats)))
+            // The first note number: applied by the panel's button, so ▲▼ only change the number.
+            .child(h_flex().items_center().gap_2().child(div().w(px(92.)).text_sm().child(text("fix.help-panels.start"))).child(mark("start", crate::shell::chrome::text_field(&p.start).spinner("notes-start", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 32767.0).integer_only(), cx, |_, _, _, _| {}).into_any_element())))
+            .child(div().text_sm().child(text("fix.help-panels.numbering")));
+        let mut restarts = crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow);
         for (i, (restart, label)) in [(NoteRestart::Continuous, "fix.help-panels.continuous"), (NoteRestart::EachSection, "fix.help-panels.restart-each-section"), (NoteRestart::EachPage, "fix.help-panels.restart-each-page")].into_iter().enumerate() {
             restarts = restarts.child(radio(format!("restart-{i}"), set.restart == restart, label, Box::new(move |this, w, cx| this.edit_notes_panel(|s| s.restart = restart, w, cx))));
         }
         body = body.child(restarts);
-        Some(SidebarPanel { title: "fix.help-panels.footnote-endnote".into(), body: body.into_any_element() })
+        let footer = crate::shell::chrome::action_bar()
+                    .action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("notes-apply", text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, _, cx| this.apply_notes_panel(cx)))))
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer("fix.help-panels.footnote-endnote", body.into_any_element(), footer))
     }
 }
 
 impl SlideEditor {
     pub(crate) fn open_bookmark_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let name = cx.new(|cx| InputState::new(window, cx).placeholder(text("fix.help-panels.bookmark-name")));
         name.update(cx, |i, cx| i.focus(window, cx));
         let panel = BookmarkPanel { name, hidden: false, chosen: None, message: String::new(), ui: Default::default() };
@@ -924,26 +889,24 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
         let mut body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_size(px(13.)).child(text("fix.help-panels.bookmark-name")))
-            .child(mark("name", Input::new(&p.name).small().cleanable(true).into_any_element()))
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(mark("add", Button::new("bookmark-add").primary().small().label(text("fix.common.add")).on_click(cx.listener(|this, _, _, cx| this.add_bookmark(cx))).into_any_element()))
-                    .child(mark("delete", Button::new("bookmark-delete").small().ghost().label(text("_shell.delete")).on_click(cx.listener(|this, _, _, cx| this.delete_bookmark(cx))).into_any_element()))
-                    .child(mark("jump", Button::new("bookmark-jump").small().ghost().label(text("_xlsx.go-to")).on_click(cx.listener(|this, _, _, cx| this.jump_to_bookmark(cx))).into_any_element())),
-            )
+            .p_0().child(div().text_sm().child(text("fix.help-panels.bookmark-name")))
+            .child(mark("name", crate::shell::chrome::text_field(&p.name).full_width().into_any_element()))
+            .children((!p.message.is_empty()).then(||div().text_sm().child(SharedString::from(p.message.clone()))))
+
             .child(mark(
                 "hidden",
-                Button::new("bookmark-hidden")
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if p.hidden { "☑" } else { "☐" }, text("fix.help-panels.hidden-bookmarks")))
+                Checkbox::new("bookmark-hidden").checked(p.hidden).label(text("fix.help-panels.hidden-bookmarks"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.bookmarks.as_mut()) {
                             p.hidden = !p.hidden;
@@ -957,9 +920,9 @@ impl SlideEditor {
             let n2 = name.clone();
             body = body.child(mark(
                 &format!("item-{name}"),
-                Button::new(SharedString::from(format!("bookmark-item-{name}")))
+                crate::shell::chrome::action_button(SharedString::from(format!("bookmark-item-{name}")))
                     .small()
-                    .ghost()
+
                     .label(format!("{} {name}", if on { "▸" } else { " " }))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.bookmarks.as_mut()) {
@@ -973,12 +936,18 @@ impl SlideEditor {
                     .into_any_element(),
             ));
         }
-        Some(SidebarPanel { title: "fix.help-panels.bookmark".into(), body: body.into_any_element() })
+        let footer = crate::shell::chrome::action_bar()
+                    .action(mark_action("add", crate::shell::chrome::ActionDefinition::new("bookmark-add", text("fix.common.add"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, _, cx| this.add_bookmark(cx)))))
+                    .action(mark_action("jump", crate::shell::chrome::ActionDefinition::new("bookmark-jump", text("_xlsx.go-to"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|this, _, _, cx| this.jump_to_bookmark(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))
+                    .action(mark_action("delete", crate::shell::chrome::ActionDefinition::new("bookmark-delete", text("_shell.delete"), crate::shell::chrome::ActionButtonKind::Destructive).on_click(cx.listener(|this, _, _, cx| this.delete_bookmark(cx)))));
+        Some(SidebarPanel::with_footer("fix.help-panels.bookmark", body.into_any_element(), footer))
     }
 }
 
 impl SlideEditor {
     pub(crate) fn open_watermark_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let current = self.flow().and_then(|d| d.watermark.clone());
         let english = crate::shell::i18n::language() == crate::shell::i18n::Language::English;
         let first = current.as_ref().map_or_else(|| text(WATERMARK_TEXTS[0]).to_string(), |w| w.text.clone());
@@ -987,7 +956,9 @@ impl SlideEditor {
         field.update(cx, |i, cx| i.set_value(first, window, cx));
         let font = cx.new(|cx| InputState::new(window, cx));
         font.update(cx, |i, cx| i.set_value(font_name, window, cx));
+        let custom_text=!WATERMARK_TEXTS.iter().any(|k|text(k).as_ref()==field.read(cx).value().as_ref());
         let panel = WatermarkPanel {
+            custom_text,
             text: field,
             font,
             color: current.as_ref().map_or(0xC0C0C0, |w| w.color.0),
@@ -1056,36 +1027,25 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let check = |on: bool, label: &str| format!("{} {}", if on { "☑" } else { "☐" }, text(label));
-        let radio = |on: bool, label: &str| format!("{} {}", if on { "◉" } else { "○" }, text(label));
-        let mut presets = h_flex().flex_wrap().gap_1();
-        for (i, words) in WATERMARK_TEXTS.iter().enumerate() {
-            let words = *words;
-            presets = presets.child(mark(
-                &format!("text-{i}"),
-                Button::new(SharedString::from(format!("watermark-text-{i}")))
-                    .small()
-                    .ghost()
-                    .label(text(words))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if let Some(field) = this.doc_state().and_then(|s| s.helper.watermark.as_ref()).map(|p| p.text.clone()) {
-                            field.update(cx, |i, cx| i.set_value(text(words), window, cx));
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let mut presets=radio_group().layout(RadioGroupLayout::Flow)
+            .child(mark("custom",radio_button("watermark-custom",p.custom_text,false,text("ui.custom"),cx.listener(|e,_,_,cx|{if let Some(p)=e.doc_state_mut().and_then(|s|s.helper.watermark.as_mut()){p.custom_text=true;}cx.notify();})).into_any_element()));
+        for (i,key) in WATERMARK_TEXTS.iter().copied().enumerate() {
+            let on=!p.custom_text && p.text.read(cx).value().as_ref()==text(key).as_ref();
+            presets=presets.child(mark(&format!("text-{i}"),radio_button(("watermark-preset",i),on,false,text(key),cx.listener(move |e,_,w,cx|{if let Some(p)=e.doc_state_mut().and_then(|s|s.helper.watermark.as_mut()){p.custom_text=false;p.text.update(cx,|i,cx|i.set_value(text(key),w,cx));}cx.notify();})).into_any_element()));
         }
-        let mut colors = h_flex().flex_wrap().gap_1();
+        let mut colors = radio_group().layout(RadioGroupLayout::Flow);
         for (i, (name, value)) in WATERMARK_COLORS.iter().enumerate() {
             let value = *value;
             colors = colors.child(mark(
                 &format!("color-{i}"),
-                Button::new(SharedString::from(format!("watermark-color-{i}")))
-                    .small()
-                    .ghost()
-                    .label(radio(p.color == value, name))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::color_radio_button(SharedString::from(format!("watermark-color-{i}")), p.color == value, value, text(name), cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.watermark.as_mut()) {
                             p.color = value;
                         }
@@ -1094,45 +1054,40 @@ impl SlideEditor {
                     .into_any_element(),
             ));
         }
-        let toggle = |id: &'static str, label: String, set: fn(&mut WatermarkPanel)| {
-            Button::new(SharedString::from(format!("watermark-{id}")))
-                .small()
-                .ghost()
-                .label(label)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.watermark.as_mut()) {
-                        set(p);
-                    }
+        let toggle = |id: &'static str, on: bool, label: &'static str, set: fn(&mut WatermarkPanel)| {
+            radio_button(SharedString::from(format!("watermark-{id}")), on, false, text(label),
+                cx.listener(move |this, _, _, cx| {
+                    if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.watermark.as_mut()) { set(p); }
                     cx.notify();
-                }))
-                .into_any_element()
+                })).into_any_element()
         };
         let body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(mark("apply", Button::new("watermark-apply").primary().small().label(text("_shell.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_watermark(cx))).into_any_element()))
-                    .child(mark("remove", Button::new("watermark-remove").small().ghost().label(text("fix.help-panels.remove-watermark")).on_click(cx.listener(|this, _, _, cx| this.remove_watermark(cx))).into_any_element())),
-            )
-            .child(div().text_size(px(13.)).child(text("_shell.text")))
-            .child(mark("text", Input::new(&p.text).small().cleanable(true).into_any_element()))
+
+            .p_0().child(div().text_sm().child(text("_shell.text")))
             .child(presets)
-            .child(div().text_size(px(13.)).child(text("_shell.font")))
-            .child(mark("font", Input::new(&p.font).small().cleanable(true).into_any_element()))
-            .child(div().text_size(px(13.)).child(text("docx.common.color")))
+            .child(mark("text", crate::shell::chrome::text_field(&p.text).full_width().disabled(!p.custom_text).into_any_element()))
+            .child(h_flex().items_center().gap_2().child(div().w(px(64.)).text_sm().child(text("_shell.font"))).child(mark("font",crate::shell::chrome::panel_font_dropdown("panel-font-watermark",&p.font,cx))))
+            .child(div().text_sm().child(text("docx.common.color")))
             .child(colors)
-            .child(mark("semi", toggle("semi", check(p.semitransparent, "fix.help-panels.semitransparent"), |p| p.semitransparent = !p.semitransparent)))
-            .child(div().text_size(px(13.)).child(text("_shell.layout")))
+            .child(mark("semi", Checkbox::new("watermark-semi").checked(p.semitransparent).label(text("fix.help-panels.semitransparent"))
+                .on_click(cx.listener(|this, on: &bool, _, cx| {
+                    if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.watermark.as_mut()) { p.semitransparent = *on; }
+                    cx.notify();
+                })).into_any_element()))
+            .child(div().text_sm().child(text("_shell.layout")))
             .child(
-                h_flex()
-                    .gap_1()
-                    .child(mark("diagonal", toggle("diagonal", radio(p.diagonal, "fix.help-panels.diagonal"), |p| p.diagonal = true)))
-                    .child(mark("horizontal", toggle("horizontal", radio(!p.diagonal, "fix.print.horizontal"), |p| p.diagonal = false))),
+                radio_group().layout(RadioGroupLayout::Flow)
+                    .child(mark("diagonal", toggle("diagonal", p.diagonal, "fix.help-panels.diagonal", |p| p.diagonal = true)))
+                    .child(mark("horizontal", toggle("horizontal", !p.diagonal, "fix.print.horizontal", |p| p.diagonal = false))),
             );
-        Some(SidebarPanel { title: "fix.help-panels.watermark".into(), body: body.into_any_element() })
+        let footer = crate::shell::chrome::action_bar()
+                    .action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("watermark-apply", text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, _, cx| this.apply_watermark(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))
+                    .action(mark_action("remove", crate::shell::chrome::ActionDefinition::new("watermark-remove", text("fix.help-panels.remove-watermark"), crate::shell::chrome::ActionButtonKind::Destructive).on_click(cx.listener(|this, _, _, cx| this.remove_watermark(cx)))));
+        Some(SidebarPanel::with_footer("fix.help-panels.watermark", body.into_any_element(), footer))
     }
 }
 
@@ -1318,6 +1273,7 @@ impl SlideEditor {
 
     /// Open the Word Count sidebar panel.
     pub(crate) fn open_word_count_panel(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let stats = self.document_statistics();
         let panel = WordCountPanel {
             stats,
@@ -1353,8 +1309,10 @@ impl SlideEditor {
 
     /// Render the Word Count sidebar panel.
     pub(crate) fn word_count_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        self.doc_state()?.helper.word_count.as_ref()?;
+        let live_stats=self.document_statistics();
         let p = self.doc_state()?.helper.word_count.as_ref()?;
-        let stats = &p.stats;
+        let stats = &live_stats;
         let theme = cx.theme();
 
         let mark = |id: &str, child: AnyElement| {
@@ -1378,8 +1336,8 @@ impl SlideEditor {
                     .py(px(5.))
                     .border_b_1()
                     .border_color(theme.title_bar_border)
-                    .child(div().text_size(px(13.)).text_color(theme.foreground).child(text(label)))
-                    .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(crate::shell::ribbon::thousands(value)))
+                    .child(div().text_sm().text_color(theme.foreground).child(text(label)))
+                    .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(crate::shell::ribbon::thousands(value)))
                     .into_any_element(),
             )
         };
@@ -1394,23 +1352,13 @@ impl SlideEditor {
             .gap_1()
             .px(px(18.))
             .py(px(8.))
-            .child(
+            .p_0().child(
                 h_flex()
                     .justify_between()
                     .items_center()
                     .pb(px(4.))
-                    .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(target_desc))
-                    .child(mark(
-                        "close",
-                        Button::new("word-count-close")
-                            .small()
-                            .ghost()
-                            .label(text("_shell.close"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_word_count_panel(cx);
-                            }))
-                            .into_any_element(),
-                    )),
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(target_desc))
+,
             )
             .child(div().h(px(4.)))
             .child(stat_row("stat-pages", "docx.help-panels.pages", stats.pages))
@@ -1420,13 +1368,11 @@ impl SlideEditor {
             .child(stat_row("stat-paragraphs", "docx.help-panels.paragraphs", stats.paragraphs))
             .child(stat_row("stat-lines", "docx.help-panels.lines", stats.lines));
 
-        Some(SidebarPanel {
-            title: text("docx.help-panels.word-count").into(),
-            body: body.into_any_element(),
-        })
+        Some(SidebarPanel { title: text("docx.help-panels.word-count"), body: body.into_any_element() })
     }
 
     pub(crate) fn open_field_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let caret = self.doc_state().and_then(|s| s.caret).unwrap_or(ibis_doc_model::FlowPos::new(0, 0));
         let (existing_code, is_edit) = if let Some(doc) = self.flow() {
             if let Some(code) = ibis_doc_model::get_field_at(doc, caret) {
@@ -1442,7 +1388,11 @@ impl SlideEditor {
 
         let code = cx.new(|cx| InputState::new(window, cx).default_value(&existing_code).placeholder(text("_docx.field-code")));
         code.update(cx, |i, cx| i.focus(window, cx));
+        let query=cx.new(|cx|InputState::new(window,cx).placeholder(text("fix.menu.search-placeholder")));
+        let query_subscription=cx.subscribe_in(&query,window,|_,_,_:&gpui_kit::component::input::InputEvent,_,cx|cx.notify());
         let panel = FieldPanel {
+            list_scroll: ScrollHandle::new(),
+            query, _query_subscription:query_subscription,
             code,
             is_edit,
             target_pos: caret,
@@ -1522,25 +1472,28 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
-        let mut body = v_flex().gap_3().p_3();
-        body = body.child(
-            div()
-                .text_size(px(12.))
-                .text_color(theme.muted_foreground)
-                .child(if is_edit { text("_docx.edit-field") } else { text("_xlsx.insert-field") })
-        );
-
+        let mut body = crate::shell::chrome::panel_form().size_full().min_h_0().p_0();
+        body = body.child(crate::shell::chrome::text_field(&p.query).full_width());
+        let query=p.query.read(cx).value().to_lowercase();
         // プリセット一覧
         let mut presets = v_flex().gap_1();
         for &(instr, label) in &FIELD_PRESETS {
+            if !query.is_empty() && !format!("{} {}",instr,text(label)).to_lowercase().contains(&query) {continue;}
             let instr_str = instr.to_string();
             let code_entity = p.code.clone();
             presets = presets.child(
-                Button::new(format!("preset_{instr}"))
+                crate::shell::chrome::action_button(format!("preset_{instr}"))
                     .small()
                     .ghost()
-                    .label(format!("{instr}  ({})", text(label)))
+                    .child(h_flex().w_full().child(format!("{instr}  ({})", text(label))))
                     .on_click(cx.listener(move |_, _, window, cx| {
                         code_entity.update(cx, |i, cx| {
                             i.set_value(&instr_str, window, cx);
@@ -1549,43 +1502,34 @@ impl SlideEditor {
                     }))
             );
         }
-        body = body.child(presets);
+        body = body.child(div().relative().flex_1().min_h_0().w_full()
+            .child(div().id("field-preset-list").size_full().overflow_y_scroll().track_scroll(&p.list_scroll).child(presets))
+            .child(crate::shell::chrome::always_visible_scrollbar_overlay("field-list-scrollbar",p.list_scroll.clone(),None)));
 
         // コード入力欄
         body = body.child(
             v_flex()
+                .flex_none()
                 .gap_1()
-                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(text("_docx.field-codes")))
-                .child(Input::new(&p.code).small().cleanable(true))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text("_docx.field-codes")))
+                .child(mark("field-code",crate::shell::chrome::text_field(&p.code).full_width().into_any_element()))
         );
 
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+            body = body.children((!p.message.is_empty()).then(||div().text_sm().child(SharedString::from(p.message.clone()))));
         }
 
         // 実行ボタンと閉じるボタン
         let btn_label = if is_edit { "_xlsx.update" } else { "menu.insert" };
-        body = body.child(
-            h_flex()
-                .gap_2()
-                .child(
-                    mark(
-                        "apply_field",
-                        Button::new("apply_field")
-                            .primary()
-                            .small()
-                            .label(text(btn_label))
+        let footer = crate::shell::chrome::action_bar()
+                .action(
+                    mark_action("apply_field", crate::shell::chrome::ActionDefinition::new("apply_field", text(btn_label), crate::shell::chrome::ActionButtonKind::Primary)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.apply_field_panel(cx);
-                            }))
-                            .into_any_element(),
-                    )
+                            })))
                 )
-                .child(
-                    Button::new("close_field")
-                        .ghost()
-                        .small()
-                        .label(text("_shell.cancel"))
+                .action(
+                    crate::shell::chrome::ActionDefinition::new("close_field", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(s) = this.doc_state_mut() {
                                 s.helper.field = None;
@@ -1593,14 +1537,14 @@ impl SlideEditor {
                             this.sidebar_open = false;
                             cx.notify();
                         }))
-                )
-        );
+                );
 
         let title = if is_edit { "_docx.edit-field" } else { "_xlsx.insert-field" };
-        Some(SidebarPanel { title: text(title).into(), body: body.into_any_element() })
+        Some(SidebarPanel::with_footer(text(title), body.into_any_element(), footer))
     }
 
     pub(crate) fn open_caption_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let is_en = crate::shell::i18n::language() == crate::shell::i18n::Language::English;
         let default_label: gpui::SharedString = if is_en { "Figure".into() } else { crate::shell::i18n::text("docx.common.figure") };
         let mut presets = if is_en {
@@ -1621,6 +1565,7 @@ impl SlideEditor {
         text_in.update(cx, |i, cx| i.focus(window, cx));
 
         let panel = CaptionPanel {
+            custom_label:false,
             label,
             text: text_in,
             format: ibis_doc_model::CaptionNumberFormat::Arabic,
@@ -1690,64 +1635,39 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
-        let mut body = v_flex().gap_3().p_3();
-        body = body.child(
-            div()
-                .text_size(px(12.))
-                .text_color(theme.muted_foreground)
-                .child(text("_docx.insert-caption"))
-        );
-
-        // ラベル入力とプリセット
-        let label_entity = p.label.clone();
-        let mut presets = h_flex().flex_wrap().gap_1();
-        for preset in &p.presets {
-            let preset_str = preset.clone();
-            let le = label_entity.clone();
-            presets = presets.child(
-                Button::new(format!("preset_lbl_{preset}"))
-                    .small()
-                    .ghost()
-                    .label(preset.clone())
-                    .on_click(cx.listener(move |_, _, window, cx| {
-                        le.update(cx, |i, cx| {
-                            i.set_value(&preset_str, window, cx);
-                        });
-                        cx.notify();
-                    }))
-            );
+        let mut body = v_flex().gap_3().p_3().p_0();
+        let mut presets=radio_group().layout(RadioGroupLayout::Flow).child(radio_button("caption-custom",p.custom_label,false,text("ui.custom"),cx.listener(|e,_,_,cx|{if let Some(p)=e.doc_state_mut().and_then(|s|s.helper.caption.as_mut()){p.custom_label=true;}cx.notify();})));
+        for (i,preset) in p.presets.iter().enumerate() {
+            let value=preset.clone();let input=p.label.clone();let on=!p.custom_label && p.label.read(cx).value().as_ref()==preset;
+            presets=presets.child(radio_button(("caption-preset",i),on,false,preset.clone(),cx.listener(move |e,_,w,cx|{input.update(cx,|i,cx|i.set_value(value.clone(),w,cx));if let Some(p)=e.doc_state_mut().and_then(|s|s.helper.caption.as_mut()){p.custom_label=false;}cx.notify();})));
         }
-
-        body = body.child(
-            v_flex()
-                .gap_1()
-                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(text("_docx.label-2")))
-                .child(Input::new(&p.label).small().cleanable(true))
-                .child(presets)
-        );
+        body=body.child(presets).child(h_flex().items_center().gap_2().child(div().text_sm().child(text("ui.caption-label"))).child(crate::shell::chrome::text_field(&p.label).width(px(124.)).disabled(!p.custom_label)));
 
         // 説明文入力
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(text("_docx.caption-text-2")))
-                .child(Input::new(&p.text).small().cleanable(true))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text("_docx.caption-text-2")))
+                .child(crate::shell::chrome::text_field(&p.text).full_width())
         );
 
         // 番号書式選択
         let current_format = p.format;
-        let mut formats = h_flex().flex_wrap().gap_1();
+        let mut formats = radio_group().layout(RadioGroupLayout::Flow);
         for &(fmt, lbl) in &CAPTION_FORMATS {
             let is_sel = fmt == current_format;
             formats = formats.child(
                 mark(
                     &format!("fmt_{:?}", fmt),
-                    Button::new(format!("btn_fmt_{:?}", fmt))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if is_sel { "◉" } else { "○" }, lbl))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    radio_button(format!("btn_fmt_{:?}", fmt), is_sel, false, lbl, cx.listener(move |this, _, _, cx| {
                             if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.caption.as_mut()) {
                                 p.format = fmt;
                             }
@@ -1760,7 +1680,7 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(text("_docx.number-format")))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text("_docx.number-format")))
                 .child(formats)
         );
 
@@ -1769,10 +1689,7 @@ impl SlideEditor {
         body = body.child(
             mark(
                 "exclude_label",
-                Button::new("btn_exclude_label")
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if exclude { "☑" } else { "☐" }, text("_docx.exclude-label-from-caption")))
+                Checkbox::new("btn_exclude_label").checked(exclude).label(text("_docx.exclude-label-from-caption"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.caption.as_mut()) {
                             p.exclude_label = !p.exclude_label;
@@ -1788,10 +1705,7 @@ impl SlideEditor {
         body = body.child(
             mark(
                 "chapter_toggle",
-                Button::new("btn_chapter")
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if chapter.is_some() { "☑" } else { "☐" }, text("_docx.include-chapter-number")))
+                Checkbox::new("btn_chapter").checked(chapter.is_some()).label(text("_docx.include-chapter-number"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.caption.as_mut()) {
                             p.chapter = if p.chapter.is_some() { None } else { Some((1, 0)) };
@@ -1802,18 +1716,18 @@ impl SlideEditor {
             )
         );
         if let Some((level, sep)) = chapter {
-            let mut levels = h_flex().flex_wrap().gap_1();
+            let mut levels = radio_group().layout(RadioGroupLayout::Flow);
             for l in 1..=3u32 {
-                levels = levels.child(Button::new(format!("btn_chapter_level_{l}")).small().ghost().label(format!("{} {}", if l == level { "◉" } else { "○" }, crate::shell::i18n::format("docx.help-panels.heading-n", &[("n", &l)]))).on_click(cx.listener(move |this, _, _, cx| {
+                levels = levels.child(radio_button(format!("btn_chapter_level_{l}"), l == level, false, crate::shell::i18n::format("docx.help-panels.heading-n", &[("n", &l)]), cx.listener(move |this, _, _, cx| {
                     if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.caption.as_mut()) {
                         p.chapter = p.chapter.map(|(_, s)| (l, s));
                     }
                     cx.notify();
                 })));
             }
-            let mut separators = h_flex().flex_wrap().gap_1();
+            let mut separators = radio_group().layout(RadioGroupLayout::Flow);
             for (i, (name, _)) in CAPTION_SEPARATORS.iter().enumerate() {
-                separators = separators.child(Button::new(format!("btn_chapter_sep_{i}")).small().ghost().label(format!("{} {}", if i == sep { "◉" } else { "○" }, text(name))).on_click(cx.listener(move |this, _, _, cx| {
+                separators = separators.child(radio_button(format!("btn_chapter_sep_{i}"), i == sep, false, text(name), cx.listener(move |this, _, _, cx| {
                     if let Some(p) = this.doc_state_mut().and_then(|s| s.helper.caption.as_mut()) {
                         p.chapter = p.chapter.map(|(l, _)| (l, i));
                     }
@@ -1824,31 +1738,19 @@ impl SlideEditor {
         }
 
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+            body = body.children((!p.message.is_empty()).then(||div().text_sm().child(SharedString::from(p.message.clone()))));
         }
 
         // 実行ボタンとキャンセルボタン
-        body = body.child(
-            h_flex()
-                .gap_2()
-                .child(
-                    mark(
-                        "apply_caption",
-                        Button::new("apply_caption")
-                            .primary()
-                            .small()
-                            .label(text("_shell.insert"))
+        let footer = crate::shell::chrome::action_bar()
+                .action(
+                    mark_action("apply_caption", crate::shell::chrome::ActionDefinition::new("apply_caption", text("_shell.insert"), crate::shell::chrome::ActionButtonKind::Primary)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.apply_caption_panel(cx);
-                            }))
-                            .into_any_element(),
-                    )
+                            })))
                 )
-                .child(
-                    Button::new("close_caption")
-                        .ghost()
-                        .small()
-                        .label(text("_shell.cancel"))
+                .action(
+                    crate::shell::chrome::ActionDefinition::new("close_caption", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(s) = this.doc_state_mut() {
                                 s.helper.caption = None;
@@ -1856,10 +1758,9 @@ impl SlideEditor {
                             this.sidebar_open = false;
                             cx.notify();
                         }))
-                )
-        );
+                );
 
-        Some(SidebarPanel { title: text("docx.help-panels.caption").into(), body: body.into_any_element() })
+        Some(SidebarPanel::with_footer(text("docx.help-panels.caption"), body.into_any_element(), footer))
     }
 }
 
@@ -1893,6 +1794,7 @@ pub(crate) struct DocPropertiesPanel {
 impl SlideEditor {
     /// Open the Document Properties sidebar panel.
     pub(crate) fn open_doc_properties_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(doc) = self.flow() else { return };
         let props = &doc.properties;
         let stats = self.document_statistics();
@@ -2111,14 +2013,21 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
         let stat_item = |label: &'static str, value: usize| {
             h_flex()
                 .justify_between()
                 .items_center()
                 .py(px(2.))
-                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(text(label)))
-                .child(div().text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(crate::shell::ribbon::thousands(value)))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text(label)))
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(crate::shell::ribbon::thousands(value)))
         };
 
         let meta_item = |label: &'static str, val: &str| {
@@ -2127,22 +2036,22 @@ impl SlideEditor {
                 .justify_between()
                 .items_center()
                 .py(px(2.))
-                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(text(label)))
-                .child(div().text_size(px(11.)).text_color(theme.foreground).child(val_str))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text(label)))
+                .child(div().text_sm().text_color(theme.foreground).child(val_str))
         };
 
         let field_input = |id: &'static str, label: &'static str, entity: &Entity<InputState>| {
             v_flex()
                 .gap_1()
                 .py(px(3.))
-                .child(div().text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(theme.muted_foreground).child(text(label)))
-                .child(mark(id, Input::new(entity).small().cleanable(true).into_any_element()))
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.muted_foreground).child(text(label)))
+                .child(mark(id, crate::shell::chrome::text_field(entity).full_width().into_any_element()))
         };
 
         let mut body = v_flex()
             .gap_2()
             .px(px(16.))
-            .py(px(8.));
+            .py(px(8.)).p_0();
 
         // 統計・メタ情報セクション
         let stats_box = v_flex()
@@ -2153,9 +2062,9 @@ impl SlideEditor {
             .child(stat_item("docx.help-panels.pages", p.stats.pages))
             .child(stat_item("docx.help-panels.words", p.stats.words))
             .child(stat_item("docx.help-panels.characters", p.stats.characters_with_spaces))
-            .child(meta_item("pptx.properties-panel.created", &p.created))
-            .child(meta_item("pptx.properties-panel.modified", &p.modified))
-            .child(meta_item("docx.properties-panel.last-printed", &p.last_printed))
+            .child(meta_item("pptx.properties-panel.created", &crate::clock::format_local_datetime(&p.created)))
+            .child(meta_item("pptx.properties-panel.modified", &crate::clock::format_local_datetime(&p.modified)))
+            .child(meta_item("docx.properties-panel.last-printed", &crate::clock::format_local_datetime(&p.last_printed)))
             .child(meta_item("docx.properties-panel.revision", &p.revision));
 
         body = body.child(stats_box);
@@ -2174,14 +2083,14 @@ impl SlideEditor {
         // カスタムプロパティセクション
         let mut custom_section = v_flex().gap_1().py(px(4.));
         custom_section = custom_section.child(
-            div().text_size(px(11.)).font_weight(FontWeight::BOLD).text_color(theme.foreground).child(text("pptx.properties-panel.custom-properties"))
+            div().text_sm().font_weight(FontWeight::BOLD).text_color(theme.foreground).child(text("pptx.properties-panel.custom-properties"))
         );
         for (ix, prop) in p.custom_properties.iter().enumerate() {
             let val_str = match &prop.value {
                 ibis_doc_model::CustomPropertyValue::Text(s) => s.clone(),
                 ibis_doc_model::CustomPropertyValue::Number(s) => s.clone(),
                 ibis_doc_model::CustomPropertyValue::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
-                ibis_doc_model::CustomPropertyValue::DateTime(s) => s.clone(),
+                ibis_doc_model::CustomPropertyValue::DateTime(s) => crate::clock::format_local_datetime(s),
             };
             let prop_name = prop.name.clone();
             let row = h_flex()
@@ -2194,15 +2103,14 @@ impl SlideEditor {
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(div().text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(SharedString::from(prop_name)))
-                        .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(": "))
-                        .child(div().text_size(px(11.)).text_color(theme.foreground).child(SharedString::from(val_str)))
+                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(SharedString::from(prop_name)))
+                        .child(div().text_sm().text_color(theme.muted_foreground).child(": "))
+                        .child(div().text_sm().text_color(theme.foreground).child(SharedString::from(val_str)))
                 )
                 .child(
                     mark(
                         &format!("remove_custom_{ix}"),
-                        Button::new(("remove_custom", ix))
-                            .ghost()
+                        crate::shell::chrome::destructive_button(("remove_custom", ix),cx)
                             .small()
                             .label(text("×"))
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -2219,12 +2127,12 @@ impl SlideEditor {
             .gap_1()
             .items_center()
             .pt(px(2.))
-            .child(div().flex_1().child(mark("new_custom_name", Input::new(&p.new_custom_name).small().cleanable(true).into_any_element())))
-            .child(div().flex_1().child(mark("new_custom_val", Input::new(&p.new_custom_val).small().cleanable(true).into_any_element())))
+            .child(div().flex_1().child(mark("new_custom_name", crate::shell::chrome::text_field(&p.new_custom_name).full_width().into_any_element())))
+            .child(div().flex_1().child(mark("new_custom_val", crate::shell::chrome::text_field(&p.new_custom_val).full_width().into_any_element())))
             .child(
                 mark(
                     "add_custom",
-                    Button::new("add_custom")
+                    crate::shell::chrome::action_button("add_custom")
                         .secondary()
                         .small()
                         .label(text("fix.common.add"))
@@ -2243,7 +2151,7 @@ impl SlideEditor {
             .py(px(4.))
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_sm()
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme.foreground)
                     .child(text("docx.properties-panel.fonts-section"))
@@ -2291,42 +2199,24 @@ impl SlideEditor {
         if !p.message.is_empty() {
             body = body.child(
                 div()
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(SharedString::from(p.message.clone()))
             );
         }
 
         // アクションボタン
-        body = body.child(
-            h_flex()
-                .gap_2()
-                .pt(px(4.))
-                .child(
-                    mark(
-                        "apply_properties",
-                        Button::new("apply_properties")
-                            .primary()
-                            .small()
-                            .label(text("_shell.apply"))
+        let footer = crate::shell::chrome::action_bar()
+                .action(
+                    mark_action("apply_properties", crate::shell::chrome::ActionDefinition::new("apply_properties", text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.apply_doc_properties(cx);
-                            }))
-                            .into_any_element(),
-                    )
+                            })))
                 )
-                .child(
-                    Button::new("close_properties")
-                        .ghost()
-                        .small()
-                        .label(text("_shell.close"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.close_doc_properties_panel(cx);
-                        }))
-                )
-        );
 
-        Some(SidebarPanel { title: text("docx.help-panels.document-properties").into(), body: body.into_any_element() })
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+
+        Some(SidebarPanel::with_footer(text("docx.help-panels.document-properties"), body.into_any_element(), footer))
     }
 }
 
@@ -2346,6 +2236,7 @@ pub(crate) struct CrossReferencePanel {
 
 impl SlideEditor {
     pub(crate) fn open_cross_reference_panel(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let targets = self.flow().map(|d| ibis_doc_model::cross_reference_targets(d, ibis_doc_model::CrossReferenceType::Heading)).unwrap_or_default();
         let chosen_index = if targets.is_empty() { None } else { Some(0) };
         let panel = CrossReferencePanel {
@@ -2471,8 +2362,15 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = panel.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
-        let mut body = v_flex().gap_3().px(px(14.)).py(px(10.));
+        let mut body = v_flex().gap_3().px(px(14.)).py(px(10.)).p_0();
 
         // 1. 参照する項目（Reference Type）
         let types: [(ibis_doc_model::CrossReferenceType, &'static str); 5] = [
@@ -2482,17 +2380,13 @@ impl SlideEditor {
             (ibis_doc_model::CrossReferenceType::Endnote, "docx.xref.type.endnote"),
             (ibis_doc_model::CrossReferenceType::Caption, "docx.xref.type.caption"),
         ];
-        let mut type_buttons = h_flex().gap_1().flex_wrap();
+        let mut type_buttons = radio_group().layout(RadioGroupLayout::Flow);
         for (t, label_key) in types {
             let is_sel = ref_type == t;
             let btn_id = format!("xref-type-{}", label_key.strip_prefix("docx.xref.type.").unwrap_or(label_key));
             type_buttons = type_buttons.child(
                 mark(&btn_id,
-                    Button::new(SharedString::from(btn_id.clone()))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if is_sel { "●" } else { "○" }, text(label_key)))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    radio_button(SharedString::from(btn_id.clone()), is_sel, false, text(label_key), cx.listener(move |this, _, _, cx| {
                             this.choose_cross_reference_type(t, cx);
                         }))
                         .into_any_element()
@@ -2501,7 +2395,7 @@ impl SlideEditor {
         }
         body = body.child(
             v_flex().gap_1()
-                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(text("docx.xref.type")))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text("docx.xref.type")))
                 .child(type_buttons)
         );
 
@@ -2531,17 +2425,13 @@ impl SlideEditor {
                 (ibis_doc_model::CrossReferenceKind::RelativePosition, "docx.xref.kind.relative"),
             ],
         };
-        let mut kind_buttons = h_flex().gap_1().flex_wrap();
+        let mut kind_buttons = radio_group().layout(RadioGroupLayout::Flow);
         for (k, label_key) in available_kinds {
             let is_sel = ref_kind == k;
             let btn_id = format!("xref-kind-{}", label_key.strip_prefix("docx.xref.kind.").unwrap_or(label_key));
             kind_buttons = kind_buttons.child(
                 mark(&btn_id,
-                    Button::new(SharedString::from(btn_id.clone()))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if is_sel { "●" } else { "○" }, text(label_key)))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    radio_button(SharedString::from(btn_id.clone()), is_sel, false, text(label_key), cx.listener(move |this, _, _, cx| {
                             this.choose_cross_reference_kind(k, cx);
                         }))
                         .into_any_element()
@@ -2550,17 +2440,14 @@ impl SlideEditor {
         }
         body = body.child(
             v_flex().gap_1()
-                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(text("docx.xref.kind")))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text("docx.xref.kind")))
                 .child(kind_buttons)
         );
 
         // 3. ハイパーリンクチェックボックス
         body = body.child(mark(
             "xref-hyperlink",
-            Button::new("xref-hyperlink")
-                .small()
-                .ghost()
-                .label(format!("{} {}", if hyperlink { "☑" } else { "☐" }, text("docx.xref.hyperlink")))
+            Checkbox::new("xref-hyperlink").checked(hyperlink).label(text("docx.xref.hyperlink"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.toggle_cross_reference_hyperlink(cx);
                 }))
@@ -2575,7 +2462,7 @@ impl SlideEditor {
                 div()
                     .px(px(8.))
                     .py(px(4.))
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(text("docx.xref.empty"))
             );
@@ -2585,10 +2472,9 @@ impl SlideEditor {
                 let item_id = format!("xref-item-{idx}");
                 body = body.child(mark(
                     &item_id,
-                    Button::new(SharedString::from(item_id.clone()))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if is_sel { "▸" } else { "  " }, target.label))
+                    h_flex().id(SharedString::from(item_id.clone())).w_full().p_2().text_sm().cursor_pointer()
+                        .when(is_sel,|d|d.bg(rgb(crate::shell::chrome::SELECTED_ROW_BG)))
+                        .child(target.label)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.select_cross_reference_item(idx, cx);
                         }))
@@ -2602,43 +2488,29 @@ impl SlideEditor {
         if !message.is_empty() {
             body = body.child(
                 div()
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(SharedString::from(message))
             );
         }
 
         // 5. アクションボタン
-        let mut actions = h_flex().gap_2().pt(px(4.));
+        let mut actions = crate::shell::chrome::action_bar();
         if chosen_index.is_some() {
-            actions = actions.child(mark(
-                "xref-insert",
-                Button::new("xref-insert")
-                    .primary()
-                    .small()
-                    .label(text("docx.xref.insert"))
+            actions = actions.action(mark_action("xref-insert", crate::shell::chrome::ActionDefinition::new("xref-insert", text("docx.xref.insert"), crate::shell::chrome::ActionButtonKind::Primary)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.apply_cross_reference(cx);
-                    }))
-                    .into_any_element()
-            ));
+                    }))));
         }
-        actions = actions.child(
-            Button::new("xref-close")
-                .ghost()
-                .small()
-                .label(text("docx.xref.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.close_cross_reference_panel(cx);
-                }))
-        );
-        body = body.child(actions);
+        actions = actions.action(crate::shell::chrome::dialog_cancel_definition(cx));
 
-        Some(SidebarPanel { title: text("docx.xref.title").into(), body: body.into_any_element() })
+
+        Some(SidebarPanel::with_footer(text("docx.xref.title"), body.into_any_element(), actions))
     }
 
     /// 挿入 > 目次 > 目次の更新…: Word の「目次の更新」ダイアログ（パネル）を開く。
     pub(crate) fn open_update_toc_panel(&mut self, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if let Some(s) = self.doc_state_mut() {
             s.find = None;
             s.link = None;
@@ -2703,64 +2575,47 @@ impl SlideEditor {
         let current_kind = p.kind;
         let theme = cx.theme();
 
-        let mut body = v_flex().gap_3().p_3();
+        let mut body = v_flex().gap_3().p_3().p_0();
 
         // 1. 説明プロンプト
         body = body.child(
             div()
-                .text_size(px(12.))
+                .text_sm()
                 .text_color(theme.foreground)
                 .child(text("docx.toc.update-dialog.prompt"))
         );
 
         // 2. ラジオ選択肢: ページ番号だけを更新する
         let is_pages = current_kind == UpdateTocKind::PageNumbersOnly;
-        let pages_btn = Button::new("toc-update-radio-pages")
-            .small()
-            .ghost()
-            .label(format!("{} {}", if is_pages { "🔘" } else { "⚪" }, text("docx.toc.update-page-numbers-only")))
-            .on_click(cx.listener(|this, _, _, cx| {
+        let pages_btn = radio_button("toc-update-radio-pages", is_pages, false, text("docx.toc.update-page-numbers-only"), cx.listener(|this, _, _, cx| {
                 this.set_update_toc_kind(UpdateTocKind::PageNumbersOnly, cx);
             }));
-        body = body.child(pages_btn);
+
 
         // 3. ラジオ選択肢: 目次をすべて更新する
         let is_entire = current_kind == UpdateTocKind::EntireTable;
-        let entire_btn = Button::new("toc-update-radio-entire")
-            .small()
-            .ghost()
-            .label(format!("{} {}", if is_entire { "🔘" } else { "⚪" }, text("docx.toc.update-entire-table")))
-            .on_click(cx.listener(|this, _, _, cx| {
+        let entire_btn = radio_button("toc-update-radio-entire", is_entire, false, text("docx.toc.update-entire-table"), cx.listener(|this, _, _, cx| {
                 this.set_update_toc_kind(UpdateTocKind::EntireTable, cx);
             }));
-        body = body.child(entire_btn);
+        body = body.child(radio_group().child(pages_btn).child(entire_btn));
 
         // 4. アクションボタン: OK / キャンセル
-        let actions = h_flex().gap_2().pt(px(6.))
-            .child(
-                Button::new("toc-update-ok")
-                    .primary()
-                    .small()
-                    .label(text("docx.toc.update-ok"))
+        let actions = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("toc-update-ok", text("docx.toc.update-ok"), crate::shell::chrome::ActionButtonKind::Primary)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.apply_update_toc_panel(cx);
                     }))
             )
-            .child(
-                Button::new("toc-update-cancel")
-                    .ghost()
-                    .small()
-                    .label(text("docx.toc.update-cancel"))
+            .action(
+                crate::shell::chrome::ActionDefinition::new("toc-update-cancel", text("docx.toc.update-cancel"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.close_update_toc_panel(cx);
                     }))
             );
-        body = body.child(actions);
 
-        Some(SidebarPanel {
-            title: text("docx.toc.update-dialog.title").into(),
-            body: body.into_any_element(),
-        })
+
+        Some(SidebarPanel::with_footer(text("docx.toc.update-dialog.title"), body.into_any_element(), actions))
     }
 }
 
@@ -2774,6 +2629,7 @@ pub(crate) struct UserInfoPanel {
 impl SlideEditor {
     /// Open the User Information sidebar panel.
     pub(crate) fn open_user_info_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let cur_name = self.user_name();
         let cur_inits = self.user_initials();
 
@@ -2850,11 +2706,11 @@ impl SlideEditor {
         let p = self.doc_state()?.helper.user_info.as_ref()?;
         let theme = cx.theme();
 
-        let mut body = v_flex().gap_3().p_3();
+        let mut body = v_flex().gap_3().p_3().p_0();
 
         body = body.child(
             div()
-                .text_size(px(12.))
+                .text_sm()
                 .text_color(theme.muted_foreground)
                 .child(text("docx.user-info.description"))
         );
@@ -2863,56 +2719,26 @@ impl SlideEditor {
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(text("docx.user-info.name")))
-                .child(Input::new(&p.name_input).small().cleanable(true))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text("docx.user-info.name")))
+                .child(crate::shell::chrome::text_field(&p.name_input).full_width())
         );
 
         // 頭文字
         body = body.child(
             v_flex()
                 .gap_1()
-                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child(text("docx.user-info.initials")))
-                .child(Input::new(&p.initials_input).small().cleanable(true))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text("docx.user-info.initials")))
+                .child(crate::shell::chrome::text_field(&p.initials_input).full_width())
         );
 
         // アクションボタン: 適用 / 既定に戻す / キャンセル
-        let actions = v_flex().gap_2().pt(px(6.))
-            .child(
-                h_flex().gap_2()
-                    .child(
-                        Button::new("user-info-apply")
-                            .primary()
-                            .small()
-                            .label(text("docx.user-info.apply"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.apply_user_info_panel(cx);
-                            }))
-                    )
-                    .child(
-                        Button::new("user-info-cancel")
-                            .ghost()
-                            .small()
-                            .label(text("docx.user-info.cancel"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_user_info_panel(cx);
-                            }))
-                    )
-            )
-            .child(
-                Button::new("user-info-reset")
-                    .ghost()
-                    .small()
-                    .label(text("docx.user-info.reset-default"))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.reset_user_info_panel(window, cx);
-                    }))
-            );
-        body = body.child(actions);
+        let actions=crate::shell::chrome::action_bar().flex_nowrap()
+            .action(crate::shell::chrome::ActionDefinition::new("user-info-apply", text("docx.user-info.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,_,cx|e.apply_user_info_panel(cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("user-info-cancel", text("docx.user-info.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,_,cx|e.close_user_info_panel(cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("user-info-reset", text("docx.user-info.reset-default"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,w,cx|e.reset_user_info_panel(w,cx))));
 
-        Some(SidebarPanel {
-            title: text("docx.user-info.title").into(),
-            body: body.into_any_element(),
-        })
+
+        Some(SidebarPanel::with_footer(text("docx.user-info.title"), body.into_any_element(), actions))
     }
 }
 

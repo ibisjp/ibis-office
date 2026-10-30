@@ -4,7 +4,7 @@
 //! パスワード (a small window): asked for when a protected file is opened
 //! (パスワードを使用して暗号化), and for the password a file is to be
 //! protected with (ファイル > パスワードで保護…), twice, or taken off.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::ButtonVariants as _;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme as _, Root, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -209,7 +209,19 @@ impl Render for PasswordWindow {
         let setting = matches!(self.mode, Mode::Set { .. } | Mode::SetModify { .. });
         let had = matches!(self.mode, Mode::Set { had: true } | Mode::SetModify { had: true });
         let modify = matches!(self.mode, Mode::Modify | Mode::SetModify { .. });
-        let mut body = v_flex().size_full().gap_2().p_4().bg(theme.background).text_color(theme.foreground);
+        let mut body = v_flex().id("password-dialog").size_full().gap_2().p_4().bg(theme.background).text_color(theme.foreground)
+            .capture_key_down(cx.listener(move|e,event:&KeyDownEvent,w,cx|{
+                let key=&event.keystroke;let modified=if cfg!(target_os="macos"){key.modifiers.platform}else{key.modifiers.control};
+                let policy=if setting{super::panel_dialog::SubmitType::CtrlEnter}else{super::panel_dialog::SubmitType::Enter};
+                if key.key=="enter" && !key.modifiers.shift && super::panel_dialog::form::shortcut(policy,&[],false,modified) {
+                    use gpui_kit::EntityInputHandler as _;
+                    for input in [&e.first, &e.second] {
+                        if input.read(cx).focus_handle(cx).is_focused(w)
+                            && input.update(cx, |state, cx| state.marked_text_range(w, cx).is_some()) { return; }
+                    }
+                    e.accept(w,cx);w.prevent_default();cx.stop_propagation();
+                }
+            }));
         body = body.child(div().text_size(px(13.)).child(i18n::text(match (setting, modify) {
             (true, true) => "pptx.password-window.password-needed-edit-file",
             (true, false) => "_shell.password-required-to-open-the-file-2",
@@ -226,11 +238,11 @@ impl Render for PasswordWindow {
         }
         let mut buttons = h_flex().gap_2().justify_end().mt_2();
         if had {
-            buttons = buttons.child(Button::new("password-remove").small().ghost().label(i18n::text(if modify { "pptx.password-window.remove-password-modify" } else { "_shell.remove-password" })).on_click(cx.listener(|this, _, window, cx| this.remove(window, cx))));
+            buttons = buttons.child(crate::shell::chrome::destructive_button("password-remove",cx).small().label(i18n::text(if modify { "pptx.password-window.remove-password-modify" } else { "_shell.remove-password" })).on_click(cx.listener(|this, _, window, cx| this.remove(window, cx))));
         }
         buttons = buttons
-            .child(Button::new("password-cancel").small().ghost().label(i18n::text(if matches!(self.mode, Mode::Modify) { "pptx.password-window.open-read-only" } else { "_shell.cancel" })).on_click(cx.listener(|this, _, window, _| this.close(window))))
-            .child(Button::new("password-ok").primary().small().label(i18n::text("OK")).on_click(cx.listener(|this, _, window, cx| this.accept(window, cx))));
+            .child(crate::shell::chrome::action_button("password-cancel").small().label(i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, window, _| this.close(window))))
+            .child(crate::shell::chrome::primary_button("password-ok").small().label(i18n::text("OK")).on_click(cx.listener(|this, _, window, cx| this.accept(window, cx))));
         body.child(buttons)
     }
 }

@@ -22,7 +22,8 @@ impl SlideEditor {
         let Some((column, row)) = self.cell_under(event.position) else { return };
         self.commit_cell_edit(cx);
         let within = self.selected_ranges().iter().any(|r| (r.first_row..=r.last_row).contains(&row) && (r.first_column..=r.last_column).contains(&column));
-        if !within {
+        let on_link=self.current_sheet().is_some_and(|(_,s)|s.hyperlinks.iter().any(|h| (h.range.first_row..=h.range.last_row).contains(&row)&&(h.range.first_column..=h.range.last_column).contains(&column)));
+        if !within || on_link {
             self.set_cell(column, row);
         }
         let entries = self.cell_menu();
@@ -816,6 +817,11 @@ impl SlideEditor {
                     this.focus_handle.focus(window, cx);
                 }),
             );
+            // The line's colour is marked in the palette.
+            let series_color_items = match sp_group.series {
+                Some(color) => crate::shell::color_palette::mark_current(series_color_items, color),
+                None => series_color_items,
+            };
 
             let point_items: Vec<MenuEntry> = [
                 ("xlsx.cell-sparkline-high-point", "xlsx.sparkline-high-point", SPK::High, sp_group.high),
@@ -947,6 +953,19 @@ impl SlideEditor {
                             this.focus_handle.focus(window, cx);
                         }),
                     );
+                    // The colour of this kind of point is marked in the palette.
+                    let current = match pt {
+                        SPK::High => sp_group.high_color,
+                        SPK::Low => sp_group.low_color,
+                        SPK::Negative => sp_group.negative,
+                        SPK::First => sp_group.first_color,
+                        SPK::Last => sp_group.last_color,
+                        SPK::Markers => sp_group.markers_color,
+                    };
+                    let items = match current {
+                        Some(color) => crate::shell::color_palette::mark_current(items, color),
+                        None => items,
+                    };
                     Submenu::new(sub_id, "palette", label_key, items).into()
                 })
                 .collect();
@@ -1212,16 +1231,17 @@ impl SlideEditor {
         out.push(MenuItem::new("xlsx.cell-format", "_xlsx.format-cells").icon("tune").on(|this, window, cx| this.open_custom_format(window, cx)).into());
         let has_link = self.current_link().is_some();
         if has_link {
-            out.push(
-                MenuItem::new("xlsx.cell-link-open", "_xlsx.open-hyperlink")
+            let mut links=Vec::new();
+            links.push(
+                MenuItem::new("xlsx.cell-link-open", crate::shell::i18n::text("hyperlink.open"))
                     .icon("open_in_new")
                     .on(|this, window, cx| {
                         this.follow_cell_link(window, cx);
                     })
                     .into(),
             );
-            out.push(
-                MenuItem::new("xlsx.cell-link-edit", "_xlsx.edit-hyperlink")
+            links.push(
+                MenuItem::new("xlsx.cell-link-edit", crate::shell::i18n::text("hyperlink.edit"))
                     .icon("edit")
                     .shortcut("⌘K")
                     .on(|this, window, cx| {
@@ -1229,14 +1249,15 @@ impl SlideEditor {
                     })
                     .into(),
             );
-            out.push(
-                MenuItem::new("xlsx.cell-link-remove", "_xlsx.remove-hyperlink")
+            links.push(
+                MenuItem::new("xlsx.cell-link-remove", crate::shell::i18n::text("hyperlink.remove"))
                     .icon("link_off")
                     .on(|this, _, cx| {
                         this.remove_cell_link(cx);
                     })
                     .into(),
             );
+            out.push(Submenu::tr("hyperlink.menu","link",links).into());
         } else {
             out.push(MenuItem::new("xlsx.cell-link", "_xlsx.hyperlink").icon("link").shortcut("⌘K").on(|this, window, cx| this.open_link_panel(window, cx)).into());
         }

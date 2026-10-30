@@ -8,7 +8,7 @@
 //! すべて非表示 for them all. Each change can be undone.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -24,6 +24,7 @@ use crate::shell::icons::Material;
 pub(crate) struct SelectionPane {
     pub(crate) renaming: Option<(ShapeId, Entity<InputState>)>,
     _subscription: Option<Subscription>,
+    pub(crate) reorder: std::rc::Rc<std::cell::RefCell<crate::shell::chrome::data_table::RowReorder>>,
 }
 
 impl SlideEditor {
@@ -183,70 +184,57 @@ impl SlideEditor {
         let slide = self.slide().clone();
         let selected = self.selected_ids();
         let shapes: Vec<ShapeId> = slide.shapes.iter().rev().filter(|s| !slide.is_attached(s.id)).map(|s| s.id).collect();
-        let count = shapes.len();
-        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.));
+        let reorder = pane.reorder.clone();
+        let mut body = v_flex().gap_1();
         if shapes.is_empty() {
             body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(t("pptx.selection-pane.no-shapes-slide")));
         }
-        for (i, id) in shapes.into_iter().enumerate() {
+        let all_hidden = !shapes.is_empty() && shapes.iter().all(|id| slide.hidden_shapes.contains(id));
+        let header = h_flex().w_full().h_full().items_center().gap_1()
+            .child(crate::shell::chrome::action_button("sel-all-eye").small().w(px(28.)).icon(Icon::new(Material(if all_hidden { "visibility_off" } else { "visibility" }))).tooltip(if all_hidden { t("pptx.selection-pane.show-all") } else { t("pptx.selection-pane.hide-all") }).on_click(cx.listener(move |e, _, _, cx| e.set_all_hidden(!all_hidden, cx))))
+            .child(div().flex_1().child(t("pptx.selection-pane.selection-pane"))).into_any_element();
+        let mut rows = Vec::new();
+        for id in shapes {
             let hidden = slide.hidden_shapes.contains(&id);
             let n = id.0 as usize;
-            let eye = Button::new(("sel-eye", n))
-                .small()
-                .ghost()
+            let eye = crate::shell::chrome::action_button(("sel-eye", n)).small().w(px(28.))
                 .icon(Icon::new(Material(if hidden { "visibility_off" } else { "visibility" })))
                 .tooltip(if hidden { t("_xlsx.show") } else { t("pptx.selection-pane.hide") })
-                .on_click(cx.listener(move |e, _, _, cx| e.set_shape_hidden(id, !hidden, cx)));
+                .on_click(cx.listener(move |e, _, _, cx| { cx.stop_propagation(); e.set_shape_hidden(id, !hidden, cx); }));
             let name: AnyElement = match &renaming {
-                Some((r, field)) if *r == id => h_flex()
-                    .flex_1()
-                    .gap_1()
-                    .child(div().flex_1().child(Input::new(field).small().cleanable(true)))
-                    .child(Button::new(("sel-rename-ok", n)).primary().small().label("OK").on_click(cx.listener(|e, _, w, cx| e.finish_renaming(w, cx))))
+                Some((r, field)) if *r == id => crate::shell::chrome::data_table::row_controls(reorder.clone(), n, 2,
+                    h_flex().flex_1().min_w_0().gap_1()
+                    .child(div().flex_1().min_w_0().child(crate::shell::chrome::text_field(field).full_width()))
+                    .child(crate::shell::chrome::primary_button(("sel-rename-ok", n)).small().label("OK").on_click(cx.listener(|e, _, w, cx| e.finish_renaming(w, cx)))))
                     .into_any_element(),
-                _ => div()
-                    .id(("sel-name", n))
-                    .flex_1()
-                    .min_w(px(0.))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .px_1()
-                    .rounded(px(3.))
-                    .text_sm()
-                    .when(selected.contains(&id), |d| d.bg(rgb(0xd3e3fd)))
-                    .when(hidden, |d| d.text_color(rgb(0x9aa0a6)))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |e, _, _, cx| {
-                        // A hidden shape is not selected (it is not drawn).
-                        if !e.slide().hidden_shapes.contains(&id) {
-                            e.set_selection(vec![id]);
-                        }
-                        cx.notify();
-                    }))
-                    .child(self.shape_label(id))
-                    .into_any_element(),
+                _ => div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().px_1().text_sm()
+                    .when(hidden, |d| d.text_color(rgb(0x9aa0a6))).child(self.shape_label(id)).into_any_element(),
             };
-            let row = h_flex()
-                .id(("sel-row", n))
-                .gap_1()
-                .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    e.open_selection_pane_context_menu(id, event.position, window, cx);
+            let row = h_flex().id(("sel-row", n)).w_full().h_full().min_w_0().items_center().gap_1().px_1()
+                .on_click(cx.listener(move |e, _, _, cx| {
+                    if !e.slide().hidden_shapes.contains(&id) { e.set_selection(vec![id]); }
+                    cx.notify();
                 }))
-                .child(eye)
+                .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation(); e.open_selection_pane_context_menu(id, event.position, window, cx);
+                }))
+                .child(crate::shell::chrome::data_table::row_controls(reorder.clone(), n, 0, eye))
                 .child(name)
-                .child(Button::new(("sel-rename", n)).small().ghost().icon(Icon::new(Material("edit"))).tooltip(t("pptx.selection-pane.rename")).on_click(cx.listener(move |e, _, w, cx| e.start_renaming(id, w, cx))))
-                .child(Button::new(("sel-up", n)).small().ghost().label("↑").disabled(i == 0).on_click(cx.listener(move |e, _, _, cx| e.order_one(id, true, cx))))
-                .child(Button::new(("sel-down", n)).small().ghost().label("↓").disabled(i + 1 >= count).on_click(cx.listener(move |e, _, _, cx| e.order_one(id, false, cx))));
-            body = body.child(row);
+                .child(crate::shell::chrome::data_table::row_controls(reorder.clone(), n, 1,
+                    crate::shell::chrome::action_button(("sel-rename", n)).small().w(px(28.)).icon(Icon::new(Material("edit"))).tooltip(t("pptx.selection-pane.rename")).on_click(cx.listener(move |e, _, w, cx| {cx.stop_propagation(); e.start_renaming(id, w, cx);}))))
+                .child(crate::shell::chrome::icon("menu", 18., rgb(0x5f6368).into()).cursor_grab());
+            rows.push((n, row.into_any_element(), selected.contains(&id)));
         }
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .pt_2()
-                .child(Button::new("sel-show-all").small().label(t("pptx.selection-pane.show-all")).on_click(cx.listener(|e, _, _, cx| e.set_all_hidden(false, cx))))
-                .child(Button::new("sel-hide-all").small().label(t("pptx.selection-pane.hide-all")).on_click(cx.listener(|e, _, _, cx| e.set_all_hidden(true, cx)))),
-        );
+        let table = crate::shell::chrome::data_table::DataTable::new("pptx-selection-table", Some(header), rows, cx)
+            .reorderable(reorder, |e, from, to, _, cx| {
+                let shape = ShapeId(from as u64); let target = ShapeId(to as u64);
+                if let Some(index) = e.slide().shape_index(target) {
+                    let slide = e.current_slide;
+                    e.set_selection(vec![shape]);
+                    e.run(vec![Command::MoveShape {slide, shape, index}], cx);
+                }
+            });
+        body = body.child(table);
         Some(SidebarPanel { title: t("pptx.selection-pane.selection-pane"), body: body.into_any_element() })
     }
 }

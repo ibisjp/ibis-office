@@ -7,8 +7,8 @@
 //! (to an arbitrary formula, constant, or the selected range), edits names,
 //! and deletes names.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Command, SheetCommand};
@@ -331,25 +331,25 @@ impl SlideEditor {
             v_flex()
                 .gap_1()
                 .py(px(4.))
-                .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(SharedString::from(format!("{name}{scope_badge}"))))
-                .child(div().text_size(px(12.)).child(SharedString::from(format!("={formula}"))))
+                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(SharedString::from(format!("{name}{scope_badge}"))))
+                .child(div().text_sm().child(SharedString::from(format!("={formula}"))))
                 .child(
                     h_flex()
                         .flex_wrap()
                         .gap_1()
-                        .child(Button::new(("name-goto", i)).small().ghost().label(crate::shell::i18n::text("_xlsx.go-to")).on_click(cx.listener(move |this, _, window, cx| {
+                        .child(crate::shell::chrome::action_button(("name-goto", i)).small().label(crate::shell::i18n::text("_xlsx.go-to")).on_click(cx.listener(move |this, _, window, cx| {
                             this.go_to_reference(&goto_ref, window, cx);
                         })))
-                        .child(Button::new(("name-use", i)).small().ghost().label(crate::shell::i18n::text("xlsx.use-in-formula")).on_click(cx.listener(move |this, _, window, cx| {
+                        .child(crate::shell::chrome::action_button(("name-use", i)).small().label(crate::shell::i18n::text("xlsx.use-in-formula")).on_click(cx.listener(move |this, _, window, cx| {
                             this.use_name_in_formula(&n4, window, cx);
                         })))
-                        .child(Button::new(("name-edit", i)).small().ghost().label(crate::shell::i18n::text("_xlsx.edit")).on_click(cx.listener(move |this, _, window, cx| {
+                        .child(crate::shell::chrome::action_button(("name-edit", i)).small().label(crate::shell::i18n::text("_xlsx.edit")).on_click(cx.listener(move |this, _, window, cx| {
                             this.edit_name(i, &n3, sheet, &f3, window, cx);
                         })))
-                        .child(Button::new(("name-set", i)).small().ghost().label(crate::shell::i18n::text("_xlsx.use-selection")).on_click(cx.listener(move |this, _, _, cx| {
+                        .child(crate::shell::chrome::action_button(("name-set", i)).small().label(crate::shell::i18n::text("_xlsx.use-selection")).on_click(cx.listener(move |this, _, _, cx| {
                             this.name_selection_with_scope(&n1, sheet, cx);
                         })))
-                        .child(Button::new(("name-delete", i)).small().ghost().label(crate::shell::i18n::text("_shell.delete")).on_click(cx.listener(move |this, _, _, cx| this.delete_name(&n2, sheet, cx)))),
+                        .child(crate::shell::chrome::destructive_button(("name-delete", i),cx).small().label(crate::shell::i18n::text("_shell.delete")).on_click(cx.listener(move |this, _, _, cx| this.delete_name(&n2, sheet, cx)))),
                 )
         });
         let name_input = new_name.clone();
@@ -365,16 +365,14 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_shell.name")))
-            .child(Input::new(&new_name).small().cleanable(true))
-            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.names.scope")))
+            .p_0().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_shell.name")))
+            .child(crate::shell::chrome::text_field(&new_name).full_width())
+            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.names.scope")))
             .child(
                 h_flex()
                     .gap_1()
                     .child({
-                        let b = Button::new("name-scope-workbook").small().label(crate::shell::i18n::text("xlsx.names.scope.workbook"));
-                        let b = if scope_is_workbook { b.primary() } else { b.ghost() };
-                        b.on_click(cx.listener(|this, _, _, cx| {
+                        crate::shell::chrome::radio_button("name-scope-workbook",scope_is_workbook,false,crate::shell::i18n::text("xlsx.names.scope.workbook"),cx.listener(|this, _, _, cx| {
                             if let Some(state) = this.sheet_state_mut().and_then(|s| s.names.as_mut()) {
                                 state.new_sheet = None;
                             }
@@ -382,9 +380,7 @@ impl SlideEditor {
                         }))
                     })
                     .child({
-                        let b = Button::new("name-scope-sheet").small().label(SharedString::from(current_sheet_label));
-                        let b = if !scope_is_workbook { b.primary() } else { b.ghost() };
-                        b.on_click(cx.listener(move |this, _, _, cx| {
+                        crate::shell::chrome::radio_button("name-scope-sheet",!scope_is_workbook,false,SharedString::from(current_sheet_label),cx.listener(move |this, _, _, cx| {
                             let target_idx = this.current_workbook_sheet_index();
                             if let Some(state) = this.sheet_state_mut().and_then(|s| s.names.as_mut()) {
                                 state.new_sheet = target_idx;
@@ -393,13 +389,13 @@ impl SlideEditor {
                         }))
                     }),
             )
-            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.refers-to-or-formula")))
-            .child(Input::new(&new_formula).small().cleanable(true))
+            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.refers-to-or-formula")))
+            .child(super::range_field::local_range_field(&new_formula,"names-new_formula",false,cx))
             .child({
                 let (add_name, add_formula) = (name_input.clone(), formula_input.clone());
                 let mut btn_row = h_flex()
                     .gap_1()
-                    .child(Button::new("name-add").primary().small().label(if is_editing { crate::shell::i18n::text("_xlsx.update-name") } else { crate::shell::i18n::text("_xlsx.add-name") }).on_click(cx.listener(move |this, _, window, cx| {
+                    .child(crate::shell::chrome::primary_button("name-add").small().label(if is_editing { crate::shell::i18n::text("_xlsx.update-name") } else { crate::shell::i18n::text("_xlsx.add-name") }).on_click(cx.listener(move |this, _, window, cx| {
                         let name_text = add_name.read(cx).value().trim().to_string();
                         let formula_text = add_formula.read(cx).value().trim().to_string();
                         let scope = this.sheet_state().and_then(|s| s.names.as_ref()).and_then(|p| p.new_sheet);
@@ -415,7 +411,7 @@ impl SlideEditor {
                     })));
                 if is_editing {
                     let (cancel_name, cancel_formula) = (name_input.clone(), formula_input.clone());
-                    btn_row = btn_row.child(Button::new("name-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(move |this, _, window, cx| {
+                    btn_row = btn_row.child(crate::shell::chrome::action_button("name-cancel").small().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(move |this, _, window, cx| {
                         cancel_name.update(cx, |i, cx| i.set_value("", window, cx));
                         let default_formula = this.selection_formula().map(|f| format!("={f}")).unwrap_or_default();
                         cancel_formula.update(cx, |i, cx| i.set_value(default_formula, window, cx));
@@ -428,18 +424,18 @@ impl SlideEditor {
                 }
                 btn_row
             })
-            .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.create-from-selection")))
+            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.create-from-selection")))
             .child(
                 h_flex()
                     .flex_wrap()
                     .gap_1()
-                    .child(Button::new("name-create-top").small().ghost().label(crate::shell::i18n::text("xlsx.create-names-top-row")).on_click(cx.listener(|this, _, _, cx| {
+                    .child(crate::shell::chrome::action_button("name-create-top").small().label(crate::shell::i18n::text("xlsx.create-names-top-row")).on_click(cx.listener(|this, _, _, cx| {
                         this.create_names_from_selection(true, false, cx);
                     })))
-                    .child(Button::new("name-create-left").small().ghost().label(crate::shell::i18n::text("xlsx.create-names-left-col")).on_click(cx.listener(|this, _, _, cx| {
+                    .child(crate::shell::chrome::action_button("name-create-left").small().label(crate::shell::i18n::text("xlsx.create-names-left-col")).on_click(cx.listener(|this, _, _, cx| {
                         this.create_names_from_selection(false, true, cx);
                     })))
-                    .child(Button::new("name-create-both").small().ghost().label(crate::shell::i18n::text("xlsx.create-names-both")).on_click(cx.listener(|this, _, _, cx| {
+                    .child(crate::shell::chrome::action_button("name-create-both").small().label(crate::shell::i18n::text("xlsx.create-names-both")).on_click(cx.listener(|this, _, _, cx| {
                         this.create_names_from_selection(true, true, cx);
                     }))),
             )

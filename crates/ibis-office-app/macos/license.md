@@ -881,7 +881,7 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 - **globset 0.4.20**：Copyright (c) 2015 Andrew Gallant
 - **globwalk 0.8.1**：Copyright (c) 2017 Gilad Naaman
 - **gpui-base 0.6.6**：Copyright 2024 - 2026 Longbridge <https://longbridge.com> / copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
-- **gpui-component 0.6.6**：Copyright 2024 - 2026 Longbridge <https://longbridge.com> / copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
+- **gpui-component 0.6.6**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright 2024 - 2026 Longbridge <https://longbridge.com>
 - **gpui-component-macros 0.6.6**：Copyright 2024 - 2026 Longbridge <https://longbridge.com> / copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **gpui-kit-assets 0.6.6**：Copyright (c) 2026 Lucide Icons and Contributors / copyright notice and this permission notice appear in all copies. / Copyright (c) 2013-present Cole Bemis
 - **gpui-pre 0.3.6**：Copyright 2022 - 2025 Zed Industries, Inc. / copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works

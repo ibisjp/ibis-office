@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -103,7 +103,7 @@ impl SlideEditor {
             return;
         }
         let panel = RepairWorkbookPanel::new(window, cx);
-        self.wb_mut().panels.close();
+        self.wb_mut().close_settings();
         self.wb_mut().panels.repair = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -114,7 +114,7 @@ impl SlideEditor {
             return;
         }
         let panel = RepairWorkbookPanel::with_path(path, window, cx);
-        self.wb_mut().panels.close();
+        self.wb_mut().close_settings();
         self.wb_mut().panels.repair = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -248,16 +248,15 @@ impl SlideEditor {
                     .items_center()
                     .gap_1()
                     .child(
-                        Button::new("repair-banner-details")
+                        crate::shell::chrome::action_button("repair-banner-details")
                             .small()
                             .ghost()
                             .label(text("xlsx.repair.show-report-btn"))
                             .on_click(cx.listener(|this, _, window, cx| this.open_xlsx_repair_panel(window, cx))),
                     )
                     .child(
-                        Button::new("repair-banner-close")
+                        crate::shell::chrome::action_button("repair-banner-close")
                             .small()
-                            .ghost()
                             .label(text("xlsx.repair.banner-close"))
                             .on_click(cx.listener(|this, _, _, cx| this.dismiss_repair_banner(cx))),
                     ),
@@ -291,10 +290,10 @@ impl SlideEditor {
                                 .rounded_xs()
                                 .bg(badge_bg)
                                 .text_color(badge_fg)
-                                .text_xs()
+                                .text_sm()
                                 .child(log.level.as_str()),
                         )
-                        .child(div().text_xs().text_color(theme.foreground).child(log.message.clone())),
+                        .child(div().text_sm().text_color(theme.foreground).child(log.message.clone())),
                 );
             }
 
@@ -308,7 +307,7 @@ impl SlideEditor {
                 .child(
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_xs()
+                        .text_sm()
                         .text_color(rgb(0x2e7d32))
                         .child(rep.summary_text()),
                 )
@@ -331,21 +330,21 @@ impl SlideEditor {
             .w_full()
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(text("xlsx.repair.desc")),
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).text_xs().child(text("xlsx.repair.file-label")))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).text_sm().child(text("xlsx.repair.file-label")))
                     .child(
                         h_flex()
                             .gap_1()
                             .items_center()
-                            .child(div().flex_1().child(Input::new(&file_input).small().cleanable(true)))
+                            .child(div().flex_1().child(crate::shell::chrome::text_field(&file_input).full_width()))
                             .child(
-                                Button::new("repair-browse-btn")
+                                crate::shell::chrome::action_button("repair-browse-btn")
                                     .small()
                                     .label(text("xlsx.repair.browse-btn"))
                                     .on_click(cx.listener(|_this, _, window, cx| {
@@ -374,62 +373,43 @@ impl SlideEditor {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).text_xs().child(text("xlsx.repair.mode-label")))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).text_sm().child(text("xlsx.repair.mode-label")))
                     .child(
-                        Button::new("repair-mode-repair")
-                            .small()
-                            .outline()
-                            .label(format!("{} {}", if is_repair { "●" } else { "○" }, text("xlsx.repair.mode-repair")))
-                            .on_click(cx.listener(|this, _, _, cx| this.set_xlsx_repair_mode(RepairMode::Repair, cx))),
+                        crate::shell::chrome::radio_button("repair-mode-repair", is_repair, false, text("xlsx.repair.mode-repair"), cx.listener(|this, _, _, cx| this.set_xlsx_repair_mode(RepairMode::Repair, cx))),
                     )
                     .child(
-                        div().text_xs().text_color(theme.muted_foreground).child(text("xlsx.repair.mode-repair-desc")),
+                        div().text_sm().text_color(theme.muted_foreground).child(text("xlsx.repair.mode-repair-desc")),
                     )
                     .child(
-                        Button::new("repair-mode-formulas")
-                            .small()
-                            .outline()
-                            .label(format!("{} {}", if is_formulas { "●" } else { "○" }, text("xlsx.repair.mode-formulas")))
-                            .on_click(cx.listener(|this, _, _, cx| this.set_xlsx_repair_mode(RepairMode::ExtractFormulas, cx))),
+                        crate::shell::chrome::radio_button("repair-mode-formulas", is_formulas, false, text("xlsx.repair.mode-formulas"), cx.listener(|this, _, _, cx| this.set_xlsx_repair_mode(RepairMode::ExtractFormulas, cx))),
                     )
                     .child(
-                        div().text_xs().text_color(theme.muted_foreground).child(text("xlsx.repair.mode-formulas-desc")),
+                        div().text_sm().text_color(theme.muted_foreground).child(text("xlsx.repair.mode-formulas-desc")),
                     )
                     .child(
-                        Button::new("repair-mode-values")
-                            .small()
-                            .outline()
-                            .label(format!("{} {}", if is_values { "●" } else { "○" }, text("xlsx.repair.mode-values")))
-                            .on_click(cx.listener(|this, _, _, cx| this.set_xlsx_repair_mode(RepairMode::ExtractValues, cx))),
+                        crate::shell::chrome::radio_button("repair-mode-values", is_values, false, text("xlsx.repair.mode-values"), cx.listener(|this, _, _, cx| this.set_xlsx_repair_mode(RepairMode::ExtractValues, cx))),
                     )
                     .child(
-                        div().text_xs().text_color(theme.muted_foreground).child(text("xlsx.repair.mode-values-desc")),
+                        div().text_sm().text_color(theme.muted_foreground).child(text("xlsx.repair.mode-values-desc")),
                     ),
             )
-            .child(
-                Button::new("repair-execute-btn")
-                    .primary()
+            .when_some(panel.status_message.as_ref(), |this, msg| {
+                this.child(div().p_2().rounded_xs().bg(rgb(0xe8f5e9)).text_color(rgb(0x2e7d32)).text_sm().child(msg.clone()))
+            })
+            .when_some(panel.error_message.as_ref(), |this, err| {
+                this.child(div().p_2().rounded_xs().bg(rgb(0xffebee)).text_color(rgb(0xc62828)).text_sm().child(err.clone()))
+            })
+            .child(report_elem)
+
+            .into_any_element();
+
+        let panel_terminal_actions = crate::shell::chrome::action_bar()            .action(
+                crate::shell::chrome::ActionDefinition::new("repair-execute-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                     .label(text("xlsx.repair.execute-btn"))
                     .on_click(cx.listener(|this, _, window, cx| this.execute_xlsx_repair(window, cx))),
             )
-            .when_some(panel.status_message.as_ref(), |this, msg| {
-                this.child(div().p_2().rounded_xs().bg(rgb(0xe8f5e9)).text_color(rgb(0x2e7d32)).text_xs().child(msg.clone()))
-            })
-            .when_some(panel.error_message.as_ref(), |this, err| {
-                this.child(div().p_2().rounded_xs().bg(rgb(0xffebee)).text_color(rgb(0xc62828)).text_xs().child(err.clone()))
-            })
-            .child(report_elem)
-            .child(
-                Button::new("repair-close-btn")
-                    .ghost()
-                    .label(text("xlsx.repair.close-btn"))
-                    .on_click(cx.listener(|this, _, _, cx| this.close_xlsx_repair_panel(cx))),
-            )
-            .into_any_element();
 
-        Some(SidebarPanel {
-            title: text("xlsx.repair.title").into(),
-            body,
-        })
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("xlsx.repair.title"), body, panel_terminal_actions))
     }
 }

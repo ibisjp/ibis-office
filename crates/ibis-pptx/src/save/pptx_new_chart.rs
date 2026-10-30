@@ -1183,7 +1183,15 @@ pub(crate) fn add_sheet_chart_part(package: &mut Package, drawing: &str, kind: N
     if let (Some(a), Some(b)) = (text.find("<c:externalData"), text.find("</c:externalData>")) {
         text.replace_range(a..b + "</c:externalData>".len(), "");
     }
-    let doc = XmlDocument::parse(text.as_bytes()).map_err(|e| Error::new(format!("グラフを作れません: {e}")))?;
+    let mut doc = XmlDocument::parse(text.as_bytes()).map_err(|e| Error::new(format!("グラフを作れません: {e}")))?;
+    // ibisOffice's sheet-chart insertion defaults: reuse the existing colorful style,
+    // and draw an opaque white card with the app's neutral gray, 1-point frame.
+    // These are application UI choices, not inferred Office rendering coefficients.
+    let root=doc.root_element().ok_or_else(||Error::new("グラフのXMLが空です"))?;
+    super::pptx_chart::write_series_fill(&mut doc,root,&ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffffff))),"c:","a")?;
+    super::pptx_chart::write_series_stroke(&mut doc,root,Some(&ibis_doc_model::Stroke::solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xdadce0)),ibis_doc_model::EMU_PER_POINT)),"c:","a")?;
+    let style=doc.append_element(root,"c:style");doc.set_attr(style,"val","2");
+    if let Some(before)=doc.child(root,"chart"){doc.detach(style);doc.insert_before(before,style);}
     package.set_xml(&chart, doc);
     package.set_override(&chart, CT_CHART)?;
     let rel = package.add_relationship(drawing, REL_CHART, &relative(drawing, &chart), false)?;
@@ -1195,7 +1203,11 @@ pub(crate) fn add_sheet_chart_part(package: &mut Package, drawing: &str, kind: N
 /// Returns the relationship's id and the part.
 pub(crate) fn add_sheet_chart_ex_part(package: &mut Package, drawing: &str, kind: NewChartKind, cells: &ExCells) -> Result<(String, String), Error> {
     let chart = next_part_name(package, "xl/charts/chartEx1.xml");
-    let doc = XmlDocument::parse(chart_ex_with(kind, cells, false, None).as_bytes()).map_err(|e| Error::new(format!("グラフを作れません: {e}")))?;
+    let mut doc = XmlDocument::parse(chart_ex_with(kind, cells, false, None).as_bytes()).map_err(|e| Error::new(format!("グラフを作れません: {e}")))?;
+    // MS-ODRAWXML 2.24.3.11: cx:chartSpace/cx:spPr styles the whole chart.
+    let root=doc.root_element().ok_or_else(||Error::new("グラフのXMLが空です"))?;
+    super::pptx_chart::write_series_fill(&mut doc,root,&ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xffffff))),"cx:","a")?;
+    super::pptx_chart::write_series_stroke(&mut doc,root,Some(&ibis_doc_model::Stroke::solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0xdadce0)),ibis_doc_model::EMU_PER_POINT)),"cx:","a")?;
     package.set_xml(&chart, doc);
     package.set_override(&chart, CT_CHART_EX)?;
     add_chart_ex_style_parts(package, &chart)?;

@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Linear gradient stop editing with frozen shape/cell/background targets.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -79,6 +79,8 @@ pub(crate) struct GradientPanel {
     pub(crate) path:Option<GradientPath>,
     pub(crate) pattern:Option<String>,
     pub(crate) focus:[Entity<InputState>;4],
+    slider: crate::shell::chrome::gradient_slider::GradientSliderState,
+    selected_stop: usize,
     target:Target,
     error:Option<SharedString>,
 }
@@ -125,6 +127,7 @@ impl SlideEditor {
     }
     fn open_gradient_panel_mode(&mut self,background:bool,path_mode:bool,pattern_mode:bool,window:&mut Window,cx:&mut Context<Self>) {
         self.commit_marked(cx);
+        self.drop_untouched_body();
         let (target,fill)=if background {
             let fill=self.slide().background.clone();(Target::Background {slide:self.current_slide,fill:fill.clone()},fill)
         } else {
@@ -151,7 +154,7 @@ impl SlideEditor {
         let stops:Vec<Row>=stops.into_iter().map(|s|row(s,window,cx)).collect();
         let focus=focus.map(|v|cx.new(|cx|InputState::new(window,cx).default_value(format!("{:.3}",v as f64/1000.))));
         let path=path_mode.then_some(path_kind);let first=if pattern_mode {stops[0][1].clone()} else if path_mode {focus[0].clone()} else {angle.clone()};
-        if let Some(s)=self.pptx_mut() {s.glow_panel=None;s.shadow_panel=None;s.paragraph_panel=None;s.timing_panel=None;s.crop_panel=None;s.insets_panel=None;s.size_panel=None; s.frame_panel = None; s.comments = None; s.chart_panel = None; s.header_footer = None;s.find=None;s.gradient_panel=Some(GradientPanel {angle,stops,path,pattern,focus,target,error:None});}
+        if let Some(s)=self.pptx_mut() {s.glow_panel=None;s.shadow_panel=None;s.paragraph_panel=None;s.timing_panel=None;s.crop_panel=None;s.insets_panel=None;s.size_panel=None; s.frame_panel = None; s.comments = None; s.chart_panel = None; s.header_footer = None;s.find=None;s.gradient_panel=Some(GradientPanel {angle,stops,path,pattern,focus,target,error:None,slider:Default::default(),selected_stop:0});}
         self.sidebar_open=true;first.update(cx,|f,cx|f.focus(window,cx));cx.notify();
     }
     pub(crate) fn set_pattern_preset(&mut self,preset:&str,cx:&mut Context<Self>) {
@@ -170,7 +173,7 @@ impl SlideEditor {
     pub(crate) fn remove_gradient_stop(&mut self,index:usize,window:&mut Window,cx:&mut Context<Self>) {
         let Some(p)=self.pptx_mut().and_then(|s|s.gradient_panel.as_mut()) else {return};
         if p.pattern.is_some() || p.stops.len()<=2 || index>=p.stops.len() {return;}
-        p.stops.remove(index);let focus=p.angle.clone();focus.update(cx,|f,cx|f.focus(window,cx));cx.notify();
+        p.stops.remove(index);p.selected_stop=p.selected_stop.min(p.stops.len().saturating_sub(1));let focus=p.angle.clone();focus.update(cx,|f,cx|f.focus(window,cx));cx.notify();
     }
     pub(crate) fn apply_gradient_panel(&mut self,window:&mut Window,cx:&mut Context<Self>) {
         let Some(p)=self.pptx().and_then(|s|s.gradient_panel.as_ref()) else {return};let fill=value(p,cx);
@@ -195,41 +198,63 @@ impl SlideEditor {
     }
     pub(crate) fn pptx_gradient_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel> {
         let p=self.pptx()?.gradient_panel.as_ref()?;let angle=p.angle.clone();let stops=p.stops.clone();let error=p.error.clone();let path=p.path;let pattern=p.pattern.clone();let focus=p.focus.clone();let kind=if pattern.is_some() {crate::shell::i18n::text("pptx.chrome.pattern")} else if path.is_some() {crate::shell::i18n::text("pptx.gradient-panel.path-gradient")} else {crate::shell::i18n::text("pptx.gradient-panel.linear-gradient")};let title=match &p.target {Target::Background {..}=>crate::shell::i18n::format("_pptx.kind-background", &[("kind", &kind)]),Target::Shapes {shapes,..}=>crate::shell::i18n::format("_pptx.kind-count-shapes", &[("kind", &kind), ("count", &shapes.len())])};
-        let mut body=v_flex().gap_2().px(px(18.)).py(px(8.));
+        let mut body=v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
+        if pattern.is_none() {
+            let points = stops.iter().filter_map(|fields| {
+                let position = fields[0].read(cx).value().trim().parse::<f64>().ok()?;
+                if !position.is_finite() || !(0. ..=100.).contains(&position) {return None;}
+                let color = super::glow_panel::color(&fields[1], &fields[2], cx)?;
+                Some(GradientStop {position: (position * 1000.).round() as u32, color})
+            }).collect::<Vec<_>>();
+            if points.len() == stops.len() {
+                body = body.child(crate::shell::chrome::gradient_slider::gradient_slider(points, p.selected_stop, true, p.slider.clone(), cx, |e, points, selected, w, cx| {
+                    let old = e.pptx().and_then(|s| s.gradient_panel.as_ref()).map(|p| p.stops.clone()).unwrap_or_default();
+                    let fields = points.into_iter().enumerate().map(|(i, point)| {
+                        if let Some(fields) = old.get(i) {
+                            let values = [format!("{:.3}", point.position as f64 / 1000.), format!("{:06X}", point.color.rgb.0), format!("{:.8}", point.color.alpha as f64 * 100. / 255.)];
+                            for (field, value) in fields.iter().zip(values) {if field.read(cx).value().as_str() != value {field.update(cx, |f, cx| f.set_value(value, w, cx));}}
+                            fields.clone()
+                        } else {row(point, w, cx)}
+                    }).collect();
+                    if let Some(p) = e.pptx_mut().and_then(|s| s.gradient_panel.as_mut()) {p.stops = fields;p.selected_stop = selected;}
+                    cx.notify();
+                }));
+            }
+        }
         if let Some(selected)=&pattern {
             let label=PATTERN_CHOICES.iter().find(|c|c.1==selected).map(|c|crate::shell::i18n::text(c.2)).unwrap_or_else(||crate::shell::i18n::text("pptx.gradient-panel.not-supported"));
             body=body.child(div().child(crate::shell::i18n::format("_pptx.type-label", &[("label", &label)])));
         } else if let Some(selected)=path {
-            let mut choices=h_flex().gap_1();
+            let mut choices=crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow);
             for (id,label,path) in [("pptx-gradient-circle",crate::shell::i18n::text("pptx.common.circle"),GradientPath::Circle),("pptx-gradient-rect",crate::shell::i18n::text("pptx.chrome.square"),GradientPath::Rect),("pptx-gradient-shape",crate::shell::i18n::text("_shell.shape"),GradientPath::Shape)] {
-                choices=choices.child(Button::new(id).small().ghost().label(if path==selected {format!("✓ {label}")} else {label.to_string()}).on_click(cx.listener(move|e,_,_,cx|e.set_gradient_path(path,cx))));
+                choices=choices.child(crate::shell::chrome::radio_button(id, path==selected, false, label, cx.listener(move|e,_,_,cx|e.set_gradient_path(path,cx))));
             }
             body=body.child(choices);
-            for (label,field) in [crate::shell::i18n::text("pptx.gradient-panel.focus-left-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-top-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-right-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-bottom-percent")].into_iter().zip(focus) {body=body.child(div().text_size(px(13.)).child(label)).child(Input::new(&field).small().cleanable(true));}
-        } else {body=body.child(div().text_size(px(13.)).child(crate::shell::i18n::text("pptx.gradient-panel.angle-degrees"))).child(Input::new(&angle).small().cleanable(true));}
+            for (i,(label,field)) in [crate::shell::i18n::text("pptx.gradient-panel.focus-left-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-top-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-right-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-bottom-percent")].into_iter().zip(focus).enumerate() {body=body.child(div().text_sm().child(label)).child(super::glow_panel::effect_field(&field,format!("pptx-gradient-focus-{i}"),Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,100.0)),cx));}
+        } else {body=body.child(div().text_sm().child(crate::shell::i18n::text("pptx.gradient-panel.angle-degrees"))).child(super::glow_panel::effect_field(&angle,"pptx-gradient-angle".into(),Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,359.0)),cx));}
         let can_remove=stops.len()>2;
         if pattern.is_some() {
-            for (label,fields) in [crate::shell::i18n::text("pptx.gradient-panel.foreground"),crate::shell::i18n::text("_shell.background")].into_iter().zip(stops) {
+            for (side,(label,fields)) in [crate::shell::i18n::text("pptx.gradient-panel.foreground"),crate::shell::i18n::text("_shell.background")].into_iter().zip(stops).enumerate() {
                 body=body.child(div().child(label));
-                for (label,field) in [crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::i18n::text("pptx.gradient-panel.intensity-percent")].into_iter().zip(fields.into_iter().skip(1)) {body=body.child(div().text_size(px(13.)).child(label)).child(Input::new(&field).small().cleanable(true));}
+                for (j,(label,field)) in [crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::i18n::text("pptx.gradient-panel.intensity-percent")].into_iter().zip(fields.into_iter().skip(1)).enumerate() {body=body.child(div().text_sm().child(label)).child(super::glow_panel::effect_field(&field,format!("pptx-pattern-{side}-{j}"),(j==1).then_some(Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,100.0))).flatten(),cx));}
             }
         } else {
         for (i,fields) in stops.into_iter().enumerate() {
-            body=body.child(h_flex().justify_between().child(div().child(format!("stop {}",i+1))).child(Button::new(ElementId::Name(format!("pptx-gradient-remove-{i}").into())).small().ghost().label(crate::shell::i18n::text("_shell.delete")).disabled(!can_remove).on_click(cx.listener(move|e,_,w,cx|e.remove_gradient_stop(i,w,cx)))));
-            for (label,field) in [crate::shell::i18n::text("pptx.gradient-panel.position-percent"),crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::i18n::text("pptx.gradient-panel.intensity-percent")].into_iter().zip(fields) {body=body.child(div().text_size(px(13.)).child(label)).child(Input::new(&field).small().cleanable(true));}
+            body=body.child(h_flex().justify_between().child(div().child(format!("stop {}",i+1))).child(crate::shell::chrome::destructive_button(ElementId::Name(format!("pptx-gradient-remove-{i}").into()),cx).small().label(crate::shell::i18n::text("_shell.delete")).disabled(!can_remove).on_click(cx.listener(move|e,_,w,cx|e.remove_gradient_stop(i,w,cx)))));
+            for (j,(label,field)) in [crate::shell::i18n::text("pptx.gradient-panel.position-percent"),crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::i18n::text("pptx.gradient-panel.intensity-percent")].into_iter().zip(fields).enumerate() {body=body.child(div().text_sm().child(label)).child(super::glow_panel::effect_field(&field,format!("pptx-gradient-stop-{i}-{j}"),(j!=1).then_some(Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,100.0))).flatten(),cx));}
         }
-        body=body.child(Button::new("pptx-gradient-add").small().ghost().label(crate::shell::i18n::text("pptx.chrome.add-stop")).on_click(cx.listener(|e,_,w,cx|e.add_gradient_stop(w,cx))));
+        body=body.child(crate::shell::chrome::action_button("pptx-gradient-add").small().label(crate::shell::i18n::text("pptx.chrome.add-stop")).on_click(cx.listener(|e,_,w,cx|e.add_gradient_stop(w,cx))));
         }
-        if let Some(error)=error {body=body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error));}
-        body=body.child(h_flex().gap_1().child(Button::new("pptx-gradient-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e,_,w,cx|e.apply_gradient_panel(w,cx)))).child(Button::new("pptx-gradient-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e,_,w,cx|e.close_gradient_panel(w,cx)))));
+        if let Some(error)=error {body=body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));}
         if let Some(selected)=&pattern {
             body=body.child(div().child(crate::shell::i18n::text("pptx.gradient-panel.select-type")));
             for choices in PATTERN_CHOICES.chunks(2) {
-                let mut group=h_flex().gap_1();
-                for &(id,preset,label) in choices {let label=crate::shell::i18n::text(label);group=group.child(Button::new(id).small().ghost().label(if selected==preset {format!("✓ {label}")} else {label.to_string()}).on_click(cx.listener(move|e,_,_,cx|e.set_pattern_preset(preset,cx))));}
+                let mut group=crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow);
+                for &(id,preset,label) in choices {let label=crate::shell::i18n::text(label);group=group.child(crate::shell::chrome::radio_button(id, selected==preset, false, label, cx.listener(move|e,_,_,cx|e.set_pattern_preset(preset,cx))));}
                 body=body.child(group);
             }
         }
-        Some(SidebarPanel {title:title.into(),body:body.into_any_element()})
+        let footer = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("pptx-gradient-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,w,cx|e.apply_gradient_panel(w,cx)))).action(crate::shell::chrome::ActionDefinition::new("pptx-gradient-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,w,cx|e.close_gradient_panel(w,cx))));
+        Some(SidebarPanel::with_footer(title, body.into_any_element(), footer))
     }
 }

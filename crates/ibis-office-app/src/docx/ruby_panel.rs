@@ -5,8 +5,8 @@
 //! over the selection (in one paragraph), or changes the ruby of the
 //! ruby selected; empty, it takes the ruby away (the base stays).
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{FlowCommand, FlowPos, FlowRunKind, RubyAlign};
@@ -17,6 +17,7 @@ use crate::shell::editor::SlideEditor;
 /// The panel's field.
 pub(crate) struct RubyState {
     pub(crate) text: Entity<InputState>,
+    target:(FlowPos,FlowPos),
     _subscription: Subscription,
 }
 
@@ -24,7 +25,7 @@ impl SlideEditor {
     /// The selection in one paragraph: its paragraph, offsets and text, and
     /// the ruby run it is (if it is exactly one).
     fn ruby_selection(&self) -> Option<(u32, usize, usize, String, Option<FlowRunKind>)> {
-        let (start, end) = self.ordered_selection()?;
+        let (start, end) = self.doc_state().and_then(|s|s.ruby.as_ref()).map(|r|r.target).or_else(||self.ordered_selection())?;
         if start.para != end.para || start == end {
             return None;
         }
@@ -80,6 +81,7 @@ impl SlideEditor {
         {
             state.anchor = Some(FlowPos::new(para, from));
             state.caret = Some(FlowPos::new(para, from + len));
+            if let Some(ruby)=state.ruby.as_mut(){ruby.target=(FlowPos::new(para,from),FlowPos::new(para,from+len));}
         }
         cx.notify();
     }
@@ -94,7 +96,7 @@ impl SlideEditor {
             cx.notify();
             return;
         }
-        let kind = FlowRunKind::Field { instruction: format!("eq \\o\\ac({enclosure},{text})"), shown: String::new() };
+        let kind = FlowRunKind::Field { instruction: format!("EQ \\o\\ac({enclosure},{text})"), shown: String::new() };
         let commands = vec![FlowCommand::Delete { from: FlowPos::new(para, from), to: FlowPos::new(para, to) }, FlowCommand::InsertField { at: FlowPos::new(para, from), kind }];
         if self.run_flow(commands, cx)
             && let Some(state) = self.doc_state_mut()
@@ -127,6 +129,7 @@ impl SlideEditor {
 
     /// 表示形式 > テキスト > ルビ…: the panel, with the selection's ruby.
     pub(crate) fn open_ruby(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let current = match self.ruby_selection() {
             Some((.., Some(FlowRunKind::Ruby { text, .. }))) => text,
             Some(_) => String::new(),
@@ -137,15 +140,17 @@ impl SlideEditor {
             }
         };
         if self.doc_state().is_some_and(|s| s.ruby.is_none()) {
+            let Some(target)=self.ordered_selection() else{return;};
             let text = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("docx.ruby-panel.ruby-text")));
-            let subscription = cx.subscribe_in(&text, window, |this, input, event: &InputEvent, _, cx| {
+            let subscription = cx.subscribe_in(&text, window, |this, input, event: &InputEvent, window, cx| {
                 if let InputEvent::PressEnter { .. } = event {
                     let text = input.read(cx).value().to_string();
                     this.set_ruby(&text, cx);
+                    this.close_panel_dialog(window,cx);
                 }
             });
             if let Some(state) = self.doc_state_mut() {
-                state.ruby = Some(RubyState { text, _subscription: subscription });
+                state.ruby = Some(RubyState { text, target, _subscription: subscription });
             }
         }
         if let Some(input) = self.doc_state().and_then(|s| s.ruby.as_ref()).map(|r| r.text.clone()) {
@@ -177,16 +182,16 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(Input::new(&input).small().cleanable(true))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("ruby-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|this, _, _, cx| {
+            .p_0().child(crate::shell::chrome::text_field(&input).full_width())
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("ruby-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, window, cx| {
                         let text = this.doc_state().and_then(|s| s.ruby.as_ref()).map(|r| r.text.read(cx).value().to_string()).unwrap_or_default();
                         this.set_ruby(&text, cx);
+                        this.close_panel_dialog(window,cx);
                     })))
-                    .child(Button::new("ruby-remove").small().ghost().label(crate::shell::i18n::text("docx.ruby-panel.remove-ruby")).on_click(cx.listener(|this, _, _, cx| this.set_ruby("", cx)))),
-            );
-        Some(SidebarPanel { title: crate::shell::i18n::text("docx.ruby-panel.phonetic-guide"), body: body.into_any_element() })
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))
+                    .action(crate::shell::chrome::ActionDefinition::new("ruby-remove", crate::shell::i18n::text("docx.ruby-panel.remove-ruby"), crate::shell::chrome::ActionButtonKind::Destructive).on_click(cx.listener(|this, _, _, cx| this.set_ruby("", cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("docx.ruby-panel.phonetic-guide"), body.into_any_element(), panel_actions))
     }
 }

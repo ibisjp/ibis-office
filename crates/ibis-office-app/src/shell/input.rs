@@ -48,11 +48,11 @@ impl InputHandler for FormatInput {
     }
 
     fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str, window: &mut Window, cx: &mut App) {
-        self.editor.update(cx, |e, cx| with_format!(e, replace_text_in_range(e, replacement_range, text, window, cx)))
+        self.editor.update(cx, |e, cx| { if !e.panel_dialog_is_modal() { with_format!(e, replace_text_in_range(e, replacement_range, text, window, cx)); } })
     }
 
     fn replace_and_mark_text_in_range(&mut self, range_utf16: Option<Range<usize>>, new_text: &str, new_selected_range: Option<Range<usize>>, window: &mut Window, cx: &mut App) {
-        self.editor.update(cx, |e, cx| with_format!(e, replace_and_mark_text_in_range(e, range_utf16, new_text, new_selected_range, window, cx)))
+        self.editor.update(cx, |e, cx| { if !e.panel_dialog_is_modal() { with_format!(e, replace_and_mark_text_in_range(e, range_utf16, new_text, new_selected_range, window, cx)); } })
     }
 
     fn unmark_text(&mut self, window: &mut Window, cx: &mut App) {
@@ -76,7 +76,7 @@ pub(crate) fn input_region(cx: &Context<SlideEditor>) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |bounds, _, window, cx| {
-            let (wants, focus) = editor.update(cx, |e, cx| (with_format!(e, wants_text_input(e, window, cx)), e.focus_handle.clone()));
+            let (wants, focus) = editor.update(cx, |e, cx| (!e.panel_dialog_is_modal() && with_format!(e, wants_text_input(e, window, cx)), e.focus_handle.clone()));
             if wants {
                 window.handle_input(&focus, FormatInput::new(editor.clone(), bounds), cx);
             }

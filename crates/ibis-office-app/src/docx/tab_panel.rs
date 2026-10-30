@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -16,6 +16,7 @@ use ibis_doc_model::{Emu, FlowDocument, ParaChange, TabAlign, TabChange, TabStop
 use crate::shell::{chrome::SidebarPanel, editor::SlideEditor};
 
 pub(crate) struct TabEditState {
+    pub(crate) editor: Option<Option<usize>>,
     pub(crate) pos_field: Entity<InputState>,
     pub(crate) align: TabAlign,
     pub(crate) leader: bool,
@@ -69,12 +70,13 @@ impl SlideEditor {
 
         let subscription = cx.subscribe_in(&pos_field, window, |this, _, event: &InputEvent, window, cx| {
             if let InputEvent::PressEnter { .. } = event {
-                this.set_tab_stop(window, cx);
+                if this.doc_state().and_then(|s|s.tab_edit.as_ref()).is_some_and(|p|p.editor.is_some()){this.finish_tab_row_editor(window,cx);}else{this.set_tab_stop(window,cx);}
             }
         });
 
         if let Some(state) = self.doc_state_mut() {
             state.tab_edit = Some(TabEditState {
+                editor: None,
                 pos_field,
                 align: initial_align,
                 leader: initial_leader,
@@ -86,6 +88,7 @@ impl SlideEditor {
                 error: None,
                 _subscriptions: vec![subscription],
             });
+            state.helper=Default::default();state.ruby=None;state.merge=None;state.text_box=None;
             state.font_edit = None;
             state.color_edit = None;
             state.picture_edit = None;
@@ -183,13 +186,6 @@ impl SlideEditor {
 
     pub(crate) fn apply_tab_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(edit) = self.doc_state().and_then(|s| s.tab_edit.as_ref()) else { return };
-        if self.flow() != Some(&edit.document) {
-            if let Some(edit) = self.doc_state_mut().and_then(|s| s.tab_edit.as_mut()) {
-                edit.error = Some(crate::shell::i18n::text("_docx.the-document-has-changed-reopen-the-tabs-setting").into());
-            }
-            cx.notify();
-            return;
-        }
         let (first, last) = edit.target;
         let original = edit.original_stops.clone();
         let new_stops = edit.stops.clone();
@@ -220,102 +216,92 @@ impl SlideEditor {
         cx.notify();
     }
 
-    pub(crate) fn tab_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let edit = self.doc_state()?.tab_edit.as_ref()?;
-        let pos_field = edit.pos_field.clone();
-        let align = edit.align;
-        let leader = edit.leader;
-        let stops = edit.stops.clone();
-        let selected_idx = edit.selected_index;
-        let error = edit.error.clone();
-
-        let choice_align = |id: &'static str, label: &'static str, value: TabAlign| {
-            Button::new(id)
-                .small()
-                .label(crate::shell::i18n::text(label))
-                .selected(align == value)
-                .on_click(cx.listener(move |this, _, _, cx| this.choose_tab_align(value, cx)))
-        };
-
-        let choice_leader = |id: &'static str, label: &'static str, value: bool| {
-            Button::new(id)
-                .small()
-                .label(crate::shell::i18n::text(label))
-                .selected(leader == value)
-                .on_click(cx.listener(move |this, _, _, cx| this.choose_tab_leader(value, cx)))
-        };
-
-        let stop_items: Vec<AnyElement> = stops
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                let is_sel = selected_idx == Some(i);
-                let label = format!("{} pt  {}  {}", format_pt(emu_to_pt(s.position)), align_name(s.align), crate::shell::i18n::text(if s.leader { "_docx.dotted" } else { "_shell.none" }));
-                div()
-                    .id(("tab-stop", i))
-                    .px(px(8.))
-                    .py(px(4.))
-                    .text_sm()
-                    .cursor_pointer()
-                    .when(is_sel, |d| d.bg(rgb(0xd0e2ff)).font_weight(FontWeight::MEDIUM))
-                    .when(!is_sel, |d| d.hover(|h| h.bg(rgb(0xeff1f4))))
-                    .child(label)
-                    .on_click(cx.listener(move |this, _, window, cx| this.select_tab_stop(i, window, cx)))
-                    .into_any_element()
-            })
-            .collect();
-
-        let body = v_flex()
-            .gap_2()
-            .px(px(18.))
-            .py(px(8.))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(div().w(px(92.)).text_sm().child(crate::shell::i18n::text("_docx.tab-stop-position-pt")))
-                    .child(Input::new(&pos_field).small().cleanable(true)),
-            )
-            .child(
-                div()
-                    .id("tab-stops-list")
-                    .border_1()
-                    .border_color(rgb(0xd1d5db))
-                    .rounded_sm()
-                    .h(px(100.))
-                    .overflow_y_scroll()
-                    .children(stop_items),
-            )
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(crate::shell::i18n::text("_shell.arrange")))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(choice_align("tab-align-left", "_shell.align-left", TabAlign::Left))
-                    .child(choice_align("tab-align-center", "_shell.center-2", TabAlign::Center))
-                    .child(choice_align("tab-align-right", "_shell.align-right", TabAlign::Right))
-                    .child(choice_align("tab-align-decimal", "_docx.decimal", TabAlign::Decimal)),
-            )
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(crate::shell::i18n::text("_docx.leader")))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(choice_leader("tab-leader-none", "_shell.none", false))
-                    .child(choice_leader("tab-leader-dot", "_docx.dotted-2", true)),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(Button::new("tab-set").small().label(crate::shell::i18n::text("fix.pivot.settings")).on_click(cx.listener(|this, _, window, cx| this.set_tab_stop(window, cx))))
-                    .child(Button::new("tab-clear").small().label(crate::shell::i18n::text("_xlsx.clear")).on_click(cx.listener(|this, _, window, cx| this.clear_tab_stop(window, cx))))
-                    .child(Button::new("tab-clear-all").small().label(crate::shell::i18n::text("fix.validation.clear-all")).on_click(cx.listener(|this, _, window, cx| this.clear_all_tab_stops(window, cx)))),
-            )
-            .children(error.map(|err| div().text_sm().text_color(rgb(0xcc0000)).child(err)))
-            .child(
-                Button::new("tab-apply").primary()
-                    .small()
-                    .label(crate::shell::i18n::text("_shell.apply"))
-                    .on_click(cx.listener(|this, _, window, cx| this.apply_tab_edit(window, cx))),
-            );
-
-        Some(SidebarPanel { title: crate::shell::i18n::text("_docx.tabs-and-leaders"), body: body.into_any_element() })
+    pub(crate) fn open_tab_row_editor(&mut self, index:Option<usize>, w:&mut Window,cx:&mut Context<Self>) {
+        if let Some(i)=index {self.select_tab_stop(i,w,cx);}
+        if let Some(p)=self.doc_state_mut().and_then(|s|s.tab_edit.as_mut()) {
+            p.editor=Some(index);p.error=None;
+            p.pos_field.update(cx,|i,cx|i.focus(w,cx));
+            if index.is_none() {p.align=TabAlign::Left;p.leader=false;let next=p.stops.last().map_or(72.,|s|emu_to_pt(s.position)+72.);let value=if next<=1584. {format_pt(next)}else{String::new()};p.pos_field.update(cx,|i,cx|i.set_value(value,w,cx));}
+        } cx.notify();
+    }
+    pub(crate) fn finish_tab_row_editor(&mut self,w:&mut Window,cx:&mut Context<Self>) {
+        let mode=self.doc_state().and_then(|s|s.tab_edit.as_ref()).and_then(|p|p.editor);
+        // Moving a stop replaces the edited stop instead of leaving its previous position behind.
+        let valid=self.doc_state().and_then(|s|s.tab_edit.as_ref()).is_some_and(|p|p.pos_field.read(cx).value().trim().parse::<f64>().is_ok_and(|n|n>0.&&n<=1584.&&n.is_finite()));
+        if !valid {self.set_tab_stop(w,cx);return;}
+        let duplicate=self.doc_state().and_then(|s|s.tab_edit.as_ref()).is_some_and(|p| {
+            let position=pt_to_emu(p.pos_field.read(cx).value().trim().parse::<f64>().unwrap());
+            p.stops.iter().enumerate().any(|(i,stop)|Some(Some(i))!=mode && stop.position==position)
+        });
+        if duplicate {if let Some(p)=self.doc_state_mut().and_then(|s|s.tab_edit.as_mut()){p.error=Some(crate::shell::i18n::text("ui.tab-duplicate").to_string());}cx.notify();return;}
+        if let Some(Some(i))=mode {if let Some(p)=self.doc_state_mut().and_then(|s|s.tab_edit.as_mut()) {if i<p.stops.len(){p.stops.remove(i);}}}
+        self.set_tab_stop(w,cx);self.apply_tab_edit(w,cx);
+        if let Some(p)=self.doc_state_mut().and_then(|s|s.tab_edit.as_mut()){p.editor=None;}cx.notify();
+    }
+    pub(crate) fn delete_live_tab(&mut self,index:usize,w:&mut Window,cx:&mut Context<Self>) {
+        self.select_tab_stop(index,w,cx);self.clear_tab_stop(w,cx);self.apply_tab_edit(w,cx);
+        if let Some(p)=self.doc_state_mut().and_then(|s|s.tab_edit.as_mut()){p.editor=None;}cx.notify();
+    }
+    pub(crate) fn tab_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel> {
+        let target=self.selected_paragraphs();let doc=self.flow().cloned();
+        if let (Some(target),Some(doc))=(target,doc) {
+            let refresh=self.doc_state()?.tab_edit.as_ref().is_some_and(|p|p.editor.is_none() && (p.target!=target || p.document!=doc));
+            if refresh {
+                let stops=self.paragraph_of(target.0).map(|p|p.tabs.clone()).unwrap_or_default();
+                if let Some(p)=self.doc_state_mut().and_then(|s|s.tab_edit.as_mut()){p.target=target;p.document=doc;p.stops=stops.clone();p.original_stops=stops;p.selected_index=None;}
+            }
+        }
+        let p=self.doc_state()?.tab_edit.as_ref()?;
+        let stops=p.stops.clone();let selected=p.selected_index;
+        let header = h_flex().items_center().h_full().px_2().gap_1()
+            .child(div().w(px(56.)).flex_none().text_sm().child(crate::shell::i18n::text("fix.help-panels.location")))
+            .child(div().w(px(70.)).flex_none().text_sm().child(crate::shell::i18n::text("_shell.arrange")))
+            .child(div().flex_1().min_w_0().text_sm().child(crate::shell::i18n::text("_docx.leader")));
+        let rows = stops.into_iter().enumerate().map(|(i, stop)| {
+            let on = selected == Some(i);
+            let row = h_flex().id(("tab-row", i)).items_center().size_full().px_2().cursor_pointer()
+                .when(on, |d| d.bg(rgb(crate::shell::chrome::SELECTED_ROW_BG)))
+                .gap_1()
+                .child(div().w(px(56.)).flex_none().text_sm().child(format!("{} pt", format_pt(emu_to_pt(stop.position)))))
+                .child(div().w(px(70.)).flex_none().text_sm().child(align_name(stop.align)))
+                .child(div().flex_1().min_w_0().overflow_hidden().text_sm().child(crate::shell::i18n::text(if stop.leader { "_docx.dotted" } else { "_shell.none" })))
+                .when(on, |d| d
+                    .child(crate::shell::chrome::action_button(("tab-edit", i)).small().w(px(crate::shell::chrome::BUTTON_HEIGHT)).px_0()
+                        .icon(crate::shell::icons::Material("edit"))
+                        .on_click(cx.listener(move |e, _, w, cx| { cx.stop_propagation(); e.open_tab_row_editor(Some(i), w, cx); })))
+                    .child(crate::shell::chrome::action_button(("tab-delete", i)).ghost().small().w(px(crate::shell::chrome::BUTTON_HEIGHT)).px_0()
+                        .icon(crate::shell::icons::Material("delete"))
+                        .on_click(cx.listener(move |e, _, w, cx| { cx.stop_propagation(); e.delete_live_tab(i, w, cx); }))))
+                .on_click(cx.listener(move |e, event: &ClickEvent, w, cx| {
+                    e.select_tab_stop(i, w, cx);
+                    if event.click_count() == 2 { e.open_tab_row_editor(Some(i), w, cx); }
+                }));
+            (i, row.into_any_element(), on)
+        }).collect();
+        let table = crate::shell::chrome::data_table::DataTable::new("docx-tabs-table", Some(header.into_any_element()), rows, cx);
+        let body=v_flex().px(px(12.)).gap_2()
+            .p_0().child(h_flex().justify_end().child(crate::shell::chrome::primary_button("tab-add").label(crate::shell::i18n::text("ui.add")).on_click(cx.listener(|e,_,w,cx|e.open_tab_row_editor(None,w,cx)))))
+            .child(table);
+        Some(SidebarPanel{title:crate::shell::i18n::text("_docx.tabs-and-leaders"),body:body.into_any_element()})
+    }
+    pub(crate) fn tab_row_dialog(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel> {
+        let p=self.doc_state()?.tab_edit.as_ref()?;let mode=p.editor?;let align=p.align;let leader=p.leader;let input=p.pos_field.clone();
+        let mut group=crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic);
+        for (i,a,k) in [(0,TabAlign::Left,"docx.tab-panel.left"),(1,TabAlign::Center,"_shell.center"),(2,TabAlign::Right,"docx.tab-panel.right"),(3,TabAlign::Decimal,"_docx.decimal")] {
+            let label=match i {0=>align_name(TabAlign::Left),2=>align_name(TabAlign::Right),_=>crate::shell::i18n::text(k)};
+            group=group.child(crate::shell::chrome::segment_control::SegmentItem::label(("tab-align",i as usize),label,align==a).on_click(cx.listener(move |e,_,_,cx|e.choose_tab_align(a,cx))));
+        }
+        let body=v_flex().gap_2().p_3()
+            .p_0().child(div().text_sm().child(crate::shell::i18n::text("_docx.tab-stop-position-pt")))
+            .child(crate::shell::chrome::text_field(&input).spinner("tab-position",crate::shell::chrome::SpinnerSpec::new(6.).range(0.05,1584.),cx,|_,_,_,_|{}).unit("pt",px(24.)))
+            .child(div().text_sm().child(crate::shell::i18n::text("_shell.arrange"))).child(group)
+            .child(div().text_sm().child(crate::shell::i18n::text("_docx.leader")))
+            .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).child(crate::shell::chrome::segment_control::SegmentItem::label("tab-none",crate::shell::i18n::text("_shell.none"),!leader).on_click(cx.listener(|e,_,_,cx|e.choose_tab_leader(false,cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("tab-dot",crate::shell::i18n::text("_docx.dotted"),leader).on_click(cx.listener(|e,_,_,cx|e.choose_tab_leader(true,cx)))))
+            .children(p.error.clone().map(|s|div().text_sm().text_color(rgb(0xd93025)).child(s)));
+        let footer=crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("tab-ok", "OK", crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,w,cx|e.finish_tab_row_editor(w,cx))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))
+            .when_some(mode,|d,i|d.action(crate::shell::chrome::ActionDefinition::new("tab-remove", crate::shell::i18n::text("_shell.delete"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(move |e,_,w,cx|e.delete_live_tab(i,w,cx)))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("_docx.tabs-and-leaders"),body.into_any_element(),footer))
     }
 }

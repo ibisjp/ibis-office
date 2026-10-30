@@ -8,8 +8,8 @@
 //! shapes the user has changed since the file was read keep theirs. No
 //! colour sets are listed: the colours are the ones the file's theme has.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -142,7 +142,7 @@ pub(crate) struct ThemePanel {
     pub(crate) colors: Vec<(&'static str, &'static str, Entity<InputState>)>,
     /// Heading Latin, heading East Asian, body Latin, body East Asian.
     pub(crate) fonts: [Entity<InputState>; 4],
-    error: Option<SharedString>,
+    pub(crate) error: Option<SharedString>,
 }
 
 fn parse_hex(text: &str) -> Option<Rgb> {
@@ -152,6 +152,7 @@ fn parse_hex(text: &str) -> Option<Rgb> {
 
 impl SlideEditor {
     pub(crate) fn open_theme_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.theme_colors_ui.editing=false;
         self.end_text_edit(window, cx);
         let p = self.presentation();
         let have = p.theme_colors.clone();
@@ -408,68 +409,6 @@ impl SlideEditor {
     }
 
     pub(crate) fn theme_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let panel = self.pptx()?.theme_panel.as_ref()?;
-        let t = crate::shell::i18n::text;
-        let label = |s: &str| div().text_size(px(12.)).child(s.to_string());
-        let mut body = v_flex()
-            .id("pptx-theme-panel")
-            .gap_1()
-            .px(px(18.))
-            .py(px(8.))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.open_theme_panel_context_menu(None, event.position, window, cx);
-                }),
-            );
-
-        let mut palette_row = h_flex().gap_1().flex_wrap();
-        for preset in &THEME_PALETTES {
-            let pid = preset.id;
-            let active = self.is_theme_palette_active(pid);
-            let btn = Button::new(format!("preset-{pid}")).small().ghost().label(t(preset.label_key));
-            let btn = if active { btn.border_1() } else { btn };
-            palette_row = palette_row.child(
-                div()
-                    .id(SharedString::from(format!("preset-wrap-{pid}")))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            this.open_theme_panel_context_menu(Some(pid), event.position, window, cx);
-                        }),
-                    )
-                    .child(btn.on_click(cx.listener(move |e, _, w, cx| e.apply_theme_palette(pid, w, cx)))),
-            );
-        }
-        body = body.child(label(&t("pptx.theme.palette"))).child(palette_row);
-
-        let mut effects_row = h_flex().gap_1().flex_wrap();
-        for preset in &ibis_pptx::theme_effects::THEME_EFFECTS {
-            let eid = preset.id;
-            let active = self.is_theme_effects_active(eid);
-            let btn = Button::new(format!("effect-{eid}")).small().ghost().label(t(preset.label_key));
-            let btn = if active { btn.border_1() } else { btn };
-            effects_row = effects_row.child(btn.on_click(cx.listener(move |e, _, w, cx| e.apply_theme_effects(eid, w, cx))));
-        }
-        body = body.child(label(&t("pptx.theme.effects"))).child(effects_row);
-
-        for (_, name, input) in &panel.colors {
-            body = body.child(label(&t(name))).child(Input::new(input).small().cleanable(true));
-        }
-        for (name, input) in [("pptx.theme-panel.heading-font-latin", &panel.fonts[0]), ("pptx.theme-panel.heading-font-east-asian", &panel.fonts[1]), ("pptx.theme-panel.body-font-latin", &panel.fonts[2]), ("pptx.theme-panel.body-font-east-asian", &panel.fonts[3])] {
-            body = body.child(label(&t(name))).child(Input::new(input).small().cleanable(true));
-        }
-        if let Some(error) = &panel.error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error.clone()));
-        }
-        let body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("theme-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_theme_panel(w, cx))))
-                .child(Button::new("theme-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_theme_panel(w, cx)))),
-        );
-        Some(SidebarPanel { title: t("pptx.theme-panel.theme-colors-fonts"), body: body.into_any_element() })
+        self.shared_theme_colors_panel(cx)
     }
 }

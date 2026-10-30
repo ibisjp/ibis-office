@@ -850,6 +850,11 @@ impl SlideEditor {
 
     /// Insert an image file on the worksheet as a floating picture.
     pub(crate) fn insert_sheet_picture(&mut self, name: &str, data: Vec<u8>, cx: &mut Context<Self>) -> Option<ShapeId> {
+        self.insert_sheet_picture_impl(name,data,false,cx)
+    }
+    pub(crate) fn paste_sheet_picture(&mut self,name:&str,data:Vec<u8>,cx:&mut Context<Self>)->Option<ShapeId>{self.insert_sheet_picture_impl(name,data,true,cx)}
+    fn insert_sheet_picture_impl(&mut self,name:&str,data:Vec<u8>,paste:bool,cx:&mut Context<Self>)->Option<ShapeId>{
+        let stamp=crate::shell::paste_placement::stamp(&data);
         let format = ibis_doc_model::MediaFormat::from_path(name);
         let (w, h) = crate::pptx::editing::validated_picture_size(format, &data)?;
         let (x, y) = self.sheet_insertion_origin();
@@ -881,7 +886,8 @@ impl SlideEditor {
             shadow: None,
             reflection: None,
             soft_edge: None, geometry: None, effects: Default::default(), tile: None, fill_rect: None, artistic_effect: None };
-        let shape = Shape::new(id, frame, ShapeKind::Picture(picture));
+        let mut shape = Shape::new(id, frame, ShapeKind::Picture(picture));
+        if paste{self.position_sheet_paste(std::slice::from_mut(&mut shape),stamp);}
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
         self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);

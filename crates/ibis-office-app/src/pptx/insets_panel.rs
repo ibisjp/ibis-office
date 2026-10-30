@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Custom text-box inset inputs, including the selected table cell.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -69,7 +69,7 @@ impl SlideEditor {
         let mut fields: Vec<_> = [initial.left, initial.top, initial.right, initial.bottom].into_iter().map(|value| {
             cx.new(|cx| InputState::new(window, cx).default_value(format!("{:.6}", value as f64 / 360_000.)))
         }).collect();
-        fields.push(cx.new(|cx| InputState::new(window,cx).default_value("")));
+        fields.push(cx.new(|cx| InputState::new(window,cx).placeholder(crate::shell::i18n::text("pptx.common.automatic")).default_value("")));
         let first = fields[0].clone();
         if let Some(s) = self.pptx_mut() {
             s.crop_panel = None; s.timing_panel = None; s.section_panel=None;s.gradient_panel = None; s.shadow_panel = None; s.glow_panel = None; s.paragraph_panel = None; s.find = None; s.size_panel = None; s.frame_panel = None; s.comments = None; s.chart_panel = None; s.header_footer = None;
@@ -134,14 +134,17 @@ impl SlideEditor {
     pub(crate) fn text_insets_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let panel = self.pptx()?.insets_panel.as_ref()?;
         let (fields, error) = (panel.fields.clone(), panel.error.clone());
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
-        for (name, field) in [crate::shell::i18n::text("pptx.insets-panel.left-cm"), crate::shell::i18n::text("pptx.insets-panel.top-cm"), crate::shell::i18n::text("pptx.insets-panel.right-cm"), crate::shell::i18n::text("pptx.insets-panel.bottom-cm"), crate::shell::i18n::text("pptx.insets-panel.text-zoom-percent-blank-keep")].into_iter().zip(fields) {
-            body = body.child(div().text_size(px(13.)).child(name)).child(Input::new(&field).small().cleanable(true));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
+        for (i, (name, field)) in [crate::shell::i18n::text("pptx.insets-panel.left-cm"), crate::shell::i18n::text("pptx.insets-panel.top-cm"), crate::shell::i18n::text("pptx.insets-panel.right-cm"), crate::shell::i18n::text("pptx.insets-panel.bottom-cm"), crate::shell::i18n::text("pptx.insets-panel.text-zoom-percent-blank-keep")].into_iter().zip(fields).enumerate() {
+            // The margins (cm) and the text zoom (%); applied with 適用, so ▲▼ only change the field.
+            let spec = if i < 4 { crate::shell::chrome::SpinnerSpec::new(0.1).min(0.0) } else { crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 100.0).integer_only() };
+            body = body.child(crate::shell::chrome::text_field_row(name, crate::shell::chrome::text_field(&field).unit(if i < 4 { "cm" } else { "%" }, px(24.)).spinner(format!("pptx-insets-field-{i}"), spec, cx, |_, _, _, _| {})));
         }
-        if let Some(error) = error { body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error)); }
-        let body = body.child(h_flex().gap_1()
-            .child(Button::new("pptx-insets-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_text_insets_panel(w, cx))))
-            .child(Button::new("pptx-insets-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_text_insets_panel(w, cx)))));
-        Some(SidebarPanel { title: crate::shell::i18n::text("pptx.insets-panel.internal-margins-text-zoom"), body: body.into_any_element() })
+        if let Some(error) = error { body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error)); }
+        let body = body;
+        let panel_actions = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-insets-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_text_insets_panel(w, cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-insets-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_text_insets_panel(w, cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("pptx.insets-panel.internal-margins-text-zoom"), body.into_any_element(), panel_actions))
     }
 }

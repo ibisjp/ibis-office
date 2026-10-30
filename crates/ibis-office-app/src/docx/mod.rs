@@ -27,7 +27,9 @@ pub(crate) mod backup;
 pub(crate) mod control_panel;
 pub(crate) mod draw_table;
 pub(crate) mod ruby_panel;
+pub(crate) mod fit_text_panel;
 pub(crate) mod text_box_panel;
+pub(crate) mod text_box_effects;
 pub(crate) mod symbol_panel;
 pub(crate) mod style_panel;
 pub(crate) mod paragraph_panel;
@@ -58,7 +60,14 @@ pub(crate) mod corpus_report;
 #[cfg(test)]
 #[path = "../tests/docx/layout_tests.rs"]
 mod layout_tests;
+#[cfg(test)]
+#[path = "../tests/docx/layout_tests_grid.rs"]
+mod layout_tests_grid;
+#[cfg(test)]
+#[path = "../tests/docx/probe.rs"]
+mod probe;
 pub(crate) mod toolbar;
+pub(crate) mod ruler_panel;
 pub(crate) mod accessibility;
 pub(crate) mod goto;
 pub(crate) mod compress_panel;
@@ -167,6 +176,7 @@ pub(crate) struct State {
     pub(crate) comments: Option<comments::CommentState>,
     /// ルビ's panel, once opened.
     pub(crate) ruby: Option<ruby_panel::RubyState>,
+    pub(crate) fit_text_edit: Option<fit_text_panel::FitTextState>,
     /// コンテンツ コントロールのプロパティ's panel, while it is the one shown.
     pub(crate) control: Option<control_panel::ControlState>,
     /// テキスト ボックスの文字's panel, while it is the one shown.
@@ -214,6 +224,7 @@ pub(crate) struct State {
     pub(crate) helper: help_panels::HelpPanels,
     /// Selection Pane (オブジェクトの選択と表示).
     pub(crate) selection_pane: bool,
+    pub(crate) selection_reorder: std::rc::Rc<std::cell::RefCell<crate::shell::chrome::data_table::RowReorder>>,
     /// Accessibility Checker (アクセシビリティ チェック).
     pub(crate) accessibility_panel: bool,
     /// Word's Navigation Pane active tab (見出し / ページ / 結果).
@@ -238,8 +249,6 @@ pub(crate) struct State {
     pub(crate) master_doc_panel: Option<editing::MasterDocPanelState>,
     /// 手描き注釈・インク描画・インク エディター (DOCX-IMAGE-019, DOCX-INK-001〜007, DOCX-INK-010)
     pub(crate) docx_ink: Option<ink::DocxInkState>,
-    /// 文書形式の変換（旧doc・RTF・テキスト・HTML・ODT・PDF: DOCX-SEC-019, DOCX-FILE-010, 012, 013）
-    pub(crate) convert_panel: Option<convert_panel::ConvertDocumentPanel>,
     /// スクリーンリーダーの操作・ランドマーク移動 (DOCX-ACCESS-007)
     pub(crate) screen_reader: Option<accessibility::DocxScreenReaderState>,
     /// 読み上げ (DOCX-ACCESS-009)
@@ -324,7 +333,7 @@ impl FormatEditor for Document {
         if editor.is_repaired {
             pages = pages.child(editor.render_docx_repair_banner(cx));
         }
-        let show_v_ruler = !is_focus && editor.ruler_open && editor.vertical_ruler_open;
+        let show_v_ruler = !is_focus && editor.vertical_ruler_open;
         let theme = cx.theme().clone();
         if !is_focus && editor.ruler_open {
             if show_v_ruler {
@@ -705,7 +714,7 @@ impl FormatEditor for Document {
 
     /// The sidebar: 検索と置換's panel when it is open.
     fn sidebar(editor: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>) -> Option<crate::shell::chrome::SidebarPanel> {
-        editor.font_panel(cx).or_else(|| editor.color_panel(cx)).or_else(|| editor.table_size_panel(cx)).or_else(|| editor.table_formula_panel(cx)).or_else(|| editor.picture_panel(cx)).or_else(|| editor.docx_compress_panel(cx)).or_else(|| editor.paragraph_panel(cx)).or_else(|| editor.tab_panel(cx)).or_else(|| editor.comments_panel(cx)).or_else(|| editor.style_panel(cx)).or_else(|| editor.link_panel(cx)).or_else(|| editor.find_panel(cx)).or_else(|| editor.ruby_panel(cx)).or_else(|| editor.text_box_panel(cx)).or_else(|| editor.merge_panel(cx)).or_else(|| editor.doc_page_setup_panel(cx)).or_else(|| editor.notes_panel(cx)).or_else(|| editor.bookmark_panel(cx)).or_else(|| editor.watermark_panel(cx)).or_else(|| editor.new_style_panel(cx)).or_else(|| editor.symbol_panel(cx)).or_else(|| editor.word_count_panel(cx)).or_else(|| editor.field_panel(cx)).or_else(|| editor.caption_panel(cx)).or_else(|| editor.doc_properties_panel(cx)).or_else(|| editor.cross_reference_panel(cx)).or_else(|| editor.selection_pane_panel(cx)).or_else(|| editor.accessibility_panel(cx)).or_else(|| editor.update_toc_panel(cx)).or_else(|| editor.user_info_panel(cx)).or_else(|| editor.kinsoku_panel(cx)).or_else(|| editor.go_to_panel(cx)).or_else(|| editor.doc_spelling_panel(cx)).or_else(|| editor.doc_chart_panel(cx)).or_else(|| editor.control_panel(cx)).or_else(|| editor.doc_autocorrect_panel(cx)).or_else(|| editor.autorecover_settings_panel(cx)).or_else(|| editor.recover_unsaved_panel(cx)).or_else(|| editor.docx_math_panel(cx)).or_else(|| editor.quick_parts_panel(cx)).or_else(|| editor.doc_inspect_panel(cx)).or_else(|| editor.doc_compatibility_panel(cx)).or_else(|| editor.doc_print_panel(cx)).or_else(|| editor.doc_source_manager_panel(cx)).or_else(|| editor.doc_thesaurus_panel(cx)).or_else(|| editor.doc_repair_panel(cx)).or_else(|| editor.doc_template_panel(cx)).or_else(|| editor.list_style_panel(cx)).or_else(|| editor.docx_theme_panel(cx)).or_else(|| editor.master_doc_panel(cx)).or_else(|| editor.docx_ink_panel(cx)).or_else(|| editor.doc_convert_panel(cx)).or_else(|| editor.docx_screen_reader_panel(cx)).or_else(|| editor.docx_read_aloud_panel(cx)).or_else(|| editor.docx_customize_toolbar_panel(cx))
+        editor.font_panel(cx).map(|panel| panel.modal_named("font_panel")).or_else(|| editor.color_panel(cx).map(|panel| panel.modal_named("color_panel"))).or_else(|| editor.table_size_panel(cx).map(|panel| panel.modal_named("table_size_panel"))).or_else(|| editor.table_formula_panel(cx).map(|panel| panel.modal_named("table_formula_panel"))).or_else(|| editor.picture_panel(cx)).or_else(|| editor.docx_compress_panel(cx).map(|panel| panel.modal_named("docx_compress_panel"))).or_else(|| editor.paragraph_panel(cx).map(|panel| panel.modal_named("paragraph_panel"))).or_else(|| editor.tab_panel(cx)).or_else(|| editor.comments_panel(cx)).or_else(|| editor.style_panel(cx).map(|panel| panel.modal_named("style_panel"))).or_else(|| editor.link_panel(cx).map(|panel| panel.modal_named("link_panel"))).or_else(|| editor.find_panel(cx)).or_else(|| editor.ruby_panel(cx).map(|panel| panel.modal_named("ruby_panel")).or_else(||editor.fit_text_panel(cx).map(|p|p.modal_named("fit_text_panel")))).or_else(|| editor.text_box_panel(cx)).or_else(|| editor.merge_panel(cx)).or_else(|| editor.doc_page_setup_panel(cx).map(|panel| panel.modal_named("doc_page_setup_panel"))).or_else(|| editor.notes_panel(cx).map(|panel| panel.modal_named("notes_panel"))).or_else(|| editor.bookmark_panel(cx).map(|panel| panel.modal_named("bookmark_panel"))).or_else(|| editor.watermark_panel(cx).map(|panel| panel.modal_named("watermark_panel"))).or_else(|| editor.new_style_panel(cx).map(|panel| panel.modal_named("new_style_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.word_count_panel(cx)).or_else(|| editor.field_panel(cx).map(|panel| panel.modal_named("field_panel"))).or_else(|| editor.caption_panel(cx).map(|panel| panel.modal_named("caption_panel"))).or_else(|| editor.doc_properties_panel(cx).map(|panel| panel.modal_named("doc_properties_panel"))).or_else(|| editor.cross_reference_panel(cx).map(|panel| panel.modal_named("cross_reference_panel"))).or_else(|| editor.selection_pane_panel(cx)).or_else(|| editor.accessibility_panel(cx)).or_else(|| editor.update_toc_panel(cx).map(|panel| panel.modal_named("update_toc_panel"))).or_else(|| editor.user_info_panel(cx).map(|panel| panel.modal_named("user_info_panel"))).or_else(|| editor.kinsoku_panel(cx).map(|panel| panel.modal_named("kinsoku_panel"))).or_else(|| editor.go_to_panel(cx).map(|panel| panel.modeless_named("go_to_panel"))).or_else(|| editor.doc_spelling_panel(cx)).or_else(|| editor.doc_chart_panel(cx)).or_else(|| editor.control_panel(cx).map(|panel| panel.modal_named("control_panel"))).or_else(|| editor.doc_autocorrect_panel(cx).map(|panel| panel.modal_named("doc_autocorrect_panel"))).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.docx_math_panel(cx).map(|panel| panel.modal_named("docx_math_panel"))).or_else(|| editor.quick_parts_panel(cx)).or_else(|| editor.doc_inspect_panel(cx).map(|panel| panel.modal_named("doc_inspect_panel"))).or_else(|| editor.doc_compatibility_panel(cx).map(|panel| panel.modal_named("doc_compatibility_panel"))).or_else(|| editor.doc_print_panel(cx).map(|panel| panel.modal_named("doc_print_panel"))).or_else(|| editor.doc_source_manager_panel(cx).map(|panel| panel.modal_named("doc_source_manager_panel"))).or_else(|| editor.doc_thesaurus_panel(cx)).or_else(|| editor.doc_repair_panel(cx).map(|panel| panel.modal_named("doc_repair_panel"))).or_else(|| editor.doc_template_panel(cx).map(|panel| panel.modal_named("doc_template_panel"))).or_else(|| editor.list_style_panel(cx).map(|panel| panel.modal_named("list_style_panel"))).or_else(|| editor.docx_theme_panel(cx).map(|panel| panel.modal_named("docx_theme_panel"))).or_else(|| editor.master_doc_panel(cx)).or_else(|| editor.docx_ink_panel(cx)).or_else(|| editor.docx_screen_reader_panel(cx)).or_else(|| editor.docx_read_aloud_panel(cx)).or_else(|| editor.docx_customize_toolbar_panel(cx))
     }
 
     /// The title bar's コメントを追加: a comment on the selection.

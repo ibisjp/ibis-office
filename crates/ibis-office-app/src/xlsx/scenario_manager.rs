@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -221,7 +221,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.scenario_manager = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -462,6 +462,7 @@ impl SlideEditor {
 
     #[inline(never)]
     fn render_scenario_manager_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        let mut panel_fixed_actions = crate::shell::chrome::action_bar();
         let p = self.sheet_state()?.panels.scenario_manager.as_ref()?;
         let mark = |id: &str, child: AnyElement| {
             let ui = p.ui.clone();
@@ -480,19 +481,26 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                        ui.borrow_mut().insert(id.clone(), bounds);
+                    })
+        };
 
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
 
         match p.mode {
             ScenarioDialogMode::List => {
                 let scenarios = self.current_sheet().and_then(|(_, s)| s.scenarios.clone()).map(|sc| sc.scenarios).unwrap_or_default();
                 let sel_idx = p.selected_index;
 
-                body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.scenarios-colon")));
+                body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.scenarios-colon")));
 
                 let mut list_box = v_flex().gap_1().p(px(4.)).border_1().border_color(cx.theme().border).rounded_md().min_h(px(100.));
                 if scenarios.is_empty() {
-                    list_box = list_box.child(div().text_size(px(12.)).text_color(cx.theme().muted).child(text("_xlsx.no-scenarios-defined")));
+                    list_box = list_box.child(div().text_sm().text_color(cx.theme().muted).child(text("_xlsx.no-scenarios-defined")));
                 } else {
                     for (i, sc) in scenarios.iter().enumerate() {
                         let is_selected = Some(i) == sel_idx;
@@ -500,7 +508,7 @@ impl SlideEditor {
                             .px(px(6.))
                             .py(px(4.))
                             .rounded_sm()
-                            .text_size(px(12.))
+                            .text_sm()
                             .bg(if is_selected { cx.theme().accent.opacity(0.2) } else { hsla(0.0, 0.0, 0.0, 0.0) })
                             .child(SharedString::from(sc.name.clone()));
                         list_box = list_box.child(mark(
@@ -530,134 +538,80 @@ impl SlideEditor {
                             .p(px(6.))
                             .rounded_sm()
                             .bg(cx.theme().muted.opacity(0.1))
-                            .child(div().text_size(px(11.)).font_weight(FontWeight::BOLD).child(text("_xlsx.changing-cells-colon")))
-                            .child(div().text_size(px(11.)).child(SharedString::from(changing_labels)))
+                            .child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.changing-cells-colon")))
+                            .child(div().text_sm().child(SharedString::from(changing_labels)))
                             .when_some(sc.comment.as_ref(), |el, c| {
-                                el.child(div().text_size(px(11.)).font_weight(FontWeight::BOLD).child(text("_xlsx.comment-colon")))
-                                    .child(div().text_size(px(11.)).child(SharedString::from(c.clone())))
+                                el.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.comment-colon")))
+                                    .child(div().text_sm().child(SharedString::from(c.clone())))
                             }),
                     );
                 }
 
                 if !p.message.is_empty() {
-                    body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+                    body = body.children(crate::shell::chrome::panel_message(&p.message));
                 }
 
                 // Action buttons grid
                 let has_selection = sel_idx.is_some() && !scenarios.is_empty();
-                let mut row1 = h_flex().gap_2();
-                row1 = row1.child(mark(
-                    "scenario-show",
-                    Button::new("sc-show-btn")
-                        .small()
-                        .primary()
+                let mut row1 = crate::shell::chrome::action_bar();
+                row1 = row1.action(mark_action("scenario-show", crate::shell::chrome::ActionDefinition::new("sc-show-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                         .disabled(!has_selection)
                         .label(text("_shell.view"))
-                        .on_click(cx.listener(|this, _, _, cx| this.show_selected_scenario(cx)))
-                        .into_any_element(),
-                ));
-                row1 = row1.child(mark(
-                    "scenario-add",
-                    Button::new("sc-add-btn").primary()
-                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.show_selected_scenario(cx)))));
+                row1 = row1.action(mark_action("scenario-add", crate::shell::chrome::ActionDefinition::new("sc-add-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .label(text("_xlsx.add"))
-                        .on_click(cx.listener(|this, _, window, cx| this.open_add_scenario(window, cx)))
-                        .into_any_element(),
-                ));
-                body = body.child(row1);
+                        .on_click(cx.listener(|this, _, window, cx| this.open_add_scenario(window, cx)))));
+                panel_fixed_actions = panel_fixed_actions.actions((row1).into_definitions());
 
-                let mut row2 = h_flex().gap_2();
-                row2 = row2.child(mark(
-                    "scenario-edit",
-                    Button::new("sc-edit-btn")
-                        .small()
+                let mut row2 = crate::shell::chrome::action_bar();
+                row2 = row2.action(mark_action("scenario-edit", crate::shell::chrome::ActionDefinition::new("sc-edit-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .disabled(!has_selection)
-                        .label(text("_xlsx.edit-ellipsis"))
-                        .on_click(cx.listener(|this, _, window, cx| this.open_edit_scenario(window, cx)))
-                        .into_any_element(),
-                ));
-                row2 = row2.child(mark(
-                    "scenario-duplicate",
-                    Button::new("sc-dup-btn")
-                        .small()
+                        .label(text("_xlsx.edit"))
+                        .on_click(cx.listener(|this, _, window, cx| this.open_edit_scenario(window, cx)))));
+                row2 = row2.action(mark_action("scenario-duplicate", crate::shell::chrome::ActionDefinition::new("sc-dup-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .disabled(!has_selection)
                         .label(text("xlsx.scenario-duplicate"))
-                        .on_click(cx.listener(|this, _, _, cx| this.duplicate_selected_scenario(cx)))
-                        .into_any_element(),
-                ));
-                row2 = row2.child(mark(
-                    "scenario-del",
-                    Button::new("sc-del-btn")
-                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.duplicate_selected_scenario(cx)))));
+                row2 = row2.action(mark_action("scenario-del", crate::shell::chrome::ActionDefinition::new("sc-del-btn", "", crate::shell::chrome::ActionButtonKind::Destructive)
                         .disabled(!has_selection)
                         .label(text("_shell.delete"))
-                        .on_click(cx.listener(|this, _, _, cx| this.delete_selected_scenario(cx)))
-                        .into_any_element(),
-                ));
-                body = body.child(row2);
+                        .on_click(cx.listener(|this, _, _, cx| this.delete_selected_scenario(cx)))));
+                panel_fixed_actions = panel_fixed_actions.actions((row2).into_definitions());
 
-                let mut row3 = h_flex().gap_2();
-                row3 = row3.child(mark(
-                    "scenario-merge",
-                    Button::new("sc-merge-btn")
-                        .small()
+                let mut row3 = crate::shell::chrome::action_bar();
+                row3 = row3.action(mark_action("scenario-merge", crate::shell::chrome::ActionDefinition::new("sc-merge-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .label(text("_xlsx.merge-ellipsis"))
-                        .on_click(cx.listener(|this, _, _, cx| this.open_merge_scenarios(cx)))
-                        .into_any_element(),
-                ));
-                row3 = row3.child(mark(
-                    "scenario-summary",
-                    Button::new("sc-sum-btn")
-                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.open_merge_scenarios(cx)))));
+                row3 = row3.action(mark_action("scenario-summary", crate::shell::chrome::ActionDefinition::new("sc-sum-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .disabled(scenarios.is_empty())
                         .label(text("_xlsx.summary-ellipsis"))
-                        .on_click(cx.listener(|this, _, window, cx| this.open_scenario_summary_dialog(window, cx)))
-                        .into_any_element(),
-                ));
-                body = body.child(row3);
+                        .on_click(cx.listener(|this, _, window, cx| this.open_scenario_summary_dialog(window, cx)))));
+                panel_fixed_actions = panel_fixed_actions.actions((row3).into_definitions());
 
-                let mut row4 = h_flex().gap_2();
-                row4 = row4.child(mark(
-                    "scenario-close",
-                    Button::new("sc-close-btn")
-                        .small()
-                        .ghost()
+                let mut row4 = crate::shell::chrome::action_bar();
+                row4 = row4.action(mark_action("scenario-close", crate::shell::chrome::ActionDefinition::new("sc-close-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .label(text("_shell.close"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.wb_mut().panels.scenario_manager = None;
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ));
-                body = body.child(row4);
+                        .on_click(cx.listener(|e, _, w, cx| e.close_panel_dialog(w, cx)))));
+                panel_fixed_actions = panel_fixed_actions.actions((row4).into_definitions());
             }
             ScenarioDialogMode::AddOrEdit => {
                 let is_edit = p.selected_index.is_some();
-                body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text(if is_edit { "fix.protection.edit-scenarios" } else { "シナリオの追加" })));
+                body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text(if is_edit { "fix.protection.edit-scenarios" } else { "シナリオの追加" })));
 
-                body = body.child(div().text_size(px(12.)).child(text("_xlsx.scenario-name-colon")));
-                body = body.child(mark("scenario-name", Input::new(&p.name_input).small().cleanable(true).into_any_element()));
+                body = body.child(div().text_sm().child(text("_xlsx.scenario-name-colon")));
+                body = body.child(mark("scenario-name", crate::shell::chrome::text_field(&p.name_input).full_width().into_any_element()));
 
                 body = body.child(
                     h_flex()
                         .justify_between()
                         .items_center()
-                        .child(div().text_size(px(12.)).child(text("_xlsx.changing-cells-colon")))
-                        .child(mark(
-                            "scenario-use-changing",
-                            Button::new("sc-use-changing-btn")
-                                .xsmall()
-                                .ghost()
-                                .label(text("xlsx.subtotal-use-selection"))
-                                .on_click(cx.listener(|this, _, window, cx| this.set_scenario_changing_from_selection(window, cx)))
-                                .into_any_element(),
-                        )),
+                        .child(div().text_sm().child(text("_xlsx.changing-cells-colon"))),
                 );
                 let mut changing_row = h_flex().gap_2();
-                changing_row = changing_row.child(div().flex_1().child(mark("scenario-changing", Input::new(&p.changing_cells_input).small().cleanable(true).into_any_element())));
+                changing_row = changing_row.child(div().flex_1().child(mark("scenario-changing", super::range_field::local_range_field(&p.changing_cells_input,"scenario_manager-p-changing_cells_input",false,cx).into_any_element())));
                 changing_row = changing_row.child(mark(
                     "scenario-reload-cells",
-                    Button::new("sc-reload-btn")
+                    crate::shell::chrome::action_button("sc-reload-btn")
                         .small()
                         .label(text("_xlsx.load-values"))
                         .on_click(cx.listener(|this, _, window, cx| this.prepare_scenario_value_inputs(window, cx)))
@@ -666,39 +620,29 @@ impl SlideEditor {
                 body = body.child(changing_row);
 
                 if !p.values_inputs.is_empty() {
-                    body = body.child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).child(text("_xlsx.values-for-each-changing-cell-colon")));
+                    body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.values-for-each-changing-cell-colon")));
                     let mut vals_box = v_flex().gap_1().p(px(4.)).border_1().border_color(cx.theme().border).rounded_md().max_h(px(140.));
                     for (r_name, inp) in &p.values_inputs {
                         let mut r_row = h_flex().gap_2().items_center();
-                        r_row = r_row.child(div().w(px(60.)).text_size(px(12.)).child(SharedString::from(r_name.clone())));
-                        r_row = r_row.child(div().flex_1().child(mark(&format!("scenario-val-{r_name}"), Input::new(inp).small().cleanable(true).into_any_element())));
+                        r_row = r_row.child(div().w(px(60.)).text_sm().child(SharedString::from(r_name.clone())));
+                        r_row = r_row.child(div().flex_1().child(mark(&format!("scenario-val-{r_name}"), crate::shell::chrome::text_field(inp).full_width().into_any_element())));
                         vals_box = vals_box.child(r_row);
                     }
                     body = body.child(vals_box);
                 }
 
-                body = body.child(div().text_size(px(12.)).child(text("_xlsx.comment-colon")));
-                body = body.child(mark("scenario-comment", Input::new(&p.comment_input).small().cleanable(true).into_any_element()));
+                body = body.child(div().text_sm().child(text("_xlsx.comment-colon")));
+                body = body.child(mark("scenario-comment", crate::shell::chrome::text_field(&p.comment_input).full_width().into_any_element()));
 
                 if !p.message.is_empty() {
-                    body = body.child(div().text_size(px(12.)).text_color(cx.theme().danger).child(SharedString::from(p.message.clone())));
+                    body = body.child(div().text_sm().text_color(cx.theme().danger).child(SharedString::from(p.message.clone())));
                 }
 
-                let mut btn_row = h_flex().gap_2();
-                btn_row = btn_row.child(mark(
-                    "scenario-save",
-                    Button::new("sc-save-btn")
-                        .small()
-                        .primary()
+                let mut btn_row = crate::shell::chrome::action_bar().flex_nowrap();
+                btn_row = btn_row.action(mark_action("scenario-save", crate::shell::chrome::ActionDefinition::new("sc-save-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                         .label(text("_shell.save"))
-                        .on_click(cx.listener(|this, _, _, cx| this.save_scenario(cx)))
-                        .into_any_element(),
-                ));
-                btn_row = btn_row.child(mark(
-                    "scenario-cancel",
-                    Button::new("sc-cancel-btn")
-                        .small()
-                        .ghost()
+                        .on_click(cx.listener(|this, _, _, cx| this.save_scenario(cx)))));
+                btn_row = btn_row.action(mark_action("scenario-cancel", crate::shell::chrome::ActionDefinition::new("sc-cancel-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .label(text("_shell.cancel"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(p) = this.wb_mut().panels.scenario_manager.as_mut() {
@@ -706,49 +650,28 @@ impl SlideEditor {
                                 p.message.clear();
                             }
                             cx.notify();
-                        }))
-                        .into_any_element(),
-                ));
-                body = body.child(btn_row);
+                        }))));
+                panel_fixed_actions = panel_fixed_actions.actions((btn_row).into_definitions());
             }
             ScenarioDialogMode::Summary => {
-                body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.scenario-summary-report")));
+                body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.scenario-summary-report")));
                 body = body.child(
                     h_flex()
                         .justify_between()
                         .items_center()
-                        .child(div().text_size(px(12.)).child(text("_xlsx.result-cells-colon")))
-                        .child(mark(
-                            "scenario-use-results",
-                            Button::new("sc-use-results-btn")
-                                .xsmall()
-                                .ghost()
-                                .label(text("xlsx.subtotal-use-selection"))
-                                .on_click(cx.listener(|this, _, window, cx| this.set_scenario_results_from_selection(window, cx)))
-                                .into_any_element(),
-                        )),
+                        .child(div().text_sm().child(text("_xlsx.result-cells-colon"))),
                 );
-                body = body.child(mark("scenario-result-cells", Input::new(&p.result_cells_input).small().cleanable(true).into_any_element()));
+                body = body.child(mark("scenario-result-cells", super::range_field::local_range_field(&p.result_cells_input,"scenario_manager-p-result_cells_input",false,cx).into_any_element()));
 
                 if !p.message.is_empty() {
-                    body = body.child(div().text_size(px(12.)).text_color(cx.theme().danger).child(SharedString::from(p.message.clone())));
+                    body = body.child(div().text_sm().text_color(cx.theme().danger).child(SharedString::from(p.message.clone())));
                 }
 
-                let mut btn_row = h_flex().gap_2();
-                btn_row = btn_row.child(mark(
-                    "scenario-run-summary",
-                    Button::new("sc-run-sum-btn")
-                        .small()
-                        .primary()
+                let mut btn_row = crate::shell::chrome::action_bar().flex_nowrap();
+                btn_row = btn_row.action(mark_action("scenario-run-summary", crate::shell::chrome::ActionDefinition::new("sc-run-sum-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                         .label(text("OK"))
-                        .on_click(cx.listener(|this, _, _, cx| this.run_scenario_summary(cx)))
-                        .into_any_element(),
-                ));
-                btn_row = btn_row.child(mark(
-                    "scenario-cancel-summary",
-                    Button::new("sc-cancel-sum-btn")
-                        .small()
-                        .ghost()
+                        .on_click(cx.listener(|this, _, _, cx| this.run_scenario_summary(cx)))));
+                btn_row = btn_row.action(mark_action("scenario-cancel-summary", crate::shell::chrome::ActionDefinition::new("sc-cancel-sum-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .label(text("_shell.cancel"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(p) = this.wb_mut().panels.scenario_manager.as_mut() {
@@ -756,14 +679,12 @@ impl SlideEditor {
                                 p.message.clear();
                             }
                             cx.notify();
-                        }))
-                        .into_any_element(),
-                ));
-                body = body.child(btn_row);
+                        }))));
+                panel_fixed_actions = panel_fixed_actions.actions((btn_row).into_definitions());
             }
             ScenarioDialogMode::Merge => {
-                body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.merge-scenarios")));
-                body = body.child(div().text_size(px(12.)).child(text("_xlsx.select-the-sheet-to-copy-scenarios-from")));
+                body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.merge-scenarios")));
+                body = body.child(div().text_sm().child(text("_xlsx.select-the-sheet-to-copy-scenarios-from")));
 
                 let current_id = self.current_slide;
                 let other_sheets: Vec<(SlideId, String, usize)> = self
@@ -780,7 +701,7 @@ impl SlideEditor {
 
                 let mut sheet_list = v_flex().gap_1().p(px(4.)).border_1().border_color(cx.theme().border).rounded_md().min_h(px(80.));
                 if other_sheets.is_empty() {
-                    sheet_list = sheet_list.child(div().text_size(px(12.)).text_color(cx.theme().muted).child(text("_xlsx.no-other-sheets")));
+                    sheet_list = sheet_list.child(div().text_sm().text_color(cx.theme().muted).child(text("_xlsx.no-other-sheets")));
                 } else {
                     for (slide_id, sheet_name, count) in &other_sheets {
                         let is_selected = p.merge_selected_sheet == Some(*slide_id);
@@ -790,7 +711,7 @@ impl SlideEditor {
                             .px(px(6.))
                             .py(px(4.))
                             .rounded_sm()
-                            .text_size(px(12.))
+                            .text_sm()
                             .bg(if is_selected { cx.theme().accent.opacity(0.2) } else { hsla(0.0, 0.0, 0.0, 0.0) })
                             .child(SharedString::from(label));
                         sheet_list = sheet_list.child(mark(
@@ -812,25 +733,16 @@ impl SlideEditor {
                 body = body.child(sheet_list);
 
                 if !p.message.is_empty() {
-                    body = body.child(div().text_size(px(12.)).text_color(cx.theme().danger).child(SharedString::from(p.message.clone())));
+                    body = body.child(div().text_sm().text_color(cx.theme().danger).child(SharedString::from(p.message.clone())));
                 }
 
                 let can_merge = p.merge_selected_sheet.is_some() && !other_sheets.is_empty();
-                let mut actions = h_flex().gap_2().pt(px(4.));
-                actions = actions.child(mark(
-                    "scenario-merge-ok",
-                    Button::new("sc-merge-ok-btn")
-                        .small()
-                        .primary()
+                let mut actions = crate::shell::chrome::action_bar().flex_nowrap();
+                actions = actions.action(mark_action("scenario-merge-ok", crate::shell::chrome::ActionDefinition::new("sc-merge-ok-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                         .disabled(!can_merge)
                         .label(text("OK"))
-                        .on_click(cx.listener(|this, _, _, cx| this.apply_merge_scenarios_ui(cx)))
-                        .into_any_element(),
-                ));
-                actions = actions.child(mark(
-                    "scenario-merge-cancel",
-                    Button::new("sc-merge-cancel-btn")
-                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.apply_merge_scenarios_ui(cx)))));
+                actions = actions.action(mark_action("scenario-merge-cancel", crate::shell::chrome::ActionDefinition::new("sc-merge-cancel-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .label(text("_shell.cancel"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(p) = this.wb_mut().panels.scenario_manager.as_mut() {
@@ -838,13 +750,11 @@ impl SlideEditor {
                                 p.message.clear();
                             }
                             cx.notify();
-                        }))
-                        .into_any_element(),
-                ));
-                body = body.child(actions);
+                        }))));
+                panel_fixed_actions = panel_fixed_actions.actions((actions).into_definitions());
             }
         }
 
-        Some(SidebarPanel { title: text("_xlsx.scenario-manager").into(), body: body.into_any_element() })
+        Some(SidebarPanel::with_footer(text("_xlsx.scenario-manager"), body.into_any_element(), panel_fixed_actions))
     }
 }

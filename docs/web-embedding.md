@@ -72,6 +72,39 @@ window.addEventListener('message', (e) => {
 
 The message is posted with the target origin from `origin=` / `targetOrigin`. Without it, the origin of `document.referrer` (the embedding page) is used. If neither is known, **nothing is posted** (a warning is logged), so a file is never sent to an unknown page. Pass `origin=*` (or `targetOrigin: '*'`) only if you really want any page to receive it.
 
+## Fetching a fixed version and checking it
+
+Every release attaches the browser version as an archive, so you can pin the version you serve and check that what you fetched is intact. The files are the same as the playground's `app/` folder (`index.html`, `main.js`, `license.md`, `pkg/`, `assets/`), starting at the top of the archive:
+
+| File (`<version>` is e.g. `0.8.5`) | What it is |
+|---|---|
+| `ibisOffice-<version>-Web.zip` | The browser version |
+| `ibisOffice-<version>-Web.zip.sha256` | SHA-256 of the archive |
+| `ibisOffice-<version>-Web.files.sha256` | SHA-256 of each file inside the archive, by path |
+
+All three are on the release page: `https://github.com/ibisjp/ibis-office/releases/tag/v<version>`. Fetch them, check the archive, unzip it, and check each file:
+
+```sh
+V=0.8.5
+BASE=https://github.com/ibisjp/ibis-office/releases/download/v$V
+curl -LO $BASE/ibisOffice-$V-Web.zip
+curl -LO $BASE/ibisOffice-$V-Web.zip.sha256
+curl -LO $BASE/ibisOffice-$V-Web.files.sha256
+
+shasum -a 256 -c ibisOffice-$V-Web.zip.sha256        # macOS (Linux: sha256sum -c ...)
+mkdir app && unzip -q ibisOffice-$V-Web.zip -d app
+(cd app && shasum -a 256 -c ../ibisOffice-$V-Web.files.sha256)   # every line must say OK
+```
+
+On Linux, `sha256sum -c` takes the same files; on Windows PowerShell, compare `(Get-FileHash ibisOffice-$V-Web.zip -Algorithm SHA256).Hash` with the hash in the `.sha256` file (case-insensitive). To check the files you actually serve, run the last command inside the folder you deploy.
+
+Notes:
+
+- The release files do not change once published, so a version you have checked stays the same. Keep the archive's SHA-256 in your own repository and compare it again when you fetch.
+- `license.md` (the third-party licences of the browser version) and `assets/artborders/ECMA-NOTICE.txt` are in the archive. Keep them when you serve the files.
+- Serve the folder as it is. The `.wasm` file is large (about 65 MB); a server that compresses it makes the download much smaller.
+- The desktop apps do not use these files (their automatic update has its own).
+
 ## Notes
 
 - The desktop apps are not affected.

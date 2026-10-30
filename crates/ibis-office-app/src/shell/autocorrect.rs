@@ -13,7 +13,8 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
@@ -414,6 +415,10 @@ pub(crate) fn next_spell_language(tag: &str) -> String {
 }
 
 pub(crate) struct AutoCorrectPanel {
+    pub(crate) entry_open: bool,
+    pub(crate) dictionary_tab: bool,
+    pub(crate) editing: Option<usize>,
+    pub(crate) table_scroll: ScrollHandle,
     pub(crate) working: AutoCorrect,
     pub(crate) replace: Entity<InputState>,
     pub(crate) with: Entity<InputState>,
@@ -426,7 +431,7 @@ impl AutoCorrectPanel {
     /// The panel over the settings now in force.
     pub(crate) fn new(window: &mut Window, cx: &mut Context<SlideEditor>) -> Self {
         let make = |window: &mut Window, cx: &mut Context<SlideEditor>| cx.new(|cx| InputState::new(window, cx));
-        Self { working: settings(), replace: make(window, cx), with: make(window, cx), selected: None, message: String::new(), ui: Default::default() }
+        Self { dictionary_tab: false, entry_open: false, editing: None, table_scroll: ScrollHandle::new(), working: settings(), replace: make(window, cx), with: make(window, cx), selected: None, message: String::new(), ui: Default::default() }
     }
 }
 
@@ -454,15 +459,37 @@ pub(crate) fn render_panel(editor: &mut SlideEditor, access: PanelAccess, cx: &m
             }).absolute().top_0().left_0().size_full())
             .into_any_element()
     };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                ui.borrow_mut().insert(id.clone(), bounds);
+            })
+        };
+    if p.entry_open {
+        let body=crate::shell::chrome::panel_form()
+            .p_0().child(div().child(text("xlsx.autocorrect.replace-box")))
+            .child(mark("from",crate::shell::chrome::text_field(&p.replace).full_width().into_any_element()))
+            .child(div().child(text("xlsx.autocorrect.with-box")))
+            .child(mark("to",crate::shell::chrome::text_field(&p.with).full_width().into_any_element()))
+            .children(crate::shell::chrome::panel_message(&p.message));
+        let footer=crate::shell::chrome::action_bar()
+            .action(mark_action("entry-ok", crate::shell::chrome::ActionDefinition::new("autocorrect-entry-ok", text("OK"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(move|e,_,_,cx|{
+                if let Some(p)=get(e){
+                    let from=p.replace.read(cx).value().trim().to_string();let to=p.with.read(cx).value().to_string();
+                    if from.is_empty(){p.message=text("autocorrect.entry-required").to_string();}
+                    else if p.working.table.iter().enumerate().any(|(i,(f,_))|f==&from&&Some(i)!=p.editing){p.message=text("autocorrect.entry-duplicate").to_string();}
+                    else {if let Some(i)=p.editing.filter(|i|*i<p.working.table.len()){p.working.table[i]=(from,to);}else{p.working.table.push((from,to));}p.entry_open=false;p.message.clear();}
+                }cx.notify();
+            }))))
+            .action(crate::shell::chrome::ActionDefinition::new("autocorrect-entry-cancel", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(move|e,_,_,cx|{if let Some(p)=get(e){p.entry_open=false;p.message.clear();}cx.notify();})));
+        return Some(SidebarPanel::with_footer(text("autocorrect.entry-title"),body.into_any_element(),footer));
+    }
     type Set = fn(&mut AutoCorrect);
     let toggle = |id: &'static str, on: bool, label: &'static str, set: Set| {
         mark(
             id,
-            Button::new(id)
-                .small()
-                .ghost()
-                .label(format!("{} {}", if on { "☑" } else { "☐" }, text(label)))
-                .on_click(cx.listener(move |this, _, _, cx| {
+            crate::shell::chrome::checkbox_button(id, text(label), on, false, cx.listener(move |this, _, _, cx| {
                     if let Some(p) = get(this) {
                         set(&mut p.working);
                     }
@@ -472,7 +499,7 @@ pub(crate) fn render_panel(editor: &mut SlideEditor, access: PanelAccess, cx: &m
         )
     };
     let w = &p.working;
-    let mut body = v_flex()
+    let mut settings_body = v_flex()
         .gap_2()
         .px(px(16.))
         .py(px(8.))
@@ -481,121 +508,63 @@ pub(crate) fn render_panel(editor: &mut SlideEditor, access: PanelAccess, cx: &m
         .child(toggle("spell-ignore-upper", w.spell_ignore_upper, "autocorrect.spell-ignore-upper", |s| s.spell_ignore_upper = !s.spell_ignore_upper))
         .child(toggle("spell-ignore-numbers", w.spell_ignore_numbers, "autocorrect.spell-ignore-numbers", |s| s.spell_ignore_numbers = !s.spell_ignore_numbers))
         .child(toggle("spell-ignore-internet", w.spell_ignore_internet, "autocorrect.spell-ignore-internet", |s| s.spell_ignore_internet = !s.spell_ignore_internet))
-        .child(mark(
-            "spell-language",
-            Button::new("spell-language")
-                .small()
-                .label(format!("{}: {}", text("autocorrect.spell-language"), spell_language_name(&w.spell_language)))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(p) = get(this) {
-                        p.working.spell_language = next_spell_language(&p.working.spell_language);
-                    }
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ))
+        .child(v_flex().gap_1().child(div().child(text("autocorrect.spell-language"))).child(mark("spell-language",
+            crate::shell::chrome::Dropdown::new("spell-language",spell_language_name(&w.spell_language),
+                SPELL_LANGUAGES.iter().map(|&(tag,key)|crate::shell::chrome::DropdownItem::new(text(key)).checked(w.spell_language==tag)
+                    .on_select(Rc::new(move|e,_,cx|{if let Some(p)=get(e){p.working.spell_language=tag.to_string();}cx.notify();}))).collect(),&cx.weak_entity()).into_any_element())))
         .child(toggle("two-initials", w.two_initials, "xlsx.autocorrect.two-initials", |s| s.two_initials = !s.two_initials))
         .child(toggle("sentences", w.sentences, "xlsx.autocorrect.sentences", |s| s.sentences = !s.sentences))
         .child(toggle("days", w.days, "xlsx.autocorrect.days", |s| s.days = !s.days))
         .child(toggle("caps-lock", w.caps_lock, "xlsx.autocorrect.caps-lock", |s| s.caps_lock = !s.caps_lock))
         .child(toggle("replace", w.replace, "xlsx.autocorrect.replace", |s| s.replace = !s.replace));
-    body = body.child(div().text_size(px(13.)).child(text("xlsx.autocorrect.replace-box"))).child(mark("from", Input::new(&p.replace).small().cleanable(true).into_any_element()));
-    body = body.child(div().text_size(px(13.)).child(text("xlsx.autocorrect.with-box"))).child(mark("to", Input::new(&p.with).small().cleanable(true).into_any_element()));
-    let selected = p.selected;
-    body = body.child(
-        h_flex()
-            .gap_2()
-            .child(mark(
-                "add",
-                Button::new("autocorrect-add")
-                    .primary()
-                    .small()
-                    .label(text("fix.common.add"))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(p) = get(this) {
-                            let (from, to) = (p.replace.read(cx).value().to_string(), p.with.read(cx).value().to_string());
-                            if !from.trim().is_empty() {
-                                let from = from.trim().to_string();
-                                match p.working.table.iter_mut().find(|(a, _)| *a == from) {
-                                    Some(entry) => entry.1 = to,
-                                    None => p.working.table.push((from, to)),
-                                }
-                            }
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ))
-            .child(mark(
-                "delete",
-                Button::new("autocorrect-delete")
-                    .small()
-                    .disabled(selected.is_none())
-                    .label(text("_shell.delete"))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(p) = get(this)
-                            && let Some(i) = p.selected.take()
-                            && i < p.working.table.len()
-                        {
-                            p.working.table.remove(i);
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            )),
-    );
-    let mut list = v_flex().gap_1().p(px(4.)).border_1().border_color(cx.theme().border).rounded_md().max_h(px(220.)).overflow_hidden();
-    for (i, (from, to)) in w.table.iter().enumerate().take(60) {
-        let on = Some(i) == selected;
-        let (f, t) = (from.clone(), to.clone());
-        list = list.child(mark(
-            &format!("entry-{i}"),
-            Button::new(SharedString::from(format!("autocorrect-entry-{i}")))
-                .small()
-                .ghost()
-                .child(div().px(px(6.)).text_size(px(12.)).bg(if on { cx.theme().accent.opacity(0.2) } else { hsla(0.0, 0.0, 0.0, 0.0) }).child(SharedString::from(format!("{from} → {to}"))))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if let Some(p) = get(this) {
-                        p.selected = Some(i);
-                        p.replace.update(cx, |input, cx| input.set_value(f.clone(), window, cx));
-                        p.with.update(cx, |input, cx| input.set_value(t.clone(), window, cx));
-                    }
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
+    settings_body=settings_body
+        .child(toggle("smart-quotes",w.smart_quotes,"autocorrect.smart-quotes",|s|s.smart_quotes=!s.smart_quotes))
+        .child(toggle("auto-lists",w.auto_lists,"autocorrect.auto-lists",|s|s.auto_lists=!s.auto_lists))
+        .child(toggle("auto-borders",w.auto_borders,"autocorrect.auto-borders",|s|s.auto_borders=!s.auto_borders))
+        ;
+    let dictionary_top=h_flex().justify_end().flex_none().child(mark("add",crate::shell::chrome::action_button("autocorrect-add").label(text("fix.common.add")).on_click(cx.listener(move|e,_,w,cx|{
+            if let Some(p)=get(e){p.entry_open=true;p.editing=None;p.message.clear();p.replace.update(cx,|i,cx|i.set_value("",w,cx));p.with.update(cx,|i,cx|i.set_value("",w,cx));}cx.notify();
+        })).into_any_element()));
+    let header=crate::shell::chrome::table_row(vec![div().child(text("xlsx.autocorrect.replace-box")).into_any_element(),div().child(text("xlsx.autocorrect.with-box")).into_any_element()],div().into_any_element(),false).bg(crate::shell::palette::rgb(0xf3f4f6)).font_weight(FontWeight::MEDIUM);
+    let mut rows=v_flex();
+    for (i,(from,to)) in w.table.iter().enumerate(){
+        let actions=h_flex().gap_1()
+            .child(crate::shell::chrome::action_button(("autocorrect-edit",i)).w(px(28.)).h(px(28.)).min_w(px(28.)).px_0().icon(crate::shell::chrome::icon("edit",16.,crate::shell::chrome::text_secondary())).on_click(cx.listener(move|e,_,w,cx|{
+                cx.stop_propagation();if let Some(p)=get(e){let (from,to)=p.working.table[i].clone();p.entry_open=true;p.editing=Some(i);p.message.clear();p.replace.update(cx,|s,cx|s.set_value(from,w,cx));p.with.update(cx,|s,cx|s.set_value(to,w,cx));}cx.notify();
+            })))
+            .child(crate::shell::chrome::action_button(("autocorrect-delete",i)).w(px(28.)).h(px(28.)).min_w(px(28.)).px_0().icon(crate::shell::chrome::icon("delete",16.,crate::shell::chrome::text_secondary())).on_click(cx.listener(move|e,_,_,cx|{
+                cx.stop_propagation();if let Some(p)=get(e){if i<p.working.table.len(){p.working.table.remove(i);p.selected=None;}}cx.notify();
+            })));
+        let row=crate::shell::chrome::table_row(vec![div().child(from.clone()).into_any_element(),div().child(to.clone()).into_any_element()],actions.into_any_element(),p.selected==Some(i))
+            .id(("autocorrect-row",i)).cursor_pointer().on_click(cx.listener(move|e,_,_,cx|{if let Some(p)=get(e){p.selected=Some(i);}cx.notify();}));
+        rows=rows.child(mark(&format!("entry-{i}"),row.into_any_element()));
     }
-    body = body.child(list);
-    if !p.message.is_empty() {
-        body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
-    }
-    body = body.child(mark(
-        "apply",
-        Button::new("autocorrect-ok")
-            .primary()
-            .small()
-            .label(text("OK"))
-            .on_click(cx.listener(move |this, _, _, cx| apply(this, cx)))
-            .into_any_element(),
-    ));
-    body = body.child(mark(
-        "close",
-        Button::new("autocorrect-close")
-            .small()
-            .label(text("_shell.close"))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                close(this);
-                cx.notify();
-            }))
-            .into_any_element(),
-    ));
-    // The typing options of the documents (the ones below the buttons keep the places of the buttons above).
-    body = body
-        .child(toggle("smart-quotes", w.smart_quotes, "autocorrect.smart-quotes", |s| s.smart_quotes = !s.smart_quotes))
-        .child(toggle("auto-lists", w.auto_lists, "autocorrect.auto-lists", |s| s.auto_lists = !s.auto_lists))
-        .child(toggle("auto-borders", w.auto_borders, "autocorrect.auto-borders", |s| s.auto_borders = !s.auto_borders));
-    Some(SidebarPanel { title: text("xlsx.autocorrect.title"), body: body.into_any_element() })
+    let tabs=crate::shell::chrome::tab_control_with_mode([text("autocorrect.tab.settings"),text("autocorrect.tab.dictionary")],usize::from(p.dictionary_tab),"autocorrect-tabs",crate::shell::chrome::TabMode::Intrinsic,move |e,index,cx|{if let Some(p)=get(e){p.dictionary_tab=index==1;}cx.notify();},cx);
+    let body=v_flex().size_full().min_h_0().gap_2().p_0().child(tabs.flex_none()).child(
+        if p.dictionary_tab {
+            crate::shell::chrome::panel_form().flex_1().min_h_0().overflow_hidden()
+                .child(dictionary_top)
+                .child(crate::shell::chrome::table_fill("autocorrect-replacements",mark("dictionary-header",header.into_any_element()),rows.into_any_element(),p.table_scroll.clone()))
+                .children(crate::shell::chrome::panel_message(&p.message)).into_any_element()
+        } else {
+            div().id("autocorrect-settings-scroll").flex_1().min_h_0().overflow_y_scroll().child(settings_body).into_any_element()
+        });
+    let footer = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("autocorrect-ok", text("OK"), crate::shell::chrome::ActionButtonKind::Primary)
+            .on_click(cx.listener(move |this, _, _, cx| apply(this, cx)))))
+        .action(crate::shell::chrome::dialog_cancel_definition(cx));
+    Some(SidebarPanel::with_footer(text("xlsx.autocorrect.title"), body.into_any_element(), footer))
 
+}
+
+impl SlideEditor {
+    pub(crate) fn cancel_autocorrect_entry(&mut self)->bool {
+        let p=match self.format.kind(){
+            ibis_pptx::Kind::Document=>self.doc_state_mut().and_then(|s|s.autocorrect.as_mut()),
+            ibis_pptx::Kind::Workbook=>self.wb_mut().panels.autocorrect.as_mut(),
+            _=>self.pptx_mut().and_then(|s|s.autocorrect.as_mut()),
+        };
+        if let Some(p)=p.filter(|p|p.entry_open){p.entry_open=false;p.message.clear();true}else{false}
+    }
 }
 
 #[cfg(test)]

@@ -1148,9 +1148,26 @@ fn filter(c: &mut Ctx, a: &[Expr]) -> Value {
 }
 
 fn take_drop(c: &mut Ctx, a: &[Expr], take: bool) -> Value {
-    let x = match arg_array(c, &a[0]) {
-        Ok(t) => t,
-        Err(e) => return err(e),
+    let previous=c.in_array_context;
+    c.in_array_context=true;
+    let value=c.eval(&a[0]);
+    c.in_array_context=previous;
+    let area = match (take,&value) {
+        (true,Value::Ref(r)) if r.len() == 1 && r[0].sheet == r[0].last_sheet => Some(r[0]),
+        _ => None,
+    };
+    let x=if area.is_some(){None}else{
+        let value=match value{Value::Ref(r)=>c.ref_to_array(&r),Value::Omitted=>Value::Empty,v=>v};
+        Some(match value{
+            Value::Array(a)=>a,
+            Value::Error(e)=>return err(e),
+            Value::Lambda(_)=>return err(CellError::Value),
+            v=>Rc::new(Array::new(1,1,vec![v])),
+        })
+    };
+    let (rows, columns) = match area {
+        Some(a) => (a.rows() as usize, a.columns() as usize),
+        None => { let x=x.as_ref().unwrap(); (x.rows,x.columns) },
     };
     let rows_arg = match a.get(1) {
         None | Some(Expr::Missing) => None,
@@ -1182,9 +1199,17 @@ fn take_drop(c: &mut Ctx, a: &[Expr], take: bool) -> Value {
     if take && (rows_arg == Some(0) || cols_arg == Some(0)) {
         return err(CellError::Value);
     }
-    let (Some((r0, r1)), Some((c0, c1))) = (range(rows_arg, x.rows), range(cols_arg, x.columns)) else {
+    let (Some((r0, r1)), Some((c0, c1))) = (range(rows_arg, rows), range(cols_arg, columns)) else {
         return err(CellError::Value);
     };
+    if let Some(area) = area {
+        return Value::Ref(Rc::new(vec![Area {
+            first_row: area.first_row+r0 as u32, last_row: area.first_row+r1 as u32-1,
+            first_column: area.first_column+c0 as u32, last_column: area.first_column+c1 as u32-1,
+            ..area
+        }]));
+    }
+    let x=x.unwrap();
     let mut data = Vec::new();
     for r in r0..r1 {
         for col in c0..c1 {

@@ -86,7 +86,7 @@ fn coarse_marks(image: &RgbaImage) -> Option<(f64, f64, f64, f64)> {
             y1 = y1.max(y + 1);
         }
     }
-    (x1 > x0 + 4 && y1 > y0 + 4).then_some((x0 as f64, y0 as f64, x1 as f64, y1 as f64))
+    (x1 > x0.saturating_add(4) && y1 > y0.saturating_add(4)).then_some((x0 as f64, y0 as f64, x1 as f64, y1 as f64))
 }
 
 fn find_marks(image: &RgbaImage) -> Option<(f64, f64, f64, f64)> {
@@ -100,7 +100,7 @@ fn find_marks(image: &RgbaImage) -> Option<(f64, f64, f64, f64)> {
             y1 = y1.max(y + 1);
         }
     }
-    if !(x1 > x0 + 4 && y1 > y0 + 4) {
+    if !(x1 > x0.saturating_add(4) && y1 > y0.saturating_add(4)) {
         return None;
     }
     // The most a pixel of column (or row) `i` is covered, among the rows

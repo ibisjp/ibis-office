@@ -13,8 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -270,7 +270,7 @@ impl SlideEditor {
             message: None,
         };
 
-        self.wb_mut().panels.close();
+        self.wb_mut().close_settings();
         self.wb_mut().panels.backup_save = Some(panel);
         cx.notify();
     }
@@ -435,7 +435,7 @@ impl SlideEditor {
             .p_4()
             .gap_4()
             .w_full()
-            .child(
+            .p_0().child(
                 // セクション 1: 既定の保存場所
                 v_flex()
                     .gap_2()
@@ -448,17 +448,16 @@ impl SlideEditor {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme.muted_foreground)
                             .child(text("xlsx.backupsave.default-loc-desc")),
                     )
-                    .child(Input::new(&default_save_input).small().cleanable(true))
+                    .child({let target=default_save_input.clone();crate::shell::chrome::text_field(&default_save_input).full_width().path_picker("backup-default-folder",crate::shell::chrome::PathMode::Folder,&[],cx,move |_,path,w,cx|target.update(cx,|i,cx|i.set_value(path.to_string_lossy().to_string(),w,cx)))})
                     .child(
                         h_flex()
                             .justify_end()
                             .child(
-                                Button::new("reset-default-save-loc-btn")
-                                    .ghost()
+                                crate::shell::chrome::action_button("reset-default-save-loc-btn")
                                     .small()
                                     .label(text("xlsx.backupsave.reset-default-loc"))
                                     .on_click(cx.listener(|this, _, window, cx| {
@@ -479,12 +478,7 @@ impl SlideEditor {
                             .child(text("xlsx.backupsave.section-backup")),
                     )
                     .child(
-                        Button::new("toggle-always-backup-btn")
-                            .ghost()
-                            .small()
-                            .w_full()
-                            .label(format!("{} {}", if always_create { "☑" } else { "☐" }, text("xlsx.backupsave.always-backup-label")))
-                            .on_click(cx.listener(|this, _, _, cx| {
+                        crate::shell::chrome::checkbox_button("toggle-always-backup-btn", text("xlsx.backupsave.always-backup-label"), always_create, false, cx.listener(|this, _, _, cx| {
                                 if let Some(p) = this.wb_mut().panels.backup_save.as_mut() {
                                     p.always_create_backup = !p.always_create_backup;
                                     cx.notify();
@@ -493,7 +487,7 @@ impl SlideEditor {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme.muted_foreground)
                             .child(text("xlsx.backupsave.backup-format-label")),
                     )
@@ -501,11 +495,7 @@ impl SlideEditor {
                         h_flex()
                             .gap_2()
                             .child(
-                                Button::new("fmt-xlk-btn")
-                                    .small()
-                                    .outline()
-                                    .label(format!("{} {}", if is_xlk { "●" } else { "○" }, text("xlsx.backupsave.format-xlk")))
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                crate::shell::chrome::radio_button("fmt-xlk-btn", is_xlk, false, text("xlsx.backupsave.format-xlk"), cx.listener(|this, _, _, cx| {
                                         if let Some(p) = this.wb_mut().panels.backup_save.as_mut() {
                                             p.backup_format = BackupFormat::Xlk;
                                             cx.notify();
@@ -513,11 +503,7 @@ impl SlideEditor {
                                     })),
                             )
                             .child(
-                                Button::new("fmt-xlsx-btn")
-                                    .small()
-                                    .outline()
-                                    .label(format!("{} {}", if !is_xlk { "●" } else { "○" }, text("xlsx.backupsave.format-xlsx")))
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                crate::shell::chrome::radio_button("fmt-xlsx-btn", !is_xlk, false, text("xlsx.backupsave.format-xlsx"), cx.listener(|this, _, _, cx| {
                                         if let Some(p) = this.wb_mut().panels.backup_save.as_mut() {
                                             p.backup_format = BackupFormat::Xlsx;
                                             cx.notify();
@@ -527,7 +513,7 @@ impl SlideEditor {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme.muted_foreground)
                             .child(text("xlsx.backupsave.backup-location-label")),
                     )
@@ -535,11 +521,7 @@ impl SlideEditor {
                         h_flex()
                             .gap_2()
                             .child(
-                                Button::new("loc-same-btn")
-                                    .small()
-                                    .outline()
-                                    .label(format!("{} {}", if use_same_folder { "●" } else { "○" }, text("xlsx.backupsave.loc-same-folder")))
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                crate::shell::chrome::radio_button("loc-same-btn", use_same_folder, false, text("xlsx.backupsave.loc-same-folder"), cx.listener(|this, _, _, cx| {
                                         if let Some(p) = this.wb_mut().panels.backup_save.as_mut() {
                                             p.use_same_folder = true;
                                             cx.notify();
@@ -547,11 +529,7 @@ impl SlideEditor {
                                     })),
                             )
                             .child(
-                                Button::new("loc-custom-btn")
-                                    .small()
-                                    .outline()
-                                    .label(format!("{} {}", if !use_same_folder { "●" } else { "○" }, text("xlsx.backupsave.loc-custom-folder")))
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                crate::shell::chrome::radio_button("loc-custom-btn", !use_same_folder, false, text("xlsx.backupsave.loc-custom-folder"), cx.listener(|this, _, _, cx| {
                                         if let Some(p) = this.wb_mut().panels.backup_save.as_mut() {
                                             p.use_same_folder = false;
                                             cx.notify();
@@ -565,11 +543,11 @@ impl SlideEditor {
                                 .gap_1()
                                 .child(
                                     div()
-                                        .text_xs()
+                                        .text_sm()
                                         .text_color(theme.muted_foreground)
                                         .child(text("xlsx.backupsave.custom-folder-label")),
                                 )
-                                .child(Input::new(&custom_input).small().cleanable(true)),
+                                .child({let target=custom_input.clone();crate::shell::chrome::text_field(&custom_input).full_width().path_picker("backup-custom-folder",crate::shell::chrome::PathMode::Folder,&[],cx,move |_,path,w,cx|target.update(cx,|i,cx|i.set_value(path.to_string_lossy().to_string(),w,cx)))}),
                         )
                     }),
             )
@@ -585,19 +563,10 @@ impl SlideEditor {
                             .child(text("xlsx.backupsave.section-workbook")),
                     )
                     .child(
-                        Button::new("toggle-wb-backup-override-btn")
-                            .ghost()
-                            .small()
-                            .w_full()
-                            .label(format!(
-                                "{} {}",
-                                match wb_override {
-                                    Some(true) => "☑",
-                                    Some(false) => "☒",
-                                    None => "☐",
-                                },
-                                text("xlsx.backupsave.wb-backup-label")
-                            ))
+                        crate::shell::chrome::Checkbox::new("toggle-wb-backup-override-btn")
+                            .label(text("xlsx.backupsave.wb-backup-label"))
+                            .checked(wb_override == Some(true))
+                            .indeterminate(wb_override.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(p) = this.wb_mut().panels.backup_save.as_mut() {
                                     p.workbook_override = match p.workbook_override {
@@ -610,7 +579,7 @@ impl SlideEditor {
                             })),
                     )
                     .child(
-                        Button::new("manual-backup-now-btn")
+                        crate::shell::chrome::action_button("manual-backup-now-btn")
                             .outline()
                             .small()
                             .label(text("xlsx.backupsave.backup-now-btn"))
@@ -627,41 +596,30 @@ impl SlideEditor {
                         .bg(theme.accent)
                         .child(
                             div()
-                                .text_xs()
+                                .text_sm()
                                 .text_color(theme.accent_foreground)
                                 .child(msg),
                         ),
                 )
             })
-            .child(
-                // 下部アクションボタン
-                h_flex()
-                    .justify_end()
-                    .gap_2()
-                    .mt_4()
-                    .child(
-                        Button::new("cancel-backup-save-settings-btn")
-                            .ghost()
-                            .small()
-                            .label(text("_shell.cancel"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_xlsx_backup_save_settings_panel(cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("save-backup-save-settings-btn")
-                            .primary()
-                            .small()
+;
+        let footer=                crate::shell::chrome::action_bar()
+
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("save-backup-save-settings-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                             .label(text("xlsx.backupsave.save-settings-btn"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.save_xlsx_backup_save_settings(cx);
                             })),
-                    ),
-            );
+                    )
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("cancel-backup-save-settings-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
+                            .label(text("_shell.cancel"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.close_xlsx_backup_save_settings_panel(cx);
+                            })),
+                    );
 
-        Some(SidebarPanel {
-            title: text("xlsx.backupsave.panel-title").into(),
-            body: body.into_any_element(),
-        })
+        Some(SidebarPanel::with_footer(text("xlsx.backupsave.panel-title"),body.into_any_element(),footer))
     }
 }

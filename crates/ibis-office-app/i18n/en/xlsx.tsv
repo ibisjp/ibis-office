@@ -103,7 +103,7 @@ xlsx.split	Split
 xlsx.sort-manage	Sort Options…
 xlsx.remove-duplicates	Remove Duplicates…
 xlsx.goto	Go To…
-xlsx.goto-destination	Go to:
+xlsx.goto-destination	Go to
 xlsx.goto-no-destinations	(No defined names or history)
 xlsx.goto-type-name	Name
 xlsx.goto-type-history	History
@@ -297,12 +297,10 @@ _xlsx.print-area-none-used-range	Print Area: None (used range)
 _xlsx.insert-delete-above-selected-row	Insert/Delete Above Selected Row
 _xlsx.the-reference-is-not-valid	The reference is not valid.
 _xlsx.go-to	Go To
-_xlsx.reference	Reference:
+_xlsx.reference	Reference
 _xlsx.column-a-b	Column (A, B…)
 _xlsx.specify-column-names-within-the-range-each-colum	Specify column names within the range. Each column and key can be specified only once.
 _xlsx.range-to-sort	Range to Sort
-_xlsx.my-data-has-headers-on	My data has headers: On
-_xlsx.my-data-has-headers-off	My data has headers: Off
 _xlsx.select-column	Select column
 _xlsx.cell-values	Cell Values
 _xlsx.ascending	Ascending
@@ -470,9 +468,9 @@ _xlsx.insert-calculated-field	Insert Calculated Field
 _xlsx.insert-field	Insert Field
 _xlsx.calculated-field-added	Calculated field added
 _xlsx.calculated-field-deleted	Calculated field deleted
-_xlsx.name	Name:
-_xlsx.formula	Formula:
-_xlsx.fields	Fields:
+_xlsx.name	Name
+_xlsx.formula	Formula
+_xlsx.fields	Fields
 _xlsx.please-enter-a-field-name	Please enter a field name
 _xlsx.please-enter-a-formula	Please enter a formula
 _xlsx.insert-calculated-item	Insert Calculated Item
@@ -481,7 +479,7 @@ _xlsx.calculated-item-added	Calculated item added
 _xlsx.calculated-item-deleted	Calculated item deleted
 _xlsx.please-enter-an-item-name	Please enter an item name
 _xlsx.please-enter-a-formula-2	Please enter a formula
-_xlsx.items-2	Items:
+_xlsx.items-2	Items
 _xlsx.no-fields-available	No fields available
 xlsx.pivot-group	Group…
 xlsx.pivot-ungroup	Ungroup
@@ -596,13 +594,11 @@ xlsx.cf-date.next-week	Next week
 xlsx.cf-date.last-month	Last month
 xlsx.cf-date.this-month	This month
 xlsx.cf-date.next-month	Next month
-_xlsx.case-sensitive-on	Case sensitive: On
-_xlsx.case-sensitive-off	Case sensitive: Off
 _xlsx.list-order	List Order
 _xlsx.reverse-list-order	Reverse List Order
 _xlsx.list-configured	List Configured ▾
 _xlsx.list	List…
-_xlsx.custom-list-comma-separated	Custom List (comma separated):
+_xlsx.custom-list-comma-separated	Custom List (comma separated)
 _xlsx.clear-list-normal-order	Clear List (Normal Order)
 _xlsx.sun-sat	Sun–Sat
 _xlsx.sunday-saturday	Sunday–Saturday
@@ -732,14 +728,10 @@ xlsx.hf.insert-time	Time (&T)
 xlsx.hf.insert-file	File (&F)
 xlsx.hf.insert-sheet	Sheet (&A)
 xlsx.hf.code-preview	Code
-xlsx.hf.apply-code	Load from Code
 xlsx.hf.diff-first	Different First Page
 xlsx.hf.diff-odd-even	Different Odd & Even Pages
 xlsx.hf.scale-with-doc	Scale with Document
 xlsx.hf.align-margins	Align with Page Margins
-xlsx.hf.apply	Apply
-xlsx.hf.clear	Clear
-xlsx.hf.back	← Back to Page Setup
 xlsx.insert-textbox	Text Box
 xlsx.insert-shape	Shapes
 xlsx.shape.rect	Rectangle
@@ -964,7 +956,7 @@ xlsx.shape-textlink.current-cell	Link to Selected Cell
 xlsx.shape-textlink.clear	Remove Link to Cell
 xlsx.copy-as-picture	Copy as Picture
 _xlsx.properties	Properties
-_xlsx.object-positioning	Object Positioning:
+_xlsx.object-positioning	Object Positioning
 _xlsx.move-and-size-with-cells	Move and size with cells
 _xlsx.move-but-don-t-size-with-cells	Move but don't size with cells
 _xlsx.don-t-move-or-size-with-cells	Don't move or size with cells
@@ -981,9 +973,9 @@ _xlsx.all-levels	All Levels
 _xlsx.no-matching-objects-found	No matching objects found.
 xlsx.move-chart	Move Chart…
 _xlsx.move-chart	Move Chart
-_xlsx.choose-where-you-want-the-chart-to-be-placed	Choose where you want the chart to be placed:
-_xlsx.new-sheet	New sheet:
-_xlsx.object-in	Object in:
+_xlsx.choose-where-you-want-the-chart-to-be-placed	Choose where you want the chart to be placed
+_xlsx.new-sheet	New sheet
+_xlsx.object-in	Object in
 _xlsx.cannot-create-a-new-sheet-because-the-workbook-s	Cannot create a new sheet because the workbook structure is protected.
 _xlsx.invalid-sheet-name	Invalid sheet name.
 _xlsx.a-sheet-with-this-name-already-exists	A sheet with this name already exists.
@@ -1057,7 +1049,7 @@ xlsx.fill-right	Fill Right
 _xlsx.indent	Indent
 _xlsx.set-size	Set size
 _xlsx.size-points	Size (points)
-_xlsx.sample	Sample: 
+_xlsx.sample	Sample
 _xlsx.set-font	Set font
 _xlsx.font-name	Font name
 _xlsx.locked	Locked
@@ -1265,9 +1257,9 @@ _xlsx.sheet-count	Sheet Count
 _xlsx.data-cell-count	Data Cell Count
 _xlsx.defined-names-count	Defined Names Count
 _xlsx.chart-format	Chart Format
-_xlsx.apply-to-pages	Apply to Pages:
-_xlsx.options	Options:
-_xlsx.insert-field-into-section	Insert Field Into Section:
+_xlsx.apply-to-pages	Apply to Pages
+_xlsx.options	Options
+_xlsx.insert-field-into-section	Insert Field (at the caret of the last selected section)
 _xlsx.number-2-decimals	Number (2 Decimals)
 _xlsx.percentage-2-decimals	Percentage (2 Decimals)
 _xlsx.no-calculation	No Calculation
@@ -1350,19 +1342,19 @@ _xlsx.error-amount	Error Amount
 _xlsx.show-data-in-hidden-rows-and-columns	Show Data in Hidden Rows and Columns
 _xlsx.references	References
 _xlsx.consolidate	Consolidate
-_xlsx.views	Views:
+_xlsx.views	Views
 _xlsx.hidden-rows-and-columns-and-filter-settings	Hidden Rows and Columns, and Filter Settings
 _xlsx.enter-a-positive-number-for-the-height	Enter a positive number for the height.
 _xlsx.enter-a-number-for-the-vertical-position	Enter a number for the vertical position.
-_xlsx.name-custom-name	Name (custom name):
-_xlsx.subtotals	Subtotals:
+_xlsx.name-custom-name	Name (custom name)
+_xlsx.subtotals	Subtotals
 _xlsx.enter-a-number-greater-than-0	Enter a number greater than 0.
 _xlsx.and	and
 _xlsx.quarters	Quarters
 _xlsx.grand-total	Grand Total
 _xlsx.layout-format	Layout & Format
 _xlsx.allow-multiple-filters-per-field	Allow Multiple Filters per Field
-_xlsx.row-label-display-name	Row label display name:
+_xlsx.row-label-display-name	Row label display name
 _xlsx.refresh-data-when-opening-the-file	Refresh Data When Opening the File
 _xlsx.footer-code	Footer: {code}
 _xlsx.the-reference-cell-range-is-not-valid	The reference cell range is not valid.
@@ -1375,7 +1367,7 @@ _xlsx.show-empty-cells-as	Show Empty Cells As
 _xlsx.select-at-least-one-column-to-subtotal	Select at least one column to subtotal.
 _xlsx.add-subtotal-to	Add Subtotal To
 _xlsx.subtotal	Subtotal
-_xlsx.unhide-workbook	Unhide workbook:
+_xlsx.unhide-workbook	Unhide workbook
 _xlsx.to-show-the-workbook-again-choose-unhide-window	To show the workbook again, choose Unhide Window.
 _xlsx.enter-the-list-range-correctly-for-example-a1-c1	Enter the list range correctly (for example, A1:C10).
 _xlsx.advanced	Advanced
@@ -1397,13 +1389,13 @@ _xlsx.add-view	Add View
 _xlsx.custom-views	Custom Views
 _xlsx.enter-a-positive-number-for-the-width	Enter a positive number for the width.
 _xlsx.expanded-the-detail-data	Expanded the detail data.
-_xlsx.summarize-values-by	Summarize Values By:
+_xlsx.summarize-values-by	Summarize Values By
 _xlsx.show-subtotals	Show Subtotals
 _xlsx.units	Units
 _xlsx.row-labels	Row Labels
 _xlsx.merge-and-center-cells	Merge and Center Cells
 _xlsx.show-row-grand-totals	Show Row Grand Totals
-_xlsx.column-labels-caption	Column Labels Caption:
+_xlsx.column-labels-caption	Column Labels Caption
 _xlsx.pivottable-options	PivotTable Options
 _xlsx.text-box-n	Text Box {n}
 _xlsx.object-n	Object {n}
@@ -1434,11 +1426,11 @@ _xlsx.consolidation-complete	Consolidation complete.
 _xlsx.no-ranges-have-been-added	(No ranges have been added)
 _xlsx.enter-a-name-for-the-view	Enter a name for the view.
 _xlsx.include-print-settings	• Include print settings
-_xlsx.settings-to-include-in-view	Settings to include in view:
+_xlsx.settings-to-include-in-view	Settings to include in view
 _xlsx.failed-to-parse-the-formula	Failed to parse the formula.
 _xlsx.enter-the-rotation-as-a-number	Enter the rotation as a number.
 _xlsx.select-a-data-cell-in-the-pivottable	Select a data cell in the PivotTable.
-_xlsx.show-values-as	Show values as:
+_xlsx.show-values-as	Show values as
 _xlsx.show-subtotals-at-top-of-group	Show subtotals at top of group
 _xlsx.starting-at	Starting at
 _xlsx.column-labels	Column Labels
@@ -1453,7 +1445,7 @@ _xlsx.line-color	Line Color
 _xlsx.negative-points	Negative Points
 _xlsx.date-axis	Date axis
 _xlsx.clear-group	Clear Group
-_xlsx.at-each-change-in	At each change in:
+_xlsx.at-each-change-in	At each change in
 _xlsx.page-break-between-groups	Page break between groups
 _xlsx.clear-validation-circles	Clear Validation Circles
 _xlsx.unhide-window	Unhide Window
@@ -1474,13 +1466,13 @@ _xlsx.include-hidden-rows-columns-and-filter-settings	• Include hidden rows, c
 _xlsx.print-settings	Print Settings
 _xlsx.enter-a-number-for-the-horizontal-position	Enter a number for the horizontal position.
 _xlsx.there-are-no-value-fields	There are no value fields.
-_xlsx.calculation-type-show-values-as	Calculation type (show values as):
-_xlsx.layout	Layout:
+_xlsx.calculation-type-show-values-as	Calculation type (show values as)
+_xlsx.layout	Layout
 _xlsx.field	Field
 _xlsx.ending-at	Ending at
-_xlsx.pivottable-name	PivotTable name:
+_xlsx.pivottable-name	PivotTable name
 _xlsx.preserve-cell-formatting-on-update	Preserve cell formatting on update
-_xlsx.grand-total-caption	Grand total caption:
+_xlsx.grand-total-caption	Grand total caption
 _xlsx.enter-a-title	Enter a title.
 _xlsx.chart-n	Chart {n}
 _xlsx.enter-a-number-in-the-first-cell	Enter a number in the first cell.
@@ -1496,20 +1488,20 @@ _xlsx.flash-fill-could-not-determine-values	Flash Fill could not determine the v
 _xlsx.enter-a-scenario-name	Enter a scenario name.
 _xlsx.specify-the-changing-cells	Specify the changing cells.
 _xlsx.specify-the-result-cells	Specify the result cells.
-_xlsx.scenarios-colon	Scenarios:
+_xlsx.scenarios-colon	Scenarios
 _xlsx.no-scenarios-defined	(No scenarios defined)
-_xlsx.changing-cells-colon	Changing cells:
-_xlsx.comment-colon	Comment:
+_xlsx.changing-cells-colon	Changing cells
+_xlsx.comment-colon	Comment
 _xlsx.edit-ellipsis	Edit…
 _xlsx.merge-ellipsis	Merge…
 _xlsx.summary-ellipsis	Summary…
-_xlsx.scenario-name-colon	Scenario name:
+_xlsx.scenario-name-colon	Scenario name
 _xlsx.load-values	Load Values
-_xlsx.values-for-each-changing-cell-colon	Values for each changing cell:
+_xlsx.values-for-each-changing-cell-colon	Values for each changing cell
 _xlsx.scenario-summary-report	Scenario Summary
-_xlsx.result-cells-colon	Result cells (comma-separated or a range):
+_xlsx.result-cells-colon	Result cells (comma-separated or a range)
 _xlsx.merge-scenarios	Merge Scenarios
-_xlsx.select-the-sheet-to-copy-scenarios-from	Select the sheet to copy scenarios from:
+_xlsx.select-the-sheet-to-copy-scenarios-from	Select the sheet to copy scenarios from
 _xlsx.no-other-sheets	(No other sheets)
 _xlsx.scenario-manager	Scenario Manager
 xlsx.format-pane.custom	Custom
@@ -1655,7 +1647,7 @@ xlsx.analysis.field.grouped-by	Grouped by
 xlsx.analysis.field.labels	Labels in first row (and column)
 xlsx.analysis.field.alpha	Alpha
 xlsx.analysis.field.rows-per-sample	Rows per sample
-xlsx.analysis.field.confidence-level	Confidence level (%)
+xlsx.analysis.field.confidence-level	Confidence level
 xlsx.analysis.field.kth-largest	Kth largest (blank: none)
 xlsx.analysis.field.kth-smallest	Kth smallest (blank: none)
 xlsx.analysis.field.hypothesized-diff	Hypothesized mean difference
@@ -1724,7 +1716,7 @@ xlsx.solver.title	Solver Parameters
 xlsx.solver.objective	Set Objective
 xlsx.solver.goal-max	Max
 xlsx.solver.goal-min	Min
-xlsx.solver.goal-value	Value Of:
+xlsx.solver.goal-value	Value Of
 xlsx.solver.variables	By Changing Variable Cells
 xlsx.solver.constraints	Subject to the Constraints
 xlsx.solver.cell-reference	Cell Reference
@@ -1800,7 +1792,7 @@ xlsx.forecast.title	Forecast Sheet
 xlsx.forecast.field.timeline	Timeline Range
 xlsx.forecast.field.values	Values Range
 xlsx.forecast.field.end	Forecast End
-xlsx.forecast.field.confidence	Confidence Interval (%)
+xlsx.forecast.field.confidence	Confidence Interval
 xlsx.forecast.field.chart	Chart Type
 xlsx.forecast.chart-line	Line
 xlsx.forecast.chart-column	Column
@@ -1911,7 +1903,7 @@ xlsx.slicer-settings.select	Select a slicer first.
 xlsx.slicer-settings.caption	Header caption
 xlsx.slicer-settings.show-caption	Display header
 xlsx.slicer-settings.columns	Number of columns
-xlsx.slicer-settings.height	Button height (pt)
+xlsx.slicer-settings.height	Button height
 xlsx.slicer-settings.connections	Report connections: pivot tables the slicer filters
 xlsx.slicer-settings.bad-number	Columns: a whole number from 1 to 20; height: 5 to 200 pt.
 xlsx.slicer-settings.connect-one	Connect at least one pivot table.
@@ -2519,10 +2511,10 @@ xlsx.size.preset-default-column	8.43 characters (Default)
 _xlsx.data-validation	Data Validation
 _xlsx.clear-all	Clear All
 _xlsx.remove-duplicates	Remove Duplicates
-xlsx.shape-panel.fill-color	Fill color (RRGGBB, empty for none)
-xlsx.shape-panel.outline-color	Outline color (RRGGBB, empty for none)
-xlsx.shape-panel.outline-width	Outline width (pt)
-xlsx.shape-panel.text-size	Text size (pt)
+xlsx.shape-panel.fill-color	Fill color
+xlsx.shape-panel.outline-color	Outline color
+xlsx.shape-panel.outline-width	Outline width
+xlsx.shape-panel.text-size	Text size
 xlsx.shape-panel.title	Format Shape
 xlsx.paste-options-button	Paste Options
 xlsx.qa.button	Quick Analysis
@@ -2600,3 +2592,95 @@ xlsx.view-mode	View Mode
 xlsx.insert-cells-menu	Insert
 xlsx.notes-comments-menu	Notes/Comments
 xlsx.recommended-charts.empty	No numeric data in selection; inserts a chart with sample data.
+
+xlsx.range-field.pick	Select a range on the sheet
+chart.ui.add	Add
+chart.ui.axes-legend	Axes & legend
+chart.ui.overall	Overall
+chart.ui.horizontal-axis	Horizontal
+chart.ui.left-axis	Left axis
+chart.ui.right-axis	Right axis
+chart.ui.edit-axis	Edit axis
+chart.ui.data	Data
+chart.ui.display	Display
+chart.ui.analysis	Analysis
+chart.ui.name	Series name
+chart.ui.categories	Category range
+chart.ui.values	Value range
+chart.ui.use-axis	Axis
+chart.ui.marker-size	Marker size
+chart.ui.order	Order
+chart.ui.period	Period
+chart.ui.error-value	Value
+chart.ui.edit-series	Edit series
+chart.ui.invalid-series	Enter valid sheet ranges, line width and marker size.
+chart.ui.edit	Edit
+chart.ui.ok	OK
+chart.ui.type	Chart type
+chart.ui.smooth	Smooth line
+chart.ui.kind-settings	Chart-specific settings
+chart.ui.visible-data	Displayed data
+chart.ui.template-placement	Templates & placement
+chart.ui.horizontal-categories	Horizontal categories
+chart.ui.combination	Combination
+chart.ui.left-short	L
+chart.ui.right-short	R
+chart.ui.type-unsupported	Individual conversion is unsupported
+chart.ui.type-family	Different chart family
+chart.ui.type-three-d	Change 3-D types for the whole chart
+chart.ui.type-round-mixed	Pie and doughnut cannot be combined
+chart.ui.type-orientation	Different axis direction
+chart.ui.analysis-unsupported	Trendlines and error bars are unavailable for this chart type.
+chart.ui.error-direction	Error direction
+chart.ui.left-value-axis	Left vertical axis
+chart.ui.right-value-axis	Right vertical axis
+chart.ui.bottom-value-axis	Bottom horizontal axis
+chart.ui.top-value-axis	Top horizontal axis
+chart.ui.vertical-categories	Vertical category axis
+chart.ui.vertical-categories-label	Vertical categories
+chart.ui.horizontal-values	Horizontal values
+chart.ui.horizontal-value-axis	Horizontal value axis
+chart.ui.bottom-short	B
+chart.ui.top-short	T
+
+chart.ui.axes	Axes
+chart.ui.show-title	Show chart title
+chart.ui.style-standard	Standard
+chart.ui.style-simple	Simple
+chart.ui.style-framed	Framed
+chart.ui.style-dark	Dark
+chart.ui.style-custom	Custom
+
+xlsx.function.not-found	No functions found
+
+xlsx.validation.tools	Check existing data
+
+xlsx.cf.rule	Rule
+xlsx.cf.other-rule	Other rule
+xlsx.cf.manage-title	Conditional formatting rules
+xlsx.cf.edit-title	Edit conditional formatting rule
+
+xlsx.cf.move-up	Move rule up
+xlsx.cf.move-down	Move rule down
+
+xlsx.sort-level.edit	Edit sort condition
+
+xlsx.sort.has-header	Use the first row as headers
+
+xlsx.sort-realtime	Update in real time
+
+text-columns.quote-label	Text qualifier
+text-columns.column-label	Column {n}
+
+xlsx.sort.key.cell-color	Cell color
+xlsx.sort.key.font-color	Font color
+xlsx.sort.key.icon	Icon
+
+xlsx.sparkline.low-point	Low point
+xlsx.watch.invalid-cell	Enter a valid cell reference.
+xlsx.shape-panel.height	Height
+xlsx.shape-panel.width	Width
+xlsx.shape-panel.rotation	Rotation
+xlsx.shape-panel.horizontal	Horizontal position
+xlsx.shape-panel.vertical	Vertical position
+chart.ui.first-cell-name	Use the first cell as the series name

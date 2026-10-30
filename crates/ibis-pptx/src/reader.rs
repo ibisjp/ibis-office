@@ -1436,14 +1436,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 }
             }
         }
-        if let Some(theme) = ctx.theme
-            && let Some(style) = bg_fill_style(theme, 1001)
-        {
-            let color = Some(ctx.colors.named("bg1"));
-            if let Some(fill) = self.fill(ctx, style, &ctx.master.rels, color, None) {
-                return fill;
-            }
-        }
+        // An absent background inherits the layout/master above, then the
+        // default white. A theme fill list is a palette, not an implicit bgRef.
         Fill::Solid(Color::WHITE)
     }
 
@@ -1748,7 +1742,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         }
         let shape = |kind| Shape { id, frame, rotation, flip_h, flip_v, kind, floating: None };
 
-        let tx_body = child(node, "txBody");
+        let tx_body = child(node, "txBody").or_else(||path(node,&["txSp","txBody"]));
         let has_text = tx_body.is_some_and(|b| {
             b.descendants().any(|n| n.has_tag_name("t") && !n.text().unwrap_or("").is_empty())
         });
@@ -1757,7 +1751,10 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             return stroke.map(|s| shape(ShapeKind::Line(s)));
         }
 
-        let mut fill = match chain().find_map(fill_element) {
+        // `useBgFill`: the shape takes the fill of the slide's background
+        // (ECMA-376 19.3.1.43), so it shows the background through itself.
+        let use_bg_fill = unqualified_attribute(node, "useBgFill").is_some_and(|v| v == "1" || v == "true");
+        let mut fill = match chain().find_map(fill_element).filter(|_| !use_bg_fill) {
             Some(f) => {
                 let mut parsed = self.fill(ctx, f, rels, None, group_fill).unwrap_or_default();
                 if f.tag_name().name() == "gradFill" && unqualified_attribute(f, "rotWithShape").map_or(false, |v| v == "0" || v == "false") {
@@ -1787,6 +1784,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 }
                 parsed
             }
+            None if use_bg_fill => self.background(ctx),
             None => self.style_fill(ctx, style, rels),
         };
         if is_line {
@@ -1796,7 +1794,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             color: style.and_then(|s| child(s, "fontRef")).and_then(|r| ctx.colors.in_parent(r, None)),
             ..TextDefaults::default()
         };
-        let text = child(node, "txBody").map(|body| self.text_body(ctx, body, defaults, inherited.as_ref()));
+        let text = child(node, "txBody").or_else(||path(node,&["txSp","txBody"])).map(|body| self.text_body(ctx, body, defaults, inherited.as_ref(), false));
         // An empty placeholder keeps its empty text (and the style it takes
         // from its layout) for typing into; it draws nothing, and the editor
         // shows its prompt (SlidePlaceholder::prompt_text).
@@ -2055,7 +2053,7 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
                 .unwrap_or_default();
             let sp_pr = child(node, "spPr");
             let stroke = sp_pr.and_then(|p| child(p, "ln")).and_then(|ln| self.stroke(ctx, Some(ln), None));
-            let picture_geometry = crate::geometry::geometry(sp_pr.and_then(|p| child(p, "prstGeom")));
+            let picture_geometry = crate::geometry::geometry(sp_pr.and_then(|p| child(p, "custGeom").or_else(||child(p, "prstGeom"))));
             let corner = match picture_geometry {
                 ibis_doc_model::Geometry::RoundRect { radius } => radius,
                 _ => 0,
@@ -2158,10 +2156,16 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
                 let (clip, format, link) = match embedded {
                     Some((clip, format)) => (clip, format, None),
                     None => {
-                        let file = nv.descendants().find(|n| n.is_element() && matches!(n.tag_name().name(), "videoFile" | "audioFile"))?;
-                        let rel = rels.get(attr(file, "link")?).filter(|r| r.external)?;
-                        let format = MediaFormat::from_path(&rel.target);
-                        (self.presentation.add_media(format, Vec::new()), format, Some(rel.target.clone()))
+                        let file = nv.descendants().find(|n| n.is_element() && matches!(n.tag_name().name(), "videoFile" | "audioFile" | "wavAudioFile"))?;
+                        let key=attr(file,"link").or_else(||attr(file,"embed"))?;
+                        let rel=rels.get(key)?;
+                        if rel.external {
+                            let format=MediaFormat::from_path(&rel.target);
+                            (self.presentation.add_media(format,Vec::new()),format,Some(rel.target.clone()))
+                        } else {
+                            let (media,format)=self.media(rels,key)?;
+                            (media,format,None)
+                        }
                     }
                 };
                 if !format.is_video() && !format.is_audio() {
@@ -2483,6 +2487,7 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                     return Some(Fill::None);
                 }
                 let mut blip = ibis_doc_model::BlipFill::new(media);
+                blip.rot_with_shape = unqualified_attribute(node, "rotWithShape").is_none_or(|v| v != "0" && v != "false");
                 if let Some(r) = child(node, "srcRect") {
                     let v = |name| attr_i64(r, name).unwrap_or(0) as i32;
                     blip.crop = ibis_doc_model::Crop { left: v("l"), top: v("t"), right: v("r"), bottom: v("b") };
@@ -2622,7 +2627,7 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
         })
     }
 
-    fn text_body(&mut self, ctx: &SlideCtx<'d, 'i, '_>, body: Node<'d, 'i>, defaults: TextDefaults, inherited: Option<&Inherited<'d, 'i>>) -> TextBody {
+    fn text_body(&mut self, ctx: &SlideCtx<'d, 'i, '_>, body: Node<'d, 'i>, defaults: TextDefaults, inherited: Option<&Inherited<'d, 'i>>, table_cell: bool) -> TextBody {
         let colors = &ctx.colors;
 
         // List styles, from the most general to the shape's own.
@@ -2648,7 +2653,10 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                 if let Some(default) = self.default_text {
                     levels.merge(default, colors);
                 }
-                if let Some(other) = path(ctx.master.root, &["txStyles", "otherStyle"]) {
+                // A table cell's text follows the master's otherStyle after the presentation's defaultTextStyle; the text of
+                // a shape that is not a placeholder follows the defaultTextStyle only (PowerPoint's PDFs: a run with no `sz`
+                // is 18 pt where the master's otherStyle says 12 pt).
+                if table_cell && let Some(other) = path(ctx.master.root, &["txStyles", "otherStyle"]) {
                     levels.merge(other, colors);
                 }
             }
@@ -2858,7 +2866,10 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                     let r_path = if recording { crate::xml::element_path(n) } else { Vec::new() };
                     let mut offset = 0usize;
                     // A vertical tab is a line break inside a run.
-                    for (i, piece) in text.split('\u{b}').enumerate() {
+                    // In a worksheet's drawing a line feed inside a run is a line break too (Excel for Windows' PDF of a
+                    // text box holding one `a:t` of several lines shows each on its own line).
+                    let in_sheet = p.ancestors().any(|a| a.has_tag_name(("http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing", "wsDr")));
+                    for (i, piece) in text.split(|c| c == '\u{b}' || (in_sheet && c == '\n')).enumerate() {
                         if i > 0 {
                             line_ends.push(Some(run_style(child(n, "rPr"), "")));
                             lines.push(Vec::new());
@@ -2975,7 +2986,15 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
             Some(BulletProps::AutoNumber { scheme, start_at }) => Some(ibis_doc_model::text::AutoNumber { scheme: scheme.clone(), start_at: *start_at }),
             _ => None,
         };
-        let bullet = bullet.map(|text| Bullet { text, picture, size: bullet_size as u32, color: props.bullet_color.flatten().map(|c| c.rgb), auto });
+        let symbol = match (&props.bullet, props.bullet_font.as_deref()) {
+            (Some(BulletProps::Char(code)), Some(font)) if crate::style::is_symbol_font(font) => Some(ibis_doc_model::SymbolBullet {
+                font: font.to_string(),
+                code: code.clone(),
+                stand_in_percent: (crate::style::bullet_scale(Some(font)) * 100.0).round() as u32,
+            }),
+            _ => None,
+        };
+        let bullet = bullet.map(|text| Bullet { text, picture, size: bullet_size as u32, color: props.bullet_color.flatten().map(|c| c.rgb), auto, symbol });
 
         let count = lines.len();
         lines
@@ -2995,6 +3014,7 @@ fn parse_grad_fill(colors: &crate::theme::Colors, node: Node, placeholder: Optio
                 line_spacing,
                 font_align: props.font_align.unwrap_or_default(),
                 space_before: if i == 0 { spacing(&props.space_before) } else { 0 },
+                space_before_exact: matches!(props.space_before, Some(Spacing::Percent(_))),
                 space_after: if i + 1 == count { spacing(&props.space_after) } else { 0 },
                 line_break: i > 0,
                 level,
@@ -3183,7 +3203,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 }
 
                 let mut text = match child(tc, "txBody") {
-                    Some(body) => self.text_body(ctx, body, defaults, None),
+                    Some(body) => self.text_body(ctx, body, defaults, None, true),
                     None => TextBody::default(),
                 };
                 let margin = |name, default| tc_pr.and_then(|p| attr_i64(p, name)).unwrap_or(default);
@@ -3780,7 +3800,10 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
         }
         xlsx::extend_sheet(&mut sheet, sheet_root, columns, rows, digit, (&styles.default_font.0, styles.default_font.1));
         // What the sheet uses: the page printed and exported.
-        let used = (*sheet.column_offsets().last().unwrap_or(&0), *sheet.row_offsets().last().unwrap_or(&0));
+        // The rows holding only a height (no cell) stay in the sheet but are not used: Excel prints no page for them.
+        let (xs_used, ys_used) = (sheet.column_offsets(), sheet.row_offsets());
+        let used_rows = if *sheet.printed_rows > 0 { ((*sheet.printed_rows).max(rows) as usize).min(ys_used.len() - 1) } else { ys_used.len() - 1 };
+        let used = (*xs_used.last().unwrap_or(&0), ys_used[used_rows]);
         // Beyond it the grid goes on, as in Excel, for text running on past
         // the last cell and for new values.
         xlsx::extend_sheet(&mut sheet, sheet_root, (columns + GRID_MARGIN_COLUMNS).max(MIN_GRID_COLUMNS), (rows + GRID_MARGIN_ROWS).max(MIN_GRID_ROWS), digit, (&styles.default_font.0, styles.default_font.1));
@@ -4761,7 +4784,18 @@ fn read_media_nodes(slide_root: Node, native_ids: &std::collections::HashMap<Str
                 clip.options.hide_while_not_playing = true;
             }
         }
-        if let Some(num_slds) = node.attribute("numSlds") {
+        if node.parent().and_then(|h| h.attribute("fullScrn")).is_some_and(|v| v == "1" || v == "true") {
+            clip.options.full_screen = true;
+        }
+        // Started with the slide: the play call is an effect after or with the previous.
+        let started_by_slide = timing.descendants().filter(|n| n.is_element() && n.tag_name().name() == "cmd" && n.attribute("cmd").is_some_and(|c| c.starts_with("play"))).any(|cmd| {
+            cmd.descendants().any(|t| t.is_element() && t.tag_name().name() == "spTgt" && t.attribute("spid") == Some(target))
+                && cmd.ancestors().find(|a| a.is_element() && a.tag_name().name() == "cTn" && a.attribute("presetClass") == Some("mediacall")).is_some_and(|c| matches!(c.attribute("nodeType"), Some("afterEffect" | "withEffect")))
+        });
+        if started_by_slide {
+            clip.options.start = ibis_doc_model::MediaStart::Automatically;
+        }
+        if let Some(num_slds) = node.attribute("numSld").or_else(|| node.attribute("numSlds")) {
             if let Ok(n) = num_slds.parse::<u32>() {
                 if n > 1 {
                     clip.options.play_across_slides = true;
@@ -4771,6 +4805,9 @@ fn read_media_nodes(slide_root: Node, native_ids: &std::collections::HashMap<Str
         if let Some(ctn) = child(node, "cTn") {
             if ctn.attribute("repeatCount") == Some("indefinite") {
                 clip.options.loop_until_stopped = true;
+            }
+            if ctn.attribute("fill") == Some("remove") {
+                clip.options.rewind = true;
             }
             if let Some(st_cond) = child(ctn, "stCondLst") {
                 for cond in st_cond.children().filter(|n| n.is_element() && n.tag_name().name() == "cond") {

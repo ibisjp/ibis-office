@@ -4,8 +4,8 @@
 //! フォントの置換 (書式 > フォントの置換…): replace a font across the entire
 //! presentation (all slides, text boxes, shapes and table cells) with another font.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -514,7 +514,7 @@ impl SlideEditor {
         // 不足しているフォント
         let missing = presentation_missing_fonts(self.presentation());
         if !missing.is_empty() {
-            body = body.child(div().text_size(px(11.)).text_color(rgb(0xd93025)).child(crate::shell::i18n::text("pptx.replace-fonts.missing-fonts-title")));
+            body = body.child(div().text_sm().text_color(rgb(0xd93025)).child(crate::shell::i18n::text("pptx.replace-fonts.missing-fonts-title")));
             let mut missing_chips = h_flex().gap_1().flex_wrap();
             for f in &missing {
                 let f_clone = f.clone();
@@ -530,9 +530,9 @@ impl SlideEditor {
                             }),
                         )
                         .child(
-                            Button::new(ElementId::Name(format!("pptx-missing-font-{f}").into()))
+                            crate::shell::chrome::action_button(ElementId::Name(format!("pptx-missing-font-{f}").into()))
                                 .small()
-                                .ghost()
+
                                 .label(f.clone())
                                 .on_click(cx.listener(move |_, _, window, cx| {
                                     target_clone.update(cx, |t, cx| t.set_value(&f_clone, window, cx));
@@ -544,12 +544,12 @@ impl SlideEditor {
         }
 
         // 置換前のフォント
-        body = body.child(div().text_size(px(12.)).text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("pptx.replace-fonts.with")));
-        body = body.child(Input::new(&target).small().cleanable(true));
+        body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("pptx.replace-fonts.with")));
+        body = body.child(crate::shell::chrome::panel_font_dropdown("panel-font-replace-target",&target,cx));
 
         // 現在使用されているフォント候補の表示（クリックで選択可能）
         if !used_fonts.is_empty() {
-            body = body.child(div().text_size(px(11.)).text_color(rgb(0x70757a)).child(crate::shell::i18n::text("pptx.replace-fonts.fonts-used-presentation")));
+            body = body.child(div().text_sm().text_color(rgb(0x70757a)).child(crate::shell::i18n::text("pptx.replace-fonts.fonts-used-presentation")));
             let mut font_chips = h_flex().gap_1().flex_wrap();
             for f in &used_fonts {
                 let f_clone = f.clone();
@@ -565,9 +565,9 @@ impl SlideEditor {
                             }),
                         )
                         .child(
-                            Button::new(ElementId::Name(format!("pptx-used-font-{f}").into()))
+                            crate::shell::chrome::action_button(ElementId::Name(format!("pptx-used-font-{f}").into()))
                                 .small()
-                                .ghost()
+
                                 .label(f.clone())
                                 .on_click(cx.listener(move |_, _, window, cx| {
                                     target_clone.update(cx, |t, cx| t.set_value(&f_clone, window, cx));
@@ -579,13 +579,13 @@ impl SlideEditor {
         }
 
         // 置換後のフォント / 代替先フォント
-        body = body.child(div().text_size(px(12.)).text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("pptx.replace-fonts.replace")));
-        body = body.child(Input::new(&replacement).small().cleanable(true));
+        body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("pptx.replace-fonts.replace")));
+        body = body.child(crate::shell::chrome::panel_font_dropdown("panel-font-replace-destination",&replacement,cx));
 
         // 設定中の代替フォント一覧
         let subs = self.presentation().font_substitutions.clone();
         if !subs.is_empty() {
-            body = body.child(div().text_size(px(11.)).text_color(rgb(0x1a73e8)).child(crate::shell::i18n::text("pptx.replace-fonts.substitutions-title")));
+            body = body.child(div().text_sm().text_color(rgb(0x1a73e8)).child(crate::shell::i18n::text("pptx.replace-fonts.substitutions-title")));
             for (tgt, rep) in &subs {
                 let tgt_clone = tgt.clone();
                 let tgt_ctx = tgt.clone();
@@ -600,11 +600,10 @@ impl SlideEditor {
                                 e.open_replace_fonts_context_menu(Some(tgt_ctx.clone()), event.position, w, cx);
                             }),
                         )
-                        .child(div().text_size(px(11.)).child(format!("{tgt} → {rep}")))
+                        .child(div().text_sm().child(format!("{tgt} → {rep}")))
                         .child(
-                            Button::new(ElementId::Name(format!("pptx-remove-sub-{tgt}").into()))
+                            crate::shell::chrome::destructive_button(ElementId::Name(format!("pptx-remove-sub-{tgt}").into()),cx)
                                 .small()
-                                .ghost()
                                 .label("✕")
                                 .on_click(cx.listener(move |e, _, _, cx| {
                                     e.set_font_substitution(&tgt_clone, None, cx);
@@ -617,7 +616,7 @@ impl SlideEditor {
         // 埋め込みフォント一覧
         let embedded_typefaces: Vec<String> = self.presentation().fonts.iter().map(|f| f.typeface.clone()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         if !embedded_typefaces.is_empty() {
-            body = body.child(div().text_size(px(11.)).text_color(rgb(0x188038)).child(crate::shell::i18n::text("pptx.replace-fonts.embedded-fonts-title")));
+            body = body.child(div().text_sm().text_color(rgb(0x188038)).child(crate::shell::i18n::text("pptx.replace-fonts.embedded-fonts-title")));
             for tf in &embedded_typefaces {
                 let tf_clone = tf.clone();
                 let tf_ctx = tf.clone();
@@ -632,11 +631,10 @@ impl SlideEditor {
                                 e.open_replace_fonts_context_menu(Some(tf_ctx.clone()), event.position, w, cx);
                             }),
                         )
-                        .child(div().text_size(px(11.)).child(tf.clone()))
+                        .child(div().text_sm().child(tf.clone()))
                         .child(
-                            Button::new(ElementId::Name(format!("pptx-remove-embed-{tf}").into()))
+                            crate::shell::chrome::destructive_button(ElementId::Name(format!("pptx-remove-embed-{tf}").into()),cx)
                                 .small()
-                                .ghost()
                                 .label("✕")
                                 .on_click(cx.listener(move |e, _, _, cx| {
                                     e.remove_embedded_font(&tf_clone, cx);
@@ -648,23 +646,16 @@ impl SlideEditor {
 
         // 実行メッセージ
         if let Some(msg) = message {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0x1a73e8)).child(msg));
+            body = body.child(div().text_sm().text_color(rgb(0x1a73e8)).child(msg));
         }
 
         // アクションボタン
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .flex_wrap()
-                .child(Button::new("pptx-replace-fonts-apply").primary().small().label(crate::shell::i18n::text("_shell.replace")).on_click(cx.listener(|e, _, w, cx| e.replace_presentation_fonts(w, cx))))
-                .child(Button::new("pptx-replace-fonts-substitute").small().label(crate::shell::i18n::text("pptx.replace-fonts.substitute")).on_click(cx.listener(|e, _, w, cx| e.set_presentation_font_substitution_action(w, cx))))
-                .child(Button::new("pptx-replace-fonts-embed").small().label(crate::shell::i18n::text("pptx.replace-fonts.embed-button")).on_click(cx.listener(|e, _, w, cx| e.embed_presentation_font_action(w, cx))))
-                .child(Button::new("pptx-replace-fonts-close").small().ghost().label(crate::shell::i18n::text("_shell.close")).on_click(cx.listener(|e, _, _, cx| e.close_replace_fonts_panel(cx)))),
-        );
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-replace-fonts-apply", crate::shell::i18n::text("_shell.replace"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.replace_presentation_fonts(w, cx))))
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-replace-fonts-substitute", crate::shell::i18n::text("pptx.replace-fonts.substitute"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.set_presentation_font_substitution_action(w, cx))))
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-replace-fonts-embed", crate::shell::i18n::text("pptx.replace-fonts.embed-button"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.embed_presentation_font_action(w, cx))))
 
-        Some(SidebarPanel {
-            title: crate::shell::i18n::text("_pptx.replace-fonts"),
-            body: body.into_any_element(),
-        })
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("_pptx.replace-fonts"), body.into_any_element(), panel_actions))
     }
 }

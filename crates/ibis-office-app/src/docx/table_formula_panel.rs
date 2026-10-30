@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Table formula insertion and edit panel (Word's 表の計算式).
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::{chrome::SidebarPanel, editor::SlideEditor};
@@ -41,6 +41,7 @@ pub(crate) struct TableFormulaState {
 impl SlideEditor {
     /// キャレット位置が表の中にあるとき、「表の計算式」サイドバーを開く。
     pub(crate) fn open_table_formula(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(target) = self.table_at_caret() else { return };
         let default_formula = self.suggest_table_formula();
         let formula = cx.new(|cx| {
@@ -169,18 +170,14 @@ impl SlideEditor {
         for (i, (_, label)) in FORMULA_FORMATS.iter().enumerate() {
             let selected = i == format_idx;
             format_buttons = format_buttons.child(
-                Button::new(format!("table-formula-fmt-{i}"))
-                    .small()
-                    .label(crate::shell::i18n::text(label))
-                    .selected(selected)
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_table_formula_format(i, cx))),
+                crate::shell::chrome::radio_button(format!("table-formula-fmt-{i}"),selected,false,crate::shell::i18n::text(label),cx.listener(move |this, _, _, cx| this.set_table_formula_format(i, cx))),
             );
         }
 
         let mut func_buttons = h_flex().gap_1().flex_wrap();
         for func in PASTE_FUNCTIONS {
             func_buttons = func_buttons.child(
-                Button::new(format!("table-formula-func-{func}"))
+                crate::shell::chrome::action_button(format!("table-formula-func-{func}"))
                     .small()
                     .label(crate::shell::i18n::text(func))
                     .on_click(cx.listener(move |this, _, window, cx| this.paste_function_to_formula(func, window, cx))),
@@ -190,7 +187,7 @@ impl SlideEditor {
         let mut dir_buttons = h_flex().gap_1().flex_wrap();
         for dir in DIRECTION_KEYWORDS {
             dir_buttons = dir_buttons.child(
-                Button::new(format!("table-formula-dir-{dir}"))
+                crate::shell::chrome::action_button(format!("table-formula-dir-{dir}"))
                     .small()
                     .label(crate::shell::i18n::text(dir))
                     .on_click(cx.listener(move |this, _, window, cx| this.paste_direction_to_formula(dir, window, cx))),
@@ -201,9 +198,9 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(div().text_sm().child(crate::shell::i18n::text("docx.table-formula-panel.insert-formula-into-table-cell")))
+            .p_0().child(div().text_sm().child(crate::shell::i18n::text("docx.table-formula-panel.insert-formula-into-table-cell")))
             .child(div().text_sm().child(crate::shell::i18n::text("docx.table-formula-panel.formula-2")))
-            .child(Input::new(&formula_input).small().cleanable(true))
+            .child(crate::shell::chrome::text_field(&formula_input).full_width())
             .child(div().text_sm().child(crate::shell::i18n::text("_shell.format")))
             .child(format_buttons)
             .child(div().text_sm().child(crate::shell::i18n::text("docx.table-formula-panel.paste-function")))
@@ -211,20 +208,14 @@ impl SlideEditor {
             .child(div().text_sm().child(crate::shell::i18n::text("docx.table-formula-panel.direction-keywords")))
             .child(dir_buttons)
             .children(error.map(|e| div().text_sm().child(e)))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .mt(px(4.))
-                    .child(
-                        Button::new("table-formula-apply").primary()
-                            .small()
-                            .label(crate::shell::i18n::text("OK"))
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("table-formula-apply", crate::shell::i18n::text("OK"), crate::shell::chrome::ActionButtonKind::Primary)
                             .on_click(cx.listener(|this, _, window, cx| this.apply_table_formula(window, cx))),
                     )
-                    .child(
-                        Button::new("table-formula-cancel")
-                            .small()
-                            .label(crate::shell::i18n::text("_shell.cancel"))
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("table-formula-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Some(state) = this.doc_state_mut() {
                                     state.table_formula = None;
@@ -232,12 +223,7 @@ impl SlideEditor {
                                 this.focus_handle.focus(window, cx);
                                 cx.notify();
                             })),
-                    ),
-            );
-
-        Some(SidebarPanel {
-            title: crate::shell::i18n::text("docx.table-formula-panel.formula"),
-            body: body.into_any_element(),
-        })
+                    );
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("docx.table-formula-panel.formula"), body.into_any_element(), panel_actions))
     }
 }

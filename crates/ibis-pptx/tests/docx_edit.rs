@@ -31,7 +31,17 @@ fn normalized(doc: &FlowDocument) -> FlowDocument {
         for b in blocks {
             *next += 1;
             match b {
-                Block::Paragraph(p) => p.id = *next,
+                Block::Paragraph(p) => {
+                    p.id = *next;
+                    // A comment's marker draws nothing and has no run properties in the file: the style a command gives it from the text beside it
+                    // (its `w:hint`, of no use to a mark) is not kept.
+                    for run in &mut p.runs {
+                        if matches!(run.kind, ibis_doc_model::FlowRunKind::CommentStart(_) | ibis_doc_model::FlowRunKind::CommentEnd(_) | ibis_doc_model::FlowRunKind::CommentRef(_)) {
+                            run.style.east_asia_hint = false;
+                            run.format.east_asia_hint = None;
+                        }
+                    }
+                }
                 Block::Table(t) => {
                     t.id = *next;
                     for row in &mut t.rows {
@@ -6211,7 +6221,7 @@ fn drawn_shape_insert_and_style() {
         assert_eq!(a.geometry.preset_name(), Some(name));
         assert!(matches!(&a.fill, ibis_doc_model::Fill::Solid(c) if c.rgb == Rgb(0x4472C4)), "{preset}: {:?}", a.fill);
         assert_eq!(a.stroke.as_ref().map(|s| (s.color.rgb, s.width)), Some((Rgb(0x2F528F), 12_700)));
-        assert!(a.text.is_none());
+        assert!(a.text.as_ref().is_some_and(|body|body.text().is_empty()),"new shapes retain their editable empty text body");
         document.undo();
     }
     // Insert, then restyle: a filled red shape without a line; saved, read, restyled again (the old element).

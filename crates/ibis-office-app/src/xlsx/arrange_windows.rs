@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
@@ -46,7 +46,7 @@ impl SlideEditor {
 
     pub(crate) fn open_arrange_windows_panel(&mut self, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
-        self.wb_mut().panels.close();
+        self.wb_mut().close_settings();
         self.wb_mut().panels.arrange_windows = Some(ArrangeWindowsPanel {
             kind: ArrangeKind::Tiled,
             active_workbook_only: false,
@@ -195,6 +195,10 @@ impl SlideEditor {
         };
 
         let mut macos_frames: Vec<(usize, f32, f32, f32, f32)> = Vec::with_capacity(targets.len());
+        #[cfg(target_os = "macos")]
+        let native_frames = macos_has_native_windows();
+        #[cfg(not(target_os = "macos"))]
+        let native_frames = false;
 
         for (idx, &target) in targets.iter().enumerate() {
             let (rel_x, rel_y) = match kind {
@@ -215,8 +219,9 @@ impl SlideEditor {
             if let Some(ord_idx) = all_windows.iter().position(|w| *w == target) {
                 macos_frames.push((ord_idx, rel_x, rel_y, tile_w, tile_h));
             }
-            #[cfg(not(target_os = "macos"))]
-            {
+            // On macOS the real windows are placed by their NSWindow frames below; a window that has no NSWindow
+            // (the headless windows of the scenarios) is resized through GPUI.
+            if !native_frames {
                 if let (Some(w), Some(h)) = (cur_window.as_mut(), cur_handle) {
                     if target == h {
                         w.resize(size(px(tile_w), px(tile_h)));
@@ -231,14 +236,10 @@ impl SlideEditor {
                     })
                     .ok();
             }
-            #[cfg(target_os = "macos")]
-            {
-                let _ = (&mut cur_window, cur_handle);
-            }
         }
 
         #[cfg(target_os = "macos")]
-        if !macos_frames.is_empty() {
+        if native_frames && !macos_frames.is_empty() {
             cx.foreground_executor()
                 .spawn(async move {
                     set_macos_window_frames(&macos_frames);
@@ -271,22 +272,29 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let id = id.to_string();
+            let ui = p.ui.clone();
+            action.on_bounds(move |bounds, _, _| {
+                        ui.borrow_mut().insert(id.clone(), bounds);
+                    })
+        };
 
-        let mut body = v_flex().gap_1().px(px(16.)).py(px(8.));
+        let mut body = v_flex().gap_1().px(px(16.)).py(px(8.)).p_0();
 
         body = body.child(
             div()
-                .text_size(px(13.))
+                .text_sm()
                 .font_weight(FontWeight::BOLD)
                 .child(text("fix.arrange-windows.arrange")),
         );
 
-        // Radio group (shared radio_row component, left-aligned)
+        // Shared radio buttons, one option per row.
         let radio_btn = |mode: ArrangeKind, label_key: &'static str, id_btn: &'static str, id_mark: &'static str, cx: &mut Context<Self>| {
             let selected = kind == mode;
             mark(
                 id_mark,
-                crate::xlsx::toggle::radio_row(
+                crate::shell::chrome::radio_button(
                     id_btn,
                     selected,
                     false,
@@ -299,10 +307,12 @@ impl SlideEditor {
             )
         };
 
-        body = body.child(radio_btn(ArrangeKind::Tiled, "fix.arrange-windows.tiled", "btn-arrange-tiled", "arrange-tiled", cx));
-        body = body.child(radio_btn(ArrangeKind::Horizontal, "fix.arrange-windows.horizontal", "btn-arrange-horizontal", "arrange-horizontal", cx));
-        body = body.child(radio_btn(ArrangeKind::Vertical, "fix.arrange-windows.vertical", "btn-arrange-vertical", "arrange-vertical", cx));
-        body = body.child(radio_btn(ArrangeKind::Cascade, "fix.arrange-windows.cascade", "btn-arrange-cascade", "arrange-cascade", cx));
+        body = body.child(crate::shell::chrome::radio_group()
+            .child(radio_btn(ArrangeKind::Tiled, "fix.arrange-windows.tiled", "btn-arrange-tiled", "arrange-tiled", cx))
+            .child(radio_btn(ArrangeKind::Horizontal, "fix.arrange-windows.horizontal", "btn-arrange-horizontal", "arrange-horizontal", cx))
+            .child(radio_btn(ArrangeKind::Vertical, "fix.arrange-windows.vertical", "btn-arrange-vertical", "arrange-vertical", cx))
+            .child(radio_btn(ArrangeKind::Cascade, "fix.arrange-windows.cascade", "btn-arrange-cascade", "arrange-cascade", cx))
+        );
 
         body = body.child(div().h(px(6.)));
 
@@ -321,22 +331,17 @@ impl SlideEditor {
         ));
 
         // Execute button ("実行") in sticky bottom footer
-        let footer = h_flex().gap_2().child(mark(
-            "arrange-ok",
-            Button::new("btn-arrange-ok")
-                .primary()
-                .small()
+        let footer = crate::shell::chrome::action_bar().action(mark_action("arrange-ok", crate::shell::chrome::ActionDefinition::new("btn-arrange-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
                 .label(text("_xlsx.run"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.apply_arrange_windows(window, cx);
-                }))
-                .into_any_element(),
-        ));
+                }))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
 
         Some(SidebarPanel::with_footer(
             text("fix.arrange-windows.arrange-windows"),
             body.into_any_element(),
-            footer.into_any_element(),
+            footer,
         ))
     }
 }
@@ -387,6 +392,34 @@ fn redisplay_macos_windows(frames: &[(usize, f32, f32, f32, f32)]) {
                 let _: () = msg_send![win, displayIfNeeded];
             }
         }
+    }
+}
+
+/// Whether this process has an NSWindow of GPUI's (false in the scenarios' headless windows).
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
+fn macos_has_native_windows() -> bool {
+    use objc::runtime::{Class, Object, BOOL, YES};
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let Some(gpui_cls) = Class::get("GPUIWindow") else { return false };
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        if app.is_null() {
+            return false;
+        }
+        let ordered: *mut Object = msg_send![app, orderedWindows];
+        if ordered.is_null() {
+            return false;
+        }
+        let count: usize = msg_send![ordered, count];
+        (0..count).any(|i| {
+            let win: *mut Object = msg_send![ordered, objectAtIndex: i];
+            if win.is_null() {
+                return false;
+            }
+            let is_gpui: BOOL = msg_send![win, isKindOfClass: gpui_cls];
+            is_gpui == YES
+        })
     }
 }
 

@@ -452,8 +452,13 @@ impl ListStyle {
 /// characters standing in for Wingdings and Symbol glyphs are larger in
 /// ordinary fonts than the glyphs they replace (measured against
 /// PowerPoint's PDF output: Wingdings' circle is about 0.6 of the text size).
+/// Whether `font` is a symbol typeface (its codes draw signs, not letters).
+pub(crate) fn is_symbol_font(font: &str) -> bool {
+    font.contains("Wingdings") || font.contains("Symbol")
+}
+
 pub(crate) fn bullet_scale(font: Option<&str>) -> f32 {
-    if font.is_some_and(|f| f.contains("Wingdings") || f.contains("Symbol")) { 0.75 } else { 1.0 }
+    if font.is_some_and(is_symbol_font) { 0.75 } else { 1.0 }
 }
 
 pub(crate) fn bullet_glyph(text: &str, font: Option<&str>) -> String {
@@ -461,13 +466,23 @@ pub(crate) fn bullet_glyph(text: &str, font: Option<&str>) -> String {
     if !symbol_font {
         return text.to_string();
     }
-    match text {
+    // A symbol font's code points are also written in the private use range U+F020..=U+F0FF (U+F000 plus the code):
+    // PowerPoint saves a bullet drawn with Wingdings as U+F0FC for the code 0xFC (ü).
+    let code = {
+        let mut chars = text.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) if ('\u{f020}'..='\u{f0ff}').contains(&c) => char::from(u32::from(c) as u8).to_string(),
+            _ => text.to_string(),
+        }
+    };
+    match code.as_str() {
         "l" | "Ÿ" | "·" => "●",
         "§" | "n" => "■",
         "p" | "q" => "❑",
         "v" => "❖",
         "Ø" => "➢",
-        "ü" => "✔",
+        // Text presentation (U+FE0E): without it Windows draws the heavy check mark as a colour emoji, which ignores the bullet's colour.
+        "ü" => "✔\u{fe0e}",
         "ð" | "è" => "➔",
         _ => "•",
     }
@@ -651,5 +666,15 @@ mod tests {
     fn wingdings_bullets_map_to_unicode() {
         assert_eq!(bullet_glyph("§", Some("Wingdings")), "■");
         assert_eq!(bullet_glyph("•", Some("Arial")), "•");
+    }
+
+    /// PowerPoint writes a Wingdings bullet's code in the private use range (U+F000 + the code): U+F0FC is ü, the check
+    /// mark, as U+F0A7 is §, the square.
+    #[test]
+    fn wingdings_bullets_in_the_private_use_range_map_like_their_codes() {
+        assert_eq!(bullet_glyph("\u{f0fc}", Some("Wingdings")), "✔\u{fe0e}");
+        assert_eq!(bullet_glyph("\u{f0a7}", Some("Wingdings")), "■");
+        assert_eq!(bullet_glyph("\u{f06c}", Some("Wingdings")), "●");
+        assert_eq!(bullet_glyph("\u{f0fc}", Some("Arial")), "\u{f0fc}");
     }
 }

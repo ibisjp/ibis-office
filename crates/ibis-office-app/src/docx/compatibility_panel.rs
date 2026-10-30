@@ -7,7 +7,7 @@
 //! 高度なフォント効果・OpenType 機能、図形の高度な視覚効果等）を検出し、
 //! 重大な機能低下と軽微な精度の低下に分類して該当箇所へのジャンプや再チェックを提供する。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::flow::{FlowDocument, FlowRunKind, Ligatures, NumberForm, NumberSpacing};
@@ -194,6 +194,7 @@ pub(crate) struct DocCompatibilityState {
 impl SlideEditor {
     /// 互換性チェックパネルを開く
     pub(crate) fn open_doc_compatibility_panel(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(doc) = self.flow() else { return };
         let report = check_docx_compatibility(doc);
         let panel = DocCompatibilityState {
@@ -260,17 +261,13 @@ impl SlideEditor {
         let mut mode_card = v_flex()
             .p_2()
             .gap_1()
-            .rounded_md()
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().background)
             .child(
                 h_flex()
                     .justify_between()
                     .items_center()
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("{}: {}", text("docx.compat.current-mode"), mode_name)),
                     ),
@@ -279,12 +276,12 @@ impl SlideEditor {
             mode_card = mode_card
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(text("docx.infobar.compat.message").to_string()),
                 )
                 .child(
-                    Button::new("compat-convert-btn")
+                    crate::shell::chrome::action_button("compat-convert-btn")
                         .label(text("docx.infobar.compat.convert"))
                         .small()
                         .primary()
@@ -299,7 +296,7 @@ impl SlideEditor {
             .child(mode_card)
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(text("docx.compat.summary-hint").to_string()),
             );
@@ -322,7 +319,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(text("docx.compat.clean-desc").to_string()),
                 )
@@ -333,7 +330,7 @@ impl SlideEditor {
         // 1. 重大な機能低下
         if !report.significant.is_empty() {
             let sig_header = div()
-                .text_xs()
+                .text_sm()
                 .font_weight(FontWeight::BOLD)
                 .text_color(cx.theme().danger)
                 .child(format!(
@@ -364,7 +361,7 @@ impl SlideEditor {
                                     .child(issue.title.clone()),
                             )
                             .child(
-                                Button::new(("compat-jump-sig", ix))
+                                crate::shell::chrome::action_button(("compat-jump-sig", ix))
                                     .label(text("docx.compat.jump"))
                                     .small()
                                     .outline()
@@ -375,13 +372,13 @@ impl SlideEditor {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(issue.description.clone()),
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(crate::shell::i18n::format("_docx.para-item", &[("para", &pos.para)])),
                     );
@@ -393,7 +390,7 @@ impl SlideEditor {
         // 2. 軽微な精度の低下
         if !report.minor.is_empty() {
             let minor_header = div()
-                .text_xs()
+                .text_sm()
                 .font_weight(FontWeight::BOLD)
                 .text_color(cx.theme().warning)
                 .child(format!(
@@ -424,7 +421,7 @@ impl SlideEditor {
                                     .child(issue.title.clone()),
                             )
                             .child(
-                                Button::new(("compat-jump-minor", ix))
+                                crate::shell::chrome::action_button(("compat-jump-minor", ix))
                                     .label(text("docx.compat.jump"))
                                     .small()
                                     .outline()
@@ -435,13 +432,13 @@ impl SlideEditor {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(issue.description.clone()),
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(crate::shell::i18n::format("_docx.para-item", &[("para", &pos.para)])),
                     );
@@ -453,40 +450,31 @@ impl SlideEditor {
         let message_box = (!msg.is_empty()).then(|| {
             div()
                 .p_2()
-                .text_xs()
+                .text_sm()
                 .rounded_md()
                 .bg(cx.theme().primary.opacity(0.1))
                 .text_color(cx.theme().primary)
                 .child(msg)
         });
 
-        let footer = h_flex()
-            .gap_2()
-            .justify_end()
-            .child(
-                Button::new("compat-recheck")
-                    .label(text("docx.compat.recheck"))
-                    .outline()
+        let footer = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("compat-recheck", text("docx.compat.recheck"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| this.recheck_doc_compatibility(cx))),
             )
-            .child(
-                Button::new("compat-close")
-                    .label(text("_shell.close"))
-                    .on_click(cx.listener(|this, _, _, cx| this.close_doc_compatibility_panel(cx))),
-            );
+
+            .action(crate::shell::chrome::ActionDefinition::new("compat-close", text("_shell.close"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,w,cx| e.close_panel_dialog(w,cx))));
 
         let body = v_flex()
             .p_4()
             .gap_3()
-            .child(header)
+            .p_0().child(header)
             .children(message_box)
             .children(clean_box)
             .child(issues_list)
-            .child(footer);
+            ;
 
-        Some(SidebarPanel {
-            title: text("docx.compat.title").into(),
-            body: body.into_any_element(),
-        })
+        let panel_terminal_actions = footer;
+        Some(SidebarPanel::with_footer(text("docx.compat.title"), body.into_any_element(), panel_terminal_actions))
     }
 }

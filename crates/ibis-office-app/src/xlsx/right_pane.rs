@@ -18,6 +18,13 @@ pub(crate) enum RightKey {
 }
 
 impl SlideEditor {
+    /// Explicit settings commands replace the previous settings session. Keeping this
+    /// reset here prevents the sidebar render chain from choosing a stale panel first.
+    pub(crate) fn begin_sheet_settings(&mut self) {
+        self.document.end_repeat_sheet_group();
+        self.wb_mut().close_settings();
+    }
+
     /// The right pane's button / 表示 > サイドバー: show or hide the pane. Shown, it is for what is
     /// selected (the render's `sync_right_pane`).
     pub(crate) fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -45,6 +52,7 @@ impl SlideEditor {
     /// goes with it. `open` is whether another panel (the name manager, a search, ...) is
     /// already on show, which stays while the selection stays.
     pub(crate) fn sync_right_pane(&mut self, shown: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.sheet_range_pick_active() { return false; }
         if !self.sidebar_open || !self.is_workbook() {
             return false;
         }
@@ -89,5 +97,50 @@ impl SlideEditor {
         if let RightKey::Shape(id) = key {
             self.refresh_sheet_frame_panel(id, window, cx);
         }
+    }
+}
+
+impl SlideEditor {
+    /// Repeat the last semantic operation at the current selection, preserving
+    /// the original style values rather than toggling the destination's values.
+    pub(crate) fn repeat_sheet_edit(&mut self,cx:&mut Context<Self>){
+        use ibis_doc_model::{Command,SheetCommand};
+        use ibis_doc_model::sheet_command::Axis;
+        let Some(range)=self.selected_range() else{return;};
+        let slide=self.current_slide;
+        let mut repeated=Vec::new();
+        for edit in self.document.repeat_sheet_commands(){
+            let next=match edit {
+                SheetCommand::SetFormat{change,..}=>SheetCommand::SetFormat{slide,ranges:self.selected_ranges(),change:change.clone()},
+                SheetCommand::ClearFormats{..}=>SheetCommand::ClearFormats{slide,ranges:self.selected_ranges()},
+                SheetCommand::Insert{axis,count,..}=>SheetCommand::Insert{slide,axis:*axis,at:if *axis==Axis::Rows{range.first_row}else{range.first_column},count:*count},
+                SheetCommand::Delete{axis,count,..}=>SheetCommand::Delete{slide,axis:*axis,at:if *axis==Axis::Rows{range.first_row}else{range.first_column},count:*count},
+                SheetCommand::ShiftCells{down,insert,..}=>SheetCommand::ShiftCells{slide,range,down:*down,insert:*insert},
+                _=>continue,
+            };
+            repeated.push(Command::Sheet(next));
+        }
+        if !repeated.is_empty(){self.document.end_repeat_sheet_group();self.run_sheet(repeated,cx);}
+    }
+}
+
+
+impl super::State {
+    /// All settings entry points share this reset, including selection attributes
+    /// stored outside EditPanels. A newly requested dialog must never be hidden
+    /// behind the previous panel in the render chain.
+    pub(crate) fn close_settings(&mut self) {
+        self.panels.close();
+        self.custom_format=None;
+        self.chart_edit=None;
+        self.validation=None;
+        self.names=None;
+        self.find=None;
+        self.link=None;
+        self.page_setup=false;
+        self.header_footer_edit=None;
+        self.conditional_edit=None;
+        self.sort_edit=None;
+        self.right_key=None;
     }
 }

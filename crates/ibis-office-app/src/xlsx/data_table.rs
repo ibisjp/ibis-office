@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, Command, DataTable, SheetCommand};
@@ -53,7 +53,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.data_table = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -131,68 +131,39 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                            ui.borrow_mut().insert(id.clone(), bounds);
+                        })
+        };
         let body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
+            .p_0().child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_sm().child(text("_xlsx.row-input-cell"))),
+            )
+            .child(mark("xlsx.data-table.row-input", super::range_field::local_range_field(&p.row_input,"data_table-p-row_input",true,cx).into_any_element()))
             .child(
                 h_flex()
                     .items_center()
                     .justify_between()
-                    .child(div().text_size(px(13.)).child(text("_xlsx.row-input-cell")))
-                    .child(mark(
-                        "xlsx.data-table.use-row",
-                        Button::new("data-table-use-row")
-                            .xsmall()
-                            .ghost()
-                            .label(text("xlsx.use-selected-cell"))
-                            .on_click(cx.listener(|this, _, window, cx| this.set_data_table_input_from_selection(false, window, cx)))
-                            .into_any_element(),
-                    )),
+                    .child(div().text_sm().child(text("_xlsx.column-input-cell"))),
             )
-            .child(mark("xlsx.data-table.row-input", Input::new(&p.row_input).small().cleanable(true).into_any_element()))
-            .child(
-                h_flex()
-                    .items_center()
-                    .justify_between()
-                    .child(div().text_size(px(13.)).child(text("_xlsx.column-input-cell")))
-                    .child(mark(
-                        "xlsx.data-table.use-col",
-                        Button::new("data-table-use-col")
-                            .xsmall()
-                            .ghost()
-                            .label(text("xlsx.use-selected-cell"))
-                            .on_click(cx.listener(|this, _, window, cx| this.set_data_table_input_from_selection(true, window, cx)))
-                            .into_any_element(),
-                    )),
-            )
-            .child(mark("xlsx.data-table.column-input", Input::new(&p.column_input).small().cleanable(true).into_any_element()))
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(mark(
-                        "xlsx.data-table.ok",
-                        Button::new("data-table-ok")
-                            .small()
-                            .primary()
+            .child(mark("xlsx.data-table.column-input", super::range_field::local_range_field(&p.column_input,"data_table-p-column_input",true,cx).into_any_element()))
+            .children(crate::shell::chrome::panel_message(&p.message))
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(mark_action("xlsx.data-table.ok", crate::shell::chrome::ActionDefinition::new("data-table-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
                             .label(text("OK"))
-                            .on_click(cx.listener(|this, _, _, cx| this.apply_data_table(cx)))
-                            .into_any_element(),
-                    ))
-                    .child(mark(
-                        "xlsx.data-table.close",
-                        Button::new("data-table-close")
-                            .small()
-                            .ghost()
-                            .label(text("_shell.close"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.wb_mut().panels.data_table = None;
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    )),
-            );
-        Some(SidebarPanel { title: text("_xlsx.data-table").to_string().into(), body: body.into_any_element() })
+                            .on_click(cx.listener(|this, _, _, cx| this.apply_data_table(cx)))))
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("_xlsx.data-table").to_string(), body.into_any_element(), panel_actions))
     }
 }

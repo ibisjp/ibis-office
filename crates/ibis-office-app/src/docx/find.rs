@@ -14,9 +14,10 @@
 //! `^s` a non-breaking space, `^-` an optional hyphen, `^~` a non-breaking hyphen,
 //! `^+` an em dash, `^=` an en dash, `^^` a caret.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::checkbox::Checkbox;
+use crate::shell::chrome::Checkbox;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -237,6 +238,7 @@ pub(crate) struct FindState {
     pub(crate) find_format: FindFormatting,
     pub(crate) replace_format: ReplaceFormatting,
     pub(crate) format_section_open: bool,
+    pub(crate) replace_mode: bool,
     _subscription: Subscription,
 }
 
@@ -1158,6 +1160,7 @@ impl SlideEditor {
 
     /// 編集 > 検索と置換…: the panel in the sidebar, its field focused.
     pub(crate) fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if self.doc_state().is_some_and(|s| s.find.is_none()) {
             let query = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_shell.find-what")));
             let replacement = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_shell.replace-with")));
@@ -1190,6 +1193,7 @@ impl SlideEditor {
                     find_format: FindFormatting::default(),
                     replace_format: ReplaceFormatting::default(),
                     format_section_open: false,
+                    replace_mode: false,
                     _subscription: subscription,
                 });
             }
@@ -1234,6 +1238,7 @@ impl SlideEditor {
         let find_fmt = state.find_format.clone();
         let rep_fmt = state.replace_format.clone();
         let fmt_open = state.format_section_open;
+        let replace_mode = state.replace_mode;
         let has_selection = state.selection_range.is_some_and(|(a, b)| a != b);
         let status: SharedString = match (state.matches.len(), state.current) {
             (0, _) if query.read(cx).value().is_empty() && find_fmt.is_empty() => "".into(),
@@ -1243,33 +1248,21 @@ impl SlideEditor {
             (n, None) => crate::shell::i18n::format("docx.find.n-results", &[("n", &n)]).into(),
         };
         let next_forward = direction != SearchDirection::Up;
-        let dir_button = |dir: SearchDirection, label_key: &'static str| {
-            let is_selected = direction == dir;
-            let id = SharedString::from(format!("find-dir-{dir:?}").to_lowercase());
-            let btn = Button::new(id)
-                .small()
-                .label(crate::shell::i18n::text(label_key))
-                .on_click(cx.listener(move |this, _, _, cx| this.set_find_direction(dir, cx)));
-            if is_selected { btn.primary() } else { btn.ghost() }
+        let dir_button = |dir:SearchDirection,label_key:&'static str| {
+            crate::shell::chrome::segment_control::SegmentItem::label(SharedString::from(format!("find-dir-{dir:?}")),crate::shell::i18n::text(label_key),direction==dir)
+                .on_click(cx.listener(move |e,_,_,cx|e.set_find_direction(dir,cx)))
         };
-        let scope_button = |sc: SearchScope, label_key: &'static str| {
-            let is_selected = scope == sc;
-            let id = SharedString::from(format!("find-scope-{sc:?}").to_lowercase());
-            let btn = Button::new(id)
-                .small()
-                .label(crate::shell::i18n::text(label_key))
-                .on_click(cx.listener(move |this, _, _, cx| this.set_find_scope(sc, cx)));
-            if is_selected { btn.primary() } else { btn.ghost() }
+        let scope_button = |scope_value:SearchScope,label_key:&'static str| {
+            crate::shell::chrome::radio_button(SharedString::from(format!("find-scope-{scope_value:?}")),scope==scope_value,false,crate::shell::i18n::text(label_key),cx.listener(move |e,_,_,cx|e.set_find_scope(scope_value,cx)))
         };
-
-        let mut query_section = v_flex().gap_1().child(crate::shell::chrome::clearable_text_field(&query));
+        let mut query_section = v_flex().gap_1().child(crate::shell::chrome::text_field(&query).full_width());
         if !find_fmt.is_empty() {
             let desc: SharedString = find_fmt.description().into();
             query_section = query_section.child(
                 h_flex()
                     .gap_1()
                     .items_center()
-                    .text_size(px(11.))
+                    .text_sm()
                     .child(
                         div()
                             .text_color(rgb(0x5f6368))
@@ -1279,23 +1272,22 @@ impl SlideEditor {
                             ])),
                     )
                     .child(
-                        Button::new("clear-find-format")
+                        crate::shell::chrome::destructive_button("clear-find-format",cx)
                             .small()
-                            .ghost()
                             .label(crate::shell::i18n::text("docx.find.format.clear"))
                             .on_click(cx.listener(|this, _, _, cx| this.clear_find_format(cx))),
                     ),
             );
         }
 
-        let mut rep_section = v_flex().gap_1().child(crate::shell::chrome::clearable_text_field(&replacement));
+        let mut rep_section = v_flex().gap_1().child(crate::shell::chrome::text_field(&replacement).full_width());
         if !rep_fmt.is_empty() {
             let desc: SharedString = rep_fmt.description().into();
             rep_section = rep_section.child(
                 h_flex()
                     .gap_1()
                     .items_center()
-                    .text_size(px(11.))
+                    .text_sm()
                     .child(
                         div()
                             .text_color(rgb(0x5f6368))
@@ -1305,55 +1297,41 @@ impl SlideEditor {
                             ])),
                     )
                     .child(
-                        Button::new("clear-replace-format")
+                        crate::shell::chrome::destructive_button("clear-replace-format",cx)
                             .small()
-                            .ghost()
                             .label(crate::shell::i18n::text("docx.find.format.clear"))
                             .on_click(cx.listener(|this, _, _, cx| this.clear_replace_format(cx))),
                     ),
             );
         }
 
-        let fmt_toggle_btn = {
-            let btn = Button::new("find-toggle-format")
-                .small()
-                .label(crate::shell::i18n::text("docx.find.format.toggle"))
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_find_format_section(cx)));
-            if fmt_open { btn.primary() } else { btn.ghost() }
-        };
-
+        let common_options=v_flex().gap_1()
+            .child(crate::shell::chrome::checkbox_button("find-case-sensitive",crate::shell::i18n::text("_shell.match-case"),case_sensitive,false,cx.listener(move |e,_,_,cx|e.set_find_case_sensitive(!case_sensitive,cx))))
+            .child(crate::shell::chrome::checkbox_button("find-whole-words",crate::shell::i18n::text("docx.find.find-whole-words-only"),whole_words,false,cx.listener(move |e,_,_,cx|e.set_find_whole_words(!whole_words,cx))))
+            .child(crate::shell::chrome::checkbox_button("find-wildcards",crate::shell::i18n::text("docx.find.use-wildcards"),wildcards,false,cx.listener(move |e,_,_,cx|e.set_find_wildcards(!wildcards,cx))));
         let mut body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
+            .p_0().child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+                .child(crate::shell::chrome::radio_button("find-mode-search", !replace_mode, false, crate::shell::i18n::text("_shell.find"), cx.listener(|this, _, _, cx| {
+                    if let Some(f) = this.doc_state_mut().and_then(|s| s.find.as_mut()) { f.replace_mode = false; } cx.notify();
+                })))
+                .child(crate::shell::chrome::radio_button("find-mode-replace", replace_mode, false, crate::shell::i18n::text("_shell.replace"), cx.listener(|this, _, _, cx| {
+                    if let Some(f) = this.doc_state_mut().and_then(|s| s.find.as_mut()) { f.replace_mode = true; } cx.notify();
+                }))))
             .child(query_section)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("find-previous").small().ghost().label(crate::shell::i18n::text("_shell.previous")).on_click(cx.listener(|this, _, _, cx| this.find_next(false, cx))))
-                    .child(Button::new("find-next").small().ghost().label(crate::shell::i18n::text("_shell.next")).on_click(cx.listener(move |this, _, _, cx| this.find_next(next_forward, cx))))
-                    .child(div().text_size(px(12.)).child(status)),
+            .when(replace_mode, |d| d.child(rep_section)).child(common_options)
+            .child(h_flex().gap_1().flex_wrap()
+                .child(crate::shell::chrome::action_button("find-previous").small().label(crate::shell::i18n::text("_shell.previous")).on_click(cx.listener(|this, _, _, cx| this.find_next(false, cx))))
+                .child(crate::shell::chrome::action_button("find-next").label(crate::shell::i18n::text("_shell.next")).tooltip(crate::shell::i18n::text(if replace_mode{"docx.find.replace-next"}else{"_shell.next"})).on_click(cx.listener(move |e,_,_,cx|{
+                    if replace_mode {let value=e.doc_state().and_then(|s|s.find.as_ref()).map(|f|f.replacement.read(cx).value().to_string()).unwrap_or_default();e.replace_current(&value,cx);}
+                    e.find_next(next_forward,cx);
+                })))
+                .when(replace_mode,|d|d.child(crate::shell::chrome::action_button("replace-all").label(crate::shell::i18n::text("docx.find.dir.all")).on_click(cx.listener(|e,_,_,cx|{let Some(f)=e.doc_state().and_then(|s|s.find.as_ref())else{return;};let(q,t)=(f.query.read(cx).value().to_string(),f.replacement.read(cx).value().to_string());e.replace_all(&q,&t,cx);}))))
             )
-            .child(rep_section)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("replace-one").small().label(crate::shell::i18n::text("_shell.replace")).on_click(cx.listener(|this, _, _, cx| {
-                        let text = this.doc_state().and_then(|s| s.find.as_ref()).map(|f| f.replacement.read(cx).value().to_string()).unwrap_or_default();
-                        this.replace_current(&text, cx);
-                    })))
-                    .child(Button::new("replace-all").small().label(crate::shell::i18n::text("_shell.replace-all")).on_click(cx.listener(|this, _, _, cx| {
-                        let Some(f) = this.doc_state().and_then(|s| s.find.as_ref()) else { return };
-                        let (q, text) = (f.query.read(cx).value().to_string(), f.replacement.read(cx).value().to_string());
-                        this.replace_all(&q, &text, cx);
-                    }))),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(fmt_toggle_btn),
-            );
+            .child(div().text_sm().child(status))
+            ;
 
         if fmt_open {
             let fmt_btn = |id: &'static str, label_key: &'static str, state_opt: Option<bool>, on_click: Box<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>) + Send + Sync>| {
@@ -1362,7 +1340,7 @@ impl SlideEditor {
                     Some(false) => SharedString::from(crate::shell::i18n::format("_docx.label-clear", &[("label", &crate::shell::i18n::text(label_key).to_string())])),
                     None => crate::shell::i18n::text(label_key),
                 };
-                let btn = Button::new(id).small().label(label_text).on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)));
+                let btn = crate::shell::chrome::action_button(id).small().label(label_text).on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)));
                 if state_opt == Some(true) {
                     btn.primary()
                 } else {
@@ -1372,7 +1350,7 @@ impl SlideEditor {
 
             let find_fmt_controls = v_flex()
                 .gap_1()
-                .child(div().text_size(px(11.)).child(crate::shell::i18n::text("docx.find.format.find-label")))
+                .child(div().text_sm().child(crate::shell::i18n::text("docx.find.format.find-label")))
                 .child(
                     h_flex()
                         .gap_1()
@@ -1382,9 +1360,8 @@ impl SlideEditor {
                         .child(fmt_btn("find-fmt-underline", "docx.find.format.underline", find_fmt.underline, Box::new(|this, cx| this.toggle_find_format_underline(cx))))
                         .child(fmt_btn("find-fmt-strike", "docx.find.format.strike", find_fmt.strike, Box::new(|this, cx| this.toggle_find_format_strike(cx))))
                         .child(
-                            Button::new("find-fmt-clear")
+                            crate::shell::chrome::destructive_button("find-fmt-clear",cx)
                                 .small()
-                                .ghost()
                                 .label(crate::shell::i18n::text("docx.find.format.clear"))
                                 .on_click(cx.listener(|this, _, _, cx| this.clear_find_format(cx))),
                         ),
@@ -1392,7 +1369,7 @@ impl SlideEditor {
 
             let rep_fmt_controls = v_flex()
                 .gap_1()
-                .child(div().text_size(px(11.)).child(crate::shell::i18n::text("docx.find.format.replace-label")))
+                .child(div().text_sm().child(crate::shell::i18n::text("docx.find.format.replace-label")))
                 .child(
                     h_flex()
                         .gap_1()
@@ -1402,9 +1379,8 @@ impl SlideEditor {
                         .child(fmt_btn("rep-fmt-underline", "docx.find.format.underline", rep_fmt.underline, Box::new(|this, cx| this.toggle_replace_format_underline(cx))))
                         .child(fmt_btn("rep-fmt-strike", "docx.find.format.strike", rep_fmt.strike, Box::new(|this, cx| this.toggle_replace_format_strike(cx))))
                         .child(
-                            Button::new("rep-fmt-clear")
+                            crate::shell::chrome::destructive_button("rep-fmt-clear",cx)
                                 .small()
-                                .ghost()
                                 .label(crate::shell::i18n::text("docx.find.format.clear"))
                                 .on_click(cx.listener(|this, _, _, cx| this.clear_replace_format(cx))),
                         ),
@@ -1412,15 +1388,13 @@ impl SlideEditor {
 
             body = body
                 .child(find_fmt_controls)
-                .child(rep_fmt_controls);
+                .when(replace_mode, |d| d.child(rep_fmt_controls));
         }
 
         body = body
             .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(div().text_size(px(11.)).child(crate::shell::i18n::text("docx.find.direction")))
+                crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
+                    .label(crate::shell::i18n::text("docx.find.direction"))
                     .child(dir_button(SearchDirection::All, "docx.find.dir.all"))
                     .child(dir_button(SearchDirection::Down, "docx.find.dir.down"))
                     .child(dir_button(SearchDirection::Up, "docx.find.dir.up")),
@@ -1428,7 +1402,7 @@ impl SlideEditor {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(11.)).child(crate::shell::i18n::text("docx.find.scope")))
+                    .child(div().text_sm().child(crate::shell::i18n::text("docx.find.scope")))
                     .child(
                         h_flex()
                             .gap_1()
@@ -1441,9 +1415,7 @@ impl SlideEditor {
                             .child(scope_button(SearchScope::Selection, "docx.find.scope.selection")),
                     ),
             )
-            .child(Checkbox::new("find-case-sensitive").label(crate::shell::i18n::text("_shell.match-case")).checked(case_sensitive).on_click(cx.listener(|this, checked: &bool, _, cx| this.set_find_case_sensitive(*checked, cx))))
-            .child(Checkbox::new("find-whole-words").label(crate::shell::i18n::text("docx.find.find-whole-words-only")).checked(whole_words).on_click(cx.listener(|this, checked: &bool, _, cx| this.set_find_whole_words(*checked, cx))))
-            .child(Checkbox::new("find-wildcards").label(crate::shell::i18n::text("docx.find.use-wildcards")).checked(wildcards).on_click(cx.listener(|this, checked: &bool, _, cx| this.set_find_wildcards(*checked, cx))));
+;
         Some(SidebarPanel { title: crate::shell::i18n::text("_shell.find-and-replace"), body: body.into_any_element() })
     }
 }

@@ -107,6 +107,7 @@ impl SlideEditor {
 
     /// データの編集: the panel for the selected chart.
     pub(crate) fn open_doc_chart_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if !self.can_edit_doc_chart() {
             return;
         }
@@ -150,7 +151,7 @@ impl SlideEditor {
                 if new != chart {
                     self.run_flow(vec![FlowCommand::SetChart { at, chart: Box::new(new) }], cx);
                 }
-                self.close_doc_chart_panel(window, cx);
+                cx.notify();
             }
             Err(error) => {
                 if let Some((p, _)) = self.doc_state_mut().and_then(|s| s.helper.chart.as_mut()) {

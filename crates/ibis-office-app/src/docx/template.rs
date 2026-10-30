@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -45,6 +45,7 @@ impl TemplateAttachPanel {
 impl SlideEditor {
     /// ツール/開発 > テンプレートとアドイン…: open the template attachment panel.
     pub(crate) fn open_docx_template_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let current_path = self.docx_attached_template().map(str::to_string);
         let panel = TemplateAttachPanel::new(current_path.as_deref(), window, cx);
         if let Some(state) = self.doc_state_mut() {
@@ -206,7 +207,7 @@ impl SlideEditor {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().foreground)
                             .child(match &current_attached {
                                 Some(p) => format!("{}: {}", text("docx.template.attached_file"), p),
@@ -223,25 +224,17 @@ impl SlideEditor {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(text("docx.template.path_label")),
                     )
-                    .child(Input::new(&path_input))
+                    .child(crate::shell::chrome::text_field(&path_input).full_width().path_picker("template-browse", crate::shell::chrome::PathMode::File, &["dotx","dotm","docx","docm"],cx,|_,_,_,_|{}))
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .mt_1()
-                            .child(
-                                Button::new("template-apply-btn")
-                                    .label(text("docx.template.apply"))
-                                    .small()
-                                    .primary()
+                        crate::shell::chrome::action_bar()
+                            .action(
+                                crate::shell::chrome::ActionDefinition::new("template-apply-btn", text("docx.template.apply"), crate::shell::chrome::ActionButtonKind::Primary)
                                     .on_click(cx.listener(|editor, _, _, cx| {
                                         editor.apply_docx_template_from_panel(cx);
                                     })),
                             )
-                            .child(
-                                Button::new("template-detach-btn")
-                                    .label(text("docx.template.detach"))
-                                    .small()
-                                    .ghost()
+                            .action(
+                                crate::shell::chrome::ActionDefinition::new("template-detach-btn", text("docx.template.detach"), crate::shell::chrome::ActionButtonKind::Destructive)
                                     .on_click(cx.listener(|editor, _, _, cx| {
                                         editor.detach_docx_template(cx);
                                     })),
@@ -256,8 +249,7 @@ impl SlideEditor {
                     .border_t_1()
                     .border_color(cx.theme().border)
                     .child(
-                        Button::new("template-toggle-link-styles")
-                            .ghost()
+                        crate::shell::chrome::action_button("template-toggle-link-styles")
                             .small()
                             .icon(if link_styles {
                                 Icon::new(Material("check_box"))
@@ -271,7 +263,7 @@ impl SlideEditor {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(text("docx.template.link_styles_desc")),
                     ),
@@ -284,7 +276,7 @@ impl SlideEditor {
                     .border_t_1()
                     .border_color(cx.theme().border)
                     .child(
-                        Button::new("template-update-now-btn")
+                        crate::shell::chrome::action_button("template-update-now-btn")
                             .label(text("docx.template.update_now"))
                             .icon(Icon::new(Material("sync")))
                             .primary()
@@ -294,7 +286,7 @@ impl SlideEditor {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(text("docx.template.update_now_desc")),
                     ),
@@ -307,7 +299,7 @@ impl SlideEditor {
                         .rounded_md()
                         .bg(cx.theme().success.opacity(0.15))
                         .text_color(cx.theme().success)
-                        .text_xs()
+                        .text_sm()
                         .child(msg),
                 )
             })
@@ -318,23 +310,15 @@ impl SlideEditor {
                         .rounded_md()
                         .bg(cx.theme().danger.opacity(0.15))
                         .text_color(cx.theme().danger)
-                        .text_xs()
+                        .text_sm()
                         .child(err),
                 )
             })
-            .child(
-                Button::new("template-close-btn")
-                    .label(text("docx.template.close"))
-                    .ghost()
-                    .on_click(cx.listener(|editor, _, _, cx| {
-                        editor.close_docx_template_panel(cx);
-                    })),
-            )
+
             .into_any_element();
 
-        Some(SidebarPanel {
-            title: text("docx.template.title").into(),
-            body,
-        })
+        let panel_terminal_actions = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::dialog_close_definition(cx));
+        Some(SidebarPanel::with_footer(text("docx.template.title"), body, panel_terminal_actions))
     }
 }

@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Arbitrary transition duration and automatic advancement in seconds.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -195,14 +195,14 @@ impl SlideEditor {
                     this.open_timing_panel_context_menu(event.position, window, cx);
                 }),
             )
-            .child(div().text_size(px(13.)).child(crate::shell::i18n::text("pptx.timing-panel.transition-duration-s"))).child(Input::new(&duration).small().cleanable(true))
-            .child(Button::new("pptx-timing-click").small().ghost().label(if click { crate::shell::i18n::text("pptx.timing-panel.mouse-click") } else { crate::shell::i18n::text("pptx.timing-panel.mouse-click-2") }).on_click(cx.listener(|e, _, _, cx| e.toggle_timing_panel(false, cx))))
-            .child(Button::new("pptx-timing-auto").small().ghost().label(if automatic { crate::shell::i18n::text("pptx.timing-panel.after") } else { crate::shell::i18n::text("pptx.timing-panel.after-2") }).on_click(cx.listener(|e, _, _, cx| e.toggle_timing_panel(true, cx))))
-            .child(div().text_size(px(13.)).child(crate::shell::i18n::text("pptx.timing-panel.advance-after-s"))).child(Input::new(&after).small().cleanable(true));
-        if let Some(error) = error { body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error)); }
-        body = body.child(h_flex().gap_1()
-            .child(Button::new("pptx-timing-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_timing_panel(w, cx))))
-            .child(Button::new("pptx-timing-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_timing_panel(w, cx)))));
-        Some(SidebarPanel { title: title.into(), body: body.into_any_element() })
+            .child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("pptx.timing-panel.transition-duration-s"), crate::shell::chrome::text_field(&duration).unit(crate::shell::i18n::text("pptx.common.seconds-unit"), px(24.)).spinner("pptx-timing-duration", crate::shell::chrome::SpinnerSpec::new(0.25).min(0.0), cx, |_, _, _, _| {})))
+            .child(crate::shell::chrome::checkbox_button("pptx-timing-click", crate::shell::i18n::text("pptx.timing-panel.mouse-click-2"), click, false, cx.listener(|e, _, _, cx| e.toggle_timing_panel(false, cx))))
+            .child(crate::shell::chrome::checkbox_button("pptx-timing-auto", crate::shell::i18n::text("pptx.timing-panel.after-2"), automatic, false, cx.listener(|e, _, _, cx| e.toggle_timing_panel(true, cx))))
+            .child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("pptx.timing-panel.advance-after-s"), crate::shell::chrome::text_field(&after).disabled(!automatic).unit(crate::shell::i18n::text("pptx.common.seconds-unit"), px(24.)).spinner("pptx-timing-after", crate::shell::chrome::SpinnerSpec::new(1.0).min(0.0), cx, |_, _, _, _| {})));
+        if let Some(error) = error { body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error)); }
+        let panel_actions = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-timing-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_timing_panel(w, cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-timing-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_timing_panel(w, cx))));
+        Some(SidebarPanel::with_footer(title, body.into_any_element(), panel_actions))
     }
 }

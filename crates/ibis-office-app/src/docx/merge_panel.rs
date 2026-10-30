@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! 差し込み印刷 (Word's 差し込み文書): the sidebar panel with the 宛先一覧 (typed, pasted or read from a CSV
+//! Mail merge: a four-step live pane and focused dialogs; recipients read from CSV
 //! / TSV / Excel file), the 差し込みフィールド to put at the caret, the 結果のプレビュー of one record after
 //! another, and 個々のドキュメントの編集 (a new file with one copy of the letter for each record).
 
+use gpui_kit::prelude::FluentBuilder as _;
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState, Textarea, TextareaState};
-use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputState, TextareaState};
+use gpui_kit::component::{Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::merge::{
     EnvelopePreset, LabelPreset, MergePrintRange, envelope_blocks, label_sheet_table, merge_field_instruction,
@@ -18,6 +19,8 @@ use ibis_doc_model::merge::{
 use ibis_doc_model::{Container, FlowCommand, FlowPos, FlowRunKind};
 
 use crate::shell::chrome::SidebarPanel;
+mod workflow;
+pub(crate) use workflow::{MergeDialog, MergeStep, MergeOutput};
 use crate::shell::editor::SlideEditor;
 
 /// 差し込み印刷のエラーチェック結果.
@@ -31,6 +34,44 @@ pub(crate) struct MergeCheckResult {
 
 /// The merge's data and what it shows.
 pub(crate) struct MergeState {
+    /// Whether its dialog is visible; recipient data and preview remain document-scoped.
+    pub(crate) visible: bool,
+    pub(crate) step: MergeStep,
+    pub(crate) dialog: Option<MergeDialog>,
+    pub(crate) output: MergeOutput,
+    pub(crate) separate: bool,
+    pub(crate) source_name: String,
+    pub(crate) recipient_backup: Option<workflow::RecipientSnapshot>,
+    pub(crate) import: Option<workflow::MergeImport>,
+    pub(crate) dialog_return: Option<MergeDialog>,
+    pub(crate) selected_row: Option<usize>,
+    pub(crate) row_reorder:std::rc::Rc<std::cell::RefCell<crate::shell::chrome::data_table::RowReorder>>,
+    pub(crate) selected_field:Option<usize>,
+    pub(crate) field_focus:FocusHandle,
+    pub(crate) targets_only:bool,
+    pub(crate) review_ack:bool,
+    pub(crate) review_ack_signature:String,
+    pub(crate) replace_body_ack:bool,
+    pub(crate) import_names:Vec<Entity<InputState>>,
+    pub(crate) import_range:Vec<Entity<InputState>>,
+    pub(crate) import_error:Option<String>,
+    pub(crate) subscriptions:Vec<Subscription>,
+    pub(crate) import_subscriptions:Vec<Subscription>,
+    pub(crate) advanced: bool,
+    pub(crate) list_search:String,
+    pub(crate) kind_draft:Option<&'static str>,
+    pub(crate) column_backup: Option<workflow::RecipientSnapshot>,
+    pub(crate) output_backup: Option<(MergePrintRange,String,String,bool)>,
+    pub(crate) mapping_draft:Vec<ibis_doc_model::merge::FieldMapData>,
+    pub(crate) table_sort:Option<(usize,bool)>,
+    pub(crate) condition_value: Entity<InputState>,
+    pub(crate) condition_yes: Entity<InputState>,
+    pub(crate) condition_no: Entity<InputState>,
+    pub(crate) condition_column: usize,
+    pub(crate) filter_column:usize,
+    pub(crate) filter_contains:bool,
+    pub row_editor: Option<Option<usize>>,
+    pub row_inputs: Vec<Entity<InputState>>,
     /// The 宛先一覧 as text: the first line the field names (comma, tab or semicolon separated).
     pub(crate) text: Entity<TextareaState>,
     pub(crate) fields: Vec<String>,
@@ -101,19 +142,27 @@ impl SlideEditor {
 
     /// ツール > 差し込み印刷…: the panel (its data kept while the document is open).
     pub(crate) fn open_merge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if self.doc_state().is_some_and(|s| s.merge.is_none()) {
             let text = cx.new(|cx| TextareaState::new(window, cx));
             if let Some(state) = self.doc_state_mut() {
                 let sort_field = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("docx.merge-panel.field-sort")));
-                let filter_field = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("docx.merge-panel.field-value-contains-field-value")));
+                let filter_field = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("merge.flow.filter-value")));
                 let rule_field = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("docx.merge-panel.rule-placeholder")));
                 let new_field = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("docx.merge-panel.new-field-name")));
                 let goto_field = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("docx.merge-panel.go-to-number")));
                 let find_field = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("docx.merge-panel.find-recipient-placeholder")));
                 let sender_field = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("docx.merge-panel.sender-address")));
-                let print_from_field = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("docx.merge-panel.print-from")));
-                let print_to_field = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("docx.merge-panel.print-to")));
+                let print_from_field = cx.new(|cx| {let mut i=InputState::new(window,cx);i.set_value("1",window,cx);i});
+                let print_to_field = cx.new(|cx| {let mut i=InputState::new(window,cx);i.set_value("1",window,cx);i});
                 state.merge = Some(MergeState {
+                    visible: true, step:MergeStep::Recipients, dialog:None, output:MergeOutput::Document, separate:false,
+                    source_name:String::new(),recipient_backup:None,import:None,dialog_return:None,selected_row:None,row_reorder:Default::default(),selected_field:None,field_focus:cx.focus_handle(),targets_only:false,review_ack:false,review_ack_signature:String::new(),replace_body_ack:false,import_names:Vec::new(),import_range:(0..4).map(|_|cx.new(|cx|InputState::new(window,cx))).collect(),import_error:None,subscriptions:Vec::new(),import_subscriptions:Vec::new(),advanced:false,list_search:String::new(),kind_draft:None,
+                    column_backup:None,output_backup:None,mapping_draft:Vec::new(),table_sort:None,condition_column:0,filter_column:0,filter_contains:true,
+                    condition_value:cx.new(|cx|InputState::new(window,cx)),
+                    condition_yes:cx.new(|cx|InputState::new(window,cx)),
+                    condition_no:cx.new(|cx|InputState::new(window,cx)),
+                    row_editor:None, row_inputs:Vec::new(),
                     text,
                     fields: Vec::new(),
                     records: Vec::new(),
@@ -140,6 +189,7 @@ impl SlideEditor {
             }
         }
         if let Some(state) = self.doc_state_mut() {
+            if let Some(merge) = state.merge.as_mut() { merge.visible = true; }
             state.find = None;
             state.link = None;
             state.style_edit = None;
@@ -153,6 +203,7 @@ impl SlideEditor {
             state.text_box = None;
             state.helper = Default::default();
         }
+        self.watch_merge_inputs(window,cx);
         self.sidebar_open = true;
         cx.notify();
     }
@@ -168,12 +219,14 @@ impl SlideEditor {
     pub(crate) fn set_merge_data(&mut self, fields: Vec<String>, records: Vec<Vec<String>>, cx: &mut Context<Self>) {
         let preview = self.merge_state().is_some_and(|m| m.preview);
         if let Some(m) = self.doc_state_mut().and_then(|s| s.merge.as_mut()) {
+            m.review_ack=false;
             m.fields = fields;
             m.included = vec![true; records.len()];
             m.records = records;
             m.sort = None;
             m.filter = None;
             m.list_page = 0;
+            m.list_search.clear();m.table_sort=None;
             m.current = 0;
         }
         if preview {
@@ -186,7 +239,7 @@ impl SlideEditor {
     pub(crate) fn pick_merge_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(not(target_family = "wasm"))]
         {
-            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: Vec::new(), multiple: false, prompt: Some(crate::shell::i18n::text("_shell.open")) });
+            let picked = cx.prompt_for_paths(PathPromptOptions { files: true, directories: false, extensions: vec!["xlsx".into(),"csv".into(),"tsv".into(),"xls".into(),"xlsm".into()], multiple: false, prompt: Some(crate::shell::i18n::text("merge.flow.load")) });
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(paths))) = picked.await else { return };
                 let Some(path) = paths.into_iter().next() else { return };
@@ -200,27 +253,17 @@ impl SlideEditor {
 
     /// The 宛先一覧 from the file at `path`.
     pub(crate) fn read_merge_file(&mut self, path: &std::path::Path, window: &mut Window, cx: &mut Context<Self>) {
-        let Ok(data) = std::fs::read(path) else {
-            self.status = Some(crate::shell::i18n::text("docx.merge-panel.cannot-read-file").into());
-            return cx.notify();
-        };
-        let excel = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "xlsx" | "xlsm" | "xls"));
-        let text = if excel {
-            match ibis_pptx::read(&data) {
-                Ok(book) => String::from_utf8_lossy(&ibis_pptx::csv::sheet_to_csv(&book, 0)).into_owned(),
-                Err(_) => {
-                    self.status = Some(crate::shell::i18n::text("docx.merge-panel.cannot-read-file").into());
-                    return cx.notify();
+        match workflow::read_recipient_file(path) {
+            Ok(import) => {
+                if let Some(m)=self.doc_state_mut().and_then(|s|s.merge.as_mut()) {
+                    m.dialog_return=m.dialog;
+                    m.import=Some(import);m.import_error=None;m.dialog=Some(MergeDialog::Import);
                 }
             }
-        } else {
-            // Shift_JIS files (Excel's 「CSV」) when the bytes are not UTF-8.
-            ibis_pptx::csv::decode(&data).unwrap_or_else(|_| String::from_utf8_lossy(&data).into_owned())
-        };
-        if let Some(input) = self.merge_state().map(|m| m.text.clone()) {
-            input.update(cx, |a, cx| a.set_value(text, window, cx));
+            Err(error) => self.status=Some(error.into()),
         }
-        self.apply_merge_data(cx);
+        self.reset_merge_import_headers(window,cx);
+        cx.notify();
     }
 
     /// 差し込み印刷の開始: the kind of the main document (`formLetters`, `email`, `fax`, `envelopes`, `mailingLabels`, `catalog`; `None`:
@@ -340,6 +383,7 @@ impl SlideEditor {
 
     /// The layout's values from the state: the current record when previewing.
     fn sync_merge_preview(&mut self, cx: &mut Context<Self>) {
+        if let Some(m)=self.doc_state_mut().and_then(|s|s.merge.as_mut()){m.current=m.current.min(m.selected().len().saturating_sub(1));}
         let field_map = self.flow().map(|d| d.mail_merge_field_map.clone()).unwrap_or_default();
         let values = self.merge_state().filter(|m| m.preview && !m.selected().is_empty()).map(|m| {
             let selected = m.selected();
@@ -427,7 +471,7 @@ impl SlideEditor {
     pub(crate) fn add_merge_field(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         let name = name.trim();
         let Some(m) = self.doc_state_mut().and_then(|s| s.merge.as_mut()) else { return };
-        if name.is_empty() || m.fields.iter().any(|f| f == name) {
+        if name.is_empty() || m.fields.iter().any(|f| f.eq_ignore_ascii_case(name)) {
             return;
         }
         m.fields.push(name.to_string());
@@ -596,23 +640,16 @@ impl SlideEditor {
     /// say not used: their values), each on its own page.
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn write_merged_documents(&mut self, path: &std::path::Path) -> Result<usize, String> {
-        let Some(m) = self.merge_state() else { return Err(crate::shell::i18n::text("docx.merge-panel.there-no-recipient-list").to_string()) };
-        if m.records.is_empty() {
-            return Err(crate::shell::i18n::text("docx.merge-panel.there-no-recipient-list").to_string());
-        }
-        let selected = m.selected();
-        if selected.is_empty() {
-            return Err(crate::shell::i18n::text("docx.merge-panel.there-no-recipient-list").to_string());
-        }
-        let (fields, records) = (m.fields.clone(), selected.iter().map(|&i| m.records[i].clone()).collect::<Vec<_>>());
-        let source = self.source.clone().ok_or_else(|| crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").to_string())?;
-        let doc = self.flow().ok_or_else(|| crate::shell::i18n::text("docx.merge-panel.there-no-document").to_string())?;
-        let merged = merged_letters(doc, &fields, &records);
-        let mut presentation = self.presentation().clone();
-        presentation.flow = Some(Arc::new(merged));
-        let bytes = source.save(&presentation, ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?;
-        crate::shell::save::write_replacing(path, &bytes).map_err(|e| e.to_string())?;
-        Ok(records.len())
+        self.write_merged_documents_range(path,MergePrintRange::All)
+    }
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn write_merged_documents_range(&self,path:&std::path::Path,range:MergePrintRange)->Result<usize,String> {
+        let (merged,count)=self.merged_document_for_range(range)?;
+        let source=self.source.clone().ok_or_else(||crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").to_string())?;
+        let mut presentation=self.presentation().clone();presentation.flow=Some(Arc::new(merged));
+        let bytes=source.save(&presentation,ibis_pptx::SaveOptions::default()).map_err(|e|e.to_string())?;
+        crate::shell::save::write_replacing(path,&bytes).map_err(|e|e.to_string())?;
+        Ok(count)
     }
 
     /// 規則の挿入: the field of the instruction in the panel's rule field (`IF`, `COMPARE`, `SKIPIF`… with `{ MERGEFIELD 項目 }` in
@@ -671,7 +708,7 @@ impl SlideEditor {
             };
         }
 
-        let recipient_count = m.records.len();
+        let recipient_count = m.selected().len();
         let field_map = &doc.mail_merge_field_map;
 
         // Check for missing fields
@@ -686,15 +723,9 @@ impl SlideEditor {
             }
         }
 
-        // Check for completely empty records among selected records
-        let mut empty_record_indices = Vec::new();
-        for (idx, record) in m.records.iter().enumerate() {
-            if m.included.get(idx).copied().unwrap_or(true) {
-                if record.iter().all(|val| val.trim().is_empty()) {
-                    empty_record_indices.push(idx);
-                }
-            }
-        }
+        // Inspect only output targets and every field actually used by this document.
+        let mut empty_record_indices:Vec<usize>=self.merge_review_issues().into_iter().filter_map(|i|i.record).collect();
+        empty_record_indices.sort_unstable();empty_record_indices.dedup();
 
         // Status message
         if !missing_fields.is_empty() {
@@ -731,12 +762,19 @@ impl SlideEditor {
     /// document; a record a `SKIPIF` leaves out has none. How many files.
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn write_merged_separately(&self, directory: &std::path::Path, stem: &str) -> Result<usize, String> {
+        self.write_merged_separately_range(directory,stem,MergePrintRange::All)
+    }
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn write_merged_separately_range(&self,directory:&std::path::Path,stem:&str,range:MergePrintRange)->Result<usize,String> {
         let Some(m) = self.merge_state() else { return Err(crate::shell::i18n::text("docx.merge-panel.there-no-recipient-list").to_string()) };
         let selected = m.selected();
         if selected.is_empty() {
             return Err(crate::shell::i18n::text("docx.merge-panel.there-no-recipient-list").to_string());
         }
         let (fields, records) = (m.fields.clone(), selected.iter().map(|&i| m.records[i].clone()).collect::<Vec<_>>());
+        // Validate and resolve against the selected recipients, before creating any files.
+        self.merged_document_for_range(range)?;
+        let records=match range {MergePrintRange::All=>records,MergePrintRange::Current=>vec![records[m.current].clone()],MergePrintRange::FromTo(start,end)=>records[start-1..end.min(records.len())].to_vec()};
         let source = self.source.clone().ok_or_else(|| crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").to_string())?;
         let doc = self.flow().ok_or_else(|| crate::shell::i18n::text("docx.merge-panel.there-no-document").to_string())?.clone();
         let mut count = 0;
@@ -764,7 +802,7 @@ impl SlideEditor {
                 let Some(directory) = paths.into_iter().next() else { return };
                 this.update(cx, |this, cx| {
                     let stem = this.file_name.as_ref().map(|n| n.trim_end_matches(".docx").to_string()).unwrap_or_else(|| crate::shell::i18n::text("_docx.merged-result-stem").to_string());
-                    this.status = Some(match this.write_merged_separately(&directory, &stem) {
+                    this.status = Some(match this.write_merged_separately_range(&directory, &stem,this.current_merge_print_range(cx)) {
                         Ok(n) => crate::shell::i18n::format("merge.done", &[("n", &n.to_string())]).into(),
                         Err(e) => e.into(),
                     });
@@ -790,7 +828,7 @@ impl SlideEditor {
             cx.spawn_in(window, async move |this, cx| {
                 let Ok(Ok(Some(path))) = picked.await else { return };
                 this.update(cx, |this, cx| {
-                    this.status = Some(match this.write_merged_documents(&path) {
+                    this.status = Some(match this.write_merged_documents_range(&path,this.current_merge_print_range(cx)) {
                         Ok(n) => crate::shell::i18n::format("merge.done", &[("n", &n)]).into(),
                         Err(e) => crate::shell::i18n::format("file.save-failed", &[("error", &e)]).into(),
                     });
@@ -897,7 +935,7 @@ impl SlideEditor {
             match self.write_merged_pdf(&temp_pdf, range) {
                 Ok(count) => {
                     #[cfg(target_os = "macos")]
-                    if std::env::var("IBIS_HEADLESS").is_err() && !std::env::args().any(|a| a.contains("test") || a.contains("scenarios")) {
+                    if !crate::shell::file_actions::running_under_test() {
                         let script = format!(
                             "tell application \"Preview\"\nactivate\nopen POSIX file \"{}\"\nprint front document with print dialog\nend tell",
                             temp_pdf.display().to_string().replace('"', "\\\"")
@@ -948,304 +986,47 @@ impl SlideEditor {
     }
 
     pub(crate) fn merge_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        self.merge_state()?;
-        self.render_merge_panel(cx)
+        if !self.merge_state()?.visible { return None; }
+        self.render_merge_workflow(cx)
+    }
+
+    pub(crate) fn move_merge_recipient(&mut self,from:usize,to:usize,w:&mut Window,cx:&mut Context<Self>) {
+        let Some(m)=self.doc_state_mut().and_then(|s|s.merge.as_mut()) else{return};
+        if from>=m.records.len()||to>=m.records.len()||from==to{return;}
+        // current indexes selected(), not the unfiltered records. Preserve the recipient's identity.
+        let selected=m.selected();
+        let current_record=selected.get(m.current.min(selected.len().saturating_sub(1))).copied();
+        let record=m.records.remove(from);m.records.insert(to,record);
+        m.included.resize(m.records.len(),true);let included=m.included.remove(from);m.included.insert(to,included);
+        let moved_index=|i|if i==from{to}else if from<i&&i<=to{i-1}else if to<=i&&i<from{i+1}else{i};
+        m.sort=None;m.table_sort=None;
+        let selected=m.selected();
+        m.current=current_record.and_then(|i|selected.iter().position(|&j|j==moved_index(i))).unwrap_or(0);
+        self.write_merge_text(w,cx);self.sync_merge_preview(cx);cx.notify();
     }
 
     #[inline(never)]
-    fn render_merge_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let m = self.merge_state()?;
-        let selected = m.selected();
-        let (text, fields, count, current, preview) = (m.text.clone(), m.fields.clone(), selected.len(), m.current, m.preview);
-        let (sort_field, filter_field, rule_field) = (m.sort_field.clone(), m.filter_field.clone(), m.rule_field.clone());
-        let (new_field, goto_field, find_field) = (m.new_field.clone(), m.goto_field.clone(), m.find_field.clone());
-        let (print_range, print_from_field, print_to_field) = (m.print_range, m.print_from_field.clone(), m.print_to_field.clone());
-        let (page, total) = (m.list_page, m.records.len());
-        let record_rows: Vec<AnyElement> = m.records.iter().enumerate().skip(page * RECORDS_PER_PAGE).take(RECORDS_PER_PAGE).map(|(i, record)| {
-            let on = m.included.get(i).copied().unwrap_or(true);
-            let label = format!("{} {} {}", if on { "☑" } else { "☐" }, i + 1, record.iter().take(3).cloned().collect::<Vec<_>>().join(" / "));
-            h_flex()
-                .gap_0p5()
-                .child(Button::new(("merge-record", i)).small().ghost().label(label).on_click(cx.listener(move |this, _, _, cx| this.toggle_merge_record(i, cx))))
-                .child(Button::new(("merge-record-delete", i)).small().ghost().label("×").on_click(cx.listener(move |this, _, window, cx| this.delete_merge_record(i, window, cx))))
-                .into_any_element()
-        }).collect();
-        let pages = total.div_ceil(RECORDS_PER_PAGE).max(1);
-        let used = self.flow().map(|d| merge_fields_used(d)).unwrap_or_default();
-        let field_buttons: Vec<AnyElement> = fields
-            .iter()
-            .enumerate()
-            .map(|(i, name)| {
-                let name = name.clone();
-                let label = if used.contains(&name) { format!("«{name}» ✓") } else { format!("«{name}»") };
-                h_flex()
-                    .gap_0p5()
-                    .child(Button::new(("merge-field", i)).small().ghost().label(label).on_click(cx.listener(move |this, _, _, cx| this.insert_merge_field(&name, cx))))
-                    .child(Button::new(("merge-field-delete", i)).small().ghost().label("×").on_click(cx.listener(move |this, _, window, cx| this.delete_merge_field(i, window, cx))))
-                    .into_any_element()
-            })
-            .collect();
-        let current_type = self.flow().and_then(|d| d.mail_merge_type.clone());
-        let type_buttons: Vec<AnyElement> = [("docx.merge-panel.type-letters", Some("formLetters")), ("docx.merge-panel.type-email", Some("email")), ("docx.merge-panel.type-envelopes", Some("envelopes")), ("docx.merge-panel.type-labels", Some("mailingLabels")), ("docx.merge-panel.type-directory", Some("catalog")), ("docx.merge-panel.type-normal", None)]
-            .into_iter()
-            .enumerate()
-            .map(|(i, (label, kind))| {
-                let on = current_type.as_deref() == kind;
-                Button::new(("merge-type", i)).small().ghost().label(crate::shell::i18n::text(label)).selected(on).on_click(cx.listener(move |this, _, _, cx| this.set_mail_merge_type(kind, cx))).into_any_element()
-            })
-            .collect();
-        let envelope_section: Option<AnyElement> = if current_type.as_deref() == Some("envelopes") {
-            let active_preset = m.envelope_preset;
-            let sender_field = m.sender_field.clone();
-            let preset_buttons: Vec<AnyElement> = EnvelopePreset::ALL.into_iter().enumerate().map(|(i, preset)| {
-                let on = preset == active_preset;
-                Button::new(("merge-env-preset", i))
-                    .small()
-                    .ghost()
-                    .label(preset.label())
-                    .selected(on)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(m) = this.doc_state_mut().and_then(|s| s.merge.as_mut()) {
-                            m.envelope_preset = preset;
-                            cx.notify();
-                        }
-                    }))
-                    .into_any_element()
-            }).collect();
-            Some(
-                v_flex()
-                    .gap_1()
-                    .child(div().text_sm().child(crate::shell::i18n::text("docx.merge-panel.envelope-setup")))
-                    .child(h_flex().flex_wrap().gap_0p5().children(preset_buttons))
-                    .child(Input::new(&sender_field).small().cleanable(true))
-                    .child(
-                        Button::new("merge-apply-envelope")
-                            .primary()
-                            .small()
-                            .label(crate::shell::i18n::text("docx.merge-panel.apply-envelope"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let (preset, sender) = if let Some(m) = this.merge_state() {
-                                    (m.envelope_preset, m.sender_field.read(cx).value().trim().to_string())
-                                } else {
-                                    (EnvelopePreset::Chou3, String::new())
-                                };
-                                this.setup_envelope(preset, (!sender.is_empty()).then_some(&sender), cx);
-                            }))
-                    )
-                    .into_any_element()
-            )
-        } else {
-            None
-        };
-        let label_section: Option<AnyElement> = if current_type.as_deref() == Some("mailingLabels") {
-            let active_preset = m.label_preset;
-            let preset_buttons: Vec<AnyElement> = LabelPreset::ALL.into_iter().enumerate().map(|(i, preset)| {
-                let on = preset == active_preset;
-                Button::new(("merge-lbl-preset", i))
-                    .small()
-                    .ghost()
-                    .label(preset.label())
-                    .selected(on)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(m) = this.doc_state_mut().and_then(|s| s.merge.as_mut()) {
-                            m.label_preset = preset;
-                            cx.notify();
-                        }
-                    }))
-                    .into_any_element()
-            }).collect();
-            Some(
-                v_flex()
-                    .gap_1()
-                    .child(div().text_sm().child(crate::shell::i18n::text("docx.merge-panel.label-setup")))
-                    .child(h_flex().flex_wrap().gap_0p5().children(preset_buttons))
-                    .child(
-                        Button::new("merge-create-labels")
-                            .primary()
-                            .small()
-                            .label(crate::shell::i18n::text("docx.merge-panel.create-labels"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let preset = this.merge_state().map(|m| m.label_preset).unwrap_or(LabelPreset::A4_24);
-                                this.setup_labels(preset, cx);
-                            }))
-                    )
-                    .into_any_element()
-            )
-        } else {
-            None
-        };
-        let match_fields_open = m.match_fields_open;
-        let mapping = self.flow().map(|d| d.mail_merge_field_map.clone()).unwrap_or_default();
-        let match_fields_section: Option<AnyElement> = if match_fields_open {
-            let unmatched = crate::shell::i18n::text("docx.merge-panel.unmatched");
-            let rows: Vec<AnyElement> = ibis_doc_model::merge::STANDARD_MERGE_FIELDS.iter().enumerate().map(|(i, std_field)| {
-                let mapped = mapping.iter().find(|map| map.mapped_name == std_field.mapped_name).map(|map| map.name.as_str());
-                let col_text = mapped.unwrap_or(unmatched.as_ref());
-                let std_mapped_name = std_field.mapped_name;
-                h_flex()
-                    .gap_1()
-                    .justify_between()
-                    .child(div().text_sm().child(format!("{} ({})", std_field.mapped_name, std_field.label_ja)))
-                    .child(
-                        Button::new(("merge-map-col", i))
-                            .small()
-                            .ghost()
-                            .label(format!("→ {col_text}"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.cycle_merge_field_mapping(std_mapped_name, cx);
-                            }))
-                    )
-                    .into_any_element()
-            }).collect();
-            Some(
-                v_flex()
-                    .gap_0p5()
-                    .p(px(8.))
-                    .border_1()
-                    .rounded_md()
-                    .child(div().text_xs().child(crate::shell::i18n::text("docx.merge-panel.match-fields-guide")))
-                    .children(rows)
-                    .into_any_element()
-            )
-        } else {
-            None
-        };
-        let status = if count == 0 { crate::shell::i18n::text("docx.merge-panel.no-recipients").to_string() } else { format!("{} / {}", current + 1, count) };
-        let body = v_flex()
-            .gap_2()
-            .px(px(18.))
-            .py(px(8.))
-            .child(div().text_sm().child(crate::shell::i18n::text("docx.merge-panel.document-type")))
-            .child(h_flex().flex_wrap().gap_1().children(type_buttons))
-            .children(envelope_section)
-            .children(label_section)
-            .child(div().text_sm().child(crate::shell::i18n::text("docx.merge-panel.recipient-list-first-line-field")))
-            .child(Textarea::new(&text).h(px(140.)))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("merge-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_merge_data(cx))))
-                    .child(Button::new("merge-file").small().ghost().label(crate::shell::i18n::text("_shell.from-file")).on_click(cx.listener(|this, _, window, cx| this.pick_merge_file(window, cx)))),
-            )
-            .child(div().text_sm().child(crate::shell::i18n::text("docx.merge-panel.recipients-click-leave-out-add")))
-            .child(v_flex().gap_0p5().children(record_rows))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("merge-add-record").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.add-recipient")).on_click(cx.listener(|this, _, window, cx| this.add_merge_record(window, cx))))
-                    .child(Button::new("merge-all").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.select-all")).on_click(cx.listener(|this, _, _, cx| this.set_all_merge_records(true, cx))))
-                    .child(Button::new("merge-none").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.select-none")).on_click(cx.listener(|this, _, _, cx| this.set_all_merge_records(false, cx))))
-                    .child(Button::new("merge-page-prev").small().ghost().label("◀").on_click(cx.listener(|this, _, _, cx| this.step_merge_page(-1, cx))))
-                    .child(div().text_sm().child(format!("{} / {}", page + 1, pages)))
-                    .child(Button::new("merge-page-next").small().ghost().label("▶").on_click(cx.listener(|this, _, _, cx| this.step_merge_page(1, cx)))),
-            )
-            .child(h_flex().gap_1().child(Input::new(&new_field).small().cleanable(true)).child(Button::new("merge-add-field").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.add-field")).on_click(cx.listener(|this, _, window, cx| {
-                let name = this.merge_state().map(|m| m.new_field.read(cx).value().to_string()).unwrap_or_default();
-                this.add_merge_field(&name, window, cx);
-            }))))
-            .child(h_flex().gap_1().child(Input::new(&sort_field).small().cleanable(true)).child(Button::new("merge-sort-up").small().ghost().label("↑").on_click(cx.listener(|this, _, _, cx| this.sort_merge_records(true, cx)))).child(Button::new("merge-sort-down").small().ghost().label("↓").on_click(cx.listener(|this, _, _, cx| this.sort_merge_records(false, cx)))))
-            .child(h_flex().gap_1().child(Input::new(&filter_field).small().cleanable(true)).child(Button::new("merge-filter").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.filter")).on_click(cx.listener(|this, _, _, cx| this.filter_merge_records(cx)))))
-            .child(div().text_sm().child(crate::shell::i18n::text("docx.merge-panel.insert-merge-field")))
-            .child(h_flex().flex_wrap().gap_1().children(field_buttons))
-            .child(h_flex().gap_1().child(Input::new(&rule_field).small().cleanable(true)).child(Button::new("merge-rule").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.insert-rule")).on_click(cx.listener(|this, _, _, cx| this.insert_merge_rule(cx)))))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("merge-address").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.address-block")).on_click(cx.listener(|this, _, _, cx| this.insert_merge_block(true, cx))))
-                    .child(Button::new("merge-greeting").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.greeting-line")).on_click(cx.listener(|this, _, _, cx| this.insert_merge_block(false, cx)))),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("merge-match-fields").small().ghost().selected(match_fields_open).label(crate::shell::i18n::text("docx.merge-panel.match-fields")).on_click(cx.listener(|this, _, _, cx| this.toggle_match_fields(cx))))
-                    .child(Button::new("merge-auto-match").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.auto-match")).on_click(cx.listener(|this, _, _, cx| this.auto_match_merge_fields(cx))))
-                    .child(Button::new("merge-clear-match").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.clear-match")).on_click(cx.listener(|this, _, _, cx| this.clear_merge_field_map(cx)))),
-            )
-            .children(match_fields_section)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("merge-preview").small().label(crate::shell::i18n::text("docx.merge-panel.preview-results")).selected(preview).on_click(cx.listener(move |this, _, _, cx| this.set_merge_preview(!preview, cx))))
-                    .child(Button::new("merge-prev").small().ghost().label("◀").on_click(cx.listener(|this, _, _, cx| this.step_merge_record(-1, cx))))
-                    .child(div().text_sm().child(status))
-                    .child(Button::new("merge-next").small().ghost().label("▶").on_click(cx.listener(|this, _, _, cx| this.step_merge_record(1, cx)))),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("merge-first").small().ghost().label("⏮").on_click(cx.listener(|this, _, _, cx| this.goto_merge_record(1, cx))))
-                    .child(Button::new("merge-last").small().ghost().label("⏭").on_click(cx.listener(|this, _, _, cx| this.goto_merge_record(usize::MAX, cx))))
-                    .child(Input::new(&goto_field).small().cleanable(true))
-                    .child(Button::new("merge-goto").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.go-to")).on_click(cx.listener(|this, _, _, cx| {
-                        let n = this.merge_state().and_then(|m| m.goto_field.read(cx).value().trim().parse::<usize>().ok()).unwrap_or(1);
-                        this.goto_merge_record(n, cx);
-                    }))),
-            )
-            .child(h_flex().gap_1().child(Input::new(&find_field).small().cleanable(true)).child(Button::new("merge-find").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.find-recipient")).on_click(cx.listener(|this, _, _, cx| { this.find_merge_record(cx); }))))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("merge-check-errors").small().ghost().label(crate::shell::i18n::text("docx.merge-panel.check-errors")).on_click(cx.listener(|this, _, _, cx| { this.check_merge_errors(cx); })))
-                    .child(Button::new("merge-separate").small().label(crate::shell::i18n::text("docx.merge-panel.create-separate-documents")).on_click(cx.listener(|this, _, window, cx| this.save_merged_separately(window, cx))))
-            )
-            .child(Button::new("merge-finish").primary().small().label(crate::shell::i18n::text("docx.merge-panel.create-individual-documents")).on_click(cx.listener(|this, _, window, cx| this.save_merged_documents(window, cx))));
-        let is_range_all = matches!(print_range, MergePrintRange::All);
-        let is_range_current = matches!(print_range, MergePrintRange::Current);
-        let is_range_from_to = matches!(print_range, MergePrintRange::FromTo(_, _));
-        let print_range_from_to_inputs: Option<AnyElement> = if is_range_from_to {
-            Some(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(div().text_xs().child(crate::shell::i18n::text("docx.merge-panel.print-from")))
-                    .child(Input::new(&print_from_field).small().cleanable(true))
-                    .child(div().text_xs().child(crate::shell::i18n::text("docx.merge-panel.print-to")))
-                    .child(Input::new(&print_to_field).small().cleanable(true))
-                    .into_any_element(),
-            )
-        } else {
-            None
-        };
-        let print_range_section = v_flex()
-            .gap_1()
-            .child(div().text_sm().child(crate::shell::i18n::text("docx.merge-panel.print-range")))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new("merge-range-all")
-                            .small()
-                            .ghost()
-                            .label(crate::shell::i18n::text("docx.merge-panel.range-all"))
-                            .selected(is_range_all)
-                            .on_click(cx.listener(|this, _, _, cx| this.set_merge_print_range(MergePrintRange::All, cx))),
-                    )
-                    .child(
-                        Button::new("merge-range-current")
-                            .small()
-                            .ghost()
-                            .label(crate::shell::i18n::text("docx.merge-panel.range-current"))
-                            .selected(is_range_current)
-                            .on_click(cx.listener(|this, _, _, cx| this.set_merge_print_range(MergePrintRange::Current, cx))),
-                    )
-                    .child(
-                        Button::new("merge-range-from-to")
-                            .small()
-                            .ghost()
-                            .label(crate::shell::i18n::text("docx.merge-panel.range-from-to"))
-                            .selected(is_range_from_to)
-                            .on_click(cx.listener(|this, _, _, cx| this.set_merge_print_range(MergePrintRange::FromTo(1, 1), cx))),
-                    ),
-            )
-            .children(print_range_from_to_inputs);
-        let body = body
-            .child(print_range_section)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("merge-print").small().label(crate::shell::i18n::text("docx.merge-panel.print-documents")).on_click(cx.listener(|this, _, window, cx| this.print_merged_documents(window, cx))))
-                    .child(Button::new("merge-export-pdf").small().label(crate::shell::i18n::text("docx.merge-panel.export-pdf")).on_click(cx.listener(|this, _, window, cx| this.export_merged_pdf(window, cx)))),
-            );
-        Some(SidebarPanel { title: crate::shell::i18n::text("docx.merge-panel.mail-merge"), body: body.into_any_element() })
+    pub(crate) fn open_merge_row(&mut self,index:Option<usize>,w:&mut Window,cx:&mut Context<Self>) {
+        let Some(m)=self.merge_state() else{return};let values=index.and_then(|i|m.records.get(i).cloned()).unwrap_or_else(||vec![String::new();m.fields.len()]);
+        let inputs=values.into_iter().map(|v|cx.new(|cx|{let mut i=InputState::new(w,cx);i.set_value(v,w,cx);i})).collect();
+        if let Some(m)=self.doc_state_mut().and_then(|s|s.merge.as_mut()){m.row_editor=Some(index);m.row_inputs=inputs;}cx.notify();
     }
+    pub(crate) fn save_merge_row(&mut self,w:&mut Window,cx:&mut Context<Self>) {
+        let Some(m)=self.merge_state() else{return};let Some(index)=m.row_editor else{return};let values=m.row_inputs.iter().map(|i|i.read(cx).value().to_string()).collect();
+        if let Some(m)=self.doc_state_mut().and_then(|s|s.merge.as_mut()) {
+            if let Some(i)=index {if i<m.records.len(){m.records[i]=values;}} else {m.records.push(values);m.included.push(true);}
+            m.review_ack=false;
+            m.row_editor=None;
+        }
+        self.write_merge_text(w,cx);self.sync_merge_preview(cx);cx.notify();
+    }
+    pub(crate) fn merge_row_dialog(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel> {
+        let m=self.merge_state()?;let mode=m.row_editor?;
+        let body=v_flex().p_3().gap_2().p_0().children(m.fields.iter().zip(m.row_inputs.iter()).map(|(label,input)|h_flex().gap_2().items_center().child(div().w(px(100.)).text_sm().child(label.clone())).child(crate::shell::chrome::text_field(input).full_width())));
+        let footer=crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("merge-row-ok", "OK", crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,w,cx|e.save_merge_row(w,cx))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))
+            .when_some(mode,|d,i|d.action(crate::shell::chrome::ActionDefinition::new("merge-row-delete", crate::shell::i18n::text("_shell.delete"), crate::shell::chrome::ActionButtonKind::Destructive).on_click(cx.listener(move |e,_,w,cx|{e.delete_merge_record(i,w,cx);if let Some(m)=e.doc_state_mut().and_then(|s|s.merge.as_mut()){m.row_editor=None;}cx.notify();}))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("ui.merge-row"),body.into_any_element(),footer))
+    }
+
 }

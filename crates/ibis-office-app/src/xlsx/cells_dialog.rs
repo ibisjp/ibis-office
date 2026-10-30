@@ -7,7 +7,7 @@
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 use crate::xlsx::toggle::toggle_row;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::sheet_command::Axis;
@@ -90,13 +90,21 @@ impl SlideEditor {
     pub(crate) fn open_cells_dialog(&mut self, insert: bool, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.cells_dialog = Some(CellsDialog { insert, choice: 0, ui: Default::default() });
         self.sidebar_open = true;
         cx.notify();
     }
 
     /// OK: the choice made.
+    /// Up or Down in the dialog: the next or previous option. Whether a cells dialog is open.
+    pub(crate) fn cells_dialog_step(&mut self, step: i32, cx: &mut Context<Self>) -> bool {
+        let Some(d) = self.sheet_state_mut().and_then(|s| s.panels.cells_dialog.as_mut()) else { return false };
+        d.choice = (d.choice as i32 + step).clamp(0, 3) as usize;
+        cx.notify();
+        true
+    }
+
     pub(crate) fn apply_cells_dialog(&mut self, cx: &mut Context<Self>) {
         let Some(d) = self.sheet_state().and_then(|s| s.panels.cells_dialog.as_ref()) else { return };
         let (insert, choice) = (d.insert, d.choice);
@@ -126,8 +134,14 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: String, action: crate::shell::chrome::ActionDefinition| {
+            let ui = d.ui.clone();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
         let options = if d.insert { INSERT_OPTIONS } else { DELETE_OPTIONS };
-        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.));
+        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.)).p_0();
         for (i, key) in options.iter().enumerate() {
             body = body.child(mark(
                 format!("option-{i}"),
@@ -140,26 +154,17 @@ impl SlideEditor {
                 .into_any_element(),
             ));
         }
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .pt_2()
-                .child(mark("ok".into(), Button::new("cells-ok").primary().small().label(crate::shell::i18n::text("query.ok")).on_click(cx.listener(|this, _, _, cx| this.apply_cells_dialog(cx))).into_any_element()))
-                .child(mark(
-                    "cancel".into(),
-                    Button::new("cells-cancel")
-                        .small()
+        let title = if d.insert { "cells.insert-title" } else { "cells.delete-title" };
+        let panel_terminal_actions = crate::shell::chrome::action_bar()
+                .action(mark_action("ok".into(), crate::shell::chrome::ActionDefinition::new("cells-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label(crate::shell::i18n::text("query.ok")).on_click(cx.listener(|this, _, _, cx| this.apply_cells_dialog(cx)))))
+                .action(mark_action("cancel".into(), crate::shell::chrome::ActionDefinition::new("cells-cancel", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .label(crate::shell::i18n::text("query.cancel"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(state) = this.sheet_state_mut() {
                                 state.panels.cells_dialog = None;
                             }
                             cx.notify();
-                        }))
-                        .into_any_element(),
-                )),
-        );
-        let title = if d.insert { "cells.insert-title" } else { "cells.delete-title" };
-        Some(SidebarPanel { title: crate::shell::i18n::text(title).into(), body: body.into_any_element() })
+                        }))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text(title), body.into_any_element(), panel_terminal_actions))
     }
 }

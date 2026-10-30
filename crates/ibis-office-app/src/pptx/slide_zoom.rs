@@ -4,7 +4,7 @@
 //! Slide Zoom (PPTX-TRANS-014): insert slide zoom cards linking to other slides,
 //! navigate seamlessly during slide shows, and modal picker dialog UI.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{h_flex, v_flex, Disableable as _, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -246,8 +246,7 @@ impl SlideEditor {
                                         .child(t("pptx.zoom.dialog.title")),
                                 )
                                 .child(
-                                    Button::new("zoom-close")
-                                        .ghost()
+                                    crate::shell::chrome::action_button("zoom-close")
                                         .small()
                                         .label("✕")
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -272,35 +271,23 @@ impl SlideEditor {
                                 .children(slides_list),
                         )
                         .child(
-                            h_flex()
-                                .justify_end()
-                                .items_center()
-                                .gap_2()
-                                .pt_2()
-                                .border_t_1()
-                                .border_color(rgb(0xeeeeee))
-                                .child(
-                                    Button::new("zoom-cancel")
-                                        .ghost()
-                                        .small()
-                                        .label(t("pptx.zoom.cancel"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_slide_zoom_dialog(cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("zoom-insert")
-                                        .primary()
-                                        .small()
+                            crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                                .action(
+                                    crate::shell::chrome::ActionDefinition::new("zoom-insert", t("pptx.zoom.insert"), crate::shell::chrome::ActionButtonKind::Primary)
                                         .disabled(selected.is_none())
-                                        .label(t("pptx.zoom.insert"))
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             if let Some(target) = selected {
                                                 this.insert_slide_zoom(target, cx);
                                                 this.close_slide_zoom_dialog(cx);
                                             }
                                         })),
-                                ),
+                                )
+                                .action(
+                                    crate::shell::chrome::ActionDefinition::new("zoom-cancel", t("pptx.zoom.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.close_slide_zoom_dialog(cx);
+                                        })),
+                                ))),
                         ),
                 )
                 .into_any_element(),
@@ -534,8 +521,7 @@ impl SlideEditor {
                                         .child(t("pptx.zoom.section.dialog.title")),
                                 )
                                 .child(
-                                    Button::new("section-zoom-close")
-                                        .ghost()
+                                    crate::shell::chrome::action_button("section-zoom-close")
                                         .small()
                                         .label("✕")
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -560,35 +546,23 @@ impl SlideEditor {
                                 .children(sections_list),
                         )
                         .child(
-                            h_flex()
-                                .justify_end()
-                                .items_center()
-                                .gap_2()
-                                .pt_2()
-                                .border_t_1()
-                                .border_color(rgb(0xeeeeee))
-                                .child(
-                                    Button::new("section-zoom-cancel")
-                                        .ghost()
-                                        .small()
-                                        .label(t("pptx.zoom.cancel"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_section_zoom_dialog(cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("section-zoom-insert")
-                                        .primary()
-                                        .small()
+                            crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                                .action(
+                                    crate::shell::chrome::ActionDefinition::new("section-zoom-insert", t("pptx.zoom.insert"), crate::shell::chrome::ActionButtonKind::Primary)
                                         .disabled(selected.is_none())
-                                        .label(t("pptx.zoom.insert"))
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             if let Some(target) = selected.as_deref() {
                                                 this.insert_section_zoom(target, cx);
                                                 this.close_section_zoom_dialog(cx);
                                             }
                                         })),
-                                ),
+                                )
+                                .action(
+                                    crate::shell::chrome::ActionDefinition::new("section-zoom-cancel", t("pptx.zoom.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.close_section_zoom_dialog(cx);
+                                        })),
+                                ))),
                         ),
                 )
                 .into_any_element(),
@@ -1082,8 +1056,7 @@ impl SlideEditor {
                                         .child(t("pptx.zoom.summary.dialog.title")),
                                 )
                                 .child(
-                                    Button::new("summary-zoom-close-btn")
-                                        .ghost()
+                                    crate::shell::chrome::action_button("summary-zoom-close-btn")
                                         .small()
                                         .label("✕")
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -1108,37 +1081,25 @@ impl SlideEditor {
                                 .children(slides_list),
                         )
                         .child(
-                            h_flex()
-                                .justify_end()
-                                .items_center()
-                                .gap_2()
-                                .pt_2()
-                                .border_t_1()
-                                .border_color(rgb(0xeeeeee))
-                                .child(
-                                    Button::new("summary-zoom-cancel")
-                                        .ghost()
-                                        .small()
-                                        .label(t("pptx.zoom.cancel"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_summary_zoom_dialog(cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("summary-zoom-insert")
-                                        .primary()
-                                        .small()
-                                        .disabled(count == 0)
-                                        .label(if count > 0 {
+                            crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                                .action(
+                                    crate::shell::chrome::ActionDefinition::new("summary-zoom-insert", if count > 0 {
                                             format!("{} ({})", t("pptx.zoom.insert"), count)
                                         } else {
                                             t("pptx.zoom.insert").to_string()
-                                        })
+                                        }, crate::shell::chrome::ActionButtonKind::Primary)
+                                        .disabled(count == 0)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.insert_summary_zoom(&selected_vec, cx);
                                             this.close_summary_zoom_dialog(cx);
                                         })),
-                                ),
+                                )
+                                .action(
+                                    crate::shell::chrome::ActionDefinition::new("summary-zoom-cancel", t("pptx.zoom.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.close_summary_zoom_dialog(cx);
+                                        })),
+                                ))),
                         ),
                 )
                 .into_any_element(),

@@ -131,12 +131,14 @@ impl SlideEditor {
             this.insert_symbol_with_window(c, window, cx);
             this.focus_handle.focus(window, cx);
         });
-        Some(SidebarPanel { title: crate::shell::i18n::text("fix.symbols.symbols-special-characters"), body: picker(group, select, pick, cx) })
+        Some(SidebarPanel { title: crate::shell::i18n::text("fix.symbols.symbols-special-characters"), body: picker(group, select, pick, self.panel_dialog.bounds.map_or(px(520.), |b| b.size.width), cx) })
     }
 }
 
 /// The groups: their name (a key of the UI's texts) and the code point ranges
 /// of the Unicode blocks they take their characters from.
+const PICKER_INSET: f32 = 18.;
+
 const GROUPS: &[(&str, &[(u32, u32)])] = &[
     ("fix.symbols.punctuation-symbols", &[(0xa1, 0xbf), (0x2010, 0x2027), (0x2030, 0x203e), (0x3001, 0x3003), (0x3008, 0x3011), (0x3014, 0x301f)]),
     ("_shell.currency-symbols", &[(0xa2, 0xa5), (0x20a0, 0x20bf)]),
@@ -163,21 +165,11 @@ pub(crate) type Pick = Rc<dyn Fn(&mut SlideEditor, char, &mut Window, &mut Conte
 
 /// The panel's body: the groups across the top (`select` chooses one) and
 /// the characters of group `group` below (`pick` is given the one pressed).
-pub(crate) fn picker(group: usize, select: Rc<dyn Fn(&mut SlideEditor, usize, &mut Context<SlideEditor>)>, pick: Pick, cx: &mut Context<SlideEditor>) -> AnyElement {
+pub(crate) fn picker(group: usize, select: Rc<dyn Fn(&mut SlideEditor, usize, &mut Context<SlideEditor>)>, pick: Pick, dialog_width: Pixels, cx: &mut Context<SlideEditor>) -> AnyElement {
     let theme = cx.theme().clone();
-    let tabs = h_flex().flex_wrap().gap_1().children(GROUPS.iter().enumerate().map(|(i, (name, _))| {
-        let select = select.clone();
-        div()
-            .id(("symbol-group", i))
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .cursor_pointer()
-            .text_size(px(12.))
-            .when(i == group, |d| d.bg(theme.accent))
-            .hover(|s| s.bg(theme.muted))
-            .child(crate::shell::i18n::text(name))
-            .on_click(cx.listener(move |this, _, _, cx| select(this, i, cx)))
+    let tabs=crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).children(GROUPS.iter().enumerate().map(|(i,(name,_))| {
+        let select=select.clone();crate::shell::chrome::segment_control::SegmentItem::label(("symbol-group",i),crate::shell::i18n::text(name),i==group)
+            .on_click(cx.listener(move |e,_,_,cx|select(e,i,cx)))
     }));
     let grid = h_flex().flex_wrap().gap(px(2.)).children(characters(group).into_iter().enumerate().map(|(i, c)| {
         let pick = pick.clone();
@@ -197,5 +189,5 @@ pub(crate) fn picker(group: usize, select: Rc<dyn Fn(&mut SlideEditor, usize, &m
             .child(c.to_string())
             .on_click(cx.listener(move |this, _, window, cx| pick(this, c, window, cx)))
     }));
-    v_flex().gap_2().px(px(18.)).py(px(8.)).child(tabs).child(grid).into_any_element()
+    v_flex().gap_2().px(px(PICKER_INSET)).py(px(8.)).child(tabs).child(grid).into_any_element()
 }

@@ -400,7 +400,8 @@ impl SlideEditor {
             let column = first + i as u32;
             // No wider than Excel lets a column be (255 characters).
             let size = fitted_width(widest).min((max_column_width_pt(self.default_font_size_pt()) * EMU_PER_POINT as f32) as Emu);
-            commands.push(Command::Sheet(SheetCommand::SetSize { slide, axis: Axis::Columns, first: column, last: column, size }));
+            // Fitted, the column is the sheet's to widen again (not a width set by hand).
+            commands.push(Command::Sheet(SheetCommand::SetColumnWidthAuto { slide, first: column, last: column, size }));
         }
         crate::debug_timing::report("fit columns: measure", started);
         if commands.is_empty() {

@@ -6,9 +6,10 @@
 //! 名前の変更、順序の入れ替え（↑ / ↓）を行うサイドバーパネル。
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+use std::{rc::Rc,cell::RefCell};
 use crate::shell::palette::rgb;
 use gpui_kit::prelude::FluentBuilder as _;
 use ibis_doc_model::{Command, Shape, ShapeId, ShapeKind};
@@ -22,6 +23,7 @@ use crate::shell::icons::Material;
 pub(crate) struct SelectionPanePanel {
     pub(crate) renaming: Option<(ShapeId, Entity<InputState>)>,
     _subscription: Option<Subscription>,
+    reorder:Rc<RefCell<crate::shell::chrome::data_table::RowReorder>>,
 }
 
 impl SlideEditor {
@@ -38,7 +40,7 @@ impl SlideEditor {
     /// 選択ウィンドウを開く.
     pub(crate) fn open_xlsx_selection_pane(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.selection_pane = Some(SelectionPanePanel::default());
         self.sidebar_open = true;
         cx.notify();
@@ -139,135 +141,31 @@ impl SlideEditor {
         let renaming_id = self.sheet_state().and_then(|s| s.panels.selection_pane.as_ref()).and_then(|p| p.renaming.as_ref()).map(|(id, _)| *id);
         let renaming_field = self.sheet_state().and_then(|s| s.panels.selection_pane.as_ref()).and_then(|p| p.renaming.as_ref()).map(|(_, f)| f.clone());
 
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(12.));
-
-        // 操作ボタン: すべて表示 / すべて非表示
-        let actions = h_flex()
-            .gap_2()
-            .child(
-                Button::new("xlsx-selpane-show-all")
-                    .small()
-                    .ghost()
-                    .label(crate::shell::i18n::text("pptx.selection-pane.show-all"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.set_all_sheet_shapes_hidden(false, cx);
-                    })),
-            )
-            .child(
-                Button::new("xlsx-selpane-hide-all")
-                    .small()
-                    .ghost()
-                    .label(crate::shell::i18n::text("pptx.selection-pane.hide-all"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.set_all_sheet_shapes_hidden(true, cx);
-                    })),
-            );
-        body = body.child(actions);
-
-        if floating_shapes.is_empty() {
-            body = body.child(
-                div()
-                    .py(px(16.))
-                    .text_size(px(13.))
-                    .text_color(rgb(0x7f7f7f))
-                    .child(crate::shell::i18n::text("_xlsx.there-are-no-shapes-or-pictures")),
-            );
-        } else {
-            let mut list = v_flex().gap_1();
-            // Frontmost shapes first (reverse order)
-            for (index, shape) in floating_shapes.into_iter().rev() {
-                let id = shape.id;
-                let is_selected = self.selected_ids().contains(&id);
-                let is_hidden = slide.hidden_shapes.contains(&id);
-                let label = self.xlsx_shape_label(&shape, index);
-
-                let is_renaming = renaming_id == Some(id);
-
-                let mut row = h_flex()
-                    .gap_2()
-                    .items_center()
-                    .px(px(6.))
-                    .py(px(4.))
-                    .rounded(px(4.))
-                    .when(is_selected, |r| r.bg(rgb(0xe0e8f6)));
-
-                // 目のアイコン（表示/非表示）
-                let eye_icon = if is_hidden { Material("visibility_off") } else { Material("visibility") };
-                let eye_btn = Button::new(format!("xlsx-selpane-eye-{index}"))
-                    .small()
-                    .ghost()
-                    .icon(Icon::new(eye_icon))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.toggle_sheet_shape_hidden(id, cx);
-                    }));
-                row = row.child(eye_btn);
-
-                // 図形種別アイコン
-                let kind_icon = match &shape.kind {
-                    ShapeKind::TextBox(_) => Material("text_fields"),
-                    ShapeKind::Picture(_) => Material("image"),
-                    ShapeKind::Chart(_) => Material("bar_chart"),
-                    ShapeKind::Line(_) => Material("horizontal_rule"),
-                    _ => Material("category"),
-                };
-                row = row.child(Icon::new(kind_icon).size(px(16.)));
-
-                // 名前またはリネーム入力欄
-                if is_renaming && let Some(field) = &renaming_field {
-                    let input_field = field.clone();
-                    row = row.child(div().flex_1().child(Input::new(&input_field).small().cleanable(true)));
-                } else {
-                    let row_label = label.clone();
-                    let name_clickable = div()
-                        .flex_1()
-                        .text_size(px(13.))
-                        .when(is_hidden, |d| d.text_color(rgb(0x9e9e9e)))
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                            if e.modifiers.shift || e.modifiers.platform || e.modifiers.control {
-                                this.toggle_select_sheet_shape(id);
-                            } else {
-                                this.select_sheet_shape(id);
-                            }
-                            cx.notify();
-                        }))
-                        .child(row_label);
-                    row = row.child(name_clickable);
-
-                    // 鉛筆アイコン（名前変更）
-                    let edit_btn = Button::new(format!("xlsx-selpane-rename-{index}"))
-                        .small()
-                        .ghost()
-                        .icon(Icon::new(Material("edit")))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.start_sheet_shape_renaming(id, window, cx);
-                        }));
-                    row = row.child(edit_btn);
-                }
-
-                // 順序変更ボタン: ↑ (前面へ) / ↓ (背面へ)
-                let up_btn = Button::new(format!("xlsx-selpane-up-{index}"))
-                    .small()
-                    .ghost()
-                    .icon(Icon::new(Material("arrow_upward")))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.select_sheet_shape(id);
-                        this.order_sheet_shape(crate::pptx::editing::Order::Forward, cx);
-                    }));
-                let down_btn = Button::new(format!("xlsx-selpane-down-{index}"))
-                    .small()
-                    .ghost()
-                    .icon(Icon::new(Material("arrow_downward")))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.select_sheet_shape(id);
-                        this.order_sheet_shape(crate::pptx::editing::Order::Backward, cx);
-                    }));
-                row = row.child(up_btn).child(down_btn);
-
-                list = list.child(row);
-            }
-            body = body.child(list);
+        use crate::shell::chrome::{self,data_table::{DataTable,row_controls}};
+        let reorder=self.wb().panels.selection_pane.as_ref()?.reorder.clone();
+        let all_hidden=!floating_shapes.is_empty()&&floating_shapes.iter().all(|(_,s)|slide.hidden_shapes.contains(&s.id));
+        let header=h_flex().h_full().px_2().gap_2().items_center()
+            .child(chrome::action_button("xlsx-selpane-visibility-all").w(px(28.)).h(px(28.)).px_0().icon(Material(if all_hidden{"visibility_off"}else{"visibility"})).tooltip(crate::shell::i18n::text("pptx.selection-pane.show-all")).on_click(cx.listener(move |e,_,_,cx|e.set_all_sheet_shapes_hidden(!all_hidden,cx))))
+            .child(crate::shell::i18n::text("fix.goto-special.select"));
+        let mut rows=Vec::new();
+        let ids=floating_shapes.iter().rev().map(|(_,s)|s.id).collect::<Vec<_>>();
+        for (row_index,(index,shape)) in floating_shapes.iter().rev().enumerate(){
+            let id=shape.id;let hidden=slide.hidden_shapes.contains(&id);let selected=self.selected_ids().contains(&id);
+            let eye=chrome::action_button(format!("xlsx-selpane-eye-{index}")).w(px(28.)).h(px(28.)).px_0().icon(Material(if hidden{"visibility_off"}else{"visibility"})).on_click(cx.listener(move |e,_,_,cx|e.toggle_sheet_shape_hidden(id,cx)));
+            let name=if renaming_id==Some(id) {div().flex_1().min_w_0().child(chrome::text_field(renaming_field.as_ref().unwrap()).full_width()).into_any_element()} else {
+                div().flex_1().min_w_0().truncate().child(self.xlsx_shape_label(shape,*index)).on_mouse_down(MouseButton::Left,cx.listener(move |e,event:&MouseDownEvent,_,cx|{if event.modifiers.shift||event.modifiers.platform||event.modifiers.control{e.toggle_select_sheet_shape(id);}else{e.select_sheet_shape(id);}cx.notify();})).into_any_element()
+            };
+            let edit=chrome::action_button(format!("xlsx-selpane-rename-{index}")).w(px(28.)).h(px(28.)).px_0().icon(Material("edit")).on_click(cx.listener(move |e,_,w,cx|e.start_sheet_shape_renaming(id,w,cx)));
+            let row=h_flex().h_full().px_2().gap_2().items_center().text_sm().when(hidden,|d|d.text_color(rgb(0x888888)))
+                .child(row_controls(reorder.clone(),row_index,0,eye)).child(name).child(row_controls(reorder.clone(),row_index,1,edit)).child(Icon::new(Material("drag_handle")).size(px(18.)));
+            rows.push((row_index,row.into_any_element(),selected));
         }
+        let table=DataTable::new("sheet-selection-table",Some(header.into_any_element()),rows,cx).reorderable(reorder,move |e,from,to,_,cx|{
+            if let (Some(&shape),Some(&target))=(ids.get(from),ids.get(to)){
+                if let Some(index)=e.slide().shapes.iter().position(|s|s.id==target){let slide=e.current_slide;e.run_sheet(vec![Command::MoveShape{slide,shape,index}],cx);}
+            }
+        });
+        let body=chrome::panel_form().p_0().child(table);
 
         Some(SidebarPanel {
             title: crate::shell::i18n::text("fix.goto-special.select"),

@@ -37,6 +37,14 @@ pub(crate) fn add(path: &Path) -> Vec<PathBuf> {
     list
 }
 
+/// Remove only the history entry; never delete the user's file.
+pub(crate) fn remove(path: &Path) -> Vec<PathBuf> {
+    let mut list=load();
+    list.retain(|entry|entry!=path);
+    save(&list);
+    list
+}
+
 fn save(list: &[PathBuf]) {
     let Some(store) = store_path() else { return };
     let mut text = String::new();

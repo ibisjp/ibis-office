@@ -4,8 +4,8 @@
 //! サイズと位置 (書式 > サイズと位置…): 選択中の図形の高さ・幅・回転・横位置・縦位置の
 //! 数値入力および縦横比固定の設定を行うサイドバーパネル。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -123,7 +123,7 @@ impl SlideEditor {
         }
 
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.frame = Some(SheetFramePanel {
             shape_id,
             fields,
@@ -315,33 +315,34 @@ impl SlideEditor {
         let (fields, error, locked, placement, print) = (panel.fields.clone(), panel.error.clone(), panel.locked, panel.placement, panel.print);
         let (attrs, has_fill, has_text) = (panel.attrs.clone(), panel.has_fill, panel.has_text);
 
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(12.));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(12.)).p_0();
         // The shape's own attributes (todo-fix #79): fill, outline, text size, as they are applied when typed.
         let rows = [("xlsx.shape-panel.fill-color", has_fill && attrs.len() > 3, 0), ("xlsx.shape-panel.outline-color", attrs.len() > 3, 1), ("xlsx.shape-panel.outline-width", attrs.len() > 3, 2), ("xlsx.shape-panel.text-size", has_text && attrs.len() > 3, 3)];
         for (label, show, i) in rows {
             if show {
-                body = body.child(div().text_size(px(13.)).child(crate::shell::i18n::text(label))).child(Input::new(&attrs[i]).small().cleanable(true));
+                body = body.child(crate::shell::chrome::control_row(crate::shell::i18n::text(label),attr_field(&attrs[i], i, cx)));
             }
         }
-        for (label, field) in [
-            crate::shell::i18n::text("pptx.frame-panel.height-cm"),
-            crate::shell::i18n::text("pptx.frame-panel.width-cm"),
-            crate::shell::i18n::text("pptx.frame-panel.rotation-degrees"),
-            crate::shell::i18n::text("pptx.frame-panel.horizontal-position-cm-top-left"),
-            crate::shell::i18n::text("pptx.frame-panel.vertical-position-cm-top-left"),
+        for (i, (label, field)) in [
+            crate::shell::i18n::text("xlsx.shape-panel.height"),
+            crate::shell::i18n::text("xlsx.shape-panel.width"),
+            crate::shell::i18n::text("xlsx.shape-panel.rotation"),
+            crate::shell::i18n::text("xlsx.shape-panel.horizontal"),
+            crate::shell::i18n::text("xlsx.shape-panel.vertical"),
         ]
         .into_iter()
         .zip(fields)
+        .enumerate()
         {
-            body = body.child(div().text_size(px(13.)).child(label)).child(Input::new(&field).small().cleanable(true));
+            body = body.child(crate::shell::chrome::text_field_row(label,
+                crate::shell::chrome::text_field(&field)
+                    .unit(if i==2 {"°"}else{"cm"},px(24.))
+                    .spinner(format!("xlsx-frame-{i}"), FRAME_SPINNERS[i], cx, |this, _, window, cx| this.apply_sheet_frame_panel(window, cx)),
+            ));
         }
 
         body = body.child(
-            Button::new("xlsx-frame-lock")
-                .small()
-                .when(!locked, |b| b.ghost())
-                .label(format!("{} {}", if locked { "☑" } else { "☐" }, crate::shell::i18n::text("pptx.frame-panel.lock-aspect-ratio")))
-                .on_click(cx.listener(|this, _, window, cx| {
+            crate::shell::chrome::checkbox_button("xlsx-frame-lock", crate::shell::i18n::text("pptx.frame-panel.lock-aspect-ratio"), locked, false, cx.listener(|this, _, window, cx| {
                     if let Some(p) = this.wb_mut().panels.frame.as_mut() {
                         p.locked = !p.locked;
                     }
@@ -349,8 +350,8 @@ impl SlideEditor {
                 })),
         );
 
-        body = body.child(div().pt(px(8.)).text_size(px(13.)).font_weight(gpui::FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.properties")));
-        body = body.child(div().text_size(px(12.)).text_color(rgb(0x666666)).child(crate::shell::i18n::text("_xlsx.object-positioning")));
+        body = body.child(div().pt(px(8.)).text_sm().font_weight(gpui::FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.properties")));
+        body = body.child(div().text_sm().text_color(rgb(0x666666)).child(crate::shell::i18n::text("_xlsx.object-positioning")));
         for (p, label, btn_id) in [
             (ibis_doc_model::ObjectPlacement::MoveAndSize, "xlsx.placement.move-and-size", "xlsx-placement-move-and-size"),
             (ibis_doc_model::ObjectPlacement::MoveOnly, "xlsx.placement.move-only", "xlsx-placement-move-only"),
@@ -358,11 +359,7 @@ impl SlideEditor {
         ] {
             let is_selected = placement == p;
             body = body.child(
-                Button::new(btn_id)
-                    .small()
-                    .when(!is_selected, |b| b.ghost())
-                    .label(format!("{} {}", if is_selected { "◉" } else { "○" }, crate::shell::i18n::text(label)))
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                crate::shell::chrome::radio_button(btn_id, is_selected, false, crate::shell::i18n::text(label), cx.listener(move |this, _, window, cx| {
                         if let Some(panel) = this.wb_mut().panels.frame.as_mut() {
                             panel.placement = p;
                         }
@@ -372,11 +369,7 @@ impl SlideEditor {
         }
 
         body = body.child(
-            Button::new("xlsx-frame-print")
-                .small()
-                .when(!print, |b| b.ghost())
-                .label(format!("{} {}", if print { "☑" } else { "☐" }, crate::shell::i18n::text("_xlsx.print-object")))
-                .on_click(cx.listener(|this, _, window, cx| {
+            crate::shell::chrome::checkbox_button("xlsx-frame-print", crate::shell::i18n::text("_xlsx.print-object"), print, false, cx.listener(|this, _, window, cx| {
                     if let Some(panel) = this.wb_mut().panels.frame.as_mut() {
                         panel.print = !panel.print;
                     }
@@ -385,7 +378,7 @@ impl SlideEditor {
         );
 
         if let Some(error) = error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error));
+            body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));
         }
 
         Some(SidebarPanel {
@@ -393,4 +386,20 @@ impl SlideEditor {
             body: body.into_any_element(),
         })
     }
+}
+
+/// The spinners of the frame fields: height and width (cm), rotation (degrees), horizontal and vertical position (cm).
+const FRAME_SPINNERS: [crate::shell::chrome::SpinnerSpec; 5] = {
+    use crate::shell::chrome::SpinnerSpec;
+    [SpinnerSpec::new(0.1).min(0.0), SpinnerSpec::new(0.1).min(0.0), SpinnerSpec::new(1.0).range(-360.0, 360.0), SpinnerSpec::new(0.1), SpinnerSpec::new(0.1)]
+};
+
+/// Shape colors use the application color field; numeric attributes share the unit spinner.
+fn attr_field(input:&Entity<InputState>,i:usize,cx:&mut Context<SlideEditor>)->AnyElement{
+    use crate::shell::chrome::{SpinnerSpec,text_field};
+    if i<2 {return crate::shell::chrome::panel_color_field(if i==0{"xlsx-frame-fill"}else{"xlsx-frame-outline"},input,cx);}
+    let field=text_field(input).unit("pt",px(24.));
+    let apply=|this:&mut SlideEditor,_:f32,w:&mut Window,cx:&mut Context<SlideEditor>|this.apply_sheet_frame_panel(w,cx);
+    if i==2{field.spinner("xlsx-frame-outline-width",SpinnerSpec::new(0.25).range(0.,1584.),cx,apply).into_any_element()}
+    else{field.spinner("xlsx-frame-text-size",SpinnerSpec::new(1.).range(1.,409.),cx,apply).into_any_element()}
 }

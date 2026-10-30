@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -154,6 +154,8 @@ pub(crate) struct SolverPanel {
     pub(crate) variables: Entity<InputState>,
     pub(crate) constraints: Vec<(String, Rel, String)>,
     pub(crate) selected: Option<usize>,
+    pub(crate) editor: Option<bool>,
+    constraint_scroll:ScrollHandle,
     pub(crate) c_lhs: Entity<InputState>,
     pub(crate) c_rhs: Entity<InputState>,
     pub(crate) c_rel: Rel,
@@ -278,6 +280,8 @@ impl SlideEditor {
             variables: make(d.variables.clone(), window, cx),
             constraints: d.constraints.clone(),
             selected: None,
+            editor:None,
+            constraint_scroll:ScrollHandle::new(),
             c_lhs: make(String::new(), window, cx),
             c_rhs: make(String::new(), window, cx),
             c_rel: Rel::Le,
@@ -305,7 +309,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.solver = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -672,7 +676,35 @@ impl SlideEditor {
         })
     }
 
+    pub(crate) fn open_solver_constraint(&mut self,index:Option<usize>,w:&mut Window,cx:&mut Context<Self>){
+        if let Some(p)=self.wb_mut().panels.solver.as_mut(){
+            p.selected=index;
+            let(lhs,rel,rhs)=index.and_then(|i|p.constraints.get(i).cloned()).unwrap_or((String::new(),Rel::Le,String::new()));
+            p.c_lhs.update(cx,|i,cx|i.set_value(lhs,w,cx));p.c_rhs.update(cx,|i,cx|i.set_value(rhs,w,cx));p.c_rel=rel;p.editor=Some(index.is_some());p.message.clear();
+        }
+        self.panel_dialog.bounds=None;cx.notify();
+    }
+    fn solver_constraint_panel(&self,cx:&Context<Self>)->Option<SidebarPanel>{
+        let p=self.sheet_state()?.panels.solver.as_ref()?;let editing=p.editor?;
+        let choices=RELATIONS.iter().map(|&rel|crate::shell::chrome::MenuItem::new("solver-relation-choice",text(relation_id(rel))).checked(rel==p.c_rel).on(move|e,_,cx|{if let Some(p)=e.wb_mut().panels.solver.as_mut(){p.c_rel=rel;}cx.notify();}).into()).collect();
+        let body=crate::shell::chrome::panel_form().p_0()
+            .child(crate::shell::chrome::text_field_row(text("xlsx.solver.cell-reference"),super::range_field::local_range_field(&p.c_lhs,"solver-constraint-lhs",false,cx)))
+            .child(crate::shell::chrome::dropdown_row(text("xlsx.solver.constraints"),div().w(crate::shell::chrome::FIELD_WIDTH).child(crate::shell::chrome::Dropdown::from_entries("solver-rel",text(relation_id(p.c_rel)),choices,true,0,&cx.weak_entity()).into_any_element())))
+            .child(crate::shell::chrome::text_field_row(text("xlsx.solver.constraint-value"),crate::shell::chrome::text_field(&p.c_rhs).disabled(!matches!(p.c_rel,Rel::Le|Rel::Eq|Rel::Ge))))
+            .children(crate::shell::chrome::panel_message(&p.message));
+        let footer=crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("solver-constraint-ok",text("OK"),crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(move|e,_,_,cx|{
+                e.solver_put_constraint(editing,cx);
+                if let Some(p)=e.wb_mut().panels.solver.as_mut(){if p.message.is_empty(){p.editor=None;e.panel_dialog.bounds=None;}}
+                cx.notify();
+            })))
+            .action(crate::shell::chrome::ActionDefinition::new("solver-constraint-cancel",text("_shell.cancel"),crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,_,cx|{if let Some(p)=e.wb_mut().panels.solver.as_mut(){p.editor=None;p.message.clear();}e.panel_dialog.bounds=None;cx.notify();})));
+        Some(SidebarPanel::with_footer(text("xlsx.solver.constraints"),body.into_any_element(),footer).modal_named("solver_constraint_editor"))
+    }
+
     pub(crate) fn solver_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        if self.sheet_state()?.panels.solver.as_ref()?.editor.is_some(){return self.solver_constraint_panel(cx);}
+        let mut panel_fixed_actions = crate::shell::chrome::action_bar();
         let p = self.sheet_state()?.panels.solver.as_ref()?;
         let mark = |id: &str, child: AnyElement| {
             let ui = p.ui.clone();
@@ -685,34 +717,28 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let caption = |id: &str| div().text_size(px(13.)).child(text(id));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let caption = |id: &str| div().text_sm().child(text(id));
         let entity = cx.entity().downgrade();
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
         body = body
             .child(
                 h_flex()
                     .justify_between()
                     .items_center()
-                    .child(caption("xlsx.solver.objective"))
-                    .child(mark(
-                        "use-objective",
-                        Button::new("solver-use-objective")
-                            .xsmall()
-                            .ghost()
-                            .label(text("xlsx.use-selected-cell"))
-                            .on_click(cx.listener(|this, _, window, cx| this.set_solver_ref_from_selection("objective", window, cx)))
-                            .into_any_element(),
-                    )),
+                    .child(caption("xlsx.solver.objective")),
             )
-            .child(mark("objective", Input::new(&p.objective).small().cleanable(true).into_any_element()));
+            .child(mark("objective", super::range_field::local_range_field(&p.objective,"solver_panel-p-objective",true,cx).into_any_element()));
         let radio = |id: &'static str, on: bool, label: &'static str, kind: GoalKind| {
             mark(
                 id,
-                Button::new(id)
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if on { "◉" } else { "○" }, text(label)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::radio_button(id, on, false, text(label), cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.wb_mut().panels.solver.as_mut() {
                             p.goal = kind;
                         }
@@ -722,125 +748,34 @@ impl SlideEditor {
             )
         };
         body = body.child(
-            h_flex()
-                .gap_1()
-                .flex_wrap()
+            crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                 .child(radio("goal-max", p.goal == GoalKind::Max, "xlsx.solver.goal-max", GoalKind::Max))
                 .child(radio("goal-min", p.goal == GoalKind::Min, "xlsx.solver.goal-min", GoalKind::Min))
                 .child(radio("goal-value", p.goal == GoalKind::Value, "xlsx.solver.goal-value", GoalKind::Value)),
         );
         if p.goal == GoalKind::Value {
-            body = body.child(mark("goal-number", Input::new(&p.goal_value).small().cleanable(true).into_any_element()));
+            body = body.child(mark("goal-number", crate::shell::chrome::text_field(&p.goal_value).full_width().into_any_element()));
         }
         body = body
             .child(
                 h_flex()
                     .justify_between()
                     .items_center()
-                    .child(caption("xlsx.solver.variables"))
-                    .child(mark(
-                        "use-variables",
-                        Button::new("solver-use-variables")
-                            .xsmall()
-                            .ghost()
-                            .label(text("xlsx.subtotal-use-selection"))
-                            .on_click(cx.listener(|this, _, window, cx| this.set_solver_ref_from_selection("variables", window, cx)))
-                            .into_any_element(),
-                    )),
+                    .child(caption("xlsx.solver.variables")),
             )
-            .child(mark("variables", Input::new(&p.variables).small().cleanable(true).into_any_element()));
+            .child(mark("variables", super::range_field::local_range_field(&p.variables,"solver_panel-p-variables",false,cx).into_any_element()));
 
-        // Constraints.
-        body = body.child(caption("xlsx.solver.constraints"));
-        let mut list = v_flex().gap_1().p(px(4.)).border_1().border_color(cx.theme().border).rounded_md().max_h(px(160.)).overflow_hidden();
-        for (i, (lhs, rel, rhs)) in p.constraints.iter().enumerate() {
-            let on = Some(i) == p.selected;
-            let (l, r, rl) = (lhs.clone(), rhs.clone(), *rel);
-            list = list.child(mark(
-                &format!("constraint-{i}"),
-                Button::new(SharedString::from(format!("solver-constraint-{i}")))
-                    .small()
-                    .ghost()
-                    .child(div().px(px(6.)).text_size(px(12.)).bg(if on { cx.theme().accent.opacity(0.2) } else { hsla(0.0, 0.0, 0.0, 0.0) }).child(SharedString::from(format!("{lhs} {} {rhs}", text(relation_id(*rel))))))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if let Some(p) = this.wb_mut().panels.solver.as_mut() {
-                            p.selected = Some(i);
-                            p.c_rel = rl;
-                            p.c_lhs.update(cx, |input, cx| input.set_value(l.clone(), window, cx));
-                            p.c_rhs.update(cx, |input, cx| input.set_value(r.clone(), window, cx));
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ));
+        // Constraints are edited separately; the main table stays focused on the model.
+        let header=crate::shell::chrome::table_row(vec![text("xlsx.solver.cell-reference").into_any_element(),text("xlsx.solver.constraints").into_any_element(),text("xlsx.solver.report.value").into_any_element()],div().into_any_element(),false);
+        let mut rows=v_flex();
+        for(i,(lhs,rel,rhs))in p.constraints.iter().enumerate(){
+            let actions=h_flex().gap_1()
+                .child(crate::shell::chrome::action_button(("solver-constraint-edit",i)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("edit")).on_click(cx.listener(move|e,_,w,cx|e.open_solver_constraint(Some(i),w,cx))))
+                .child(crate::shell::chrome::action_button(("solver-constraint-delete",i)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("delete")).on_click(cx.listener(move|e,_,_,cx|{if let Some(p)=e.wb_mut().panels.solver.as_mut(){if i<p.constraints.len(){p.constraints.remove(i);}}cx.notify();})));
+            rows=rows.child(crate::shell::chrome::table_row(vec![div().truncate().child(lhs.clone()).into_any_element(),text(relation_id(*rel)).into_any_element(),div().truncate().child(rhs.clone()).into_any_element()],actions.into_any_element(),false));
         }
-        body = body.child(list);
-        body = body
-            .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .child(caption("xlsx.solver.cell-reference"))
-                    .child(mark(
-                        "use-lhs",
-                        Button::new("solver-use-lhs")
-                            .xsmall()
-                            .ghost()
-                            .label(text("xlsx.subtotal-use-selection"))
-                            .on_click(cx.listener(|this, _, window, cx| this.set_solver_ref_from_selection("c-lhs", window, cx)))
-                            .into_any_element(),
-                    )),
-            )
-            .child(mark("c-lhs", Input::new(&p.c_lhs).small().cleanable(true).into_any_element()));
-        body = body.child(mark(
-            "c-rel",
-            Button::new("solver-rel")
-                .small()
-                .label(text(relation_id(p.c_rel)))
-                .dropdown_menu({
-                    let entity = entity.clone();
-                    move |menu, _, _| {
-                        RELATIONS.iter().fold(menu, |menu, &r| {
-                            let entity = entity.clone();
-                            menu.item(PopupMenuItem::new(text(relation_id(r))).on_click(move |_, _, cx| {
-                                entity
-                                    .update(cx, |this, cx| {
-                                        if let Some(p) = this.wb_mut().panels.solver.as_mut() {
-                                            p.c_rel = r;
-                                        }
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }))
-                        })
-                    }
-                })
-                .into_any_element(),
-        ));
-        body = body.child(caption("xlsx.solver.constraint-value")).child(mark("c-rhs", Input::new(&p.c_rhs).small().cleanable(true).into_any_element()));
-        body = body.child(
-            h_flex()
-                .gap_2()
-                .child(mark("c-add", Button::new("solver-add").primary().small().label(text("xlsx.solver.add")).on_click(cx.listener(|this, _, _, cx| this.solver_put_constraint(false, cx))).into_any_element()))
-                .child(mark("c-change", Button::new("solver-change").small().disabled(p.selected.is_none()).label(text("xlsx.solver.change")).on_click(cx.listener(|this, _, _, cx| this.solver_put_constraint(true, cx))).into_any_element()))
-                .child(mark(
-                    "c-delete",
-                    Button::new("solver-delete")
-                        .small()
-                        .disabled(p.selected.is_none())
-                        .label(text("xlsx.solver.delete"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(p) = this.wb_mut().panels.solver.as_mut()
-                                && let Some(i) = p.selected.take()
-                                && i < p.constraints.len()
-                            {
-                                p.constraints.remove(i);
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                )),
-        );
+        body=body.child(h_flex().w_full().items_center().justify_between().child(caption("xlsx.solver.constraints")).child(mark("c-add",crate::shell::chrome::action_button("solver-add").label(text("xlsx.solver.add")).on_click(cx.listener(|e,_,w,cx|e.open_solver_constraint(None,w,cx))).into_any_element())))
+            .child(crate::shell::chrome::table("solver-constraints",header.into_any_element(),rows.into_any_element(),p.constraint_scroll.clone(),px(180.)));
 
         // Options.
         body = body.child(mark(
@@ -860,27 +795,11 @@ impl SlideEditor {
         ));
         body = body.child(caption("xlsx.solver.method")).child(mark(
             "method",
-            Button::new("solver-method")
-                .small()
-                .label(text(method_id(p.method)))
-                .dropdown_menu({
-                    let entity = entity.clone();
-                    move |menu, _, _| {
-                        [Method::Grg, Method::Simplex, Method::Evolutionary].iter().fold(menu, |menu, &m| {
-                            let entity = entity.clone();
-                            menu.item(PopupMenuItem::new(text(method_id(m))).on_click(move |_, _, cx| {
-                                entity
-                                    .update(cx, |this, cx| {
-                                        if let Some(p) = this.wb_mut().panels.solver.as_mut() {
-                                            p.method = m;
-                                        }
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }))
-                        })
-                    }
-                })
+            crate::shell::chrome::Dropdown::new("solver-method",text(method_id(p.method)),
+                [Method::Grg,Method::Simplex,Method::Evolutionary].into_iter().map(|method| {
+                    crate::shell::chrome::DropdownItem::new(text(method_id(method))).checked(method==p.method)
+                        .on_select(std::rc::Rc::new(move|e,_,cx|{if let Some(p)=e.wb_mut().panels.solver.as_mut(){p.method=method;}cx.notify();}))
+                }).collect(),&cx.weak_entity())
                 .into_any_element(),
         ));
         for (id, caption_id, entity) in [
@@ -890,10 +809,22 @@ impl SlideEditor {
             ("max-iterations", "xlsx.solver.max-iterations", &p.max_iterations),
             ("max-time", "xlsx.solver.max-time", &p.max_time),
         ] {
-            body = body.child(caption(caption_id)).child(mark(id, Input::new(entity).small().cleanable(true).into_any_element()));
+            // Integer tolerance (%), iterations and seconds step by 1; precision and convergence are small decimals (1e-6…) the
+            // spinner's rounding to 0.01 would lose, so they have no ▲▼. The options are read when solving.
+            let spec = match id {
+                "integer-tolerance" => Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 100.0)),
+                "max-iterations" | "max-time" => Some(crate::shell::chrome::SpinnerSpec::new(1.0).min(0.0).integer_only()),
+                _ => None,
+            };
+            let field = crate::shell::chrome::text_field(entity).full_width();
+            let field = match spec {
+                Some(spec) => field.spinner(format!("solver-{id}"), spec, cx, |_, _, _, _| {}),
+                None => field,
+            };
+            body = body.child(caption(caption_id)).child(mark(id, field.into_any_element()));
         }
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+            body = body.children(crate::shell::chrome::panel_message(&p.message));
         }
         if p.found.is_some() {
             body = body.child(mark(
@@ -941,23 +872,17 @@ impl SlideEditor {
                 )
                 .into_any_element(),
             ));
-            body = body.child(
-                h_flex()
-                    .gap_2()
-                    .child(mark("keep", Button::new("solver-keep").primary().small().label(text("xlsx.solver.keep")).on_click(cx.listener(|this, _, _, cx| this.solver_finish(true, cx))).into_any_element()))
-                    .child(mark("restore", Button::new("solver-restore").small().label(text("xlsx.solver.restore")).on_click(cx.listener(|this, _, _, cx| this.solver_finish(false, cx))).into_any_element())),
-            );
+            panel_fixed_actions = panel_fixed_actions.actions((crate::shell::chrome::action_bar()
+                    .action(mark_action("keep", crate::shell::chrome::ActionDefinition::new("solver-keep", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("xlsx.solver.keep")).on_click(cx.listener(|this, _, _, cx| this.solver_finish(true, cx)))))
+                    .action(mark_action("restore", crate::shell::chrome::ActionDefinition::new("solver-restore", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("xlsx.solver.restore")).on_click(cx.listener(|this, _, _, cx| this.solver_finish(false, cx)))))).into_definitions());
         } else {
-            body = body.child(
-                h_flex()
-                    .gap_2()
-                    .flex_wrap()
-                    .child(mark("solve", Button::new("solver-solve").primary().small().label(text("xlsx.solver.solve")).on_click(cx.listener(|this, _, _, cx| this.solver_solve(cx))).into_any_element()))
-                    .child(mark("reset", Button::new("solver-reset").small().label(text("xlsx.solver.reset-all")).on_click(cx.listener(|this, _, window, cx| this.solver_reset_all(window, cx))).into_any_element()))
-                    .child(mark("close", Button::new("solver-close").small().label(text("_shell.close")).on_click(cx.listener(|this, _, _, cx| this.solver_finish(false, cx))).into_any_element())),
-            );
+            panel_fixed_actions = panel_fixed_actions.actions((crate::shell::chrome::action_bar()
+                    .action(mark_action("solve", crate::shell::chrome::ActionDefinition::new("solver-solve", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("xlsx.solver.solve")).on_click(cx.listener(|this, _, _, cx| this.solver_solve(cx)))))
+                    .action(mark_action("reset", crate::shell::chrome::ActionDefinition::new("solver-reset", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("xlsx.solver.reset-all")).on_click(cx.listener(|this, _, window, cx| this.solver_reset_all(window, cx)))))
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))).into_definitions());
         }
-        Some(SidebarPanel { title: text("xlsx.solver.title"), body: body.into_any_element() })
+        Some(SidebarPanel::with_footer(text("xlsx.solver.title"), body.into_any_element(), panel_fixed_actions))
     }
 }
 

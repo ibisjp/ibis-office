@@ -157,6 +157,7 @@ pub(crate) fn check_document_accessibility(doc: &FlowDocument) -> Vec<Accessibil
 impl SlideEditor {
     /// Open Accessibility Checker pane.
     pub(crate) fn open_accessibility_panel(&mut self, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if let Some(state) = self.doc_state_mut() {
             state.accessibility_panel = true;
             state.selection_pane = false;
@@ -197,7 +198,7 @@ impl SlideEditor {
         let flow = self.flow()?;
         let issues = check_document_accessibility(flow);
 
-        let mut body = v_flex().gap_3().px(px(18.)).py(px(8.));
+        let mut body = v_flex().w_full().min_w_0().gap_3().px(px(18.)).py(px(8.)).p_0();
 
         if issues.is_empty() {
             body = body.child(
@@ -207,11 +208,11 @@ impl SlideEditor {
                     .p_3()
                     .rounded_md()
                     .bg(rgb(0xe6f4ea))
-                    .child(Icon::new(Material("check_circle")).size(px(20.)).text_color(rgb(0x137333)))
+                    .child(Icon::new(Material("check_circle")).size(px(20.)).flex_none().text_color(rgb(0x137333)))
                     .child(
-                        v_flex()
+                        v_flex().flex_1().min_w_0()
                             .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(rgb(0x137333)).child(crate::shell::i18n::text("docx.accessibility.passed")))
-                            .child(div().text_xs().text_color(rgb(0x1e8e3e)).child(crate::shell::i18n::text("_docx.no-accessibility-issues-were-found-in-the-docume")))
+                            .child(div().text_sm().text_color(rgb(0x1e8e3e)).child(crate::shell::i18n::text("_docx.no-accessibility-issues-were-found-in-the-docume")))
                     )
             );
         } else {
@@ -220,7 +221,7 @@ impl SlideEditor {
             let notice_count = issues.iter().filter(|i| i.category == IssueCategory::Notice).count();
 
             body = body.child(
-                div().text_xs().text_color(rgb(0x5f6368)).child(
+                div().text_sm().text_color(rgb(0x5f6368)).child(
                     crate::shell::i18n::format(
                         "_docx.check-results-errors-errors-warnings-warnings-no",
                         &[("errors", &error_count.to_string()), ("warnings", &warn_count.to_string()), ("notices", &notice_count.to_string())],
@@ -236,7 +237,7 @@ impl SlideEditor {
                     IssueCategory::Notice => ("info", rgb(0x1a73e8), rgb(0xe8f0fe)),
                 };
 
-                let item = v_flex()
+                let item = v_flex().w_full().min_w_0()
                     .id(("acc-issue", idx))
                     .gap_1()
                     .p_2()
@@ -247,13 +248,13 @@ impl SlideEditor {
                     .child(
                         h_flex()
                             .gap_2()
-                            .items_center()
+                            .items_center().flex_wrap()
                             .child(Icon::new(Material(icon_name)).size(px(16.)).text_color(icon_color))
-                            .child(div().flex_1().text_sm().font_weight(FontWeight::MEDIUM).child(issue.title))
-                            .child(div().text_xs().text_color(rgb(0x5f6368)).child(issue.target_name))
+                            .child(div().flex_1().min_w_0().text_sm().font_weight(FontWeight::MEDIUM).child(issue.title))
+                            .child(div().text_sm().text_color(rgb(0x5f6368)).child(issue.target_name))
                     )
                     .child(
-                        div().text_xs().text_color(rgb(0x3c4043)).pl(px(24.)).child(issue.description)
+                        div().w_full().min_w_0().text_sm().text_color(rgb(0x3c4043)).pl(px(24.)).child(issue.description)
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.jump_to_accessibility_issue(at, cx);
@@ -486,6 +487,7 @@ fn collect_screen_reader_landmarks(doc: &FlowDocument, filter: Option<ScreenRead
 
 impl SlideEditor {
     pub(crate) fn open_docx_screen_reader_panel(&mut self, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if let Some(state) = self.doc_state_mut() {
             let mut sr = state.screen_reader.take().unwrap_or_default();
             sr.open = true;
@@ -710,19 +712,9 @@ impl SlideEditor {
         let mut filter_row = h_flex().gap_1().flex_wrap();
         for f in filters {
             let active = sr.filter == f;
-            let mut b = Button::new(SharedString::from(format!("sr-filter-{f:?}")))
-                .label(crate::shell::i18n::text(f.label_key()))
-                .small();
-            if active {
-                b = b.primary();
-            } else {
-                b = b.ghost();
-            }
-            filter_row = filter_row.child(
-                b.on_click(cx.listener(move |this, _, _, cx| {
-                    this.set_docx_screen_reader_filter(f, cx);
-                })),
-            );
+            filter_row = filter_row.child(crate::shell::chrome::radio_button(
+                SharedString::from(format!("sr-filter-{f:?}")),active,false,crate::shell::i18n::text(f.label_key()),
+                cx.listener(move |e,_,_,cx|e.set_docx_screen_reader_filter(f,cx))));
         }
 
         let mut list = v_flex().gap_1();
@@ -738,8 +730,8 @@ impl SlideEditor {
                     .hover(|s| s.bg(rgb(0xe8f0fe)))
                     .cursor_pointer()
                     .justify_between()
-                    .child(div().text_xs().font_weight(FontWeight::MEDIUM).child(lm.label))
-                    .child(div().text_xs().text_color(rgb(0x5f6368)).child(lm.detail))
+                    .min_w_0().overflow_hidden().child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::MEDIUM).child(lm.label))
+                    .child(div().max_w(px(100.)).truncate().text_sm().text_color(rgb(0x5f6368)).child(lm.detail))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(st) = this.doc_state_mut() {
                             st.caret = Some(at);
@@ -756,51 +748,39 @@ impl SlideEditor {
         let body = v_flex()
             .gap_3()
             .p_3()
-            .child(
+            .p_0().child(
                 v_flex()
                     .gap_1()
                     .p_2()
                     .rounded_md()
                     .bg(rgb(0xe8f0fe))
-                    .child(div().text_xs().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("docx.screen-reader.current")))
-                    .child(div().text_xs().child(announcement)),
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("docx.screen-reader.current")))
+                    .overflow_hidden().child(div().w_full().text_sm().overflow_hidden().child(announcement)),
             )
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("sr-prev-btn")
-                            .label(crate::shell::i18n::text("docx.screen-reader.prev"))
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let _ = this.docx_screen_reader_prev_landmark(None, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("sr-next-btn")
-                            .label(crate::shell::i18n::text("docx.screen-reader.next"))
-                            .small()
-                            .primary()
+                crate::shell::chrome::action_bar()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("sr-next-btn", crate::shell::i18n::text("docx.screen-reader.next"), crate::shell::chrome::ActionButtonKind::Primary)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 let _ = this.docx_screen_reader_next_landmark(None, cx);
+                            })),
+                    )
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("sr-prev-btn", crate::shell::i18n::text("docx.screen-reader.prev"), crate::shell::chrome::ActionButtonKind::Normal)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let _ = this.docx_screen_reader_prev_landmark(None, cx);
                             })),
                     ),
             )
             .child(filter_row)
             .child(list)
-            .child(
-                Button::new("sr-close-btn")
-                    .label(crate::shell::i18n::text("docx.convert.close"))
-                    .ghost()
+            ;
+
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("sr-close-btn", crate::shell::i18n::text("docx.convert.close"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.close_docx_screen_reader_panel(cx);
-                    })),
-            );
-
-        Some(SidebarPanel {
-            title: crate::shell::i18n::text("docx.screen-reader.title"),
-            body: body.into_any_element(),
-        })
+                    })));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("docx.screen-reader.title"), body.into_any_element(), panel_terminal_actions))
     }
 }
 
@@ -866,6 +846,7 @@ fn collect_read_aloud_units(doc: &FlowDocument) -> Vec<(u32, usize, String)> {
 
 impl SlideEditor {
     pub(crate) fn open_docx_read_aloud(&mut self, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let units = self.flow().map(|d| collect_read_aloud_units(d)).unwrap_or_default();
         let caret_para = self.doc_state().and_then(|s| s.caret.map(|c| c.para));
         let start_idx = caret_para
@@ -1000,23 +981,10 @@ impl SlideEditor {
             return None;
         }
         let speeds = [0.5f32, 0.75, 1.0, 1.25, 1.5, 2.0];
-        let mut speed_row = h_flex().gap_1().flex_wrap();
-        for sp in speeds {
-            let active = (ra.speed - sp).abs() < 0.01;
-            let mut b = Button::new(SharedString::from(format!("ra-speed-{sp}")))
-                .label(format!("{sp}x"))
-                .small();
-            if active {
-                b = b.primary();
-            } else {
-                b = b.ghost();
-            }
-            speed_row = speed_row.child(
-                b.on_click(cx.listener(move |this, _, _, cx| {
-                    this.docx_read_aloud_set_speed(sp, cx);
-                })),
-            );
-        }
+        let speed_row = crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
+            .children(speeds.into_iter().map(|sp| crate::shell::chrome::segment_control::SegmentItem::label(
+                SharedString::from(format!("ra-speed-{sp}")),format!("{sp}x"),(ra.speed-sp).abs()<0.01)
+                .on_click(cx.listener(move |e,_,_,cx|e.docx_read_aloud_set_speed(sp,cx)))));
 
         let voices = [
             ReadAloudVoice::SystemDefault,
@@ -1028,83 +996,59 @@ impl SlideEditor {
         let mut voice_col = v_flex().gap_1();
         for v in voices {
             let active = ra.voice == v;
-            let mut b = Button::new(SharedString::from(format!("ra-voice-{v:?}")))
-                .label(crate::shell::i18n::text(v.label_key()))
-                .small();
-            if active {
-                b = b.primary();
-            } else {
-                b = b.ghost();
-            }
-            voice_col = voice_col.child(
-                b.on_click(cx.listener(move |this, _, _, cx| {
-                    this.docx_read_aloud_set_voice(v, cx);
-                })),
-            );
+            voice_col = voice_col.child(crate::shell::chrome::radio_button(
+                SharedString::from(format!("ra-voice-{v:?}")),active,false,crate::shell::i18n::text(v.label_key()),
+                cx.listener(move |e,_,_,cx|e.docx_read_aloud_set_voice(v,cx))));
         }
 
         let body = v_flex()
             .gap_3()
             .p_3()
-            .child(
+            .p_0().child(
                 v_flex()
                     .gap_1()
                     .p_2()
                     .rounded_md()
                     .bg(rgb(0xf8f9fa))
-                    .child(div().text_xs().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("docx.read-aloud.speaking")))
+                    .child(div().text_sm().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("docx.read-aloud.speaking")))
                     .child(div().text_sm().child(ra.spoken_text.clone())),
             )
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("ra-prev-btn")
-                            .label(crate::shell::i18n::text("docx.read-aloud.prev"))
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.docx_read_aloud_prev(cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("ra-play-pause-btn")
-                            .label(if ra.playing {
+                crate::shell::chrome::action_bar()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("ra-play-pause-btn", if ra.playing {
                                 crate::shell::i18n::text("docx.read-aloud.pause")
                             } else {
                                 crate::shell::i18n::text("docx.read-aloud.play")
-                            })
-                            .small()
-                            .primary()
+                            }, crate::shell::chrome::ActionButtonKind::Primary)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.docx_read_aloud_toggle_play(cx);
                             })),
                     )
-                    .child(
-                        Button::new("ra-next-btn")
-                            .label(crate::shell::i18n::text("docx.read-aloud.next"))
-                            .small()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("ra-prev-btn", crate::shell::i18n::text("docx.read-aloud.prev"), crate::shell::chrome::ActionButtonKind::Normal)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.docx_read_aloud_prev(cx);
+                            })),
+                    )
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("ra-next-btn", crate::shell::i18n::text("docx.read-aloud.next"), crate::shell::chrome::ActionButtonKind::Normal)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.docx_read_aloud_next(cx);
                             })),
                     ),
             )
-            .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("docx.read-aloud.speed")))
+            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("docx.read-aloud.speed")))
             .child(speed_row)
-            .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("docx.read-aloud.voice")))
+            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("docx.read-aloud.voice")))
             .child(voice_col)
-            .child(
-                Button::new("ra-close-btn")
-                    .label(crate::shell::i18n::text("docx.convert.close"))
-                    .ghost()
+            ;
+
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("ra-close-btn", crate::shell::i18n::text("docx.convert.close"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.close_docx_read_aloud(cx);
-                    })),
-            );
-
-        Some(SidebarPanel {
-            title: crate::shell::i18n::text("docx.read-aloud.title"),
-            body: body.into_any_element(),
-        })
+                    })));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("docx.read-aloud.title"), body.into_any_element(), panel_terminal_actions))
     }
 }
 
@@ -1171,6 +1115,7 @@ impl Default for DocxToolbarCustomizeState {
 
 impl SlideEditor {
     pub(crate) fn open_docx_customize_toolbar_panel(&mut self, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if let Some(state) = self.doc_state_mut() {
             let mut c = state.toolbar_customize.take().unwrap_or_default();
             c.open = true;
@@ -1252,7 +1197,7 @@ impl SlideEditor {
             let on = self.is_docx_toolbar_group_visible(g);
             group_col = group_col.child(
                 Button::new(SharedString::from(format!("cust-grp-{g:?}")))
-                    .label(crate::shell::i18n::text(g.label_key()))
+                    .child(div().w_full().text_align(TextAlign::Left).child(crate::shell::i18n::text(g.label_key())))
                     .icon(Icon::new(Material(if on { "check_box" } else { "check_box_outline_blank" })))
                     .small()
                     .ghost()
@@ -1283,7 +1228,7 @@ impl SlideEditor {
             let on = qat_chosen.iter().any(|x| x == id);
             qat_col = qat_col.child(
                 Button::new(SharedString::from(format!("cust-qat-{id}")))
-                    .label(crate::shell::i18n::text(id))
+                    .child(div().w_full().text_align(TextAlign::Left).child(crate::shell::i18n::text(id)))
                     .icon(Icon::new(Material(if on { "check_box" } else { "check_box_outline_blank" })))
                     .small()
                     .ghost()
@@ -1297,31 +1242,20 @@ impl SlideEditor {
         let body = v_flex()
             .gap_3()
             .p_3()
-            .child(div().text_xs().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("docx.customize.ribbon-groups")))
+            .p_0().child(div().text_sm().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("docx.customize.ribbon-groups")))
             .child(group_col)
-            .child(div().text_xs().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("docx.customize.qat-commands")))
+            .child(div().text_sm().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("docx.customize.qat-commands")))
             .child(qat_col)
-            .child(
-                Button::new("cust-reset-btn")
-                    .label(crate::shell::i18n::text("docx.customize.reset"))
-                    .small()
+            ;
+
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("cust-reset-btn", crate::shell::i18n::text("docx.customize.reset"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.reset_docx_toolbar_customization(cx);
-                    })),
-            )
-            .child(
-                Button::new("cust-close-btn")
-                    .label(crate::shell::i18n::text("docx.convert.close"))
-                    .ghost()
+                    }))).action(crate::shell::chrome::ActionDefinition::new("cust-close-btn", crate::shell::i18n::text("docx.convert.close"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.close_docx_customize_toolbar_panel(cx);
-                    })),
-            );
-
-        Some(SidebarPanel {
-            title: crate::shell::i18n::text("docx.customize.title"),
-            body: body.into_any_element(),
-        })
+                    })));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("docx.customize.title"), body.into_any_element(), panel_terminal_actions))
     }
 }
 

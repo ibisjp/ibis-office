@@ -9,13 +9,14 @@
 //! destination cell, asking before it replaces what is there.
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_calc::input::{Typed, parse_date_in_order, parse_input};
 use ibis_doc_model::{CellEdit, CellInput, CellRange, CellValue, Command, SheetCommand, SlideId, StyleChange};
 use super::import_text::ColumnType;
+use gpui_kit::component::menu::DropdownMenu as _;
 
 /// Converts split parts of a row into CellEdits and number format changes according to column types.
 pub(crate) fn convert_parts(
@@ -254,7 +255,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.text_columns = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -370,11 +371,18 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
         type Toggle = fn(&mut TextColumnsPanel);
         let toggle = |id: &'static str, label: String, flip: Toggle| {
             mark(
                 id,
-                Button::new(id)
+                crate::shell::chrome::action_button(id)
                     .small()
                     .label(label)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -387,21 +395,35 @@ impl SlideEditor {
                     .into_any_element(),
             )
         };
-        let check = |on: bool, name: &str| format!("{} {}", if on { "☑" } else { "☐" }, crate::shell::i18n::text(name));
+        let option = |id: &'static str, on: bool, name: &str, radio: bool, flip: Toggle| {
+            let handler = cx.listener(move |this, _, _, cx| {
+                if let Some(p) = this.wb_mut().panels.text_columns.as_mut() {
+                    flip(p);
+                    p.confirm = false;
+                }
+                cx.notify();
+            });
+            let label = crate::shell::i18n::text(name);
+            let control = if radio {
+                crate::shell::chrome::radio_button(id, on, false, label, handler).into_any_element()
+            } else {
+                crate::shell::chrome::checkbox_button(id, label, on, false, handler).into_any_element()
+            };
+            mark(id, control)
+        };
         let source = format!("{}:{}", ibis_doc_model::cell_name(p.source.first_column, p.source.first_row), ibis_doc_model::cell_name(p.source.last_column, p.source.last_row));
         let mut body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(crate::shell::i18n::format("text-columns.source", &[("cells", &source)]))
+            .p_0().child(crate::shell::i18n::format("text-columns.source", &[("cells", &source)]))
             .child(
-                h_flex()
-                    .gap_1()
-                    .child(toggle("text-columns-delimited", check(!p.fixed, "fix.text-columns.delimiters"), |p| p.fixed = false))
-                    .child(toggle("text-columns-fixed", check(p.fixed, "fix.text-columns.fixed-width"), |p| p.fixed = true)),
+                crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+                    .child(option("text-columns-delimited", !p.fixed, "fix.text-columns.delimiters", true, |p| p.fixed = false))
+                    .child(option("text-columns-fixed", p.fixed, "fix.text-columns.fixed-width", true, |p| p.fixed = true)),
             );
         if p.fixed {
-            body = body.child(crate::shell::i18n::text("fix.text-columns.break-positions-characters-start")).child(mark("breaks", Input::new(&p.breaks).small().cleanable(true).into_any_element()));
+            body = body.child(crate::shell::i18n::text("fix.text-columns.break-positions-characters-start")).child(mark("breaks", crate::shell::chrome::text_field(&p.breaks).full_width().into_any_element()));
         } else {
             body = body
                 .child(crate::shell::i18n::text("fix.text-columns.delimiters"))
@@ -409,66 +431,29 @@ impl SlideEditor {
                     h_flex()
                         .gap_1()
                         .flex_wrap()
-                        .child(toggle("text-columns-tab", check(p.tab, "fix.text-columns.tab"), |p| p.tab = !p.tab))
-                        .child(toggle("text-columns-semicolon", check(p.semicolon, "fix.text-columns.semicolon"), |p| p.semicolon = !p.semicolon))
-                        .child(toggle("text-columns-comma", check(p.comma, "fix.text-columns.comma"), |p| p.comma = !p.comma))
-                        .child(toggle("text-columns-space", check(p.space, "fix.text-columns.space"), |p| p.space = !p.space)),
+                        .child(option("text-columns-tab", p.tab, "fix.text-columns.tab", false, |p| p.tab = !p.tab))
+                        .child(option("text-columns-semicolon", p.semicolon, "fix.text-columns.semicolon", false, |p| p.semicolon = !p.semicolon))
+                        .child(option("text-columns-comma", p.comma, "fix.text-columns.comma", false, |p| p.comma = !p.comma))
+                        .child(option("text-columns-space", p.space, "fix.text-columns.space", false, |p| p.space = !p.space)),
                 )
-                .child(mark("other", Input::new(&p.other).small().cleanable(true).into_any_element()))
+                .child(mark("other", crate::shell::chrome::text_field(&p.other).width(px(72.)).into_any_element()))
                 .child(
                     h_flex()
                         .gap_1()
                         .flex_wrap()
-                        .child(toggle("text-columns-consecutive", check(p.consecutive, "fix.text-columns.treat-consecutive-delimiters-one"), |p| p.consecutive = !p.consecutive))
-                        .child(toggle(
-                            "text-columns-quote",
-                            crate::shell::i18n::format(
-                                "text-columns.quote",
-                                &[("quote", &match p.quote {
-                                    Some('"') => "\"".into(),
-                                    Some(_) => "'".into(),
-                                    None => crate::shell::i18n::text("_shell.none"),
-                                })],
-                            ),
-                            |p| {
-                                p.quote = match p.quote {
-                                    Some('"') => Some('\''),
-                                    Some(_) => None,
-                                    None => Some('"'),
-                                }
-                            },
-                        )),
-                );
+                        .child(option("text-columns-consecutive", p.consecutive, "fix.text-columns.treat-consecutive-delimiters-one", false, |p| p.consecutive = !p.consecutive))
+                )
+                .child({let quote=p.quote;let entries=[Some('"'),Some('\''),None].into_iter().map(|value|crate::shell::chrome::MenuItem::new("xlsx.text-columns.quote",value.map(|c|c.to_string()).unwrap_or_else(||crate::shell::i18n::text("_shell.none").to_string())).checked(quote==value).on(move|e,_,cx|{if let Some(p)=e.wb_mut().panels.text_columns.as_mut(){p.quote=value;p.confirm=false;}cx.notify();}).into()).collect();
+                    crate::shell::chrome::dropdown_row(crate::shell::i18n::text("text-columns.quote-label"),crate::shell::chrome::Dropdown::from_entries("text-columns-quote-dropdown",quote.map(|c|c.to_string()).unwrap_or_else(||crate::shell::i18n::text("_shell.none").to_string()),entries,true,0,&cx.weak_entity()).into_any_element())
+                });
         }
         let shown_cols = preview_rows.iter().map(Vec::len).max().unwrap_or(0).min(8);
-        let mut fmt_row = h_flex().gap_1().flex_wrap();
-        fmt_row = fmt_row.child(toggle(
-            "text-columns-format",
-            crate::shell::i18n::format("text-columns.format", &[("format", &crate::shell::i18n::text(if p.as_text { "_xlsx.text" } else { "_xlsx.general" }))]),
-            |p| {
-                p.as_text = !p.as_text;
-                let target_type = if p.as_text { ColumnType::Text } else { ColumnType::Standard };
-                for c in &mut p.columns {
-                    *c = target_type;
-                }
-            },
-        ));
-        for i in 0..shown_cols {
-            let kind = p.column(i);
-            fmt_row = fmt_row.child(mark(
-                &format!("text-columns-column-{i}"),
-                Button::new(SharedString::from(format!("text-columns-col-{i}")))
-                    .small()
-                    .label(crate::shell::i18n::format("import-text.column", &[("n", &(i + 1)), ("format", &crate::shell::i18n::text(kind.label()))]))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(p) = this.wb_mut().panels.text_columns.as_mut() {
-                            p.set_column_type(i, p.column(i).next());
-                            p.confirm = false;
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ));
+        let mut fmt_row=v_flex().gap_2();
+        for i in 0..shown_cols{
+            let kind=p.column(i);let mut candidates=Vec::new();let mut value=ColumnType::Standard;loop{candidates.push(value);value=value.next();if value==ColumnType::Standard{break;}}
+            let entries=candidates.into_iter().map(|value|crate::shell::chrome::MenuItem::new("xlsx.text-columns.column-format",crate::shell::i18n::text(value.label())).checked(value==kind).on(move|e,_,cx|{if let Some(p)=e.wb_mut().panels.text_columns.as_mut(){p.set_column_type(i,value);p.confirm=false;}cx.notify();}).into()).collect::<Vec<_>>();let owner=cx.weak_entity();
+            let dropdown=crate::shell::chrome::Dropdown::from_entries("text-columns-col-type",crate::shell::i18n::text(kind.label()),entries,true,i,&owner).button_width(crate::shell::chrome::FIELD_WIDTH).into_any_element();
+            fmt_row=fmt_row.child(crate::shell::chrome::dropdown_row(crate::shell::i18n::format("text-columns.column-label",&[("n",&(i+1))]),mark(&format!("text-columns-column-{i}"),dropdown.into_any_element())));
         }
         body = body
             .child(fmt_row)
@@ -477,7 +462,7 @@ impl SlideEditor {
                     .gap_2()
                     .items_center()
                     .child(crate::shell::i18n::text("fix.text-columns.destination"))
-                    .child(div().flex_1().child(mark("destination", Input::new(&p.destination).small().cleanable(true).into_any_element()))),
+                    .child(div().flex_1().child(mark("destination", super::range_field::local_range_field(&p.destination,"text_columns-p-destination",true,cx).into_any_element()))),
             )
             .child(crate::shell::i18n::text("fix.text-columns.preview"));
         for record in &preview_rows {
@@ -494,30 +479,16 @@ impl SlideEditor {
                 })
                 .collect::<Vec<_>>()
                 .join(" │ ");
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(line)));
+            body = body.child(div().text_sm().child(SharedString::from(line)));
         }
         body = body
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(mark(
-                        "apply",
-                        Button::new("text-columns-apply").primary().small().label(crate::shell::i18n::text(if p.confirm { "fix.text-columns.replace" } else { "fix.text-columns.split" })).on_click(cx.listener(|this, _, _, cx| this.apply_text_columns_panel(cx))).into_any_element(),
-                    ))
-                    .child(mark(
-                        "close",
-                        Button::new("text-columns-close")
-                            .small()
-                            .label(crate::shell::i18n::text("_shell.close"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.wb_mut().panels.text_columns = None;
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    )),
-            );
-        Some(SidebarPanel { title: "fix.text-columns.text-columns".into(), body: body.into_any_element() })
+            .children(crate::shell::chrome::panel_message(&p.message))
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("text-columns-apply", "", crate::shell::chrome::ActionButtonKind::Primary).label(crate::shell::i18n::text(if p.confirm { "fix.text-columns.replace" } else { "fix.text-columns.split" })).on_click(cx.listener(|this, _, _, cx| this.apply_text_columns_panel(cx)))))
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer("fix.text-columns.text-columns", body.into_any_element(), panel_actions))
     }
 }
 

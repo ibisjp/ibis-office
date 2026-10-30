@@ -1397,7 +1397,12 @@ pub(crate) fn default_column_width(format: Option<Node>, digit: f64) -> f64 {
         .unwrap_or_else(|| {
             let base = format.and_then(|f| attr(f, "baseColWidth")).and_then(|v| v.parse::<f64>().ok()).unwrap_or(8.0);
             let pixel = EXCEL_METRICS.pixel_pt();
-            (base * (digit / pixel) + 5.0).trunc() * pixel
+            // The width of a column without `defaultColWidth` is the base width's pixels and 5 more for the cell's padding and
+            // grid line, rounded up to a multiple of 8 pixels (ECMA-376 18.3.1.81 on `baseColWidth`): 8 digits of 8 px and 5 make
+            // 69 px, which Excel for Windows prints as 72 (a column of 72 px: 49.7 pt at 100 % where 69 px gave 47.6 pt); 8 digits
+            // of 7 px and 5 make 61, shown as 64.
+            let pixels = base * (digit / pixel) + 5.0;
+            if EXCEL_METRICS == ExcelMetrics::Windows { (pixels / 8.0).ceil() * 8.0 * pixel } else { pixels.trunc() * pixel }
         })
 }
 
@@ -1805,18 +1810,30 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     let mut outline_rows = std::collections::BTreeMap::new();
     let mut outline_columns = std::collections::BTreeMap::new();
     let mut hidden_rows = std::collections::BTreeMap::new();
+    let mut custom_rows = std::collections::BTreeSet::new();
+    let mut custom_columns = std::collections::BTreeSet::new();
     let mut max_column = 0u32;
+    let mut column_fonts: Vec<(u32, u32, Option<String>, u32)> = Vec::new();
+    let mut row_fonts: std::collections::BTreeMap<u32, (Option<String>, u32)> = std::collections::BTreeMap::new();
+    // The styles (xf) of the cells written in each row, each once (see `Sheet::written_fonts`).
+    let mut written_xfs: std::collections::BTreeMap<u32, Vec<usize>> = std::collections::BTreeMap::new();
     for col in child(root, "cols").into_iter().flat_map(|c| children(c, "col")) {
         let (Some(min), Some(max)) = (attr_i64(col, "min"), attr_i64(col, "max")) else { continue };
         let hidden = attr_bool(col, "hidden").unwrap_or(false);
         let char_w = attr(col, "width").and_then(|v| v.parse::<f64>().ok()).unwrap_or(default_col_chars);
         let width = column_pixels(char_w, digit);
         let level = attr_i64(col, "outlineLevel").unwrap_or(0).clamp(0, 7) as u8;
+        let col_format = attr_i64(col, "style").filter(|&s| s > 0).and_then(|s| styles.formats.get(s as usize));
+        column_fonts.push((min.max(1) as u32 - 1, max.clamp(1, 16_384) as u32 - 1, col_format.and_then(|f| f.style.font.clone()), col_format.map_or(0, |f| f.style.font_size)));
         for c in (min.max(1) as u32 - 1)..(max.clamp(1, 16_384) as u32) {
             if level > 0 {
                 outline_columns.insert(c, level);
             }
             col_chars.insert(c, char_w);
+            // A width the user fixed (`customWidth`): the column does not widen by itself when a number is entered.
+            if attr_bool(col, "customWidth").unwrap_or(false) {
+                custom_columns.insert(c);
+            }
             widths.insert(c, if hidden { 0 } else { px(width) });
             if hidden {
                 hidden_columns.insert(c, px(width));
@@ -1827,7 +1844,11 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     let mut cells = Vec::new();
     let mut cell_images: Vec<ibis_doc_model::CellImage> = Vec::new();
     let mut heights: HashMap<u32, Emu> = HashMap::new();
+    // Rows Excel measures by their fonts (no `customHeight`, no wrapping text): see `Sheet::measured_rows`.
+    let mut measured: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
     let mut max_row = 0u32;
+    // The rows that have a cell element (a row of only a height is not part of what Excel prints).
+    let mut rows_with_cells: HashSet<u32> = HashSet::new();
     let mut style_index: HashMap<usize, u32> = HashMap::new();
     let mut sheet_styles: Vec<CellStyle> = Vec::new();
     let mut row_styles: Vec<(u32, u32)> = Vec::new();
@@ -1864,6 +1885,10 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         let fits_content = EXCEL_METRICS == ExcelMetrics::Windows && declared_default;
         let mut auto_ht = if fits_content { 0.0 } else { default_row_pt };
         let win_step = |h: f64| if fits_content { (h / 0.75 - 1e-6).ceil() * 0.75 } else { h };
+        if attr_bool(row, "customFormat").unwrap_or(false) {
+            let format = attr_i64(row, "s").filter(|&s| s > 0).and_then(|s| styles.formats.get(s as usize));
+            row_fonts.insert(r, (format.and_then(|f| f.style.font.clone()), format.map_or(0, |f| f.style.font_size)));
+        }
         let row_xf = attr_i64(row, "s")
             .filter(|&s| s > 0 && attr_bool(row, "customFormat").unwrap_or(true))
             .map(|s| s as usize);
@@ -1890,6 +1915,7 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             }
         }
         let mut wraps_text = false;
+        let mut any_wrap = false;
         // A cell without a reference follows the one before it.
         let mut next_column = 0u32;
         for c in children(row, "c") {
@@ -1900,6 +1926,7 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                 continue;
             };
             next_column = column + 1;
+            rows_with_cells.insert(row_index);
             let xf = attr_i64(c, "s").map(|s| s.max(0) as usize).or(row_xf).unwrap_or(0);
             let format = styles.formats.get(xf).or_else(|| styles.formats.first());
             let raw = child(c, "v").and_then(|v| v.text()).unwrap_or("");
@@ -1913,6 +1940,16 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                 text = display_with_width(&value, format.map_or("General", |f| f.number_format.as_str()), styles.date1904, col_width);
             }
             let in_merge = merged_cells.iter().any(|m| m.first_row <= row_index && row_index <= m.last_row && m.first_column <= column && column <= m.last_column);
+            // A row with a wrapping cell (a merged one too) is left at the height the file has: this is a limit of ibisOffice, not a
+            // rule of Microsoft Excel, which fits such a row to the lines of the text (a merged cell is not fitted); ibisOffice does not
+            // measure the lines of wrapped text with the formula of `ibis-office-app`'s `xlsx::row_fit` yet.
+            any_wrap |= format.is_some_and(|f| f.style.wrap);
+            if !in_merge {
+                let list = written_xfs.entry(row_index).or_default();
+                if !list.contains(&xf) {
+                    list.push(xf);
+                }
+            }
             if !custom_height && !hidden && in_merge && !text.is_empty() {
                 // A merged cell does not fit its row to its text (it does not wrap into more rows), but a larger
                 // font still makes the row as tall as one line of it (Excel's PDFs of xlsx-XCEL).
@@ -1923,6 +1960,7 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             if !custom_height && !hidden && !in_merge {
                 let font_pt = format.map_or(styles.default_font.1 as f64 / 100.0, |f| f.style.font_size as f64 / 100.0).max(1.0);
                 let wrap = format.map_or(false, |f| f.style.wrap);
+                any_wrap |= wrap;
                 // A cell with nothing in it does not make its row taller.
                 if !text.is_empty() {
                     let font_name = format.and_then(|f| f.style.font.as_deref()).or(styles.default_font.0.as_deref());
@@ -1987,6 +2025,11 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             });
             let style = format.map(|f| f.style.clone()).unwrap_or_default();
             let visible = formula.is_some()
+                // Typed empty text and values hidden by number formats still
+                // establish Excel's print extent (Windows Office controls:
+                // A1 plus a typed value at C70 prints all six grid pages).
+                // This tests actual cells, not the worksheet's dimension hint.
+                || !value.is_empty()
                 || !text.is_empty()
                 || style.fill.is_some()
                 || style.gradient.is_some()
@@ -2002,10 +2045,8 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             // A cell with only a format that does not show (a number
             // format, a font) is kept, for what is typed into it, but does
             // not make the sheet any bigger.
-            // Empty text still has calculation semantics (e.g. TOCOL ignore=1
-            // keeps it, while it skips a genuinely empty cell). Keep typed
-            // values even when they have no visible text, without growing
-            // the visible sheet extent.
+            // Typed empty text is distinct from a genuinely empty cell both
+            // for calculation (e.g. TOCOL ignore=1) and for the print extent.
             if !visible && value.is_empty() && (xf == 0 || styles.formats.get(xf).is_none()) {
                 continue;
             }
@@ -2031,8 +2072,14 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             let ht = declared_ht.unwrap_or(default_row_pt);
             hidden_rows.insert(r, pt(ht));
         } else if custom_height {
-            let ht = declared_ht.map(|h| h.floor().max(h.min(1.0))).unwrap_or(default_row_pt);
+            // A custom row is a whole number of device pixels in Excel for Windows (0.75 pt, cut down: 5.85 pt = 7.8 px is 7 px = 5.25 pt;
+            // 37.5 pt = 50 px stays; a height written to 4 decimals of a centimetre by another format is not cut by that noise): its PDFs show
+            // 118's rows 1..32 (stored 1029 pt) at 1029 pt, not the 1008 pt of whole points, and 058's 150 rows of 5.85 pt on 1 page.
+            // Elsewhere OOXML ht is a height in points, fractions included, and printing cuts it to whole points (`export::print_layout`).
+            // Saving writes only the rows the person changed, as they set them (40 pt is written 40 pt; read again it is 39.75 pt).
+            let ht = declared_ht.filter(|h| h.is_finite() && *h >= 0.0).map(|h| if EXCEL_METRICS == ExcelMetrics::Windows { (h / 0.75 + 0.01).floor() * 0.75 } else { h }).unwrap_or(default_row_pt);
             heights.insert(r, pt(ht));
+            custom_rows.insert(r);
         } else {
             // Excel for Mac fits again a row holding wrapping text of Meiryo UI
             // or ＭＳ ゴシック when it opens the file (one private workbook's
@@ -2044,6 +2091,9 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             // estimate made the 84 pt row 104).
             // Excel for Windows keeps a stored height (the refitting below is what Excel
             // for Mac does on opening, to fonts whose metrics differ from its own).
+            if !any_wrap {
+                measured.insert(r);
+            }
             let keeps_stored = (!wraps_text || EXCEL_METRICS == ExcelMetrics::Windows) && declared_ht.is_some();
             heights.insert(r, pt(if keeps_stored { declared_ht.unwrap_or(auto_ht) } else if auto_ht > 0.0 { auto_ht } else { default_row_pt }));
         }
@@ -2167,11 +2217,21 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         }
     }
     let columns = (0..max_column).map(|c| widths.get(&c).copied().unwrap_or(px(default_width))).collect();
-    // A row of its own height counts even with nothing shown in it (a picture in a cell leaves its cell's text empty).
+    // A row of its own height counts even with nothing shown in it (a picture in a cell leaves its cell's text empty), but
+    // only when the row has a cell: a `<row ht=.. customHeight/>` with no cell is not printed (Excel's PDF of a sheet whose
+    // last rows, 647 and 648, are only a height has no page for them).
+    let mut printed_rows = max_row;
+    if let Some(last) = heights.iter().filter(|(r, h)| **h != pt(default_row_pt) && rows_with_cells.contains(r)).map(|(r, _)| *r).max() {
+        max_row = max_row.max(last + 1);
+        printed_rows = max_row;
+    }
+    // The rows of a height alone stay in the model (the person's edit of an empty row is kept), but print no page.
     if let Some(last) = heights.iter().filter(|(_, h)| **h != pt(default_row_pt)).map(|(r, _)| *r).max() {
         max_row = max_row.max(last + 1);
     }
     let rows = (0..max_row).map(|r| heights.get(&r).copied().unwrap_or(pt(default_row_pt))).collect();
+    // The rows with no `row` element are measured too.
+    let measured_rows: Vec<u32> = (0..max_row).filter(|r| measured.contains(r) || !heights.contains_key(r)).collect();
     cells.sort_by_key(|c| (c.row, c.column));
     let show_phonetic = view.and_then(|v| attr_bool(v, "showPhonetic")).unwrap_or(false);
     let phonetic_pr = child(root, "phoneticPr").map(|p| {
@@ -2201,7 +2261,29 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         print,
         default_row: pt(default_row_pt),
         default_column: px(default_width),
+        measured_rows: ibis_doc_model::Unsaved(measured_rows),
+        column_fonts: ibis_doc_model::Unsaved(column_fonts),
+        row_fonts: ibis_doc_model::Unsaved(row_fonts),
+        written_fonts: ibis_doc_model::Unsaved(
+            written_xfs
+                .into_iter()
+                .map(|(r, xfs)| {
+                    let fonts: Vec<(Option<String>, u32)> = xfs
+                        .into_iter()
+                        .map(|xf| {
+                            let format = styles.formats.get(xf).or_else(|| styles.formats.first());
+                            (format.and_then(|f| f.style.font.clone()), format.map_or(0, |f| f.style.font_size))
+                        })
+                        .collect();
+                    (r, fonts)
+                })
+                .collect(),
+        ),
+        fitted_rows: Default::default(),
+        printed_rows: ibis_doc_model::Unsaved(printed_rows),
         hidden_rows,
+        custom_rows,
+        custom_columns,
         hidden_columns,
         spills,
         conditional: read_conditional(root, styles, colors),
@@ -2721,33 +2803,44 @@ fn reference_at(chars: &[char], start: usize, rows: i64, columns: i64) -> Option
 }
 
 /// How a worksheet is printed. Without a `pageSetup`, it goes on A4 (the
-/// Japanese locale's paper); with one that names no paper, on Letter, as
-/// the format says.
+/// Japanese locale's paper); with one that names no paper, on the region's paper in Excel for
+/// Windows (A4 in Japan), on Letter (the format's default) elsewhere.
 fn read_print(root: Node, show_grid_lines: bool) -> SheetPrint {
     let mut print = SheetPrint::default();
     let number = |n: Node, name: &str| attr(n, name).and_then(|v| v.parse::<f64>().ok());
     let inches = |v: f64| (v * EMU_PER_INCH as f64).round() as Emu;
     if let Some(setup) = child(root, "pageSetup").or_else(|| child(root, "pageSetUp")) {
-        print.paper = match attr_i64(setup, "paperSize").unwrap_or(1) {
-            1 => (inches(8.5), inches(11.0)),
-            5 => (inches(8.5), inches(14.0)),
-            8 => (297 * 36_000, 420 * 36_000),
-            11 => (148 * 36_000, 210 * 36_000),
-            12 => (257 * 36_000, 364 * 36_000),
-            13 => (182 * 36_000, 257 * 36_000),
-            43 => SheetPrint::HAGAKI,
-            44 => SheetPrint::OFUKU_HAGAKI,
-            2 => (inches(8.5), inches(11.0)),
-            3 => (inches(11.0), inches(17.0)),
-            6 => (inches(5.5), inches(8.5)),
-            7 => (inches(7.25), inches(10.5)),
-            14 => (inches(8.5), inches(13.0)),
-            9 | 10 => SheetPrint::A4,
-            // A number the table does not know: Excel for Windows prints on
-            // Letter, the Mac's on A4.
-            _ if EXCEL_METRICS == ExcelMetrics::Windows => (inches(8.5), inches(11.0)),
-            _ => SheetPrint::A4,
+        // The paper a `pageSetup` names is Letter (1) when it names none (ECMA-376). Excel for Windows prints a sheet laid out
+        // for Letter on the A4 paper of a printer set for A4 (the region's default paper, `locale_paper`: 15 of the corpus'
+        // documents, every one of them with an A4 PDF; and Excel's PDFs of `paperSize` 1 and of none are the same),
+        // (its text, rows and columns come out 5 points of the scale smaller there: pagesetup-probe, not worked out yet).
+        // Paper sizes this table does not know print on the machine's
+        // default paper, and on A4 in the Mac's.
+        let named = attr_i64(setup, "paperSize");
+        let region = if EXCEL_METRICS == ExcelMetrics::Windows { crate::locale_paper::default_paper_size() } else { 1 };
+        let letter_on_a4 = EXCEL_METRICS == ExcelMetrics::Windows && region == 9 && named.unwrap_or(1) == 1;
+        let missing = if letter_on_a4 { 9 } else { region };
+        let known = |n: i64| -> Option<(Emu, Emu)> {
+            Some(match n {
+                1 | 2 => (inches(8.5), inches(11.0)),
+                5 => (inches(8.5), inches(14.0)),
+                8 => (297 * 36_000, 420 * 36_000),
+                11 => (148 * 36_000, 210 * 36_000),
+                12 => (257 * 36_000, 364 * 36_000),
+                13 => (182 * 36_000, 257 * 36_000),
+                43 => SheetPrint::HAGAKI,
+                44 => SheetPrint::OFUKU_HAGAKI,
+                3 => (inches(11.0), inches(17.0)),
+                6 => (inches(5.5), inches(8.5)),
+                7 => (inches(7.25), inches(10.5)),
+                14 => (inches(8.5), inches(13.0)),
+                9 | 10 => SheetPrint::A4,
+                _ => return None,
+            })
         };
+        // A number the table does not know (257, a custom size) prints on the machine's default paper in Excel for
+        // Windows (A4 in the Japanese PC's PDF of 151; Excel for the web's was Letter), on A4 in the Mac's.
+        print.paper = known(if letter_on_a4 { 9 } else { named.unwrap_or(missing) }).unwrap_or_else(|| if EXCEL_METRICS == ExcelMetrics::Windows { known(missing).unwrap_or((inches(8.5), inches(11.0))) } else { SheetPrint::A4 });
         print.landscape = attr(setup, "orientation") == Some("landscape");
         print.scale = attr_i64(setup, "scale").filter(|s| (10..=400).contains(s)).unwrap_or(100) as u32;
         print.over_then_down = attr(setup, "pageOrder") == Some("overThenDown");
@@ -2760,6 +2853,11 @@ fn read_print(root: Node, show_grid_lines: bool) -> SheetPrint {
         if fit {
             let pages = |name: &str| attr_i64(setup, name).unwrap_or(1).max(0) as u32;
             print.fit_to = Some((pages("fitToWidth"), pages("fitToHeight")));
+        } else {
+            // A sheet that names Letter on an A4 printer is laid out in pages of Letter's size and drawn smaller on the A4 paper
+            // (the page's `letter_on_a4`: see `print_sheet`); not when it is fitted to pages (Excel's PDFs: paper1fit prints
+            // as paper9 does).
+            print.letter_on_a4 = letter_on_a4;
         }
     }
     if let Some(m) = child(root, "pageMargins") {

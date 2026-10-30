@@ -799,6 +799,8 @@ mod tests {
         let plain = |m: &MathBox| m.pieces.iter().any(|p| matches!(p, Piece::Text { text, italic: false, .. } if text == "sin"));
         assert!(plain(&f), "the name is drawn as it is, upright");
         let gap = typeset(&Math::Text("a\u{a0}b".into()), 36.0, &mut fake).width - typeset(&Math::Text("ab".into()), 36.0, &mut fake).width;
-        assert!((gap - 36.0).abs() < 0.01, "{gap}");
+        // The no-break space is as wide as the size; the letter before it, now the end of its own italic run, leans over it (its italic correction).
+        let lean_a = 36.0 * mx().italic_correction(math_italic('a'));
+        assert!((gap - (36.0 + lean_a)).abs() < 0.01, "{gap}");
     }
 }

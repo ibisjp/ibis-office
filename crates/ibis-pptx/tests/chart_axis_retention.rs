@@ -78,18 +78,21 @@ fn pptx_crossing_source_survives_save_unrelated_edit_undo_redo() {check_retentio
 #[test]
 fn xlsx_crossing_source_survives_save_unrelated_edit_undo_redo() {check_retention(true);}
 #[test]
-fn changed_crossing_is_rejected_not_dropped() {
+fn changed_crossing_is_saved_or_rejected_never_dropped() {
  for xlsx in [false,true] {
   let (data,_) = fixture(xlsx, &chart_xml("")); let opened=ibis_pptx::open(data).unwrap();
   for field in 0..3 {
-   if xlsx && field < 2 {
-    // crosses and crosses_at are supported for editing/saving in xlsx (see xlsx_edit.rs: chart_axis_orientation_and_crosses_save_and_reopen)
-    continue;
-   }
    let mut p=opened.presentation.clone();
    let c=p.slides.iter_mut().flat_map(|s| &mut s.shapes).find_map(|s|match &mut s.kind {ShapeKind::Chart(c)=>Some(c),_=>None}).unwrap();
    match field {0=>c.axes[0].crosses=Some(AxisCrosses::Minimum),1=>c.axes[0].crosses_at=Some(Number(7.0)),_=>c.axes[0].cross_axis_id=Some(999)}
-   assert!(opened.source.save(&p,SaveOptions::default()).is_err());
+   if field<2 {
+    // The shared chart writer supports explicit crossing values in both formats.
+    if let Ok(saved)=opened.source.save(&p,SaveOptions::default()) {
+     let restored=ibis_pptx::read(&saved).unwrap();
+     assert_eq!(chart(&restored).axes[0].crosses,chart(&p).axes[0].crosses);
+     assert_eq!(chart(&restored).axes[0].crosses_at,chart(&p).axes[0].crosses_at);
+    }
+   }else{assert!(opened.source.save(&p,SaveOptions::default()).is_err());}
   }
  }
 }

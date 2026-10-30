@@ -48,16 +48,24 @@ fn width_chars(size: Emu, digit: f64) -> f64 {
 pub(crate) fn write_sizes(doc: &mut XmlDocument, old: &Sheet, new: &Sheet, digit: f64) -> Result<(), Error> {
     let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
     let prefix = prefix_of(doc, root);
-    // Columns: runs of changed columns with the same new width.
-    let changed: Vec<u32> = (0..new.columns.len().max(old.columns.len()) as u32)
-        .filter(|&c| old.columns.get(c as usize) != new.columns.get(c as usize) && (c as usize) < new.columns.len() && (c as usize) < old.columns.len())
-        .collect();
-    let mut runs: Vec<(u32, u32, Emu)> = Vec::new();
-    for c in changed {
+    // Columns: runs of changed columns with the same new width. Only widths the user fixed are saved (`customWidth`); a width the
+    // sheet chose by itself (a number entered wider than the column) is not, so the file opens with the column as it was (as Excel's).
+    // A column given back to the sheet ("fit to selection") keeps its new width, without `customWidth`.
+    let in_range = |c: u32| (c as usize) < new.columns.len() && (c as usize) < old.columns.len();
+    let mut runs: Vec<(u32, u32, Emu, bool)> = Vec::new();
+    for c in 0..new.columns.len().max(old.columns.len()) as u32 {
+        if !in_range(c) {
+            continue;
+        }
         let w = new.columns[c as usize];
+        let (fixed, was_fixed) = (new.custom_columns.contains(&c), old.custom_columns.contains(&c));
+        let changed = old.columns[c as usize] != w || fixed != was_fixed;
+        if !changed || (w != 0 && !fixed && !was_fixed) {
+            continue;
+        }
         match runs.last_mut() {
-            Some(r) if r.1 + 1 == c && r.2 == w => r.1 = c,
-            _ => runs.push((c, c, w)),
+            Some(r) if r.1 + 1 == c && r.2 == w && r.3 == fixed => r.1 = c,
+            _ => runs.push((c, c, w, fixed)),
         }
     }
     if !runs.is_empty() {
@@ -69,7 +77,7 @@ pub(crate) fn write_sizes(doc: &mut XmlDocument, old: &Sheet, new: &Sheet, digit
                 c
             }
         };
-        for (a, b, w) in runs {
+        for (a, b, w, fixed) in runs {
             // Split the col elements that overlap [a, b] (1-based in XML).
             let (a1, b1) = (a + 1, b + 1);
             for col in doc.children_named(cols, "col").collect::<Vec<_>>() {
@@ -133,14 +141,18 @@ pub(crate) fn write_sizes(doc: &mut XmlDocument, old: &Sheet, new: &Sheet, digit
                 } else {
                     doc.remove_attr(e, "hidden");
                     doc.set_attr(e, "width", &number(width_chars(w, digit)));
-                    doc.set_attr(e, "customWidth", "1");
+                    if fixed {
+                        doc.set_attr(e, "customWidth", "1");
+                    } else {
+                        doc.remove_attr(e, "customWidth");
+                    }
                 }
             }
         }
     }
     // Rows.
     let data = doc.child(root, "sheetData").ok_or_else(|| Error::new("シートに sheetData がありません"))?;
-    let changed_rows: Vec<u32> = (0..new.rows.len().min(old.rows.len()) as u32).filter(|&r| old.rows[r as usize] != new.rows[r as usize]).collect();
+    let changed_rows: Vec<u32> = (0..new.rows.len().min(old.rows.len()) as u32).filter(|&r| old.rows[r as usize] != new.rows[r as usize] && new.fitted_rows.get(&r) != Some(&new.rows[r as usize])).collect();
     for r in changed_rows {
         let h = new.rows[r as usize];
         let found = doc.children_named(data, "row").find(|&n| doc.attr(n, "r").and_then(|v| v.parse::<u32>().ok()) == Some(r + 1));

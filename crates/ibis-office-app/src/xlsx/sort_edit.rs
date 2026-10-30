@@ -5,7 +5,7 @@
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, Command, SheetCommand, SlideId};
@@ -20,7 +20,23 @@ pub(crate) enum LevelKey {
     Icon(String, u32),
 }
 
+/// Key of the 「リアルタイム更新」 setting in the document's `document_memory` (per open document, not saved in the file).
+pub(crate) const SORT_REALTIME_KEY: &str = "xlsx.sort.realtime";
+
+/// Re-sorts when a text box of the panel is edited (typing, or a range picked on the sheet).
+fn watch_input(input: &Entity<InputState>, window: &mut Window, cx: &mut Context<SlideEditor>) {
+    cx.subscribe_in(input, window, |editor, _, event: &InputEvent, _, cx| {
+        if matches!(event, InputEvent::Change) {
+            editor.sort_changed(cx);
+        }
+    })
+    .detach();
+}
+
+pub(crate) struct SortLevelEdit{pub(crate) index:usize,new:bool,original:(String,bool,LevelKey,String)}
 pub(crate) struct SortPanel {
+    pub(crate) editor:Option<SortLevelEdit>,
+    pub(crate) reorder:std::rc::Rc<std::cell::RefCell<crate::shell::chrome::data_table::RowReorder>>,
     pub(crate) range: Entity<InputState>,
     pub(crate) levels: Vec<(Entity<InputState>, bool)>,
     /// Each level's key, beside `levels`.
@@ -39,6 +55,9 @@ pub(crate) struct SortPanel {
     pub(crate) header: bool,
     pub(crate) match_case: bool,
     pub(crate) error: String,
+    /// The undo length right after the last real-time sort. While the undo stack is still that long, nothing else
+    /// was done since, so the next real-time sort replaces that step instead of stacking another.
+    live: Option<usize>,
 }
 fn range(text: &str) -> Option<CellRange> {
     let mut ends = text.trim().split(':');
@@ -67,13 +86,76 @@ fn column_input(
     input.update(cx, |i, cx| {
         i.set_value(name.strip_suffix('1').unwrap(), window, cx)
     });
+    watch_input(&input, window, cx);
     input
 }
 fn custom_list_input(
     window: &mut Window,
     cx: &mut Context<SlideEditor>,
 ) -> Entity<InputState> {
-    cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_xlsx.e-g-sun-mon-tue-wed-thu-fri-sat")))
+    let input = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_xlsx.e-g-sun-mon-tue-wed-thu-fri-sat")));
+    watch_input(&input, window, cx);
+    input
+}
+impl SlideEditor {
+ /// Excel's "Copy Level": the level is duplicated right below itself.
+ pub(crate) fn copy_sort_level(&mut self,i:usize,w:&mut Window,cx:&mut Context<Self>){
+  let Some(p)=self.wb().sort_edit.as_ref()else{return;};
+  let Some((column,ascending))=p.levels.get(i)else{return;};
+  let (column,ascending,key)=(column.read(cx).value().to_string(),*ascending,p.keys.get(i).cloned().unwrap_or(LevelKey::Value));
+  let list=p.custom_lists.get(i).map(|c|c.read(cx).value().to_string()).unwrap_or_default();
+  // The copy sorts by the next column to the right (the same column twice is refused as a duplicate); the last column keeps its own.
+  let next=self.next_sort_column_text(&column,&p.range.read(cx).value(),p.header);
+  let column=next.unwrap_or(column);
+  let new_column=cx.new(|cx|InputState::new(w,cx).placeholder(crate::shell::i18n::text("_xlsx.column-a-b")));
+  new_column.update(cx,|input,cx|input.set_value(column,w,cx));
+  watch_input(&new_column,w,cx);
+  let new_list=custom_list_input(w,cx);
+  if !list.is_empty(){new_list.update(cx,|input,cx|input.set_value(list,w,cx));}
+  if let Some(p)=self.wb_mut().sort_edit.as_mut(){
+   let at=(i+1).min(p.levels.len());
+   p.levels.insert(at,(new_column,ascending));p.keys.insert(at,key);p.custom_lists.insert(at,new_list);
+   if let Some(open)=p.custom_open{if open>i{p.custom_open=Some(open+1);}}
+  }
+  self.sort_changed(cx);
+ }
+ /// The column right of the one a level names (a letter or a heading), in the same form; None at the range's last column.
+ fn next_sort_column_text(&self,level:&str,range:&str,header:bool)->Option<String>{
+  let r=self.resolve_sort_range(range)?;
+  let raw=level.trim();let up=raw.to_uppercase();
+  let by_letter=if !up.is_empty()&&up.bytes().all(|b|b.is_ascii_alphabetic()){
+   ibis_calc::formula::parser::parse_cell(&format!("{up}1")).map(|a|a.column).filter(|c|(r.first_column..=r.last_column).contains(c))
+  }else{None};
+  let (_,sheet)=self.current_sheet()?;
+  let (current,named)=match by_letter{
+   Some(c)=>(c,false),
+   None=>{
+    if !header||raw.is_empty(){return None;}
+    let c=(r.first_column..=r.last_column).find(|&c|sheet.cell(r.first_row,c).is_some_and(|cell|cell.text.trim().eq_ignore_ascii_case(raw)))?;
+    (c,true)
+   }
+  };
+  let next=current+1;
+  if next>r.last_column{return None;}
+  if named{
+   if let Some(text)=sheet.cell(r.first_row,next).map(|cell|cell.text.trim().to_string()).filter(|t|!t.is_empty()){return Some(text);}
+  }
+  Some(super::dedupe_edit::column_name(next))
+ }
+ pub(crate) fn open_sort_level(&mut self,index:Option<usize>,w:&mut Window,cx:&mut Context<Self>){
+  self.cancel_table_reorder(w,cx);
+  let new=index.is_none();
+  if new {let column=self.wb().sort_edit.as_ref().and_then(|p|self.resolve_sort_range(&p.range.read(cx).value()).map(|r|(r.first_column+p.levels.len()as u32).min(r.last_column))).unwrap_or(0);let Some(p)=self.wb_mut().sort_edit.as_mut()else{return;};let input=column_input(column,w,cx);let list=custom_list_input(w,cx);p.levels.push((input,true));p.keys.push(LevelKey::Value);p.custom_lists.push(list);}
+  if new{self.sort_changed(cx);}
+  let Some(p)=self.wb_mut().sort_edit.as_mut()else{return;};let index=index.unwrap_or(p.levels.len()-1);let Some((field,asc))=p.levels.get(index)else{return;};
+  p.editor=Some(SortLevelEdit{index,new,original:(field.read(cx).value().to_string(),*asc,p.keys[index].clone(),p.custom_lists[index].read(cx).value().to_string())});p.picking=None;p.keying=None;p.custom_open=None;cx.notify();
+ }
+ pub(crate) fn finish_sort_level(&mut self,cancel:bool,w:&mut Window,cx:&mut Context<Self>){
+  let Some(p)=self.wb_mut().sort_edit.as_mut()else{return;};let Some(edit)=p.editor.take()else{return;};
+  if cancel {if edit.new {p.levels.remove(edit.index);p.keys.remove(edit.index);p.custom_lists.remove(edit.index);}else{p.levels[edit.index].0.update(cx,|i,cx|i.set_value(edit.original.0,w,cx));p.levels[edit.index].1=edit.original.1;p.keys[edit.index]=edit.original.2;p.custom_lists[edit.index].update(cx,|i,cx|i.set_value(edit.original.3,w,cx));}}
+  p.picking=None;p.keying=None;p.custom_open=None;
+  if cancel{self.sort_changed(cx);}else{cx.notify();}
+ }
 }
 impl SlideEditor {
     pub(crate) fn sort_by_selected_cell_color(&mut self, cx: &mut Context<Self>) {
@@ -169,8 +251,9 @@ impl SlideEditor {
             );
             i.focus(window, cx);
         });
+        watch_input(&input, window, cx);
         let custom_inp = custom_list_input(window, cx);
-        let panel = SortPanel {
+        let panel = SortPanel {editor:None,reorder:Default::default(),
             range: input,
             levels: vec![(column_input(column, window, cx), true)],
             keys: vec![LevelKey::Value],
@@ -183,6 +266,7 @@ impl SlideEditor {
             header,
             match_case: false,
             error: String::new(),
+            live: None,
         };
         let state = self.wb_mut();
         state.custom_format = None;
@@ -192,7 +276,7 @@ impl SlideEditor {
         state.find = None;
         state.link = None;
         state.conditional_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.sort_edit = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -244,7 +328,37 @@ impl SlideEditor {
         self.focus_handle.focus(window, cx);
     }
 
+    /// Whether 「リアルタイム更新」 is on (the default). Kept per open document in `document_memory`.
+    pub(crate) fn sort_realtime(&self) -> bool {
+        self.document_memory.get::<bool>(SORT_REALTIME_KEY).unwrap_or(true)
+    }
+
+    /// Turns 「リアルタイム更新」 on or off. Turning it on sorts at once, since the 並べ替える button goes away with it.
+    pub(crate) fn set_sort_realtime(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.document_memory.set(SORT_REALTIME_KEY, on);
+        if on {
+            self.apply_sort_panel_as(true, cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    /// A setting of the panel changed: with 「リアルタイム更新」 on, the sort follows it.
+    pub(crate) fn sort_changed(&mut self, cx: &mut Context<Self>) {
+        if self.sort_realtime() {
+            self.apply_sort_panel_as(true, cx);
+        } else {
+            cx.notify();
+        }
+    }
+
     pub(crate) fn apply_sort_panel(&mut self, cx: &mut Context<Self>) {
+        self.apply_sort_panel_as(false, cx);
+    }
+
+    /// Sorts by the panel's settings. `live` (real-time update) replaces the previous real-time sort in the Undo
+    /// stack, as long as nothing else was done since, so a run of changes is one Undo step.
+    fn apply_sort_panel_as(&mut self, live: bool, cx: &mut Context<Self>) {
         let Some(p) = self.sheet_state().and_then(|s| s.sort_edit.as_ref()) else {
             return;
         };
@@ -327,7 +441,10 @@ impl SlideEditor {
                 })
             })
             .collect();
-        let (slide, header, match_case) = (p.slide, p.header, p.match_case);
+        let (slide, header, match_case, last_live) = (p.slide, p.header, p.match_case, p.live);
+        if live && last_live == Some(self.document.undo_len()) {
+            self.document.retract_last();
+        }
         if let Err(error) = self
             .document
             .execute(vec![Command::Sheet(SheetCommand::SortBy {
@@ -341,9 +458,11 @@ impl SlideEditor {
             self.sort_error(&error.to_string(), cx);
             return;
         }
+        let undo_len = self.document.undo_len();
         self.wb_mut().last_fill = None;
         if let Some(p) = self.wb_mut().sort_edit.as_mut() {
             p.error.clear();
+            p.live = live.then_some(undo_len);
         }
         cx.notify();
     }
@@ -386,7 +505,18 @@ impl SlideEditor {
         (columns, fills, fonts, icons)
     }
 
+    /// The right pane's sort panel; while a level is being edited, that level's form (shown as a dialog over the pane).
     pub(crate) fn sort_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        self.sort_panel_view(true, cx)
+    }
+
+    /// The pane's main sort panel, kept in view behind the level editor.
+    pub(crate) fn sort_background_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        self.sort_panel_view(false, cx)
+    }
+
+    fn sort_panel_view(&mut self, level_form: bool, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        let realtime = self.sort_realtime();
         let p = self.sheet_state()?.sort_edit.as_ref()?;
         let mark = |id: &str, child: AnyElement| {
             let ui = p.ui.clone();
@@ -408,72 +538,66 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                            ui.borrow_mut().insert(id.clone(), bounds);
+                        })
+        };
         let mut body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(
+            .p_0().child(
                 h_flex()
                     .items_center()
                     .justify_between()
-                    .child(crate::shell::i18n::text("_xlsx.range-to-sort"))
-                    .child(mark(
-                        "use-selection",
-                        Button::new("sort-use-selection")
-                            .xsmall()
-                            .ghost()
-                            .label(crate::shell::i18n::text("xlsx.subtotal-use-selection"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.set_sort_range_from_selection(window, cx);
-                            }))
-                            .into_any_element(),
-                    )),
+                    .child(crate::shell::i18n::text("_xlsx.range-to-sort")),
             )
             .child(mark(
                 "range",
-                Input::new(&p.range).small().cleanable(true).into_any_element(),
+                super::range_field::local_range_field(&p.range,"sort_edit-p-range",false,cx).into_any_element(),
             ))
             .child(
                 h_flex()
                     .gap_2()
+                    .flex_wrap()
                     .child(mark(
                         "header",
-                        Button::new("sort-header")
-                            .small()
-                            .label(if p.header {
-                                crate::shell::i18n::text("_xlsx.my-data-has-headers-on")
-                            } else {
-                                crate::shell::i18n::text("_xlsx.my-data-has-headers-off")
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
+                        crate::shell::chrome::checkbox_button("sort-header",crate::shell::i18n::text("xlsx.sort.has-header"),p.header,false,cx.listener(|this,_,_,cx|{
                                 if let Some(p) = this.wb_mut().sort_edit.as_mut() {
                                     p.header = !p.header;
                                 }
-                                cx.notify();
+                                this.sort_changed(cx);
                             }))
                             .into_any_element(),
                     ))
                     .child(mark(
                         "match-case",
-                        Button::new("sort-match-case")
-                            .small()
-                            .label(if p.match_case {
-                                crate::shell::i18n::text("_xlsx.case-sensitive-on")
-                            } else {
-                                crate::shell::i18n::text("_xlsx.case-sensitive-off")
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
+                        crate::shell::chrome::checkbox_button("sort-match-case",crate::shell::i18n::text("_shell.match-case"),p.match_case,false,cx.listener(|this,_,_,cx|{
                                 if let Some(p) = this.wb_mut().sort_edit.as_mut() {
                                     p.match_case = !p.match_case;
                                 }
-                                cx.notify();
+                                this.sort_changed(cx);
+                            }))
+                            .into_any_element(),
+                    ))
+                    .child(mark(
+                        "realtime",
+                        crate::shell::chrome::checkbox_button("sort-realtime",crate::shell::i18n::text("xlsx.sort-realtime"),realtime,false,cx.listener(|this,_,_,cx|{
+                                let on = !this.sort_realtime();
+                                this.set_sort_realtime(on, cx);
                             }))
                             .into_any_element(),
                     )),
             );
         // The headings (or column letters) of the range, and the colours and icons in it.
         let choices = self.sort_choices(p, cx);
+        let editing=p.editor.as_ref().map(|e|e.index).filter(|_|level_form);
+        if editing.is_some(){body=crate::shell::chrome::panel_form().p_0();}
         for (i, (column, ascending)) in p.levels.iter().enumerate() {
+            if editing!=Some(i){continue;}
             let key = p.keys.get(i).cloned().unwrap_or(LevelKey::Value);
             let typed = column.read(cx).value().trim().to_uppercase();
             let heading = choices.0.iter().find(|(letter, _)| *letter == typed).map_or_else(|| crate::shell::i18n::text("_xlsx.select-column").to_string(), |(_, h)| h.clone());
@@ -497,11 +621,11 @@ impl SlideEditor {
                 .gap_1()
                 .child(mark(
                     &format!("column-{i}"),
-                    Input::new(column).small().cleanable(true).w(px(56.)).into_any_element(),
+                    crate::shell::chrome::text_field(column).width(px(56.)).into_any_element(),
                 ))
                 .child(mark(
                     &format!("pick-{i}"),
-                    Button::new(("sort-pick", i))
+                    crate::shell::chrome::action_button(("sort-pick", i))
                         .small()
                         .label(format!("{heading} ▾"))
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -516,7 +640,7 @@ impl SlideEditor {
                 ))
                 .child(mark(
                     &format!("key-{i}"),
-                    Button::new(("sort-key", i))
+                    crate::shell::chrome::action_button(("sort-key", i))
                         .small()
                         .label(format!("{key_label} ▾"))
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -531,7 +655,7 @@ impl SlideEditor {
                 ))
                 .child(mark(
                     &format!("order-{i}"),
-                    Button::new(("sort-order", i))
+                    crate::shell::chrome::action_button(("sort-order", i))
                         .small()
                         .label(order_label)
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -540,11 +664,12 @@ impl SlideEditor {
                                     *ascending = !*ascending;
                                 }
                             }
-                            cx.notify();
+                            this.sort_changed(cx);
                         }))
                         .into_any_element(),
                 ));
-            body = body.child(crate::shell::i18n::format("_xlsx.level-n", &[("n", &(i + 1))])).child(row);
+            let custom_button=mark(&format!("custom-btn-{i}"),crate::shell::chrome::action_button(("sort-custom",i)).small().label(crate::shell::i18n::text("_xlsx.custom-list-comma-separated")).on_click(cx.listener(move|e,_,_,cx|{if let Some(p)=e.wb_mut().sort_edit.as_mut(){p.custom_open=if p.custom_open==Some(i){None}else{Some(i)};p.picking=None;p.keying=None;}cx.notify();})).into_any_element());
+            body = body.child(crate::shell::i18n::format("_xlsx.level-n", &[("n", &(i + 1))])).child(row).child(custom_button);
             if p.custom_open == Some(i) {
                 if let Some(custom_input) = p.custom_lists.get(i) {
                     let mut custom_box = v_flex()
@@ -554,12 +679,12 @@ impl SlideEditor {
                         .py_1()
                         .child(
                             div()
-                                .text_size(px(12.))
+                                .text_sm()
                                 .child(crate::shell::i18n::text("_xlsx.custom-list-comma-separated")),
                         )
                         .child(mark(
                             &format!("custom-input-{i}"),
-                            Input::new(custom_input).small().cleanable(true).into_any_element(),
+                            crate::shell::chrome::text_field(custom_input).full_width().into_any_element(),
                         ));
 
                     let presets: [(&str, &str); 7] = [
@@ -576,7 +701,7 @@ impl SlideEditor {
                         let val = (*val).to_string();
                         preset_row1 = preset_row1.child(mark(
                             &format!("preset-{i}-{p_idx}"),
-                            Button::new(SharedString::from(format!("sort-preset-{i}-{p_idx}")))
+                            crate::shell::chrome::action_button(SharedString::from(format!("sort-preset-{i}-{p_idx}")))
                                 .small()
                                 .label(crate::shell::i18n::text(label))
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -586,7 +711,7 @@ impl SlideEditor {
                                             inp.update(cx, |s, cx| s.set_value(val, window, cx));
                                         }
                                     }
-                                    cx.notify();
+                                    this.sort_changed(cx);
                                 }))
                                 .into_any_element(),
                         ));
@@ -597,7 +722,7 @@ impl SlideEditor {
                         let val = (*val).to_string();
                         preset_row2 = preset_row2.child(mark(
                             &format!("preset-{i}-{p_idx}"),
-                            Button::new(SharedString::from(format!("sort-preset-{i}-{p_idx}")))
+                            crate::shell::chrome::action_button(SharedString::from(format!("sort-preset-{i}-{p_idx}")))
                                 .small()
                                 .label(crate::shell::i18n::text(label))
                                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -607,14 +732,14 @@ impl SlideEditor {
                                             inp.update(cx, |s, cx| s.set_value(val, window, cx));
                                         }
                                     }
-                                    cx.notify();
+                                    this.sort_changed(cx);
                                 }))
                                 .into_any_element(),
                         ));
                     }
                     let clear_btn = h_flex().gap_1().child(mark(
                         &format!("custom-clear-{i}"),
-                        Button::new(SharedString::from(format!("sort-custom-clear-{i}")))
+                        crate::shell::chrome::destructive_button(SharedString::from(format!("sort-custom-clear-{i}")),cx)
                             .small()
                             .label(crate::shell::i18n::text("_xlsx.clear-list-normal-order"))
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -624,7 +749,7 @@ impl SlideEditor {
                                     }
                                     p.custom_open = None;
                                 }
-                                cx.notify();
+                                this.sort_changed(cx);
                             }))
                             .into_any_element(),
                     ));
@@ -638,7 +763,7 @@ impl SlideEditor {
                     let letter = letter.clone();
                     list = list.child(mark(
                         &format!("pick-{i}-{letter}"),
-                        Button::new(SharedString::from(format!("sort-pick-{i}-{letter}")))
+                        crate::shell::chrome::action_button(SharedString::from(format!("sort-pick-{i}-{letter}")))
                             .small()
                             .label(heading.clone())
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -649,7 +774,7 @@ impl SlideEditor {
                                     let letter = letter.clone();
                                     input.update(cx, |s, cx| s.set_value(letter, window, cx));
                                 }
-                                cx.notify();
+                                this.sort_changed(cx);
                             }))
                             .into_any_element(),
                     ));
@@ -672,7 +797,7 @@ impl SlideEditor {
                     let option_clone = option.clone();
                     list = list.child(mark(
                         &format!("key-{i}-{k}"),
-                        Button::new(SharedString::from(format!("sort-key-{i}-{k}")))
+                        crate::shell::chrome::action_button(SharedString::from(format!("sort-key-{i}-{k}")))
                             .small()
                             .label(text)
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -685,196 +810,43 @@ impl SlideEditor {
                                         p.custom_open = None;
                                     }
                                 }
-                                cx.notify();
+                                this.sort_changed(cx);
                             }))
                             .into_any_element(),
                     ));
                 }
                 body = body.child(list);
             }
-            let mut actions = h_flex()
-                .gap_1()
-                .child(mark(
-                    &format!("up-{i}"),
-                    Button::new(("sort-up", i))
-                        .small()
-                        .label("↑")
-                        .disabled(i == 0)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(p) = this.wb_mut().sort_edit.as_mut() {
-                                if i > 0 && i < p.levels.len() {
-                                    p.levels.swap(i, i - 1);
-                                    p.keys.swap(i, i - 1);
-                                    p.custom_lists.swap(i, i - 1);
-                                    if p.custom_open == Some(i) {
-                                        p.custom_open = Some(i - 1);
-                                    } else if p.custom_open == Some(i - 1) {
-                                        p.custom_open = Some(i);
-                                    }
-                                }
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ))
-                .child(mark(
-                    &format!("down-{i}"),
-                    Button::new(("sort-down", i))
-                        .small()
-                        .label("↓")
-                        .disabled(i + 1 == p.levels.len())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(p) = this.wb_mut().sort_edit.as_mut() {
-                                if i + 1 < p.levels.len() {
-                                    p.levels.swap(i, i + 1);
-                                    p.keys.swap(i, i + 1);
-                                    p.custom_lists.swap(i, i + 1);
-                                    if p.custom_open == Some(i) {
-                                        p.custom_open = Some(i + 1);
-                                    } else if p.custom_open == Some(i + 1) {
-                                        p.custom_open = Some(i);
-                                    }
-                                }
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ))
-                .child(mark(
-                    &format!("copy-{i}"),
-                    Button::new(("sort-copy", i))
-                        .small()
-                        .label(crate::shell::i18n::text("xlsx.sort-copy-level"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let Some(p) = this.wb().sort_edit.as_ref() else { return };
-                            let Some((col_inp, asc)) = p.levels.get(i) else { return };
-                            let col_val = col_inp.read(cx).value().to_string();
-                            let asc_val = *asc;
-                            let key_val = p.keys.get(i).cloned().unwrap_or(LevelKey::Value);
-                            let custom_val = p.custom_lists.get(i).map(|c| c.read(cx).value().to_string()).unwrap_or_default();
-                            let new_col = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_xlsx.column-a-b")));
-                            new_col.update(cx, |inp, cx| inp.set_value(col_val, window, cx));
-                            let new_custom = custom_list_input(window, cx);
-                            if !custom_val.is_empty() {
-                                new_custom.update(cx, |inp, cx| inp.set_value(custom_val, window, cx));
-                            }
-                            if let Some(p) = this.wb_mut().sort_edit.as_mut() {
-                                let insert_at = (i + 1).min(p.levels.len());
-                                p.levels.insert(insert_at, (new_col, asc_val));
-                                p.keys.insert(insert_at, key_val);
-                                p.custom_lists.insert(insert_at, new_custom);
-                                if let Some(open) = p.custom_open {
-                                    if open > i {
-                                        p.custom_open = Some(open + 1);
-                                    }
-                                }
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ))
-                .child(mark(
-                    &format!("remove-{i}"),
-                    Button::new(("sort-remove", i))
-                        .small()
-                        .label(crate::shell::i18n::text("_shell.delete"))
-                        .disabled(p.levels.len() == 1)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(p) = this.wb_mut().sort_edit.as_mut() {
-                                if p.levels.len() > 1 && i < p.levels.len() {
-                                    p.levels.remove(i);
-                                    p.keys.remove(i);
-                                    p.custom_lists.remove(i);
-                                    if p.custom_open == Some(i) {
-                                        p.custom_open = None;
-                                    } else if let Some(open) = p.custom_open {
-                                        if open > i {
-                                            p.custom_open = Some(open - 1);
-                                        }
-                                    }
-                                }
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ));
-            if key == LevelKey::Value {
-                let custom_btn_label = if has_custom {
-                    crate::shell::i18n::text("_xlsx.list-configured")
-                } else {
-                    crate::shell::i18n::text("_xlsx.list")
-                };
-                actions = actions.child(mark(
-                    &format!("custom-btn-{i}"),
-                    Button::new(("sort-custom-btn", i))
-                        .small()
-                        .label(custom_btn_label)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(p) = this.wb_mut().sort_edit.as_mut() {
-                                p.custom_open = if p.custom_open == Some(i) { None } else { Some(i) };
-                                p.picking = None;
-                                p.keying = None;
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ));
-            }
-            body = body.child(actions);
+
         }
-        body = body
-            .child(mark(
-                "add",
-                Button::new("sort-add")
-                    .small()
-                    .label(crate::shell::i18n::text("_xlsx.add-column"))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let Some(p) = this.wb().sort_edit.as_ref() else {
-                            return;
-                        };
-                        let range_val = p.range.read(cx).value().to_string();
-                        let levels_len = p.levels.len() as u32;
-                        let column = this.resolve_sort_range(&range_val).map_or(0, |r| {
-                            (r.first_column + levels_len).min(r.last_column)
-                        });
-                        let input = column_input(column, window, cx);
-                        let custom_inp = custom_list_input(window, cx);
-                        let p = this.wb_mut().sort_edit.as_mut().unwrap();
-                        p.levels.push((input, true));
-                        p.keys.push(LevelKey::Value);
-                        p.custom_lists.push(custom_inp);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ))
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .child(SharedString::from(p.error.clone())),
-            )
-            .child(mark(
-                "apply",
-                Button::new("sort-apply").primary()
-                    .small()
+        if editing.is_none(){
+            use crate::shell::chrome::{self,data_table::{DataTable,row_controls}};
+            let reorder=p.reorder.clone();
+            let header=h_flex().px_2().h_full().items_center().gap_2().children(["_xlsx.column","_xlsx.cell-values","xlsx.order"].into_iter().map(|key|div().flex_1().min_w_0().child(crate::shell::i18n::text(key))));
+            let mut rows=Vec::new();for(i,(column,ascending))in p.levels.iter().enumerate(){
+                let name=column.read(cx).value().to_string();let kind=match p.keys.get(i){Some(LevelKey::CellColor(_))=>"xlsx.sort.key.cell-color",Some(LevelKey::FontColor(_))=>"xlsx.sort.key.font-color",Some(LevelKey::Icon(..))=>"xlsx.sort.key.icon",_=>"_xlsx.cell-values"};
+                let actions=h_flex().gap_1().child(row_controls(reorder.clone(),i,0,chrome::action_button(("sort-edit",i)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("edit")).on_click(cx.listener(move|e,_,w,cx|e.open_sort_level(Some(i),w,cx)))))
+                    .child(row_controls(reorder.clone(),i,2,chrome::action_button(("sort-copy",i)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("content_copy")).tooltip(crate::shell::i18n::text("xlsx.sort-copy-level")).on_click(cx.listener(move|e,_,w,cx|e.copy_sort_level(i,w,cx)))))
+                    .child(row_controls(reorder.clone(),i,1,chrome::action_button(("sort-delete",i)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("delete")).disabled(p.levels.len()<=1).on_click(cx.listener(move|e,_,_,cx|{if let Some(p)=e.wb_mut().sort_edit.as_mut(){if p.levels.len()>1{p.levels.remove(i);p.keys.remove(i);p.custom_lists.remove(i);}}e.sort_changed(cx);}))));
+                let row=h_flex().px_2().h_full().items_center().gap_2().child(div().flex_1().min_w_0().child(name)).child(div().flex_1().min_w_0().truncate().child(crate::shell::i18n::text(kind)))
+                    .child(div().flex_1().min_w_0().child(crate::shell::i18n::text(if *ascending{"_xlsx.ascending"}else{"_xlsx.descending"}))).child(actions).child(crate::shell::chrome::icon("drag_handle",18.,crate::shell::palette::rgb(0x444746).into()));rows.push((i,row.into_any_element(),false));
+            }
+            let table=DataTable::new("sort-levels-table",Some(header.into_any_element()),rows,cx).reorderable(reorder,|e,from,to,_,cx|{if let Some(p)=e.wb_mut().sort_edit.as_mut(){let level=p.levels.remove(from);p.levels.insert(to,level);let key=p.keys.remove(from);p.keys.insert(to,key);let custom=p.custom_lists.remove(from);p.custom_lists.insert(to,custom);}e.sort_changed(cx);});
+            body=body.child(h_flex().w_full().justify_end().child(mark("add",chrome::action_button("sort-add").label(crate::shell::i18n::text("_xlsx.add-column")).on_click(cx.listener(|e,_,w,cx|e.open_sort_level(None,w,cx))).into_any_element()))).child(table);
+        }
+        body=body.children(crate::shell::chrome::panel_message(&p.error));
+        if editing.is_some(){let footer=crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("sort-level-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|e,_,w,cx|e.finish_sort_level(false,w,cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("sort-level-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e,_,w,cx|e.finish_sort_level(true,w,cx))));
+            return Some(SidebarPanel::with_footer(crate::shell::i18n::text("xlsx.sort-level.edit"),body.into_any_element(),footer));}
+        // Real-time update on: the sort follows every change, so the pane has no end-area button. Off: only the
+        // 並べ替える button, which applies the settings (the pane stays open).
+        if realtime {
+            return Some(SidebarPanel { title: crate::shell::i18n::text("_xlsx.sort-2").into(), body: body.into_any_element() });
+        }
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("sort-apply", "", crate::shell::chrome::ActionButtonKind::Primary)
                     .label(crate::shell::i18n::text("_xlsx.sort"))
-                    .on_click(cx.listener(|this, _, window, cx| this.apply_sort_button(window, cx)))
-                    .into_any_element(),
-            ))
-            .child(mark(
-                "close",
-                Button::new("sort-close")
-                    .small()
-                    .label(crate::shell::i18n::text("_shell.close"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.wb_mut().sort_edit = None;
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ));
-        Some(SidebarPanel {
-            title: crate::shell::i18n::text("_xlsx.sort-2").into(),
-            body: body.into_any_element(),
-        })
+                    .on_click(cx.listener(|this, _, window, cx| this.apply_sort_button(window, cx)))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("_xlsx.sort-2"), body.into_any_element(), panel_terminal_actions))
     }
 }
 

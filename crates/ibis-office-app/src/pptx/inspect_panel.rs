@@ -5,7 +5,7 @@
 //! プレゼンテーション内の個人情報、ドキュメントのプロパティ、コメント、
 //! 発表者ノート、非表示スライド、スライド外コンテンツを検査し、一括削除する。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -393,10 +393,9 @@ impl SlideEditor {
             };
 
             let remove_btn = (found && !props_removed).then(|| {
-                Button::new("inspect-remove-props")
+                crate::shell::chrome::destructive_button("inspect-remove-props",cx)
                     .label(text("pptx.inspect.remove-all"))
                     .small()
-                    .danger()
                     .on_click(cx.listener(|this, _, _, cx| this.inspect_remove_all_properties(cx)))
             });
 
@@ -429,7 +428,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(if found && !props_removed { cx.theme().danger } else { cx.theme().muted_foreground })
                         .child(status_text),
                 )
@@ -447,10 +446,9 @@ impl SlideEditor {
             };
 
             let remove_btn = (found && !comments_removed).then(|| {
-                Button::new("inspect-remove-comments")
+                crate::shell::chrome::destructive_button("inspect-remove-comments",cx)
                     .label(text("pptx.inspect.remove-all"))
                     .small()
-                    .danger()
                     .on_click(cx.listener(|this, _, _, cx| this.inspect_remove_all_comments(cx)))
             });
 
@@ -483,7 +481,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(if found && !comments_removed { cx.theme().danger } else { cx.theme().muted_foreground })
                         .child(status_text),
                 )
@@ -501,10 +499,9 @@ impl SlideEditor {
             };
 
             let remove_btn = (found && !notes_removed).then(|| {
-                Button::new("inspect-remove-notes")
+                crate::shell::chrome::destructive_button("inspect-remove-notes",cx)
                     .label(text("pptx.inspect.remove-all"))
                     .small()
-                    .danger()
                     .on_click(cx.listener(|this, _, _, cx| this.inspect_remove_all_notes(cx)))
             });
 
@@ -537,7 +534,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(if found && !notes_removed { cx.theme().danger } else { cx.theme().muted_foreground })
                         .child(status_text),
                 )
@@ -555,10 +552,9 @@ impl SlideEditor {
             };
 
             let remove_btn = (found && !hidden_removed).then(|| {
-                Button::new("inspect-remove-hidden")
+                crate::shell::chrome::destructive_button("inspect-remove-hidden",cx)
                     .label(text("pptx.inspect.remove-all"))
                     .small()
-                    .danger()
                     .on_click(cx.listener(|this, _, _, cx| this.inspect_remove_all_hidden_slides(cx)))
             });
 
@@ -591,7 +587,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(if found && !hidden_removed { cx.theme().danger } else { cx.theme().muted_foreground })
                         .child(status_text),
                 )
@@ -609,10 +605,9 @@ impl SlideEditor {
             };
 
             let remove_btn = (found && !off_slide_removed).then(|| {
-                Button::new("inspect-remove-off-slide")
+                crate::shell::chrome::destructive_button("inspect-remove-off-slide",cx)
                     .label(text("pptx.inspect.remove-all"))
                     .small()
-                    .danger()
                     .on_click(cx.listener(|this, _, _, cx| this.inspect_remove_all_off_slide_shapes(cx)))
             });
 
@@ -645,40 +640,31 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(if found && !off_slide_removed { cx.theme().danger } else { cx.theme().muted_foreground })
                         .child(status_text),
                 )
         };
 
-        let bottom_actions = h_flex()
-            .gap_2()
-            .justify_end()
-            .child(
-                Button::new("inspect-recheck")
-                    .label(text("pptx.inspect-panel.reinspect"))
-                    .small()
+        let bottom_actions = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("inspect-recheck", text("pptx.inspect-panel.reinspect"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| this.recheck_presentation_inspection(cx))),
             )
-            .child(
-                Button::new("inspect-close")
-                    .label(text("_shell.close"))
-                    .small()
-                    .primary()
-                    .on_click(cx.listener(|this, _, _, cx| this.close_presentation_inspect_panel(cx))),
-            );
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
 
         let content = v_flex()
             .p_4()
             .gap_3()
-            .child(header)
+            .p_0().child(header)
             .when(!msg.is_empty(), |el| {
                 el.child(
                     div()
                         .p_2()
                         .rounded_md()
                         .bg(cx.theme().primary.opacity(0.1))
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().primary)
                         .child(msg),
                 )
@@ -689,11 +675,9 @@ impl SlideEditor {
             .child(hidden_item)
             .child(off_slide_item)
             .child(div().h_2())
-            .child(bottom_actions);
+            ;
 
-        Some(SidebarPanel {
-            title: text("pptx.inspect-panel.inspect-presentation").into(),
-            body: content.into_any_element(),
-        })
+        let panel_terminal_actions = bottom_actions;
+        Some(SidebarPanel::with_footer(text("pptx.inspect-panel.inspect-presentation"), content.into_any_element(), panel_terminal_actions))
     }
 }

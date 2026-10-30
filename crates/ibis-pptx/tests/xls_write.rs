@@ -65,12 +65,13 @@ fn formats_sizes_and_merges_survive_the_xls_round_trip() {
                 assert_eq!((sx.left.as_ref().map(|b| (b.line, b.color)), sx.bottom.as_ref().map(|b| (b.line, b.color))), (sy.left.as_ref().map(|b| (b.line, b.color)), sy.bottom.as_ref().map(|b| (b.line, b.color))), "{at}");
             }
             assert_eq!(x.merges, y.merges, "merges of {path} sheet {i}");
-            // Sizes: a column and a row differ by what a width in characters and a height in twips round.
+            // Sizes: a column and a row differ by what a width in characters and a height in twips round (a row the xls
+            // file gives a height reads at a whole 96 dpi pixel, on every OS since the sizes follow Excel for Windows (`EXCEL_METRICS`): 20 pt of an automatic row of the xlsx is 19.5 pt there).
             for c in 0..x.columns.len().min(20) {
                 assert!((x.columns[c] - y.columns.get(c).copied().unwrap_or(0)).abs() < 40_000, "{path} sheet {i} column {c}: {} / {:?}", x.columns[c], y.columns.get(c));
             }
             for r in 0..x.rows.len().min(20) {
-                assert!((x.rows[r] - y.rows.get(r).copied().unwrap_or(0)).abs() < 700, "{path} sheet {i} row {r}: {} / {:?}", x.rows[r], y.rows.get(r));
+                assert!((x.rows[r] - y.rows.get(r).copied().unwrap_or(0)).abs() < 700 + 9_525, "{path} sheet {i} row {r}: {} / {:?}", x.rows[r], y.rows.get(r));
             }
         }
     }

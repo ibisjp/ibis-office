@@ -18,6 +18,10 @@ use ibis_doc_model::{FontAlign, TextAlign};
 use crate::render::math_view::{self, MathBox};
 use crate::render::font_metrics::{POWERPOINT_SINGLE, natural_below, powerpoint_below_baseline};
 
+/// The size of a pixel of the device Office draws a PDF on, in points: 600 dpi. Its emboldened glyphs (Excel's PDF: `0.12 Tc` on a
+/// bold of a typeface without one; PowerPoint's: a bold run 18.12 pt a character) are a pixel wider.
+const OFFICE_PDF_DEVICE_PIXEL_PT: f32 = 72.0 / 600.0;
+
 /// A run of the paragraph, ready to draw.
 #[derive(Clone, Debug)]
 pub(crate) struct Piece {
@@ -35,6 +39,10 @@ pub(crate) struct Piece {
     pub(crate) raise: f32,
     /// Added after each character, in pixels.
     pub(crate) spacing: f32,
+    /// Added after each character of a bold the typeface does not have (drawn by thickening the regular glyphs), in
+    /// pixels: Office's PDF device is 600 dpi and its emboldening widens a glyph by a pixel of it (0.12 pt). Set by
+    /// `lay_out` from the typeface the text is shaped with.
+    pub(crate) synthetic_bold: std::cell::Cell<f32>,
     /// Background colour behind the characters (a highlighter).
     pub(crate) highlight: Option<Hsla>,
     /// Outline around the characters: colour and width in pixels.
@@ -67,6 +75,14 @@ pub(crate) struct Piece {
     /// Whether the piece substitutes an uninstalled proportional Japanese typeface
     /// (`ＭＳ Ｐ`, `HGP`, `Meiryo UI`), so full-width alphanumerics use proportional advances.
     pub(crate) proportional_alnum: bool,
+}
+
+impl Piece {
+    /// The space added after each character, in pixels: the run's character spacing and the widening of an emboldened
+    /// glyph.
+    pub(crate) fn spacing_px(&self) -> f32 {
+        self.spacing + self.synthetic_bold.get()
+    }
 }
 
 /// How much smaller PowerPoint draws a small capital than a capital.
@@ -655,28 +671,7 @@ impl Turn {
         self.sin.abs() > 1e-6 || self.cos < 0.0 || self.tx.abs() > 1e-3 || self.ty.abs() > 1e-3
     }
 
-    /// Shift the pivot of the turn so that the text line's visual center (baseline - ascent / 2)
-    /// stays in place, as PowerPoint rotates text about its line center rather than the box center.
-    pub(crate) fn with_visual_pivot(self, baseline_y: f32, ascent: f32) -> Self {
-        if !self.shape_turned {
-            return self;
-        }
-        let one_minus_cos = 1.0 - self.cos;
-        let det = 2.0 * one_minus_cos;
-        if det.abs() < 1e-4 {
-            return self;
-        }
-        let cy = (self.sin * self.tx + one_minus_cos * self.ty) / det;
-        let visual_y = baseline_y - ascent / 2.0;
-        let delta = (visual_y - cy) / 2.0;
-        Self {
-            cos: self.cos,
-            sin: self.sin,
-            tx: self.tx + delta * self.sin,
-            ty: self.ty + delta * one_minus_cos,
-            shape_turned: self.shape_turned,
-        }
-    }
+
 }
 
 /// How a text is turned with its shape (`TextBlock::place`): `text`
@@ -1015,25 +1010,30 @@ impl Element for RichParagraphElement {
             let shown_chars = layout.chars[line.start..line.end].iter().rposition(|c| !c.c.is_whitespace()).map_or(0, |k| k + 1);
             let shown_slice = &layout.chars[line.start..line.start + shown_chars];
             let shown_width: f32 = shown_slice.iter().map(|c| c.advance).sum();
+            // A comma or full stop that hangs past the edge (the line broke because it did not fit) is not spread over the room: the characters before it
+            // are, and it follows the last of them (PowerPoint's justified line of 032 p10 ends past the edge with its comma).
+            let hang = shown_slice.last().filter(|c| hangs(c.c) && shown_width > room + 0.01 && shown_chars > 2).map_or(0.0, |c| c.advance);
+            let spread_chars = shown_chars - usize::from(hang > 0.0);
+            let spread_width = shown_width - hang;
             let spread = match paragraph.align {
                 TextAlign::Distributed => true,
                 TextAlign::Justify => n + 1 < line_count || (!paragraph.last && paragraph.text_top.as_ref().is_some_and(|t| t.after == 0.0)),
                 _ => false,
-            } && room > shown_width
+            } && room > spread_width
                 && paragraph.room != Some(0.0);
             let word_spaces = if spread && paragraph.align == TextAlign::Justify && !shown_slice.iter().any(|c| is_cjk(c.c)) {
                 shown_slice.iter().filter(|c| c.c == ' ').count()
             } else {
                 0
             };
-            let space_extra = if word_spaces > 0 { (room - shown_width) / word_spaces as f32 } else { 0.0 };
-            let extra = if spread && word_spaces == 0 && shown_chars > 1 { (room - shown_width) / (shown_chars - 1) as f32 } else { 0.0 };
+            let space_extra = if word_spaces > 0 { (room - spread_width) / word_spaces as f32 } else { 0.0 };
+            let extra = if spread && word_spaces == 0 && spread_chars > 1 { (room - spread_width) / (spread_chars - 1) as f32 } else { 0.0 };
             let char_extra = |k: usize| -> f32 {
-                if !spread || k >= line.start + shown_chars {
+                if !spread || k >= line.start + spread_chars {
                     0.0
                 } else if word_spaces > 0 {
                     if layout.chars[k].c == ' ' { space_extra } else { 0.0 }
-                } else if k + 1 < line.start + shown_chars {
+                } else if k + 1 < line.start + spread_chars {
                     extra
                 } else {
                     0.0
@@ -1050,7 +1050,10 @@ impl Element for RichParagraphElement {
                     TextAlign::Center => (room - line.width) / 2.0,
                     TextAlign::Right => room - line.width,
                 };
-            let mut baseline = text_top + snap(top + line.baseline, paragraph.px_per_point);
+            // PowerPoint on a screen puts a line's baseline on a whole point from the top of the text; its PDF does not (Windows PowerPoint's PDF of 009:
+            // two lines of 14 pt are 16.80 pt apart, 1.2 x 14, on the 0.12 pt grid of the 600 dpi page; whole points would make 17).
+            let baseline = if window.is_recording_paints_only() { top + line.baseline } else { snap(top + line.baseline, paragraph.px_per_point) };
+            let mut baseline = text_top + baseline;
             let mut line_top = text_top + top;
             if paragraph.mirror && let Some(t) = &paragraph.text_top {
                 // Lines from left to right: each line where it would be
@@ -1071,7 +1074,9 @@ impl Element for RichParagraphElement {
                 }
             }
             let reference = reference(paragraph, &layout.chars[line.start..line.end]);
-            let line_turn = turn.map(|t| t.with_visual_pivot(baseline, reference.0));
+            // Every line shares the shape transform: a line-specific pivot would
+            // compress the spacing as the shape rotates.
+            let line_turn = turn;
             // Text bent to a warp: the line's box is kept, the glyphs are collected as they come.
             let warp = paragraph.text_top.as_ref().map(|t| t.block.warp.clone()).filter(|w| w.borrow().is_some());
             if let Some(w) = &warp && let Some(w) = w.borrow_mut().as_mut() {
@@ -1169,7 +1174,7 @@ impl Element for RichParagraphElement {
                         let Some((data, index)) = window.text_system().font_data(run.font_id) else { readable = false; break };
                         for glyph in &run.glyphs {
                             let before = text[..glyph.index.min(text.len())].chars().count() as f32;
-                            let (gx, gy) = (x + f32::from(glyph.position.x) + piece.spacing * before, y + f32::from(glyph.position.y));
+                            let (gx, gy) = (x + f32::from(glyph.position.x) + piece.spacing_px() * before, y + f32::from(glyph.position.y));
                             let Some(polygons) = crate::render::glyph_outline::glyph_polygons(&data, index, glyph.id.0, piece.size) else { readable = false; break 'glyphs };
                             let polygons = slanted_if_synthetic(polygons, window.text_system().synthetic_style(run.font_id).1);
                             taken.push((polygons.into_iter().map(|p| p.into_iter().map(|(a, b)| (gx + a, gy + b)).collect()).collect(), piece.color));
@@ -1218,10 +1223,11 @@ impl Element for RichParagraphElement {
                     // ring fainter (they add up to a soft fall-off). Office's glow is the letters' outline blurred out
                     // to `rad` at the glow's alpha; the rings stand for that blur, and the half of the alpha is a
                     // choice of ours (not measured against Office's blur), so that the rings together stay fainter than the letters.
-                    // Because each ring shifts whole unblurred glyphs, cap the ring offset at `0.35 * piece.size` so a
-                    // large glow radius on small text stays a continuous rim instead of detaching into separate copies.
+                    // The glow surrounds the filled AND outlined glyph. DrawingML's
+                    // centred outline contributes half its width before the glow radius.
+                    // Do not clamp a document's explicit radius by the font size.
                     let rings = 6;
-                    let max_r = radius.min(piece.size * 0.35);
+                    let max_r = radius + piece.outline.map_or(0., |(_,width)|width * 0.5);
                     let per = color.a * 0.5 / rings as f32;
                     for ring in (1..=rings).rev() {
                         let r = max_r * ring as f32 / rings as f32;
@@ -1232,7 +1238,7 @@ impl Element for RichParagraphElement {
                             for run in &shaped.runs {
                                 for glyph in &run.glyphs {
                                     let before = text[..glyph.index.min(text.len())].chars().count() as f32;
-                                    let _ = window.paint_glyph(at + glyph.position + point(px((piece.spacing + extra) * before), px(0.0)), run.font_id, glyph.id, px(piece.size), tint);
+                                    let _ = window.paint_glyph(at + glyph.position + point(px((piece.spacing_px() + extra) * before), px(0.0)), run.font_id, glyph.id, px(piece.size), tint);
                                 }
                             }
                         }
@@ -1240,33 +1246,21 @@ impl Element for RichParagraphElement {
                 }
                 if let Some((color, dx, dy, blur)) = piece.shadow {
                     // The shadow's letters sit where the text's do: after the character spacing and
-                    // the extra space a distributed line adds. When `blurRad` is set, rings around
-                    // `(dx, dy)` widen and soften the shadow.
-                    if blur > 1.0 {
-                        let r_max = (blur * 0.75).min(piece.size * 0.35);
-                        let rings = (r_max / 3.0).ceil().max(1.0) as usize;
-                        let per = color.a * 0.4 / rings as f32;
-                        for ring in (1..=rings).rev() {
-                            let r = r_max * ring as f32 / rings as f32;
-                            let tint = Hsla { a: per, ..color };
-                            for k in 0..12 {
-                                let (s, c) = (k as f32 / 12.0 * std::f32::consts::TAU).sin_cos();
-                                let at = point(px(x + dx + c * r), px(y + dy + s * r));
-                                for run in &shaped.runs {
-                                    for glyph in &run.glyphs {
-                                        let before = text[..glyph.index.min(text.len())].chars().count() as f32;
-                                        let _ = window.paint_glyph(at + glyph.position + point(px((piece.spacing + extra) * before), px(0.0)), run.font_id, glyph.id, px(piece.size), tint);
-                                    }
-                                }
+                    // the extra space a distributed line adds. PowerPoint blurs the glyph mask with a
+                    // Gaussian of deviation `TEXT_SHADOW_SIGMA_PER_BLUR * blurRad` and paints it at the
+                    // shadow's alpha inside the letters. The blur is the glyph drawn at offsets that follow that
+                    // Gaussian (rings of equal probability), each at the alpha whose product over all of them
+                    // leaves the shadow's alpha where every copy overlaps.
+                    let offsets = text_shadow_offsets(blur);
+                    let alpha = 1.0 - (1.0 - color.a).powf(1.0 / offsets.len() as f32);
+                    let tint = Hsla { a: alpha, ..color };
+                    for (ox, oy) in offsets {
+                        let at = point(px(x + dx + ox), px(y + dy + oy));
+                        for run in &shaped.runs {
+                            for glyph in &run.glyphs {
+                                let before = text[..glyph.index.min(text.len())].chars().count() as f32;
+                                let _ = window.paint_glyph(at + glyph.position + point(px((piece.spacing_px() + extra) * before), px(0.0)), run.font_id, glyph.id, px(piece.size), tint);
                             }
-                        }
-                    }
-                    let center_color = if blur > 1.0 { Hsla { a: color.a * 0.65, ..color } } else { color };
-                    let at = point(px(x + dx), px(y + dy));
-                    for run in &shaped.runs {
-                        for glyph in &run.glyphs {
-                            let before = text[..glyph.index.min(text.len())].chars().count() as f32;
-                            let _ = window.paint_glyph(at + glyph.position + point(px((piece.spacing + extra) * before), px(0.0)), run.font_id, glyph.id, px(piece.size), center_color);
                         }
                     }
                 }
@@ -1292,7 +1286,7 @@ impl Element for RichParagraphElement {
                         }
                     }
                 }
-                if piece.spacing == 0.0 && extra == 0.0 && space_extra == 0.0 && piece.kana_widths.is_none() && !piece.proportional_alnum && !text.contains('\t') {
+                if piece.spacing_px() == 0.0 && extra == 0.0 && space_extra == 0.0 && piece.kana_widths.is_none() && !piece.proportional_alnum && !text.contains('\t') {
                     let height = shaped.ascent + shaped.descent;
                     let _ = shaped.paint(point(px(x), px(y) - shaped.ascent), height, gpui_kit::TextAlign::Left, None, window, cx);
                 } else {
@@ -1388,7 +1382,7 @@ fn paint_turned(shaped: &ShapedLine, text: &str, piece: &Piece, (x, y): (f32, f3
     }
     let glyph_at = |index: usize, position: Point<Pixels>| {
         let before = text[..index.min(text.len())].chars().count() as f32;
-        (x + f32::from(position.x) + piece.spacing * before, y + f32::from(position.y))
+        (x + f32::from(position.x) + piece.spacing_px() * before, y + f32::from(position.y))
     };
     if let Some((color, width)) = piece.outline {
         let r = width / 2.0;
@@ -1456,7 +1450,7 @@ fn paint_filled(
         let Some((data, index)) = window.text_system().font_data(run.font_id) else { return false };
         for glyph in &run.glyphs {
             let before = text[..glyph.index.min(text.len())].chars().count() as f32;
-            let (gx, gy) = (x + f32::from(glyph.position.x) + piece.spacing * before, y + f32::from(glyph.position.y));
+            let (gx, gy) = (x + f32::from(glyph.position.x) + piece.spacing_px() * before, y + f32::from(glyph.position.y));
             let Some(polygons) = crate::render::glyph_outline::glyph_polygons(&data, index, glyph.id.0, piece.size) else { return false };
             let polygons = slanted_if_synthetic(polygons, window.text_system().synthetic_style(run.font_id).1);
             contours.extend(polygons.into_iter().map(|p| p.into_iter().map(|(px_, py)| (gx + px_ - bx, gy + py - by)).collect()));
@@ -1531,7 +1525,7 @@ fn paint_inner_shadow(
         offsets[1 + k] = (c * r1, s * r1);
         offsets[7 + k] = (c * r2, s * r2);
     }
-    let spaced = !(piece.spacing == 0.0 && extra == 0.0 && piece.kana_widths.is_none() && !piece.proportional_alnum && !text.contains('\t'));
+    let spaced = !(piece.spacing_px() == 0.0 && extra == 0.0 && piece.kana_widths.is_none() && !piece.proportional_alnum && !text.contains('\t'));
     for run in &shaped.runs {
         let Some((data, index)) = window.text_system().font_data(run.font_id) else { continue };
         let synth_italic = window.text_system().synthetic_style(run.font_id).1;
@@ -1700,6 +1694,8 @@ fn lay_out(paragraph: &RichParagraph, width: Option<f32>, window: &mut Window) -
             strikethrough: None,
         };
         let shaped = window.text_system().shape_line(piece.text.clone().into(), px(piece.size), &[run], None);
+        let emboldened = shaped.runs.first().is_some_and(|r| window.text_system().synthetic_style(r.font_id).0);
+        piece.synthetic_bold.set(if emboldened { OFFICE_PDF_DEVICE_PIXEL_PT * paragraph.px_per_point } else { 0.0 });
         let bounds: Vec<(usize, char)> = piece.text.char_indices().collect();
         for (k, &(start, c)) in bounds.iter().enumerate() {
             let end = bounds.get(k + 1).map_or(piece.text.len(), |b| b.0);
@@ -1715,12 +1711,12 @@ fn lay_out(paragraph: &RichParagraph, width: Option<f32>, window: &mut Window) -
                 && (0x3041..=0x30fa).contains(&(c as usize))
                 && !next_c.is_some_and(|n| "（「『【〔〈《［｛〘〖".contains(n)) // i18n-ok（禁則の文字の並び）
             {
-                (w[c as usize - 0x3040] as f32 / 256.0) * piece.size + piece.spacing
+                (w[c as usize - 0x3040] as f32 / 256.0) * piece.size + piece.spacing_px()
             } else if piece.proportional_alnum
                 && let Some(w) = crate::render::font_metrics::fallback_fullwidth_alnum_width(c)
             {
-                (w as f32 / 256.0) * piece.size + piece.spacing
-            } else if c == ' ' && piece.spacing == 0.0 && piece.text.chars().all(|ch| ch == ' ') {
+                (w as f32 / 256.0) * piece.size + piece.spacing_px()
+            } else if c == ' ' && piece.spacing_px() == 0.0 && piece.text.chars().all(|ch| ch == ' ') {
                 // Office (DirectWrite/GDI) snaps space advances to 96 DPI half-pixels:
                 // (Points from pixels by the paragraph's own scale: below one pixel a point the space came out too narrow.)
                 let size_pt = piece.size / paragraph.px_per_point.max(1e-3);
@@ -1734,7 +1730,7 @@ fn lay_out(paragraph: &RichParagraph, width: Option<f32>, window: &mut Window) -
                     raw
                 }
             } else {
-                raw + piece.spacing
+                raw + piece.spacing_px()
             };
             chars.push(Char { piece: index, start, end, c, raw, advance: adv, lift: None });
         }
@@ -1908,9 +1904,57 @@ pub(crate) fn is_cjk(c: char) -> bool {
     matches!(c as u32, 0x2460..=0x24ff | 0x25a0..=0x25ff | 0x2e80..=0x9fff | 0xf900..=0xfaff | 0xfe30..=0xfe4f | 0xff00..=0xffef | 0x20000..=0x3ffff)
 }
 
+/// The deviation of PowerPoint's text shadow blur per unit of `blurRad`. Measured on the shadow bitmaps of PowerPoint
+/// 16.0.20527.20088's PDFs (`a:rPr/a:effectLst/a:outerShdw`, black 43%, 54pt text): PowerPoint draws the shadow at a resolution
+/// (200 dpi for blurRad 1.5pt and 3pt, 100 dpi for 6pt, 50 dpi for 12pt, 28.7 dpi for 24pt) that keeps the blur radius at 8.3 to
+/// 9.5 bitmap pixels, and the blur is about 2.2 to 2.5 pixels' deviation (0.264 of the radius in every case). Fitted
+/// (the deviation of an extra Gaussian that turns the 1.5pt shadow's mask into the 6pt and 24pt masks, pixel footprint included;
+/// and the edge of the 3pt mask, and of the 12pt mask from the 3pt mask): 0.79pt for 3pt, 3.2pt for 12pt, 1.58pt for 6pt,
+/// 6.45pt for 24pt, that is 0.263, 0.266, 0.263 and 0.269 of blurRad.
+const TEXT_SHADOW_SIGMA_PER_BLUR: f32 = 0.265;
+
+/// The offsets (pixels) at which a text shadow of blur radius `blur` is drawn: one at (0, 0) when the blur is under a
+/// pixel, else 3 rings of 8 points whose radii cut the Gaussian of deviation `TEXT_SHADOW_SIGMA_PER_BLUR * blur` into 3 parts of equal
+/// probability (the radius of the middle of each part: `sigma * sqrt(-2 ln(1 - p))` at p = 1/6, 1/2, 5/6), the rings turned
+/// by a third of the angle between points so that the points do not line up, and the radii scaled so that the offsets' variance is sigma^2 in each direction.
+fn text_shadow_offsets(blur: f32) -> Vec<(f32, f32)> {
+    if blur < 1.0 {
+        return vec![(0.0, 0.0)];
+    }
+    let sigma = blur * TEXT_SHADOW_SIGMA_PER_BLUR;
+    let mut offsets = Vec::with_capacity(24);
+    let ps = [1.0f32 / 6.0, 0.5, 5.0 / 6.0];
+    // The rings' mean square radius is made 2 * sigma^2 (the variance of the 2-D Gaussian), as the middles of the parts alone fall short of it.
+    let mean_square = ps.iter().map(|p| -2.0 * (1.0 - p).ln()).sum::<f32>() / ps.len() as f32;
+    let fit = (2.0 / mean_square).sqrt();
+    for (ring, p) in ps.into_iter().enumerate() {
+        let radius = sigma * fit * (-2.0 * (1.0 - p).ln()).sqrt();
+        for k in 0..8 {
+            let angle = (k as f32 + ring as f32 / 3.0) / 8.0 * std::f32::consts::TAU;
+            let (s, c) = angle.sin_cos();
+            offsets.push((c * radius, s * radius));
+        }
+    }
+    offsets
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Char, CharPosition, LinePosition, ParagraphPositions, break_lines};
+    use super::{Char, CharPosition, LinePosition, ParagraphPositions, break_lines, text_shadow_offsets, TEXT_SHADOW_SIGMA_PER_BLUR};
+
+    /// The shadow's blur is a Gaussian of deviation 0.265 blurRad (PowerPoint's PDFs of blurRad 3pt, 6pt, 12pt and 24pt): the offsets' variance in each direction, whatever the radius.
+    #[test]
+    fn text_shadow_offsets_have_the_deviation_of_the_blur_fraction() {
+        for blur in [4.0f32, 8.3, 33.0] {
+            let offsets = text_shadow_offsets(blur);
+            let n = offsets.len() as f32;
+            let var_x = offsets.iter().map(|o| o.0 * o.0).sum::<f32>() / n;
+            let var_y = offsets.iter().map(|o| o.1 * o.1).sum::<f32>() / n;
+            let sigma = blur * TEXT_SHADOW_SIGMA_PER_BLUR;
+            assert!((var_x / (sigma * sigma) - 1.0).abs() < 0.08 && (var_y / (sigma * sigma) - 1.0).abs() < 0.08, "{blur}: {var_x} {var_y} against {}", sigma * sigma);
+        }
+        assert_eq!(text_shadow_offsets(0.5), vec![(0.0, 0.0)]);
+    }
 
     /// "ab c" wrapped after "ab " (10 px a character), then "de".
     fn positions() -> ParagraphPositions {

@@ -296,7 +296,18 @@ pub(crate) fn write_slide(
     }
     // Placeholders that now keep their own place (their new layout has none).
     for shape in &slide.shapes {
-        let (Some(ph), Some(&node), Some(source)) = (slide.placeholders.get(&shape.id), nodes.get(&shape.id), sources.get(&shape.id)) else { continue };
+        let (Some(&node), Some(source)) = (nodes.get(&shape.id), sources.get(&shape.id)) else { continue };
+        let Some(ph) = slide.placeholders.get(&shape.id) else {
+            // A layout can turn an entered placeholder into an ordinary shape.
+            // Remove its XML placeholder too, and preserve its inherited frame.
+            let placeholder = ["nvSpPr", "nvPicPr", "nvGraphicFramePr", "nvCxnSpPr"].into_iter()
+                .find_map(|nv|doc.path(node,&[nv,"nvPr","ph"]));
+            if let Some(ph) = placeholder {
+                doc.detach(ph);
+                pin_frame(doc,node,&untwisted(shape,&source.turns),source.group)?;
+            }
+            continue;
+        };
         if ph.own_frame {
             pin_frame(doc, node, &untwisted(shape, &source.turns), source.group)?;
         } else if let Some(props) = doc.child(node, "spPr") {
@@ -1247,47 +1258,10 @@ fn write_picture_clip(doc: &mut XmlDocument, node: NodeId, clip: Option<ibis_doc
     let Some(nv_pr) = doc.path(node, &["nvPicPr", "nvPr"]) else { return Ok(()) };
     let media_node = doc.descendants(nv_pr).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "media");
     if let Some(m) = media_node {
-        let vol = match clip.options.volume {
-            ibis_doc_model::MediaVolume::High => "100000",
-            ibis_doc_model::MediaVolume::Medium => "66000",
-            ibis_doc_model::MediaVolume::Low => "33000",
-            ibis_doc_model::MediaVolume::Mute => "0",
-        };
-        doc.set_attr(m, "vol", vol);
-        if clip.options.loop_until_stopped {
-            doc.set_attr(m, "loop", "1");
-        } else {
-            doc.remove_attr(m, "loop");
-        }
-        if clip.options.rewind {
-            doc.set_attr(m, "rewind", "1");
-        } else {
-            doc.remove_attr(m, "rewind");
-        }
-        if clip.options.start == ibis_doc_model::MediaStart::Automatically {
-            doc.set_attr(m, "autoPlay", "1");
-        } else {
-            doc.remove_attr(m, "autoPlay");
-        }
-        if clip.options.full_screen {
-            doc.set_attr(m, "fullScreen", "1");
-        } else {
-            doc.remove_attr(m, "fullScreen");
-        }
-        if clip.options.hide_while_not_playing {
-            doc.set_attr(m, "showWhenStopped", "0");
-        } else {
-            doc.remove_attr(m, "showWhenStopped");
-        }
-        if clip.options.hide_during_show {
-            doc.set_attr(m, "isNarration", "1");
-        } else {
-            doc.remove_attr(m, "isNarration");
-        }
-        if clip.options.play_across_slides {
-            doc.set_attr(m, "playAcrossSlides", "1");
-        } else {
-            doc.remove_attr(m, "playAcrossSlides");
+        // The playing options are those of the timing (`p:cMediaNode`), not attributes of
+        // `p14:media`: the ones an earlier version wrote there are taken away.
+        for stale in ["vol", "loop", "rewind", "autoPlay", "fullScreen", "showWhenStopped", "isNarration", "playAcrossSlides"] {
+            doc.remove_attr(m, stale);
         }
         let existing_trim = doc.elements(m).find(|&n| doc.local_name(n) == "trim");
         if clip.options.trim_start_ms > 0 || clip.options.trim_end_ms > 0 {

@@ -8,8 +8,8 @@
 //! does not get smaller is left alone.
 use std::io::Cursor;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 #[cfg(all(any(target_os = "macos", windows, target_os = "linux"), feature = "export"))]
@@ -240,13 +240,12 @@ impl SlideEditor {
         let (resolution, delete_crop, selected_only) = (p.resolution, p.delete_crop, p.selected_only);
         let any_selected = self.selected_shapes().iter().any(|s| matches!(s.kind, ShapeKind::Picture(_)));
         let t = crate::shell::i18n::text;
-        let mark = |on: bool, label: &str| -> SharedString { format!("{} {}", if on { "●" } else { "○" }, t(label)).into() };
-        let heading = |label: &str| div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(t(label));
+        let heading = |label: &str| div().text_sm().font_weight(FontWeight::BOLD).child(t(label));
         let body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(heading("pptx.compress.compression-options"))
+            .p_0().child(heading("pptx.compress.compression-options"))
             .child(Checkbox::new("pptx-compress-delete").label(t("pptx.compress.delete-cropped-areas-pictures")).checked(delete_crop).on_click(cx.listener(|e, on: &bool, _, cx| {
                 let on = *on;
                 e.edit_compress_panel(|p| p.delete_crop = on, cx)
@@ -256,16 +255,14 @@ impl SlideEditor {
                 e.edit_compress_panel(|p| p.selected_only = on, cx)
             })))
             .child(heading("pptx.compress.resolution"))
-            .child(Button::new("pptx-compress-print").small().ghost().label(mark(resolution == Resolution::Print, "pptx.compress.print-220-ppi")).on_click(cx.listener(|e, _, _, cx| e.edit_compress_panel(|p| p.resolution = Resolution::Print, cx))))
-            .child(Button::new("pptx-compress-web").small().ghost().label(mark(resolution == Resolution::Web, "pptx.compress.web-150-ppi")).on_click(cx.listener(|e, _, _, cx| e.edit_compress_panel(|p| p.resolution = Resolution::Web, cx))))
-            .child(Button::new("pptx-compress-email").small().ghost().label(mark(resolution == Resolution::Email, "pptx.compress.e-mail-96-ppi")).on_click(cx.listener(|e, _, _, cx| e.edit_compress_panel(|p| p.resolution = Resolution::Email, cx))))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(Button::new("pptx-compress-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_compress_panel(w, cx))))
-                    .child(Button::new("pptx-compress-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_compress_panel(w, cx)))),
-            );
-        Some(SidebarPanel { title: t("pptx.compress.compress-pictures"), body: body.into_any_element() })
+            .child(crate::shell::chrome::radio_button("pptx-compress-print", resolution == Resolution::Print, false, crate::shell::i18n::text("pptx.compress.print-220-ppi"), cx.listener(|e, _, _, cx| e.edit_compress_panel(|p| p.resolution = Resolution::Print, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-compress-web", resolution == Resolution::Web, false, crate::shell::i18n::text("pptx.compress.web-150-ppi"), cx.listener(|e, _, _, cx| e.edit_compress_panel(|p| p.resolution = Resolution::Web, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-compress-email", resolution == Resolution::Email, false, crate::shell::i18n::text("pptx.compress.e-mail-96-ppi"), cx.listener(|e, _, _, cx| e.edit_compress_panel(|p| p.resolution = Resolution::Email, cx))))
+            ;
+        let panel_actions = crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("pptx-compress-apply", t("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_compress_panel(w, cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("pptx-compress-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_compress_panel(w, cx))));
+        Some(SidebarPanel::with_footer(t("pptx.compress.compress-pictures"), body.into_any_element(), panel_actions))
     }
 }
 

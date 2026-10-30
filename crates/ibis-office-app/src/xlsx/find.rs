@@ -5,8 +5,9 @@
 //! entire cell contents, look in formulas), finding next, finding all with a result list,
 //! and replacing in one cell or all with undo/redo.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -49,6 +50,7 @@ pub(crate) struct FindMatch {
 pub(crate) struct FindPanel {
     pub(crate) query: Entity<InputState>,
     pub(crate) replacement: Entity<InputState>,
+    pub(crate) replace_mode: bool,
     pub(crate) formulas: bool,
     pub(crate) match_case: bool,
     pub(crate) entire_cell: bool,
@@ -213,6 +215,7 @@ impl SlideEditor {
             s.find = Some(FindPanel {
                 query,
                 replacement,
+                replace_mode: false,
                 formulas: false,
                 match_case: false,
                 entire_cell: false,
@@ -514,6 +517,7 @@ impl SlideEditor {
             panel.comments,
         );
         let results = panel.results.clone();
+        let replace_mode = panel.replace_mode;
 
         let get_values = |this: &SlideEditor, cx: &App| -> (String, String, FindOptions) {
             let p = this.sheet_state().and_then(|s| s.find.as_ref());
@@ -537,73 +541,58 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .child(crate::shell::chrome::clearable_text_field(&query))
-            .child(crate::shell::chrome::clearable_text_field(&replacement))
+            .p_0().child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+                .child(crate::shell::chrome::radio_button("xlsx-find-mode-search", !replace_mode, false, crate::shell::i18n::text("_shell.find"), cx.listener(|this, _, _, cx| { if let Some(f) = this.sheet_state_mut().and_then(|s| s.find.as_mut()) { f.replace_mode = false; } cx.notify(); })))
+                .child(crate::shell::chrome::radio_button("xlsx-find-mode-replace", replace_mode, false, crate::shell::i18n::text("_shell.replace"), cx.listener(|this, _, _, cx| { if let Some(f) = this.sheet_state_mut().and_then(|s| s.find.as_mut()) { f.replace_mode = true; } cx.notify(); }))))
+            .child(crate::shell::chrome::text_field(&query).full_width())
+            .when(replace_mode, |d| d.child(crate::shell::chrome::text_field(&replacement).full_width()))
             .child(
                 v_flex()
                     .gap_1()
                     .child(
-                        Checkbox::new("find-formulas")
-                            .label(crate::shell::i18n::text("_xlsx.include-formulas"))
-                            .checked(formulas)
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        crate::shell::chrome::checkbox_button("find-match-case",crate::shell::i18n::text("_shell.match-case"),match_case,false,cx.listener(move |this, _, _, cx| {
                                 if let Some(p) = this.sheet_state_mut().and_then(|s| s.find.as_mut()) {
-                                    p.formulas = *checked;
+                                    p.match_case = !match_case;
                                 }
                                 cx.notify();
                             })),
                     )
                     .child(
-                        Checkbox::new("find-match-case")
-                            .label(crate::shell::i18n::text("_shell.match-case"))
-                            .checked(match_case)
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        crate::shell::chrome::checkbox_button("find-formulas",crate::shell::i18n::text("_xlsx.include-formulas"),formulas,false,cx.listener(move |this, _, _, cx| {
                                 if let Some(p) = this.sheet_state_mut().and_then(|s| s.find.as_mut()) {
-                                    p.match_case = *checked;
+                                    p.formulas = !formulas;
                                 }
                                 cx.notify();
                             })),
                     )
                     .child(
-                        Checkbox::new("find-entire-cell")
-                            .label(crate::shell::i18n::text("xlsx.match-entire-cell"))
-                            .checked(entire_cell)
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        crate::shell::chrome::checkbox_button("find-entire-cell",crate::shell::i18n::text("xlsx.match-entire-cell"),entire_cell,false,cx.listener(move |this, _, _, cx| {
                                 if let Some(p) = this.sheet_state_mut().and_then(|s| s.find.as_mut()) {
-                                    p.entire_cell = *checked;
+                                    p.entire_cell = !entire_cell;
                                 }
                                 cx.notify();
                             })),
                     )
                     .child(
-                        Checkbox::new("find-workbook")
-                            .label(crate::shell::i18n::text("xlsx.find-within-workbook"))
-                            .checked(search_workbook)
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        crate::shell::chrome::checkbox_button("find-workbook",crate::shell::i18n::text("xlsx.find-within-workbook"),search_workbook,false,cx.listener(move |this, _, _, cx| {
                                 if let Some(p) = this.sheet_state_mut().and_then(|s| s.find.as_mut()) {
-                                    p.search_workbook = *checked;
+                                    p.search_workbook = !search_workbook;
                                 }
                                 cx.notify();
                             })),
                     )
                     .child(
-                        Checkbox::new("find-by-columns")
-                            .label(crate::shell::i18n::text("xlsx.find-by-columns"))
-                            .checked(by_columns)
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        crate::shell::chrome::checkbox_button("find-by-columns",crate::shell::i18n::text("xlsx.find-by-columns"),by_columns,false,cx.listener(move |this, _, _, cx| {
                                 if let Some(p) = this.sheet_state_mut().and_then(|s| s.find.as_mut()) {
-                                    p.by_columns = *checked;
+                                    p.by_columns = !by_columns;
                                 }
                                 cx.notify();
                             })),
                     )
                     .child(
-                        Checkbox::new("find-comments")
-                            .label(crate::shell::i18n::text("xlsx.find-include-comments"))
-                            .checked(comments)
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        crate::shell::chrome::checkbox_button("find-comments",crate::shell::i18n::text("xlsx.find-include-comments"),comments,false,cx.listener(move |this, _, _, cx| {
                                 if let Some(p) = this.sheet_state_mut().and_then(|s| s.find.as_mut()) {
-                                    p.comments = *checked;
+                                    p.comments = !comments;
                                 }
                                 cx.notify();
                             })),
@@ -613,26 +602,26 @@ impl SlideEditor {
                 h_flex()
                     .gap_1()
                     .flex_wrap()
-                    .child(Button::new("xfind-next").small().ghost().label(crate::shell::i18n::text("_xlsx.find-next")).on_click(cx.listener(move |this, _, _, cx| {
-                        let (q, _, opts) = get_values(this, cx);
-                        this.find_next_cell_with_options(&q, opts, cx);
-                    })))
-                    .child(Button::new("xfind-prev").small().ghost().label(crate::shell::i18n::text("xlsx.find-prev")).on_click(cx.listener(move |this, _, _, cx| {
+                    .child(crate::shell::chrome::action_button("xfind-prev").small().label(crate::shell::i18n::text("_shell.previous")).on_click(cx.listener(move |this, _, _, cx| {
                         let (q, _, opts) = get_values(this, cx);
                         this.find_prev_cell_with_options(&q, opts, cx);
                     })))
-                    .child(Button::new("xfind-all").small().ghost().label(crate::shell::i18n::text("xlsx.find-all")).on_click(cx.listener(move |this, _, _, cx| {
+                    .child(crate::shell::chrome::action_button("xfind-next").small().label(crate::shell::i18n::text("_shell.next")).on_click(cx.listener(move |this, _, _, cx| {
+                        let (q, _, opts) = get_values(this, cx);
+                        this.find_next_cell_with_options(&q, opts, cx);
+                    })))
+                    .child(crate::shell::chrome::action_button("xfind-all").small().label(crate::shell::i18n::text("_xlsx.all")).on_click(cx.listener(move |this, _, _, cx| {
                         let (q, _, opts) = get_values(this, cx);
                         this.find_all_cells(&q, opts, cx);
                     })))
-                    .child(Button::new("xreplace-one").small().label(crate::shell::i18n::text("_shell.replace")).on_click(cx.listener(move |this, _, _, cx| {
+                    .when(replace_mode, |d| d.child(crate::shell::chrome::action_button("xreplace-one").small().label(crate::shell::i18n::text("_shell.replace")).on_click(cx.listener(move |this, _, _, cx| {
                         let (q, r, opts) = get_values(this, cx);
                         this.replace_one_with_options(&q, &r, opts, cx);
                     })))
-                    .child(Button::new("xreplace-all").small().label(crate::shell::i18n::text("_shell.replace-all")).on_click(cx.listener(move |this, _, _, cx| {
+                    .child(crate::shell::chrome::action_button("xreplace-all").small().label(crate::shell::i18n::text("_shell.replace-all")).on_click(cx.listener(move |this, _, _, cx| {
                         let (q, r, opts) = get_values(this, cx);
                         this.replace_all_cells_with_options(&q, &r, opts, cx);
-                    }))),
+                    })))),
             );
 
         if !results.is_empty() {
@@ -657,13 +646,13 @@ impl SlideEditor {
                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
                             this.jump_to_sheet_cell(slide, r, c, cx);
                         }))
-                        .child(div().min_w(px(36.)).text_size(px(11.)).font_weight(FontWeight::BOLD).text_color(rgb(0x107C41)).child(m.reference.clone()))
-                        .child(div().flex_1().text_size(px(11.)).text_ellipsis().child(display_text)),
+                        .child(div().min_w(px(36.)).text_sm().font_weight(FontWeight::BOLD).text_color(rgb(0x107C41)).child(m.reference.clone()))
+                        .child(div().flex_1().text_sm().text_ellipsis().child(display_text)),
                 );
             }
             body = body
                 .child(div().h(px(1.)).bg(rgb(0xE0E0E0)).my(px(4.)))
-                .child(h_flex().justify_between().child(div().text_size(px(11.)).font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("xlsx.find-results"))).child(div().text_size(px(11.)).text_color(rgb(0x666666)).child(format!("{} hits", results.len()))))
+                .child(h_flex().justify_between().child(div().text_sm().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("xlsx.find-results"))).child(div().text_sm().text_color(rgb(0x666666)).child(format!("{} hits", results.len()))))
                 .child(list);
         }
 

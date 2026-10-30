@@ -11,9 +11,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::sheet_calc::sheet_of_slide;
@@ -93,7 +93,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.custom_views = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -291,6 +291,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn custom_views_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        let mut panel_fixed_actions = crate::shell::chrome::action_bar();
         let p = self.wb().panels.custom_views.as_ref()?;
         let has_tables = self.presentation().has_tables();
 
@@ -312,8 +313,15 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let id = id.to_string();
+            let ui = p.ui.clone();
+            action.on_bounds(move |bounds, _, _| {
+                        ui.borrow_mut().insert(id.clone(), bounds);
+                    })
+        };
 
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
 
         if has_tables {
             body = body.child(
@@ -323,7 +331,7 @@ impl SlideEditor {
                     .bg(cx.theme().danger.opacity(0.1))
                     .border_1()
                     .border_color(cx.theme().danger)
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(cx.theme().danger)
                     .child(text("_xlsx.custom-views-can-t-be-used-because-the-workbook")),
             );
@@ -334,11 +342,11 @@ impl SlideEditor {
                 let views = self.presentation().workbook.as_ref().map(|wb| wb.custom_views.clone()).unwrap_or_default();
                 let sel_idx = p.selected_index;
 
-                body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.views")));
+                body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.views")));
 
                 let mut list_box = v_flex().gap_1().p(px(4.)).border_1().border_color(cx.theme().border).rounded_md().min_h(px(100.));
                 if views.is_empty() {
-                    list_box = list_box.child(div().text_size(px(12.)).text_color(cx.theme().muted).child(text("_xlsx.no-views-have-been-added")));
+                    list_box = list_box.child(div().text_sm().text_color(cx.theme().muted).child(text("_xlsx.no-views-have-been-added")));
                 } else {
                     for (i, v) in views.iter().enumerate() {
                         let is_selected = Some(i) == sel_idx;
@@ -348,7 +356,7 @@ impl SlideEditor {
                             .px(px(6.))
                             .py(px(4.))
                             .rounded_sm()
-                            .text_size(px(12.))
+                            .text_sm()
                             .cursor_pointer()
                             .bg(if is_selected { cx.theme().accent.opacity(0.2) } else { hsla(0.0, 0.0, 0.0, 0.0) })
                             .hover(|s| s.bg(cx.theme().muted))
@@ -370,60 +378,44 @@ impl SlideEditor {
                 if let Some(v) = sel_idx.and_then(|i| views.get(i)) {
                     let mut details = v_flex().gap_1().p(px(6.)).rounded_sm().bg(cx.theme().muted.opacity(0.1));
                     if v.include_print_settings {
-                        details = details.child(div().text_size(px(11.)).child(text("_xlsx.include-print-settings")));
+                        details = details.child(div().text_sm().child(text("_xlsx.include-print-settings")));
                     }
                     if v.include_hidden {
-                        details = details.child(div().text_size(px(11.)).child(text("_xlsx.include-hidden-rows-columns-and-filter-settings")));
+                        details = details.child(div().text_sm().child(text("_xlsx.include-hidden-rows-columns-and-filter-settings")));
                     }
                     body = body.child(details);
                 }
 
                 if !p.message.is_empty() {
-                    body = body.child(div().text_size(px(12.)).text_color(cx.theme().danger).child(SharedString::from(p.message.clone())));
+                    body = body.child(div().text_sm().text_color(cx.theme().danger).child(SharedString::from(p.message.clone())));
                 }
 
                 let has_selection = sel_idx.is_some() && !views.is_empty() && !has_tables;
-                let mut row1 = h_flex().gap_2();
-                row1 = row1.child(mark(
-                    "custom-view-show",
-                    Button::new("cv-show-btn")
-                        .small()
-                        .primary()
+                let mut row1 = crate::shell::chrome::action_bar();
+                row1 = row1.action(mark_action("custom-view-show", crate::shell::chrome::ActionDefinition::new("cv-show-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                         .disabled(!has_selection)
                         .label(text("_shell.view"))
-                        .on_click(cx.listener(|this, _, window, cx| this.show_selected_custom_view(window, cx)))
-                        .into_any_element(),
-                ));
-                row1 = row1.child(mark(
-                    "custom-view-add",
-                    Button::new("cv-add-btn")
-                        .small()
+                        .on_click(cx.listener(|this, _, window, cx| this.show_selected_custom_view(window, cx)))));
+                row1 = row1.action(mark_action("custom-view-add", crate::shell::chrome::ActionDefinition::new("cv-add-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .disabled(has_tables)
                         .label(text("xlsx.solver.add"))
-                        .on_click(cx.listener(|this, _, window, cx| this.open_add_custom_view(window, cx)))
-                        .into_any_element(),
-                ));
-                row1 = row1.child(mark(
-                    "custom-view-del",
-                    Button::new("cv-del-btn")
-                        .small()
+                        .on_click(cx.listener(|this, _, window, cx| this.open_add_custom_view(window, cx)))));
+                row1 = row1.action(mark_action("custom-view-del", crate::shell::chrome::ActionDefinition::new("cv-del-btn", "", crate::shell::chrome::ActionButtonKind::Destructive)
                         .disabled(!has_selection)
                         .label(text("_shell.delete"))
-                        .on_click(cx.listener(|this, _, _, cx| this.delete_selected_custom_view(cx)))
-                        .into_any_element(),
-                ));
-                body = body.child(row1);
+                        .on_click(cx.listener(|this, _, _, cx| this.delete_selected_custom_view(cx)))));
+                panel_fixed_actions = panel_fixed_actions.actions((row1).into_definitions());
             }
             CustomViewDialogMode::Add => {
-                body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.add-view")));
+                body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.add-view")));
 
-                body = body.child(div().text_size(px(12.)).child(text("_xlsx.name")));
-                body = body.child(mark("custom-view-name", Input::new(&p.name_input).small().cleanable(true).into_any_element()));
+                body = body.child(div().text_sm().child(text("_xlsx.name")));
+                body = body.child(mark("custom-view-name", crate::shell::chrome::text_field(&p.name_input).full_width().into_any_element()));
 
                 let inc_print = p.include_print_settings;
                 let inc_hidden = p.include_hidden;
 
-                body = body.child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).pt(px(4.)).child(text("_xlsx.settings-to-include-in-view")));
+                body = body.child(div().text_sm().font_weight(FontWeight::BOLD).pt(px(4.)).child(text("_xlsx.settings-to-include-in-view")));
 
                 body = body.child(mark(
                     "custom-view-opt-print",
@@ -454,23 +446,14 @@ impl SlideEditor {
                 ));
 
                 if !p.message.is_empty() {
-                    body = body.child(div().text_size(px(12.)).text_color(cx.theme().danger).child(SharedString::from(p.message.clone())));
+                    body = body.child(div().text_sm().text_color(cx.theme().danger).child(SharedString::from(p.message.clone())));
                 }
 
-                let mut actions = h_flex().gap_2().pt(px(4.));
-                actions = actions.child(mark(
-                    "custom-view-ok",
-                    Button::new("cv-ok-btn")
-                        .small()
-                        .primary()
+                let mut actions = crate::shell::chrome::action_bar();
+                actions = actions.action(mark_action("custom-view-ok", crate::shell::chrome::ActionDefinition::new("cv-ok-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                         .label(text("OK"))
-                        .on_click(cx.listener(|this, _, window, cx| this.apply_add_custom_view_ui(window, cx)))
-                        .into_any_element(),
-                ));
-                actions = actions.child(mark(
-                    "custom-view-cancel",
-                    Button::new("cv-cancel-btn")
-                        .small()
+                        .on_click(cx.listener(|this, _, window, cx| this.apply_add_custom_view_ui(window, cx)))));
+                actions = actions.action(mark_action("custom-view-cancel", crate::shell::chrome::ActionDefinition::new("cv-cancel-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .label(text("_shell.cancel"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(p) = this.wb_mut().panels.custom_views.as_mut() {
@@ -478,16 +461,11 @@ impl SlideEditor {
                                 p.message.clear();
                             }
                             cx.notify();
-                        }))
-                        .into_any_element(),
-                ));
-                body = body.child(actions);
+                        }))));
+                panel_fixed_actions = panel_fixed_actions.actions((actions).into_definitions());
             }
         }
 
-        Some(SidebarPanel {
-            title: text("_xlsx.custom-views").into(),
-            body: body.into_any_element(),
-        })
+        Some(SidebarPanel::with_footer(text("_xlsx.custom-views"), body.into_any_element(), panel_fixed_actions))
     }
 }

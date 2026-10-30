@@ -778,12 +778,44 @@ impl PartialEq for SheetBookContext {
 
 impl Eq for SheetBookContext {}
 
+/// A value the app works out when it opens a file and that is not part of the file: two sheets are equal whatever it holds
+/// (reading a file again gives the sheet without it), and it is not saved. Compare its contents through `.0`.
+#[derive(Clone, Debug, Default)]
+pub struct Unsaved<T>(pub T);
+
+impl<T> PartialEq for Unsaved<T> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl<T> Eq for Unsaved<T> {}
+
+impl<T> std::ops::Deref for Unsaved<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for Unsaved<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sheet {
     /// Column widths, in EMU (0 for a hidden column).
     pub columns: Vec<Emu>,
     /// Row heights, in EMU (0 for a hidden row).
     pub rows: Vec<Emu>,
+    /// Rows whose height the file fixes (`customHeight`). `rows` keeps the stored height; printing lays
+    /// these rows out on whole points (Excel truncates a fractional stored height there).
+    pub custom_rows: std::collections::BTreeSet<u32>,
+    /// Columns whose width the user (or the file: `customWidth="1"`) fixed. A column outside this set
+    /// widens by itself when a number wider than it is entered, and its width is not saved (as in Excel).
+    pub custom_columns: std::collections::BTreeSet<u32>,
     /// Cells with a value or a visible format, in row-major order.
     pub cells: Cells,
     pub styles: Vec<CellStyle>,
@@ -824,6 +856,26 @@ pub struct Sheet {
     /// their own (for rows and columns inserted).
     pub default_row: Emu,
     pub default_column: Emu,
+    /// The rows (0-based) that have no height of their own (`customHeight`) and no wrapping text: Excel measures them by the
+    /// fonts in them, whatever height the file stored (`ibis-office-app`'s `xlsx::row_fit` does, where the fonts can be read).
+    /// Not saved; empty for a sheet made here.
+    pub measured_rows: Unsaved<Vec<u32>>,
+    /// The height each of the `measured_rows` was given when the sheet was opened (what the fonts in it measure, which is not
+    /// what the file stored). A row still at that height is not a height the person chose: saving does not write it.
+    pub fitted_rows: Unsaved<std::collections::BTreeMap<u32, Emu>>,
+    /// How many rows the file prints (0: all of `rows`). Rows past it hold only a height (`<row ht customHeight/>` with no cell):
+    /// Excel keeps them but prints no page for them, so printing lays the sheet out without them. Not saved.
+    pub printed_rows: Unsaved<u32>,
+    /// The font of each `<col>` of the file (first column, last column, typeface, size in hundredths of a point; `None` and 0 when
+    /// the column has no style of its own, so it is the Normal font): a cell no one wrote takes its column's style, and Excel
+    /// measures a row by all the cells of it, the unwritten ones too. Not saved.
+    pub column_fonts: Unsaved<Vec<(u32, u32, Option<String>, u32)>>,
+    /// The font of the style of each row that has one of its own (`<row s customFormat="1">`; `None` and 0 for the Normal style):
+    /// the cells of the row no one wrote take it, not their column's. Not saved.
+    pub row_fonts: Unsaved<std::collections::BTreeMap<u32, (Option<String>, u32)>>,
+    /// The fonts (typeface, size in hundredths of a point) of the cells written in each row of the file, empty ones too, but not the
+    /// ones in merged ranges. Excel measures a row by them and by the cells no one wrote. Not saved.
+    pub written_fonts: Unsaved<std::collections::BTreeMap<u32, Vec<(Option<String>, u32)>>>,
     /// The height of each hidden row and the width of each hidden column
     /// (their size in `rows` and `columns` is 0), to show them at again.
     pub hidden_rows: std::collections::BTreeMap<u32, Emu>,
@@ -917,7 +969,15 @@ impl Default for Sheet {
             print: SheetPrint::default(),
             default_row: 0,
             default_column: 0,
+            measured_rows: Unsaved::default(),
+            fitted_rows: Unsaved::default(),
+            printed_rows: Unsaved::default(),
+            column_fonts: Unsaved::default(),
+            row_fonts: Unsaved::default(),
+            written_fonts: Unsaved::default(),
             hidden_rows: std::collections::BTreeMap::new(),
+            custom_rows: std::collections::BTreeSet::new(),
+            custom_columns: std::collections::BTreeSet::new(),
             hidden_columns: std::collections::BTreeMap::new(),
             spills: std::collections::BTreeMap::new(),
             conditional: Vec::new(),
@@ -1819,6 +1879,10 @@ pub struct SheetPrint {
     /// The rows and columns manual page breaks come before (0-based).
     pub row_breaks: Vec<u32>,
     pub column_breaks: Vec<u32>,
+    /// The file names Letter (or no paper), is not fitted to pages, and the printer is set for A4: Excel for Windows breaks
+    /// the pages where Letter's would and draws them on the A4 paper at 0.95 of the scale (rounded down to a whole percent), in
+    /// the middle of the printable height, from the left margin. Read from the file; not saved.
+    pub letter_on_a4: bool,
 }
 
 impl SheetPrint {
@@ -1860,6 +1924,7 @@ impl Default for SheetPrint {
             header_footer: SheetHeaderFooter::default(),
             row_breaks: Vec::new(),
             column_breaks: Vec::new(),
+            letter_on_a4: false,
         }
     }
 }

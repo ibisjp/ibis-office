@@ -102,17 +102,7 @@ pub(crate) fn read(slide: Node, shapes: &HashMap<String, ShapeId>, groups: &Hash
 
     // 1. Main sequence effects (mainSeq)
     if let Some(main) = timing.descendants().find(|n| n.is_element() && n.tag_name().name() == "cTn" && n.attribute("nodeType") == Some("mainSeq")) {
-        for click in child(main, "childTnLst").into_iter().flat_map(elements) {
-            let Some(click_ctn) = ctn(click) else { continue };
-            for timed in child(click_ctn, "childTnLst").into_iter().flat_map(elements) {
-                let Some(timed_ctn) = ctn(timed) else { continue };
-                let group_delay = delay(timed_ctn);
-                for effect in child(timed_ctn, "childTnLst").into_iter().flat_map(elements) {
-                    let Some(e) = ctn(effect) else { continue };
-                    read_effects(e, group_delay, &targets, &AnimationTrigger::None, &mut out);
-                }
-            }
-        }
+        read_time_node(main,0,&targets,&AnimationTrigger::None,&mut out);
     }
 
     // 2. Interactive sequence effects (interactiveSeq, triggers)
@@ -121,21 +111,20 @@ pub(crate) fn read(slide: Node, shapes: &HashMap<String, ShapeId>, groups: &Hash
         if trigger.is_none() {
             continue;
         }
-        for node in child(interactive, "childTnLst").into_iter().flat_map(elements) {
-            let Some(node_ctn) = ctn(node) else { continue };
-            if node_ctn.attribute("presetClass").is_some() {
-                read_effects(node_ctn, 0, &targets, &trigger, &mut out);
-            } else {
-                let group_delay = delay(node_ctn);
-                for effect in child(node_ctn, "childTnLst").into_iter().flat_map(elements) {
-                    let Some(e) = ctn(effect) else { continue };
-                    read_effects(e, group_delay, &targets, &trigger, &mut out);
-                }
-            }
-        }
+        read_time_node(interactive,0,&targets,&trigger,&mut out);
     }
 
     out
+}
+
+/// CT_TimeNodeList permits nested parallel and sequential containers. Office
+/// versions need not insert exactly the same number of wrapper nodes.
+fn read_time_node(node:Node,parent_delay:u32,targets:&Targets<'_>,trigger:&AnimationTrigger,out:&mut Vec<Animation>){
+    if node.attribute("presetClass").is_some(){read_effects(node,parent_delay,targets,trigger,out);return;}
+    let nested_delay=parent_delay.saturating_add(delay(node));
+    for timed in child(node,"childTnLst").into_iter().flat_map(elements){
+        if let Some(next)=ctn(timed){read_time_node(next,nested_delay,targets,trigger,out);}
+    }
 }
 
 /// The effects of time node `e`: one for its shape, or (a group, 19.5: the
@@ -259,8 +248,10 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
             2 => side(preset.1).map_or(AnimationLook::Fade, AnimationLook::Fly),
             10 => AnimationLook::Fade,
             22 => side(preset.1).map_or(AnimationLook::Wipe(AnimationSide::Bottom), AnimationLook::Wipe),
-            24 => AnimationLook::Zoom,
-            25 => AnimationLook::Float(if preset.1 == 2 { AnimationSide::Bottom } else { AnimationSide::Top }),
+            // PowerPoint MsoAnimEffectZoom=23 and Float=30 (Microsoft's enum). PowerPoint's own ズーム entry
+            // is 53 (subtype 16 from the object's centre, 528 from the slide's centre; issue #62).
+            23 | 53 => AnimationLook::Zoom,
+            30 => AnimationLook::Float(if preset.1 == 2 { AnimationSide::Bottom } else { AnimationSide::Top }),
             28 => AnimationLook::Replay,
             _ if has("animEffect") || has("anim") || has("animScale") => AnimationLook::Fade,
             _ => AnimationLook::Appear,

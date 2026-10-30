@@ -6,10 +6,10 @@
 //! presentation (or the next, previous, first or last), or the link taken
 //! away. A link of text takes the look the file gives it (underlined, in
 //! the theme's link colour: read back through the file). In the slide show
-//! a click on a link follows it; in the editor ⌘ and a click.
+//! and editor a normal click follows it.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -95,7 +95,6 @@ pub(crate) fn link_tooltip_of_cell(slide: &ibis_doc_model::Slide, shape: ShapeId
 impl SlideEditor {
     /// ⌘K: the panel for the text selected (while editing) or the shape selected.
     pub(crate) fn slide_open_link_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let slide = self.current_slide;
         let target = match self.text_editing() {
             Some(e) => match e.cell {
                 None if !e.range().is_empty() => LinkTarget::Text { shape: e.shape, start: e.range().start, end: e.range().end },
@@ -104,7 +103,7 @@ impl SlideEditor {
                     LinkTarget::CellText { shape: e.shape, row, col, start: e.range().start, end: e.range().end }
                 }
                 Some((row, col)) => {
-                    let len = self.edited_body().map(|b| b.text().len()).unwrap_or(0);
+                    let len = self.edited_body().map(|b| b.text().chars().count()).unwrap_or(0);
                     LinkTarget::CellText { shape: e.shape, row, col, start: 0, end: len }
                 }
             },
@@ -113,10 +112,25 @@ impl SlideEditor {
                 _ => return,
             },
         };
+        let target=match target{
+            LinkTarget::Shape(shape) if !self.slide().shape_links.contains_key(&shape)=>{
+                self.slide().shape(shape).and_then(|s|s.text_body()).and_then(|b|{
+                    let mut offset=0;
+                    for p in &b.paragraphs{for r in &p.runs{
+                        if r.style.link.is_some(){return text_link_span(b,offset).map(|(start,end,_)|LinkTarget::Text{shape,start,end});}
+                        offset+=r.text.chars().count();
+                    }offset+=1;}None
+                }).unwrap_or(LinkTarget::Shape(shape))
+            },other=>other,
+        };
+        self.slide_open_link_target(target,window,cx);
+    }
+    pub(crate) fn slide_open_link_target(&mut self,target:LinkTarget,window:&mut Window,cx:&mut Context<Self>){
+        let slide=self.current_slide;
         let (existing, existing_tooltip) = match &target {
             LinkTarget::Shape(shape) => (link_of_shape(self.slide(), *shape), link_tooltip_of_shape(self.slide(), *shape)),
-            LinkTarget::Text { shape, .. } => (link_of_shape(self.slide(), *shape), link_tooltip_of_shape(self.slide(), *shape)),
-            LinkTarget::CellText { shape, row, col, .. } => (link_of_cell(self.slide(), *shape, *row, *col), link_tooltip_of_cell(self.slide(), *shape, *row, *col)),
+            LinkTarget::Text { shape,start,.. } => (self.slide().shape(*shape).and_then(|s|s.text_body()).and_then(|b|text_link_span(b,*start)).map(|(_,_,l)|l), link_tooltip_of_shape(self.slide(), *shape)),
+            LinkTarget::CellText { shape, row, col,start,.. } => (self.slide().shape(*shape).and_then(|s|if let ShapeKind::Table(t)=&s.kind{t.rows.get(*row)?.cells.get(*col).and_then(|c|text_link_span(&c.text,*start)).map(|(_,_,l)|l)}else{None}), link_tooltip_of_cell(self.slide(), *shape, *row, *col)),
         };
         if self.text_editing().is_some() {
             self.end_text_edit(window, cx);
@@ -270,7 +284,7 @@ impl SlideEditor {
         let index = self.presentation().slide_index(self.current_slide).unwrap_or(0);
         let to = match link {
             SlideLink::Url(url) => {
-                cx.open_url(url);
+                crate::shell::links::open_external_url(url,cx);
                 return;
             }
             SlideLink::Slide(id) => slides.iter().position(|s| s.id == *id),
@@ -293,22 +307,38 @@ impl SlideEditor {
 
     /// The shape and its link under `p` (slide coordinates) of the slide shown, if any.
     pub(crate) fn slide_shape_and_link_at(&self, p: EmuPoint) -> Option<(ibis_doc_model::ShapeId, SlideLink)> {
-        let slide = self.slide();
-        let shape = slide.hit_test(p)?;
-        if let Some(target_shape) = slide.shape(shape) {
-            if let ShapeKind::Table(t) = &target_shape.kind {
-                if let Some((r, c)) = interaction::table_cell_at(target_shape, interaction::P::of(p)) {
-                    if let Some(cell) = t.rows.get(r).and_then(|row| row.cells.get(c)) {
-                        let mut links = cell.text.paragraphs.iter().flat_map(|para| para.runs.iter()).filter_map(|run| run.style.link.clone());
-                        if let Some(first) = links.next() {
-                            return Some((shape, first));
+        self.slide_link_target_at(p).map(|(target,link)|{
+            let shape=match target{LinkTarget::Shape(id)|LinkTarget::Text{shape:id,..}|LinkTarget::CellText{shape:id,..}=>id};(shape,link)
+        })
+    }
+    /// Use the same character positions that painted the text, including rotation.
+    pub(crate) fn slide_link_target_at(&self,p:EmuPoint)->Option<(LinkTarget,SlideLink)>{
+        let slide=self.slide();let hit=slide.hit_test(p);let layout=self.slide_layout()?;
+        let x=f32::from(layout.origin.x)+p.x as f32*layout.scale;let y=f32::from(layout.origin.y)+p.y as f32*layout.scale;
+        let cache=self.link_text_positions.borrow();
+        // Text may extend past the authored shape/row frame. Its painted
+        // characters remain clickable, while a shape painted above blocks it.
+        for sh in slide.shown_shapes().collect::<Vec<_>>().into_iter().rev(){
+            let shape=sh.id;
+            if hit==Some(shape){if let Some(link)=slide.shape_links.get(&shape){return Some((LinkTarget::Shape(shape),link.clone()));}}
+            let mut slots=cache.iter().filter(|((id,_),_)|*id==shape).collect::<Vec<_>>();
+            slots.sort_by_key(|((_,cell),_)|std::cmp::Reverse(*cell));
+            for ((_,cell),positions)in slots{
+                let body=match (&sh.kind,cell){(ShapeKind::Table(t),Some((row,col)))=>&t.rows.get(*row)?.cells.get(*col)?.text,_=>sh.text_body()?};
+                let mut offset=0;
+                for(paragraph,slot)in body.paragraphs.iter().zip(positions.paragraphs.borrow().iter()){
+                    let q=slot.borrow();let(tx,ty)=q.text_point(x,y);
+                    for(i,c)in q.chars.iter().enumerate(){let line=q.lines.get(c.line)?;
+                        if tx>=c.x.min(c.x+c.advance)&&tx<c.x.max(c.x+c.advance)&&ty>=line.top&&ty<line.top+line.height{
+                            let(start,end,link)=text_link_span(body,offset+i)?;
+                            let target=match cell{Some((row,col))=>LinkTarget::CellText{shape,row:*row,col:*col,start,end},None=>LinkTarget::Text{shape,start,end}};return Some((target,link));
                         }
                     }
+                    offset+=paragraph.runs.iter().map(|r|r.text.chars().count()).sum::<usize>()+1;
                 }
             }
-        }
-        let link = link_of_shape(slide, shape)?;
-        Some((shape, link))
+            if hit==Some(shape){return None;}
+        }None
     }
 
     pub(crate) fn link_panel_set_mode(&mut self, web: bool, cx: &mut Context<Self>) {
@@ -499,7 +529,7 @@ impl SlideEditor {
         let web = p.web;
         let place = p.place.clone();
         let tab = |id: &'static str, label: &'static str, on: bool, web: bool| {
-            Button::new(id).small().label(t(label)).when(!on, |b| b.ghost()).on_click(cx.listener(move |e, _, _, cx| {
+            crate::shell::chrome::segment_control::SegmentItem::label(id, t(label), on).on_click(cx.listener(move |e, _, _, cx| {
                 e.link_panel_set_mode(web, cx);
             }))
         };
@@ -512,9 +542,9 @@ impl SlideEditor {
                 cx.stop_propagation();
                 this.open_link_panel_context_menu(event.position, window, cx);
             }))
-            .child(h_flex().gap_1().child(tab("link-web", "pptx.links.web-page-file", web, true)).child(tab("link-place", "pptx.links.place-document", !web, false)));
+            .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).child(tab("link-web", "pptx.links.web-page-file", web, true)).child(tab("link-place", "pptx.links.place-document", !web, false)));
         if web {
-            body = body.child(div().text_sm().child(t("pptx.links.address"))).child(Input::new(&p.url).small().cleanable(true));
+            body = body.child(div().text_sm().child(t("pptx.links.address"))).child(crate::shell::chrome::text_field(&p.url).full_width());
         } else {
             let mut places: Vec<(SlideLink, String)> = vec![
                 (SlideLink::FirstSlide, t("pptx.links.first-slide").to_string()),
@@ -553,19 +583,44 @@ impl SlideEditor {
             }));
             body = body.child(list);
         }
-        body = body.child(div().text_sm().child(t("pptx.links.screentip"))).child(Input::new(&p.tooltip).small().cleanable(true));
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("link-apply").primary().small().label(t("_shell.apply")).on_click(cx.listener(|e, _, w, cx| {
+        body = body.child(div().text_sm().child(t("pptx.links.screentip"))).child(crate::shell::chrome::text_field(&p.tooltip).full_width());
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(crate::shell::chrome::ActionDefinition::new("link-apply", t("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| {
                     if let Some(link) = e.slide_chosen_link(cx) {
                         e.slide_apply_link(Some(link), w, cx);
                     }
                 })))
-                .child(Button::new("link-remove").small().label(t("pptx.links.remove-link")).on_click(cx.listener(|e, _, w, cx| e.slide_apply_link(None, w, cx))))
-                .child(Button::new("link-cancel").small().ghost().label(t("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.slide_close_link_panel(w, cx)))),
-        );
-        Some(SidebarPanel { title: t("pptx.links.hyperlink"), body: body.into_any_element() })
+                .action(crate::shell::chrome::ActionDefinition::new("link-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.slide_close_link_panel(w, cx))))
+                .when(match &p.target {LinkTarget::Shape(id)=>link_of_shape(self.slide(),*id).is_some(),LinkTarget::Text{shape,start,..}=>self.slide().shape(*shape).and_then(|s|s.text_body()).and_then(|b|text_link_span(b,*start)).is_some(),LinkTarget::CellText{shape,row,col,start,..}=>self.slide().shape(*shape).and_then(|s|if let ShapeKind::Table(t)=&s.kind{t.rows.get(*row)?.cells.get(*col).and_then(|c|text_link_span(&c.text,*start))}else{None}).is_some()},|bar|bar.action(crate::shell::chrome::ActionDefinition::new("link-remove", t("pptx.links.remove-link"), crate::shell::chrome::ActionButtonKind::Destructive).on_click(cx.listener(|e, _, w, cx| e.slide_apply_link(None, w, cx)))));
+        Some(SidebarPanel::with_footer(t("pptx.links.hyperlink"), body.into_any_element(), panel_actions))
     }
 }
 
+
+impl SlideEditor {
+    pub(crate) fn slide_hyperlink_context_entry(&self)->crate::shell::chrome::MenuEntry{
+        use crate::shell::chrome::MenuItem;
+        let link=self.selected_ids().first().and_then(|id|link_of_shape(self.slide(),*id));
+        let Some(link)=link else{return MenuItem::tr("pptx.link").icon("link").shortcut("⌘K").on(|e,w,cx|e.slide_open_link_panel(w,cx)).into();};
+        self.slide_hyperlink_menu_for(LinkTarget::Shape(self.selected_ids()[0]),link)
+    }
+    pub(crate) fn slide_hyperlink_menu_for(&self,target:LinkTarget,link:SlideLink)->crate::shell::chrome::MenuEntry{
+        use crate::shell::chrome::{MenuItem,Submenu};
+        let edit=target.clone();
+        Submenu::tr("hyperlink.menu","link",vec![
+            MenuItem::tr("hyperlink.open").on(move|e,w,cx|e.slide_follow_link(&link,w,cx)).into(),
+            MenuItem::tr("hyperlink.edit").on(move|e,w,cx|e.slide_open_link_target(edit.clone(),w,cx)).into(),
+            MenuItem::tr("hyperlink.remove").on(move|e,w,cx|{e.slide_open_link_target(target.clone(),w,cx);e.slide_apply_link(None,w,cx);}).into(),
+        ]).into()
+    }
+}
+
+/// Character span of the link at a text position; adjacent styled runs retain one target.
+fn text_link_span(body:&ibis_doc_model::TextBody,at:usize)->Option<(usize,usize,SlideLink)>{
+    let mut offset=0;let mut spans=Vec::new();
+    for p in &body.paragraphs{for r in &p.runs{let end=offset+r.text.chars().count();spans.push((offset,end,r.style.link.clone()));offset=end;}offset+=1;}
+    let i=spans.iter().position(|(a,b,_)|*a<=at&&at<*b)?;let link=spans[i].2.clone()?;let(mut a,mut b)=(i,i);
+    while a>0&&spans[a-1].1==spans[a].0&&spans[a-1].2.as_ref()==Some(&link){a-=1;}
+    while b+1<spans.len()&&spans[b].1==spans[b+1].0&&spans[b+1].2.as_ref()==Some(&link){b+=1;}
+    Some((spans[a].0,spans[b].1,link))
+}

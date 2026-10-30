@@ -60,6 +60,8 @@ impl Clip {
 
 impl SlideEditor {
     pub(crate) fn copy_cells(&mut self, cut: bool, cx: &mut Context<Self>) {
+        let shapes:Vec<_>=self.selected_shapes().into_iter().cloned().collect();
+        if !shapes.is_empty() && self.copy_office_shapes(&shapes,cx){if cut{self.delete_selected(cx);}return;}
         self.commit_cell_edit(cx);
         let Some((_, sheet)) = self.current_sheet() else { return };
         let ranges = self.selected_ranges();
@@ -346,6 +348,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         if let Some(state) = self.sheet_state_mut() {
             state.clip = Some(Clip { slide, range: clip_range, cells, cut, text, validations, cell_images, col_widths, comments });
+            cx.notify();
         }
     }
 
@@ -355,7 +358,7 @@ impl SlideEditor {
             return;
         }
         self.commit_cell_edit(cx);
-        let Some((column, row)) = self.current_cell() else { return };
+        if !plain && self.paste_office_shapes(cx) { return; }
         let slide = self.current_slide;
         let item = cx.read_from_clipboard();
         let text = item.as_ref().and_then(|c| c.text()).unwrap_or_default();
@@ -363,7 +366,7 @@ impl SlideEditor {
         if clip.is_none() && text.is_empty() {
             if let Some(item) = &item {
                 if let Some(ClipboardEntry::Image(image)) = item.entries().iter().find(|e| matches!(e, ClipboardEntry::Image(_))) {
-                    if self.insert_sheet_picture("clipboard.png", image.bytes.clone(), cx).is_some() {
+                    if self.paste_sheet_picture("clipboard.png", image.bytes.clone(), cx).is_some() {
                         self.status = Some(crate::shell::i18n::text("_xlsx.pasted-the-image").into());
                         return cx.notify();
                     }
@@ -371,6 +374,7 @@ impl SlideEditor {
             }
         }
 
+        let Some((column,row))=self.current_cell() else{return};
         let selected_ranges = self.selected_ranges();
         let dest_ranges = if selected_ranges.is_empty() {
             vec![CellRange { first_row: row, last_row: row, first_column: column, last_column: column }]

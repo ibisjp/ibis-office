@@ -418,3 +418,27 @@ fn check_cell_range_text(file: &str) {
     assert!(texts.iter().all(|t| !t.contains("[CELLRANGE]")), "no label's text is the placeholder \"[CELLRANGE]\": {texts:?}");
     assert!(texts.iter().any(|t| t.contains("12,300 (4%)")), "the text \"12,300 (4%)\" is a label's text: {texts:?}");
 }
+
+/// The text of a shape that is not a placeholder takes its size from the presentation's `defaultTextStyle` only (no `sz`: 18 pt),
+/// not the master's `otherStyle` (12 pt in `shape-text-default-size.pptx`), which a table cell's text follows (PowerPoint's PDF of a
+/// slide of the corpus: a run with no `sz` in the title bar is 18 pt where the master's otherStyle says 12 pt).
+#[test]
+fn a_shape_text_without_size_is_18_and_a_table_cell_text_follows_the_other_style() {
+    let p = read("shape-text-default-size.pptx");
+    let slide = &p.slides[0];
+    let shape_size = named(slide, "Box").text_body().expect("a text").paragraphs[0].runs[0].style.font_size;
+    let cell_size = table_of(slide).rows[0].cells[0].text.paragraphs[0].runs[0].style.font_size;
+    assert_eq!((shape_size, cell_size), (Some(1800), Some(1200)), "the shape's run, then the table cell's run");
+}
+
+/// A bullet of a symbol typeface keeps what the file says (`buFont` and `buChar`), beside the Unicode character that stands in for
+/// its glyph: where Wingdings is installed it is drawn with the typeface (PowerPoint's PDF: Wingdings' own check mark, 1.0 of the
+/// bullet's size), the stand-in is drawn at 0.75 of it.
+#[test]
+fn a_symbol_typeface_bullet_keeps_the_typeface_and_its_code() {
+    let p = read("wingdings-p-bullet-glyph.pptx");
+    let symbols: Vec<ibis_doc_model::SymbolBullet> = p.slides[0].shapes.iter().filter_map(|s| s.text_body()).flat_map(|b| b.paragraphs.iter()).filter_map(|para| para.bullet.as_ref()?.symbol.clone()).collect();
+    assert_eq!(symbols.len(), 3, "the three items carry a symbol bullet: {symbols:?}");
+    assert!(symbols.iter().all(|s| s.font.contains("Wingdings") && s.stand_in_percent == 75), "{symbols:?}");
+    assert!(symbols.iter().any(|s| s.code == "p"), "the code the file writes: {symbols:?}");
+}

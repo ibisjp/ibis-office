@@ -135,6 +135,11 @@ fn change_sheet(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
         sizes.drain(at_i..at_i + n);
         sizes.extend(std::iter::repeat_n(default, n));
     }
+    if axis == Axis::Rows {
+        // The rows the app measured follow their rows (the ones deleted are gone).
+        sheet.measured_rows.0 = sheet.measured_rows.iter().filter_map(|&r| move_index(r, at, count)).collect();
+        sheet.fitted_rows.0 = std::mem::take(&mut sheet.fitted_rows.0).into_iter().filter_map(|(r, h)| Some((move_index(r, at, count)?, h))).collect();
+    }
     for cf in sheet.conditional.iter_mut() {
         cf.ranges = cf.ranges.iter().filter_map(|r| move_range(*r, axis, at, count)).collect();
     }
@@ -203,6 +208,9 @@ fn change_sheet(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
         Axis::Columns => &mut sheet.outline_columns,
     };
     *outline = std::mem::take(outline).into_iter().filter_map(|(i, l)| Some((move_index(i, at, count)?, l))).collect();
+    if axis == Axis::Columns {
+        sheet.custom_columns = std::mem::take(&mut sheet.custom_columns).into_iter().filter_map(|i| move_index(i, at, count)).collect();
+    }
     let hidden = match axis {
         Axis::Rows => &mut sheet.hidden_rows,
         Axis::Columns => &mut sheet.hidden_columns,
@@ -646,6 +654,18 @@ pub fn valid_sheet_name(presentation: &Presentation, name: &str, except: Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sheet::Unsaved;
+
+    #[test]
+    fn measured_rows_follow_inserted_and_deleted_rows() {
+        let mut sheet = Sheet { measured_rows: Unsaved(vec![1, 4, 6]), fitted_rows: Unsaved([(1, 10), (4, 40), (6, 60)].into()), rows: vec![5; 10], ..Sheet::default() };
+        change_sheet(&mut sheet, Axis::Rows, 3, 2);
+        assert_eq!(sheet.measured_rows.0, vec![1, 6, 8]);
+        assert_eq!(sheet.fitted_rows.0, [(1, 10), (6, 40), (8, 60)].into());
+        change_sheet(&mut sheet, Axis::Rows, 0, -2);
+        assert_eq!(sheet.measured_rows.0, vec![4, 6]);
+        assert_eq!(sheet.fitted_rows.0, [(4, 40), (6, 60)].into());
+    }
 
     #[test]
     fn moving() {

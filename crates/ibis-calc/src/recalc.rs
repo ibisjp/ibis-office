@@ -845,6 +845,31 @@ mod tests {
     }
 
     #[test]
+    fn github_44_45_46_50_array_limits_and_reference_values() {
+        let mut book=MockBook::new(false);
+        book.dynamic=true;
+        book.values.insert((0,0,0),CellValue::Number(4.));
+        book.values.insert((0,1,0),CellValue::Number(6.));
+        let cases=[
+            ("SEQUENCE(2^20+1)",CellValue::Error(CellError::Num)),
+            ("SEQUENCE(1,2^14+1)",CellValue::Error(CellError::Num)),
+            ("ISREF(TAKE(A1,1))",CellValue::Bool(true)),
+            ("SUM(TAKE(A1:A2,-1))",CellValue::Number(6.)),
+            ("LAMBDA(a,[b],a+b)(10)",CellValue::Number(10.)),
+            ("LAMBDA(a,[b],a+b)(10,20)",CellValue::Number(30.)),
+            ("LAMBDA(a,[b],ISOMITTED(b))(10)",CellValue::Bool(true)),
+            ("ISREF(IF(1,A1,A1))",CellValue::Bool(true)),
+            ("SUM(LET(a,IF(1,A1,A1),a:A2))",CellValue::Number(10.)),
+        ];
+        for (i,(formula,_)) in cases.iter().enumerate() {book.formulas.insert((0,i as u32,3),formula.to_string());}
+        let cells:Vec<_>=(0..cases.len()).map(|i|(0,i as u32,3)).collect();
+        let result=recalculate(&book,&cells,&cells);
+        for (i,(formula,want)) in cases.iter().enumerate() {
+            assert_eq!(&result.iter().find(|r|r.cell==(0,i as u32,3)).unwrap().value,want,"{formula}");
+        }
+    }
+
+    #[test]
     fn a_lookup_table_shared_within_a_recalculation_is_not_stale_after_an_edit() {
         let mut book = MockBook::new(false);
         // A1:A100 keys 1..100, B1:B100 = A * 2 (formulas, so the table is made of results).
@@ -1903,7 +1928,14 @@ mod tests {
         let res = recalculate(&book, &formula_cells, &formula_cells);
         for (cell, formula, expected) in cases {
             let actual = res.iter().find(|r| r.cell == *cell).map(|r| &r.value).expect(formula);
-            assert_eq!(actual, expected, "formula `{formula}` evaluated incorrectly");
+            // A number may differ by what is below Excel's 15 shown digits: exp, ln and pow come from the platform's libm
+            // (CHISQ.DIST.RT(1E-15, 2) is the half-way case between two doubles, which Windows' libm rounds the other way, and
+            // EFFECT(1, 1000) = (1 + 1/1000)^1000 comes out 4e-14 of itself apart (the rounding of 1 + 1/1000 is raised to the 1000th power)).
+            if let (CellValue::Number(a), CellValue::Number(e)) = (actual, expected) {
+                assert!((a - e).abs() <= 1e-13 * e.abs().max(1e-300) || (a - e).abs() <= 4e-16, "formula `{formula}` evaluated incorrectly: {a:?} vs {e:?}");
+            } else {
+                assert_eq!(actual, expected, "formula `{formula}` evaluated incorrectly");
+            }
         }
     }
 

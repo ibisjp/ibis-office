@@ -4,8 +4,8 @@
 //! データ > ピボットテーブル > 集計アイテム… (ピボットテーブルの計算アイテムの追加・変更・削除)
 //! Panel to configure calculated items (計算アイテム) on a pivot table.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -107,7 +107,7 @@ impl SlideEditor {
         s.link = None;
         s.conditional_edit = None;
         s.sort_edit = None;
-        s.panels.close();
+        s.close_settings();
         s.panels.pivot_calc_item = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -274,24 +274,24 @@ impl SlideEditor {
     pub(crate) fn pivot_calc_item_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.wb().panels.pivot_calc_item.as_ref()?;
 
-        let mut body = v_flex().gap_3().p_3();
+        let mut body = v_flex().gap_3().p_3().p_0();
 
         body = body
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.name")))
-                    .child(Input::new(&p.name_input).small().cleanable(true))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.name")))
+                    .child(crate::shell::chrome::text_field(&p.name_input).full_width())
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.formula")))
-                    .child(Input::new(&p.formula_input).small().cleanable(true))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.formula")))
+                    .child(crate::shell::chrome::text_field(&p.formula_input).full_width())
             );
 
         // Fields list (left) and Items list (right)
-        let mut field_list = div().id("calc-item-fields-list").max_h(px(140.)).overflow_y_scroll();
+        let mut field_list = div().id("calc-item-fields-list").h(px(160.)).overflow_y_scroll();
         for (idx, (_, f_name)) in p.fields.iter().enumerate() {
             let is_sel = idx == p.selected_field;
             field_list = field_list.child(
@@ -300,8 +300,8 @@ impl SlideEditor {
                     .px_2()
                     .py_1()
                     .rounded_sm()
-                    .text_size(px(12.))
-                    .when(is_sel, |d| d.bg(crate::shell::palette::rgb(0x3B82F6)).text_color(crate::shell::palette::doc(0xffffff)))
+                    .text_sm()
+                    .when(is_sel, |d| d.bg(crate::shell::palette::rgb(crate::shell::chrome::SELECTED_ROW_BG)))
                     .when(!is_sel, |d| d.hover(|h| h.bg(crate::shell::palette::rgb(0xE5E7EB))))
                     .child(f_name.clone())
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -310,7 +310,7 @@ impl SlideEditor {
             );
         }
 
-        let mut item_list = div().id("calc-items-list").max_h(px(140.)).overflow_y_scroll();
+        let mut item_list = div().id("calc-items-list").h(px(160.)).overflow_y_scroll();
         for (idx, it_name) in p.items.iter().enumerate() {
             let is_sel = idx == p.selected_item;
             item_list = item_list.child(
@@ -319,8 +319,8 @@ impl SlideEditor {
                     .px_2()
                     .py_1()
                     .rounded_sm()
-                    .text_size(px(12.))
-                    .when(is_sel, |d| d.bg(crate::shell::palette::rgb(0x3B82F6)).text_color(crate::shell::palette::doc(0xffffff)))
+                    .text_sm()
+                    .when(is_sel, |d| d.bg(crate::shell::palette::rgb(crate::shell::chrome::SELECTED_ROW_BG)))
                     .when(!is_sel, |d| d.hover(|h| h.bg(crate::shell::palette::rgb(0xE5E7EB))))
                     .child(it_name.clone())
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -339,7 +339,7 @@ impl SlideEditor {
                             v_flex()
                                 .flex_1()
                                 .gap_1()
-                                .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.fields")))
+                                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.fields")))
                                 .child(
                                     div()
                                         .p_1()
@@ -353,7 +353,7 @@ impl SlideEditor {
                             v_flex()
                                 .flex_1()
                                 .gap_1()
-                                .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.items-2")))
+                                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("_xlsx.items-2")))
                                 .child(
                                     div()
                                         .p_1()
@@ -368,7 +368,7 @@ impl SlideEditor {
                     h_flex()
                         .justify_end()
                         .child(
-                            Button::new("insert-item-btn").primary()
+                            crate::shell::chrome::primary_button("insert-item-btn")
                                 .small()
                                 .label(text("_xlsx.insert-item"))
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -382,49 +382,30 @@ impl SlideEditor {
         if !p.message.is_empty() {
             body = body.child(
                 div()
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(crate::shell::palette::rgb(0x2563EB))
                     .child(p.message.clone())
             );
         }
 
         // Action buttons
-        body = body.child(
-            h_flex()
-                .gap_2()
-                .pt_2()
-                .child(
-                    Button::new("calc-item-add")
-                        .small()
-                        .primary()
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(
+                    crate::shell::chrome::ActionDefinition::new("calc-item-add", "", crate::shell::chrome::ActionButtonKind::Primary)
                         .label(text("fix.common.add"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.add_or_modify_calc_item(cx);
                         }))
                 )
-                .child(
-                    Button::new("calc-item-delete")
-                        .small()
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))
+                .action(
+                    crate::shell::chrome::ActionDefinition::new("calc-item-delete", "", crate::shell::chrome::ActionButtonKind::Destructive)
                         .label(text("_shell.delete"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.delete_calc_item(cx);
                         }))
-                )
-                .child(
-                    Button::new("calc-item-close")
-                        .small()
-                        .ghost()
-                        .label(text("_shell.close"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.wb_mut().panels.pivot_calc_item = None;
-                            cx.notify();
-                        }))
-                )
-        );
-
-        Some(SidebarPanel {
-            title: text("_xlsx.insert-calculated-item").to_string().into(),
-            body: body.into_any_element(),
-        })
+                );
+        Some(SidebarPanel::with_footer(text("_xlsx.insert-calculated-item").to_string(), body.into_any_element(), panel_actions))
     }
 }

@@ -7,7 +7,6 @@
 //! When the view is closed the text goes into the notes page of the file; the
 //! file is then read again from what the program holds (what was not saved
 //! is kept), and the history of undoing starts over.
-use gpui_kit::component::button::Button;
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::*;
 
@@ -224,8 +223,9 @@ impl SlideEditor {
                     this.open_notes_format_context_menu(event.position, w, cx);
                 }),
             )
-            .child(div().text_size(px(12.)).child(t(help)))
-            .child(Button::new("pptx-notes-format-close").small().label(t(close)).on_click(cx.listener(|e, _, w, cx| e.close_notes_format(w, cx))));
-        Some(SidebarPanel { title: t(title), body: body.into_any_element() })
+            .child(div().text_sm().child(t(help)))
+            ;
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("pptx-notes-format-close", t(close), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_notes_format(w, cx))));
+        Some(SidebarPanel::with_footer(t(title), body.into_any_element(), panel_terminal_actions))
     }
 }

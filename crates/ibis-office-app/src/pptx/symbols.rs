@@ -53,6 +53,6 @@ impl SlideEditor {
         let pick = Rc::new(|this: &mut SlideEditor, c: char, window: &mut Window, cx: &mut Context<SlideEditor>| {
             this.insert_symbol_text(c, window, cx);
         });
-        Some(SidebarPanel { title: crate::shell::i18n::text("fix.symbols.symbols-special-characters"), body: crate::shell::symbols::picker(group, select, pick, cx) })
+        Some(SidebarPanel { title: crate::shell::i18n::text("fix.symbols.symbols-special-characters"), body: crate::shell::symbols::picker(group, select, pick, self.panel_dialog.bounds.map_or(px(520.), |b| b.size.width), cx) })
     }
 }

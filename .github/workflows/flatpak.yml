@@ -17,6 +17,7 @@ permissions:
   contents: write
 
 jobs:
+  # Each step has a time limit: a step stuck (an apt-get that waited 34 minutes for 0.8.4) fails instead of hanging.
   appimage:
     name: AppImage (x86_64, glibc 2.31)
     runs-on: ubuntu-24.04
@@ -27,6 +28,7 @@ jobs:
 
     steps:
       - name: Install system build dependencies
+        timeout-minutes: 10
         run: |
           apt-get update
           apt-get install -y \
@@ -47,6 +49,7 @@ jobs:
             libxcb-xfixes0-dev
 
       - name: Checkout repository and submodules
+        timeout-minutes: 10
         uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -54,6 +57,7 @@ jobs:
       # Only GitHub's own actions are allowed in this repository: Rust comes from
       # the official rustup installer, and the build is not cached.
       - name: Install Rust toolchain
+        timeout-minutes: 10
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
@@ -71,9 +75,11 @@ jobs:
           cat version.txt
 
       - name: Build AppImage
+        timeout-minutes: 60
         run: scripts/bundle-linux.sh --release
 
       - name: Upload AppImage artifact
+        timeout-minutes: 10
         uses: actions/upload-artifact@v4
         with:
           name: ibisOffice-AppImage-x86_64
@@ -82,6 +88,7 @@ jobs:
             target/dist/ibisOffice-*-Linux.AppImage.sha256
 
       - name: Attach AppImage to GitHub Release
+        timeout-minutes: 10
         if: github.event_name == 'release' || inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -91,7 +98,7 @@ jobs:
           chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
           apt-get update && apt-get install -y gh
-          gh release upload "$TAG" \
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
             target/dist/ibisOffice-*-Linux.AppImage \
             target/dist/ibisOffice-*-Linux.AppImage.sha256 \
             --clobber
@@ -110,11 +117,13 @@ jobs:
 
     steps:
       - name: Checkout repository and submodules
+        timeout-minutes: 10
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - name: Install system build and Flatpak dependencies
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -133,6 +142,7 @@ jobs:
             flatpak-builder
 
       - name: Install Flathub runtime and SDK
+        timeout-minutes: 15
         run: |
           sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install -y --system flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
@@ -140,6 +150,7 @@ jobs:
       # Only GitHub's own actions are allowed in this repository: Rust comes from
       # the official rustup installer, and the build is not cached.
       - name: Install Rust toolchain
+        timeout-minutes: 10
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
@@ -157,9 +168,11 @@ jobs:
           cat version.txt
 
       - name: Build Flatpak bundle
+        timeout-minutes: 60
         run: scripts/bundle-flatpak.sh --release
 
       - name: Upload Flatpak artifact
+        timeout-minutes: 10
         uses: actions/upload-artifact@v4
         with:
           name: ibisOffice-Flatpak-${{ matrix.arch }}
@@ -168,12 +181,13 @@ jobs:
             target/dist/ibisOffice-*-Linux-${{ matrix.arch }}.flatpak.sha256
 
       - name: Attach Flatpak to GitHub Release
+        timeout-minutes: 10
         if: github.event_name == 'release' || inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
-          gh release upload "$TAG" \
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
             target/dist/ibisOffice-*-Linux-${{ matrix.arch }}.flatpak \
             target/dist/ibisOffice-*-Linux-${{ matrix.arch }}.flatpak.sha256 \
             --clobber

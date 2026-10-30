@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -94,6 +94,7 @@ impl RepairDocumentPanel {
 impl SlideEditor {
     /// ファイル/ツール > 破損文書の修復…: the panel for the document that could not be opened.
     pub(crate) fn open_docx_repair_damaged(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         match damaged_document() {
             Some(path) => self.open_docx_repair_file(path, window, cx),
             None => self.open_docx_repair_panel(window, cx),
@@ -101,6 +102,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn open_docx_repair_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if self.doc_state().is_none() {
             return;
         }
@@ -134,6 +136,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn open_docx_repair_file(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if self.doc_state().is_none() {
             return;
         }
@@ -300,16 +303,15 @@ impl SlideEditor {
                     .items_center()
                     .gap_1()
                     .child(
-                        Button::new("docx-repair-banner-details")
+                        crate::shell::chrome::action_button("docx-repair-banner-details")
                             .small()
                             .ghost()
                             .label(text("docx.repair.show-report-btn"))
                             .on_click(_cx.listener(|this, _, window, cx| this.open_docx_repair_panel(window, cx))),
                     )
                     .child(
-                        Button::new("docx-repair-banner-close")
+                        crate::shell::chrome::action_button("docx-repair-banner-close")
                             .small()
-                            .ghost()
                             .label(text("docx.repair.banner-close"))
                             .on_click(_cx.listener(|this, _, _, cx| this.dismiss_docx_repair_banner(cx))),
                     ),
@@ -342,10 +344,10 @@ impl SlideEditor {
                                 .rounded_xs()
                                 .bg(badge_bg)
                                 .text_color(badge_fg)
-                                .text_xs()
+                                .text_sm()
                                 .child(log.level.as_str()),
                         )
-                        .child(div().text_xs().text_color(theme.foreground).child(log.message.clone())),
+                        .child(div().text_sm().text_color(theme.foreground).child(log.message.clone())),
                 );
             }
 
@@ -359,7 +361,7 @@ impl SlideEditor {
                 .child(
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_xs()
+                        .text_sm()
                         .text_color(rgb(0x2e7d32))
                         .child(rep.summary_text()),
                 )
@@ -382,96 +384,50 @@ impl SlideEditor {
             .w_full()
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(text("docx.repair.desc")),
             )
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).text_xs().child(text("docx.repair.file-label")))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).text_sm().child(text("docx.repair.file-label")))
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .items_center()
-                            .child(div().flex_1().child(Input::new(&file_input).small().cleanable(true)))
-                            .child(
-                                Button::new("docx-repair-browse-btn")
-                                    .small()
-                                    .label(text("docx.repair.browse-btn"))
-                                    .on_click(cx.listener(|_this, _, window, cx| {
-                                        let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
-                                            files: true,
-                                            directories: false,
-                                            extensions: vec!["docx".to_string(), "docm".to_string(), "dotx".to_string(), "dotm".to_string()],
-                                            multiple: false,
-                                            prompt: Some(text("docx.repair.prompt-file").into()),
-                                        });
-                                        cx.spawn_in(window, async move |this, cx| {
-                                            let Ok(Ok(Some(paths))) = picked.await else { return };
-                                            let Some(path) = paths.into_iter().next() else { return };
-                                            this.update_in(cx, |this, window, cx| {
-                                                if let Some(panel) = this.doc_state_mut().and_then(|s| s.repair.as_mut()) {
-                                                    let s = path.to_string_lossy().to_string();
-                                                    panel.file_path_input.update(cx, |input, cx| input.set_value(s, window, cx));
-                                                    panel.file_path = Some(path);
-                                                }
-                                                cx.notify();
-                                            }).ok();
-                                        }).detach();
-                                    })),
-                            ),
+                        crate::shell::chrome::text_field(&file_input).full_width().path_picker("docx-repair-browse-btn",crate::shell::chrome::PathMode::File,&["docx","docm","dotx","dotm"],cx,|this,path,_,_|{
+                            if let Some(p)=this.doc_state_mut().and_then(|s|s.repair.as_mut()){p.file_path=Some(path);}
+                        })
                     ),
             )
             .child(
                 v_flex()
                     .gap_2()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).text_xs().child(text("docx.repair.mode-label")))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).text_sm().child(text("docx.repair.mode-label")))
                     .child(
-                        Button::new("docx-repair-mode-repair")
-                            .small()
-                            .outline()
-                            .label(format!("{} {}", if is_repair { "●" } else { "○" }, text("docx.repair.mode-repair")))
-                            .on_click(cx.listener(|this, _, _, cx| this.set_docx_repair_mode(RepairMode::Repair, cx))),
+                        crate::shell::chrome::radio_button("docx-repair-mode-repair", is_repair, false, text("docx.repair.mode-repair"), cx.listener(|this, _, _, cx| this.set_docx_repair_mode(RepairMode::Repair, cx))),
                     )
                     .child(
-                        div().text_xs().text_color(theme.muted_foreground).child(text("docx.repair.mode-repair-desc")),
+                        div().text_sm().text_color(theme.muted_foreground).child(text("docx.repair.mode-repair-desc")),
                     )
                     .child(
-                        Button::new("docx-repair-mode-recover-text")
-                            .small()
-                            .outline()
-                            .label(format!("{} {}", if is_recover_text { "●" } else { "○" }, text("docx.repair.mode-recover-text")))
-                            .on_click(cx.listener(|this, _, _, cx| this.set_docx_repair_mode(RepairMode::RecoverText, cx))),
+                        crate::shell::chrome::radio_button("docx-repair-mode-recover-text", is_recover_text, false, text("docx.repair.mode-recover-text"), cx.listener(|this, _, _, cx| this.set_docx_repair_mode(RepairMode::RecoverText, cx))),
                     )
                     .child(
-                        div().text_xs().text_color(theme.muted_foreground).child(text("docx.repair.mode-recover-text-desc")),
+                        div().text_sm().text_color(theme.muted_foreground).child(text("docx.repair.mode-recover-text-desc")),
                     ),
             )
-            .child(
-                Button::new("docx-repair-execute-btn")
-                    .primary()
-                    .label(text("docx.repair.execute-btn"))
-                    .on_click(cx.listener(|this, _, window, cx| this.execute_docx_repair(window, cx))),
-            )
             .when_some(panel.status_message.as_ref(), |this, msg| {
-                this.child(div().p_2().rounded_xs().bg(rgb(0xe8f5e9)).text_color(rgb(0x2e7d32)).text_xs().child(msg.clone()))
+                this.child(div().p_2().rounded_xs().bg(rgb(0xe8f5e9)).text_color(rgb(0x2e7d32)).text_sm().child(msg.clone()))
             })
             .when_some(panel.error_message.as_ref(), |this, err| {
-                this.child(div().p_2().rounded_xs().bg(rgb(0xffebee)).text_color(rgb(0xc62828)).text_xs().child(err.clone()))
+                this.child(div().p_2().rounded_xs().bg(rgb(0xffebee)).text_color(rgb(0xc62828)).text_sm().child(err.clone()))
             })
             .child(report_elem)
-            .child(
-                Button::new("docx-repair-close-btn")
-                    .ghost()
-                    .label(text("docx.repair.close-btn"))
-                    .on_click(cx.listener(|this, _, _, cx| this.close_docx_repair_panel(cx))),
-            )
+
             .into_any_element();
 
-        Some(SidebarPanel {
-            title: text("docx.repair.title").into(),
-            body,
-        })
+        let panel_terminal_actions = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("docx-repair-execute-btn", text("docx.repair.execute-btn"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,w,cx|e.execute_docx_repair(w,cx))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("docx.repair.title"), body, panel_terminal_actions))
     }
 }

@@ -7,7 +7,7 @@
 //! 各変更の個別反映 (Accept) / 破棄 (Reject)、一括反映 (Accept All) / 一括破棄 (Reject All)、
 //! レビュー終了 (End Review)、および Undo / Redo 連動を完全実装。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -84,11 +84,41 @@ pub(crate) fn compare_presentations(orig: &Presentation, rev: &Presentation) -> 
         };
 
         let mut shape_diffs = Vec::new();
-        let common_shapes = o_slide.shapes.len().min(r_slide.shapes.len());
+        // Shapes are paired by what they are, not by their place in the stacking
+        // order (PowerPoint's compare follows the object, so a shape inserted in
+        // the middle does not make every shape after it look changed). Ids do not
+        // help: a saved file renumbers them. In turn: the same text and frame,
+        // the same text (moved), the same frame (retyped). Shapes left unpaired
+        // are added or deleted.
+        let text_of = |s: &Shape| s.text_body().map(|b| b.text().trim().to_string()).unwrap_or_default();
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        let mut o_taken = vec![false; o_slide.shapes.len()];
+        let mut r_taken = vec![false; r_slide.shapes.len()];
+        type Same = fn(&Shape, &Shape, &dyn Fn(&Shape) -> String) -> bool;
+        let passes: [Same; 3] = [
+            |o, r, t| t(o) == t(r) && o.frame == r.frame,
+            |o, r, t| t(o) == t(r),
+            |o, r, _| o.frame == r.frame,
+        ];
+        for same in passes {
+            for (j, o_shape) in o_slide.shapes.iter().enumerate() {
+                if o_taken[j] {
+                    continue;
+                }
+                if let Some(k) = (0..r_slide.shapes.len()).find(|&k| !r_taken[k] && same(o_shape, &r_slide.shapes[k], &text_of)) {
+                    o_taken[j] = true;
+                    r_taken[k] = true;
+                    pairs.push((j, k));
+                }
+            }
+        }
+        pairs.sort_unstable();
+        let o_left: Vec<usize> = (0..o_slide.shapes.len()).filter(|&j| !o_taken[j]).collect();
+        let r_left: Vec<usize> = (0..r_slide.shapes.len()).filter(|&k| !r_taken[k]).collect();
 
-        for j in 0..common_shapes {
+        for &(j, k) in &pairs {
             let o_shape = &o_slide.shapes[j];
-            let r_shape = &r_slide.shapes[j];
+            let r_shape = &r_slide.shapes[k];
             let name = shape_label(o_shape, o_slide, j);
 
             let o_text = o_shape.text_body().map(|b| b.text().trim().to_string()).unwrap_or_default();
@@ -113,14 +143,14 @@ pub(crate) fn compare_presentations(orig: &Presentation, rev: &Presentation) -> 
         }
 
         // Added shapes in revision
-        for j in common_shapes..r_slide.shapes.len() {
+        for &k in &r_left {
             shape_diffs.push(ShapeDiff::Added {
-                shape: r_slide.shapes[j].clone(),
+                shape: r_slide.shapes[k].clone(),
             });
         }
 
         // Deleted shapes in revision (shapes existing in original but not revision)
-        for j in common_shapes..o_slide.shapes.len() {
+        for &j in &o_left {
             let o_shape = &o_slide.shapes[j];
             let name = shape_label(o_shape, o_slide, j);
             shape_diffs.push(ShapeDiff::Deleted {
@@ -431,12 +461,12 @@ impl SlideEditor {
 
         let title = text("pptx.compare.title").to_string();
 
-        let mut body = v_flex().gap_2().px(px(14.)).py(px(10.));
+        let mut body = v_flex().gap_2().px(px(14.)).py(px(10.)).p_0();
 
         // ヘッダー情報
         let header = v_flex().gap_1()
             .child(div().text_sm().font_weight(FontWeight::BOLD).child(format!("📄 {}", file_path)))
-            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(
+            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(
                 if diffs.is_empty() {
                     text("pptx.compare.no-changes").to_string()
                 } else {
@@ -448,8 +478,8 @@ impl SlideEditor {
         if !diffs.is_empty() {
             // 一括操作ボタン
             let top_actions = h_flex().gap_1().flex_wrap()
-                .child(Button::new("cmp-accept-all").small().primary().label(text("pptx.review.accept-all")).on_click(cx.listener(|this, _, _, cx| this.compare_accept_all(cx))))
-                .child(Button::new("cmp-reject-all").small().ghost().label(text("pptx.review.reject-all")).on_click(cx.listener(|this, _, _, cx| this.compare_reject_all(cx))));
+                .child(crate::shell::chrome::primary_button("cmp-accept-all").small().label(text("pptx.review.accept-all")).on_click(cx.listener(|this, _, _, cx| this.compare_accept_all(cx))))
+                .child(crate::shell::chrome::action_button("cmp-reject-all").small().label(text("pptx.review.reject-all")).on_click(cx.listener(|this, _, _, cx| this.compare_reject_all(cx))));
             body = body.child(top_actions);
 
             // 差分リスト
@@ -497,22 +527,22 @@ impl SlideEditor {
                                 }
                                 ShapeDiff::ModifiedFrame { name, .. } => crate::shell::i18n::format("pptx.compare.frame-changed", &[("name", name)]),
                             };
-                            card = card.child(div().text_xs().text_color(rgb(0x3c4043)).child(detail));
+                            card = card.child(div().text_sm().text_color(rgb(0x3c4043)).child(detail));
                         }
                         if let Some((old_n, new_n)) = notes_diff {
                             let old_short = if old_n.chars().count() > 15 { format!("{}…", old_n.chars().take(15).collect::<String>()) } else { old_n.clone() };
                             let new_short = if new_n.chars().count() > 15 { format!("{}…", new_n.chars().take(15).collect::<String>()) } else { new_n.clone() };
-                            card = card.child(div().text_xs().text_color(rgb(0x188038)).child(crate::shell::i18n::format("pptx.compare.notes-changed", &[("old", &old_short), ("new", &new_short)])));
+                            card = card.child(div().text_sm().text_color(rgb(0x188038)).child(crate::shell::i18n::format("pptx.compare.notes-changed", &[("old", &old_short), ("new", &new_short)])));
                         }
                     }
                 }
 
                 // 反映・破棄ボタン
-                let actions = h_flex().gap_1().justify_end().pt_1()
-                    .child(Button::new(("cmp-acc", idx)).small().primary().label(text("pptx.compare.accept")).on_click(cx.listener(move |this, _, _, cx| {
+                let actions = crate::shell::chrome::action_bar().justify_end()
+                    .action(crate::shell::chrome::ActionDefinition::new(("cmp-acc", idx), text("pptx.compare.accept"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(move |this, _, _, cx| {
                         this.compare_accept_diff(idx, cx);
                     })))
-                    .child(Button::new(("cmp-rej", idx)).small().ghost().label(text("pptx.compare.reject")).on_click(cx.listener(move |this, _, _, cx| {
+                    .action(crate::shell::chrome::ActionDefinition::new(("cmp-rej", idx), text("pptx.compare.reject"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(move |this, _, _, cx| {
                         this.compare_reject_diff(idx, cx);
                     })));
                 card = card.child(actions);
@@ -522,12 +552,10 @@ impl SlideEditor {
         }
 
         // レビュー終了ボタン
-        body = body.child(h_flex().pt_4().justify_end()
-            .child(Button::new("cmp-close").small().ghost().label(text("pptx.review.end-review")).on_click(cx.listener(|this, _, _, cx| this.compare_end_review(cx)))));
 
-        Some(SidebarPanel {
-            title: title.into(),
-            body: body.into_any_element(),
-        })
+        let panel_terminal_actions = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("cmp-close", text("pptx.review.end-review"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|this, _, _, cx| this.compare_end_review(cx))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(title, body.into_any_element(), panel_terminal_actions))
     }
 }

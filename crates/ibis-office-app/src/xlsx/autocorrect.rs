@@ -18,7 +18,7 @@ impl SlideEditor {
         self.commit_cell_edit(cx);
         let panel = AutoCorrectPanel::new(window, cx);
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.autocorrect = Some(panel);
         self.sidebar_open = true;
         cx.notify();

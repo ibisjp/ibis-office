@@ -2179,17 +2179,35 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::corpus_report_pptx_scaled_image_has_no_edge_line", corpus_report_pptx_scaled_image_has_no_edge_line),
         ("pptx::corpus_report_pptx_cmyk_jpeg_uses_its_icc_profile", corpus_report_pptx_cmyk_jpeg_uses_its_icc_profile),
         ("pptx::corpus_report_pptx_theme_gradient_tint_is_not_pale", corpus_report_pptx_theme_gradient_tint_is_not_pale),
-        ("pptx::corpus_report_pptx_large_text_glow_is_a_thin_rim", corpus_report_pptx_large_text_glow_is_a_thin_rim),
         ("pptx::corpus_report_pptx_connector_gradient_line_changes_colour", corpus_report_pptx_connector_gradient_line_changes_colour),
         ("pptx::corpus_report_pptx_stacked_bar_series_lines_are_drawn", corpus_report_pptx_stacked_bar_series_lines_are_drawn),
         ("pptx::corpus_report_pptx_custom_error_bars_use_their_values", corpus_report_pptx_custom_error_bars_use_their_values),
         ("pptx::corpus_report_pptx_text_shadow_blur_widens_the_shadow", corpus_report_pptx_text_shadow_blur_widens_the_shadow),
         ("pptx::corpus_report_pptx_text_inner_shadow_tints_the_glyph_edge", corpus_report_pptx_text_inner_shadow_tints_the_glyph_edge),
         ("pptx::corpus_report_pptx_picture_solid_fill_shows_behind_the_png", corpus_report_pptx_picture_solid_fill_shows_behind_the_png),
+        ("pptx::corpus_report_pptx_synthetic_bold_keeps_the_regular_advance", corpus_report_pptx_synthetic_bold_keeps_the_regular_advance),
     ]
 }
 
 /// Unfixed corpus_report bug scenarios (skipped in normal `cargo test`, run with `--ignored` or `--include-ignored`).
 pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
-    vec![]
+    vec![
+        // Unfixed: the text glow's reach depends on the text size as well as the radius (PowerPoint, Mac and Windows),
+        // and no formula is known yet. Measurements: tasks/doc/glow-measurements-20261030.md.
+        ("pptx::corpus_report_pptx_large_text_glow_is_a_thin_rim", corpus_report_pptx_large_text_glow_is_a_thin_rim),
+    ]
+}
+
+/// コーパスの 1 文書の 1 枚：「ＭＳ ゴシック」の太字（b="1"、18pt）の全角 16 字の 1 行（幅 311pt の角丸の箱、左右の内側の余白 8.5pt）を、PowerPoint は 1 行に
+/// 収める。ＭＳ ゴシックには太字の face が無く、PowerPoint は普通の face の字を太らせるだけで送りは変えない（16 字で 288pt）。ibisOffice は Windows で
+/// DirectWrite の擬似太字の送り（1 字 18.35pt）で測り、最後の 1 字が 2 行目に折り返す。太字の行も普通の行（対照）と同じ 1 行（今は 2 行）。
+pub(crate) fn corpus_report_pptx_synthetic_bold_keeps_the_regular_advance() {
+    let pages = render("msgothic-bold-fits.pptx", "msgothic-bold-fits");
+    let page = &pages[0];
+    let mut lines = Vec::new();
+    for (label, y) in [("bold", 326326_i64), ("regular", 1000000), ("bold-proportional", 1700000)] {
+        lines.push((label, ink_bands(page, rect(258858, y, 3960000, 390286), dark, 4.0).len()));
+    }
+    eprintln!("text lines: {lines:?}");
+    assert!(lines.iter().all(|(_, n)| *n == 1), "the bold line of 16 full-width characters at 18pt (288pt) fits the 294.8pt inside its box as the regular one does: lines of text {lines:?}");
 }

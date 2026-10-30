@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Paragraph spacing for a frozen text selection, including a table cell.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -155,26 +155,44 @@ impl SlideEditor {
     pub(crate) fn pptx_paragraph_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.pptx()?.paragraph_panel.as_ref()?;
         let (fields, mode, font_align, error) = (p.fields.clone(), p.mode, p.font_align, p.error.clone());
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
+        let mut spacing = crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic);
         for (value, label, id) in [(Mode::Default, crate::shell::i18n::text("pptx.paragraph-panel.default-line-spacing"), "pptx-paragraph-default"), (Mode::Multiple, crate::shell::i18n::text("_shell.multiple"), "pptx-paragraph-multiple"), (Mode::Points, crate::shell::i18n::text("pptx.paragraph-panel.exactly-pt"), "pptx-paragraph-points")] {
-            body = body.child(Button::new(id).small().ghost().label(if mode == value { format!("✓ {label}") } else { label.to_string() }).on_click(cx.listener(move |e, _, _, cx| e.set_paragraph_panel_mode(value, cx))));
+            spacing = spacing.child(crate::shell::chrome::segment_control::SegmentItem::label(id, label, mode == value).on_click(cx.listener(move |e, _, _, cx| e.set_paragraph_panel_mode(value, cx))));
         }
-        body = body.child(div().text_size(px(13.)).child(crate::shell::i18n::text("pptx.paragraph-panel.alignment-mixed-font-sizes-keep")));
-        for (value, label, id) in [(FontAlign::Auto, crate::shell::i18n::text("_shell.auto"), "pptx-font-align-auto"), (FontAlign::Top, crate::shell::i18n::text("_shell.top"), "pptx-font-align-top"), (FontAlign::Center, crate::shell::i18n::text("_shell.center"), "pptx-font-align-center"), (FontAlign::Baseline, crate::shell::i18n::text("pptx.chrome.baseline"), "pptx-font-align-baseline"), (FontAlign::Bottom, crate::shell::i18n::text("_shell.bottom"), "pptx-font-align-bottom")] {
-            body = body.child(Button::new(id).small().ghost().label(if font_align == Some(value) { format!("✓ {label}") } else { label.to_string() }).on_click(cx.listener(move |e, _, _, cx| e.set_paragraph_panel_font_align(value, cx))));
-        }
-        for (label, field) in [
+        body = body.child(spacing);
+        let choices = [(FontAlign::Auto, "_shell.auto"), (FontAlign::Top, "_shell.top"), (FontAlign::Center, "_shell.center"), (FontAlign::Baseline, "pptx.chrome.baseline"), (FontAlign::Bottom, "_shell.bottom")];
+        let selected = font_align.map(|value| choices.iter().position(|(v, _)| *v == value).unwrap_or(0));
+        let entries = choices.iter().map(|&(value, key)| crate::shell::chrome::MenuItem::new("pptx.paragraph.font-align", crate::shell::i18n::text(key)).checked(font_align == Some(value)).on(move |e, _, cx| e.set_paragraph_panel_font_align(value, cx)).into()).collect();
+        let dropdown = crate::shell::chrome::Dropdown::from_entries("pptx-paragraph-font-align",selected.map(|i| crate::shell::i18n::text(choices[i].1)).unwrap_or_else(|| crate::shell::i18n::text("pptx.paragraph-panel.keep-existing")),entries,true,0,&cx.weak_entity()).into_any_element();
+        body = body.child(crate::shell::chrome::dropdown_row(crate::shell::i18n::text("pptx.paragraph-panel.alignment-mixed-font-sizes-keep"), dropdown));
+        for (i, (label, field)) in [
             crate::shell::i18n::text("pptx.paragraph-panel.line-spacing-value"),
             crate::shell::i18n::text("pptx.paragraph-panel.before-pt"),
             crate::shell::i18n::text("pptx.paragraph-panel.after-pt"),
             crate::shell::i18n::text("_pptx.left-indent-pt"),
             crate::shell::i18n::text("_pptx.first-line-indent-pt"),
             crate::shell::i18n::text("pptx.paragraph-panel.start-at"),
-        ].into_iter().zip(fields) { body = body.child(div().text_size(px(13.)).child(label)).child(Input::new(&field).small().cleanable(true)); }
-        if let Some(error) = error { body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error)); }
-        body = body.child(h_flex().gap_1()
-            .child(Button::new("pptx-paragraph-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_paragraph_panel(w, cx))))
-            .child(Button::new("pptx-paragraph-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_paragraph_panel(w, cx)))));
-        Some(SidebarPanel { title: crate::shell::i18n::text("_pptx.paragraph-line-spacing-spacing-indentation"), body: body.into_any_element() })
+        ].into_iter().zip(fields).enumerate() {
+            // Line spacing (a multiple or points), before and after (pt, PowerPoint steps by 6), indents (pt), numbering start.
+            // The values are applied with 適用, so ▲▼ only change the field.
+            use crate::shell::chrome::SpinnerSpec;
+            let spec = match i {
+                0 if mode == Mode::Points => SpinnerSpec::new(1.0).range(0.0, 4000.0),
+                0 => SpinnerSpec::new(0.1).range(0.0, 10.0),
+                1 | 2 => SpinnerSpec::new(6.0).range(0.0, 4000.0),
+                3 => SpinnerSpec::new(1.0).range(0.0, 4032.0),
+                4 => SpinnerSpec::new(1.0).range(-4032.0, 4032.0),
+                _ => SpinnerSpec::new(1.0).range(1.0, 9999.0).integer_only(),
+            };
+            let mut field = crate::shell::chrome::text_field(&field).spinner(format!("pptx-paragraph-field-{i}"), spec, cx, |_, _, _, _| {});
+            if (i == 0 && mode == Mode::Points) || (1..=4).contains(&i) { field = field.unit("pt", px(24.)); }
+            body = body.child(crate::shell::chrome::text_field_row(label, field));
+        }
+        if let Some(error) = error { body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error)); }
+        let panel_actions = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-paragraph-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_paragraph_panel(w, cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-paragraph-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_paragraph_panel(w, cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("_pptx.paragraph-line-spacing-spacing-indentation"), body.into_any_element(), panel_actions))
     }
 }

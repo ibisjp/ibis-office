@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Arbitrary shape shadow with frozen targets and serialization preflight.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -68,10 +68,14 @@ impl SlideEditor {
 
     pub(crate) fn shadow_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel> {
         let p=self.pptx()?.shadow_panel.as_ref()?;let fields=p.fields.clone();let error=p.error.clone();let title=crate::shell::i18n::format("_pptx.outer-shadow-count-shapes", &[("count", &p.targets.len())]);
-        let mut body=v_flex().gap_2().px(px(18.)).py(px(8.));
-        for (label,field) in [crate::shell::i18n::text("pptx.shadow-panel.blur-pt"),crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::i18n::text("pptx.gradient-panel.intensity-percent"),crate::shell::i18n::text("pptx.shadow-panel.distance-pt"),crate::shell::i18n::text("pptx.gradient-panel.angle-degrees")].into_iter().zip(fields) {body=body.child(div().text_size(px(13.)).child(label)).child(Input::new(&field).small().cleanable(true));}
-        if let Some(error)=error {body=body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error));}
-        body=body.child(h_flex().gap_1().child(Button::new("pptx-shadow-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e,_,w,cx|e.apply_shadow_panel(w,cx)))).child(Button::new("pptx-shadow-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e,_,w,cx|e.close_shadow_panel(w,cx)))));
-        Some(SidebarPanel {title:title.into(),body:body.into_any_element()})
+        let mut body=v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
+        for (i,(label,field)) in [crate::shell::i18n::text("pptx.shadow-panel.blur-pt"),crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::i18n::text("pptx.gradient-panel.intensity-percent"),crate::shell::i18n::text("pptx.shadow-panel.distance-pt"),crate::shell::i18n::text("pptx.gradient-panel.angle-degrees")].into_iter().zip(fields).enumerate() {
+            use crate::shell::chrome::SpinnerSpec;
+            let spec=[Some(SpinnerSpec::new(1.0).range(0.0,100.0)),None,Some(SpinnerSpec::new(1.0).range(0.0,100.0)),Some(SpinnerSpec::new(1.0).range(0.0,200.0)),Some(SpinnerSpec::new(1.0).range(0.0,359.0))][i];
+            body=body.child(div().text_sm().child(label)).child(super::glow_panel::effect_field(&field,format!("pptx-shadow-field-{i}"),spec,cx));
+        }
+        if let Some(error)=error {body=body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));}
+        let panel_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("pptx-shadow-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,w,cx|e.apply_shadow_panel(w,cx)))).action(crate::shell::chrome::ActionDefinition::new("pptx-shadow-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,w,cx|e.close_shadow_panel(w,cx))));
+        Some(SidebarPanel::with_footer(title, body.into_any_element(), panel_actions))
     }
 }

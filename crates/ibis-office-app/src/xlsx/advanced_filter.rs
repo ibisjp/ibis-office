@@ -9,8 +9,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, Command, SheetCommand, SlideId};
@@ -111,7 +111,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.advanced_filter = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -184,20 +184,25 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
         let copy_to_other = p.copy_to_other;
         let unique = p.unique;
 
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
 
         // Action selector (Radio buttons: in-place vs copy-to)
-        body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.copy-to")));
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.copy-to")));
         body = body.child(mark(
             "action-inplace",
-            Button::new("adv-action-inplace")
-                .small()
-                .label(crate::shell::i18n::format("_xlsx.mark-filter-in-place", &[("mark", &(if !copy_to_other { "●" } else { "○" }))]))
-                .on_click(cx.listener(|this, _, _, cx| {
+            crate::shell::chrome::radio_button("adv-action-inplace", !copy_to_other, false,
+                crate::shell::i18n::format("_xlsx.mark-filter-in-place", &[("mark", &"")]).trim().to_string(), cx.listener(|this, _, _, cx| {
                     if let Some(p) = this.wb_mut().panels.advanced_filter.as_mut() {
                         p.copy_to_other = false;
                     }
@@ -207,10 +212,8 @@ impl SlideEditor {
         ));
         body = body.child(mark(
             "action-copy",
-            Button::new("adv-action-copy")
-                .small()
-                .label(crate::shell::i18n::format("_xlsx.mark-copy-to-another-location", &[("mark", &(if copy_to_other { "●" } else { "○" }))]))
-                .on_click(cx.listener(|this, _, _, cx| {
+            crate::shell::chrome::radio_button("adv-action-copy", copy_to_other, false,
+                crate::shell::i18n::format("_xlsx.mark-copy-to-another-location", &[("mark", &"")]).trim().to_string(), cx.listener(|this, _, _, cx| {
                     if let Some(p) = this.wb_mut().panels.advanced_filter.as_mut() {
                         p.copy_to_other = true;
                     }
@@ -224,62 +227,32 @@ impl SlideEditor {
             h_flex()
                 .items_center()
                 .justify_between()
-                .child(div().text_size(px(13.)).child(text("_xlsx.list-range")))
-                .child(mark(
-                    "adv-use-list",
-                    Button::new("adv-use-list")
-                        .small()
-                        .ghost()
-                        .label(text("xlsx.subtotal-use-selection"))
-                        .on_click(cx.listener(|this, _, window, cx| this.set_advanced_filter_range_from_selection("list", window, cx)))
-                        .into_any_element(),
-                )),
+                .child(div().text_sm().child(text("_xlsx.list-range"))),
         );
-        body = body.child(mark("list-input", Input::new(&p.list_range).small().cleanable(true).into_any_element()));
+        body = body.child(mark("list-input", super::range_field::local_range_field(&p.list_range,"advanced_filter-p-list_range",false,cx).into_any_element()));
 
         body = body.child(
             h_flex()
                 .items_center()
                 .justify_between()
-                .child(div().text_size(px(13.)).child(text("_xlsx.criteria-range")))
-                .child(mark(
-                    "adv-use-criteria",
-                    Button::new("adv-use-criteria")
-                        .small()
-                        .ghost()
-                        .label(text("xlsx.subtotal-use-selection"))
-                        .on_click(cx.listener(|this, _, window, cx| this.set_advanced_filter_range_from_selection("criteria", window, cx)))
-                        .into_any_element(),
-                )),
+                .child(div().text_sm().child(text("_xlsx.criteria-range"))),
         );
-        body = body.child(mark("criteria-input", Input::new(&p.criteria_range).small().cleanable(true).into_any_element()));
+        body = body.child(mark("criteria-input", super::range_field::local_range_field(&p.criteria_range,"advanced_filter-p-criteria_range",false,cx).into_any_element()));
 
         if copy_to_other {
             body = body.child(
                 h_flex()
                     .items_center()
                     .justify_between()
-                    .child(div().text_size(px(13.)).child(text("_xlsx.copy-to")))
-                    .child(mark(
-                        "adv-use-copy-to",
-                        Button::new("adv-use-copy-to")
-                            .small()
-                            .ghost()
-                            .label(text("xlsx.subtotal-use-selection"))
-                            .on_click(cx.listener(|this, _, window, cx| this.set_advanced_filter_range_from_selection("copy_to", window, cx)))
-                            .into_any_element(),
-                    )),
+                    .child(div().text_sm().child(text("_xlsx.copy-to"))),
             );
-            body = body.child(mark("copy-to-input", Input::new(&p.copy_to_range).small().cleanable(true).into_any_element()));
+            body = body.child(mark("copy-to-input", super::range_field::local_range_field(&p.copy_to_range,"advanced_filter-p-copy_to_range",false,cx).into_any_element()));
         }
 
         // Unique records checkbox
         body = body.child(mark(
             "unique",
-            Button::new("adv-unique")
-                .small()
-                .label(crate::shell::i18n::format("_xlsx.mark-unique-records-only", &[("mark", &(if unique { "☑" } else { "☐" }))]))
-                .on_click(cx.listener(|this, _, _, cx| {
+            crate::shell::chrome::checkbox_button("adv-unique", crate::shell::i18n::format("_xlsx.mark-unique-records-only", &[("mark", &"")]).trim().to_string(), unique, false, cx.listener(|this, _, _, cx| {
                     if let Some(p) = this.wb_mut().panels.advanced_filter.as_mut() {
                         p.unique = !p.unique;
                     }
@@ -289,29 +262,13 @@ impl SlideEditor {
         ));
 
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+            body = body.children(crate::shell::chrome::panel_message(&p.message));
         }
 
-        body = body.child(mark(
-            "apply",
-            Button::new("adv-apply").primary()
-                .small()
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("adv-apply", "", crate::shell::chrome::ActionButtonKind::Primary)
                 .label(text("OK"))
-                .on_click(cx.listener(|this, _, _, cx| this.apply_advanced_filter_panel(cx)))
-                .into_any_element(),
-        ));
-        body = body.child(mark(
-            "close",
-            Button::new("adv-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.advanced_filter = None;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
-
-        Some(SidebarPanel { title: text("_xlsx.advanced").into(), body: body.into_any_element() })
+                .on_click(cx.listener(|this, _, _, cx| this.apply_advanced_filter_panel(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("_xlsx.advanced"), body.into_any_element(), panel_terminal_actions))
     }
 }

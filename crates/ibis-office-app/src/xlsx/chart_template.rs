@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -87,7 +87,7 @@ impl SlideEditor {
         };
 
         self.commit_cell_edit(cx);
-        self.wb_mut().panels.close();
+        self.wb_mut().close_settings();
 
         let default_name = "CustomChart1".to_string();
         let template_name = cx.new(|cx| InputState::new(window, cx).default_value(default_name));
@@ -222,7 +222,7 @@ impl SlideEditor {
 
         self.status = Some(crate::shell::i18n::format("_xlsx.applied-template-name", &[("name", &tmpl_info.name)]).into());
         self.wb_mut().panels.chart_template = None;
-        self.sidebar_open = false;
+        self.sidebar_open = true;
         cx.notify();
     }
 
@@ -286,7 +286,7 @@ impl SlideEditor {
                         let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Template");
                         this.status = Some(crate::shell::i18n::format("_xlsx.applied-template-name", &[("name", &name)]).into());
                         this.wb_mut().panels.chart_template = None;
-                        this.sidebar_open = false;
+                        this.sidebar_open = true;
                     }
                     cx.notify();
                 }).ok();
@@ -297,6 +297,7 @@ impl SlideEditor {
 
     /// Renders the sidebar panel for グラフ テンプレート.
     pub(crate) fn chart_template_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        let mut panel_fixed_actions = crate::shell::chrome::action_bar();
         let p = self.sheet_state()?.panels.chart_template.as_ref()?;
         let mode = p.mode;
         let selected_idx = p.selected_index;
@@ -320,78 +321,53 @@ impl SlideEditor {
                 )
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let id = id.to_string();
+            let ui = p.ui.clone();
+            action.on_bounds(move |bounds, _, _| {
+                        ui.borrow_mut().insert(id.clone(), bounds);
+                    })
+        };
 
-        // Header mode buttons (適用 / 保存)
-        let apply_mode_btn = Button::new("chart-template-tab-apply")
-            .small()
-            .label(text("fix.chart-template.apply-template"))
-            .when(mode == ChartTemplateMode::Apply, |b| b.primary())
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.set_chart_template_mode(ChartTemplateMode::Apply, cx);
-            }));
+        let mode_tabs=crate::shell::chrome::tab_control_with_mode([text("fix.chart-template.apply-template"),text("fix.chart-template.save-template")],usize::from(mode==ChartTemplateMode::Save),"chart-template-tabs",crate::shell::chrome::TabMode::Intrinsic,|e,index,cx|e.set_chart_template_mode(if index==0{ChartTemplateMode::Apply}else{ChartTemplateMode::Save},cx),cx);
 
-        let save_mode_btn = Button::new("chart-template-tab-save")
-            .small()
-            .label(text("fix.chart-template.save-template"))
-            .when(mode == ChartTemplateMode::Save, |b| b.primary())
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.set_chart_template_mode(ChartTemplateMode::Save, cx);
-            }));
-
-        let mode_tabs = h_flex()
-            .gap_2()
-            .items_center()
-            .child(mark("chart-template-mode-apply", apply_mode_btn.into_any_element()))
-            .child(mark("chart-template-mode-save", save_mode_btn.into_any_element()));
-
-        let mut content = v_flex().gap_3().px(px(16.)).py(px(8.)).child(mode_tabs);
+        let mut content = v_flex().gap_3().px(px(16.)).py(px(8.)).p_0().child(mode_tabs);
 
         match mode {
             ChartTemplateMode::Save => {
-                let name_input = Input::new(&p.template_name).small().cleanable(true);
+                let name_input = crate::shell::chrome::text_field(&p.template_name).full_width();
                 content = content
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(text("fix.chart-template.template-name")))
                     .child(mark("chart-template-name-input", name_input.into_any_element()));
 
-                let save_btn = Button::new("chart-template-save-btn")
-                    .small()
-                    .primary()
+                let save_btn = crate::shell::chrome::ActionDefinition::new("chart-template-save-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                     .label(text("_shell.save"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.save_selected_chart_template(cx);
                     }));
 
-                let cancel_btn = Button::new("chart-template-cancel-btn")
-                    .small()
+                let cancel_btn = crate::shell::chrome::ActionDefinition::new("chart-template-cancel-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                     .label(text("_shell.cancel"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.wb_mut().panels.chart_template = None;
-                        this.sidebar_open = false;
+                        this.sidebar_open = true;
                         cx.notify();
                     }));
 
-                content = content.child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(mark("chart-template-save", save_btn.into_any_element()))
-                        .child(mark("chart-template-cancel", cancel_btn.into_any_element())),
-                );
+                panel_fixed_actions = panel_fixed_actions.actions((crate::shell::chrome::action_bar()
+                        .action(mark_action("chart-template-save", save_btn))
+                        .action(mark_action("chart-template-cancel", cancel_btn))).into_definitions());
             }
             ChartTemplateMode::Apply => {
                 content = content.child(div().font_weight(FontWeight::SEMIBOLD).child(text("fix.chart-template.saved-templates")));
 
                 if p.templates.is_empty() {
-                    content = content.child(div().text_size(px(12.)).text_color(cx.theme().muted).child(text("fix.chart-template.no-saved-templates-found")));
+                    content = content.child(div().text_sm().text_color(cx.theme().muted).child(text("fix.chart-template.no-saved-templates-found")));
                 } else {
                     let mut list = v_flex().gap_1();
                     for (i, tmpl) in p.templates.iter().enumerate() {
                         let is_sel = selected_idx == Some(i);
-                        let item_btn = Button::new(("chart-template-item", i))
-                            .small()
-                            .label(tmpl.name.clone())
-                            .when(is_sel, |b| b.primary())
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                        let item_btn = crate::shell::chrome::radio_button(("chart-template-item", i),is_sel,false,tmpl.name.clone(),cx.listener(move |this, _, _, cx| {
                                 this.set_selected_chart_template(i, cx);
                             }));
                         list = list.child(mark(&format!("chart-template-item-{i}"), item_btn.into_any_element()));
@@ -399,54 +375,39 @@ impl SlideEditor {
                     content = content.child(list);
                 }
 
-                let apply_btn = Button::new("chart-template-apply-btn")
-                    .small()
-                    .primary()
+                let apply_btn = crate::shell::chrome::ActionDefinition::new("chart-template-apply-btn", "", crate::shell::chrome::ActionButtonKind::Primary)
                     .label(text("_shell.apply"))
                     .disabled(selected_idx.is_none() || templates_count == 0)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.apply_selected_chart_template(window, cx);
                     }));
 
-                let delete_btn = Button::new("chart-template-delete-btn")
-                    .small()
+                let delete_btn = crate::shell::chrome::ActionDefinition::new("chart-template-delete-btn", "", crate::shell::chrome::ActionButtonKind::Destructive)
                     .label(text("_shell.delete"))
                     .disabled(selected_idx.is_none() || templates_count == 0)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.delete_selected_chart_template(cx);
                     }));
 
-                let from_file_btn = Button::new("chart-template-from-file-btn")
-                    .small()
+                let from_file_btn = crate::shell::chrome::ActionDefinition::new("chart-template-from-file-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                     .label(text("fix.chart-template.apply-file"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.prompt_apply_chart_template_file(window, cx);
                     }));
 
-                let cancel_btn = Button::new("chart-template-cancel-btn")
-                    .small()
+                let cancel_btn = crate::shell::chrome::ActionDefinition::new("chart-template-cancel-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                     .label(text("_shell.cancel"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.wb_mut().panels.chart_template = None;
-                        this.sidebar_open = false;
+                        this.sidebar_open = true;
                         cx.notify();
                     }));
 
-                content = content
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(mark("chart-template-apply", apply_btn.into_any_element()))
-                            .child(mark("chart-template-delete", delete_btn.into_any_element()))
-                            .child(mark("chart-template-cancel", cancel_btn.into_any_element())),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(mark("chart-template-from-file", from_file_btn.into_any_element())),
-                    );
+                panel_fixed_actions = panel_fixed_actions.actions((crate::shell::chrome::action_bar()
+                            .action(mark_action("chart-template-apply", apply_btn))
+                            .action(mark_action("chart-template-delete", delete_btn))
+                            .action(mark_action("chart-template-cancel", cancel_btn))).into_definitions()).actions((crate::shell::chrome::action_bar()
+                            .action(mark_action("chart-template-from-file", from_file_btn))).into_definitions());
             }
         }
 
@@ -458,15 +419,12 @@ impl SlideEditor {
                     .bg(cx.theme().danger.opacity(0.1))
                     .border_1()
                     .border_color(cx.theme().danger)
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(cx.theme().danger)
                     .child(err.clone()),
             );
         }
 
-        Some(SidebarPanel {
-            title: text("fix.chart-template.chart-template").into(),
-            body: content.into_any_element(),
-        })
+        Some(SidebarPanel::with_footer(text("fix.chart-template.chart-template"), content.into_any_element(), panel_fixed_actions))
     }
 }

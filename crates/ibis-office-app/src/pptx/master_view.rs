@@ -8,9 +8,9 @@
 //! another or the view is closed; the file is then read again from what
 //! the program holds (not from the disk: what was not saved is kept), and the
 //! history of undoing starts over.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_pptx::master_page::{self, LevelStyle, Page, StyleKind};
@@ -341,21 +341,21 @@ impl SlideEditor {
     pub(crate) fn master_view_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let view = self.master_view.as_ref()?;
         let t = crate::shell::i18n::text;
-        let mut body = v_flex().gap_1().px(px(12.)).py(px(8.));
+        let mut body = v_flex().gap_1().px(px(12.)).py(px(8.)).p_0();
         for (i, page) in view.pages.iter().enumerate() {
             let name = if page.name.is_empty() { t("pptx.chrome.no-name").to_string() } else { page.name.clone() };
-            let label: SharedString = if page.master { format!("{} {}", if i == view.current { "●" } else { "○" }, crate::shell::i18n::format("pptx.master-view.slide-master-name", &[("name", &name)])).into() } else { format!("    {} {}", if i == view.current { "●" } else { "○" }, name).into() };
+            let label = if page.master { crate::shell::i18n::format("pptx.master-view.slide-master-name", &[("name", &name)]) } else { name.into() };
             let row = div()
                 .id(ElementId::Name(format!("pptx-master-page-row-{i}").into()))
                 .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, w, cx| {
                     cx.stop_propagation();
                     e.open_master_page_context_menu(i, event.position, w, cx);
                 }))
-                .child(Button::new(ElementId::Name(format!("pptx-master-page-{i}").into())).small().ghost().label(label).on_click(cx.listener(move |e, _, w, cx| e.switch_master_page(i, w, cx))));
+                .child(crate::shell::chrome::radio_button(ElementId::Name(format!("pptx-master-page-{i}").into()), i == view.current, false, label, cx.listener(move |e, _, w, cx| e.switch_master_page(i, w, cx))));
             body = body.child(row);
         }
         // プレースホルダーの挿入: onto the page shown.
-        body = body.child(div().mt_2().text_size(px(13.)).font_weight(FontWeight::BOLD).child(t("pptx.master-view.placeholder.insert")));
+        body = body.child(div().mt_2().text_sm().font_weight(FontWeight::BOLD).child(t("pptx.master-view.placeholder.insert")));
         let mut kinds = h_flex().gap_1().flex_wrap();
         for (kind, label) in [
             (master_page::PlaceholderKind::Title, "pptx.master-view.placeholder.title"),
@@ -366,31 +366,33 @@ impl SlideEditor {
             (master_page::PlaceholderKind::Table, "pptx.master-view.placeholder.table"),
             (master_page::PlaceholderKind::Media, "pptx.master-view.placeholder.media"),
         ] {
-            kinds = kinds.child(Button::new(ElementId::Name(format!("pptx-master-placeholder-{label}").into())).small().ghost().label(t(label)).on_click(cx.listener(move |e, _, w, cx| e.insert_master_placeholder(kind, w, cx))));
+            kinds = kinds.child(crate::shell::chrome::action_button(ElementId::Name(format!("pptx-master-placeholder-{label}").into())).small().label(t(label)).on_click(cx.listener(move |e, _, w, cx| e.insert_master_placeholder(kind, w, cx))));
         }
         body = body.child(kinds);
         // 文字の書式: the text styles of the master (the title's, the body's) by level.
         let style = &view.style;
         let (kind, level, bold) = (style.kind, style.level, style.bold);
-        let mark = |on: bool, label: &str| -> SharedString { format!("{} {}", if on { "●" } else { "○" }, t(label)).into() };
-        body = body.child(div().mt_2().text_size(px(13.)).font_weight(FontWeight::BOLD).child(t("pptx.master-view.text-styles")));
-        body = body.child(h_flex().gap_1().flex_wrap()
-            .child(Button::new("pptx-master-style-title").small().ghost().label(mark(kind == StyleKind::Title, "_shell.title")).on_click(cx.listener(move |e, _, w, cx| e.choose_master_style(StyleKind::Title, level, w, cx))))
-            .child(Button::new("pptx-master-style-body").small().ghost().label(mark(kind == StyleKind::Body, "pptx.master-view.body")).on_click(cx.listener(move |e, _, w, cx| e.choose_master_style(StyleKind::Body, level, w, cx))))
-            .child(Button::new("pptx-master-style-other").small().ghost().label(mark(kind == StyleKind::Other, "_shell.more")).on_click(cx.listener(move |e, _, w, cx| e.choose_master_style(StyleKind::Other, level, w, cx)))));
+        body = body.child(div().mt_2().text_sm().font_weight(FontWeight::BOLD).child(t("pptx.master-view.text-styles")));
+        body = body.child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+            .child(crate::shell::chrome::radio_button("pptx-master-style-title", kind == StyleKind::Title, false, crate::shell::i18n::text("_shell.title"), cx.listener(move |e, _, w, cx| e.choose_master_style(StyleKind::Title, level, w, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-master-style-body", kind == StyleKind::Body, false, crate::shell::i18n::text("pptx.master-view.body"), cx.listener(move |e, _, w, cx| e.choose_master_style(StyleKind::Body, level, w, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-master-style-other", kind == StyleKind::Other, false, crate::shell::i18n::text("_shell.more"), cx.listener(move |e, _, w, cx| e.choose_master_style(StyleKind::Other, level, w, cx)))));
         let mut levels = h_flex().gap_1().flex_wrap();
         for n in 1..=9u8 {
-            levels = levels.child(Button::new(ElementId::Name(format!("pptx-master-level-{n}").into())).small().ghost().label(if n == level { format!("[{n}]") } else { n.to_string() }).on_click(cx.listener(move |e, _, w, cx| e.choose_master_style(kind, n, w, cx))));
+            levels = levels.child(crate::shell::chrome::action_button(ElementId::Name(format!("pptx-master-level-{n}").into())).small().label(if n == level { format!("[{n}]") } else { n.to_string() }).on_click(cx.listener(move |e, _, w, cx| e.choose_master_style(kind, n, w, cx))));
         }
         body = body
-            .child(div().text_size(px(12.)).child(t("pptx.master-view.level")))
+            .child(div().text_sm().child(t("pptx.master-view.level")))
             .child(levels)
-            .child(Input::new(&style.size).small().cleanable(true))
+            .child(crate::shell::chrome::text_field(&style.size).full_width().spinner("pptx-master-style-size", crate::shell::chrome::SpinnerSpec::new(1.0).steps(FONT_SIZE_STEPS).range(1.0, 4000.0), cx, |_, _, _, _| {}))
             .child(Checkbox::new("pptx-master-style-bold").label(t("_shell.bold")).checked(bold).on_click(cx.listener(|e, on: &bool, _, cx| e.toggle_master_style_bold(*on, cx))))
-            .child(Input::new(&style.color).small().cleanable(true))
-            .child(Input::new(&style.font).small().cleanable(true))
-            .child(Button::new("pptx-master-style-apply").primary().small().label(t("pptx.master-view.apply-style")).on_click(cx.listener(|e, _, w, cx| e.apply_master_style(w, cx))));
-        body = body.child(Button::new("pptx-master-close").small().label(t("pptx.master-view.close-master-view")).on_click(cx.listener(|e, _, w, cx| e.close_master_view(w, cx))));
-        Some(SidebarPanel { title: t("pptx.master-view.slide-master"), body: body.into_any_element() })
+            .child(crate::shell::chrome::panel_color_field("master-color",&style.color,cx))
+            .child(crate::shell::chrome::panel_font_dropdown("panel-font-master",&style.font,cx))
+            .child(crate::shell::chrome::primary_button("pptx-master-style-apply").small().label(t("pptx.master-view.apply-style")).on_click(cx.listener(|e, _, w, cx| e.apply_master_style(w, cx))));
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("pptx-master-close", t("pptx.master-view.close-master-view"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_master_view(w, cx))));
+        Some(SidebarPanel::with_footer(t("pptx.master-view.slide-master"), body.into_any_element(), panel_terminal_actions))
     }
 }
+
+/// The sizes of PowerPoint's font size list, which the ▲▼ of the text style's size step through (applied with 文字の書式を適用).
+const FONT_SIZE_STEPS: &[f32] = &[8.0, 9.0, 10.0, 10.5, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 40.0, 44.0, 48.0, 54.0, 60.0, 66.0, 72.0, 80.0, 88.0, 96.0];

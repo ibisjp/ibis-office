@@ -153,7 +153,7 @@ pub(crate) const WIDTHS: &[f32] = &[0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6
 const NUDGE: i64 = 72_000;
 const FINE_NUDGE: i64 = 12_700;
 /// A pasted copy on the same slide is moved this much down and right.
-const PASTE_OFFSET: i64 = 182_880;
+pub(crate) const PASTE_OFFSET: i64 = 182_880;
 
 
 /// アクション ボタン: each preset with the link it has when drawn (PowerPoint's
@@ -1319,6 +1319,7 @@ impl SlideEditor {
             }
             return self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
         }
+        self.drop_untouched_body();
         let commands = self
             .selected_shapes()
             .into_iter()
@@ -3538,6 +3539,7 @@ impl SlideEditor {
             self.run(commands, cx);
             return true;
         }
+        self.drop_untouched_body();
         // Preview serialization before changing any live target.
         let mut preview=self.presentation().clone();
         for command in &commands {

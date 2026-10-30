@@ -11,7 +11,7 @@
 //! formatting, Delete and ⌃Enter take them all.
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, CellValue, Sheet, SlideId};
@@ -640,15 +640,16 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.goto_special = Some(panel);
         self.sidebar_open = true;
         cx.notify();
     }
 
     /// Select the cells or objects the panel asks for.
-    pub(crate) fn apply_goto_special(&mut self, cx: &mut Context<Self>) {
-        let Some(p) = self.sheet_state().and_then(|s| s.panels.goto_special.as_ref()) else { return };
+    /// Returns true when the cells or objects were selected (the dialog then closes, as Excel's OK does).
+    pub(crate) fn apply_goto_special(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(p) = self.sheet_state().and_then(|s| s.panels.goto_special.as_ref()) else { return false };
         let (kind, types, scope, trace_level) = (p.kind, p.types, p.scope, p.trace_level);
 
         if kind == Special::Objects {
@@ -660,7 +661,8 @@ impl SlideEditor {
                 if let Some(p) = self.wb_mut().panels.goto_special.as_mut() {
                     p.message = crate::shell::i18n::text("_xlsx.no-matching-objects-found").into();
                 }
-                return cx.notify();
+                cx.notify();
+                return false;
             }
             let count = object_ids.len() as u32;
             self.set_selection(object_ids);
@@ -670,10 +672,11 @@ impl SlideEditor {
             if let Some(p) = self.wb_mut().panels.goto_special.as_mut() {
                 p.message = crate::shell::i18n::format("goto-special.done", &[("count", &count)]);
             }
-            return cx.notify();
+            cx.notify();
+            return true;
         }
 
-        let (Some((_, sheet)), Some(selection), Some(cell)) = (self.current_sheet(), self.selected_range(), self.current_cell()) else { return };
+        let (Some((_, sheet)), Some(selection), Some(cell)) = (self.current_sheet(), self.selected_range(), self.current_cell()) else { return false };
         let single = sheet.merge_at(cell.1, cell.0).unwrap_or(CellRange { first_row: cell.1, last_row: cell.1, first_column: cell.0, last_column: cell.0 });
         let area = if selection == single { used_range(sheet) } else { selection };
         let sheet_name = self.presentation().workbook.as_ref().and_then(|wb| {
@@ -684,7 +687,8 @@ impl SlideEditor {
             if let Some(p) = self.wb_mut().panels.goto_special.as_mut() {
                 p.message = crate::shell::i18n::text("_xlsx.no-matching-cells-were-found").into();
             }
-            return cx.notify();
+            cx.notify();
+                return false;
         };
         let slide = self.current_slide;
         let count: u32 = found.iter().map(|r| (r.last_row - r.first_row + 1) * (r.last_column - r.first_column + 1)).sum();
@@ -704,6 +708,7 @@ impl SlideEditor {
             p.message = crate::shell::i18n::format("goto-special.done", &[("count", &count)]);
         }
         cx.notify();
+        true
     }
 
     /// ホーム > 編集 > 検索と選択: 1 クリックで指定種類のセルまたはオブジェクトを選択する.
@@ -782,7 +787,15 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.)).child(crate::shell::i18n::text("fix.goto-special.select"));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.)).p_0().child(crate::shell::i18n::text("fix.goto-special.select"));
+        let mut options = crate::shell::chrome::radio_group();
         let kinds = [
             (Special::Comments, "comments", "docx.find.scope.comments"),
             (Special::Constants, "constants", "fix.goto-special.constants"),
@@ -801,9 +814,9 @@ impl SlideEditor {
         ];
         for (kind, id, label) in kinds {
             let on = p.kind == kind;
-            body = body.child(mark(
+            options = options.child(mark(
                 id,
-                crate::xlsx::toggle::radio_row(
+                crate::shell::chrome::radio_button(
                     id,
                     on,
                     false,
@@ -838,7 +851,7 @@ impl SlideEditor {
                         .into_any_element(),
                     )
                 };
-                body = body.child(
+                options = options.child(
                     v_flex()
                         .pl_4()
                         .gap_0p5()
@@ -852,13 +865,13 @@ impl SlideEditor {
             if on && (kind == Special::Conditional || kind == Special::Validation) {
                 let scope = p.scope;
                 let same_label = if kind == Special::Conditional { "_xlsx.same-conditional-format" } else { "_xlsx.same-data-validation" };
-                body = body.child(
+                options = options.child(
                     v_flex()
                         .pl_4()
                         .gap_0p5()
                         .child(mark(
                             "scope-all",
-                            crate::xlsx::toggle::radio_row(
+                            crate::shell::chrome::radio_button(
                                 "scope-all",
                                 scope == Scope::All,
                                 false,
@@ -874,7 +887,7 @@ impl SlideEditor {
                         ))
                         .child(mark(
                             "scope-same",
-                            crate::xlsx::toggle::radio_row(
+                            crate::shell::chrome::radio_button(
                                 "scope-same",
                                 scope == Scope::Same,
                                 false,
@@ -893,13 +906,13 @@ impl SlideEditor {
             // Trace level radio options for Precedents and Dependents
             if on && (kind == Special::Precedents || kind == Special::Dependents) {
                 let trace_level = p.trace_level;
-                body = body.child(
+                options = options.child(
                     v_flex()
                         .pl_4()
                         .gap_0p5()
                         .child(mark(
                             "trace-direct",
-                            crate::xlsx::toggle::radio_row(
+                            crate::shell::chrome::radio_button(
                                 "trace-direct",
                                 trace_level == TraceLevel::DirectOnly,
                                 false,
@@ -915,7 +928,7 @@ impl SlideEditor {
                         ))
                         .child(mark(
                             "trace-all",
-                            crate::xlsx::toggle::radio_row(
+                            crate::shell::chrome::radio_button(
                                 "trace-all",
                                 trace_level == TraceLevel::AllLevels,
                                 false,
@@ -932,22 +945,21 @@ impl SlideEditor {
                 );
             }
         }
+        body = body.child(options);
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+            body = body.children(crate::shell::chrome::panel_message(&p.message));
         }
-        let footer = mark(
-            "apply",
-            Button::new("goto-special-apply")
-                .primary()
-                .small()
+        let footer = mark_action("apply", crate::shell::chrome::ActionDefinition::new("goto-special-apply", "", crate::shell::chrome::ActionButtonKind::Primary)
                 .label(crate::shell::i18n::text("fix.goto-special.select"))
-                .on_click(cx.listener(|this, _, _, cx| this.apply_goto_special(cx)))
-                .into_any_element(),
-        );
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.apply_goto_special(cx) {
+                        this.close_panel_dialog(window, cx);
+                    }
+                })));
         Some(SidebarPanel::with_footer(
             "fix.goto-special.go-special",
             body.into_any_element(),
-            footer,
+            crate::shell::chrome::action_bar().action(footer).action(crate::shell::chrome::dialog_cancel_definition(cx)),
         ))
     }
 }

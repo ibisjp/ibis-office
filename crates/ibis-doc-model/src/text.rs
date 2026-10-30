@@ -104,6 +104,19 @@ pub const FONT_SIZE_STEPS: &[u32] = &[
     4400, 4800, 5400, 6000, 6600, 7200, 8000, 8800, 9600,
 ];
 
+/// The size of text PowerPoint draws in a shape whose text is shrunk by `a:normAutofit fontScale` (`font_scale`, 100000 = 100%): the size times the
+/// scale rounded to a whole point, a half up. Windows PowerPoint's PDFs: 009's titles (16 pt at 90% is 14 pt, 13 pt at 90% is 12 pt), 032 (18 pt at 90% is
+/// 16 pt), 005 (12 pt at 92.5% is 11 pt), and autofit-size-rounding.pptx, where all 44 boxes agree: 10 pt at 85% = 8.5 is 9, 7 pt at 50% = 3.5 is 4,
+/// 20 pt at 92.5% = 18.5 is 19, 44 pt at 62.5% = 27.5 is 28, 4 pt at 85% = 3.4 is 3 (no lower limit). Computed in decimals (a scale as a float is not
+/// exactly 0.925). Without a shrink the size is as it is.
+pub fn autofit_font_size_pt(size_pt: f32, font_scale: u32) -> f32 {
+    if font_scale >= 100_000 {
+        return size_pt;
+    }
+    let scaled = f64::from(size_pt) * f64::from(font_scale) / 100_000.0;
+    ((scaled + 0.5).floor() as f32).max(1.0)
+}
+
 /// The next larger (`grow = true`) or smaller size in [`FONT_SIZE_STEPS`],
 /// like PowerPoint's "Increase/Decrease Font Size".
 pub fn step_font_size(current: u32, grow: bool) -> u32 {
@@ -356,6 +369,21 @@ pub struct Bullet {
     pub color: Option<Rgb>,
     /// A numbered bullet (`a:buAutoNum`): `text` is the label it shows now.
     pub auto: Option<AutoNumber>,
+    /// A bullet drawn with a symbol typeface (`a:buFont` Wingdings, Symbol): `text` is the Unicode character that stands in
+    /// for its glyph where the typeface is not installed; this is what the file says.
+    pub symbol: Option<SymbolBullet>,
+}
+
+/// The glyph of a symbol typeface (Wingdings, Symbol) a bullet is drawn with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SymbolBullet {
+    /// The typeface (`a:buFont/@typeface`).
+    pub font: String,
+    /// The character as the file writes it (`a:buChar/@char`): a code of the typeface, or in the private use range U+F020..=U+F0FF.
+    pub code: String,
+    /// The percentage of the bullet's size the stand-in character is drawn smaller (`Bullet::size` is already scaled by it): the
+    /// typeface's own glyph is drawn at the full size.
+    pub stand_in_percent: u32,
 }
 
 /// How a numbered bullet counts (`a:buAutoNum`).
@@ -421,6 +449,10 @@ pub struct Paragraph {
     /// Space above and below the paragraph, in hundredths of a point.
     pub space_before: u32,
     pub space_after: u32,
+    /// Whether `space_before` is drawn as it is. Not so (the default) for a space before given in points: PowerPoint draws it rounded to a whole
+    /// point (Windows PowerPoint's PDF of paragraph-spacing-before-values: 3.75 is 4, 4.8 is 5, 5.5 is 6, 6.4 is 6, 7.2 is 7; the reason is not
+    /// known). A space before given as a percentage of the line (`a:spcPct`) is not rounded, nor is Word's.
+    pub space_before_exact: bool,
     /// Formatting of the paragraph mark; sets the height of an empty paragraph.
     pub end_style: RunStyle,
     /// The paragraph is a line after a line break (Shift+Enter, `a:br`) of
@@ -1208,6 +1240,8 @@ impl TextBody {
             }
             if let Some(v) = format.space_before {
                 paragraph.space_before = v;
+                // A space before set here is in points (`a:spcPts`), which PowerPoint rounds; only a percentage read from a file is exact.
+                paragraph.space_before_exact = false;
             }
             if let Some(v) = format.space_after {
                 paragraph.space_after = v;
@@ -1247,7 +1281,7 @@ impl TextBody {
                         scheme: s.name().to_string(),
                         start_at: if shown == start_for_level { start_for_level } else { 1 },
                     });
-                    paragraph.bullet = Some(Bullet { text, picture: None, size: 100_000, color: None, auto });
+                    paragraph.bullet = Some(Bullet { text, picture: None, size: 100_000, color: None, auto, symbol: None });
                     // A hanging indent the width of the mark, as PowerPoint sets.
                     if paragraph.indent >= 0 {
                         let hang = if scheme.is_some() { 342_900 } else { 228_600 };
@@ -1282,7 +1316,7 @@ impl TextBody {
                                 let (picture, size, color) = paragraph.bullet.as_ref()
                                     .map(|b| (b.picture.clone(), b.size, b.color))
                                     .unwrap_or((None, 100_000, None));
-                                paragraph.bullet = Some(Bullet { text, picture, size, color, auto });
+                                paragraph.bullet = Some(Bullet { text, picture, size, color, auto, symbol: None });
                             }
                         }
                     }
@@ -1375,6 +1409,23 @@ impl TextBody {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_autofit_shrink_gives_a_whole_point_size() {
+        // PowerPoint's PDFs (009, 032, 005): 16 pt and 13 pt at 90% are 14 pt and 12 pt, 18 pt at 90% is 16 pt, 12 pt at 92.5% is 11 pt.
+        assert_eq!(autofit_font_size_pt(16.0, 90_000), 14.0);
+        assert_eq!(autofit_font_size_pt(13.0, 90_000), 12.0);
+        assert_eq!(autofit_font_size_pt(18.0, 90_000), 16.0);
+        assert_eq!(autofit_font_size_pt(12.0, 92_500), 11.0);
+        // The halves go up.
+        assert_eq!(autofit_font_size_pt(10.0, 85_000), 9.0);
+        assert_eq!(autofit_font_size_pt(20.0, 92_500), 19.0);
+        assert_eq!(autofit_font_size_pt(20.0, 62_500), 13.0);
+        assert_eq!(autofit_font_size_pt(28.0, 62_500), 18.0);
+        assert_eq!(autofit_font_size_pt(4.0, 85_000), 3.0);
+        assert_eq!(autofit_font_size_pt(16.0, 100_000), 16.0);
+        assert_eq!(autofit_font_size_pt(10.5, 100_000), 10.5);
+    }
 
     #[test]
     fn paragraph_format_excludes_next_paragraph_at_range_end() {

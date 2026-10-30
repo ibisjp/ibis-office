@@ -6,8 +6,8 @@
 //! ページ種別（通常・奇数 / 偶数 / 先頭）切り替え、
 //! ページ設定（ヘッダー・フッターのオプション）との連携。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -53,6 +53,12 @@ pub(crate) struct HeaderFooterEditPanel {
     pub(crate) code: Entity<InputState>,
     /// The page layout view's page whose header or footer is edited in place on the paper.
     pub(crate) inline_page: Option<usize>,
+    /// The undo depth right after the last real-time reflection: the next one replaces that step while nothing
+    /// else was done since, so a run of typing is one Undo step (as the sort panel's real-time update).
+    live: Option<(usize, ibis_doc_model::SheetPrint)>,
+    /// The 「コード」 section is folded away until opened.
+    pub(crate) code_open: bool,
+    code_state: std::rc::Rc<crate::shell::chrome::collapsible_section::SectionState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -86,18 +92,35 @@ impl SlideEditor {
         let right = cx.new(|cx| InputState::new(window, cx).default_value(right_str));
         let code = cx.new(|cx| InputState::new(window, cx).default_value(raw_code.to_string()));
 
-        // Pressing Enter or leaving a section puts what was typed in the sheet.
-        let subscriptions = [&left, &center, &right]
+        // Every change is put in the sheet as it is typed. The section last focused is where a field is inserted.
+        let mut subscriptions: Vec<Subscription> = [(&left, HfActiveSection::Left), (&center, HfActiveSection::Center), (&right, HfActiveSection::Right)]
             .into_iter()
-            .map(|input| {
-                cx.subscribe_in(input, window, |this, _, event: &InputEvent, window, cx| {
-                    if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) && this.sheet_state().is_some_and(|s| s.header_footer_edit.as_ref().is_some_and(|p| p.inline_page.is_some())) {
+            .map(|(input, which)| {
+                cx.subscribe_in(input, window, move |this, _, event: &InputEvent, window, cx| match event {
+                    InputEvent::Focus => {
+                        if let Some(p) = this.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
+                            p.active_section = which;
+                        }
+                        cx.notify();
+                    }
+                    InputEvent::Change | InputEvent::PressEnter { .. } => {
+                        // What is typed in a section makes it the one the next field goes in.
+                        if let Some(p) = this.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
+                            p.active_section = which;
+                        }
                         this.apply_header_footer_edit(cx);
                         this.sync_hf_code_input(window, cx);
                     }
+                    InputEvent::Blur => {}
                 })
             })
             .collect();
+        // The code typed directly is split into the sections as it is typed (only while it is the field being typed in).
+        subscriptions.push(cx.subscribe_in(&code, window, |this, input, event: &InputEvent, window, cx| {
+            if matches!(event, InputEvent::Change) && input.focus_handle(cx).is_focused(window) {
+                this.apply_hf_code_direct(window, cx);
+            }
+        }));
         let focus = match section {
             HfActiveSection::Left => left.clone(),
             HfActiveSection::Center => center.clone(),
@@ -112,14 +135,19 @@ impl SlideEditor {
             right,
             code,
             inline_page: page,
+            live: None,
+            code_open: false,
+            code_state: Default::default(),
             _subscriptions: subscriptions,
         };
         if page.is_some() {
             focus.update(cx, |input, cx| input.focus(window, cx));
         }
+        // The editor is a pane beside the sheet (not a dialog over it): the page setup dialog it may have been opened
+        // from is closed, so there is nothing to go back to.
         if let Some(s) = self.sheet_state_mut() {
+            s.close_settings();
             s.header_footer_edit = Some(panel);
-            s.page_setup = true;
         }
         self.sidebar_open = true;
         cx.notify();
@@ -134,7 +162,13 @@ impl SlideEditor {
         let c = panel.center.read(cx).value().to_string();
         let r = panel.right.read(cx).value().to_string();
         let new_code = join_sections(&l, &c, &r);
+        let live = panel.live.clone();
 
+        // Only while the sheet is as this panel left it (an Undo, or an option changed, since is not replaced).
+        if live.as_ref().is_some_and(|(len, print)| *len == self.document.undo_len() && self.current_print().as_ref() == Some(print)) {
+            self.document.retract_last();
+        }
+        let before = self.document.undo_len();
         self.set_print(
             move |p| {
                 let hf = &mut p.header_footer;
@@ -150,6 +184,11 @@ impl SlideEditor {
             None,
             cx,
         );
+        let undo_len = self.document.undo_len();
+        let print = self.current_print();
+        if let Some(p) = self.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
+            p.live = print.filter(|_| undo_len > before).map(|print| (undo_len, print));
+        }
     }
 
     /// コード表示 input を現在の左右中の内容で同期
@@ -160,21 +199,25 @@ impl SlideEditor {
         let r = panel.right.read(cx).value().to_string();
         let new_code = join_sections(&l, &c, &r).unwrap_or_default();
         let code_input = panel.code.clone();
-        code_input.update(cx, |i, cx| i.set_value(new_code, window, cx));
+        if code_input.read(cx).value().as_ref() != new_code {
+            code_input.update(cx, |i, cx| i.set_value(new_code, window, cx));
+        }
     }
 
     /// アクティブな入力セクションにフィールドコードを挿入する
     pub(crate) fn insert_hf_field(&mut self, field_code: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(panel) = self.sheet_state().and_then(|s| s.header_footer_edit.as_ref()) else { return };
-        let target_input = match panel.active_section {
+        // The section being typed in, or else the one last focused.
+        let focused = [&panel.left, &panel.center, &panel.right].into_iter().find(|i| i.focus_handle(cx).is_focused(window)).cloned();
+        let target_input = focused.unwrap_or_else(|| match panel.active_section {
             HfActiveSection::Left => panel.left.clone(),
             HfActiveSection::Center => panel.center.clone(),
             HfActiveSection::Right => panel.right.clone(),
-        };
-        let mut cur = target_input.read(cx).value().to_string();
-        cur.push_str(field_code);
+        });
+        // At the caret of the section last focused, as Excel's header editor does.
         target_input.update(cx, |i, cx| {
-            i.set_value(cur, window, cx);
+            i.insert(field_code.to_string(), window, cx);
+            i.focus(window, cx);
         });
         self.apply_header_footer_edit(cx);
         self.sync_hf_code_input(window, cx);
@@ -188,9 +231,11 @@ impl SlideEditor {
         let left_input = panel.left.clone();
         let center_input = panel.center.clone();
         let right_input = panel.right.clone();
-        left_input.update(cx, |i, cx| i.set_value(l, window, cx));
-        center_input.update(cx, |i, cx| i.set_value(c, window, cx));
-        right_input.update(cx, |i, cx| i.set_value(r, window, cx));
+        for (input, value) in [(left_input, l), (center_input, c), (right_input, r)] {
+            if input.read(cx).value().as_ref() != value {
+                input.update(cx, |i, cx| i.set_value(value, window, cx));
+            }
+        }
         self.apply_header_footer_edit(cx);
     }
 
@@ -211,6 +256,7 @@ impl SlideEditor {
         let (l, c, r) = split_sections(raw_code);
         let Some(panel) = self.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) else { return };
         panel.page_kind = kind;
+        panel.live = None;
         let left_input = panel.left.clone();
         let center_input = panel.center.clone();
         let right_input = panel.right.clone();
@@ -222,39 +268,24 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// 全セクションをクリア
-    pub(crate) fn clear_header_footer_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(panel) = self.sheet_state().and_then(|s| s.header_footer_edit.as_ref()) else { return };
-        let left_input = panel.left.clone();
-        let center_input = panel.center.clone();
-        let right_input = panel.right.clone();
-        let code_input = panel.code.clone();
-        left_input.update(cx, |i, cx| i.set_value(String::new(), window, cx));
-        center_input.update(cx, |i, cx| i.set_value(String::new(), window, cx));
-        right_input.update(cx, |i, cx| i.set_value(String::new(), window, cx));
-        code_input.update(cx, |i, cx| i.set_value(String::new(), window, cx));
-        self.apply_header_footer_edit(cx);
-    }
-
-    /// ヘッダー／フッター編集パネルを閉じ、通常のページ設定に戻る
+    /// ヘッダー／フッター編集パネルを閉じる（入力は入力のたびにシートへ反映済み）
     pub(crate) fn close_header_footer_edit(&mut self, cx: &mut Context<Self>) {
-        self.apply_header_footer_edit(cx);
         if let Some(s) = self.sheet_state_mut() {
             s.header_footer_edit = None;
         }
         cx.notify();
     }
 
-    /// ヘッダー・フッター編集サイドバーパネル
+    /// ヘッダー・フッター編集サイドバーパネル: every change is put in the sheet as it is made.
     pub(crate) fn header_footer_edit_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let panel = self.sheet_state()?.header_footer_edit.as_ref()?;
         let target = panel.target;
         let page_kind = panel.page_kind;
-        let active_section = panel.active_section;
         let left_state = panel.left.clone();
         let center_state = panel.center.clone();
         let right_state = panel.right.clone();
         let code_state = panel.code.clone();
+        let (code_open, code_section) = (panel.code_open, panel.code_state.clone());
 
         let print = self.current_print()?;
         let hf = &print.header_footer;
@@ -264,200 +295,72 @@ impl SlideEditor {
             HfTarget::Footer => text("xlsx.footer-edit.title"),
         };
 
-        let choice = |id: SharedString, label: &'static str, on: bool, f: Box<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>)>| {
-            let b = Button::new(id).small().label(text(label));
-            let b = if on { b.primary() } else { b.ghost() };
-            b.on_click(cx.listener(move |this, _, _, cx| f(this, cx)))
+        // The pages the header or footer is for are chosen only when the options make them differ.
+        let kinds: Vec<(&'static str, &'static str, HfPageKind)> = [
+            ("hf-kind-odd", "xlsx.hf.odd-page", HfPageKind::Odd, true),
+            ("hf-kind-even", "xlsx.hf.even-page", HfPageKind::Even, hf.different_odd_even),
+            ("hf-kind-first", "xlsx.hf.first-page", HfPageKind::First, hf.different_first),
+        ].into_iter().filter(|k| k.3).map(|k| (k.0, k.1, k.2)).collect();
+        let page_kinds = (kinds.len() > 1).then(|| {
+            v_flex().gap_1()
+                .child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("_xlsx.apply-to-pages")))
+                .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).children(
+                    kinds.into_iter().map(|(id, label, kind)| crate::shell::chrome::segment_control::SegmentItem::label(id, text(label), page_kind == kind).on_click(cx.listener(move |e, _, w, cx| e.set_hf_page_kind(kind, w, cx))))))
+        });
+        // An option that takes a kind of page away puts the editor back on the standard pages.
+        let option = |id: &'static str, label: &'static str, on: bool, change: fn(&mut ibis_doc_model::SheetHeaderFooter, bool), cx: &mut Context<Self>| {
+            crate::shell::chrome::checkbox_button(id, text(label), on, false, cx.listener(move |e, _, w, cx| {
+                e.set_print(|p| change(&mut p.header_footer, !on), None, cx);
+                let hf = e.current_print().map(|p| p.header_footer).unwrap_or_default();
+                let page_kind = e.sheet_state().and_then(|s| s.header_footer_edit.as_ref()).map(|p| p.page_kind);
+                if (page_kind == Some(HfPageKind::First) && !hf.different_first) || (page_kind == Some(HfPageKind::Even) && !hf.different_odd_even) {
+                    e.set_hf_page_kind(HfPageKind::Odd, w, cx);
+                }
+                cx.notify();
+            }))
         };
+        let options_row = v_flex().gap_1()
+            .child(option("hf-opt-diff-first", "xlsx.hf.diff-first", hf.different_first, |h, v| h.different_first = v, cx))
+            .child(option("hf-opt-diff-odd-even", "xlsx.hf.diff-odd-even", hf.different_odd_even, |h, v| h.different_odd_even = v, cx))
+            .child(option("hf-opt-scale-doc", "xlsx.hf.scale-with-doc", hf.scale_with_doc, |h, v| h.scale_with_doc = v, cx))
+            .child(option("hf-opt-align-margins", "xlsx.hf.align-margins", hf.align_with_margins, |h, v| h.align_with_margins = v, cx));
 
-        // ページ種別切り替えボタン群
-        let page_kinds = h_flex()
-            .gap_1()
-            .items_center()
-            .child(choice(
-                "hf-kind-odd".into(),
-                "xlsx.hf.odd-page",
-                page_kind == HfPageKind::Odd,
-                Box::new(|this, cx| {
-                    // window が必要な場合はダミーで空呼び出しできるヘルパー
-                    this.apply_header_footer_edit(cx);
-                    if let Some(p) = this.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
-                        p.page_kind = HfPageKind::Odd;
-                    }
-                    cx.notify();
-                }),
-            ))
-            .child(choice(
-                "hf-kind-even".into(),
-                "xlsx.hf.even-page",
-                page_kind == HfPageKind::Even,
-                Box::new(|this, cx| {
-                    this.apply_header_footer_edit(cx);
-                    if let Some(p) = this.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
-                        p.page_kind = HfPageKind::Even;
-                    }
-                    cx.notify();
-                }),
-            ))
-            .child(choice(
-                "hf-kind-first".into(),
-                "xlsx.hf.first-page",
-                page_kind == HfPageKind::First,
-                Box::new(|this, cx| {
-                    this.apply_header_footer_edit(cx);
-                    if let Some(p) = this.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
-                        p.page_kind = HfPageKind::First;
-                    }
-                    cx.notify();
-                }),
-            ));
-
-        // オプショントグル
-        let options_row = v_flex()
-            .gap_1()
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(choice(
-                        "hf-opt-diff-first".into(),
-                        "xlsx.hf.diff-first",
-                        hf.different_first,
-                        Box::new(|this, cx| this.set_print(|p| p.header_footer.different_first = !p.header_footer.different_first, None, cx)),
-                    ))
-                    .child(choice(
-                        "hf-opt-diff-odd-even".into(),
-                        "xlsx.hf.diff-odd-even",
-                        hf.different_odd_even,
-                        Box::new(|this, cx| this.set_print(|p| p.header_footer.different_odd_even = !p.header_footer.different_odd_even, None, cx)),
-                    )),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(choice(
-                        "hf-opt-scale-doc".into(),
-                        "xlsx.hf.scale-with-doc",
-                        hf.scale_with_doc,
-                        Box::new(|this, cx| this.set_print(|p| p.header_footer.scale_with_doc = !p.header_footer.scale_with_doc, None, cx)),
-                    ))
-                    .child(choice(
-                        "hf-opt-align-margins".into(),
-                        "xlsx.hf.align-margins",
-                        hf.align_with_margins,
-                        Box::new(|this, cx| this.set_print(|p| p.header_footer.align_with_margins = !p.header_footer.align_with_margins, None, cx)),
-                    )),
-            );
-
-        // フィールド挿入ボタン群
+        // フィールド挿入ボタン群: they go in at the caret of the section last focused.
         let field_buttons = h_flex().flex_wrap().gap_1().children(FIELD_BUTTONS.iter().map(|&(id, label, code)| {
-            Button::new(id).small().label(text(label)).on_click(cx.listener(move |this, _, window, cx| {
+            crate::shell::chrome::action_button(id).small().label(text(label)).on_click(cx.listener(move |this, _, window, cx| {
                 this.insert_hf_field(code, window, cx);
             }))
         }));
 
-        // セクション選択ボタングループ
-        let section_selector = h_flex()
-            .gap_1()
-            .items_center()
-            .child(choice(
-                "hf-sec-left".into(),
-                "xlsx.hf.left-section",
-                active_section == HfActiveSection::Left,
-                Box::new(|this, cx| {
-                    if let Some(p) = this.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
-                        p.active_section = HfActiveSection::Left;
-                    }
-                    cx.notify();
-                }),
-            ))
-            .child(choice(
-                "hf-sec-center".into(),
-                "xlsx.hf.center-section",
-                active_section == HfActiveSection::Center,
-                Box::new(|this, cx| {
-                    if let Some(p) = this.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
-                        p.active_section = HfActiveSection::Center;
-                    }
-                    cx.notify();
-                }),
-            ))
-            .child(choice(
-                "hf-sec-right".into(),
-                "xlsx.hf.right-section",
-                active_section == HfActiveSection::Right,
-                Box::new(|this, cx| {
-                    if let Some(p) = this.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
-                        p.active_section = HfActiveSection::Right;
-                    }
-                    cx.notify();
-                }),
-            ));
-
-        let section_block = |label: &'static str, state: &Entity<InputState>, sec: HfActiveSection| {
-            let is_active = active_section == sec;
-            v_flex()
-                .gap_1()
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .items_center()
-                        .child(div().text_size(px(12.)).font_weight(if is_active { FontWeight::BOLD } else { FontWeight::NORMAL }).child(text(label)))
-                        .child(Button::new(format!("sec-focus-{label}")).small().ghost().label(if is_active { "●" } else { "○" }).on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(p) = this.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
-                                p.active_section = sec;
-                            }
-                            cx.notify();
-                        }))),
-                )
-                .child(Input::new(state).small().cleanable(true))
+        let section_block = |label: &'static str, state: &Entity<InputState>| {
+            v_flex().gap_1()
+                .child(div().text_sm().child(text(label)))
+                .child(crate::shell::chrome::text_field(state).full_width())
         };
 
-        let direct_code_row = v_flex()
-            .gap_1()
-            .child(div().text_size(px(12.)).child(text("xlsx.hf.code-preview")))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(div().flex_1().child(Input::new(&code_state).small().cleanable(true)))
-                    .child(Button::new("hf-apply-code").primary().small().label(text("xlsx.hf.apply-code")).on_click(cx.listener(move |this, _, window, cx| {
-                        this.apply_hf_code_direct(window, cx);
-                    }))),
-            );
-
-        let bottom_actions = h_flex()
-            .justify_between()
-            .items_center()
-            .child(Button::new("hf-back").small().ghost().label(text("xlsx.hf.back")).on_click(cx.listener(|this, _, _, cx| this.close_header_footer_edit(cx))))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(Button::new("hf-clear").small().ghost().label(text("xlsx.hf.clear")).on_click(cx.listener(|this, _, window, cx| this.clear_header_footer_edit(window, cx))))
-                    .child(Button::new("hf-apply").small().primary().label(text("xlsx.hf.apply")).on_click(cx.listener(|this, _, window, cx| {
-                        this.apply_header_footer_edit(cx);
-                        this.sync_hf_code_input(window, cx);
-                    }))),
-            );
+        let direct_code_row = div().mx(px(-18.)).child(crate::shell::chrome::collapsible_section(
+            "hf-code-section", text("xlsx.hf.code-preview"), code_open,
+            div().px(px(18.)).child(crate::shell::chrome::text_field(&code_state).full_width()).into_any_element(),
+            code_section, self.sidebar_scroll.clone(),
+            cx.listener(move |e, _, _, cx| {
+                if let Some(p) = e.sheet_state_mut().and_then(|s| s.header_footer_edit.as_mut()) {
+                    p.code_open = !code_open;
+                }
+                cx.notify();
+            })));
 
         let body = v_flex()
             .gap_2()
-            .px(px(18.))
-            .py(px(8.))
-            .child(div().text_size(px(11.)).text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("_xlsx.apply-to-pages")))
-            .child(page_kinds)
-            .child(div().text_size(px(11.)).text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("_xlsx.options")))
+            .p_0()
+            .children(page_kinds)
+            .child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("_xlsx.options")))
             .child(options_row)
-            .child(div().text_size(px(11.)).text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("_xlsx.insert-field-into-section")))
-            .child(section_selector)
+            .child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("_xlsx.insert-field-into-section")))
             .child(field_buttons)
-            .child(section_block("xlsx.hf.left-section", &left_state, HfActiveSection::Left))
-            .child(section_block("xlsx.hf.center-section", &center_state, HfActiveSection::Center))
-            .child(section_block("xlsx.hf.right-section", &right_state, HfActiveSection::Right))
-            .child(direct_code_row)
-            .child(bottom_actions);
+            .child(section_block("xlsx.hf.left-section", &left_state))
+            .child(section_block("xlsx.hf.center-section", &center_state))
+            .child(section_block("xlsx.hf.right-section", &right_state))
+            .child(direct_code_row);
 
         Some(SidebarPanel { title: title.into(), body: body.into_any_element() })
     }

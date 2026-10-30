@@ -201,16 +201,4 @@ impl SlideEditor {
         let actions = crate::shell::spell_panel::SpellActions { change: Self::spelling_change, ignore: Self::spelling_ignore, learn: Self::spelling_learn, step: Self::spelling_next, close: Self::close_spelling };
         Some(crate::shell::spell_panel::sidebar(view, actions, cx))
     }
-
-    /// ツール > 類義語辞典…: 選択中の語句の類義語を検索
-    pub(crate) fn open_pptx_thesaurus(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.edited_text().or_else(|| self.selected_shapes().into_iter().find_map(|s| s.text_body().map(|b| b.text()))).unwrap_or_default();
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            self.status = Some(crate::shell::i18n::text("pptx.thesaurus.select-word").into());
-        } else {
-            self.status = Some(crate::shell::i18n::format("pptx.thesaurus.lookup", &[("word", &trimmed)]).into());
-        }
-        cx.notify();
-    }
 }

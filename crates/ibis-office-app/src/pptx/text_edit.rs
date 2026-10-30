@@ -36,6 +36,10 @@ pub(crate) struct TextEditing {
     /// The other corner of the cells selected with it (Shift+click), for
     /// セルの結合.
     pub(crate) cell_anchor: Option<(usize, usize)>,
+    /// The edit gave the shape an empty text body (its undo length right
+    /// after). Left with no input at all, the body is taken back, so a mere
+    /// click does not change the shape (and its undo history).
+    pub(crate) added_body: Option<usize>,
 }
 
 impl TextEditing {
@@ -217,7 +221,7 @@ impl SlideEditor {
         };
         let Some(len) = len else { return };
         if let Some(state) = self.pptx_mut() {
-            state.edit = Some(TextEditing { shape, anchor: len, caret: len, marked: None, is_new: false, typing: false, cell: Some(cell), cell_anchor: None });
+            state.edit = Some(TextEditing { shape, anchor: len, caret: len, marked: None, is_new: false, typing: false, cell: Some(cell), cell_anchor: None, added_body: None });
         }
         self.set_selection(vec![shape]);
         self.focus_handle.focus(window, cx);
@@ -237,6 +241,7 @@ impl SlideEditor {
             s.outline_edit = None;
         }
         let slide = self.current_slide;
+        let mut added_body = None;
         // A shape with no text yet gets a body to type into.
         if let Some(s) = self.slide().shape(shape)
             && s.text_body().is_none()
@@ -249,16 +254,39 @@ impl SlideEditor {
                 log::warn!("edit rejected: {err}");
                 return;
             }
+            added_body = Some(self.document.undo_len());
         }
         let Some(len) = self.slide().shape(shape).and_then(|s| s.text_body()).map(|b| b.text().chars().count()) else { return };
         let anchor = if select_all { 0 } else { len };
         if let Some(state) = self.pptx_mut() {
-            state.edit = Some(TextEditing { shape, anchor, caret: len, marked: None, is_new, typing: false, cell: None, cell_anchor: None });
+            state.edit = Some(TextEditing { shape, anchor, caret: len, marked: None, is_new, typing: false, cell: None, cell_anchor: None, added_body });
         }
         self.set_selection(vec![shape]);
         self.focus_handle.focus(window, cx);
         self.restart_caret_blink(cx);
         cx.notify();
+    }
+
+    /// Take back the empty text body that a click gave a shape, when nothing
+    /// was typed, and leave the text edit. A change of the shape other than
+    /// its text (a fill, say) then sees the shape as it was, which the saved
+    /// file can hold. Returns whether it did.
+    pub(crate) fn drop_untouched_body(&mut self) -> bool {
+        let untouched = self.text_editing().is_some_and(|e| {
+            e.cell.is_none() && e.marked.is_none() && e.added_body.is_some_and(|n| n == self.document.undo_len())
+                && self.slide().shape(e.shape).and_then(|s| s.text_body()).is_none_or(|b| b.text().trim().is_empty())
+        });
+        if !untouched || self.doc_state().is_some_and(|s| s.box_edit.is_some()) || self.editing.is_some() {
+            return false;
+        }
+        if let Some(s) = self.pptx_mut() {
+            s.pending_click = None;
+            s.goal_x = None;
+            s.edit = None;
+        }
+        self.document.retract_last();
+        self.sync_selection();
+        true
     }
 
     /// Finish editing (a new text box left empty goes).
@@ -286,6 +314,9 @@ impl SlideEditor {
         if edit.is_new && empty {
             self.document.retract_last();
             self.set_selection(Vec::new());
+        } else if empty && edit.added_body.is_some_and(|n| n == self.document.undo_len()) {
+            // Nothing was typed: the body the edit added goes (no redo step).
+            self.document.retract_last();
         }
         self.sync_selection();
         cx.notify();
@@ -445,7 +476,7 @@ impl SlideEditor {
         let url = autolink_target(&word);
         let Some(url) = url else { return };
         let slide = self.current_slide;
-        let command = Command::SetCharacterFormat { slide, shape: edit.shape, start, end, format: ibis_doc_model::CharacterFormat { link: Some(Some(ibis_doc_model::SlideLink::Url(url))), ..Default::default() } };
+        let command = Command::SetCharacterFormat { slide, shape: edit.shape, start, end, format: ibis_doc_model::CharacterFormat { link: Some(Some(ibis_doc_model::SlideLink::Url(url))), color:Some(ibis_doc_model::Rgb(0x0563c1)),underline:Some(true), ..Default::default() } };
         let commands = self.in_edited_cell(vec![command]);
         self.run(commands, cx);
     }
@@ -549,11 +580,12 @@ impl SlideEditor {
             for entry in item.entries() {
                 match entry {
                     ClipboardEntry::String(s) => s.text().hash(&mut hasher),
-                    ClipboardEntry::Image(i) => i.bytes.len().hash(&mut hasher),
+                    ClipboardEntry::Image(i) => i.bytes.hash(&mut hasher),
                     ClipboardEntry::ExternalPaths(p) => p.paths().hash(&mut hasher),
                 }
             }
         }
+        crate::native_shape_clipboard::read().hash(&mut hasher);
         hasher.finish()
     }
 
@@ -562,6 +594,7 @@ impl SlideEditor {
     /// apart by a blank line). The shapes themselves are kept here (for pasting here).
     pub(crate) fn write_shapes_to_system_clipboard(&mut self, cx: &mut Context<Self>) {
         let shapes: Vec<ibis_doc_model::Shape> = self.selected_shapes().into_iter().cloned().collect();
+        if self.copy_office_shapes(&shapes,cx){return;}
         let picture = match shapes.as_slice() {
             [one] => match &one.kind {
                 ibis_doc_model::ShapeKind::Picture(p) => self.presentation().media(p.media).and_then(|m| {
@@ -603,7 +636,7 @@ impl SlideEditor {
         if !external_is_newer && self.paste_shapes(cx) {
             return true;
         }
-        self.paste_text_as_text_box(window, cx) || self.paste_shapes(cx)
+        self.paste_office_shapes(cx) || self.paste_text_as_text_box(window, cx) || self.paste_shapes(cx)
     }
 
     /// ⌘V with no text edited and no shapes copied: the clipboard's text in a new text box in the middle of the slide.
@@ -910,7 +943,7 @@ impl SlideEditor {
         let mut total = 0.0;
         for (i, p) in body.paragraphs.iter().enumerate() {
             let style = body.style.with_run(p.runs.first().map(|r| &r.style).unwrap_or(&p.end_style));
-            let size = style.font_size_pt() * font_scale * px_per_point;
+            let size = ibis_doc_model::autofit_font_size_pt(style.font_size_pt(), body.font_scale) * px_per_point;
             let height = match p.line_spacing {
                 Some(LineSpacing::Percent(v)) => size * 1.2 * v as f32 / 100_000.0,
                 Some(LineSpacing::Points(v)) => v as f32 / 100.0 * px_per_point,

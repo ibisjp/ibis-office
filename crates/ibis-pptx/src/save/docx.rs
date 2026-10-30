@@ -245,6 +245,11 @@ enum AtomKey {
 /// the link it is part of.
 type Atom<'a> = (AtomKey, &'a RunFormat, &'a Option<String>, &'a Option<Link>, &'a Option<Revision>);
 
+/// How many positions the save tells apart in `p` (what the reader keeps a source node for each of).
+pub(crate) fn atom_count(p: &FlowParagraph) -> usize {
+    atoms(p).len()
+}
+
 fn atoms(p: &FlowParagraph) -> Vec<Atom<'_>> {
     let mut out = Vec::new();
     for run in &p.runs {
@@ -6563,8 +6568,16 @@ impl Writer<'_> {
         if c0 != c1 {
             self.val(rpr, "rStyle", c1.as_deref(), o);
         }
-        if f0.font != f1.font || f0.east_asian_font != f1.east_asian_font || f0.cs_font != f1.cs_font {
+        if f0.font != f1.font || f0.east_asian_font != f1.east_asian_font || f0.cs_font != f1.cs_font || f0.east_asia_hint != f1.east_asia_hint {
             let fonts = self.ensure(rpr, "rFonts", o);
+            if f0.east_asia_hint != f1.east_asia_hint {
+                // `w:hint` is the run's own: a copy of another run's takes the model's (the reader reads `eastAsia` as true, else false).
+                match f1.east_asia_hint {
+                    Some(true) => self.doc.set_attr(fonts, "w:hint", "eastAsia"),
+                    Some(false) => self.doc.set_attr(fonts, "w:hint", "default"),
+                    None => self.doc.remove_attr(fonts, "w:hint"),
+                }
+            }
             if f0.font != f1.font {
                 for a in ["w:asciiTheme", "w:hAnsiTheme"] {
                     self.doc.remove_attr(fonts, a);
@@ -6592,6 +6605,13 @@ impl Writer<'_> {
                 match &f1.cs_font {
                     Some(f) => self.doc.set_attr(fonts, "w:cs", f),
                     None => self.doc.remove_attr(fonts, "w:cs"),
+                }
+            }
+            if f0.east_asia_hint != f1.east_asia_hint {
+                match f1.east_asia_hint {
+                    Some(true)=>self.doc.set_attr(fonts,"w:hint","eastAsia"),
+                    Some(false)=>self.doc.set_attr(fonts,"w:hint","default"),
+                    None=>self.doc.remove_attr(fonts,"w:hint"),
                 }
             }
             if self.doc.attributes(fonts).is_empty() {

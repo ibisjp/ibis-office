@@ -94,8 +94,11 @@ pub(crate) fn rotated_picture(
     let (fw, fh, bw, bh) = (fw_emu * k, fh_emu * k, bw_emu * k, bh_emu * k);
 
     // The whole picture, placed so the cropped part fills the frame.
-    let (ix, iy) = (-frac(crop.left) / visible_w * fw, -frac(crop.top) / visible_h * fh);
-    let (iw, ih) = (fw / visible_w, fh / visible_h);
+    // (The picture's own area: the frame less the fill rectangle's insets, which may be negative.)
+    let [fl, ft, fr, fb] = look.fill_rect.map_or([0.0; 4], |r| r.map(|v| v as f64 / 100_000.0));
+    let (rx, ry, rw, rh) = (fw * fl, fh * ft, fw * (1.0 - fl - fr), fh * (1.0 - ft - fb));
+    let (ix, iy) = (rx - frac(crop.left) / visible_w * rw, ry - frac(crop.top) / visible_h * rh);
+    let (iw, ih) = (rw / visible_w, rh / visible_h);
     let (sx, sy) = (if flip_h { -1.0 } else { 1.0 }, if flip_v { -1.0 } else { 1.0 });
     let clip_shape = match subpaths {
         Some(subpaths) => {
@@ -113,13 +116,21 @@ pub(crate) fn rotated_picture(
     let primitives = filter_primitives(look);
     let filter = if primitives.is_empty() { String::new() } else { format!(r#"<filter id="fx" color-interpolation-filters="sRGB" x="0" y="0" width="1" height="1">{primitives}</filter>"#) };
     let filter_attr = if filter.is_empty() { "" } else { r#" filter="url(#fx)""# };
+    // Flip, then rotate, about the frame's centre (OOXML's order).
+    let turn = format!("translate({cx:.3} {cy:.3}) rotate({deg}) scale({sx} {sy}) translate({ncx:.3} {ncy:.3})", cx = fw / 2.0, cy = fh / 2.0, deg = degrees, sx = sx, sy = sy, ncx = -fw / 2.0, ncy = -fh / 2.0);
+    // The picture turns with the outline, or stays upright under the turned outline (`rotWithShape` 0: the outline carries the turn).
+    let (clip_shape, open, close) = if look.upright {
+        let turned = clip_shape.replacen("<path ", &format!("<path transform=\"{turn}\" "), 1).replacen("<rect ", &format!("<rect transform=\"{turn}\" "), 1);
+        (turned, String::new(), "")
+    } else {
+        (clip_shape, format!(r#"<g transform="{turn}">"#), "</g>")
+    };
     let svg = format!(
         concat!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" "#,
             r#"width="{w}" height="{h}" viewBox="{vx:.3} {vy:.3} {bw:.3} {bh:.3}">"#,
             r#"<defs><clipPath id="frame">{clip_shape}</clipPath>{filter}</defs>"#,
-            // Flip, then rotate, about the frame's centre (OOXML's order).
-            r#"<g transform="translate({cx:.3} {cy:.3}) rotate({deg}) scale({sx} {sy}) translate({ncx:.3} {ncy:.3})">"#,
+            r#"{open}"#,
             r#"<g clip-path="url(#frame)"><image{filter_attr} x="{ix:.3}" y="{iy:.3}" width="{iw:.3}" height="{ih:.3}" preserveAspectRatio="none" xlink:href="data:{mime};base64,"#,
         ),
         w = stated(bw.round().max(1.0)),
@@ -131,13 +142,7 @@ pub(crate) fn rotated_picture(
         clip_shape = clip_shape,
         filter = filter,
         filter_attr = filter_attr,
-        cx = fw / 2.0,
-        cy = fh / 2.0,
-        deg = degrees,
-        sx = sx,
-        sy = sy,
-        ncx = -fw / 2.0,
-        ncy = -fh / 2.0,
+        open = open,
         ix = ix,
         iy = iy,
         iw = iw,
@@ -146,7 +151,9 @@ pub(crate) fn rotated_picture(
     );
     let mut out = svg.into_bytes();
     base64(data, &mut out);
-    out.extend_from_slice(br#""/></g></g></svg>"#);
+    out.extend_from_slice(br#""/></g>"#);
+    out.extend_from_slice(close.as_bytes());
+    out.extend_from_slice(b"</svg>");
     RotatedPicture { svg: out, bounds }
 }
 
@@ -401,6 +408,10 @@ pub(crate) struct Look {
     pub effects: ibis_doc_model::BlipEffects,
     pub soft_edge: Option<i64>,
     pub artistic_effect: Option<ibis_doc_model::ArtisticEffect>,
+    /// The area the picture covers, as insets from the frame in 100 000ths (`a:stretch/a:fillRect`); a turned picture's.
+    pub fill_rect: Option<[i32; 4]>,
+    /// The picture stays upright while the outline that cuts it turns (`rotWithShape` 0).
+    pub upright: bool,
 }
 
 fn rgb_text(c: ibis_doc_model::Rgb) -> String {

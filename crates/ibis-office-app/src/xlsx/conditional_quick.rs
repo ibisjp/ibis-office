@@ -228,7 +228,7 @@ pub(crate) fn menu() -> MenuEntry {
             MenuEntry::Separator,
             MenuItem::new("xlsx.cf-clear-selection", t("docx.conditional-quick.clear-rules-selected-cells")).on(|this, _, cx| this.clear_conditional_selection(cx)).into(),
             MenuItem::new("xlsx.cf-clear-sheet", t("docx.conditional-quick.clear-rules-entire-sheet")).on(|this, _, cx| this.clear_sheet_conditional(cx)).into(),
-            MenuItem::tr("xlsx.conditional").on(|this, window, cx| this.open_conditional(None, window, cx)).into(),
+            MenuItem::new("xlsx.conditional",t("xlsx.cf.manage-title")).on(|this, window, cx| this.open_conditional_manager(window, cx)).into(),
         ],
     )
     .into()

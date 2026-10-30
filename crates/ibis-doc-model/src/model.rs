@@ -2124,6 +2124,13 @@ impl Presentation {
         if old_background.is_none_or(|b| *b == old.background) {
             out.background = new_layout.background.clone();
         }
+        // Empty placeholders with no destination in the new layout disappear.
+        // Content already entered by the user stays as an ordinary shape.
+        if old.layout != Some(layout) {
+            let unmatched: Vec<_> = out.placeholders.iter().filter(|(_,ph)|Layout::matching(&new_layout.placeholders,&ph.placeholder,true).is_none()).map(|(id,_)|*id).collect();
+            out.shapes.retain(|shape|!unmatched.contains(&shape.id)||!shape.text_body().is_some_and(|body|body.is_empty() && body.paragraphs.iter().all(|p|p.runs.iter().all(|r|r.style.field.is_none()))));
+            for id in unmatched {out.placeholders.remove(&id);}
+        }
         for shape in &mut out.shapes {
             let Some(ph) = out.placeholders.get_mut(&shape.id) else { continue };
             if ph.own_frame {

@@ -91,6 +91,12 @@ pub fn parse_input(text: &str, date1904: bool) -> Typed {
         };
         return Typed::Value(CellValue::Number(n), Some(format));
     }
+    // Signed literals have already been read as numbers/dates above. Remaining
+    // leading signs introduce an expression, while apostrophe-escaped text was
+    // handled before numeric parsing. Preserve the sign as a unary operator.
+    if text.starts_with(['+', '-']) && text.len()>1 {
+        return Typed::Formula(text.to_string());
+    }
     Typed::Value(CellValue::Text(text.to_string()), None)
 }
 
@@ -204,6 +210,17 @@ mod tests {
         assert_eq!(value("1234567890123456789"), (CellValue::Number(1234567890123450000.0), None));
         assert_eq!(parse_input("-12:00", true), Typed::Value(CellValue::Number(-0.5), Some("[h]:mm")));
         assert_eq!(parse_input("-1904/01/02", true), Typed::Value(CellValue::Number(-1.0), Some("yyyy/m/d")));
+    }
+
+    #[test]
+    fn signed_formula_entry_preserves_typed_literals() {
+        for text in ["+A1", "-A1", "+SUM(A1:A3)", "-2^2", "+1+2"] {
+            assert_eq!(parse_input(text,false),Typed::Formula(text.to_string()));
+        }
+        assert_eq!(value("-123"),(CellValue::Number(-123.),None));
+        assert_eq!(value("+123"),(CellValue::Number(123.),None));
+        assert_eq!(value("-50%"),(CellValue::Number(-0.5),Some("0%")));
+        assert_eq!(value("'+A1"),(CellValue::Text("+A1".into()),None));
     }
 
     #[test]

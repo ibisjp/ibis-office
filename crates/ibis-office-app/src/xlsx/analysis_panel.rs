@@ -9,8 +9,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -144,6 +144,28 @@ impl Tool {
             }
             _ => Vec::new(),
         }
+    }
+}
+
+/// The ▲▼ of a number box of the tools: counts step by 1, probabilities (α, damping, p) by 0.01, percentages by 1.
+/// Free values (means, variances, bounds, seeds…) have none.
+fn param_spinner(label: &str) -> Option<crate::shell::chrome::SpinnerSpec> {
+    use crate::shell::chrome::SpinnerSpec;
+    match label {
+        "xlsx.analysis.field.rows-per-sample"
+        | "xlsx.analysis.field.kth-largest"
+        | "xlsx.analysis.field.kth-smallest"
+        | "xlsx.analysis.field.interval"
+        | "xlsx.analysis.field.period"
+        | "xlsx.analysis.field.random-count"
+        | "xlsx.analysis.field.variables"
+        | "xlsx.analysis.field.count"
+        | "xlsx.analysis.field.trials"
+        | "xlsx.analysis.field.repeat-each"
+        | "xlsx.analysis.field.repeat-sequence" => Some(SpinnerSpec::new(1.0).min(1.0).integer_only()),
+        "xlsx.analysis.field.alpha" | "xlsx.analysis.field.damping" | "xlsx.analysis.field.p-value" => Some(SpinnerSpec::new(0.01).range(0.0, 1.0)),
+        "xlsx.analysis.field.confidence-level" => Some(SpinnerSpec::new(1.0).range(0.0, 100.0)),
+        _ => None,
     }
 }
 
@@ -329,7 +351,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.analysis = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -793,32 +815,22 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let caption = |id: &str| div().text_size(px(13.)).child(text(id));
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let caption = |id: &str| div().text_sm().child(text(id));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
 
         // The tool.
         body = body.child(caption("xlsx.analysis.field.tool"));
-        let entity = cx.entity().downgrade();
         let current = p.tool;
         let current_dist = p.dist;
-        body = body.child(mark(
-            "tool",
-            Button::new("analysis-tool")
-                .small()
-                .label(text(current.id()))
-                .dropdown_menu({
-                    let entity = entity.clone();
-                    move |menu, _, _| {
-                        Tool::ALL.iter().fold(menu, |menu, &t| {
-                            let entity = entity.clone();
-                            menu.item(PopupMenuItem::new(text(t.id())).on_click(move |_, window, cx| {
-                                entity.update(cx, |this, cx| this.analysis_choose(t, Dist::Uniform, window, cx)).ok();
-                            }))
-                        })
-                    }
-                })
-                .into_any_element(),
-        ));
+        let choices=Tool::ALL.iter().map(|&t|crate::shell::chrome::MenuItem::new("analysis-tool-choice",text(t.id())).checked(t==current).on(move|this,w,cx|this.analysis_choose(t,Dist::Uniform,w,cx)).into()).collect();
+        body=body.child(mark("tool",div().w(px(224.)).child(crate::shell::chrome::Dropdown::from_entries("analysis-tool",text(current.id()),choices,true,0,&cx.weak_entity()).into_any_element()).into_any_element()));
 
         // Input ranges.
         let (first_caption, second_caption) = current.ranges();
@@ -828,18 +840,9 @@ impl SlideEditor {
                     h_flex()
                         .items_center()
                         .justify_between()
-                        .child(caption(first_caption))
-                        .child(mark(
-                            "analysis-use-input",
-                            Button::new("analysis-use-input")
-                                .small()
-                                .ghost()
-                                .label(text("xlsx.subtotal-use-selection"))
-                                .on_click(cx.listener(|this, _, window, cx| this.set_analysis_range_from_selection("input", window, cx)))
-                                .into_any_element(),
-                        )),
+                        .child(caption(first_caption)),
                 )
-                .child(mark("input", Input::new(&p.input).small().cleanable(true).into_any_element()));
+                .child(mark("input", super::range_field::local_range_field(&p.input,"analysis-input",false,cx).into_any_element()));
         }
         let has_second = second_caption.is_some() && (current != Tool::Random || current_dist == Dist::Discrete);
         if has_second {
@@ -849,64 +852,39 @@ impl SlideEditor {
                         h_flex()
                             .items_center()
                             .justify_between()
-                            .child(caption(c))
-                            .child(mark(
-                                "analysis-use-input2",
-                                Button::new("analysis-use-input2")
-                                    .small()
-                                    .ghost()
-                                    .label(text("xlsx.subtotal-use-selection"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.set_analysis_range_from_selection("input2", window, cx)))
-                                    .into_any_element(),
-                            )),
+                            .child(caption(c)),
                     )
-                    .child(mark("input2", Input::new(&p.input2).small().cleanable(true).into_any_element()));
+                    .child(mark("input2", super::range_field::local_range_field(&p.input2,"analysis-input2",false,cx).into_any_element()));
             }
         }
 
+        let entity = cx.entity().downgrade();
         // Random numbers: the distribution.
         if current == Tool::Random {
             body = body.child(caption("xlsx.analysis.field.distribution"));
             body = body.child(mark(
                 "dist",
-                Button::new("analysis-dist")
-                    .small()
-                    .label(text(current_dist.id()))
-                    .dropdown_menu({
-                        let entity = entity.clone();
-                        move |menu, _, _| {
-                            Dist::ALL.iter().fold(menu, |menu, &d| {
-                                let entity = entity.clone();
-                                menu.item(PopupMenuItem::new(text(d.id())).on_click(move |_, window, cx| {
-                                    entity.update(cx, |this, cx| this.analysis_choose(Tool::Random, d, window, cx)).ok();
-                                }))
-                            })
-                        }
-                    })
+                crate::shell::chrome::Dropdown::new("analysis-dist",text(current_dist.id()),
+                    Dist::ALL.iter().map(|&dist|crate::shell::chrome::DropdownItem::new(text(dist.id()))
+                        .checked(dist==current_dist).on_select(std::rc::Rc::new(move|e,w,cx|e.analysis_choose(Tool::Random,dist,w,cx)))).collect(),&cx.weak_entity())
                     .into_any_element(),
             ));
         }
 
         // Grouped by.
         if current.grouped() {
-            let by_rows = p.by_rows;
-            let radio = |id: &'static str, on: bool, label: &'static str, rows: bool| {
-                mark(
-                    id,
-                    Button::new(id)
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if on { "◉" } else { "○" }, text(label)))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(p) = this.wb_mut().panels.analysis.as_mut() {
-                                p.by_rows = rows;
-                            }
+            body = body.child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
+                .label(text("xlsx.analysis.field.grouped-by"))
+                .children([(false,"_xlsx.column","grouped-columns"),(true,"_xlsx.row","grouped-rows")].into_iter().map(|(rows,label,id)| {
+                    let ui=p.ui.clone();
+                    crate::shell::chrome::segment_control::SegmentItem::label(id,text(label),p.by_rows==rows)
+                        .on_bounds(move|b|{ui.borrow_mut().insert(id.to_string(),b);})
+                        .on_click(cx.listener(move|this,_,_,cx|{
+                            if let Some(p) = this.wb_mut().panels.analysis.as_mut() { p.by_rows=rows; }
                             cx.notify();
                         }))
-                        .into_any_element(),
-                )
-            };
-            body = body.child(caption("xlsx.analysis.field.grouped-by")).child(h_flex().gap_1().child(radio("grouped-columns", !by_rows, "_xlsx.column", false)).child(radio("grouped-rows", by_rows, "_xlsx.row", true)));
+                }))
+            );
         }
         let toggle = |id: String, on: bool, label: &'static str, set: Rc<dyn Fn(&mut AnalysisPanel)>| {
             mark(
@@ -932,7 +910,13 @@ impl SlideEditor {
         // Numbers.
         let params = current.params(current_dist);
         for (i, (label, _)) in params.iter().enumerate() {
-            body = body.child(caption(label)).child(mark(&format!("param-{i}"), Input::new(&p.params[i]).small().cleanable(true).into_any_element()));
+            let mut field = crate::shell::chrome::text_field(&p.params[i]);
+            if *label == "xlsx.analysis.field.confidence-level" { field = field.unit("%",px(20.)); }
+            if let Some(spec) = param_spinner(label) {
+                // The tool runs from its OK button, not on Enter: a step only changes the box.
+                field = field.spinner(format!("analysis-param-{i}"), spec, cx, |_, _, _, _| {});
+            }
+            body = body.child(caption(label)).child(mark(&format!("param-{i}"), field.into_any_element()));
         }
 
         // Options.
@@ -945,11 +929,7 @@ impl SlideEditor {
         let out_radio = |id: &'static str, on: bool, label: &'static str, sheet: bool| {
             mark(
                 id,
-                Button::new(id)
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if on { "◉" } else { "○" }, text(label)))
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                crate::shell::chrome::radio_button(id, on, false, text(label), cx.listener(move |this, _, window, cx| {
                         let out_input = this.wb_mut().panels.analysis.as_mut().map(|p| {
                             p.new_sheet = sheet;
                             p.output.clone()
@@ -967,37 +947,19 @@ impl SlideEditor {
             .gap_1()
             .items_center()
             .justify_between()
-            .child(h_flex().gap_1().child(out_radio("output-range", !new_sheet, "xlsx.analysis.field.output", false)).child(out_radio("output-new-sheet", new_sheet, "_xlsx.new-worksheet", true)));
+            .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow).child(out_radio("output-range", !new_sheet, "xlsx.analysis.field.output", false)).child(out_radio("output-new-sheet", new_sheet, "_xlsx.new-worksheet", true)));
         if !new_sheet {
-            out_header = out_header.child(mark(
-                "analysis-use-output",
-                Button::new("analysis-use-output")
-                    .small()
-                    .ghost()
-                    .label(text("xlsx.use-selected-cell"))
-                    .on_click(cx.listener(|this, _, window, cx| this.set_analysis_range_from_selection("output", window, cx)))
-                    .into_any_element(),
-            ));
+            out_header = out_header;
         }
         body = body
             .child(out_header)
-            .child(mark("output", Input::new(&p.output).small().cleanable(true).into_any_element()));
+            .child(mark("output", super::range_field::local_range_field(&p.output,"analysis-output",true,cx).into_any_element()));
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+            body = body.children(crate::shell::chrome::panel_message(&p.message));
         }
-        body = body.child(mark("apply", Button::new("analysis-apply").primary().small().label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_analysis_panel(cx))).into_any_element()));
-        body = body.child(mark(
-            "close",
-            Button::new("analysis-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.analysis = None;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        Some(SidebarPanel { title: text("xlsx.analysis.title").into(), body: body.into_any_element() })
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("analysis-apply", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_analysis_panel(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("xlsx.analysis.title"), body.into_any_element(), panel_terminal_actions))
     }
 }
 

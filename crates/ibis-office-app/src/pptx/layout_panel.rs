@@ -3,8 +3,8 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! スライド レイアウトの名前の変更と複製 (レイアウト メニューから): the
 //! slide's layout is renamed in a side panel, or copied under a new name.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{h_flex, v_flex, Sizable as _};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -149,16 +149,13 @@ impl SlideEditor {
     pub(crate) fn layout_name_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let p = self.pptx()?.layout_panel.as_ref()?;
         let (name, error) = (p.name.clone(), p.error.clone());
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).child(div().child(crate::shell::i18n::text("_shell.name"))).child(Input::new(&name).small().cleanable(true));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0().child(div().child(crate::shell::i18n::text("_shell.name"))).child(crate::shell::chrome::text_field(&name).full_width());
         if let Some(error) = error {
             body = body.child(div().text_color(rgb(0xb3261e)).child(error));
         }
-        body = body.child(
-            h_flex()
-                .gap_1()
-                .child(Button::new("pptx-layout-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_layout_rename(w, cx))))
-                .child(Button::new("pptx-layout-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_layout_rename(w, cx)))),
-        );
-        Some(SidebarPanel { title: crate::shell::i18n::text("pptx.selection-pane.rename"), body: body.into_any_element() })
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-layout-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_layout_rename(w, cx))))
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-layout-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_layout_rename(w, cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("pptx.selection-pane.rename"), body.into_any_element(), panel_actions))
     }
 }

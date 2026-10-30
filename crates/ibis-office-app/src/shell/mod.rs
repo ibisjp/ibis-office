@@ -11,13 +11,24 @@
 //! editor (format.rs).
 
 pub(crate) mod app_data;
+pub(crate) mod caret;
+pub(crate) mod document_memory;
+pub(crate) mod paste_placement;
+pub(crate) mod selection_handles;
 pub(crate) mod autocorrect;
 pub(crate) mod autorecover;
 pub(crate) mod editor;
 pub mod embed;
 pub(crate) mod file_actions;
 pub(crate) mod chrome;
+pub(crate) mod links;
+pub(crate) mod panel_dialog;
 pub(crate) mod color_palette;
+pub(crate) mod color_editor;
+pub(crate) mod color_picker_dialog;
+pub(crate) mod theme_colors;
+pub(crate) mod math_editor;
+pub(crate) mod ink_panel;
 pub(crate) mod chrome_defaults;
 pub(crate) mod format;
 pub(crate) mod font_list;

@@ -38,12 +38,14 @@ mod pptx_sections;
 mod pptx_groups;
 pub(crate) mod pptx_chart;
 mod pptx_comments;
+mod pptx_media_timing;
 mod pptx_timing;
 mod pptx_foreign;
 mod pptx_header_footer;
 mod pptx_links;
 mod pptx_theme;
 mod pptx_chart_type;
+pub(crate) mod chart_topology;
 pub(crate) mod pptx_chart_data;
 pub use pptx_foreign::ForeignSlide;
 pub(crate) mod pptx_new_chart;
@@ -727,6 +729,7 @@ impl Source {
             ex: None,
             ex_format: None,
             excel_layout: false,
+            word_layout: false,
             cell_refs: Vec::new(),
             ex_source: None,
         };
@@ -844,6 +847,7 @@ impl Source {
             ex: None,
             ex_format: None,
             excel_layout: false,
+            word_layout: false,
             cell_refs: Vec::new(),
             ex_source: None,
         };
@@ -862,7 +866,15 @@ impl Source {
         match made {
             Ok((template, read)) => {
                 // A chartEx chart (waterfall…) was read back with its cells' values cached: it is that.
-                let chart = if kind.is_chart_ex() || refs.is_empty() { template.clone() } else { pptx_chart_data::sheet_chart_from_data(&template, current, &refs) };
+                let mut chart = if kind.is_chart_ex() || refs.is_empty() { template.clone() } else { pptx_chart_data::sheet_chart_from_data(&template, current, &refs) };
+                // A series with no name cell is named by its number, as Excel does ("系列1"), not by the template's sample name.
+                if !kind.is_chart_ex() {
+                    for (i, (series, r)) in chart.groups.iter_mut().flat_map(|g| g.series.iter_mut()).zip(refs.iter()).enumerate() {
+                        if r.name.is_none() {
+                            series.name = if crate::english_names() { format!("Series{}", i + 1) } else { format!("系列{}", i + 1) }; // i18n-ok（文書に保存する名前）
+                        }
+                    }
+                }
                 lock().insert(id, NewChartEntry { kind, template: Some(template), refs });
                 Ok(ibis_doc_model::Shape { id, kind: ibis_doc_model::ShapeKind::Chart(Box::new(chart)), ..read })
             }
@@ -1168,3 +1180,5 @@ fn renumbered(slide: &ibis_doc_model::Slide, id: ibis_doc_model::SlideId, ids: &
     }
     out
 }
+
+mod chart_format;

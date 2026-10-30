@@ -4,12 +4,10 @@
 //! 挿入 > 数式… (PPTX-MATH-001, 011, 013): a formula typed in UnicodeMath's linear form (`a/b`, `x^2`, `√(x+1)`,
 //! `∑_(i=1)^n x`, `■(a&b@c&d)`) is read into a tree, shown typeset, and inserted as a text box of its own.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
-use crate::shell::palette::rgb;
 use ibis_doc_model::math::{Math, parse_latex, parse_linear};
 use ibis_doc_model::{EmuRect, Paragraph, Run, RunStyle, Shape, ShapeKind, TextAlign, TextBody, TextStyle};
 
@@ -18,29 +16,17 @@ use crate::shell::chrome::{MenuEntry, MenuItem, SidebarPanel, text_secondary};
 use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
 
-/// The math input format (UnicodeMath linear form or standard LaTeX).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub(crate) enum MathFormat {
-    #[default]
-    UnicodeMath,
-    Latex,
-}
-
-/// The panel: the linear or LaTeX text typed and format mode.
-pub(crate) struct MathPanel {
-    pub(crate) input: Entity<InputState>,
-    pub(crate) format: MathFormat,
-}
+pub(crate) use crate::shell::math_editor::{MathFormat, MathEditorState as MathPanel};
+use crate::shell::math_editor::{MathDialogSpec, math_dialog};
 
 impl SlideEditor {
     pub(crate) fn open_pptx_math_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.end_text_edit(window, cx);
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("x^2/2 + √(a+b) or \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}"));
-        input.update(cx, |f, cx| f.focus(window, cx));
+        let editor = MathPanel::new("", window, cx, |e, _, cx| e.apply_pptx_math_panel(false, cx));
         if let Some(s) = self.pptx_mut() {
             s.ink = None;
             s.autocorrect = None;
-            s.math_panel = Some(MathPanel { input, format: MathFormat::UnicodeMath });
+            s.math_panel = Some(editor);
         }
         self.sidebar_open = true;
         cx.notify();
@@ -259,120 +245,31 @@ impl SlideEditor {
         let panel = self.pptx()?.math_panel.as_ref()?;
         let format = panel.format;
         let input = panel.input.clone();
-        let typed = input.read(cx).value().to_string();
-        let is_latex = format == MathFormat::Latex || typed.trim_start().starts_with('\\');
-        let parsed = (!typed.trim().is_empty()).then(|| {
-            if is_latex {
-                parse_latex(typed.trim())
-            } else {
-                parse_linear(typed.trim())
-            }
-        });
-        let preview_linear = parsed.as_ref().map(Math::linear).unwrap_or_default();
-        let preview_latex = parsed.as_ref().map(Math::to_latex).unwrap_or_default();
-        let font = self.resources.font(&TextStyle { font: Some("Cambria Math".into()), ..Default::default() });
-        // The formula typeset as it is typed (the conversion of the linear or LaTeX form shown as it will be inserted).
-        let typeset = parsed.as_ref().map(|math| {
-            let math = math.clone();
-            canvas(
-                |_, _, _| (),
-                move |bounds, _, window, cx| {
-                    let size = 24.0f32;
-                    let boxed = crate::render::math_view::typeset(&math, size, &mut crate::render::math_view::window_measure(font.clone(), window));
-                    let origin = point(bounds.origin.x + px(8.0), bounds.origin.y + px(8.0 + boxed.ascent));
-                    crate::render::math_view::paint(&boxed, origin, black(), &font, window, cx);
-                },
-            )
-            .w_full()
-            .h(px(96.0))
-        });
+        let empty = input.read(cx).value().trim().is_empty();
         let has_text_shape = self.selected_shapes().iter().any(|s| s.text_body().is_some());
-        let body = v_flex()
-            .id("pptx-math-panel")
-            .gap_2()
-            .px(px(16.))
-            .py(px(8.))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                    this.open_math_panel_context_menu(event.position, window, cx);
-                }),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child({
-                        let b = Button::new("fmt-unicodemath")
-                            .small()
-                            .label(text("pptx.math.format-unicodemath"))
-                            .on_click(cx.listener(|this, _, _, cx| this.set_pptx_math_format(MathFormat::UnicodeMath, cx)));
-                        if format == MathFormat::UnicodeMath { b.primary() } else { b.ghost() }
-                    })
-                    .child({
-                        let b = Button::new("fmt-latex")
-                            .small()
-                            .label(text("pptx.math.format-latex"))
-                            .on_click(cx.listener(|this, _, _, cx| this.set_pptx_math_format(MathFormat::Latex, cx)));
-                        if format == MathFormat::Latex { b.primary() } else { b.ghost() }
-                    }),
-            )
-            .child(div().text_size(px(13.)).child(text("pptx.math.hint")))
-            .child(Input::new(&input).small().cleanable(true))
-            .children(typeset.map(|c| div().w_full().h(px(96.)).border_1().border_color(rgb(0xd0d0d0)).child(c)))
-            .child(div().text_size(px(12.)).child(SharedString::from(format!("UnicodeMath: {preview_linear}"))))
-            .child(div().text_size(px(12.)).text_color(text_secondary()).child(SharedString::from(format!("LaTeX: {preview_latex}"))))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new("math-insert")
-                            .primary()
-                            .small()
-                            .label(text("pptx.math.insert"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let typed = this.pptx().and_then(|s| s.math_panel.as_ref()).map(|p| p.input.read(cx).value().to_string());
-                                if let Some(t) = typed {
-                                    if this.insert_pptx_math(&t, cx).is_some() {
-                                        if let Some(s) = this.pptx_mut() {
-                                            s.math_panel = None;
-                                        }
-                                    }
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("math-copy-latex")
-                            .small()
-                            .ghost()
-                            .label(text("pptx.math.copy-latex"))
-                            .disabled(parsed.is_none())
-                            .on_click(cx.listener(|this, _, _, cx| this.copy_pptx_math_panel_latex(cx))),
-                    ),
-            )
-            .child(
-                Button::new("math-insert-inline")
-                    .small()
-                    .label(text("pptx.math.insert-inline"))
-                    .disabled(!has_text_shape)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let typed = this.pptx().and_then(|s| s.math_panel.as_ref()).map(|p| p.input.read(cx).value().to_string());
-                        if let Some(t) = typed {
-                            if this.insert_pptx_math_inline(&t, cx).is_some() {
-                                if let Some(s) = this.pptx_mut() {
-                                    s.math_panel = None;
-                                }
-                            }
-                        }
-                        cx.notify();
-                    })),
-            )
-            .child(Button::new("math-close").small().label(text("_shell.close")).on_click(cx.listener(|this, _, _, cx| {
-                if let Some(s) = this.pptx_mut() {
-                    s.math_panel = None;
-                }
-                cx.notify();
-            })));
-        Some(SidebarPanel { title: text("pptx.math.title"), body: body.into_any_element() })
+        let insert = crate::shell::chrome::ActionDefinition::new("math-insert", text("pptx.math.insert"), crate::shell::chrome::ActionButtonKind::Primary)
+            .disabled(empty)
+            .on_click(cx.listener(|e, _, _, cx| e.apply_pptx_math_panel(false, cx)));
+        let commands = vec![
+            crate::shell::chrome::ActionDefinition::new("math-copy-latex", text("pptx.math.copy-latex"), crate::shell::chrome::ActionButtonKind::Normal)
+                .disabled(empty).on_click(cx.listener(|e, _, _, cx| e.copy_pptx_math_panel_latex(cx))),
+            crate::shell::chrome::ActionDefinition::new("math-insert-inline", text("pptx.math.insert-inline"), crate::shell::chrome::ActionButtonKind::Normal)
+                .disabled(empty || !has_text_shape)
+                .on_click(cx.listener(|e, _, _, cx| e.apply_pptx_math_panel(true, cx))),
+        ];
+        Some(math_dialog(MathDialogSpec {
+            input, format,
+            set_format: |e, f, cx| e.set_pptx_math_format(f, cx),
+            options: Vec::new(), error: None,
+            context_menu: Some(|e, p, w, cx| e.open_math_panel_context_menu(p, w, cx)),
+            insert, commands,
+        }, cx))
+    }
+
+    fn apply_pptx_math_panel(&mut self, inline: bool, cx: &mut Context<Self>) {
+        let Some(value) = self.pptx().and_then(|s| s.math_panel.as_ref()).map(|p| p.input.read(cx).value().to_string()) else { return };
+        let inserted = if inline { self.insert_pptx_math_inline(&value, cx) } else { self.insert_pptx_math(&value, cx) };
+        if inserted.is_some() && let Some(s) = self.pptx_mut() { s.math_panel = None; }
+        cx.notify();
     }
 }

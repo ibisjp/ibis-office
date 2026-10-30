@@ -6,7 +6,7 @@
 //! Excel takes them (more rows than columns: in columns), placed at the
 //! selected cell.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -170,7 +170,7 @@ fn fallback_series_refs(
     let (r0, c0, r1, c1) = (range.first_row, range.first_column, range.last_row, range.last_column);
     let one = |ra: u32, ca: u32, rb: u32, cb: u32| ibis_pptx::format_ref(sheet, CellRange { first_row: ra, first_column: ca, last_row: rb, last_column: cb });
 
-    if by_columns || r1 > r0 {
+    if by_columns {
         let has_header = r1 > r0 && (c0..=c1).any(|c| !is_number(r0, c)) && (c0..=c1).any(|c| (r0 + 1..=r1).any(|r| is_number(r, c)));
         let data_r0 = if has_header { r0 + 1 } else { r0 };
         let has_cat_col = c1 > c0 && (data_r0..=r1).all(|r| !is_number(r, c0));
@@ -289,11 +289,14 @@ impl SlideEditor {
         let Some(name) = self.presentation().slide(slide).and_then(|s| s.name.clone()) else { return };
         let sheet = ibis_pptx::quote_sheet(&name);
         let current = self.presentation().clone();
-        // Excel: more rows than columns, the series in columns.
-        let rows = range.last_row - range.first_row;
-        let columns = range.last_column - range.first_column;
-        let by_columns = rows >= columns;
+        // Prefer the orientation supported by the cell types, then point count.
         let scatter = matches!(kind, NewChartKind::Scatter | NewChartKind::ScatterSmooth | NewChartKind::ScatterLines);
+        // X-Y charts and stock charts read their own layout (X column, date, high, low, close), so Excel's rule applies: in columns unless the range is wider than tall.
+        let by_columns = if scatter || matches!(kind, NewChartKind::Bubble | NewChartKind::StockHLC | NewChartKind::StockOHLC | NewChartKind::StockVHLC | NewChartKind::StockVOHLC) {
+            range.last_row - range.first_row >= range.last_column - range.first_column
+        } else {
+            ibis_pptx::preferred_series_columns(&current,&sheet,range)
+        };
         // A scatter chart: the first column the X values, a heading row of text above numbers.
         let bubble = matches!(kind, NewChartKind::Bubble);
         let is_stock = matches!(kind, NewChartKind::StockHLC | NewChartKind::StockOHLC | NewChartKind::StockVHLC | NewChartKind::StockVOHLC);
@@ -332,7 +335,7 @@ impl SlideEditor {
         }
         let frame = EmuRect::new(x, y, 4_572_000, 2_743_200);
         let id = self.document.ids().new_shape_id();
-        let shape = match source.new_sheet_chart(&current, slide, id, frame, kind, refs) {
+        let mut shape = match source.new_sheet_chart(&current, slide, id, frame, kind, refs) {
             Ok(shape) => shape,
             Err(err) => {
                 log::warn!("Cannot insert the chart: {err}");
@@ -341,6 +344,15 @@ impl SlideEditor {
                 return;
             }
         };
+        if let ibis_doc_model::ShapeKind::Chart(chart)=&mut shape.kind {
+            chart.title.get_or_insert_with(||ibis_doc_model::ChartTitle{text:crate::shell::i18n::text("_xlsx.chart-title").to_string(),style:ibis_doc_model::ChartText{size:1400,..Default::default()},at:None});
+            if !kind.is_chart_ex(){
+                // Existing theme accent colors provide the document's colorful series cycle.
+                let accents=(1..=6).map(|n|current.theme_colors.iter().find(|(key,_)|key==&format!("accent{n}")).map(|(_,c)|*c).unwrap_or(ibis_doc_model::Rgb(super::chart_edit::COLOR_PALETTES[0].1[n-1]))).collect::<Vec<_>>();
+                for (i,series)in chart.groups.iter_mut().flat_map(|g|&mut g.series).enumerate(){let color=ibis_doc_model::Color::opaque(accents[i%accents.len()]);if !matches!(series.fill,ibis_doc_model::Fill::None){series.fill=ibis_doc_model::Fill::Solid(color);}if let Some(stroke)=series.stroke.as_mut(){stroke.color=color;}if let Some(marker)=series.marker.as_mut(){marker.fill=ibis_doc_model::Fill::Solid(color);}}
+            }
+
+        }
         let index = self.slide().shapes.len();
         self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
         self.selection = Some(id);
@@ -383,7 +395,7 @@ impl SlideEditor {
     pub(crate) fn open_recommended_charts(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.recommended_charts = Some(RecommendedChartsPanel { selected: 0 });
         self.sidebar_open = true;
         cx.notify();
@@ -419,63 +431,42 @@ impl SlideEditor {
                 .any(|r| (range.first_column..=range.last_column).any(|c| matches!(sheet.cell(r, c).map(|x| &x.value), Some(CellValue::Number(_)))))
         });
 
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(10.));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(10.)).p_0();
         if !has_num {
             body = body.child(
                 div()
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(crate::shell::i18n::text("xlsx.recommended-charts.empty")),
             );
         }
-        for (idx, (_kind, label_id, icon_name)) in candidates.iter().enumerate() {
-            let is_sel = idx == selected;
-            let row = h_flex()
-                .id(SharedString::from(format!("rec-chart-{idx}")))
-                .w_full()
-                .items_center()
-                .gap_2()
-                .px(px(10.))
-                .py(px(8.))
-                .rounded(px(6.))
-                .cursor_pointer()
-                .border_1()
-                .border_color(if is_sel { Hsla::from(rgb(PRIMARY_BUTTON_BG)) } else { cx.theme().border })
-                .when(is_sel, |d| d.bg(cx.theme().secondary))
-                .child(Icon::new(Material(icon_name)).size(px(18.)))
-                .child(div().text_size(px(13.)).child(crate::shell::i18n::text(label_id)))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(panel) = this.wb_mut().panels.recommended_charts.as_mut() {
-                        panel.selected = idx;
-                    }
-                    cx.notify();
-                }));
-            body = body.child(row);
+        let mut tiles=Vec::new();
+        for (idx,(kind,label_id,_))in candidates.iter().enumerate(){
+            let preview=self.source.as_ref().and_then(|source|{
+                let name=self.slide().name.clone().unwrap_or_default();let sheet=ibis_pptx::quote_sheet(&name);
+                let refs=if matches!(kind,NewChartKind::Scatter|NewChartKind::ScatterLines|NewChartKind::ScatterSmooth){ibis_pptx::scatter_refs_for_range(self.presentation(),&sheet,range,true)}else{ibis_pptx::refs_for_range(self.presentation(),&sheet,range,true)}.or_else(||fallback_series_refs(self.presentation(),&sheet,range,*kind,true)).unwrap_or_default();
+                source.new_sheet_chart(self.presentation(),self.current_slide,ibis_doc_model::ShapeId(u64::MAX),EmuRect::new(0,0,4572000,2743200),*kind,refs).ok()
+            });
+            let preview=if let Some(ibis_doc_model::Shape{kind:ibis_doc_model::ShapeKind::Chart(c),..})=preview{
+                crate::render::chart_view::chart_element(&c,EmuRect::new(0,0,4572000,2743200),220./4572000.,&self.resources).into_any_element()
+            }else{div().size_full().bg(rgb(0xf5f5f5)).into_any_element()};
+            tiles.push(v_flex().id(SharedString::from(format!("rec-chart-{idx}"))).flex_1().min_w_0().gap_1().p_2().rounded(px(6.)).cursor_pointer().border_1().border_color(if idx==selected{rgb(PRIMARY_BUTTON_BG).into()}else{cx.theme().border}).hover(|d|d.bg(rgb(0xf3f4f6))).child(div().relative().w_full().h(px(132.)).overflow_hidden().child(preview)).child(div().text_size(px(12.)).child(crate::shell::i18n::text(label_id))).on_click(cx.listener(move |e,_,_,cx|{if let Some(p)=e.wb_mut().panels.recommended_charts.as_mut(){p.selected=idx;}cx.notify();})).into_any_element());
         }
-        let footer = h_flex()
-            .gap_2()
-            .child(
-                Button::new("rec-chart-insert")
-                    .primary()
-                    .small()
+        let mut iter=tiles.into_iter();while let Some(first)=iter.next(){let mut row=h_flex().w_full().gap_2().items_stretch().child(first);if let Some(second)=iter.next(){row=row.child(second);}else{row=row.child(div().flex_1());}body=body.child(row);}
+        let footer = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("rec-chart-insert", "", crate::shell::chrome::ActionButtonKind::Primary)
                     .label(crate::shell::i18n::text("_shell.insert"))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.insert_recommended_chart(window, cx);
                     })),
             )
-            .child(
-                Button::new("rec-chart-close")
-                    .small()
-                    .label(crate::shell::i18n::text("_shell.close"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.wb_mut().panels.recommended_charts = None;
-                        cx.notify();
-                    })),
-            );
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
         Some(SidebarPanel::with_footer(
             crate::shell::i18n::text("xlsx.recommended-charts"),
             body.into_any_element(),
-            footer.into_any_element(),
+            footer,
         ))
     }
 }

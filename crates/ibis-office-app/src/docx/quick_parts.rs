@@ -4,8 +4,8 @@
 //! Word's Quick Parts & Building Blocks (クイック パーツ・定型句・文書パーツの登録・挿入・管理).
 //! Implementation of DOCX-STYLE-018, DOCX-FIELD-012, DOCX-FORM-008.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
@@ -310,6 +310,7 @@ pub(crate) struct BuildingBlockFormState {
 
 /// クイックパーツ・文書パーツパネル状態
 pub(crate) struct QuickPartsState {
+    pub(crate) tab: usize,
     pub(crate) building_blocks: Vec<BuildingBlock>,
     pub(crate) filter_input: Entity<InputState>,
     #[allow(dead_code)]
@@ -323,6 +324,7 @@ pub(crate) struct QuickPartsState {
 impl SlideEditor {
     /// クイックパーツ（フィールド・文書プロパティ・文書パーツ）パネルを開く。
     pub(crate) fn open_quick_parts_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         self.end_text_edit(window, cx);
         let blocks = load_all_building_blocks(self.flow().map(|v| &**v));
         let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder(text("docx.quick-parts.filter-placeholder")));
@@ -344,6 +346,7 @@ impl SlideEditor {
         ];
         if let Some(state) = self.doc_state_mut() {
             state.quick_parts = Some(QuickPartsState {
+                tab: 0,
                 building_blocks: blocks,
                 filter_input,
                 selected_block: None,
@@ -374,6 +377,7 @@ impl SlideEditor {
 
     /// 選択範囲を文書パーツとして登録するダイアログ（パネル内の登録フォーム）を開く。
     pub(crate) fn open_save_building_block_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         self.open_quick_parts_panel(window, cx);
         self.quick_parts_start_new(window, cx);
     }
@@ -617,16 +621,26 @@ impl SlideEditor {
     #[inline(never)]
     fn render_quick_parts_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let state = self.doc_state()?.quick_parts.as_ref()?;
+        let active_tab = state.tab;
         let custom_input = state.custom_field.clone();
         let filter_input = state.filter_input.clone();
         let filter_text = state.filter_input.read(cx).value().trim().to_lowercase();
         let message = state.message.clone();
 
         let label = |tr_key: &'static str| {
-            div().text_size(px(12.)).font_weight(FontWeight::BOLD).text_color(text_secondary()).child(text(tr_key))
+            div().text_sm().font_weight(FontWeight::BOLD).text_color(text_secondary()).child(text(tr_key))
         };
 
-        let mut body = v_flex().gap_3().p_3();
+        let mut body = v_flex().gap_3().p_0().child(
+            crate::shell::chrome::tab_control_with_mode(
+                [text("docx.quick-parts.tab.parts"), text("docx.quick-parts.tab.properties"), text("docx.quick-parts.tab.fields")],
+                active_tab, "quick-parts-tabs", crate::shell::chrome::TabMode::Intrinsic,
+                |e, tab, cx| {
+                    if let Some(p) = e.doc_state_mut().and_then(|s| s.quick_parts.as_mut()) { p.tab = tab; }
+                    cx.notify();
+                }, cx,
+            ),
+        );
 
         // 状態メッセージ表示
         if let Some(msg) = message {
@@ -635,24 +649,13 @@ impl SlideEditor {
                     .p_2()
                     .rounded_md()
                     .bg(cx.theme().primary.opacity(0.1))
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().primary)
                     .child(msg),
             );
         }
 
-        // 「選択範囲を文書パーツとして登録」ボタン
-        let _has_sel = !self.selected_text().is_empty();
-        body = body.child(
-            Button::new("btn-save-selection-as-part")
-                .primary()
-                .small()
-                .label(text("docx.quick-parts.save-selection"))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.quick_parts_start_new(window, cx);
-                })),
-        );
-
+        if active_tab == 0 {
         // 新規登録・編集フォーム表示
         if let Some(form) = &state.save_form {
             let name_in = form.name_input.clone();
@@ -674,15 +677,15 @@ impl SlideEditor {
                 .child(div().font_weight(FontWeight::BOLD).text_sm().child(crate::shell::i18n::text("docx.quick-parts.save-title")));
 
             if let Some(e) = err {
-                form_el = form_el.child(div().text_xs().text_color(cx.theme().danger).child(e));
+                form_el = form_el.child(div().text_sm().text_color(cx.theme().danger).child(e));
             }
 
             // 名前
             form_el = form_el.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.name").to_string()))
-                    .child(Input::new(&name_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.name").to_string()))
+                    .child(crate::shell::chrome::text_field(&name_in).full_width()),
             );
 
             // ギャラリー選択
@@ -690,11 +693,7 @@ impl SlideEditor {
             for g in [BuildingBlockGallery::AutoText, BuildingBlockGallery::QuickParts, BuildingBlockGallery::Custom] {
                 let is_sel = g == cur_gallery;
                 gall_row = gall_row.child(
-                    Button::new(format!("gall-{:?}", g))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if is_sel { "●" } else { "○" }, g.label()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    crate::shell::chrome::radio_button(format!("gall-{:?}", g), is_sel, false, g.label(), cx.listener(move |this, _, _, cx| {
                             if let Some(form) = this.doc_state_mut().and_then(|s| s.quick_parts.as_mut()).and_then(|q| q.save_form.as_mut()) {
                                 form.gallery = g;
                             }
@@ -705,7 +704,7 @@ impl SlideEditor {
             form_el = form_el.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.gallery").to_string()))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.gallery").to_string()))
                     .child(gall_row),
             );
 
@@ -713,8 +712,8 @@ impl SlideEditor {
             form_el = form_el.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.category").to_string()))
-                    .child(Input::new(&cat_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.category").to_string()))
+                    .child(crate::shell::chrome::text_field(&cat_in).full_width()),
             );
 
             // 保存先 (Scope)
@@ -722,11 +721,7 @@ impl SlideEditor {
             for sc in [BuildingBlockScope::Global, BuildingBlockScope::Document] {
                 let is_sel = sc == cur_scope;
                 scope_row = scope_row.child(
-                    Button::new(format!("scope-{:?}", sc))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if is_sel { "●" } else { "○" }, sc.label()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    crate::shell::chrome::radio_button(format!("scope-{:?}", sc), is_sel, false, sc.label(), cx.listener(move |this, _, _, cx| {
                             if let Some(form) = this.doc_state_mut().and_then(|s| s.quick_parts.as_mut()).and_then(|q| q.save_form.as_mut()) {
                                 form.scope = sc;
                             }
@@ -737,7 +732,7 @@ impl SlideEditor {
             form_el = form_el.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.scope").to_string()))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.scope").to_string()))
                     .child(scope_row),
             );
 
@@ -746,11 +741,7 @@ impl SlideEditor {
             for op in [BuildingBlockOption::ContentOnly, BuildingBlockOption::Paragraph, BuildingBlockOption::Page] {
                 let is_sel = op == cur_opt;
                 opt_row = opt_row.child(
-                    Button::new(format!("opt-{:?}", op))
-                        .small()
-                        .ghost()
-                        .label(format!("{} {}", if is_sel { "●" } else { "○" }, op.label()))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    crate::shell::chrome::radio_button(format!("opt-{:?}", op), is_sel, false, op.label(), cx.listener(move |this, _, _, cx| {
                             if let Some(form) = this.doc_state_mut().and_then(|s| s.quick_parts.as_mut()).and_then(|q| q.save_form.as_mut()) {
                                 form.insert_option = op;
                             }
@@ -761,7 +752,7 @@ impl SlideEditor {
             form_el = form_el.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.options").to_string()))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.options").to_string()))
                     .child(opt_row),
             );
 
@@ -769,36 +760,29 @@ impl SlideEditor {
             form_el = form_el.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.description").to_string()))
-                    .child(Input::new(&desc_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.description").to_string()))
+                    .child(crate::shell::chrome::text_field(&desc_in).full_width()),
             );
 
             // コンテンツ
             form_el = form_el.child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.content").to_string()))
-                    .child(Input::new(&cont_in).small().cleanable(true)),
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("docx.quick-parts.content").to_string()))
+                    .child(crate::shell::chrome::text_field(&cont_in).full_width()),
             );
 
             // ボタン (保存 / キャンセル)
             form_el = form_el.child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("btn-commit-bb")
-                            .primary()
-                            .small()
-                            .label(text("docx.quick-parts.save"))
+                crate::shell::chrome::action_bar()
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("btn-commit-bb", text("docx.quick-parts.save"), crate::shell::chrome::ActionButtonKind::Primary)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.quick_parts_commit_form(cx);
                             })),
                     )
-                    .child(
-                        Button::new("btn-cancel-bb")
-                            .ghost()
-                            .small()
-                            .label(text("docx.quick-parts.cancel"))
+                    .action(
+                        crate::shell::chrome::ActionDefinition::new("btn-cancel-bb", text("docx.quick-parts.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.quick_parts_cancel_form(cx);
                             })),
@@ -810,7 +794,7 @@ impl SlideEditor {
 
         // --- 登録済み文書パーツ一覧 ---
         body = body.child(label("docx.quick-parts.building-blocks"));
-        body = body.child(Input::new(&filter_input).small().cleanable(true));
+        body = body.child(crate::shell::chrome::text_field(&filter_input).full_width());
 
         let mut block_list = v_flex().gap_2();
         let filtered: Vec<BuildingBlock> = state.building_blocks.iter().filter(|b| {
@@ -825,7 +809,7 @@ impl SlideEditor {
 
         if filtered.is_empty() {
             block_list = block_list.child(
-                div().text_xs().text_color(text_secondary()).p_2().child(text("docx.quick-parts.no-blocks")),
+                div().text_sm().text_color(text_secondary()).p_2().child(text("docx.quick-parts.no-blocks")),
             );
         } else {
             for b in filtered {
@@ -847,7 +831,7 @@ impl SlideEditor {
                                 h_flex()
                                     .gap_1()
                                     .items_center()
-                                    .child(div().font_weight(FontWeight::BOLD).text_xs().child(b.name.clone()))
+                                    .child(div().font_weight(FontWeight::BOLD).text_sm().child(b.name.clone()))
                                     .child(
                                         div()
                                             .text_size(px(10.))
@@ -861,8 +845,7 @@ impl SlideEditor {
                                 h_flex()
                                     .gap_1()
                                     .child(
-                                        Button::new(format!("btn-insert-bb-{}", b.name))
-                                            .primary()
+                                        crate::shell::chrome::action_button(format!("btn-insert-bb-{}", b.name))
                                             .small()
                                             .label(text("docx.quick-parts.insert"))
                                             .on_click(cx.listener({
@@ -873,10 +856,9 @@ impl SlideEditor {
                                             })),
                                     )
                                     .child(
-                                        Button::new(format!("btn-del-bb-{}", b.name))
-                                            .ghost()
-                                            .small()
-                                            .label(text("docx.quick-parts.delete"))
+                                        crate::shell::chrome::action_button(format!("btn-del-bb-{}", b.name))
+                                            .small().w(px(crate::shell::chrome::BUTTON_HEIGHT)).px_0()
+                                            .icon(crate::shell::icons::Material("delete"))
                                             .on_click(cx.listener({
                                                 let name = b.name.clone();
                                                 move |this, _, _, cx| {
@@ -887,12 +869,13 @@ impl SlideEditor {
                             ),
                     )
                     .child(
-                        div().text_xs().text_color(text_secondary()).child(preview),
+                        div().text_sm().text_color(text_secondary()).child(preview),
                     );
                 block_list = block_list.child(card);
             }
         }
         body = body.child(block_list);
+        }
 
         // --- ドキュメント プロパティ ---
         let doc_props = [
@@ -908,7 +891,7 @@ impl SlideEditor {
         let mut prop_grid = h_flex().gap_1().flex_wrap();
         for (code, tr_key) in doc_props {
             prop_grid = prop_grid.child(
-                Button::new(format!("qp-prop-{code}"))
+                crate::shell::chrome::action_button(format!("qp-prop-{code}"))
                     .small()
                     .label(text(tr_key))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -929,7 +912,7 @@ impl SlideEditor {
         let mut field_grid = h_flex().gap_1().flex_wrap();
         for (code, label_str) in standard_fields {
             field_grid = field_grid.child(
-                Button::new(format!("qp-field-{code}"))
+                crate::shell::chrome::action_button(format!("qp-field-{code}"))
                     .small()
                     .label(text(label_str))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -938,18 +921,17 @@ impl SlideEditor {
             );
         }
 
-        body = body
-            .child(label("docx.quick-parts.doc-property"))
-            .child(prop_grid)
-            .child(label("docx.quick-parts.field"))
-            .child(field_grid)
-            .child(label("docx.quick-parts.custom-field"))
-            .child(Input::new(&custom_input).small().cleanable(true))
-            .child(
-                Button::new("btn-insert-custom-field")
-                    .primary()
-                    .small()
-                    .label(text("docx.quick-parts.insert"))
+        if active_tab == 1 {
+            body = body.child(prop_grid);
+        } else if active_tab == 2 {
+            body = body.child(field_grid)
+                .child(label("docx.quick-parts.custom-field"))
+                .child(crate::shell::chrome::text_field(&custom_input).full_width());
+        }
+        if active_tab != 2 {
+            return Some(SidebarPanel { title: text("docx.quick-parts"), body: body.into_any_element() });
+        }
+        let panel_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("btn-insert-custom-field", text("docx.quick-parts.insert"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         let code = this.doc_state()
                             .and_then(|s| s.quick_parts.as_ref())
@@ -958,13 +940,8 @@ impl SlideEditor {
                         if !code.is_empty() {
                             this.insert_quick_part_field(&code, cx);
                         }
-                    })),
-            );
-
-        Some(SidebarPanel {
-            title: text("docx.quick-parts").into(),
-            body: body.into_any_element(),
-        })
+                    })),);
+        Some(SidebarPanel::with_footer(text("docx.quick-parts"), body.into_any_element(), panel_actions))
     }
 }
 

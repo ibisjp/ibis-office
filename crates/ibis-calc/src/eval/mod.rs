@@ -259,6 +259,8 @@ impl Array {
 #[derive(Debug, PartialEq)]
 pub struct Lambda {
     pub params: Vec<String>,
+    /// Trailing parameters explicitly declared with square brackets.
+    pub optional: usize,
     pub body: Expr,
     /// The names bound where it was made (LET), captured.
     pub captured: Vec<(String, Value)>,
@@ -571,7 +573,12 @@ impl<'a> Ctx<'a> {
     pub fn cell_result(&mut self, v: Value) -> CellValue {
         match v {
             Value::Ref(areas) => {
-                let v = self.deref_implicit(&areas);
+                let v = if self.book.dynamic(self.sheet,self.row,self.column) {
+                    match self.ref_to_array(&areas) {
+                        Value::Array(a) => a.data.first().cloned().unwrap_or(Value::Empty),
+                        other => other,
+                    }
+                } else { self.deref_implicit(&areas) };
                 match v {
                     Value::Empty | Value::Omitted => CellValue::Number(0.0),
                     other => other.to_cell(),
@@ -974,7 +981,7 @@ impl<'a> Ctx<'a> {
             // A function's name alone is that function, to give to BYROW, GROUPBY and the like.
             let bare = name.trim_start_matches("_xleta.").to_uppercase();
             if sheet.is_none() && crate::functions::lookup(&bare).is_some() {
-                return Value::Lambda(Rc::new(Lambda { params: Vec::new(), body: Expr::Missing, captured: Vec::new(), eta: Some(bare) }));
+                return Value::Lambda(Rc::new(Lambda { params: Vec::new(), optional: 0, body: Expr::Missing, captured: Vec::new(), eta: Some(bare) }));
             }
             return Value::Error(CellError::Name);
         };
@@ -1062,7 +1069,7 @@ impl<'a> Ctx<'a> {
             self.locals = saved;
             return v;
         }
-        if values.len() != l.params.len() {
+        if values.len() > l.params.len() || values.len() < l.params.len() - l.optional {
             return Value::Error(CellError::Value);
         }
         if self.depth > 200 {
@@ -1070,7 +1077,7 @@ impl<'a> Ctx<'a> {
         }
         let saved = std::mem::replace(&mut self.locals, l.captured.clone());
         for (i, p) in l.params.iter().enumerate() {
-            self.locals.push((p.clone(), values.get(i).cloned().unwrap_or(Value::Empty)));
+            self.locals.push((p.clone(), values.get(i).cloned().unwrap_or(Value::Omitted)));
         }
         self.depth += 1;
         let v = self.eval(&l.body);

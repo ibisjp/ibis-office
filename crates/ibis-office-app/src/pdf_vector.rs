@@ -4,7 +4,8 @@
 //! Pages written as a vector PDF from what GPUI painted (its
 //! `PaintRecord`s): text as text in the fonts it was drawn with (subset and
 //! embedded, with the characters for copying and searching), shapes as
-//! paths, pictures as images. Shadows are left out: PDF has no blur.
+//! paths, pictures as images. A blurred shadow (a drop shadow, a soft edge, a glow) is a picture of its blur (as PowerPoint writes one: a bitmap
+//! with an alpha mask, PDF having no blur); an inner shadow is left out.
 //!
 //! The records are in logical pixels from the page's top-left corner; each
 //! page is scaled to its size in points.
@@ -26,6 +27,9 @@ use krilla::text::{Font, GlyphId, KrillaGlyph};
 /// The font data of a font GPUI drew with: the file's bytes and the font's
 /// index in it.
 pub type FontData = Option<(Arc<Vec<u8>>, u32)>;
+
+/// The axis values (OpenType tag, value) a variable font is drawn at; empty for a font that is not variable.
+pub type Variations = Vec<([u8; 4], f32)>;
 
 /// How far a synthetic italic slants (x by this much of y), and the width of a synthetic bold's outline in ems: as the
 /// screen draws them (the macOS text system).
@@ -54,13 +58,15 @@ pub struct PdfWriter {
     fonts: HashMap<FontId, Option<PdfFont>>,
     /// Images by the address of GPUI's image.
     images: HashMap<usize, Image>,
+    /// The same pictures by what they hold (size and a hash of the pixels, then the pixels themselves compared in full, so a hash that happens to match never stands in for another picture): one GPUI image rebuilt for another slide is compressed once.
+    images_by_content: HashMap<(u32, u32, u64), Vec<(Vec<u8>, Image)>>,
     /// Glyphs left out for want of their font.
     pub missing_glyphs: usize,
 }
 
 impl PdfWriter {
     pub fn new() -> Self {
-        Self { pages: Vec::new(), document: Document::new(), fonts: HashMap::new(), images: HashMap::new(), missing_glyphs: 0 }
+        Self { pages: Vec::new(), document: Document::new(), fonts: HashMap::new(), images: HashMap::new(), images_by_content: HashMap::new(), missing_glyphs: 0 }
     }
 
     /// Add a page `page_pt` points large from `records`, painted in a window
@@ -71,7 +77,7 @@ impl PdfWriter {
         self.pages.len()
     }
 
-    pub fn add_page(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, font_data: &mut dyn FnMut(FontId) -> (FontData, (bool, bool))) {
+    pub fn add_page(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, font_data: &mut dyn FnMut(FontId) -> (FontData, (bool, bool), Variations)) {
         self.add_page_shifted(records, width_px, page_pt, scale_factor, (0.0, 0.0), font_data);
     }
 
@@ -80,17 +86,18 @@ impl PdfWriter {
     /// wants it between them).
     /// `font_data` also tells whether the font is drawn emboldened and slanted (bold or italic asked of a family without
     /// that face): it is written so too.
-    pub fn add_page_shifted(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, shift: (f32, f32), font_data: &mut dyn FnMut(FontId) -> (FontData, (bool, bool))) {
+    pub fn add_page_shifted(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, shift: (f32, f32), font_data: &mut dyn FnMut(FontId) -> (FontData, (bool, bool), Variations)) {
         for record in &records {
             if let PaintRecord::Glyph { font_id, glyph_id, .. } = record {
                 let font = self.fonts.entry(*font_id).or_insert_with(|| {
-                    let (data, synthetic) = font_data(*font_id);
+                    let (data, synthetic, variations) = font_data(*font_id);
                     data.and_then(|(data, index)| {
                         let characters = Arc::new(glyph_characters(&data, index));
                         let glyph_count = glyph_count(&data, index);
                         let extent = vertical_extent(&data, index);
-                        let advances = glyph_advances(&data, index);
-                        let font = Font::new(data.clone().into(), index)?;
+                        let advances = glyph_advances(&data, index, &variations);
+                        let coords: Vec<(krilla::text::Tag, f32)> = variations.iter().map(|(tag, value)| (krilla::text::Tag::new(tag), *value)).collect();
+                        let font = Font::new_variable(data.clone().into(), index, &coords)?;
                         Some(PdfFont { font, characters, data, index, glyph_count, extent, advances, glyphs: Vec::new(), outlined: false, synthetic })
                     })
                 });
@@ -187,6 +194,8 @@ impl PdfWriter {
                                     opacity: fill.opacity,
                                     line_cap: if stroke.round_caps { LineCap::Round } else { LineCap::Butt },
                                     line_join: if stroke.round_joins { LineJoin::Round } else { LineJoin::Miter },
+                                    // A dashed line is one line with its pattern (`d`: [on off ...] phase), not a path of dashes.
+                                    dash: stroke.dash.map(|d| StrokeDash { array: d.pattern().to_vec(), offset: d.phase }),
                                     ..Stroke::default()
                                 }));
                                 s.draw_path(&path);
@@ -281,9 +290,24 @@ impl PdfWriter {
                             let Some(bytes) = image.as_bytes(*frame_index) else { continue };
                             let size = image.size(*frame_index);
                             let (w, h) = (size.width.0.max(1) as u32, size.height.0.max(1) as u32);
-                            // BGRA to RGBA.
-                            let rgba: Vec<u8> = bytes.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect();
-                            let i = Image::from_rgba8(rgba, w, h);
+                            let content = (w, h, pixel_hash(bytes));
+                            let same = self.images_by_content.get(&content).and_then(|v| v.iter().find(|(held, _)| held.as_slice() == bytes).map(|(_, i)| i.clone()));
+                            let i = match same {
+                                Some(i) => i,
+                                None => {
+                                    // BGRA to RGBA, into one buffer of the right size.
+                                    let mut rgba = vec![0u8; bytes.len()];
+                                    for (to, from) in rgba.chunks_exact_mut(4).zip(bytes.chunks_exact(4)) {
+                                        to[0] = from[2];
+                                        to[1] = from[1];
+                                        to[2] = from[0];
+                                        to[3] = from[3];
+                                    }
+                                    let i = Image::from_rgba8(rgba, w, h);
+                                    self.images_by_content.entry(content).or_default().push((bytes.to_vec(), i.clone()));
+                                    i
+                                }
+                            };
                             self.images.insert(key, i.clone());
                             i
                         }
@@ -320,7 +344,19 @@ impl PdfWriter {
                         }
                     });
                 }
-                PaintRecord::Shadow { .. } => {}
+                PaintRecord::Shadow { bounds, corner_radii, color: shadow_color, blur_radius, inset, clip } => {
+                    if *inset {
+                        continue;
+                    }
+                    let Some((image, rect)) = shadow_image(bounds, corner_radii, *shadow_color, f32::from(*blur_radius)) else { continue };
+                    with_clip(&mut surface, clip, within(&rect, clip), |s| {
+                        s.push_transform(&Transform::from_translate(f32::from(rect.left()), f32::from(rect.top())));
+                        if let Some(size) = Size::from_wh(f32::from(rect.size.width), f32::from(rect.size.height)) {
+                            s.draw_image(image, size);
+                        }
+                        s.pop();
+                    });
+                }
             }
         }
         surface.pop();
@@ -420,6 +456,99 @@ fn with_clip(s: &mut Surface, clip: &Bounds<Pixels>, inside: bool, f: impl FnOnc
         }
         None => {}
     }
+}
+
+/// The picture of a blurred shadow: the rounded rectangle `bounds` (the shadow before it is blurred), its coverage blurred by a Gaussian of deviation
+/// `sigma` (pixels) and coloured, as straight RGBA with the shadow's alpha where the rectangle is whole. As PowerPoint writes a shadow, the picture's
+/// pixels are as coarse as keeps the blur at about 2.2 of them (`sigma / 2.2` logical pixels, at least half a pixel; PowerPoint 16.0.20527.20088's PDFs
+/// of blurRad 1.5pt to 24pt: the deviation is 2.2 to 2.5 pixels of the shadow's bitmap, whose resolution goes from 200 dpi down to 29 dpi), at most
+/// 1500 across. The rectangle the picture covers goes with it.
+fn shadow_image(bounds: &Bounds<Pixels>, radii: &Corners<Pixels>, shadow_color: Hsla, sigma: f32) -> Option<(Image, Bounds<Pixels>)> {
+    let rgba = shadow_color.to_rgb();
+    let (bw, bh) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    if rgba.a <= 0.0 || bw <= 0.0 || bh <= 0.0 {
+        return None;
+    }
+    let sigma = sigma.max(0.0);
+    let margin = 3.0 * sigma;
+    let pitch = (sigma / 2.2).max(0.5).max((bw + 2.0 * margin) / 1500.0).max((bh + 2.0 * margin) / 1500.0);
+    let cols = ((bw + 2.0 * margin) / pitch).ceil() as usize + 1;
+    let rows = ((bh + 2.0 * margin) / pitch).ceil() as usize + 1;
+    let (left, top) = (f32::from(bounds.left()) - margin, f32::from(bounds.top()) - margin);
+    let (cx, cy) = (f32::from(bounds.left()) + bw / 2.0, f32::from(bounds.top()) + bh / 2.0);
+    let (hx, hy) = (bw / 2.0, bh / 2.0);
+    let radius = |right: bool, bottom: bool| {
+        let r = match (right, bottom) {
+            (false, false) => radii.top_left,
+            (true, false) => radii.top_right,
+            (false, true) => radii.bottom_left,
+            (true, true) => radii.bottom_right,
+        };
+        f32::from(r).min(hx).min(hy).max(0.0)
+    };
+    let mut coverage = vec![0f32; cols * rows];
+    for j in 0..rows {
+        let y = top + (j as f32 + 0.5) * pitch;
+        for i in 0..cols {
+            let x = left + (i as f32 + 0.5) * pitch;
+            let r = radius(x > cx, y > cy);
+            let (qx, qy) = ((x - cx).abs() - hx + r, (y - cy).abs() - hy + r);
+            let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
+            coverage[j * cols + i] = (0.5 - d / pitch).clamp(0.0, 1.0);
+        }
+    }
+    let deviation = sigma / pitch;
+    if deviation > 0.3 {
+        let reach = (3.0 * deviation).ceil() as isize;
+        let kernel: Vec<f32> = (-reach..=reach).map(|k| (-((k * k) as f32) / (2.0 * deviation * deviation)).exp()).collect();
+        let total: f32 = kernel.iter().sum();
+        let kernel: Vec<f32> = kernel.iter().map(|k| k / total).collect();
+        let mut across = vec![0f32; cols * rows];
+        for j in 0..rows {
+            for i in 0..cols as isize {
+                let mut sum = 0.0;
+                for (n, w) in kernel.iter().enumerate() {
+                    let at = i + n as isize - reach;
+                    if at >= 0 && at < cols as isize {
+                        sum += w * coverage[j * cols + at as usize];
+                    }
+                }
+                across[j * cols + i as usize] = sum;
+            }
+        }
+        for j in 0..rows as isize {
+            for i in 0..cols {
+                let mut sum = 0.0;
+                for (n, w) in kernel.iter().enumerate() {
+                    let at = j + n as isize - reach;
+                    if at >= 0 && at < rows as isize {
+                        sum += w * across[at as usize * cols + i];
+                    }
+                }
+                coverage[j as usize * cols + i] = sum;
+            }
+        }
+    }
+    let (r, g, b) = ((rgba.r * 255.0).round() as u8, (rgba.g * 255.0).round() as u8, (rgba.b * 255.0).round() as u8);
+    let pixels: Vec<u8> = coverage.iter().flat_map(|c| [r, g, b, (c * rgba.a * 255.0).round().clamp(0.0, 255.0) as u8]).collect();
+    let image = Image::from_rgba8(pixels, cols as u32, rows as u32);
+    let rect = Bounds::new(gpui_kit::point(gpui_kit::px(left), gpui_kit::px(top)), gpui_kit::size(gpui_kit::px(cols as f32 * pitch), gpui_kit::px(rows as f32 * pitch)));
+    Some((image, rect))
+}
+
+/// A hash of all the bytes of a picture (8 at a time, multiplied and folded in), to tell pictures by what they hold.
+fn pixel_hash(bytes: &[u8]) -> u64 {
+    const K: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut h = bytes.len() as u64;
+    let mut chunks = bytes.chunks_exact(8);
+    for c in &mut chunks {
+        let v = u64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]);
+        h = (h.rotate_left(5) ^ v).wrapping_mul(K);
+    }
+    for b in chunks.remainder() {
+        h = (h.rotate_left(5) ^ *b as u64).wrapping_mul(K);
+    }
+    h
 }
 
 fn rect_path(x0: f32, y0: f32, x1: f32, y1: f32) -> Option<Path> {
@@ -569,10 +698,12 @@ fn vertical_extent(data: &[u8], index: u32) -> (f32, f32) {
 
 /// The advances of a font's glyphs, in ems (`hmtx`); empty when they
 /// cannot be read.
-fn glyph_advances(data: &[u8], index: u32) -> Vec<f32> {
+fn glyph_advances(data: &[u8], index: u32, variations: &Variations) -> Vec<f32> {
     use skrifa::MetadataProvider as _;
     let Ok(font) = skrifa::FontRef::from_index(data, index) else { return Vec::new() };
-    let metrics = font.glyph_metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default());
+    // At the variable font's axis values (the default instance when it is not variable).
+    let location = font.axes().location(variations.iter().map(|(tag, value)| (skrifa::Tag::new(tag), *value)));
+    let metrics = font.glyph_metrics(skrifa::instance::Size::unscaled(), &location);
     let em = font.metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default()).units_per_em.max(1) as f32;
     (0..glyph_count(data, index)).map(|g| metrics.advance_width(skrifa::GlyphId::new(g)).unwrap_or(em) / em).collect()
 }

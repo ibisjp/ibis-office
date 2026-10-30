@@ -51,6 +51,7 @@ pub(crate) struct CellEdit {
     /// A reference put in by clicking a cell: its byte span in `text` and
     /// the cell clicked (a drag makes it a range from there).
     pub(crate) pointed: Option<(usize, usize, (u32, u32))>,
+    pub(crate) reference_drag:bool,
     /// Where the text is on screen (set when painted), for the input method.
     pub(crate) rect: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Pixels per point of the text on screen (set when painted), to find the
@@ -370,13 +371,15 @@ impl SlideEditor {
         let edit = self.cell_edit()?;
         let state = self.sheet_state()?;
         let rect = state.bar_bounds.get()?;
-        let lines = text_lines(&edit.text);
+        let visual=&state.bar_visual_lines;
+        let fallback=text_lines(&edit.text);
+        let lines=if visual.is_empty(){fallback}else{visual.iter().map(|(s,l)|(*s,l.as_str())).collect()};
         // Closed, the bar shows the line the caret is on; widened, all of them from the scrolled top, each a line high.
         let row = if state.bar_expanded {
             let y = f32::from(position.y - rect.origin.y - state.bar_scroll.offset().y);
             ((y / BAR_LINE_HEIGHT).floor().max(0.0) as usize).min(lines.len() - 1)
         } else {
-            edit.caret_line()
+            state.bar_caret_row.filter(|&i|lines.get(i).is_some_and(|(a,l)|(*a..=*a+utf16_len(l)).contains(&edit.caret))).unwrap_or_else(||lines.iter().rposition(|(s,_)|*s<=edit.caret).unwrap_or(0))
         };
         let (start, line) = lines[row];
         let line = line.trim_end_matches('\r');
@@ -392,6 +395,7 @@ impl SlideEditor {
     /// A press on the formula bar's text, as `press_in_cell_text` does on the cell's.
     pub(crate) fn press_in_bar_text(&mut self, position: Point<Pixels>, click_count: usize, shift: bool, window: &Window, cx: &mut Context<Self>) -> bool {
         let Some(index) = self.bar_text_index_at(position, window) else { return false };
+        self.wb_mut().bar_caret_row=None;
         self.place_caret(index, click_count, shift, true, cx);
         true
     }
@@ -403,6 +407,16 @@ impl SlideEditor {
         let Some(index) = self.cell_text_index_at(position, cx) else { return false };
         self.place_caret(index, click_count, shift, false, cx);
         true
+    }
+
+    /// F2 while typing: Enter (the arrows point at cells or finish the entry) and Edit (the arrows move the caret) swap.
+    pub(crate) fn toggle_edit_mode(&mut self, cx: &mut Context<Self>) {
+        let Some(edit) = self.sheet_state_mut().and_then(|s| s.cell_edit.as_mut()) else { return };
+        edit.mode = match edit.mode {
+            EditMode::Enter => EditMode::Edit,
+            EditMode::Edit => EditMode::Enter,
+        };
+        cx.notify();
     }
 
     fn place_caret(&mut self, index: usize, click_count: usize, shift: bool, in_bar: bool, cx: &mut Context<Self>) {
@@ -521,7 +535,7 @@ impl SlideEditor {
             let (ey0, ey1) = ((shape.frame.y + t) as f32 * scale, (shape.frame.y + b) as f32 * scale);
             let default_style = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref());
             let ts = WindowTextSystem::new(cx.text_system().clone());
-            let layout = super::sheet_view::edit_layout(&ts, sheet, default_style, &self.resources, row, column, &text, runs.clone().map(std::sync::Arc::new), (l as f32 * scale, t as f32 * scale), (ex1 - ex0, ey1 - ey0), px_per_point);
+            let layout = super::sheet_view::edit_layout(&ts, sheet, default_style, &self.resources, row, column, &text, runs.clone().map(std::sync::Arc::new), (l as f32 * scale, t as f32 * scale), (ex1 - ex0, ey1 - ey0), px_per_point, self.cell_editor_width(ex0));
             let max_box_h = self.max_edit_box_height_px(row, ey0, ey1, px_per_point);
             let overflows = layout.height - max_box_h > 0.5;
             if text.contains('\n') && (overflows || layout.height > (ey1 - ey0) + 0.5) {
@@ -535,13 +549,14 @@ impl SlideEditor {
         }
         if let Some(state) = self.sheet_state_mut() {
             state.validation_warning = None;
-            state.cell_edit = Some(CellEdit { slide, column, row, text, caret, marked: None, mode, anchor: None, runs, pointed: None, rect: Rc::new(Cell::new(None)), pixels_per_point: Rc::new(Cell::new(0.0)), layout: Default::default(), dragging: None, dragging_in_bar: false, pending: None, scroll_y: Default::default(), followed_caret: Default::default() });
+            state.cell_edit = Some(CellEdit { slide, column, row, text, caret, marked: None, mode, anchor: None, runs, pointed: None, reference_drag:false, rect: Rc::new(Cell::new(None)), pixels_per_point: Rc::new(Cell::new(0.0)), layout: Default::default(), dragging: None, dragging_in_bar: false, pending: None, scroll_y: Default::default(), followed_caret: Default::default() });
         }
         cx.notify();
     }
 
     /// Give up typing (Esc).
     pub(crate) fn cancel_cell_edit(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Some(s) = self.sheet_state_mut() { s.validation_choices = None; }
         let had = self.sheet_state_mut().and_then(|s| s.cell_edit.take()).is_some();
         if had {
             cx.notify();
@@ -551,7 +566,12 @@ impl SlideEditor {
 
     /// Finish typing: put what was typed into the cell as one step.
     pub(crate) fn commit_cell_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(edit) = self.sheet_state_mut().and_then(|s| s.cell_edit.take()) else { return };
+        let candidates = self.filtered_validation_choices();
+        let chosen = self.sheet_state().and_then(|s| s.validation_choices.as_ref()).and_then(|_| candidates.get(self.validation_choice_index(candidates.len()))).cloned();
+        if let Some(s) = self.sheet_state_mut() { s.validation_choices = None; }
+        let Some(mut edit) = self.sheet_state_mut().and_then(|s| s.cell_edit.take()) else { return };
+        if let Some(chosen) = chosen { edit.text = chosen; }
+        if super::formula_reference::is_formula(&edit.text){edit.text=super::formula_reference::close_parentheses(&edit.text);}
         if let Some(s) = self.sheet_state_mut() {
             s.last_fill = None;
             s.validation_warning = None;
@@ -586,7 +606,11 @@ impl SlideEditor {
         if let Some(value) = check_val {
             match self.check_entry(edit.row, edit.column, value) {
                 Err(message) => {
-                    self.status = Some(message.into());
+                    self.status = Some(message.clone().into());
+                    if self.current_rule().is_some_and(|r|r.kind=="list") {
+                        self.show_panel_message(message.into(), cx);
+                        self.wb_mut().validation_rejected = Some((edit.column, edit.row));
+                    }
                     if let Some(state) = self.sheet_state_mut() {
                         state.cell_edit = Some(edit);
                     }
@@ -612,21 +636,6 @@ impl SlideEditor {
         if let (Some(code), true) = (format.clone(), general) {
             let range = CellRange { first_row: edit.row, first_column: edit.column, last_row: edit.row, last_column: edit.column };
             commands.push(Command::Sheet(SheetCommand::SetFormat { slide: edit.slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
-        }
-        // A number typed with a format Excel gives it (a date, `1,234`, `¥1,000`)
-        // that is wider than its column widens the column, as Excel does.
-        if auto_format
-            && let (Some(code), Some(sheet), CellInput::Value(value)) = (format.as_ref(), sheet, &input)
-        {
-            let mut style = sheet.cell(edit.row, edit.column).map(|c| sheet.styles[c.style as usize].clone()).unwrap_or_else(|| self.presentation().workbook.as_ref().and_then(|w| w.default_style.clone()).unwrap_or_default());
-            style.number_format = code.clone();
-            let shown = ibis_calc::numfmt::format(value, code, date1904).text;
-            let ts = cx.text_system().clone();
-            let needed = super::headers::fitted_width(self.excel_text_width(&shown, &style, &ts));
-            let current = sheet.columns.get(edit.column as usize).copied().unwrap_or(0);
-            if needed > current && current > 0 {
-                commands.push(Command::Sheet(SheetCommand::SetSize { slide: edit.slide, axis: ibis_doc_model::sheet_command::Axis::Columns, first: edit.column, last: edit.column, size: needed }));
-            }
         }
         // オートコレクト: a URL or an email address typed alone becomes a link
         // (the link's colour and underline, one step with the entry).
@@ -684,8 +693,17 @@ impl SlideEditor {
             if !fit.is_empty() {
                 self.document.undo();
                 commands.extend(fit);
-                result = self.document.execute(commands);
+                result = self.document.execute(commands.clone());
             }
+        }
+        // A number entered that is wider than its column widens the column, unless the width was set by hand (as in Excel).
+        // Measured once the cell is entered, so a formula's result and the format Excel gives what was typed count; one undo step with the entry.
+        if result.is_ok()
+            && let Some(widen) = self.auto_widen_command(edit.slide, edit.row, edit.column, &cx.text_system().clone())
+        {
+            self.document.undo();
+            commands.push(widen);
+            result = self.document.execute(commands);
         }
         match result {
             Ok(_) => {
@@ -704,6 +722,28 @@ impl SlideEditor {
         }
         self.sync_workbook_peers(cx);
         cx.notify();
+    }
+
+    /// The command that widens the column of a number just entered to show it, if the column is wider by nothing but the sheet's
+    /// own choice (not set by hand), shows nothing narrower, and the cell is a number (a formula's result too). Only widens.
+    /// A decimal fraction is rounded to fit by the display, so only the whole part decides.
+    pub(crate) fn auto_widen_command(&self, slide: SlideId, row: u32, column: u32, ts: &TextSystem) -> Option<Command> {
+        let sheet = self.presentation().slide(slide).and_then(ibis_doc_model::sheet_calc::sheet_of_slide)?;
+        let cell = sheet.cell(row, column)?;
+        let current = sheet.columns.get(column as usize).copied().unwrap_or(0);
+        if !matches!(cell.value, CellValue::Number(_)) || cell.text.is_empty() || current <= 0 || sheet.custom_columns.contains(&column) {
+            return None;
+        }
+        if sheet.merge_at(row, column).is_some_and(|m| m.first_row != m.last_row || m.first_column != m.last_column) {
+            return None;
+        }
+        let style = &sheet.styles[cell.style as usize];
+        let shown = match cell.text.split_once('.') {
+            Some((whole, _)) if style.number_format == "General" && !cell.text.contains('E') => whole,
+            _ => cell.text.as_str(),
+        };
+        let needed = super::headers::fitted_width(self.excel_text_width(shown, style, ts));
+        (needed > current).then_some(Command::Sheet(SheetCommand::SetColumnWidthAuto { slide, first: column, last: column, size: needed }))
     }
 
     /// Clear the selected cells' values (Delete when not typing).
@@ -862,7 +902,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         let style = self.current_style();
         let Some(edit) = self.cell_edit_mut() else { return false };
-        if edit.slide != slide || edit.text.starts_with('=') {
+        if edit.slide != slide || super::formula_reference::is_formula(&edit.text) {
             return false;
         }
         if !matches!(change, StyleChange::Bold(_) | StyleChange::Italic(_) | StyleChange::Underline(_) | StyleChange::UnderlineKind(_) | StyleChange::Strike(_) | StyleChange::Color(_) | StyleChange::ColorTheme(..) | StyleChange::FontSize(_) | StyleChange::Font(_)) {
@@ -905,7 +945,7 @@ impl SlideEditor {
     pub(crate) fn point_reference(&mut self, column: u32, row: u32, cx: &mut Context<Self>) -> bool {
         let slide = self.current_slide;
         let Some(edit) = self.cell_edit_mut() else { return false };
-        if edit.slide != slide || !edit.text.starts_with('=') {
+        if edit.slide != slide || !super::formula_reference::is_formula(&edit.text) {
             return false;
         }
         let caret = byte_at(&edit.text, edit.caret);
@@ -948,7 +988,7 @@ impl SlideEditor {
     /// caret cycles `A1` → `$A$1` → `A$1` → `$A1` → `A1`, as in Excel.
     pub(crate) fn cycle_reference(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(edit) = self.cell_edit_mut() else { return false };
-        if !edit.text.starts_with('=') {
+        if !super::formula_reference::is_formula(&edit.text) {
             return false;
         }
         let caret = byte_at(&edit.text, edit.caret);
@@ -1013,6 +1053,7 @@ impl SlideEditor {
             }
             self.begin_cell_edit(EditMode::Enter, false, cx);
         }
+        if !text.is_empty() { self.show_typed_validation_choices(); }
         let Some(edit) = self.cell_edit_mut() else { return };
         edit.pointed = None;
         let range = range.or_else(|| edit.marked.clone()).or_else(|| edit.selection()).unwrap_or(edit.caret..edit.caret);
@@ -1381,7 +1422,7 @@ mod caret_items_tests {
             mode: EditMode::Edit,
             anchor: None,
             runs: None,
-            pointed: None,
+            pointed: None, reference_drag:false,
             rect: Rc::new(Cell::new(None)),
             pixels_per_point: Rc::new(Cell::new(1.0)),
             layout: Default::default(),

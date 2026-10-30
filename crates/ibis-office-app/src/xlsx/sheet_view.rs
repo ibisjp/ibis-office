@@ -130,6 +130,18 @@ struct Quad {
     color: Hsla,
 }
 
+/// A dashed line of a printed border: one path, and in a PDF one line with its dash pattern.
+#[derive(Clone)]
+struct DashedLine {
+    /// Where it runs (pixels).
+    points: Vec<(f32, f32)>,
+    width: f32,
+    color: Hsla,
+    /// The lengths of its dashes and gaps in turn, and how far into them it starts (pixels).
+    pattern: Vec<f32>,
+    phase: f32,
+}
+
 fn on_pixels_bounds(r: Bounds<Pixels>, across_y: bool, scale_factor: f32) -> Bounds<Pixels> {
     let k = scale_factor;
     let (x0, y0, x1, y1) = (
@@ -594,15 +606,15 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                         window.paint_path(path, *color);
                     }
                 }
-                for (pieces, width, color) in parts.iter().flat_map(|l| l.dashed_lines.iter()) {
-                    let (x0, x1) = pieces.iter().flatten().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.0), b.max(p.0)));
-                    let (y0, y1) = pieces.iter().flatten().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
+                for line in parts.iter().flat_map(|l| l.dashed_lines.iter()) {
+                    let (x0, x1) = line.points.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.0), b.max(p.0)));
+                    let (y0, y1) = line.points.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
                     if shown((x0, y0, x1 - x0, y1 - y0)).is_none() {
                         continue;
                     }
-                    let moved: Vec<Vec<_>> = pieces.iter().map(|piece| piece.iter().map(|&(x, y)| point(o.x + px(x), o.y + px(y))).collect()).collect();
-                    if let Some(path) = crate::render::shape_view::dashes_path(&moved, px(*width)) {
-                        window.paint_path(path, *color);
+                    let moved: Vec<_> = line.points.iter().map(|&(x, y)| point(o.x + px(x), o.y + px(y))).collect();
+                    if let Some(path) = crate::render::shape_view::dashed_line_path(&moved, px(line.width), &line.pattern, line.phase) {
+                        window.paint_path(path, line.color);
                     }
                 }
                 for (a, b, width, color) in parts.iter().flat_map(|l| l.diagonals.iter()) {
@@ -729,11 +741,13 @@ thread_local! {
     /// Layouts of the sheets drawn lately, by the sheet, the scale and
     /// whether printed: GPUI draws the whole window again on every scroll.
     static LAYOUTS: std::cell::RefCell<Vec<CachedLayout>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PRINT_REGIONS: std::cell::RefCell<Vec<(LayoutKey, std::sync::Weak<Sheet>, Vec<EmuRect>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Forget the layouts kept: they hold their sheets, so that an edit would copy every cell of a big sheet before changing one (the layout of the changed sheet is made again at the next draw).
 pub(crate) fn release_layouts() {
     LAYOUTS.with(|cache| cache.borrow_mut().clear());
+    PRINT_REGIONS.with(|cache| cache.borrow_mut().clear());
     SHAPED_TEXTS.with(|cache| cache.borrow_mut().clear());
 }
 
@@ -750,18 +764,23 @@ pub(crate) fn cell_shown_text(sheet: &Sheet, cell: &ibis_doc_model::SheetCell) -
 
 /// A layout by its key (the sheet's address, the scale's bits and whether
 /// printed), with the sheet it was made for.
-type CachedLayout = ((usize, u32, bool, u64, i64, u64), Arc<Sheet>, Rc<SheetLayout>);
+type LayoutKey = (usize, usize, usize, u32, bool, u64, i64, u64);
+type CachedLayout = (LayoutKey, Arc<Sheet>, Rc<SheetLayout>);
 
 /// How many layouts to keep (a workbook's sheets at a zoom or two).
 const CACHED_LAYOUTS: usize = 8;
 
-fn cached_layout(sheet: &Arc<Sheet>, scale: f32, res: &Resources) -> Rc<SheetLayout> {
+fn layout_key(sheet: &Arc<Sheet>, scale: f32, res: &Resources) -> LayoutKey {
     // Keyed by the cell content generation so zoom changes on `Sheet`
     // retain cached layouts across zoom levels.
     let breaks = res.print_breaks.borrow();
     let breaks_key = breaks.0.iter().chain(&breaks.1).fold(breaks.0.len() as i64, |h, v| h.wrapping_mul(31).wrapping_add(*v));
     drop(breaks);
-    let key = (sheet.cells.content_id(), scale.to_bits(), res.print, res.print_scale.get().to_bits(), breaks_key, crate::render::web_image::generation());
+    (sheet.cells.content_id(), Arc::as_ptr(sheet) as usize, res.layout_generation, scale.to_bits(), res.print, res.print_scale.get().to_bits(), breaks_key, crate::render::web_image::generation())
+}
+
+fn cached_layout(sheet: &Arc<Sheet>, scale: f32, res: &Resources) -> Rc<SheetLayout> {
+    let key = layout_key(sheet, scale, res);
     LAYOUTS.with(|cache| {
         let mut cache = cache.borrow_mut();
         if let Some(i) = cache.iter().position(|(k, _, _)| *k == key) {
@@ -927,7 +946,7 @@ struct Layout {
     /// stroked with a pen this wide.
     diagonal_shapes: Vec<(Vec<(f32, f32)>, f32, Hsla)>,
     /// Lines of short dashes (the dots of dotted borders): the dashes, the line's width and its colour.
-    dashed_lines: Vec<(Vec<Vec<(f32, f32)>>, f32, Hsla)>,
+    dashed_lines: Vec<DashedLine>,
     comments: Vec<((f32, f32), (f32, f32), (f32, f32), Hsla)>,
     /// The fills, grid lines, borders and vertical borders by band.
     bands: [Bands; 4],
@@ -1175,7 +1194,10 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                         to += 1;
                     }
                 }
-                (x(from), x(to + 1))
+                // Printed text can reach unused columns beyond the stored grid.
+                // The export measures its actual shaped end before choosing pages.
+                let end = if ctx.print && dir >= 0 && to + 1 == columns && range.first_row == range.last_row { 16_384 } else { to + 1 };
+                (x(from), x(end))
             };
             // The number format's colour ([Red]) over the font's.
             let mut style = style.clone();
@@ -1890,13 +1912,13 @@ thread_local! {
     static DASH_ANCHOR: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((-39.0, -39.0)) };
     /// For a printed sheet, its scale on the paper and where its origin is
     /// on the paper in sheet points (`dash_anchors`, negated): dotted and
-    /// hair lines are drawn on the paper's point grid (`paper_pattern`).
+    /// hair lines are drawn on the paper's point grid (`hair_cells`).
     static PRINT_GRID: std::cell::Cell<Option<(f32, f32, f32)>> = const { std::cell::Cell::new(None) };
     /// Outlines `border_quads` makes besides rectangles (slanted dashes),
     /// moved into the layout's `diagonal_shapes`.
     static BORDER_SHAPES: std::cell::RefCell<Vec<(Vec<(f32, f32)>, f32, Hsla)>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The dots of dotted lines, as the dashes of a line each (`border_quads`), moved into the layout's `dashed_lines`.
-    static BORDER_DASHES: std::cell::RefCell<Vec<(Vec<Vec<(f32, f32)>>, f32, Hsla)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The dashed lines of printed borders (`border_quads`), moved into the layout's `dashed_lines`.
+    static BORDER_DASHES: std::cell::RefCell<Vec<DashedLine>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Cut a dotted or hair line's rectangle (sheet points, x0, y0, x1, y1) as
@@ -1933,7 +1955,8 @@ fn clip_to_box(poly: &[(f32, f32)], (x0, y0, x1, y1): (f32, f32, f32, f32)) -> V
     out
 }
 
-fn paper_pattern(line: BorderLine, horizontal: bool, r: (f32, f32, f32, f32), grid: (f32, f32, f32)) -> Vec<(f32, f32, f32, f32)> {
+/// A hair line's squares on the paper's checkerboard (`r`: the line's rectangle in sheet points).
+fn hair_cells(r: (f32, f32, f32, f32), grid: (f32, f32, f32)) -> Vec<(f32, f32, f32, f32)> {
     let (s, kx, ky) = grid;
     let (x0, y0, x1, y1) = r;
     let cells = |a: f32, b: f32, k: f32| -> Vec<(i64, f32, f32)> {
@@ -1946,35 +1969,29 @@ fn paper_pattern(line: BorderLine, horizontal: bool, r: (f32, f32, f32, f32), gr
             .collect()
     };
     let mut out = Vec::new();
-    match line {
-        BorderLine::Hair => {
-            for (i, xa, xb) in cells(x0, x1, kx) {
-                for (j, ya, yb) in cells(y0, y1, ky) {
-                    if (i + j).rem_euclid(2) == 0 {
-                        out.push((xa, ya, xb, yb));
-                    }
-                }
-            }
-        }
-        // Excel 365's dotted line is a tile of 8 × 8 pixels drawn 0.96 pt square (its PDF's pattern: `XStep 0.96`,
-        // each row 4 pixels grey and 4 white, from the paper's corner): dots of half the step, a step apart.
-        _ => {
-            let (lo, hi, k) = if horizontal { (x0, x1, kx) } else { (y0, y1, ky) };
-            let (u0, u1) = (s * (k + lo), s * (k + hi));
-            for m in (u0 / DOT_STEP).floor() as i64..(u1 / DOT_STEP).ceil() as i64 {
-                let (on0, on1) = ((m as f32 * DOT_STEP).max(u0), (m as f32 * DOT_STEP + DOT_STEP / 2.0).min(u1));
-                if on1 > on0 {
-                    let (a, b) = (on0 / s - k, on1 / s - k);
-                    out.push(if horizontal { (a, y0, b, y1) } else { (x0, a, x1, b) });
-                }
+    for (i, xa, xb) in cells(x0, x1, kx) {
+        for (j, ya, yb) in cells(y0, y1, ky) {
+            if (i + j).rem_euclid(2) == 0 {
+                out.push((xa, ya, xb, yb));
             }
         }
     }
     out
 }
 
-/// The step, on the paper in points, of the tile Excel fills a dotted border with (a dot and a gap of half of it).
+/// The step, on the paper in points, of the tile Excel 365 fills a dotted border with: 8 x 8 pixels drawn 0.96 pt
+/// square (its PDF's pattern: `XStep 0.96`), each row 4 pixels grey and 4 white, from the paper's corner: dots of
+/// half the step, a step apart.
 const DOT_STEP: f32 = 0.96;
+
+/// The dash pattern of a dotted border printed at `scale` (paper points per sheet point), in pixels (`px_per_point`
+/// a sheet point): the lengths of a dot and a gap, and how far into them the line starts, `start` sheet points
+/// from the sheet's origin, which is `origin` sheet points from the paper's corner.
+fn dotted_pattern(scale: f32, origin: f32, start: f32, px_per_point: f32) -> (Vec<f32>, f32) {
+    let px_per_paper_point = px_per_point / scale;
+    let half = DOT_STEP / 2.0 * px_per_paper_point;
+    (vec![half, half], (scale * (origin + start)).rem_euclid(DOT_STEP) * px_per_paper_point)
+}
 
 /// Where Excel starts the dash patterns of a sheet's borders, along a row
 /// and down a column, in points from the sheet's origin: at the paper's
@@ -2069,24 +2086,21 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, at_page_start: boo
     if (b.line == BorderLine::Dotted || (b.line == BorderLine::Hair && ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Mac))
         && let Some(grid) = PRINT_GRID.with(|g| g.get())
     {
-        // Printed: a 1 pt line, cut on the paper's points.
+        // Printed: a 1 pt line, on the paper's points.
         let t = px_per_point;
         let (from, to) = if horizontal { (from, to) } else { (from - px_per_point, to) };
         let (x, y, w, h) = rect(near(t), t, from, to);
         let p = px_per_point;
-        let dots = paper_pattern(b.line, horizontal, (x / p, y / p, (x + w) / p, (y + h) / p), grid);
-        // A dotted line's dots as the dashes of one line (a drawing of each is thousands of objects in a page of
-        // notes): short lines the line's thickness wide, drawn as one path.
-        if b.line == BorderLine::Dotted && dots.len() > 1 {
-            let thickness = if horizontal { (y + h) - y } else { (x + w) - x };
-            let pieces: Vec<Vec<(f32, f32)>> = dots
-                .into_iter()
-                .map(|(a, b2, c, d)| if horizontal { vec![(a * p, (b2 + d) * p / 2.0), (c * p, (b2 + d) * p / 2.0)] } else { vec![((a + c) * p / 2.0, b2 * p), ((a + c) * p / 2.0, d * p)] })
-                .collect();
-            BORDER_DASHES.with(|s| s.borrow_mut().push((pieces, thickness, color)));
+        if b.line == BorderLine::Dotted {
+            // The dots as the dashes of one line (a drawing of each is thousands of objects in a page of notes).
+            let (scale, kx, ky) = grid;
+            let (origin, start) = if horizontal { (kx, x / p) } else { (ky, y / p) };
+            let (pattern, phase) = dotted_pattern(scale, origin, start, p);
+            let (points, width) = if horizontal { (vec![(x, y + h / 2.0), (x + w, y + h / 2.0)], h) } else { (vec![(x + w / 2.0, y), (x + w / 2.0, y + h)], w) };
+            BORDER_DASHES.with(|d| d.borrow_mut().push(DashedLine { points, width, color, pattern, phase }));
             return;
         }
-        for (a, b2, c, d) in dots {
+        for (a, b2, c, d) in hair_cells((x / p, y / p, (x + w) / p, (y + h) / p), grid) {
             out.push(Quad { rect: (a * p, b2 * p, (c - a) * p, (d - b2) * p), color });
         }
         return;
@@ -2148,30 +2162,28 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, at_page_start: boo
             // above (Excel's PDF of xlsx-XBRD).
             let from = if horizontal { from } else { from - border_unit };
             let (start, end) = (from / px_per_point, to / px_per_point);
+            if !screen {
+                // Printed, the dashes are one line with its pattern, from where the pattern's period starts.
+                let across = if horizontal { near(t) } else { near(t).max(0.0) } + t / 2.0;
+                let points = if horizontal { vec![(start * px_per_point, across), (end * px_per_point, across)] } else { vec![(across, start * px_per_point), (across, end * px_per_point)] };
+                let phase = (start - anchor).rem_euclid(period) * px_per_point;
+                if end > start {
+                    BORDER_DASHES.with(|d| d.borrow_mut().push(DashedLine { points, width: t, color, pattern: pattern.iter().map(|l| l * px_per_point).collect(), phase }));
+                }
+                return;
+            }
+            // On the screen each dash is a rectangle on whole pixels.
             let mut p = start - (start - anchor).rem_euclid(period);
-            // Printed, the dashes are those of one line, drawn as one path; on the screen each is a rectangle on
-            // whole pixels.
-            let across = if horizontal { near(t) } else { near(t).max(0.0) } + t / 2.0;
-            let mut pieces: Vec<Vec<(f32, f32)>> = Vec::new();
             while p < end {
                 let mut q = p;
                 for (i, &len) in pattern.iter().enumerate() {
                     let (a, z) = (q.max(start), (q + len).min(end));
                     if i % 2 == 0 && z > a {
-                        if screen {
-                            out.push(Quad { rect: rect(near(t), t, a * px_per_point, z * px_per_point), color });
-                        } else if horizontal {
-                            pieces.push(vec![(a * px_per_point, across), (z * px_per_point, across)]);
-                        } else {
-                            pieces.push(vec![(across, a * px_per_point), (across, z * px_per_point)]);
-                        }
+                        out.push(Quad { rect: rect(near(t), t, a * px_per_point, z * px_per_point), color });
                     }
                     q += len;
                 }
                 p += period;
-            }
-            if !pieces.is_empty() {
-                BORDER_DASHES.with(|s| s.borrow_mut().push((pieces, t, color)));
             }
         }
         _ => {
@@ -2331,6 +2343,87 @@ struct CellFont {
 /// `text_items` draws them.
 pub(crate) fn text_width_pt(text: &str, style: &CellStyle, res: &Resources, ts: &TextSystem) -> f32 {
     GlyphWidths::new(style, res, ts).width(text)
+}
+
+fn printed_shaped_width(ts: &WindowTextSystem, text: &str, font: &Font, size: f32, px_per_point: f32) -> f32 {
+    let run = TextRun { len: text.len(), font: font.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
+    let mut line = ts.shape_line(SharedString::from(text.to_owned()), px(size * px_per_point), &[run], None);
+    whole_point_advances(&mut line, px_per_point);
+    f32::from(line.width) / px_per_point
+}
+
+#[cfg(all(test, target_os = "windows", feature = "export"))]
+#[path = "../tests/xlsx/print_bounds.rs"]
+mod print_bounds_tests;
+
+/// Printed text's horizontal coverage, using the same line layout, font shaping,
+/// advance rounding and alignment as painting. Coordinates are sheet-local EMU.
+/// Empty values and explicit formatting are accounted for separately by export.
+pub(crate) fn printed_text_regions(sheet: &Arc<Sheet>, res: &Resources) -> Vec<EmuRect> {
+    let key = layout_key(sheet, 1.0 / EMU_PER_POINT as f32, res);
+    PRINT_REGIONS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.retain(|(_, sheet, _)| sheet.strong_count() > 0);
+        if let Some(at) = cache.iter().position(|(cached, _, _)| *cached == key) {
+            let entry = cache.remove(at);
+            let regions = entry.2.clone();
+            cache.push(entry);
+            return regions;
+        }
+        let regions = measure_printed_text_regions(sheet, res);
+        if cache.len() >= CACHED_LAYOUTS { cache.remove(0); }
+        // Weak keeps the allocation identity reserved without forcing a full
+        // Sheet clone on edit. Arc::make_mut dissociates it on mutation.
+        cache.push((key, Arc::downgrade(sheet), regions.clone()));
+        regions
+    })
+}
+
+fn measure_printed_text_regions(sheet: &Sheet, res: &Resources) -> Vec<EmuRect> {
+    let scale = 1.0 / EMU_PER_POINT as f32;
+    let mut fonts: Vec<CellFont> = sheet.styles.iter().map(|s| cell_font(s, res)).collect();
+    fonts.push(cell_font(&CellStyle::default(), res));
+    let context = LayoutContext { print: true, print_scale: 1.0, breaks: Default::default(), fonts, sheets: res.sheets.clone(), images: Default::default() };
+    let mut regions = Vec::new();
+    // Only one band is laid out at a time: print extent discovery must not
+    // retain another full-sheet set of fills, borders and text alongside paint.
+    let mut first = 0;
+    while first < sheet.cells.len() {
+        let from = sheet.cells[first].row;
+        let to = from.saturating_add(PART_ROWS);
+        let next = sheet.cells.partition_point(|cell| cell.row < to);
+        let laid = layout(sheet, scale, &context, None, Part::Rows(from, to));
+        let text_system = WindowTextSystem::new(Arc::clone(res.text_system()));
+        let measure = |text: &str, font: &Font, size: f32| {
+            printed_shaped_width(&text_system, text, font, size, 1.0)
+        };
+        for cell in &laid.cells {
+            let mut items = Vec::new();
+            text_items(cell, 1.0, &measure, &mut items);
+            for item in items {
+                // Horizontal run-on is enabled only at rotation zero in text_items;
+                // the cell/merge establishes the extent of other text modes.
+                if item.rotation != 0 { continue }
+                let width: f32 = item.pieces.iter().map(|piece| {
+                    piece.advance.unwrap_or_else(|| {
+                        let font = piece.run.as_ref().map(|r| &r.font).unwrap_or(if piece.plain { &item.plain } else { &item.font });
+                        measure(&piece.text, font, piece.size)
+                    })
+                }).sum();
+                let count = item.pieces.len();
+                let trailing = item.pieces.last().is_some_and(|p| p.advance.is_none() && p.text.ends_with(' '));
+                let (x, gap) = compute_text_x(item.align, item.left, item.right, width, count, trailing, item.rotation, 1.0);
+                let left = x.max(item.clip.0);
+                let right = (x + width + gap * count.saturating_sub(1) as f32).min(item.clip.0 + item.clip.2);
+                if right > left && item.clip.3 > 0.0 && (left < item.cell.0 || right > item.cell.1) {
+                    let emu = |v: f32| (v as f64 * EMU_PER_POINT as f64).round() as i64;
+                    regions.push(EmuRect::new(emu(left), emu(item.clip.1), emu(right) - emu(left), emu(item.clip.3)));
+                }
+            }
+        }
+        first = next;
+    }
+    regions
 }
 
 /// The widths of the glyphs of a format's font, found once each: the width of many texts in one format (a column of a million cells) without resolving the font and asking for each glyph again every time.
@@ -2822,7 +2915,8 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
     // Each line, and whether it ends its paragraph (justified text is
     // spread on the other lines only).
     let (mut lines, ends): (Vec<String>, Vec<bool>) = if is_vertical {
-        text.chars().map(|c| (c.to_string(), true)).unzip()
+        // (A line break in a stacked text is not a character to draw: a piece with a newline cannot be shaped.)
+        text.chars().filter(|c| !matches!(c, '\n' | '\r')).map(|c| (c.to_string(), true)).unzip()
     } else if wrap_text {
         wrap(text, room, |t| width(t, 1.0)).into_iter().unzip()
     } else {
@@ -2976,7 +3070,12 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
     } else {
         0.0
     };
-    let min_top = top + pad * 0.5 + v_shift_top;
+    // Ruby occupies its own font-metric line above the base text. Place both
+    // lines as one block, rather than painting the ruby inside the base line.
+    let ruby_height = if cell.phonetic.as_deref().is_some_and(|s|!s.is_empty()) && !is_vertical && style.rotation == 0 {
+        (ascent + descent) * base * 0.5 * 1.1 // Requested gap: ten percent of the ruby line.
+    } else { 0. };
+    let min_top = top + pad * 0.5 + v_shift_top + ruby_height;
     if !is_vertical && lines.len() > 1 {
         let mut max_lines = 1;
         while max_lines < lines.len() {
@@ -3000,7 +3099,7 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         CellVerticalAlign::Top | CellVerticalAlign::Justify => min_top,
         CellVerticalAlign::Distributed if lines.len() > 1 && !is_vertical => min_top,
         CellVerticalAlign::Center | CellVerticalAlign::Distributed => {
-            top + (bottom - top - block) / 2.0 + v_shift_center
+            top + (bottom - top - block + ruby_height) / 2.0 + v_shift_center
         }
         CellVerticalAlign::Bottom => {
             let base_block = if style.shrink { last_offset + orig_line * last_ratio } else { block };
@@ -3318,9 +3417,14 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         let ruby_scale = 0.5f32;
         let ruby_size = base * ruby_scale;
         let ruby_pieces = segments(phonetic, ruby_scale);
-        let ruby_baseline = (first_top + (ascent * ruby_size) - 1.0 * px_per_point).max(top + ruby_size);
+        let main=out.last();
+        let ruby_baseline = main.map_or(first_top,|m|m.baseline-ascent*base) - descent * ruby_size - (ascent + descent) * ruby_size * 0.1;
         let (pad_left, pad_right) = (TEXT_PAD_LEFT_PT * px_per_point, TEXT_PAD_RIGHT_PT * px_per_point);
-        let (l, r) = (left + pad_left + indent, right - pad_right);
+        let (mut l, r) = (left + pad_left + indent, right - pad_right);
+        if let Some(main)=main {
+            let main_width=main.pieces.iter().map(|p|p.advance.unwrap_or_else(||measure(&p.text,font_of(p.plain),p.size))).sum::<f32>();
+            l=match main.align {CellAlign::Center=>(main.left+main.right-main_width)/2.,CellAlign::Right=>main.right-main_width,_=>main.left};
+        }
         out.push(TextItem {
             pieces: ruby_pieces,
             font: font.clone(),
@@ -3415,7 +3519,7 @@ pub(crate) fn cell_or_default_style(sheet: &Sheet, default_style: Option<&CellSt
 
 /// `text` typed into the cell at (`row`, `column`) whose box is `cell` (width, height) pixels, `px_per_point`
 /// pixels to a point, laid out as `text_items` lays out that cell's shown text.
-pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: Option<&CellStyle>, res: &Resources, row: u32, column: u32, text: &str, runs: Option<Arc<Vec<ibis_doc_model::CellRun>>>, origin: (f32, f32), cell: (f32, f32), px_per_point: f32) -> EditLayout {
+pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: Option<&CellStyle>, res: &Resources, row: u32, column: u32, text: &str, runs: Option<Arc<Vec<ibis_doc_model::CellRun>>>, origin: (f32, f32), cell: (f32, f32), px_per_point: f32, max_width: f32) -> EditLayout {
     let own = sheet.cell(row, column);
     let mut style = cell_or_default_style(sheet, default_style, row, column);
     let kind = own.map_or(CellKind::Text, |c| c.kind);
@@ -3478,6 +3582,9 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
         let indent = style.indent as f32 * 9.0 * px_per_point;
         right = right.max(widest + (TEXT_PAD_LEFT_PT + TEXT_PAD_RIGHT_PT) * px_per_point + indent + 2.0 * px_per_point);
     }
+    let capped=right>max_width;
+    right=right.min(max_width.max(1.));
+    let make=|r,b|{let mut cell=make(r,b);if capped{cell.style.wrap=true;cell.style.align=CellAlign::Left;}cell};
     // The room the lines need: all of them laid out (text_items drops those below the box), the box then as high as they are.
     let biggest = |t: &TextItem| t.pieces.iter().map(|p| p.size).fold(t.font_size, f32::max);
     let mut items = Vec::new();
@@ -3497,10 +3604,11 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
         // The line's place in the text: after the previous line, over a line break.
         let start = text[cursor..].find(&line_text).map_or(cursor, |i| cursor + i);
         let end = start + line_text.len();
+        let mut piece_at=start;
         let shaped: Vec<(Option<ShapedLine>, f32)> = t
             .pieces
             .iter()
-            .map(|p| match p.advance {
+            .map(|p| {let piece_start=piece_at;piece_at+=p.text.len();match p.advance {
                 Some(a) => (None, a),
                 None => {
                     let f = match &p.run {
@@ -3517,12 +3625,13 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
                         underline: None,
                         strikethrough: p.run.as_ref().map_or(t.strike, |r| r.strike).then(|| StrikethroughStyle { thickness: px((p.size / 14.0).max(0.5)), color: Some(color) }),
                     };
-                    let mut line = ts.shape_line(SharedString::from(p.text.clone()), px(p.size), &[run], None);
+                    let runs=super::formula_reference::color_runs(text,piece_start,p.text.len(),run);
+                    let mut line = ts.shape_line(SharedString::from(p.text.clone()), px(p.size), &runs, None);
                     whole_point_advances(&mut line, px_per_point);
                     let w = f32::from(line.width);
                     (Some(line), w)
                 }
-            })
+            }})
             .collect();
         let sum: f32 = shaped.iter().map(|(_, w)| *w).sum();
         let trailing = t.pieces.last().is_some_and(|p| p.advance.is_none() && p.text.ends_with(' '));
@@ -3698,6 +3807,25 @@ mod tests {
     use super::{Bands, CellText, CellFont, text_items, fill_sources};
     use ibis_doc_model::{CellAlign, CellKind, CellStyle};
     use gpui_kit::font;
+
+    /// A stacked (rotation 255) text with a line break: the break is not a character to shape (`shape_line` panics on a
+    /// newline in debug), so no piece holds one and the letters stack on.
+    #[test]
+    fn stacked_text_with_a_line_break_shapes_no_newline() {
+        let cell = CellText { runs: None, phonetic: None,
+            text: "ab\ncd".into(), kind: CellKind::Text, general: None,
+            style: CellStyle { rotation: 255, wrap: true, font_size: 1000, ..Default::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
+            rect: (0., 0., 100., 200.), spans: [(0., 100.); 3], row_gap: None,
+        };
+        let measure = |t: &str, _: &gpui_kit::Font, _: f32| {
+            assert!(!t.contains('\n') && !t.contains('\r'), "a newline is measured: {t:?}");
+            t.chars().count() as f32 * 5.
+        };
+        let mut out = Vec::new();
+        text_items(&cell, 1., &measure, &mut out);
+        assert_eq!(out.len(), 4);
+    }
 
     #[test]
     fn vertical_justify_places_single_line_at_top_and_spreads_multiple_lines() {
@@ -4034,7 +4162,8 @@ mod tests {
 
     #[test]
     fn ruby_phonetic_rendered_when_present() {
-        let cell = CellText {
+        use ibis_doc_model::CellVerticalAlign;
+        let mut cell = CellText {
             runs: None,
             phonetic: Some("トウキョウ".into()),
             text: "東京".into(),
@@ -4059,32 +4188,57 @@ mod tests {
         assert_eq!(ruby.font_size, 6.0);
         // Ruby baseline is above main text baseline
         assert!(ruby.baseline < main.baseline, "ruby baseline ({}) should be above main text baseline ({})", ruby.baseline, main.baseline);
+        // Horizontal alignment must keep the reading at the base text's left,
+        // and vertical centring must preserve the same typographic separation.
+        let mut gaps = Vec::new();
+        for horizontal in [CellAlign::Left, CellAlign::Center, CellAlign::Right] {
+            for vertical in [CellVerticalAlign::Top, CellVerticalAlign::Center, CellVerticalAlign::Bottom] {
+                let candidate = &mut cell;
+                candidate.style.align = horizontal;
+                candidate.style.vertical = vertical;
+                candidate.style.vertical_set = true;
+                let mut items = Vec::new();
+                text_items(candidate, 1., &measure, &mut items);
+                let (base, reading) = (&items[0], &items[1]);
+                let text_width = measure("東京", &candidate.font.font, base.font_size);
+                let expected = match horizontal {
+                    CellAlign::Center => (base.left + base.right - text_width) / 2.,
+                    CellAlign::Right => base.right - text_width,
+                    _ => base.left,
+                };
+                assert!((reading.left - expected).abs() < 0.001);
+                gaps.push(base.baseline - reading.baseline);
+            }
+        }
+        assert!(gaps.iter().all(|gap| (gap - gaps[0]).abs() < 0.001));
     }
 
     /// GitHub #22: Excel 365 fills a dotted border with a tile 0.96 pt across, half of it grey: dots of 0.48 pt a
-    /// step of 0.96 pt apart, from the paper's corner (its PDF's pattern), cut to the line's ends.
+    /// step of 0.96 pt apart, from the paper's corner (its PDF's pattern), whatever the print scale.
     #[test]
     fn a_dotted_border_is_dots_of_half_the_tile_step_from_the_papers_corner() {
-        use super::{BorderLine, paper_pattern};
-        let dots = paper_pattern(BorderLine::Dotted, true, (0.0, 0.0, 3.0, 1.0), (1.0, 0.0, 0.0));
+        use super::dotted_pattern;
         let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
-        // 0 to 0.48, 0.96 to 1.44, 1.92 to 2.4, 2.88 to 3 (cut).
-        assert_eq!(dots.len(), 4, "{dots:?}");
-        assert!(near(dots[0].0, 0.0) && near(dots[0].2, 0.48), "{dots:?}");
-        assert!(near(dots[1].0, 0.96) && near(dots[1].2, 1.44), "{dots:?}");
-        assert!(near(dots[3].0, 2.88) && near(dots[3].2, 3.0), "{dots:?}");
-        // Printed at 50 %, the tile stays 0.96 pt on the paper: 1.92 pt of the sheet.
-        let half = paper_pattern(BorderLine::Dotted, true, (0.0, 0.0, 4.0, 1.0), (0.5, 0.0, 0.0));
-        assert!(near(half[1].0, 1.92) && near(half[1].2, 2.88), "{half:?}");
-        // Down a column the same along y.
-        let down = paper_pattern(BorderLine::Dotted, false, (0.0, 0.0, 1.0, 3.0), (1.0, 0.0, 0.0));
-        assert_eq!(down.len(), 4);
-        assert!(near(down[1].1, 0.96) && near(down[1].3, 1.44) && near(down[1].0, 0.0) && near(down[1].2, 1.0), "{down:?}");
+        // At 100 %, a pixel a point: dots of 0.48, gaps of 0.48, and a line that starts on the origin starts a dot.
+        let (pattern, phase) = dotted_pattern(1.0, 0.0, 0.0, 1.0);
+        assert!(pattern.len() == 2 && near(pattern[0], 0.48) && near(pattern[1], 0.48), "{pattern:?}");
+        assert!(near(phase, 0.0));
+        // A line that starts 1.2 pt in starts 0.24 into the tile (1.2 - 0.96), which is half a dot in.
+        assert!(near(dotted_pattern(1.0, 0.0, 1.2, 1.0).1, 0.24));
+        // The sheet's origin 10 pt from the paper's corner moves the start by as much: 10 + 1.2 = 11.2 = 11 x 0.96 + 0.64.
+        assert!(near(dotted_pattern(1.0, 10.0, 1.2, 1.0).1, 0.64), "{}", dotted_pattern(1.0, 10.0, 1.2, 1.0).1);
+        // Printed at 50 %, the tile stays 0.96 pt on the paper: a sheet point is half a paper point, at 2 px a sheet
+        // point a paper point is 4 px, and a dot 0.48 of them.
+        let (half, _) = dotted_pattern(0.5, 0.0, 0.0, 2.0);
+        assert!(near(half[0], 1.92) && near(half[1], 1.92), "{half:?}");
+        // At 200 % on the paper (a sheet point two paper points), half the pixels per paper point.
+        let (double, _) = dotted_pattern(2.0, 0.0, 0.0, 2.0);
+        assert!(near(double[0], 0.48) && near(double[1], 0.48), "{double:?}");
     }
 
-    /// What `border_quads` draws of a border along a row or a column: the rectangles (the screen) and the lines of
-    /// dashes (printed) it makes.
-    fn border_marks(line: ibis_doc_model::BorderLine, horizontal: bool, printed: bool, scale: f32, length: f32) -> (usize, Vec<(Vec<Vec<(f32, f32)>>, f32)>) {
+    /// What `border_quads` draws of a border along a row or a column: the rectangles (the screen) and the dashed lines
+    /// (printed) it makes.
+    fn border_marks(line: ibis_doc_model::BorderLine, horizontal: bool, printed: bool, scale: f32, length: f32) -> (usize, Vec<super::DashedLine>) {
         use super::{BORDER_DASHES, PRINT_GRID, border_quads};
         BORDER_DASHES.with(|d| d.borrow_mut().clear());
         PRINT_GRID.with(|g| g.set(printed.then_some((1.0, 0.0, 0.0))));
@@ -4092,66 +4246,66 @@ mod tests {
         let border = ibis_doc_model::Border { line, color: ibis_doc_model::Rgb(0x808080) };
         border_quads(&border, horizontal, false, 100.0 * scale, 10.0 * scale, (10.0 + length) * scale, scale, &mut quads);
         PRINT_GRID.with(|g| g.set(None));
-        let dashes = BORDER_DASHES.with(|d| std::mem::take(&mut *d.borrow_mut())).into_iter().map(|(pieces, width, _)| (pieces, width)).collect();
-        (quads.len(), dashes)
+        (quads.len(), BORDER_DASHES.with(|d| std::mem::take(&mut *d.borrow_mut())))
     }
 
-    /// GitHub #22: a printed dashed or dotted border (any style, along a row or a column, at any size) is the
-    /// dashes of one line, drawn as one path, not a rectangle for each of them; on the screen each is a rectangle.
+    /// GitHub #22: a printed dashed or dotted border (any style, along a row or a column, at any size) is one dashed
+    /// line, not a rectangle for each dash; on the screen each dash is a rectangle.
     #[test]
-    fn a_printed_dashed_border_is_one_line_of_dashes_and_a_screen_one_is_rectangles() {
+    fn a_printed_dashed_border_is_one_dashed_line_and_a_screen_one_is_rectangles() {
         use ibis_doc_model::BorderLine::*;
         for line in [Dashed, Dotted, DashDot, DashDotDot, MediumDashed, MediumDashDot, MediumDashDotDot] {
             for horizontal in [true, false] {
                 for scale in [1.0f32, 2.0] {
                     let what = format!("{line:?} horizontal {horizontal} at {scale}");
-                    let (quads, dashes) = border_marks(line, horizontal, true, scale, 100.0);
+                    let (quads, lines) = border_marks(line, horizontal, true, scale, 100.0);
                     assert_eq!(quads, 0, "printed {what}: no rectangles");
-                    assert_eq!(dashes.len(), 1, "printed {what}: one line of dashes");
-                    let (pieces, width) = &dashes[0];
-                    assert!(pieces.len() > 5, "printed {what}: {} dashes", pieces.len());
-                    assert!(*width >= 0.9 * scale, "printed {what}: {width} wide");
-                    // Each dash is a straight short line along the border.
-                    for piece in pieces {
-                        assert_eq!(piece.len(), 2, "{what}");
-                        let (dx, dy) = ((piece[1].0 - piece[0].0).abs(), (piece[1].1 - piece[0].1).abs());
-                        assert!(if horizontal { dy < 1e-4 && dx > 0.0 } else { dx < 1e-4 && dy > 0.0 }, "{what}: {piece:?}");
-                    }
-                    let (quads, dashes) = border_marks(line, horizontal, false, scale, 100.0);
-                    assert!(quads > 5 && dashes.is_empty(), "screen {what}: {quads} rectangles, {} lines", dashes.len());
+                    assert_eq!(lines.len(), 1, "printed {what}: one dashed line");
+                    let l = &lines[0];
+                    assert!(l.width >= 0.9 * scale, "printed {what}: {} wide", l.width);
+                    assert!(l.pattern.len() >= 2 && l.pattern.len() % 2 == 0 && l.pattern.iter().all(|v| *v > 0.0), "{what}: {:?}", l.pattern);
+                    assert_eq!(l.points.len(), 2, "{what}");
+                    // The line runs along the border, 100 sheet points of it, from its start.
+                    let (a, b) = (l.points[0], l.points[1]);
+                    let (along, across) = if horizontal { (b.0 - a.0, b.1 - a.1) } else { (b.1 - a.1, b.0 - a.0) };
+                    // (A column's line starts a point above, as its solid line does.)
+                    assert!(across.abs() < 1e-4 && (along - 100.0 * scale).abs() < 1.5 * scale, "{what}: {:?}", l.points);
+                    let (quads, lines) = border_marks(line, horizontal, false, scale, 100.0);
+                    assert!(quads > 5 && lines.is_empty(), "screen {what}: {quads} rectangles, {} lines", lines.len());
                 }
             }
         }
     }
 
-    /// The lengths of a dashed border's dashes are its pattern's (`dash_pattern`, in points on the sheet), cut at the
-    /// line's ends: 3 pt dashes and 1 pt gaps for `dashed`, 9 and 3 for `mediumDashed`.
+    /// The lengths of a dashed border's dashes and gaps are its pattern's (`dash_pattern`, in sheet points): 3 and 1 for
+    /// `dashed`, 9 and 3 for `mediumDashed`, 9 3 3 3 for a dash-dot, at any size.
     #[test]
     fn the_dashes_of_a_dashed_border_are_its_patterns() {
         use ibis_doc_model::BorderLine::*;
-        for (line, on, gap) in [(Dashed, 3.0f32, 1.0f32), (MediumDashed, 9.0, 3.0)] {
-            let (_, dashes) = border_marks(line, true, true, 1.0, 120.0);
-            let pieces = &dashes[0].0;
-            let inner = &pieces[1..pieces.len() - 1];
-            assert!(inner.iter().all(|p| ((p[1].0 - p[0].0) - on).abs() < 1e-3), "{line:?}: {inner:?}");
-            assert!(pieces.windows(2).all(|w| ((w[1][0].0 - w[0][1].0) - gap).abs() < 1e-3), "{line:?}: gaps");
+        for (line, pattern) in [(Dashed, vec![3.0f32, 1.0]), (MediumDashed, vec![9.0, 3.0]), (DashDot, vec![9.0, 3.0, 3.0, 3.0]), (MediumDashDotDot, vec![9.0, 3.0, 3.0, 3.0, 3.0, 3.0])] {
+            for scale in [1.0f32, 2.0] {
+                let (_, lines) = border_marks(line, true, true, scale, 120.0);
+                let want: Vec<f32> = pattern.iter().map(|l| l * scale).collect();
+                assert_eq!(lines[0].pattern, want, "{line:?} at {scale}");
+            }
         }
     }
 
-    /// A dotted border's dots are the tile's (0.96 pt, half grey) at the line's thickness: along a row and down a
-    /// column, at 100 % and 200 % (the tile is of the paper's points, not the sheet's).
+    /// A printed dotted border is the Excel tile's dots whatever its length, along a row and down a column, at 100 %
+    /// and 200 %: dots and gaps of 0.48 paper points, starting where the tile does on the paper.
     #[test]
     fn a_printed_dotted_border_is_the_excel_tile_at_any_size() {
         use ibis_doc_model::BorderLine::Dotted;
         for scale in [1.0f32, 2.0] {
             for horizontal in [true, false] {
-                let (_, dashes) = border_marks(Dotted, horizontal, true, scale, 100.0);
-                let pieces = &dashes[0].0;
-                let along = |p: &Vec<(f32, f32)>| if horizontal { (p[0].0, p[1].0) } else { (p[0].1, p[1].1) };
-                let inner = &pieces[1..pieces.len() - 1];
-                // A dot is 0.48 pt of the paper, which at `scale` px per point is 0.48 × scale px.
-                assert!(inner.iter().all(|p| { let (a, b) = along(p); ((b - a) - 0.48 * scale).abs() < 1e-3 * scale }), "scale {scale} horizontal {horizontal}: {inner:?}");
-                assert!(inner.windows(2).all(|w| ((along(&w[1]).0 - along(&w[0]).0) - 0.96 * scale).abs() < 1e-3 * scale), "scale {scale} horizontal {horizontal}: the step");
+                let (_, lines) = border_marks(Dotted, horizontal, true, scale, 100.0);
+                let l = &lines[0];
+                // The grid scale is 1 here: a sheet point is a paper point, and `scale` pixels.
+                assert!(l.pattern.iter().all(|v| (v - 0.48 * scale).abs() < 1e-3 * scale), "scale {scale} horizontal {horizontal}: {:?}", l.pattern);
+                assert!(l.phase >= 0.0 && l.phase < 0.96 * scale, "the phase is in the tile: {}", l.phase);
+                // The line starts 10 sheet points along (a column starts a point earlier: 9), which is 0.4 (0.36) into a tile.
+                let want = if horizontal { 0.4 } else { 0.36 };
+                assert!((l.phase - want * scale).abs() < 1e-3 * scale, "scale {scale} horizontal {horizontal}: phase {}", l.phase);
             }
         }
     }

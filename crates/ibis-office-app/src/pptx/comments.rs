@@ -226,7 +226,7 @@ impl SlideEditor {
         let state = self.pptx()?.comments.as_ref()?;
         let (input, target) = (state.input.clone(), state.target);
         let comments = self.slide().comments.clone();
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
         let prompt = match target {
             Some(CommentTarget::New(Some(_))) => "pptx.comments.comment-selected-shape",
             Some(CommentTarget::New(None)) => "pptx.comments.comment-slide",
@@ -241,7 +241,7 @@ impl SlideEditor {
                 crate::shell::i18n::text("pptx.comments.post-tip-other")
             };
             let send_input = input.clone();
-            let send_btn = Button::new("pptx-comment-send")
+            let send_btn = crate::shell::chrome::primary_button("pptx-comment-send")
                 .small()
                 .tooltip(tip)
                 .child(Icon::new(Material("send")).size(px(16.)))
@@ -280,7 +280,7 @@ impl SlideEditor {
                 }))
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(rgb(0x5f6368))
                         .child(format!("{header_text}{}", if done { format!(" {}", crate::shell::i18n::text("_shell.resolved")) } else { "".into() })),
                 )
@@ -296,16 +296,16 @@ impl SlideEditor {
                     v_flex()
                         .pl(px(8.))
                         .gap_0p5()
-                        .child(div().text_xs().text_color(rgb(0x5f6368)).child(r_header))
+                        .child(div().text_sm().text_color(rgb(0x5f6368)).child(r_header))
                         .child(div().text_sm().child(r.text.clone())),
                 );
             }
             card = card.child(
                 h_flex()
                     .gap_1()
-                    .child(Button::new(("pptx-comment-reply", index)).small().ghost().label(crate::shell::i18n::text("_shell.reply")).on_click(cx.listener(move |this, _, window, cx| this.reply_to_slide_comment(index, window, cx))))
-                    .child(Button::new(("pptx-comment-done", index)).small().ghost().label(crate::shell::i18n::text(if done { "pptx.comments.reopen" } else { "_shell.resolve" })).on_click(cx.listener(move |this, _, _, cx| this.resolve_slide_comment(index, !done, cx))))
-                    .child(Button::new(("pptx-comment-delete", index)).small().ghost().label(crate::shell::i18n::text("_shell.delete")).on_click(cx.listener(move |this, _, _, cx| this.delete_slide_comment(index, cx)))),
+                    .child(crate::shell::chrome::action_button(("pptx-comment-reply", index)).small().label(crate::shell::i18n::text("_shell.reply")).on_click(cx.listener(move |this, _, window, cx| this.reply_to_slide_comment(index, window, cx))))
+                    .child(crate::shell::chrome::action_button(("pptx-comment-done", index)).small().label(crate::shell::i18n::text(if done { "pptx.comments.reopen" } else { "_shell.resolve" })).on_click(cx.listener(move |this, _, _, cx| this.resolve_slide_comment(index, !done, cx))))
+                    .child(crate::shell::chrome::destructive_button(("pptx-comment-delete", index),cx).small().label(crate::shell::i18n::text("_shell.delete")).on_click(cx.listener(move |this, _, _, cx| this.delete_slide_comment(index, cx)))),
             );
             body = body.child(card);
         }

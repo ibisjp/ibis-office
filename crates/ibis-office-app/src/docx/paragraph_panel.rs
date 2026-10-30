@@ -2,10 +2,10 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! P1 paragraph spacing, line height and indentation controls.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{LineHeight, ParaChange};
 use crate::shell::{chrome::SidebarPanel, editor::SlideEditor};
@@ -106,6 +106,7 @@ fn parse_indent_value(raw: &str, current_unit: IndentUnit, char_emu: i64) -> Opt
 
 impl SlideEditor {
     pub(crate) fn open_paragraph_edit(&mut self, rule: Option<LineRule>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(target) = self.selected_paragraphs() else { return };
         let Some(document) = self.flow().cloned() else { return };
         let Some(p) = self.paragraph_of(target.0) else { return };
@@ -333,7 +334,7 @@ impl SlideEditor {
                 edit.document = document;
                 edit.error = None;
             }
-            self.focus_handle.focus(window, cx);
+            if !self.panel_dialog_is_modal() { self.focus_handle.focus(window, cx); }
         }
         cx.notify();
     }
@@ -345,19 +346,32 @@ impl SlideEditor {
         let mixed = edit.rule_mixed;
         let indent_unit = edit.indent_unit;
         let error = edit.error.clone();
-        let row = |label: &'static str, field: &Entity<InputState>| h_flex().gap_2()
-            .child(div().w(px(92.)).text_sm().child(crate::shell::i18n::text(label))).child(Input::new(field).small().cleanable(true));
-        let choice = |id: &'static str, label: &'static str, value: LineRule| Button::new(id).small().label(crate::shell::i18n::text(label)).selected(!mixed && rule == value)
-            .on_click(cx.listener(move |this, _, window, cx| this.choose_paragraph_line_rule(value, window, cx)));
-        let indent_choice = |id: &'static str, label: &'static str, value: IndentUnit| Button::new(id).small().label(crate::shell::i18n::text(label)).selected(indent_unit == value)
-            .on_click(cx.listener(move |this, _, window, cx| this.choose_paragraph_indent_unit(value, window, cx)));
+        use crate::shell::chrome::SpinnerSpec;
+        // ▲▼ as Word's: spacing before/after by 6 pt, indents by 0.5 character or 1 pt, line spacing by 0.5 line or 1 pt.
+        let indent_spec = if indent_unit == IndentUnit::Chars { SpinnerSpec::new(0.5) } else { SpinnerSpec::new(1.0) };
+        let line_spec = if rule == LineRule::Multiple { SpinnerSpec::new(0.5).range(0.06, 132.0) } else { SpinnerSpec::new(1.0).range(0.0, 1584.0) };
+        let specs = [SpinnerSpec::new(6.0).range(0.0, 1584.0), SpinnerSpec::new(6.0).range(0.0, 1584.0), indent_spec, indent_spec, indent_spec, line_spec];
+        let field_cx = &*cx;
+        let row = |label: &'static str, i: usize| h_flex().gap_2()
+            .child(div().w(px(92.)).text_sm().child(crate::shell::i18n::text(label)))
+            .child(crate::shell::chrome::text_field(&fields[i])
+                .spinner(format!("para-field-{i}"), specs[i], field_cx, |_, _, _, _| {}));
+        let choice = |id: &'static str, label: &'static str, value: LineRule| crate::shell::chrome::radio_button(id, !mixed && rule == value, false, crate::shell::i18n::text(label),
+            cx.listener(move |this, _, window, cx| this.choose_paragraph_line_rule(value, window, cx)));
+        let indent_choice = |id: &'static str, label: &'static str, value: IndentUnit| crate::shell::chrome::radio_button(id, indent_unit == value, false, crate::shell::i18n::text(label),
+            cx.listener(move |this, _, window, cx| this.choose_paragraph_indent_unit(value, window, cx)));
         let body = v_flex().gap_2().px(px(18.)).py(px(8.))
+            .p_0().child(div().text_sm().child(crate::shell::i18n::text("docx.paragraph-panel.indent-units")))
+            .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+                .child(indent_choice("indent-chars", "docx.paragraph-panel.characters", IndentUnit::Chars))
+                .child(indent_choice("indent-pt", "pt", IndentUnit::Pt)))
             .child(div().text_sm().child(crate::shell::i18n::text("docx.paragraph-panel.spacing-indent-unit-pt-use")))
-            .child(row("docx.paragraph-panel.before", &fields[0])).child(row("docx.paragraph-panel.after", &fields[1]))
-            .child(row("docx.paragraph-panel.left-indent", &fields[2])).child(row("docx.paragraph-panel.right-indent", &fields[3])).child(row("docx.paragraph-panel.first-line", &fields[4]))
-            .child(h_flex().gap_1().child(choice("para-multiple", "_shell.multiple", LineRule::Multiple))
+            .child(row("docx.paragraph-panel.before", 0)).child(row("docx.paragraph-panel.after", 1))
+            .child(row("docx.paragraph-panel.left-indent", 2)).child(row("docx.paragraph-panel.right-indent", 3)).child(row("docx.paragraph-panel.first-line", 4))
+            .child(div().text_sm().child(crate::shell::i18n::text("docx.paragraph-panel.line-type")))
+            .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow).child(choice("para-multiple", "_shell.multiple", LineRule::Multiple))
                 .child(choice("para-atleast", "_shell.at-least", LineRule::AtLeast)).child(choice("para-exact", "docx.common.exactly", LineRule::Exact)))
-            .child(row(if mixed { "docx.paragraph-panel.line-spacing-mixed" } else if rule == LineRule::Multiple { "docx.paragraph-panel.line-spacing-multiple" } else { "docx.paragraph-panel.line-spacing-pt" }, &fields[5]))
+            .child(row(if mixed { "docx.paragraph-panel.line-spacing-mixed" } else if rule == LineRule::Multiple { "docx.paragraph-panel.line-spacing-multiple" } else { "docx.paragraph-panel.line-spacing-pt" }, 5))
             .child(Checkbox::new("para-widow-control")
                 .label(crate::shell::i18n::text("docx.paragraph-panel.widow-orphan-control"))
                 .checked(edit.widow_control == Some(true))
@@ -375,14 +389,19 @@ impl SlideEditor {
                 .checked(edit.contextual_spacing == Some(true))
                 .on_click(cx.listener(|this, on: &bool, _, cx| this.toggle_paragraph_contextual_spacing(*on, cx))))
             .children(error.map(|error| div().text_sm().child(error)))
-            .child(h_flex().gap_2()
-                .child(Button::new("para-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|this, _, window, cx| this.apply_paragraph_edit(window, cx))))
-                .child(Button::new("para-tabs").small().label(crate::shell::i18n::text("docx.paragraph-panel.tabs")).on_click(cx.listener(|this, _, window, cx| this.open_tab_edit(window, cx)))))
-            .child(h_flex().gap_1()
-                .child(div().w(px(92.)).text_sm().child(crate::shell::i18n::text("docx.paragraph-panel.indent-units")))
-                .child(indent_choice("indent-chars", "docx.paragraph-panel.characters", IndentUnit::Chars))
-                .child(indent_choice("indent-pt", "pt", IndentUnit::Pt)))
             .child(div().text_sm().child(crate::shell::i18n::text("docx.paragraph-panel.blank-means-mixed-only-changed")));
-        Some(SidebarPanel { title: crate::shell::i18n::text("docx.paragraph-panel.align-indent"), body: body.into_any_element() })
+        let footer = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("para-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary)
+                .on_click(cx.listener(|this, _, window, cx| this.apply_paragraph_edit(window, cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("para-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if let Some(state) = this.doc_state_mut() { state.paragraph_edit = None; }
+                    this.sidebar_open = false;
+                    this.focus_handle.focus(window, cx);
+                    cx.notify();
+                })))
+            .action(crate::shell::chrome::ActionDefinition::new("para-tabs", crate::shell::i18n::text("docx.paragraph-panel.tabs"), crate::shell::chrome::ActionButtonKind::Normal)
+                .on_click(cx.listener(|this, _, window, cx| this.open_tab_edit(window, cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("docx.paragraph-panel.align-indent"), body.into_any_element(), footer))
     }
 }

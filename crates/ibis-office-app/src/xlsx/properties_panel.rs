@@ -10,8 +10,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
@@ -217,14 +217,21 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
         let stat_item = |label: &'static str, value: usize| {
             h_flex()
                 .justify_between()
                 .items_center()
                 .py(px(2.))
-                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(text(label)))
-                .child(div().text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(crate::shell::ribbon::thousands(value)))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text(label)))
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(crate::shell::ribbon::thousands(value)))
         };
 
         let meta_item = |label: &'static str, val: &str| {
@@ -233,22 +240,22 @@ impl SlideEditor {
                 .justify_between()
                 .items_center()
                 .py(px(2.))
-                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(text(label)))
-                .child(div().text_size(px(11.)).text_color(theme.foreground).child(val_str))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text(label)))
+                .child(div().text_sm().text_color(theme.foreground).child(val_str))
         };
 
         let field_input = |id: &'static str, label: &'static str, entity: &Entity<InputState>| {
             v_flex()
                 .gap_1()
                 .py(px(3.))
-                .child(div().text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(theme.muted_foreground).child(text(label)))
-                .child(mark(id, Input::new(entity).small().cleanable(true).into_any_element()))
+                .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.muted_foreground).child(text(label)))
+                .child(mark(id, crate::shell::chrome::text_field(entity).full_width().into_any_element()))
         };
 
         let mut body = v_flex()
             .gap_2()
             .px(px(16.))
-            .py(px(8.));
+            .py(px(8.)).p_0();
 
         // 統計・メタ情報セクション
         let stats_box = v_flex()
@@ -259,9 +266,9 @@ impl SlideEditor {
             .child(stat_item("_xlsx.sheet-count", p.sheet_count))
             .child(stat_item("_xlsx.data-cell-count", p.cell_count))
             .child(stat_item("_xlsx.defined-names-count", p.defined_names_count))
-            .child(meta_item("pptx.properties-panel.created", &p.created))
-            .child(meta_item("pptx.properties-panel.modified", &p.modified))
-            .child(meta_item("docx.properties-panel.last-printed", &p.last_printed))
+            .child(meta_item("pptx.properties-panel.created", &crate::clock::format_local_datetime(&p.created)))
+            .child(meta_item("pptx.properties-panel.modified", &crate::clock::format_local_datetime(&p.modified)))
+            .child(meta_item("docx.properties-panel.last-printed", &crate::clock::format_local_datetime(&p.last_printed)))
             .child(meta_item("docx.properties-panel.revision", &p.revision));
 
         body = body.child(stats_box);
@@ -280,14 +287,14 @@ impl SlideEditor {
         // カスタムプロパティセクション
         let mut custom_section = v_flex().gap_1().py(px(4.));
         custom_section = custom_section.child(
-            div().text_size(px(11.)).font_weight(FontWeight::BOLD).text_color(theme.foreground).child(text("pptx.properties-panel.custom-properties"))
+            div().text_sm().font_weight(FontWeight::BOLD).text_color(theme.foreground).child(text("pptx.properties-panel.custom-properties"))
         );
         for (ix, prop) in p.custom_properties.iter().enumerate() {
             let val_str = match &prop.value {
                 ibis_doc_model::CustomPropertyValue::Text(s) => s.clone(),
                 ibis_doc_model::CustomPropertyValue::Number(s) => s.clone(),
                 ibis_doc_model::CustomPropertyValue::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
-                ibis_doc_model::CustomPropertyValue::DateTime(s) => s.clone(),
+                ibis_doc_model::CustomPropertyValue::DateTime(s) => crate::clock::format_local_datetime(s),
             };
             let prop_name = prop.name.clone();
             let row = h_flex()
@@ -300,15 +307,14 @@ impl SlideEditor {
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(div().text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(SharedString::from(prop_name)))
-                        .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child(": "))
-                        .child(div().text_size(px(11.)).text_color(theme.foreground).child(SharedString::from(val_str)))
+                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(SharedString::from(prop_name)))
+                        .child(div().text_sm().text_color(theme.muted_foreground).child(": "))
+                        .child(div().text_sm().text_color(theme.foreground).child(SharedString::from(val_str)))
                 )
                 .child(
                     mark(
                         &format!("remove_custom_{ix}"),
-                        Button::new(("remove_custom", ix))
-                            .ghost()
+                        crate::shell::chrome::destructive_button(("remove_custom", ix),cx)
                             .small()
                             .label(text("×"))
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -325,12 +331,12 @@ impl SlideEditor {
             .gap_1()
             .items_center()
             .pt(px(2.))
-            .child(div().flex_1().child(mark("new_custom_name", Input::new(&p.new_custom_name).small().cleanable(true).into_any_element())))
-            .child(div().flex_1().child(mark("new_custom_val", Input::new(&p.new_custom_val).small().cleanable(true).into_any_element())))
+            .child(div().flex_1().child(mark("new_custom_name", crate::shell::chrome::text_field(&p.new_custom_name).full_width().into_any_element())))
+            .child(div().flex_1().child(mark("new_custom_val", crate::shell::chrome::text_field(&p.new_custom_val).full_width().into_any_element())))
             .child(
                 mark(
                     "add_custom",
-                    Button::new("add_custom")
+                    crate::shell::chrome::action_button("add_custom")
                         .secondary()
                         .small()
                         .label(text("fix.common.add"))
@@ -346,41 +352,23 @@ impl SlideEditor {
         if !p.message.is_empty() {
             body = body.child(
                 div()
-                    .text_size(px(12.))
+                    .text_sm()
                     .text_color(theme.muted_foreground)
                     .child(SharedString::from(p.message.clone()))
             );
         }
 
         // アクションボタン
-        body = body.child(
-            h_flex()
-                .gap_2()
-                .pt(px(4.))
-                .child(
-                    mark(
-                        "apply_properties",
-                        Button::new("apply_properties")
-                            .primary()
-                            .small()
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(
+                    mark_action("apply_properties", crate::shell::chrome::ActionDefinition::new("apply_properties", "", crate::shell::chrome::ActionButtonKind::Primary)
                             .label(text("_shell.apply"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.apply_sheet_doc_properties(cx);
-                            }))
-                            .into_any_element(),
-                    )
+                            })))
                 )
-                .child(
-                    Button::new("close_properties")
-                        .ghost()
-                        .small()
-                        .label(text("_shell.close"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.close_sheet_doc_properties_panel(cx);
-                        }))
-                )
-        );
 
-        Some(SidebarPanel { title: text("_xlsx.document-properties").into(), body: body.into_any_element() })
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("_xlsx.document-properties"), body.into_any_element(), panel_actions))
     }
 }

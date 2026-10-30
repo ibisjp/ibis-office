@@ -107,7 +107,7 @@ impl SlideEditor {
             s.custom_format = None;
             s.conditional_edit = None;
             s.sort_edit = None;
-            s.panels.close();
+            s.close_settings();
             s.spelling = Some(SpellPanel { issues, current: 0, ignored, range, from: (row, column), suggestions: Vec::new() });
         }
         self.sidebar_open = true;

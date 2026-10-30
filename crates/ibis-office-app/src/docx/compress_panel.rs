@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! 図の圧縮・画像のサイズと品質設定 (Word の「図の圧縮…」「画像のサイズと品質」、DOCX-OPTIONS-011).
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
 use gpui_kit::component::{h_flex, v_flex, Disableable as _, Sizable as _};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -79,6 +79,7 @@ pub(crate) struct DocxCompressState {
 
 impl SlideEditor {
     pub(crate) fn open_docx_compress_panel(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let has_pic = self.picture_at_caret().is_some();
         let default_res = self.default_image_dpi().map(Resolution::from_dpi).unwrap_or(Resolution::Print);
         let discard_crop = self.is_discard_image_editing_data() || true;
@@ -125,13 +126,18 @@ impl SlideEditor {
         let has_pic = self.picture_at_caret().is_some();
 
         let t = |k: &str| crate::shell::i18n::text(k);
-        let mark = |on: bool, k: &str| if on { format!("✓ {}", t(k)) } else { format!("  {}", t(k)) };
-        let heading = |k: &str| div().text_xs().text_color(rgb(0x5f6368)).font_weight(FontWeight::SEMIBOLD).mt_2().child(t(k));
+        let heading = |k: &str| div().text_sm().text_color(rgb(0x5f6368)).font_weight(FontWeight::SEMIBOLD).mt_2().child(t(k));
 
         let body = v_flex()
             .gap_2()
             .px(px(18.))
             .py(px(8.))
+            .p_0().child(heading("docx.compress.target"))
+            .child(crate::shell::chrome::radio_group()
+                .child(crate::shell::chrome::radio_button("docx-compress-all", !selected_only, false, t("docx.compress.entire-file"),
+                    cx.listener(|e, _, _, cx| e.edit_docx_compress_panel(|p| p.selected_only = false, cx))))
+                .child(crate::shell::chrome::radio_button("docx-compress-selected", selected_only && has_pic, !has_pic, t("docx.compress.selected-picture"),
+                    cx.listener(|e, _, _, cx| e.edit_docx_compress_panel(|p| p.selected_only = true, cx)))))
             .child(heading("docx.compress.options"))
             .child(
                 Checkbox::new("docx-compress-delete")
@@ -141,68 +147,23 @@ impl SlideEditor {
                         e.edit_docx_compress_panel(|p| p.delete_crop = *on, cx);
                     })),
             )
-            .child(
-                Checkbox::new("docx-compress-selected")
-                    .label(t("docx.compress.apply-only-selected"))
-                    .checked(selected_only && has_pic)
-                    .disabled(!has_pic)
-                    .on_click(cx.listener(|e, on: &bool, _, cx| {
-                        e.edit_docx_compress_panel(|p| p.selected_only = *on, cx);
-                    })),
-            )
             .child(heading("docx.compress.resolution"))
-            .child(
-                Button::new("docx-compress-hd")
-                    .small()
-                    .ghost()
-                    .label(mark(resolution == Resolution::Hd, "docx.compress.hd-330-ppi"))
-                    .on_click(cx.listener(|e, _, _, cx| e.edit_docx_compress_panel(|p| p.resolution = Resolution::Hd, cx))),
-            )
-            .child(
-                Button::new("docx-compress-print")
-                    .small()
-                    .ghost()
-                    .label(mark(resolution == Resolution::Print, "docx.compress.print-220-ppi"))
-                    .on_click(cx.listener(|e, _, _, cx| e.edit_docx_compress_panel(|p| p.resolution = Resolution::Print, cx))),
-            )
-            .child(
-                Button::new("docx-compress-web")
-                    .small()
-                    .ghost()
-                    .label(mark(resolution == Resolution::Web, "docx.compress.web-150-ppi"))
-                    .on_click(cx.listener(|e, _, _, cx| e.edit_docx_compress_panel(|p| p.resolution = Resolution::Web, cx))),
-            )
-            .child(
-                Button::new("docx-compress-email")
-                    .small()
-                    .ghost()
-                    .label(mark(resolution == Resolution::Email, "docx.compress.email-96-ppi"))
-                    .on_click(cx.listener(|e, _, _, cx| e.edit_docx_compress_panel(|p| p.resolution = Resolution::Email, cx))),
-            )
-            .child(
-                h_flex()
-                    .mt_3()
-                    .gap_2()
-                    .child(
-                        Button::new("docx-compress-apply")
-                            .primary()
-                            .small()
-                            .label(t("_shell.apply"))
-                            .on_click(cx.listener(|e, _, w, cx| e.apply_docx_compress_panel(w, cx))),
-                    )
-                    .child(
-                        Button::new("docx-compress-cancel")
-                            .small()
-                            .ghost()
-                            .label(t("_shell.cancel"))
-                            .on_click(cx.listener(|e, _, w, cx| e.close_docx_compress_panel(w, cx))),
-                    ),
-            );
-
-        Some(SidebarPanel {
-            title: t("docx.compress.title"),
-            body: body.into_any_element(),
-        })
+            .child(crate::shell::chrome::radio_group()
+                .children([
+                    ("docx-compress-hd", Resolution::Hd, "docx.compress.hd-330-ppi"),
+                    ("docx-compress-print", Resolution::Print, "docx.compress.print-220-ppi"),
+                    ("docx-compress-web", Resolution::Web, "docx.compress.web-150-ppi"),
+                    ("docx-compress-email", Resolution::Email, "docx.compress.email-96-ppi"),
+                ].into_iter().map(|(id, value, label)| crate::shell::chrome::radio_button(
+                    id, resolution == value, false, t(label),
+                    cx.listener(move |e, _, _, cx| e.edit_docx_compress_panel(|p| p.resolution = value, cx)),
+                ))));
+        let footer = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("docx-compress-apply", t("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary)
+                .on_click(cx.listener(|e, _, w, cx| e.apply_docx_compress_panel(w, cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("docx-compress-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
+                .on_click(cx.listener(|e, _, w, cx| e.close_docx_compress_panel(w, cx))));
+        Some(SidebarPanel::with_footer(t("docx.compress.title"), body.into_any_element(), footer))
     }
 
     pub(crate) fn apply_docx_compress_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {

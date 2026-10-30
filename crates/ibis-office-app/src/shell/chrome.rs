@@ -41,6 +41,32 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use crate::shell::palette::rgb;
 
+mod form;
+pub(crate) mod font_size;
+pub(crate) const TOOLBAR_CARET_WIDTH:f32=16.;
+pub(crate) const CONTROL_INDENT:f32=14.;
+pub(crate) use form::FORM_PADDING;
+pub(crate) mod dropdown_list;
+pub(crate) mod dropdown;
+pub(crate) use dropdown::{Dropdown,DropdownItem,FontDropdown,ColorPaletteDropdown};
+mod scrollbar;
+pub(crate) mod action_bar;
+pub(crate) use action_bar::{ActionBar, ActionDefinition};
+pub(crate) mod preview_dropdown;
+pub(crate) mod gradient_slider;
+pub(crate) mod collapsible_section;
+pub(crate) use collapsible_section::collapsible_section;
+pub(crate) mod control_row;
+pub(crate) use control_row::{SegmentControlRow, control_row, text_field_row, color_field_row, color_text_field_row, dropdown_row, segment_control_row};
+mod tab_control;
+pub(crate) mod segment_control;
+pub(crate) use tab_control::{tab_control,tab_control_with_mode,TabMode};
+pub(crate) mod panel;
+pub(crate) mod data_table;
+mod sheet_preview;
+pub(crate) use sheet_preview::sheet_preview;
+pub(crate) use form::{table_list,table_fill,panel_form, panel_message, table, table_row,table_row_with_actions};
+
 use crate::shell::editor::SlideEditor;
 use crate::shell::format::with_format;
 use crate::shell::icons::Material;
@@ -56,13 +82,13 @@ const PRIMARY_BUTTON_HOVER_BG: u32 = 0x3a6bb8;
 const PRIMARY_BUTTON_ACTIVE_BG: u32 = 0x234a85;
 /// The icon in a menu row is drawn this many times larger than the menu's own icon size (12 px).
 pub(crate) const MENU_ICON_SCALE: f32 = 1.4;
-const TOOLBAR_BG: u32 = 0xedf2f7;
+pub(crate) const TOOLBAR_BG: u32 = 0xedf2f7;
 const ICON: u32 = 0x444746;
-const TEXT: u32 = 0x1f1f1f;
-const TEXT_SECONDARY: u32 = 0x5f6368;
+pub(super) const TEXT: u32 = 0x1f1f1f;
+pub(crate) const TEXT_SECONDARY: u32 = 0x5f6368;
 const DIVIDER: u32 = 0xc7c7c7;
-const BORDER: u32 = 0xdadce0;
-const SIDEBAR_WIDTH: f32 = 300.0;
+pub(crate) const BORDER: u32 = 0xdadce0;
+pub(crate) const SIDEBAR_WIDTH: f32 = 300.0;
 
 /// Padding at the left of the title row. On macOS, leaves space for the native
 /// traffic light buttons (close, minimize, fullscreen). On other platforms, standard padding.
@@ -153,11 +179,12 @@ pub(crate) struct MenuItem {
     pub checked: bool,
     pub disabled: bool,
     pub handler: Option<Handler>,
+    pub dropdown_content: Option<dropdown::ItemContent>,
 }
 
 impl MenuItem {
     pub(crate) fn new(id: &'static str, label: impl Into<SharedString>) -> Self {
-        Self { id, icon: None, swatch: None, label: label.into(), shortcut: None, checked: false, disabled: false, handler: None }
+        Self { id, icon: None, swatch: None, label: label.into(), shortcut: None, checked: false, disabled: false, handler: None, dropdown_content: None }
     }
 
     /// An item labelled in the UI's language by its id (`i18n/*.tsv`).
@@ -587,7 +614,7 @@ impl ToolItem {
             ToolItem::Button(b) => b.width(),
             ToolItem::Separator => 9.0,
             ToolItem::Select { width, .. } => *width,
-            ToolItem::FontSize { .. } => 96.0,
+            ToolItem::FontSize { .. } => 120.0,
         }
     }
 }
@@ -616,13 +643,42 @@ pub(crate) struct SidebarPanel {
     pub body: AnyElement,
 }
 
+// The opt-in gallery renders each real panel independently, without stale panel precedence.
+#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+pub(crate) type CapturedPanel = (fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) -> Option<SidebarPanel>, &'static str, super::panel_dialog::PanelMode);
+#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
 thread_local! {
-    static SIDEBAR_FOOTER: std::cell::RefCell<Option<AnyElement>> = const { std::cell::RefCell::new(None) };
+    pub(crate) static FORCED_SIDEBAR: std::cell::Cell<Option<CapturedPanel>> = const { std::cell::Cell::new(None) };
+    pub(crate) static LAST_SIDEBAR_TITLE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+thread_local! {
+    static PANEL_MODE: std::cell::Cell<super::panel_dialog::PanelMode> = const { std::cell::Cell::new(super::panel_dialog::PanelMode::Sidebar) };
+    static PANEL_KEY: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+    static SIDEBAR_FOOTER: std::cell::RefCell<Option<ActionBar>> = const { std::cell::RefCell::new(None) };
 }
 
 impl SidebarPanel {
+    pub(crate) fn submit_type(self,submit:super::panel_dialog::SubmitType)->Self {super::panel_dialog::form::OPTIONS.with(|o|o.set(super::panel_dialog::form::Options{submit,..o.get()}));self}
+    pub(crate) fn auto_focus(self,auto_focus:bool)->Self {super::panel_dialog::form::OPTIONS.with(|o|o.set(super::panel_dialog::form::Options{auto_focus,..o.get()}));self}
+
+    pub(crate) fn modal_named(self, key: &'static str) -> Self {
+        PANEL_KEY.with(|current| current.set(Some(key)));
+        self.modal()
+    }
+    pub(crate) fn modeless_named(self, key: &'static str) -> Self {
+        PANEL_KEY.with(|current| current.set(Some(key)));
+        self.modeless()
+    }
+    pub(crate) fn modal(self) -> Self {
+        PANEL_MODE.with(|mode| mode.set(super::panel_dialog::PanelMode::Modal)); self
+    }
+    pub(crate) fn modeless(self) -> Self {
+        PANEL_MODE.with(|mode| mode.set(super::panel_dialog::PanelMode::Modeless)); self
+    }
+
     /// Construct a `SidebarPanel` with a sticky bottom footer rendered below the scrollable body (#151).
-    pub(crate) fn with_footer(title: impl Into<SharedString>, body: AnyElement, footer: AnyElement) -> Self {
+    pub(crate) fn with_footer(title: impl Into<SharedString>, body: AnyElement, footer: ActionBar) -> Self {
         SIDEBAR_FOOTER.with(|cell| *cell.borrow_mut() = Some(footer));
         Self {
             title: title.into(),
@@ -669,17 +725,26 @@ fn menu_icon(name: &'static str) -> Icon {
 /// handle, so it works in popups too.
 fn listener(editor: &WeakEntity<SlideEditor>, handler: &Handler) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     let (editor, handler) = (editor.clone(), handler.clone());
-    move |_, window, cx| {
-        editor.update(cx, |this, cx| handler(this, window, cx)).ok();
+    move |event, window, cx| {
+        editor.update(cx, |this, cx| {
+            // PopupMenu invokes commands with a default event, including keyboard confirmation.
+            // Only actual pointer positions can be checked against the title row.
+            if this.panel_dialog_is_modal() && event.position() != point(px(0.), px(0.)) && event.position().y < px(36.) {
+                return;
+            }
+            this.ruler_settings_open = false;
+            handler(this, window, cx)
+        }).ok();
     }
 }
 
 /// Resolve the display label for `item`: UI keys go through `i18n::text`, installed font names
 /// go through `i18n::font_label`, and document-specific / user-defined names are returned as-is.
 pub(crate) fn menu_item_display_label(item: &MenuItem) -> SharedString {
-    const NAMES: [&str; 11] = [
+    const NAMES: [&str; 12] = [
         "file.recent.item",
         "xlsx.unhide-sheet",
+        "merge.import.sheet",
         "xlsx.validation-item",
         "xlsx.sheet-list.item",
         "pptx.new-slide.layout",
@@ -690,7 +755,6 @@ pub(crate) fn menu_item_display_label(item: &MenuItem) -> SharedString {
         "docx.style.update",
         "xlsx.function",
     ];
-    const FONT_ITEMS: [&str; 4] = ["xlsx.font", "pptx.font", "docx.font", "font.recent.item"];
     let is_dynamic_id = item.id.starts_with("window.open.")
         || item.id.starts_with("font.section.")
         || item.id.starts_with("docx.style.doc.")
@@ -698,7 +762,7 @@ pub(crate) fn menu_item_display_label(item: &MenuItem) -> SharedString {
         || item.id.starts_with("docx.track.reviewers.author:")
         || (item.id.starts_with("docx.xref.") && item.id != "docx.xref.dialog" && item.id != "docx.xref.none")
         || (item.id.starts_with("docx.date.") && item.id != "docx.date.update");
-    if FONT_ITEMS.contains(&item.id) {
+    if dropdown::is_font_item_id(item.id) {
         crate::shell::i18n::font_label(&item.label)
     } else if NAMES.contains(&item.id) || is_dynamic_id {
         item.label.clone()
@@ -749,12 +813,12 @@ pub(crate) fn format_shortcut_for_platform(shortcut: &str) -> String {
     format_shortcut_for_target(shortcut, cfg!(target_os = "macos"))
 }
 
-pub(crate) fn menu_item_row(item: &MenuItem, editor: &WeakEntity<SlideEditor>) -> PopupMenuItem {
+pub(crate) fn menu_item_row(item: &MenuItem, editor: &WeakEntity<SlideEditor>) -> PopupMenuItem {menu_item_row_for_width(item,editor,MENU_ITEM_MAX_WIDTH)}
+fn menu_item_row_for_width(item:&MenuItem,editor:&WeakEntity<SlideEditor>,width:f32)->PopupMenuItem {
                 // Icon (or ✓) in the menu's icon column, the label, the shortcut.
                 // The code's words in the UI's language; a document's names (sheets,
                 // layouts, styles, fonts, files) as they are.
-                const FONT_ITEMS: [&str; 4] = ["xlsx.font", "pptx.font", "docx.font", "font.recent.item"];
-                let is_font_item = FONT_ITEMS.contains(&item.id);
+                let is_font_item = dropdown::is_font_item_id(item.id);
                 let is_font_section = item.id.starts_with("font.section.");
 
                 if is_font_section {
@@ -772,27 +836,24 @@ pub(crate) fn menu_item_row(item: &MenuItem, editor: &WeakEntity<SlideEditor>) -
                     .disabled(true);
                 }
 
-                let label = menu_item_display_label(item);
+                let full_label=menu_item_display_label(item);
+                let shortcut_width=item.shortcut.map_or(0.,|key|text_width(&format_shortcut_for_platform(key),13.)+24.);
+                let label=fit_menu_label(&full_label,(width-72.-shortcut_width-if item.swatch.is_some(){18.}else{0.}).max(0.));
                 let (shortcut, enabled, swatch) = (item.shortcut, item.enabled(), item.swatch);
                 let valid_icon = item.icon.filter(|i| !i.is_empty() && !item.checked && crate::shell::icons::icon_svg_bytes(i).is_some());
                 let raw_font_name = item.label.to_string();
                 let display_label = label.clone();
+                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                let probe_id = item.id;
 
+                let preview=item.dropdown_content.clone();
+                let tooltip_label=item.label.clone();
                 let mut row = PopupMenuItem::element(move |_, cx| {
                     let fg: Hsla = if enabled { rgb(TEXT).into() } else { disabled_color() };
-                    let content = if is_font_item {
-                        let preview = crate::shell::font_preview::get_or_render_preview(&raw_font_name, &display_label);
-                        if let Some(preview) = preview {
-                            let fallback_label = display_label.clone();
-                            div().pl(px(14.)).child(
-                                img(preview.image)
-                                    .w(px(preview.width))
-                                    .h(px(preview.height))
-                                    .with_loading(move || div().text_color(fg).child(fallback_label.clone()).into_any_element()),
-                            )
-                        } else {
-                            div().pl(px(14.)).text_color(fg).child(display_label.clone())
-                        }
+                    let content = if let Some(dropdown::ItemContent::Palette(colors))=&preview {
+                        div().id("menu-palette-preview").child(dropdown::color_palette_item(colors)).tooltip({let label=tooltip_label.clone();move|w,cx|gpui_kit::component::tooltip::Tooltip::new(label.clone()).build(w,cx)}).into_any_element()
+                    } else if is_font_item {
+                        div().pl(px(14.)).child(dropdown::font_item(&raw_font_name,display_label.clone(),fg)).into_any_element()
                     } else {
                         h_flex()
                             .items_center()
@@ -800,15 +861,21 @@ pub(crate) fn menu_item_row(item: &MenuItem, editor: &WeakEntity<SlideEditor>) -
                             .when_some(swatch, |d, c| {
                                 d.child(div().w(px(10.)).h(px(10.)).rounded(px(2.)).bg(rgb(c.0)).border_1().border_color(crate::shell::palette::shade(0.0, 0.2)))
                             })
-                            .child(div().text_color(fg).child(display_label.clone()))
+                            .child(div().flex_1().min_w_0().truncate().text_color(fg).child(display_label.clone())).into_any_element()
                     };
 
-                    h_flex()
+                    let row = h_flex()
                         .w_full()
                         .gap(px(16.))
                         .items_center()
-                        .child(div().flex_1().child(content))
-                        .when_some(shortcut, |d, key| d.child(div().text_color(if enabled { cx.theme().muted_foreground } else { disabled_color() }).child(format_shortcut_for_platform(key))))
+                        .child(div().flex_1().min_w_0().overflow_hidden().child(content))
+                        .when_some(shortcut, |d, key| d.child(div().text_color(if enabled { cx.theme().muted_foreground } else { disabled_color() }).child(format_shortcut_for_platform(key))));
+                    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                    let row = {
+                        let id = SharedString::from(format!("menu-item-{probe_id}"));
+                        super::scenario::button_probe::observe_control(row.id(id.clone()), id.into())
+                    };
+                    row
                 })
                 .checked(item.checked)
                 .disabled(!enabled);
@@ -848,12 +915,29 @@ pub(crate) fn prune_entries(entries: Vec<MenuEntry>) -> Vec<MenuEntry> {
     out
 }
 
+/// Maximum width of a menu item, including icon and shortcut columns.
+fn fit_menu_label(label:&str,width:f32)->SharedString {
+    if text_width(label,14.)<=width{return label.to_owned().into();}
+    let ellipsis="…";
+    if text_width(ellipsis,14.)>width{return "".into();}
+    let boundaries=label.char_indices().map(|(i,_)|i).chain(std::iter::once(label.len())).collect::<Vec<_>>();
+    let (mut low,mut high)=(0,boundaries.len());
+    while low+1<high {let mid=(low+high)/2;let candidate=format!("{}{}",&label[..boundaries[mid]],ellipsis);if text_width(&candidate,14.)<=width{low=mid;}else{high=mid;}}
+    format!("{}{}",&label[..boundaries[low]],ellipsis).into()
+}
+
+pub(crate) const MENU_ITEM_MAX_WIDTH:f32=600.;
+
 /// Compute the fixed width required to display all `entries` without changing width while scrolling (#108).
 pub(crate) fn menu_width_for_entries(entries: &[MenuEntry]) -> f32 {
-    let mut max_w: f32 = 280.0;
+    let palette_only=!entries.is_empty()&&entries.iter().all(|e|matches!(e,MenuEntry::Item(item) if matches!(item.dropdown_content,Some(dropdown::ItemContent::Palette(_)))));
+    let mut max_w: f32 = if palette_only{0.}else{280.};
     for entry in entries {
         match entry {
             MenuEntry::Item(item) => {
+                if let Some(dropdown::ItemContent::Palette(colors))=&item.dropdown_content {
+                    max_w=max_w.max(colors.len() as f32*16.+colors.len().saturating_sub(1) as f32*3.+48.);continue;
+                }
                 let label = menu_item_display_label(item);
                 let shortcut_w = item.shortcut.map_or(0.0, |s| text_width(&format_shortcut_for_platform(s), 13.0) + 24.0);
                 let swatch_w = if item.swatch.is_some() { 18.0 } else { 0.0 };
@@ -868,21 +952,22 @@ pub(crate) fn menu_width_for_entries(entries: &[MenuEntry]) -> f32 {
             _ => {}
         }
     }
-    max_w.min(520.0)
+    max_w.min(MENU_ITEM_MAX_WIDTH)
 }
 
 /// Add `entries` directly into `menu` without re-pruning or applying `PopupMenu`'s internal scroll cap (#105).
-pub(crate) fn fill_menu_entries(mut menu: PopupMenu, entries: &[MenuEntry], editor: &WeakEntity<SlideEditor>, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+pub(crate) fn fill_menu_entries(mut menu: PopupMenu, entries: &[MenuEntry], width:f32, editor: &WeakEntity<SlideEditor>, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
     for entry in entries {
         menu = match entry {
             MenuEntry::Separator => menu.separator(),
             MenuEntry::Submenu(sub) => {
                 let (items, editor) = (sub.items.clone(), editor.clone());
                 let icon = sub.icon.filter(|i| !i.is_empty() && crate::shell::icons::icon_svg_bytes(i).is_some()).map(menu_icon);
-                menu.submenu_with_icon(icon, crate::shell::i18n::text(&sub.label), window, cx, move |m, window, cx| fill_menu(m, &items, &editor, window, cx))
+                let caption=fit_menu_label(&crate::shell::i18n::text(&sub.label),(width-84.).max(0.));
+                menu.submenu_with_icon(icon, caption, window, cx, move |m, window, cx| fill_menu(m, &items, &editor, window, cx))
             }
             MenuEntry::Palette(palette) => crate::shell::color_palette::fill_palette(menu, palette, editor, cx),
-            MenuEntry::Item(item) => menu.item(menu_item_row(item, editor)),
+            MenuEntry::Item(item) => menu.item(menu_item_row_for_width(item, editor,width)),
         };
     }
     menu
@@ -895,24 +980,51 @@ pub(crate) fn fill_menu(menu: PopupMenu, entries: &[MenuEntry], editor: &WeakEnt
     crate::shell::menu_bar::fill_scrollable_popup_menu(menu, entries, width, editor, window, cx)
 }
 
+
+/// Row overflow actions: hover visibility and compact borderless styling live here.
+/// The start history explicitly uses this light-grey overflow affordance.
+pub(crate) fn hover_row_actions(index: usize, entries: Vec<MenuEntry>, editor: &WeakEntity<SlideEditor>) -> AnyElement {
+    let id=ElementId::Name(format!("row-actions-{index}").into());
+    let button=Button::new(id.clone()).ghost().small()
+        .icon(Icon::new(Material("more_vert")).transform(Transformation::rotate(Radians(std::f32::consts::FRAC_PI_2)))).w(px(30.)).h(px(26.)).rounded(px(5.))
+        .bg(rgb(0xf0f0f0)).tooltip(crate::shell::i18n::text("shell.row.actions"));
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    let button=super::scenario::button_probe::observe(button,id);
+    div().id(("row-actions-wrap",index))
+        .on_mouse_down(MouseButton::Left,|_,_,cx|cx.stop_propagation())
+        .on_click(|_,_,cx|cx.stop_propagation())
+        .child(Dropdown::with_button("row-actions",button,entries,false,index,editor).reveal_on_hover("row-actions")).into_any_element()
+}
+
+/// One logo renderer for the start panel and all editing menu bars.
+pub(crate) fn brand_logo(id:&'static str,height:f32,full_width:bool)->Stateful<Div>{
+    let root=div().id(id).relative().flex_none();
+    let root=if full_width{root.w_full().aspect_ratio(LOGO_ASPECT)}else{root.w(px(height*LOGO_ASPECT)).h(px(height))};
+    let root=root.child(img(app_logo_for_height(height)).absolute().inset_0().size_full().object_fit(ObjectFit::Contain));
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    let root=super::scenario::button_probe::observe_control(root,id.into());
+    root
+}
+
 /// The ibisOffice logo (the mark and the name, logo/ibisOffice_logo.svg) as
 /// the start view's title row shows it: its height in pixels, and its width
 /// over its height. The SVG's own size is this size (99.25×22): GPUI draws
 /// an SVG picture at twice its own size and scales that to the element, and
 /// scaled down from its 600×133 it came out jagged.
-const LOGO_HEIGHT: f32 = 22.0;
+pub(crate) const LOGO_HEIGHT: f32 = 22.0;
 pub(crate) const LOGO_ASPECT: f32 = 600.0 / 133.0;
 
-pub(crate) fn app_logo() -> std::sync::Arc<Image> {
-    static LIGHT: std::sync::OnceLock<std::sync::Arc<Image>> = std::sync::OnceLock::new();
-    static DARK: std::sync::OnceLock<std::sync::Arc<Image>> = std::sync::OnceLock::new();
-    let svg = include_str!("../../logo/ibisOffice_logo.svg");
-    if crate::shell::palette::is_dark() {
-        // The dark navy of the letters is a light colour over the dark chrome; the blues are kept.
-        DARK.get_or_init(|| std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg, svg.replace("rgb(0,40,76)", "rgb(232,238,246)").replace("rgb(0,40,77)", "rgb(232,238,246)").into_bytes()))).clone()
-    } else {
-        LIGHT.get_or_init(|| std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg, svg.as_bytes().to_vec()))).clone()
-    }
+pub(crate) fn app_logo() -> std::sync::Arc<Image> { app_logo_for_height(LOGO_HEIGHT) }
+/// Size the SVG raster source to its use, so a large start logo stays sharp.
+pub(crate) fn app_logo_for_height(height:f32)->std::sync::Arc<Image>{
+    static CACHE:std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(u32,bool),std::sync::Arc<Image>>>>=std::sync::OnceLock::new();
+    let height=height.ceil().max(1.)as u32;let dark=crate::shell::palette::is_dark();
+    let mut cache=CACHE.get_or_init(Default::default).lock().unwrap();
+    cache.entry((height,dark)).or_insert_with(||{
+        let mut svg=include_str!("../../logo/ibisOffice_logo.svg").replacen("width=\"99.25\" height=\"22\"",&format!("width=\"{}\" height=\"{height}\"",height as f32*LOGO_ASPECT),1);
+        if dark {svg=svg.replace("rgb(0,40,76)","rgb(232,238,246)").replace("rgb(0,40,77)","rgb(232,238,246)");}
+        std::sync::Arc::new(Image::from_bytes(ImageFormat::Svg,svg.into_bytes()))
+    }).clone()
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -940,6 +1052,10 @@ pub(crate) fn icon(name: &'static str, size: f32, color: Hsla) -> Icon {
 /// Returns true if this platform requires client-drawn window control buttons
 /// (Minimize, Maximize/Restore, Close).
 pub(crate) fn should_render_window_controls(window: &Window) -> bool {
+    #[cfg(feature = "scenarios")]
+    if SCENARIO_CLIENT_WINDOW_CONTROLS.load(std::sync::atomic::Ordering::Relaxed) {
+        return true;
+    }
     #[cfg(target_os = "macos")]
     {
         let _ = window;
@@ -959,6 +1075,26 @@ pub(crate) fn should_render_window_controls(window: &Window) -> bool {
         let _ = window;
         false
     }
+}
+
+// Scenarios exercise the actual client-drawn controls on platforms whose
+// native title bar would otherwise hide them. Restore even if a scenario panics.
+#[cfg(feature = "scenarios")]
+static SCENARIO_CLIENT_WINDOW_CONTROLS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "scenarios")]
+pub(crate) struct ScenarioClientWindowControls(bool);
+
+#[cfg(feature = "scenarios")]
+impl Drop for ScenarioClientWindowControls {
+    fn drop(&mut self) {
+        SCENARIO_CLIENT_WINDOW_CONTROLS.store(self.0, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[cfg(feature = "scenarios")]
+pub(crate) fn scenario_client_window_controls() -> ScenarioClientWindowControls {
+    ScenarioClientWindowControls(SCENARIO_CLIENT_WINDOW_CONTROLS.swap(true, std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Configures a div as a window titlebar drag area.
@@ -1031,7 +1167,11 @@ fn system_menu_icon() -> AnyElement {
         .on_mouse_down(MouseButton::Left, |_, window, cx| {
             // Below the icon, in the window's client pixels.
             let scale = window.scale_factor();
-            show_system_menu((TITLE_ROW_PADDING_LEFT * scale) as i32, (36.0 * scale) as i32);
+            let (x, y) = ((TITLE_ROW_PADDING_LEFT * scale) as i32, (36.0 * scale) as i32);
+            // Out of this handler: TrackPopupMenu runs a message loop until the
+            // menu closes, and the tasks it runs would find the app still
+            // borrowed by this event ("RefCell already borrowed", GitHub issue #74).
+            cx.spawn(async move |_| show_system_menu(x, y)).detach();
             cx.stop_propagation();
         })
         .into_any_element()
@@ -1099,7 +1239,7 @@ fn show_system_menu(x: i32, y: i32) {
 }
 
 /// Renders the Minimize, Maximize/Restore, and Close buttons on platforms requiring CSD.
-pub(crate) fn render_window_controls(window: &Window) -> Option<AnyElement> {
+pub(crate) fn render_window_controls(window: &Window, editor: &WeakEntity<SlideEditor>) -> Option<AnyElement> {
     if !should_render_window_controls(window) {
         return None;
     }
@@ -1149,6 +1289,7 @@ pub(crate) fn render_window_controls(window: &Window) -> Option<AnyElement> {
     let max_btn = max_btn.window_control_area(WindowControlArea::Max);
 
     // Close button (✕, red on hover)
+    let editor = editor.clone();
     let close_btn = div()
         .id("window-control-close")
         .w(px(46.))
@@ -1160,9 +1301,14 @@ pub(crate) fn render_window_controls(window: &Window) -> Option<AnyElement> {
         .text_color(rgb(ICON))
         .hover(|s| s.bg(rgb(0xe81123)).text_color(crate::shell::palette::white()))
         .child(Icon::new(Material("close")).size(px(18.)))
-        .on_click(|_, window, _| {
-            eprintln!("[DEBUG-WAYLAND] close button clicked! calling window.remove_window()");
-            window.remove_window();
+        .on_click(move |_, window, cx| {
+            // Removing a window directly bypasses the platform close callback.
+            // Use the same save guard as its native close button and Alt+F4.
+            let _ = editor.update(cx, |editor, cx| {
+                if editor.window_should_close(cx) {
+                    window.remove_window();
+                }
+            });
         })
         .tooltip(|window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text("_shell.close")).build(window, cx));
 
@@ -1203,6 +1349,36 @@ impl SlideEditor {
             }
             tools
         });
+        fn wrap(entries: &mut [MenuEntry]) {
+            for entry in entries {
+                match entry {
+                    MenuEntry::Item(item) => {
+                        if let Some(handler) = item.handler.take() {
+                            let ruler = item.id == "docx.ruler";
+                            item.handler = Some(Rc::new(move |this, window, cx| {
+                                if !ruler { this.ruler_settings_open = false; }
+                                handler(this, window, cx);
+                            }));
+                        }
+                    }
+                    MenuEntry::Submenu(submenu) => wrap(&mut submenu.items),
+                    _ => {}
+                }
+            }
+        }
+        for (_, entries) in &mut menus.menus { wrap(entries); }
+        if self.panel_dialog_is_modal() {
+            fn disable(entries: &mut [MenuEntry]) {
+                for entry in entries {
+                    match entry {
+                        MenuEntry::Item(item) => item.disabled = true,
+                        MenuEntry::Submenu(submenu) => disable(&mut submenu.items),
+                        _ => {}
+                    }
+                }
+            }
+            for (_, entries) in &mut menus.menus { disable(entries); }
+        }
         menus
     }
 
@@ -1226,13 +1402,12 @@ impl SlideEditor {
     /// the window drag region and control buttons (minimize, maximize/restore, close).
     pub(crate) fn render_title_row(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = cx.entity().downgrade();
-        let controls = render_window_controls(window);
+        let controls = render_window_controls(window, &editor);
         let pr = if controls.is_some() { px(0.) } else { px(12.) };
         let row = h_flex().h(px(36.)).flex_shrink_0().pl(px(TITLE_ROW_PADDING_LEFT)).pr(pr).gap(px(8.)).items_center().bg(rgb(APP_BG)).text_color(rgb(TEXT));
         if !self.has_document {
             // The start view: the app's logo (開く and 新規作成 are in the view).
             return row
-                .child(img(app_logo()).h(px(LOGO_HEIGHT)).w(px(LOGO_HEIGHT * LOGO_ASPECT)))
                 .child(apply_title_drag(div().flex_1().h_full(), window))
                 .child(title_button("help", "help", "_shell.help", None, &editor))
                 .children(self.embed_buttons(&editor))
@@ -1383,16 +1558,18 @@ impl SlideEditor {
         }
     }
 
-    /// The button with the format's icon that opens a start window.
+    /// The format's icon in the title bar (blue document, green workbook, orange presentation). Only a mark, not a button:
+    /// the start window opens from the menu bar's logo and ファイル > スタートウィンドウ.
     #[cfg(not(target_arch = "wasm32"))]
-    fn start_window_button(&self, editor: &WeakEntity<SlideEditor>) -> AnyElement {
+    fn start_window_button(&self, _editor: &WeakEntity<SlideEditor>) -> AnyElement {
         let (app_icon, app_color) = match self.kind() {
             ibis_pptx::Kind::Document => ("description", 0x2f6fd6),
             ibis_pptx::Kind::Workbook => ("table_chart", 0x1e8e3e),
             ibis_pptx::Kind::Presentation => ("slideshow", 0xe8a100),
         };
-        let handler: Handler = Rc::new(|_, _, cx| crate::open_editor(None, None, cx));
-        title_button_icon("start-window", Icon::new(Material::fill(app_icon)).size(px(24.)).text_color(rgb(app_color)), "file.start-window", Some(handler), editor)
+        div().w(px(32.)).h(px(32.)).flex_none().flex().items_center().justify_center()
+            .child(Icon::new(Material::fill(app_icon)).size(px(24.)).text_color(rgb(app_color)))
+            .into_any_element()
     }
 
     /// The commands of the クイック アクセス ツール バー the open document has, as buttons beside undo and redo.
@@ -1515,7 +1692,7 @@ impl SlideEditor {
         // (CSD), with the menus hidden, the toolbar is the title row: between
         // the system menu's icon (Windows) and the start window's button and
         // the window's buttons.
-        let in_title_row = cfg!(any(target_os = "windows", target_os = "linux", target_os = "freebsd")) && self.chrome_compact && should_render_window_controls(window);
+        let in_title_row = self.chrome_compact && should_render_window_controls(window);
         // What fits: the bar is the window less 8 px each side, 6 px padding
         // each side, and ︙ and ^ on the right (and in the title row, the
         // icons and the three window buttons).
@@ -1594,7 +1771,7 @@ impl SlideEditor {
                 9999,
                 &editor,
             ));
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd", feature = "scenarios"))]
         if in_title_row {
             let icons = h_flex().flex_none().gap(px(8.)).pl(px(TITLE_ROW_PADDING_LEFT)).pt(px(8.));
             #[cfg(target_os = "windows")]
@@ -1606,7 +1783,7 @@ impl SlideEditor {
                 .bg(rgb(APP_BG))
                 .child(icons.child(self.start_window_button(&editor)).children(self.pages_are_slides().then(|| self.render_slideshow_button(&editor, true))))
                 .child(div().flex_1().min_w_0().px(px(8.)).py(px(4.)).child(bar))
-                .children(render_window_controls(window))
+                .children(render_window_controls(window, &editor))
                 .into_any_element();
         }
         div().pl(px(mac_inset)).pr(px(8.)).pt(px(2.)).pb(px(6.)).flex_shrink_0().bg(rgb(APP_BG)).child(bar).into_any_element()
@@ -1616,28 +1793,132 @@ impl SlideEditor {
     /// format has for it. Also records `right_pane` (shown, and whether the toggle can show it), which the title row's
     /// button and 表示 > サイドバー read.
     pub(crate) fn render_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.panel_dialog.active {
+            let restore_focus = self.panel_dialog.focus.as_ref().is_some_and(|focus| focus.contains_focused(window, cx));
+            let editor = cx.weak_entity();
+            // A dialog can disappear by replacing its panel state, including after Apply.
+            // Restore document keys centrally instead of leaving focus in a removed input.
+            window.defer(cx, move |window, cx| {
+                let _ = editor.update(cx, |e, cx| {
+                    if !e.panel_dialog.active {
+                        e.panel_dialog.form_controls.clear();
+                        e.panel_dialog.submit_handler = None;
+                        e.panel_dialog.has_submit_action = false;
+                        if restore_focus { e.focus_handle.focus(window, cx); }
+                    }
+                });
+            });
+        }
+        if !self.panel_dialog.active { self.panel_dialog.bounds = None; }
+        self.panel_dialog.overlay = None;
+        self.panel_dialog.active = false;
+        self.panel_dialog.key = None;
+        PANEL_KEY.with(|key| key.set(None));
+        super::panel_dialog::form::OPTIONS.with(|o|o.set(Default::default()));
+        PANEL_MODE.with(|mode| mode.set(super::panel_dialog::PanelMode::Sidebar));
         let editor = cx.entity().downgrade();
         let tabs_of = with_format!(self, sidebar_tabs());
         let on_request = with_format!(self, sidebar_on_request()) || !tabs_of.is_empty();
         // Closed, a format with nothing to show on request is asked whether a panel is open (the toggle can show
         // only that); one that always has something is not asked (its panel would be made for nothing).
+        #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+        super::scenario::button_probe::input_scope(true);
         let panel = if self.sidebar_open || !on_request {
             SIDEBAR_FOOTER.with(|cell| *cell.borrow_mut() = None);
-            with_format!(self, sidebar(self, window, cx)).or_else(|| crate::shell::chrome_defaults::sidebar(self, window, cx))
+            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+            let forced = FORCED_SIDEBAR.with(|slot| slot.get());
+            #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
+            let forced: Option<(fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) -> Option<SidebarPanel>, &'static str, super::panel_dialog::PanelMode)> = None;
+            if let Some((render, key, mode)) = forced {
+                render(self, window, cx).map(|p| match mode {
+                    super::panel_dialog::PanelMode::Modal => p.modal_named(key),
+                    super::panel_dialog::PanelMode::Modeless => p.modeless_named(key),
+                    super::panel_dialog::PanelMode::Sidebar => p,
+                })
+            } else if let Some(panel)=self.color_picker_dialog(cx) {
+                Some(panel.modal_named("color_picker_dialog"))
+            } else if self.ruler_settings_open && self.is_document() {
+                self.ruler_panel(cx)
+            } else {
+                with_format!(self, sidebar(self, window, cx)).or_else(|| crate::shell::chrome_defaults::sidebar(self, window, cx))
+            }
         } else {
             None
         };
+        #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+        super::scenario::button_probe::input_scope(false);
         let has_content = panel.is_some() || !tabs_of.is_empty();
         self.right_pane = RightPane { available: on_request || panel.is_some(), shown: self.sidebar_open && has_content };
         if !self.right_pane.shown {
+            self.panel_dialog.form_controls.clear();self.panel_dialog.submit_handler=None;self.panel_dialog.has_submit_action=false;
             return None;
         }
-        let panel = match panel {
+        let mut panel = match panel {
             Some(panel) => panel,
             // Nothing open: the tabs alone, for a format that has them.
             None => SidebarPanel { title: "".into(), body: div().into_any_element() },
         };
-        let footer = SIDEBAR_FOOTER.with(|cell| cell.borrow_mut().take());
+        #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+        LAST_SIDEBAR_TITLE.with(|title| *title.borrow_mut() = panel::panel_title(&panel.title).to_string());
+        let mut footer = SIDEBAR_FOOTER.with(|cell| cell.borrow_mut().take());
+        let mode = PANEL_MODE.with(|mode| mode.get());
+        self.panel_dialog.key = PANEL_KEY.with(|key| key.get());
+        if mode != super::panel_dialog::PanelMode::Sidebar {
+            let child_key = self.panel_dialog.key;
+            let retain_chart = self.is_workbook() && self.sheet_state().is_some_and(|state| state.chart_edit.is_some())
+                && matches!(child_key, Some("move_chart_panel" | "chart_template_panel" | "chart_series_editor"));
+            let retain_sort = self.is_workbook() && child_key == Some("sort_level_editor");
+            let background = if retain_chart { self.sheet_chart_panel(cx) } else if retain_sort { self.sort_background_panel(cx) } else { None };
+            let background_footer = SIDEBAR_FOOTER.with(|cell| cell.borrow_mut().take());
+            self.panel_dialog.key = child_key;
+            self.panel_dialog.overlay = Some(self.render_panel_dialog(panel, footer, mode, window, cx));
+            if let Some(background) = background {
+                panel = background;
+                footer = background_footer;
+                PANEL_MODE.with(|mode| mode.set(super::panel_dialog::PanelMode::Sidebar));
+                PANEL_KEY.with(|key| key.set(None));
+            } else {
+                self.right_pane.shown = false;
+                return None;
+            }
+        }
+        if self.is_document() {
+            if let Some((child,key))=self.merge_workflow_dialog(cx) {
+                let child_footer=SIDEBAR_FOOTER.with(|cell|cell.borrow_mut().take());
+                self.panel_dialog.key=Some(key);
+                self.panel_dialog.overlay=Some(self.render_panel_dialog(child,child_footer,super::panel_dialog::PanelMode::Modal,window,cx));
+            }
+        }
+        if self.is_document() {
+            if let Some(child)=self.tab_row_dialog(cx) {
+                let child_footer=SIDEBAR_FOOTER.with(|cell|cell.borrow_mut().take());
+                self.panel_dialog.key=Some("tab_stop_editor");
+                self.panel_dialog.overlay=Some(self.render_panel_dialog(child,child_footer,super::panel_dialog::PanelMode::Modal,window,cx));
+            }
+        }
+        if self.is_workbook() && !self.panel_dialog.active {
+            if let Some(child) = self.chart_series_editor_panel(cx) {
+                let child_footer = SIDEBAR_FOOTER.with(|cell| cell.borrow_mut().take());
+                self.panel_dialog.key = Some("chart_series_editor");
+                let child_mode = if self.sheet_range_pick_active() {
+                    super::panel_dialog::PanelMode::Modeless
+                } else {
+                    super::panel_dialog::PanelMode::Modal
+                };
+                self.panel_dialog.overlay = Some(self.render_panel_dialog(child, child_footer, child_mode, window, cx));
+                PANEL_MODE.with(|mode| mode.set(super::panel_dialog::PanelMode::Sidebar));
+                PANEL_KEY.with(|key| key.set(None));
+            }
+        }
+        if self.is_workbook() && self.sheet_range_pick_active() && !self.panel_dialog.active {
+            if let Some(picker)=self.generic_range_pick_panel(cx) {
+                let footer=take_sidebar_footer();
+                self.panel_dialog.key=Some("generic_range_picker");
+                self.panel_dialog.overlay=Some(self.render_panel_dialog(picker,footer,super::panel_dialog::PanelMode::Modeless,window,cx));
+            }
+        }
+        let pane_blocked = self.is_workbook() && self.panel_dialog.active
+            && matches!(self.panel_dialog.key, Some("chart_series_editor" | "move_chart_panel" | "chart_template_panel" | "sort_level_editor"));
         // The tabs show with their panels, or with none open; another
         // panel (the name manager, ...) has its own title only.
         let selected = tabs_of.iter().position(|t| crate::shell::i18n::text(t.panel_title) == crate::shell::i18n::text(&panel.title));
@@ -1670,6 +1951,7 @@ impl SlideEditor {
         let sidebar_scroll = self.sidebar_scroll.clone();
         Some(
             v_flex()
+                .relative()
                 .w(px(SIDEBAR_WIDTH))
                 .h_full()
                 .flex_shrink_0()
@@ -1684,43 +1966,87 @@ impl SlideEditor {
                         .pr(px(10.))
                         .items_center()
                         .justify_between()
-                        .child(div().text_size(px(16.)).font_weight(FontWeight::MEDIUM).text_color(rgb(TEXT)).child(crate::shell::i18n::text(&panel.title)))
+                        .child(div().text_size(px(16.)).font_weight(FontWeight::MEDIUM).text_color(rgb(TEXT)).child(panel::panel_title(&panel.title)))
                         .child(title_button("sidebar-close", "close", "_shell.close", Some(close), &editor)),
                 )
                 .children(tabs)
-                .child(
-                    div()
-                        .relative()
-                        .flex_1()
-                        .min_h_0()
-                        .w_full()
-                        .child(
-                            div()
-                                .id("sidebar-body")
-                                .size_full()
-                                .overflow_y_scroll()
-                                .track_scroll(&sidebar_scroll)
-                                .child(panel.body),
-                        )
-                        .child(always_visible_scrollbar_overlay("sidebar-scrollbar", sidebar_scroll, None)),
-                )
-                .when_some(footer, |d, footer| {
-                    d.child(
-                        div()
-                            .id("sidebar-footer")
-                            .flex_shrink_0()
-                            .w_full()
-                            .px(px(18.))
-                            .py(px(10.))
-                            .border_t_1()
-                            .border_color(rgb(BORDER))
-                            .bg(crate::shell::palette::white())
-                            .child(footer),
-                    )
-                })
+                .child(panel::panel_contents(panel.body,footer,sidebar_scroll,self.sidebar_layout.clone(),editor.clone()))
+                .when(pane_blocked, |d| d.child(div().absolute().inset_0().occlude()
+                    .on_mouse_down(MouseButton::Left, |_,_,cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Right, |_,_,cx| cx.stop_propagation())
+                    .on_mouse_up(MouseButton::Left, |_,_,cx| cx.stop_propagation())
+                    .on_scroll_wheel(|_,_,cx| cx.stop_propagation())))
                 .into_any_element(),
         )
     }
+}
+
+/// Shared height for labeled command buttons across all document formats.
+pub(crate) const BUTTON_HEIGHT: f32 = 28.;
+
+#[derive(Clone, Copy, Default)]
+pub(crate) enum ActionButtonKind { Primary, #[default] Normal, Destructive }
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ActionButtonStyle { pub kind: ActionButtonKind }
+impl ActionButtonStyle {
+    fn apply(self, button: Button, cx: Option<&App>) -> Button {
+        match self.kind {
+            ActionButtonKind::Primary => button.primary(),
+            ActionButtonKind::Normal => button,
+            ActionButtonKind::Destructive => button.custom(gpui_kit::component::button::ButtonCustomVariant::new(cx.expect("destructive style requires application context"))
+                .color(rgb(0xd93025).into()).foreground(rgb(0xd93025).into()).hover(cx.unwrap().theme().button_hover).active(cx.unwrap().theme().button_active))
+                .border_1().bg(rgb(0xffffff)).text_color(rgb(0xd93025)).border_color(rgb(0xd93025)),
+        }
+    }
+}
+pub(crate) const SELECTED_ROW_BG: u32 = 0xe8f0fe;
+pub(crate) fn styled_action_button(id: impl Into<ElementId>, style: ActionButtonStyle, cx: Option<&App>) -> Button {
+    let id=id.into();
+    let button=style.apply(Button::new(id.clone()).h(px(BUTTON_HEIGHT)).min_h(px(BUTTON_HEIGHT)).max_h(px(BUTTON_HEIGHT)).flex_none(),cx);
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    let button=super::scenario::button_probe::observe(button,id);
+    button
+}
+pub(crate) fn action_button(id: impl Into<ElementId>) -> Button { styled_action_button(id, ActionButtonStyle::default(),None) }
+pub(crate) fn primary_button(id: impl Into<ElementId>) -> Button { styled_action_button(id, ActionButtonStyle {kind:ActionButtonKind::Primary},None) }
+pub(crate) fn destructive_button(id: impl Into<ElementId>, cx: &App) -> Button { styled_action_button(id, ActionButtonStyle {kind:ActionButtonKind::Destructive},Some(cx)) }
+pub(crate) fn dialog_close_button(cx: &Context<SlideEditor>) -> Button {
+    action_button("dialog-close").label(crate::shell::i18n::text("_shell.close"))
+        .on_click(cx.listener(|this, _, window, cx| this.close_panel_dialog(window, cx)))
+}
+
+pub(crate) fn dialog_cancel_button(cx: &Context<SlideEditor>) -> Button {
+    action_button("dialog-cancel").label(crate::shell::i18n::text("_shell.cancel"))
+        .on_click(cx.listener(|this, _, window, cx| this.close_panel_dialog(window, cx)))
+}
+
+pub(crate) fn dialog_cancel_definition(cx: &Context<SlideEditor>) -> ActionDefinition {
+    ActionDefinition::new("dialog-cancel", crate::shell::i18n::text("_shell.cancel"), ActionButtonKind::Normal)
+        .on_click(cx.listener(|this, _, window, cx| this.close_panel_dialog(window, cx)))
+}
+pub(crate) fn dialog_close_definition(cx: &Context<SlideEditor>) -> ActionDefinition {
+    ActionDefinition::new("dialog-close", crate::shell::i18n::text("_shell.close"), ActionButtonKind::Normal)
+        .on_click(cx.listener(|this, _, window, cx| this.close_panel_dialog(window, cx)))
+}
+
+/// The shared terminal action area, in a pane or a dialog. No controls follow this area.
+pub(crate) fn action_bar() -> ActionBar { ActionBar::new() }
+
+/// The outer content inset is owned by the pane/dialog host, never a screen-specific form.
+pub(crate) fn panel_body(body:AnyElement)->Div {
+ div().w_full().min_w_0().min_h_0().p(px(form::FORM_PADDING)).child(body)
+}
+
+pub(crate) const ACTION_BAR_PADDING_Y: f32 = 12.;
+
+/// Every registered footer receives its insets here, including legacy custom button rows.
+pub(crate) fn action_bar_host(footer:ActionBar)->Div {
+ h_flex().relative().w_full().flex_none().justify_center().items_center().py(px(ACTION_BAR_PADDING_Y)).border_t_1().border_color(rgb(BORDER)).bg(rgb(0xffffff)).child(footer)
+}
+
+/// Wizards progress left-to-right: Back first, primary last at the right edge.
+pub(crate) fn wizard_action_bar() -> ActionBar {
+    action_bar().justify_end()
 }
 
 /// A round icon button of the title row (32 px).
@@ -1741,7 +2067,12 @@ fn title_button_icon(id: &'static str, icon: Icon, tooltip: &'static str, handle
         .rounded_full()
         .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(crate::shell::palette::shade(0.27, 0.08))))
         .child(icon)
-        .when_some(handler, |d, h| d.on_click(listener(editor, &h)))
+        .when_some(handler, |d, h| {
+            let guarded: Handler = Rc::new(move |this, window, cx| {
+                if !this.panel_dialog_is_modal() { h(this, window, cx); }
+            });
+            d.on_click(listener(editor, &guarded))
+        })
         .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text(&tooltip)).build(window, cx))
         .into_any_element()
 }
@@ -1809,7 +2140,7 @@ pub(crate) fn step_enabled_menu_index(items: &[MenuItem], current: Option<usize>
     Some(enabled_indices[next_pos])
 }
 
-fn scroll_row_into_view(handle: &ScrollHandle, row_idx: usize, row_h: f32, viewport_h: f32) {
+pub(crate) fn scroll_row_into_view(handle: &ScrollHandle, row_idx: usize, row_h: f32, viewport_h: f32) {
     let top = row_idx as f32 * row_h;
     let bottom = top + row_h;
     let current_scroll = (-f32::from(handle.offset().y)).max(0.0);
@@ -1824,85 +2155,15 @@ fn scroll_row_into_view(handle: &ScrollHandle, row_idx: usize, row_h: f32, viewp
 }
 
 /// Renders an always-visible vertical scrollbar thumb overlay for `handle` whenever content overflows (#125, #149, #151).
-fn always_visible_scrollbar_overlay(
-    id: impl Into<ElementId>,
-    handle: ScrollHandle,
-    known_heights: Option<(f32, f32)>,
-) -> Stateful<Div> {
-    let dragging = Rc::new(std::cell::Cell::new(false));
-    div()
-        .id(id)
-        .absolute()
-        .top_0()
-        .bottom_0()
-        .right_0()
-        .w(px(10.))
-        .child(
-            canvas(
-                |bounds, _, _| bounds,
-                move |bounds, _, window, _| {
-                    let viewport_h = f32::from(bounds.size.height).max(1.0);
-                    let max_off = f32::from(handle.max_offset().y).max(0.0);
-                    let (vh, ch, max_scroll) = if max_off > 0.5 {
-                        (viewport_h, viewport_h + max_off, max_off)
-                    } else if let Some((k_vh, k_ch)) = known_heights
-                        && k_ch > k_vh + 0.5
-                    {
-                        (k_vh, k_ch, k_ch - k_vh)
-                    } else {
-                        return;
-                    };
-                    let shown = (vh / ch).clamp(0.05, 1.0);
-                    let thumb_h = (viewport_h * shown).max(16.0).min(viewport_h);
-                    let cur_scroll = (-f32::from(handle.offset().y)).clamp(0.0, max_scroll);
-                    let frac = if max_scroll > 0.0 { (cur_scroll / max_scroll).clamp(0.0, 1.0) } else { 0.0 };
-                    let thumb_y = bounds.origin.y + px((viewport_h - thumb_h).max(0.0) * frac);
-                    let thumb_bounds = Bounds::new(
-                        point(bounds.origin.x + px(1.5), thumb_y),
-                        size(px(7.), px(thumb_h)),
-                    );
-                    window.paint_quad(
-                        gpui::fill(thumb_bounds, crate::shell::palette::shade(0.0, 0.28)).corner_radii(px(3.5)),
-                    );
+pub(crate) fn always_visible_scrollbar_overlay(
+    id: impl Into<ElementId>, handle: ScrollHandle, known_heights: Option<(f32,f32)>,
+) -> scrollbar::ScrollbarOverlay {
+    scrollbar::ScrollbarOverlay { id:id.into(), handle, known_heights, horizontal:false }
+}
 
-                    let scroll_at = {
-                        let handle = handle.clone();
-                        move |y: Pixels, window: &mut Window| {
-                            let ratio = ((f32::from(y - bounds.origin.y) - thumb_h / 2.0) / (viewport_h - thumb_h).max(1.0)).clamp(0.0, 1.0);
-                            handle.set_offset(point(px(0.), px(-ratio * max_scroll)));
-                            window.refresh();
-                        }
-                    };
-                    let drag_down = dragging.clone();
-                    let scroll_down = scroll_at.clone();
-                    window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                        if phase == DispatchPhase::Capture && event.button == MouseButton::Left && bounds.contains(&event.position) {
-                            drag_down.set(true);
-                            scroll_down(event.position.y, window);
-                            cx.stop_propagation();
-                        }
-                    });
-                    let drag_move = dragging.clone();
-                    let scroll_move = scroll_at;
-                    window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                        if phase == DispatchPhase::Capture && event.dragging() && drag_move.get() {
-                            scroll_move(event.position.y, window);
-                            cx.stop_propagation();
-                        }
-                    });
-                    let drag_up = dragging.clone();
-                    window.on_mouse_event(move |event: &MouseUpEvent, phase, _, _| {
-                        if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
-                            drag_up.set(false);
-                        }
-                    });
-                },
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full(),
-        )
+/// Persistent horizontal thumb, painted only when content exceeds its viewport width.
+pub(crate) fn horizontal_scrollbar_overlay(id: impl Into<ElementId>, handle: ScrollHandle) -> scrollbar::ScrollbarOverlay {
+    scrollbar::ScrollbarOverlay { id:id.into(), handle, known_heights:None, horizontal:true }
 }
 
 /// One part of the toolbar.
@@ -1914,322 +2175,17 @@ pub(crate) fn tool_item(item: &ToolItem, index: usize, editor: &WeakEntity<Slide
             let enabled = !disabled && !menu.is_empty();
             let color: Hsla = if enabled { rgb(TEXT).into() } else { disabled_color() };
             let is_font = *id == "font";
-            let button = Button::new(SharedString::from(format!("{id}-{index}")))
-                .ghost()
-                .xsmall()
-                .h(px(28.))
-                .w(px(*width))
-                .rounded(px(4.))
-                .tooltip(crate::shell::i18n::text(tooltip))
-                .disabled(!enabled)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .pl(px(6.))
-                        .justify_between()
-                        .text_size(px(14.))
-                        .text_color(color)
-                        .child(div().truncate().child(if is_font { crate::shell::i18n::font_label(value) } else { value.clone() }))
-                        .child(icon("arrow_drop_down", 18.0, if enabled { rgb(ICON).into() } else { disabled_color() })),
-                );
+            let label=if is_font {crate::shell::i18n::font_label(value)}else{value.clone()};
+            let button=dropdown_button(SharedString::from(format!("{id}-{index}")),label)
+                .h(px(28.)).w(px(*width)).tooltip(crate::shell::i18n::text(tooltip)).disabled(!enabled);
             if enabled {
-                searchable_dropdown_button(id, button, menu.clone(), false, index, editor)
+                if is_font { FontDropdown::new(id,value,menu.clone(),index,editor).button(button).into_any_element() }
+                else { Dropdown::with_button(id,button,menu.clone(),false,index,editor).into_any_element() }
             } else {
                 button.into_any_element()
             }
         }
-        ToolItem::FontSize { value, smaller, larger } => {
-            let enabled = value.is_some();
-            let color: Hsla = if enabled { rgb(TEXT).into() } else { disabled_color() };
-            let step = |id: &'static str, name: &'static str, tip: &'static str, handler: &Option<Handler>| {
-                tool_button(&ToolButton { handler: handler.clone(), ..ToolButton::new(id, name, tip) }, index, editor)
-            };
-            let current_text = value.clone().unwrap_or_default();
-            let init_val = current_text.to_string();
-            let editor_click = editor.clone();
-            let box_el = div()
-                .id(SharedString::from(format!("font-size-box-{index}")))
-                .min_w(px(36.))
-                .px(px(4.))
-                .h(px(26.))
-                .mx(px(2.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .border_1()
-                .border_color(if enabled { rgb(0x747775).into() } else { disabled_color() })
-                .rounded(px(4.))
-                .text_size(px(14.))
-                .text_color(color)
-                .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(crate::shell::palette::shade(0.0, 0.06))))
-                .child(current_text.clone());
-            let size_control: AnyElement = if enabled {
-                let init_val_btn = init_val.clone();
-                Button::new(SharedString::from(format!("font-size-trigger-{index}")))
-                    .ghost()
-                    .xsmall()
-                    .p_0()
-                    .h(px(28.))
-                    .child(box_el)
-                    .on_click(move |_, window, cx| {
-                        let init_val_btn = init_val_btn.clone();
-                        editor_click
-                            .update(cx, |this, cx| {
-                                let next_open = !this.font_size_menu_open;
-                                this.font_size_menu_open = next_open;
-                                this.font_size_filtering = false;
-                                this.font_size_selected = None;
-                                this.font_size_scroll.set_offset(Point::default());
-                                if next_open {
-                                    this.toolbar_search_open = None;
-                                    let clean = init_val_btn.trim_end_matches('+').to_string();
-                                    this.font_size_input.update(cx, |input, cx| {
-                                        input.set_value(clean, window, cx);
-                                        input.focus(window, cx);
-                                    });
-                                }
-                                set_current_toolbar_open(this.font_size_menu_open, this.toolbar_search_open);
-                                cx.notify();
-                            })
-                            .ok();
-                    })
-                    .into_any_element()
-            } else {
-                box_el.into_any_element()
-            };
-            let popover_anchor: Option<AnyElement> = enabled.then(|| {
-                let editor_open = editor.clone();
-                let editor_content = editor.clone();
-                let is_open = CURRENT_TOOLBAR_OPEN.with(|c| c.get().0);
-                Popover::new(SharedString::from(format!("font-size-popover-{index}")))
-                    .anchor(Anchor::TopLeft)
-                    .open(is_open)
-                    .trigger(
-                        Button::new(SharedString::from(format!("font-size-anchor-{index}")))
-                            .ghost()
-                            .xsmall()
-                            .p_0()
-                            .w(px(0.))
-                            .min_w(px(0.))
-                            .h(px(28.)),
-                    )
-                    .on_open_change(move |open, window, cx| {
-                        let init_val = init_val.clone();
-                        editor_open
-                            .update(cx, |this, cx| {
-                                this.font_size_menu_open = *open;
-                                this.font_size_filtering = false;
-                                this.font_size_selected = None;
-                                if *open {
-                                    this.toolbar_search_open = None;
-                                    this.font_size_scroll.set_offset(Point::default());
-                                    let clean = init_val.trim_end_matches('+').to_string();
-                                    this.font_size_input.update(cx, |input, cx| {
-                                        input.set_value(clean, window, cx);
-                                        input.focus(window, cx);
-                                    });
-                                }
-                                set_current_toolbar_open(this.font_size_menu_open, this.toolbar_search_open);
-                                cx.notify();
-                            })
-                            .ok();
-                    })
-                    .content(move |_, window, cx| {
-                        let Some(ed) = editor_content.upgrade() else {
-                            return div().into_any_element();
-                        };
-                        let (input, scroll_handle, selected_idx, filtering) = {
-                            let r = ed.read(cx);
-                            (
-                                r.font_size_input.clone(),
-                                r.font_size_scroll.clone(),
-                                r.font_size_selected,
-                                r.font_size_filtering,
-                            )
-                        };
-                        let current_str = ed
-                            .read(cx)
-                            .toolbar_items()
-                            .into_iter()
-                            .find_map(|it| match it {
-                                ToolItem::FontSize { value: Some(v), .. } => Some(v.to_string()),
-                                _ => None,
-                            })
-                            .unwrap_or_default();
-                        let query = input.read(cx).value().to_string();
-                        let candidates = filtered_font_size_candidates(&query, filtering);
-                        let total_candidates = candidates.len();
-                        let row_h = 24.0;
-                        let full_h = (FONT_SIZE_CANDIDATES.len() as f32) * row_h;
-                        let avail_h = (f32::from(window.viewport_size().height) - 160.0).max(144.0);
-                        let list_h = full_h.min((avail_h / row_h).floor().max(4.0) * row_h);
-                        let visible_rows = (list_h / row_h).round().max(1.0) as usize;
-                        let current_clean = current_str.trim_end_matches('+');
-                        let current_match_idx = candidates
-                            .iter()
-                            .position(|&pt| font_size_candidate_label(pt) == current_clean)
-                            .or_else(|| (filtering && !candidates.is_empty()).then_some(0));
-                        let editor_for_list = editor_content.clone();
-                        let editor_for_keys = editor_content.clone();
-                        let scroll_for_keys = scroll_handle.clone();
-                        v_flex()
-                            .w(px(108.))
-                            .p(px(4.))
-                            .gap(px(4.))
-                            .on_mouse_down_stop()
-                            .child(
-                                canvas(
-                                    |_, _, _| {},
-                                    move |_, _, window, _| {
-                                        let ed_key = editor_for_keys.clone();
-                                        let scroll_key = scroll_for_keys.clone();
-                                        window.on_key_event(move |event: &KeyDownEvent, phase, window, cx| {
-                                            if phase != DispatchPhase::Capture {
-                                                return;
-                                            }
-                                            let key = event.keystroke.key.as_str();
-                                            if key == "escape" {
-                                                ed_key
-                                                    .update(cx, |this, cx| {
-                                                        this.font_size_menu_open = false;
-                                                        this.font_size_filtering = false;
-                                                        this.font_size_selected = None;
-                                                        set_current_toolbar_open(false, this.toolbar_search_open);
-                                                        this.focus_handle.focus(window, cx);
-                                                        cx.notify();
-                                                    })
-                                                    .ok();
-                                                window.refresh();
-                                                cx.stop_propagation();
-                                                return;
-                                            }
-                                            if total_candidates == 0 {
-                                                return;
-                                            }
-                                            let page_step = visible_rows.saturating_sub(1).max(1);
-                                            let next_idx = match key {
-                                                "down" => Some(match selected_idx.or(current_match_idx) {
-                                                    Some(i) => (i + 1).min(total_candidates - 1),
-                                                    None => 0,
-                                                }),
-                                                "pagedown" => Some(match selected_idx.or(current_match_idx) {
-                                                    Some(i) => (i + page_step).min(total_candidates - 1),
-                                                    None => page_step.min(total_candidates - 1),
-                                                }),
-                                                "up" => selected_idx.or(current_match_idx).map(|i| i.saturating_sub(1)),
-                                                "pageup" => selected_idx.or(current_match_idx).map(|i| i.saturating_sub(page_step)),
-                                                _ => None,
-                                            };
-                                            if let Some(idx) = next_idx {
-                                                scroll_row_into_view(&scroll_key, idx, row_h, list_h);
-                                                ed_key
-                                                    .update(cx, |this, cx| {
-                                                        this.font_size_selected = Some(idx);
-                                                        cx.notify();
-                                                    })
-                                                    .ok();
-                                                window.refresh();
-                                                cx.stop_propagation();
-                                            }
-                                        });
-                                    },
-                                )
-                                .absolute()
-                                .size_0(),
-                            )
-                            .child(clearable_text_field(&input))
-                            .child(
-                                div()
-                                    .relative()
-                                    .w_full()
-                                    .h(px(list_h))
-                                    .child(
-                                        div()
-                                            .id("font-size-candidates")
-                                            .size_full()
-                                            .overflow_y_scroll()
-                                            .track_scroll(&scroll_handle)
-                                            .flex()
-                                            .flex_col()
-                                            .children(if candidates.is_empty() {
-                                                vec![
-                                                    div()
-                                                        .w_full()
-                                                        .h(px(24.))
-                                                        .px(px(6.))
-                                                        .flex()
-                                                        .items_center()
-                                                        .text_size(px(12.))
-                                                        .text_color(rgb(TEXT_SECONDARY))
-                                                        .child(crate::shell::i18n::text("fix.menu.not-found"))
-                                                        .into_any_element(),
-                                                ]
-                                            } else {
-                                                candidates
-                                                    .into_iter()
-                                                    .enumerate()
-                                                    .map(|(idx, pt)| {
-                                                        let label = font_size_candidate_label(pt);
-                                                        let is_highlighted = match selected_idx {
-                                                            Some(sel) => sel == idx,
-                                                            None => current_match_idx == Some(idx),
-                                                        };
-                                                        let ed_click = editor_for_list.clone();
-                                                        div()
-                                                            .id(("font-size-candidate", idx))
-                                                            .h(px(24.))
-                                                            .px(px(8.))
-                                                            .rounded(px(4.))
-                                                            .flex()
-                                                            .flex_none()
-                                                            .items_center()
-                                                            .justify_between()
-                                                            .cursor_pointer()
-                                                            .text_size(px(13.))
-                                                            .text_color(rgb(TEXT))
-                                                            .when(is_highlighted, |d| {
-                                                                d.bg(crate::shell::palette::shade(0.0, 0.08)).font_weight(FontWeight::MEDIUM)
-                                                            })
-                                                            .hover(|s| s.bg(crate::shell::palette::shade(0.0, 0.08)))
-                                                            .child(label)
-                                                            .on_mouse_down_stop()
-                                                            .on_click(move |_, window, cx| {
-                                                                ed_click
-                                                                    .update(cx, |this, cx| {
-                                                                        this.font_size_menu_open = false;
-                                                                        this.font_size_filtering = false;
-                                                                        this.font_size_selected = None;
-                                                                        set_current_toolbar_open(false, this.toolbar_search_open);
-                                                                        this.set_toolbar_font_size(pt, window, cx);
-                                                                        cx.notify();
-                                                                    })
-                                                                    .ok();
-                                                            })
-                                                            .into_any_element()
-                                                    })
-                                                    .collect()
-                                            }),
-                                    )
-                                    .child(always_visible_scrollbar_overlay(
-                                        "font-size-scrollbar",
-                                        scroll_handle,
-                                        Some((list_h, (total_candidates as f32) * row_h)),
-                                    )),
-                            )
-                            .into_any_element()
-                    })
-                    .into_any_element()
-            });
-            h_flex()
-                .h(px(28.))
-                .flex_none()
-                .items_center()
-                .children(popover_anchor)
-                .child(step("font-smaller", "remove", "_shell.decrease-font-size", smaller))
-                .child(size_control)
-                .child(step("font-larger", "add", "_shell.increase-font-size", larger))
-                .into_any_element()
-        }
+        ToolItem::FontSize { value, smaller, larger } => font_size::FontSizeControl {search:false,value:value.clone(),smaller:smaller.clone(),larger:larger.clone(),index,editor:editor.clone()}.into_any_element(),
     }
 }
 
@@ -2279,17 +2235,17 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
             )
             .on_click(listener(editor, quick));
         let (menu, editor) = (Rc::new(menu.clone()), editor.clone());
-        let right = Button::new(SharedString::from(format!("{}-{index}-menu", b.id)))
+        let right = action_button(SharedString::from(format!("{}-{index}-menu", b.id)))
             .ghost()
             .xsmall()
             .h(px(28.))
-            .w(px(16.))
+            .w(px(TOOLBAR_CARET_WIDTH))
             .px(px(0.))
             .rounded_r(px(4.))
             .rounded_l(px(0.))
             .tooltip(crate::shell::i18n::text(&b.tooltip))
-            .child(icon("arrow_drop_down", 16.0, color))
-            .dropdown_menu(move |m, window, cx| fill_menu(m.min_w(px(220.)), &menu, &editor, window, cx));
+            .child(icon("arrow_drop_down", 16.0, color));
+        let right=if menu.iter().any(|e|matches!(e,MenuEntry::Palette(_))){ColorPaletteDropdown::from_palette(b.id,right,(*menu).clone(),&editor).into_any_element()}else{right.dropdown_menu(move|m,w,cx|fill_menu(m,&menu,&editor,w,cx)).into_any_element()};
         return h_flex().items_center().child(left).child(right).into_any_element();
     }
     let button = Button::new(SharedString::from(format!("{}-{index}", b.id)))
@@ -2309,12 +2265,19 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
         SegmentRounding::Right => button.rounded_r(px(4.)).rounded_l(px(0.)),
     };
     if enabled && b.searchable {
-        return searchable_dropdown_button(b.id, button, b.menu.clone().unwrap_or_default(), b.single_select, index, editor);
+        return Dropdown::with_button(b.id, button, b.menu.clone().unwrap_or_default(), b.single_select, index, editor).into_any_element();
     }
     match (&b.menu, &b.handler) {
         (Some(menu), _) if enabled => {
-            let (menu, editor) = (Rc::new(menu.clone()), editor.clone());
-            button.dropdown_menu(move |m, window, cx| fill_menu(m.min_w(px(220.)), &menu, &editor, window, cx)).into_any_element()
+            let items=flatten_menu_entries(menu);
+            if items.iter().any(|i|dropdown::is_font_item_id(i.id)) {
+                FontDropdown::new(b.id,"",menu.clone(),index,editor).button(button).into_any_element()
+            } else if b.single_select || (menu.iter().all(|entry|matches!(entry,MenuEntry::Item(_))) && items.iter().any(|i|i.checked)) {
+                Dropdown::with_button(b.id,button,menu.clone(),b.single_select,index,editor).into_any_element()
+            } else {
+                let (menu,editor)=(Rc::new(menu.clone()),editor.clone());
+                button.dropdown_menu(move|m,w,cx|fill_menu(m.min_w(px(220.)),&menu,&editor,w,cx)).into_any_element()
+            }
         }
         (_, Some(handler)) if enabled => button.on_click(listener(editor, handler)).into_any_element(),
         _ => button.into_any_element(),
@@ -2386,12 +2349,212 @@ pub(crate) fn filter_menu_items(items: &[MenuItem], query: &str) -> Vec<MenuItem
         .collect()
 }
 
-/// Shared TextField with a right-aligned `✕` clear button (`cleanable(true)`) (#98, #127, #149, #150).
-pub(crate) fn clearable_text_field(input: &Entity<gpui_kit::component::input::InputState>) -> gpui_kit::component::input::Input {
-    gpui_kit::component::input::Input::new(input).small().cleanable(true)
+/// The width of a field in the right pane (a number with its ▲▼, a colour code, a dropdown of line styles…): the
+/// boxes of a row line up when they all use it. [`text_field`]'s default width.
+pub(crate) const FIELD_WIDTH: Pixels = px(124.);
+/// Standard font selector width in dialogs and side panes (1.5 × the input width).
+pub(crate) const FONT_DROPDOWN_WIDTH: Pixels = px(186.);
+
+/// The one text field of the app (the right-pane panels and the popups): small, with a ✕ button to clear it, and
+/// [`FIELD_WIDTH`] wide. Set what differs with the builder (#98, #127, #149, #150):
+///
+/// - `.no_clear()`: no ✕. Colour codes (6-digit hex): in the narrow colour fields the ✕ hid the end of the code
+///   (2026-10-23 ユーザー).
+/// - `.width(px)` / `.full_width()`: another width, or fill the parent (a name, a range, a search box…).
+/// - `.spinner(id, spec, cx, on_step)`: ▲▼ buttons for a number. A click steps the value by `spec`, writes it into the
+///   field and calls `on_step`, which applies it as typing it and pressing Enter does.
+/// - `.disabled(bool)`.
+///
+/// It is an element: `.child(text_field(&input))`, or `.into_any_element()`.
+pub(crate) fn text_field(input: &Entity<gpui_kit::component::input::InputState>) -> TextField {
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    super::scenario::button_probe::record_input(input);
+    TextField { input: input.clone(), clear: true, width: Some(FIELD_WIDTH), disabled: false, spinner: None, compact_spinner: false, unit: None, picker: None, trailing: None }
 }
 
-/// Shared right-pane row with left-aligned label, right-aligned `clearable_text_field`, and fixed-width unit label
+type StepHandler = Rc<dyn Fn(&mut SlideEditor, f32, &mut Window, &mut Context<SlideEditor>)>;
+
+struct FieldSpinner {
+    id: SharedString,
+    spec: SpinnerSpec,
+    editor: WeakEntity<SlideEditor>,
+    on_step: StepHandler,
+}
+
+/// See [`text_field`].
+#[derive(IntoElement)]
+pub(crate) struct TextField {
+    input: Entity<gpui_kit::component::input::InputState>,
+    clear: bool,
+    /// `None`: fill the parent.
+    width: Option<Pixels>,
+    disabled: bool,
+    spinner: Option<FieldSpinner>,
+    compact_spinner: bool,
+    unit: Option<(SharedString, Pixels)>,
+    picker: Option<FieldPathPicker>,
+    trailing: Option<FieldTrailingIcon>,
+}
+
+struct FieldTrailingIcon {
+    id: SharedString,
+    icon: &'static str,
+    tooltip: SharedString,
+    editor: WeakEntity<SlideEditor>,
+    clicked: Handler,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PathMode { File, Folder }
+struct FieldPathPicker {
+    id: SharedString,
+    mode: PathMode,
+    extensions: Vec<String>,
+    editor: WeakEntity<SlideEditor>,
+    selected: Rc<dyn Fn(&mut SlideEditor, std::path::PathBuf, &mut Window, &mut Context<SlideEditor>)>,
+}
+
+impl TextField {
+    /// An action icon inside the input's trailing edge (for example a sheet range picker).
+    pub(crate) fn trailing_icon(mut self, id: impl Into<SharedString>, name: &'static str, tooltip: impl Into<SharedString>, cx: &Context<SlideEditor>, clicked: impl Fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) -> Self {
+        self.trailing = Some(FieldTrailingIcon { id: id.into(), icon: name, tooltip: tooltip.into(), editor: cx.weak_entity(), clicked: Rc::new(clicked) });
+        self
+    }
+
+    /// A path input with a standard Browse button; selection changes the draft only.
+    pub(crate) fn path_picker(mut self, id: impl Into<SharedString>, mode: PathMode, extensions: &[&str], cx: &Context<SlideEditor>, selected: impl Fn(&mut SlideEditor, std::path::PathBuf, &mut Window, &mut Context<SlideEditor>) + 'static) -> Self {
+        self.picker = Some(FieldPathPicker { id: id.into(), mode, extensions: extensions.iter().map(|s| s.to_string()).collect(), editor: cx.weak_entity(), selected: Rc::new(selected) }); self
+    }
+    pub(crate) fn unit(mut self, label: impl Into<SharedString>, width: Pixels) -> Self { self.unit=Some((label.into(),width)); self }
+    /// Compact three-digit color channel input; other numeric fields retain the standard width.
+    pub(crate) fn compact_spinner(mut self) -> Self { self.compact_spinner = true; self }
+
+    /// No ✕ to clear the field.
+    pub(crate) fn no_clear(mut self) -> Self {
+        self.clear = false;
+        self
+    }
+
+    /// The field's width (with its ▲▼ when it has them) instead of [`FIELD_WIDTH`].
+    pub(crate) fn width(mut self, width: Pixels) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    /// The field fills its parent's width.
+    pub(crate) fn full_width(mut self) -> Self {
+        self.width = None;
+        self
+    }
+
+    pub(crate) fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// ▲▼ buttons that step the number in the field by `spec` and then call `on_step` with the new value.
+    pub(crate) fn spinner(
+        mut self,
+        id: impl Into<SharedString>,
+        spec: SpinnerSpec,
+        cx: &Context<SlideEditor>,
+        on_step: impl Fn(&mut SlideEditor, f32, &mut Window, &mut Context<SlideEditor>) + 'static,
+    ) -> Self {
+        self.spinner = Some(FieldSpinner { id: id.into(), spec, editor: cx.weak_entity(), on_step: Rc::new(on_step) });
+        self
+    }
+}
+
+impl RenderOnce for TextField {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let spinner_width = if self.compact_spinner { px(80.) } else { FIELD_WIDTH };
+        let mut field = gpui_kit::component::input::Input::new(&self.input).small().cleanable(self.clear).disabled(self.disabled);
+        #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+        let probe_id = self.trailing.as_ref().map(|t| format!("{}-field", t.id));
+        if let Some(trailing) = self.trailing {
+            let button = action_button(trailing.id).ghost().xsmall().w(px(24.)).h(px(24.)).px(px(0.))
+                .disabled(self.disabled).tooltip(trailing.tooltip)
+                .child(icon(trailing.icon, 18., rgb(ICON).into()))
+                .on_click(move |_, window, cx| {
+                    let clicked = trailing.clicked.clone();
+                    let _ = trailing.editor.update(cx, |this, cx| clicked(this, window, cx));
+                });
+            field = field.suffix(button);
+        }
+        if let Some(picker) = self.picker {
+            let input = self.input.clone();
+            let browse = action_button(picker.id).label(crate::shell::i18n::text("field.browse"))
+                .disabled(self.disabled || cfg!(target_family = "wasm"))
+                .on_click(move |_, window, cx| {
+                    let input = input.clone(); let extensions = picker.extensions.clone(); let selected = picker.selected.clone();
+                    let _ = picker.editor.update(cx, |_, cx| {
+                        let picked = cx.prompt_for_paths(PathPromptOptions { files: matches!(picker.mode, PathMode::File), directories: matches!(picker.mode, PathMode::Folder), extensions, multiple: false, prompt: None });
+                        cx.spawn_in(window, async move |this, cx| {
+                            let Ok(Ok(Some(paths))) = picked.await else { return };
+                            let Some(path) = paths.into_iter().next() else { return };
+                            let _ = this.update_in(cx, |this, window, cx| {
+                                input.update(cx, |i, cx| i.set_value(path.to_string_lossy().into_owned(), window, cx));
+                                selected(this, path, window, cx); cx.notify();
+                            });
+                        }).detach();
+                    });
+                });
+            return h_flex().gap_2().items_center().w_full().child(div().flex_1().min_w_0().child(field)).child(browse).into_any_element();
+        }
+        let Some(spinner) = self.spinner else {
+            let element = match self.width {
+                Some(w) => field.w(w).into_any_element(),
+                None => field.into_any_element(),
+            };
+            // Scenario measurement of the box's outer edge (compare with a dropdown's right edge).
+            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+            if let Some(key) = probe_id {
+                let wrapper = div().relative().when_some(self.width, |d, w| d.w(w)).when(self.width.is_none(), |d| d.w_full());
+                return wrapper.child(element).child(canvas(|_, _, _| (), move |b, _, _, _| super::scenario::button_probe::record_bounds(&key, b)).absolute().inset_0()).into_any_element();
+            }
+            return element;
+        };
+        let FieldSpinner { id, spec, editor, on_step } = spinner;
+        let disabled = self.disabled;
+        let step_btn = |up: bool| {
+            let input = self.input.clone();
+            let editor = editor.clone();
+            let on_step = on_step.clone();
+            let (suffix, icon_name) = if up { ("up", "keyboard_arrow_up") } else { ("down", "keyboard_arrow_down") };
+            Button::new(SharedString::from(format!("{id}-{suffix}")))
+                .ghost()
+                .xsmall()
+                .w(px(18.))
+                .h(px(12.))
+                .px(px(0.))
+                .disabled(disabled)
+                .child(icon(icon_name, 12.0, rgb(ICON).into()))
+                .on_click(move |_, window, cx| {
+                    let raw = input.read(cx).value().to_string();
+                    let (current, unit) = split_number(&raw).unwrap_or((spec.empty_value(), ""));
+                    let next = spec.step_value(current, up);
+                    let formatted = format!("{}{unit}", spec.format_value(next));
+                    input.update(cx, |s, cx| s.set_value(formatted, window, cx));
+                    let on_step = on_step.clone();
+                    editor.update(cx, |this, cx| on_step(this, next, window, cx)).ok();
+                })
+        };
+        let (up_btn, down_btn) = (step_btn(true), step_btn(false));
+        let numeric = h_flex()
+            .gap_1()
+            .items_center()
+            .w(spinner_width).min_w(spinner_width).max_w(spinner_width).flex_none()
+            .child(div().flex_1().min_w(px(48.)).child(field))
+            .child(v_flex().items_center().justify_center().child(up_btn).child(down_btn))
+            .into_any_element();
+        if let Some((label,width))=self.unit {
+            h_flex().items_center().gap_2().flex_none().child(numeric)
+                .child(div().w(width).min_w(width).flex_none().text_sm().child(label)).into_any_element()
+        } else { numeric }
+    }
+}
+
+/// Shared right-pane row with left-aligned label, right-aligned `text_field`, and fixed-width unit label
 /// so input left/right edges align vertically across rows (#150, #151).
 pub(crate) fn labeled_input_unit(
     label: impl Into<SharedString>,
@@ -2409,36 +2572,88 @@ pub(crate) fn labeled_input_unit(
                 .flex_none()
                 .items_center()
                 .gap(px(4.))
-                .child(div().w(px(96.)).child(clearable_text_field(input)))
+                .child(text_field(input).width(px(96.)))
                 .child(div().w(px(36.)).text_size(px(12.)).text_color(rgb(TEXT_SECONDARY)).child(unit.into())),
         )
 }
 
+/// Content attribute for the single dropdown button: a standard text label or custom preview.
+pub(crate) enum DropdownButtonContent {
+    Label(SharedString),
+    Custom(AnyElement),
+}
+impl From<SharedString> for DropdownButtonContent {
+    fn from(value: SharedString) -> Self { Self::Label(value) }
+}
+impl From<String> for DropdownButtonContent {
+    fn from(value: String) -> Self { Self::Label(value.into()) }
+}
+impl From<&str> for DropdownButtonContent {
+    fn from(value: &str) -> Self { Self::Label(value.to_owned().into()) }
+}
+impl From<AnyElement> for DropdownButtonContent {
+    fn from(value: AnyElement) -> Self { Self::Custom(value) }
+}
+/// The closed button shared by text, font and owner-drawn preview dropdowns.
+pub(crate) fn dropdown_button(id: impl Into<ElementId>, content: impl Into<DropdownButtonContent>) -> Button {
+    let content = match content.into() {
+        DropdownButtonContent::Label(label) => div().truncate().text_sm().child(label).into_any_element(),
+        DropdownButtonContent::Custom(preview) => preview,
+    };
+    action_button(id).small().h(px(BUTTON_HEIGHT)).w_full().bg(rgb(0xffffff))
+        .child(h_flex().w_full().min_w_0().items_center().justify_between().gap_2()
+            .child(div().flex_1().min_w_0().overflow_hidden().child(content))
+            .child(icon("arrow_drop_down",18.,rgb(ICON).into())))
+}
+
+pub(crate) fn font_dropdown(
+    id: &'static str, current: &str, entries: Vec<MenuEntry>, index: usize,
+    editor: &WeakEntity<SlideEditor>,
+) -> AnyElement {
+    FontDropdown::new(id,current,entries,index,editor).into_any_element()
+}
+
+#[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+thread_local! {pub(crate) static DROPDOWN_LAYOUT: std::cell::RefCell<std::collections::HashMap<&'static str,(f32,bool)>> = Default::default();}
+thread_local! {
+    static DROPDOWN_BUTTON_WIDTHS: std::cell::RefCell<std::collections::HashMap<&'static str,f32>> = Default::default();
+}
 /// Render a dropdown button whose popup menu has a `✕`-clearable search TextField at the top,
 /// keeps a fixed width and height (`x, y, w, h` unchanged when filtering), shows `"みつかりません"`
 /// when 0 items match, and supports keyboard navigation (`↑`, `↓`, `PageUp`, `PageDown`, `Enter`)
 /// plus an always-visible scrollbar when scrollable (#98, #103, #125, #126, #127).
-pub(crate) fn searchable_dropdown_button(
+
+thread_local! {static DROPDOWN_INSTANCE:std::cell::Cell<Option<(&'static str,usize)>>=const{std::cell::Cell::new(None)};}
+#[derive(IntoElement)]
+struct HoverDropdownTrigger{button:Button,group:&'static str,selected:bool}
+impl gpui_kit::component::Selectable for HoverDropdownTrigger{fn selected(mut self,value:bool)->Self{self.selected=value;self.button=self.button.selected(value);self}fn is_selected(&self)->bool{self.selected}}
+impl RenderOnce for HoverDropdownTrigger{fn render(self,_:&mut Window,_:&mut App)->impl IntoElement{div().opacity(if self.selected{1.}else{0.}).group_hover(self.group,|d|d.opacity(1.)).child(self.button)}}
+fn render_dropdown(
     id: &'static str,
-    trigger_button: Button,
+    button: Button,
     entries: Vec<MenuEntry>,
     single_select: bool,
     index: usize,
     editor: &WeakEntity<SlideEditor>,
+    options: dropdown::Options,
 ) -> AnyElement {
     let static_items = Rc::new(flatten_menu_entries(&entries));
     let editor_open = editor.clone();
+    let items_open = static_items.clone();
     let editor_content = editor.clone();
-    let is_open = CURRENT_TOOLBAR_OPEN.with(|c| c.get().1 == Some(id));
+    let is_open = CURRENT_TOOLBAR_OPEN.with(|c| c.get().1 == Some(id)) && DROPDOWN_INSTANCE.with(|c|c.get().is_none_or(|(open_id,open_index)|open_id!=id || open_index==index));
     // Toolbar buttons (like `menu-search`) open downward (`Anchor::TopLeft` places the popup's top-left at the button's bottom-left);
     // bottom-bar buttons (like `sheet-list`) open upward (`Anchor::BottomLeft` places the popup's bottom-left at the button's top-left).
     let anchor = if id == "sheet-list" { Anchor::BottomLeft } else { Anchor::TopLeft };
 
-    Popover::new(SharedString::from(format!("searchable-menu-{id}-{index}")))
+    let popup = Popover::new(SharedString::from(format!("searchable-menu-{id}-{index}")))
+        .appearance(false).p_0()
         .anchor(anchor)
-        .open(is_open)
-        .trigger(trigger_button)
-        .on_open_change(move |open, window, cx| {
+        .open(is_open);
+    let popup=if let Some(group)=options.hover_reveal{popup.trigger(HoverDropdownTrigger{button,group,selected:is_open})}else{popup.trigger(button)};
+    let popup=popup.on_open_change(move |open, window, cx| {
+            if *open {DROPDOWN_INSTANCE.with(|c|c.set(Some((id,index))));}
+            else {DROPDOWN_INSTANCE.with(|c|{if c.get()==Some((id,index)){c.set(None);}});}
             editor_open
                 .update(cx, |this, cx| {
                     let input = this.ensure_toolbar_search_input(id, window, cx);
@@ -2448,7 +2663,11 @@ pub(crate) fn searchable_dropdown_button(
                         this.font_size_filtering = false;
                         this.font_size_selected = None;
                         this.toolbar_search_open = Some(id);
-                        this.toolbar_search_selected.insert(id, None);
+                        let items = if items_open.is_empty() { this.searchable_menu_items_for(id) } else { (*items_open).clone() };
+                        let initial=items.iter().position(|item|item.checked && item.enabled())
+                            .or_else(||items.iter().position(|item|item.enabled()));
+                        this.toolbar_search_popup_items = Some((id, items));
+                        this.toolbar_search_selected.insert(id, initial);
                         scroll.set_offset(Point::default());
                         input.update(cx, |state, cx| {
                             state.set_value("", window, cx);
@@ -2456,6 +2675,7 @@ pub(crate) fn searchable_dropdown_button(
                         });
                     } else if this.toolbar_search_open == Some(id) {
                         this.toolbar_search_open = None;
+                        this.toolbar_search_popup_items = None;
                         this.toolbar_search_selected.insert(id, None);
                     }
                     set_current_toolbar_open(this.font_size_menu_open, this.toolbar_search_open);
@@ -2478,24 +2698,31 @@ pub(crate) fn searchable_dropdown_button(
             } else {
                 (*static_items).clone()
             };
-            let fixed_width = {
-                let mut max_w: f32 = 240.0;
-                for item in &all_items {
-                    let label = menu_item_display_label(item);
-                    let shortcut_w = item.shortcut.map_or(0.0, |s| text_width(&format_shortcut_for_platform(s), 12.0) + 20.0);
-                    let w = 44.0 + text_width(&label, 14.0) + shortcut_w + 24.0;
-                    max_w = max_w.max(w);
-                }
-                max_w.min(420.0)
+            let button_width = DROPDOWN_BUTTON_WIDTHS.with(|widths| widths.borrow().get(id).copied()).unwrap_or(240.);
+            let fixed_width = match options.width {
+                dropdown::ListWidth::Button=>button_width.min(dropdown_list::MAX_WIDTH),
+                dropdown::ListWidth::Fixed(w)=>f32::from(w).min(dropdown_list::MAX_WIDTH),
+                dropdown::ListWidth::Content=>dropdown_list::content_width(&all_items,|item|menu_item_display_label(item).to_string(),|item| {
+                    let label=menu_item_display_label(item);
+                    let text_width=match &item.dropdown_content {
+                        Some(dropdown::ItemContent::Font(family))=>crate::shell::font_preview::get_or_render_preview(family,&label).map(|p|p.width).unwrap_or_else(||dropdown_list::label_width(window,&label,13.)),
+                        _=>dropdown_list::label_width(window,&label,13.),
+                    };
+                    text_width+68.+item.shortcut.map_or(0.,|sc|dropdown_list::label_width(window,&format_shortcut_for_platform(sc),12.)+20.)
+                },button_width),
             };
-            let row_h = 28.0;
+            let row_h = dropdown_list::ROW_HEIGHT;
             let avail_list_h = (f32::from(window.viewport_size().height) - 214.0).max(224.0);
             let max_rows = ((avail_list_h / row_h).floor() as usize).max(8);
             let visible_rows = all_items.len().clamp(1, max_rows);
             let fixed_list_height = (visible_rows as f32) * row_h;
-            let query = input.read(cx).value().to_string();
+            let show_search = options.search && all_items.len() > 20;
+            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+            DROPDOWN_LAYOUT.with(|m|{m.borrow_mut().insert(id,(fixed_width,show_search));});
+            let query = if show_search {input.read(cx).value().to_string()} else {String::new()};
             let has_query = !query.trim().is_empty();
             let matched = filter_menu_items(&all_items, &query);
+            let reserve_left=options.checkmarks || all_items.iter().any(|i|i.icon.is_some()||i.swatch.is_some());
             let matched_len = matched.len();
             let first_enabled_idx = if has_query {
                 matched.iter().position(|it| it.enabled())
@@ -2504,84 +2731,21 @@ pub(crate) fn searchable_dropdown_button(
             };
             let active_highlight_idx = selected_idx.map(|i| i.min(matched_len.saturating_sub(1))).or(first_enabled_idx);
             let editor_for_rows = editor_content.clone();
-            let editor_for_keys = editor_content.clone();
             let input_for_rows = input.clone();
-            let scroll_for_keys = scroll_handle.clone();
-            let matched_for_keys = Rc::new(matched.clone());
 
-            v_flex()
+            let menu_focus=input.read(cx).focus_handle(cx);
+            dropdown_list::surface().relative().left(options.offset_x).border_1().border_color(rgb(BORDER)).rounded(px(6.)).shadow_md()
+                .when(!show_search, |d|d.track_focus(&menu_focus))
                 .w(px(fixed_width))
-                .p(px(6.))
-                .gap(px(6.))
                 .on_mouse_down_stop()
-                .child(
-                    canvas(
-                        |_, _, _| {},
-                        move |_, _, window, _| {
-                            let ed_key = editor_for_keys.clone();
-                            let scroll_key = scroll_for_keys.clone();
-                            let matched_key = matched_for_keys.clone();
-                            window.on_key_event(move |event: &KeyDownEvent, phase, window, cx| {
-                                if phase != DispatchPhase::Capture {
-                                    return;
-                                }
-                                let key = event.keystroke.key.as_str();
-                                if key == "escape" {
-                                    ed_key
-                                        .update(cx, |this, cx| {
-                                            this.toolbar_search_open = None;
-                                            this.toolbar_search_selected.insert(id, None);
-                                            set_current_toolbar_open(this.font_size_menu_open, None);
-                                            this.focus_handle.focus(window, cx);
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                    window.refresh();
-                                    cx.stop_propagation();
-                                    return;
-                                }
-                                if matched_key.is_empty() {
-                                    return;
-                                }
-                                let page_step = (visible_rows.saturating_sub(1).max(1)) as isize;
-                                let next_idx = match key {
-                                    "down" => step_enabled_menu_index(&matched_key, active_highlight_idx, 1),
-                                    "pagedown" => step_enabled_menu_index(&matched_key, active_highlight_idx, page_step),
-                                    "up" => step_enabled_menu_index(&matched_key, active_highlight_idx, -1),
-                                    "pageup" => step_enabled_menu_index(&matched_key, active_highlight_idx, -page_step),
-                                    _ => None,
-                                };
-                                if let Some(idx) = next_idx {
-                                    scroll_row_into_view(&scroll_key, idx, row_h, fixed_list_height);
-                                    ed_key
-                                        .update(cx, |this, cx| {
-                                            this.toolbar_search_selected.insert(id, Some(idx));
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                    window.refresh();
-                                    cx.stop_propagation();
-                                }
-                            });
-                        },
-                    )
-                    .absolute()
-                    .size_0(),
-                )
-                .child(clearable_text_field(&input))
+                .when(show_search, |d| d.child(text_field(&input).full_width()))
                 .child(
                     div()
                         .relative()
                         .w_full()
                         .h(px(fixed_list_height))
                         .child(
-                            div()
-                                .id(SharedString::from(format!("searchable-menu-list-{id}")))
-                                .size_full()
-                                .overflow_y_scroll()
-                                .track_scroll(&scroll_handle)
-                                .flex()
-                                .flex_col()
+                            dropdown_list::list(SharedString::from(format!("searchable-menu-list-{id}")), &scroll_handle)
                                 .children(if matched.is_empty() {
                                     vec![
                                         div()
@@ -2596,7 +2760,6 @@ pub(crate) fn searchable_dropdown_button(
                                             .into_any_element(),
                                     ]
                                 } else {
-                                    const FONT_ITEMS: [&str; 4] = ["xlsx.font", "pptx.font", "docx.font", "font.recent.item"];
                                     matched
                                         .into_iter()
                                         .enumerate()
@@ -2617,12 +2780,10 @@ pub(crate) fn searchable_dropdown_button(
                                                     .on_mouse_down_stop()
                                                     .into_any_element();
                                             }
-                                            let is_font_item = FONT_ITEMS.contains(&item.id);
                                             let is_highlighted = active_highlight_idx == Some(row_idx);
                                             let enabled = item.enabled();
                                             let fg: Hsla = if enabled { rgb(TEXT).into() } else { disabled_color() };
                                             let label = menu_item_display_label(&item);
-                                            let raw_font_name = item.label.to_string();
                                             let handler = item.handler.clone();
                                             let ed_click = editor_for_rows.clone();
                                             let input_click = input_for_rows.clone();
@@ -2645,8 +2806,8 @@ pub(crate) fn searchable_dropdown_button(
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
-                                                .when(item.checked, |d| d.child(icon("check", 16.0, check_fg)))
-                                                .when(!item.checked, |d| {
+                                                .children(dropdown_list::checkmark(item.checked,options.checkmarks,check_fg))
+                                                .when(!options.checkmarks || !item.checked, |d| {
                                                     if let Some(ic) = item.icon.filter(|i| !i.is_empty()) {
                                                         d.child(icon(ic, 16.0, check_fg))
                                                     } else {
@@ -2654,65 +2815,45 @@ pub(crate) fn searchable_dropdown_button(
                                                     }
                                                 });
 
-                                            let selected_row_bg = single_select && item.checked;
-                                            let label_el = if is_font_item {
-                                                if let Some(preview) = crate::shell::font_preview::get_or_render_preview(&raw_font_name, &label) {
-                                                    let fallback_label = label.clone();
-                                                    div().flex_1().truncate().child(
-                                                        img(preview.image)
-                                                            .w(px(preview.width))
-                                                            .h(px(preview.height))
-                                                            .with_loading(move || div().text_size(px(13.)).text_color(fg).child(fallback_label.clone()).into_any_element()),
-                                                    )
-                                                } else {
-                                                    div().flex_1().truncate().text_size(px(13.)).text_color(fg).child(label)
-                                                }
-                                            } else {
-                                                div().flex_1().truncate().text_size(px(13.)).text_color(fg).child(label)
+                                            let selected_row_bg = (single_select || options.checkmarks) && item.checked;
+                                            let is_preview=matches!(&item.dropdown_content,Some(dropdown::ItemContent::Palette(_)|dropdown::ItemContent::Custom(_)));
+                                            let label_el=match &item.dropdown_content {
+                                                Some(dropdown::ItemContent::Font(family))=>dropdown::font_item(family,label.clone(),fg),
+                                                Some(dropdown::ItemContent::Palette(colors))=>dropdown::color_palette_item(colors),
+                                                Some(dropdown::ItemContent::Custom(render))=>render(),
+                                                None=>div().flex_1().truncate().text_size(px(13.)).text_color(fg).child(label.clone()).into_any_element(),
                                             };
 
-                                            div()
-                                                .id((SharedString::from(format!("searchable-item-{id}")), row_idx))
-                                                .w_full()
-                                                .h(px(28.))
-                                                .px(px(6.))
-                                                .rounded(px(4.))
-                                                .flex()
-                                                .flex_none()
-                                                .items_center()
-                                                .gap(px(6.))
-                                                .when(selected_row_bg, |d| d.bg(rgb(0xd3e3fd)))
-                                                .when(enabled, |d| {
-                                                    d.cursor_pointer().hover(|s| {
-                                                        s.bg(if selected_row_bg { Hsla::from(rgb(0xc2d7fa)) } else { crate::shell::palette::shade(0.0, 0.08) })
-                                                    })
-                                                })
-                                                .when(is_highlighted && !selected_row_bg, |d| d.bg(crate::shell::palette::shade(0.0, 0.08)))
-                                                .child(left_slot)
-                                                .child(label_el)
-                                                .when_some(item.shortcut, |d, sc| {
-                                                    d.child(div().text_size(px(12.)).text_color(rgb(TEXT_SECONDARY)).child(format_shortcut_for_platform(sc)))
-                                                })
-                                                .on_mouse_down_stop()
-                                                .when_some(handler.filter(|_| enabled), |d, h| {
-                                                    d.on_click(move |_, window, cx| {
-                                                        input_click.update(cx, |s, cx| s.set_value("", window, cx));
-                                                        let ed_inner = ed_click.clone();
-                                                        let h_inner = h.clone();
-                                                        ed_click
-                                                            .update(cx, |this, cx| {
-                                                                this.toolbar_search_open = None;
-                                                                this.toolbar_search_selected.insert(id, None);
-                                                                set_current_toolbar_open(this.font_size_menu_open, None);
-                                                                cx.notify();
-                                                            })
-                                                            .ok();
-                                                        window.defer(cx, move |window, cx| {
-                                                            ed_inner.update(cx, |this, cx| h_inner(this, window, cx)).ok();
-                                                        });
-                                                    })
-                                                })
-                                                .into_any_element()
+                                            let row_id=ElementId::from((SharedString::from(format!("searchable-item-{id}")),row_idx));
+                                            let activate=move |_: &ClickEvent,window:&mut Window,cx:&mut App| {
+                                                if let Some(h)=handler.as_ref().filter(|_|enabled) {
+                                                    input_click.update(cx,|s,cx|s.set_value("",window,cx));
+                                                    ed_click.update(cx,|this,cx| {
+                                                        this.toolbar_search_open=None;this.toolbar_search_popup_items=None;
+                                                        this.toolbar_search_selected.insert(id,None);set_current_toolbar_open(this.font_size_menu_open,None);cx.notify();
+                                                    }).ok();
+                                                    let owner=ed_click.clone();let h=h.clone();window.defer(cx,move|w,cx|{owner.update(cx,|e,cx|h(e,w,cx)).ok();});
+                                                }
+                                            };
+                                            let has_left=reserve_left;
+                                            if is_preview {
+                                                let tooltip=item.label.clone();
+                                                let row=dropdown_list::option(row_id.clone(),selected_row_bg,is_highlighted,enabled)
+                                                    .tooltip(move|w,cx|gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(w,cx))
+                                                    .child(h_flex().w_full().min_w_0().items_center().gap(px(6.)).when(has_left,|d|d.child(left_slot)).child(label_el))
+                                                    .on_mouse_down_stop().on_click(activate);
+                                                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                                                let row=super::scenario::button_probe::observe_control(row,row_id);
+                                                row.into_any_element()
+                                            } else {
+                                                let row=dropdown_list::option(row_id.clone(),selected_row_bg,is_highlighted,enabled)
+                                                    .when(has_left,|d|d.child(left_slot)).child(label_el)
+                                                    .when_some(item.shortcut,|d,sc|d.child(div().text_size(px(12.)).text_color(rgb(TEXT_SECONDARY)).child(format_shortcut_for_platform(sc))))
+                                                    .on_mouse_down_stop().on_click(activate);
+                                                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                                                let row=super::scenario::button_probe::observe_control(row,row_id);
+                                                row.into_any_element()
+                                            }
                                         })
                                         .collect()
                                 }),
@@ -2725,52 +2866,152 @@ pub(crate) fn searchable_dropdown_button(
                 )
                 .into_any_element()
         })
-        .into_any_element()
+        .into_any_element();
+    div().relative().child(popup).child(canvas(|_,_,_|(),move |bounds,_,_,_| {
+        DROPDOWN_BUTTON_WIDTHS.with(|widths| {widths.borrow_mut().insert(id,f32::from(bounds.size.width));});
+    }).absolute().inset_0()).into_any_element()
 }
 
-/// Shared radio button indicator circle with primary button blue (`PRIMARY_BUTTON_BG`) inner dot (#106).
-#[allow(dead_code)]
+/// The shared radio indicator, matching the Go To Special panel.
 pub(crate) fn radio_dot(selected: bool) -> Div {
-    div()
-        .w(px(14.))
-        .h(px(14.))
-        .rounded(px(7.))
-        .border_1()
-        .border_color(if selected { rgb(PRIMARY_BUTTON_BG) } else { rgb(0x747775) })
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .when(selected, |d| {
-            d.child(div().w(px(8.)).h(px(8.)).rounded(px(4.)).bg(rgb(PRIMARY_BUTTON_BG)))
-        })
+    div().size(px(14.)).rounded(px(7.)).border_1()
+        .border_color(if selected { rgb(PRIMARY_BUTTON_BG) } else { rgb(0x888888) })
+        .flex().flex_none().items_center().justify_center()
+        .when(selected, |d| d.child(div().size(px(8.)).rounded(px(4.)).bg(rgb(PRIMARY_BUTTON_BG))))
 }
 
-/// Shared left-aligned borderless radio button row with primary button blue inner dot (#106).
-#[allow(dead_code)]
+#[derive(IntoElement)]
+struct FormControlMarker(bool);
+impl RenderOnce for FormControlMarker {fn render(self,_:&mut Window,_:&mut App)->impl IntoElement {gpui_kit::component::form_controls::other(self.0,false);div().absolute().size_0()}}
+
+/// A radio indicator and its label are one indivisible item, including in a flow group.
+/// The group owns placement; the button owns appearance and the caller owns selection.
 pub(crate) fn radio_button(
     id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
     selected: bool,
     disabled: bool,
+    label: impl Into<SharedString>,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     let label = label.into();
-    h_flex()
-        .id(id)
-        .gap(px(8.))
-        .py(px(3.))
-        .px(px(4.))
-        .rounded(px(4.))
-        .items_center()
-        .when(!disabled, |d| {
-            d.cursor_pointer()
-                .hover(|s| s.bg(crate::shell::palette::shade(0.0, 0.05)))
-                .on_click(on_click)
-        })
-        .when(disabled, |d| d.opacity(0.5))
+    let id: ElementId = id.into();
+    let control = h_flex().id(id.clone()).role(gpui_kit::Role::RadioButton).aria_label(label.clone())
+        .aria_toggled(if selected { gpui_kit::Toggled::True } else { gpui_kit::Toggled::False }).flex_none().items_center().gap_2()
+        .py(px(3.)).px_1().rounded(px(3.)).whitespace_nowrap()
+        .when(disabled, |d| d.opacity(0.45))
+        .when(!disabled, |d| d.cursor_pointer().hover(|s| s.bg(rgb(0xedf2f7))).on_click(on_click))
+        .child(FormControlMarker(disabled))
         .child(radio_dot(selected))
-        .child(div().text_size(px(13.)).text_color(rgb(TEXT)).child(label))
+        .child(div().text_sm().child(label));
+    // The scenario tests press it by its rendered bounds.
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    let control = super::scenario::button_probe::observe_control(control, id);
+    control
+}
+
+/// Layout of a shared radio group. Flow wraps between buttons, never inside a label.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RadioGroupLayout {
+    Flow,
+    #[default]
+    Column,
+}
+
+/// Radio group container. Use `.layout(RadioGroupLayout::Flow)` for wrapping rows;
+/// the default is one button per row. Children may include panel bounds markers.
+#[derive(IntoElement)]
+pub(crate) struct RadioGroup {
+    base: Div,
+    layout: RadioGroupLayout,
+}
+
+pub(crate) fn radio_group() -> RadioGroup {
+    RadioGroup { base: div(), layout: RadioGroupLayout::Column }
+}
+
+impl RadioGroup {
+    pub(crate) fn layout(mut self, layout: RadioGroupLayout) -> Self {
+        self.layout = layout;
+        self
+    }
+}
+
+impl ParentElement for RadioGroup {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.base.extend(elements);
+    }
+}
+
+impl RenderOnce for RadioGroup {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        self.base.flex().gap_0p5().map(|d| match self.layout {
+            RadioGroupLayout::Flow => d.flex_row().flex_wrap().items_center(),
+            RadioGroupLayout::Column => d.flex_col().items_stretch(),
+        })
+    }
+}
+
+/// App-wide checkbox: the primary-blue graphical indicator and a left-aligned label.
+/// Keeps the familiar builder used by the panels; the change callback receives the next value.
+#[derive(IntoElement)]
+pub(crate) struct Checkbox {
+    base: Stateful<Div>,
+    id: ElementId,
+    indeterminate: bool,
+    label: SharedString,
+    accessibility_label: Option<SharedString>,
+    checked: bool,
+    disabled: bool,
+    on_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
+}
+
+impl Checkbox {
+    pub(crate) fn new(id: impl Into<ElementId>) -> Self {
+        let id = id.into();
+        Self { base: div().id(id.clone()), id, indeterminate: false, label: "".into(), accessibility_label:None, checked: false, disabled: false, on_change: None }
+    }
+    pub(crate) fn label(mut self, label: impl Into<SharedString>) -> Self { self.label = label.into(); self }
+    pub(crate) fn accessibility_label(mut self,label:impl Into<SharedString>)->Self {self.accessibility_label=Some(label.into());self}
+    pub(crate) fn indeterminate(mut self, mixed: bool) -> Self { self.indeterminate = mixed; self }
+    pub(crate) fn checked(mut self, checked: bool) -> Self { self.checked = checked; self }
+    pub(crate) fn disabled(mut self, disabled: bool) -> Self { self.disabled = disabled; self }
+    pub(crate) fn on_click(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.on_change = Some(Rc::new(handler)); self
+    }
+    pub(crate) fn small(self) -> Self { self }
+}
+
+impl Styled for Checkbox {
+    fn style(&mut self) -> &mut StyleRefinement { self.base.style() }
+}
+
+impl RenderOnce for Checkbox {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let checked = self.checked;
+        let focus = window.use_keyed_state(self.id, cx, |_, cx| cx.focus_handle().tab_stop(true)).read(cx).clone().tab_stop(!self.disabled);
+        let focus_click = focus.clone();
+        let keyboard_handler = self.on_change.clone();
+        let disabled = self.disabled;
+        let indicator = if self.indeterminate {
+            checkbox_box(false).child(div().w(px(8.)).h(px(2.)).bg(rgb(PRIMARY_BUTTON_BG)))
+        } else { checkbox_box(checked) };
+        self.base.role(gpui_kit::Role::CheckBox).aria_label(self.accessibility_label.unwrap_or_else(||self.label.clone()))
+            .aria_toggled(if self.indeterminate { gpui_kit::Toggled::Mixed } else if checked { gpui_kit::Toggled::True } else { gpui_kit::Toggled::False })
+            .track_focus(&focus).flex().items_center().justify_start().gap_2().py(px(3.)).px_1()
+            .when(self.disabled, |d| d.opacity(0.45))
+            .when(!self.disabled, |d| d.on_mouse_down(MouseButton::Left, move |_, window, cx| focus_click.focus(window, cx))
+                .on_key_down(move |e: &KeyDownEvent, window, cx| {
+                    if !disabled && matches!(e.keystroke.key.as_str(), "space" | "enter") {
+                        if let Some(handler) = &keyboard_handler { handler(&!checked, window, cx); }
+                        cx.stop_propagation();
+                    }
+                }).cursor_pointer().hover(|s| s.bg(rgb(0xedf2f7))))
+            .when_some(self.on_change.filter(|_| !self.disabled), |d, handler| {
+                d.on_click(move |_, window, cx| handler(&!checked, window, cx))
+            })
+            .child(indicator)
+            .child(div().min_w_0().text_sm().child(self.label))
+    }
 }
 
 /// Shared checkbox indicator square with primary button blue (`PRIMARY_BUTTON_BG`) border and fill when checked (#106, #150).
@@ -2800,8 +3041,10 @@ pub(crate) fn checkbox_button(
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     let label = label.into();
-    h_flex()
-        .id(id)
+    let id=id.into();let probe_id=id.clone();
+    let control=h_flex()
+        .id(id).role(gpui_kit::Role::CheckBox).aria_label(label.clone())
+        .aria_toggled(if checked { gpui_kit::Toggled::True } else { gpui_kit::Toggled::False })
         .gap(px(8.))
         .py(px(3.))
         .px(px(4.))
@@ -2814,7 +3057,10 @@ pub(crate) fn checkbox_button(
         })
         .when(disabled, |d| d.opacity(0.5))
         .child(checkbox_box(checked))
-        .child(div().text_size(px(13.)).text_color(rgb(TEXT)).child(label))
+        .child(div().text_sm().text_color(rgb(TEXT)).child(label));
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    let control=super::scenario::button_probe::observe_control(control,probe_id);
+    control
 }
 
 /// The colour of the chrome's text, for panels.
@@ -2966,14 +3212,61 @@ pub(crate) fn render_align_v_group(
     row.into_any_element()
 }
 
+pub(crate) fn panel_font_dropdown(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, cx: &Context<SlideEditor>) -> AnyElement {
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    super::scenario::button_probe::record_input(input);
+    let current=input.read(cx).value().to_string(); let field=input.clone();
+    let entries=crate::shell::font_list::build_font_menu_entries(id,Vec::new(),Some(&current),move |name,_,w,cx| {
+        field.update(cx,|i,cx|i.set_value(name.to_string(),w,cx));cx.notify();
+    });
+    div().w(FONT_DROPDOWN_WIDTH).flex_none().child(font_dropdown(id,&current,entries,0,&cx.weak_entity())).into_any_element()
+}
+pub(crate) fn panel_color_field(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, cx: &Context<SlideEditor>) -> AnyElement {
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    super::scenario::button_probe::record_input(input);
+    let current=u32::from_str_radix(input.read(cx).value().trim_start_matches('#'),16).ok().map(ibis_doc_model::Rgb);
+    let field=input.clone();
+    let pick: crate::shell::color_palette::PickColor=Rc::new(move |e,color,w,cx| {
+        if let Some(c)=color {field.update(cx,|i,cx|{i.set_value(format!("{:06X}",c.0),w,cx);cx.emit(gpui_kit::component::input::InputEvent::Change);});e.note_recent_color(c);}cx.notify();
+    });
+    let colors:Vec<_>=crate::shell::color_editor::palette_colors().into_iter().map(|c|(SharedString::from(format!("#{:06X}",c.0)),c,"color.swatch")).collect();
+    let entries=crate::shell::color_palette::simple_palette(None,None,&colors,current,pick);
+    div().w(FIELD_WIDTH).flex_none().child(color_text_field(id,input,current,entries,&cx.weak_entity())).into_any_element()
+}
+pub(crate) fn panel_color_field_enabled(id:&'static str,input:&Entity<gpui_kit::component::input::InputState>,enabled:bool,cx:&Context<SlideEditor>)->AnyElement {
+ if enabled{return panel_color_field(id,input,cx);}
+ let current=u32::from_str_radix(input.read(cx).value().trim_start_matches('#'),16).unwrap_or(0);
+ h_flex().gap_1().w(FIELD_WIDTH).items_center().child(action_button(id).disabled(true).w(px(32.)).px_1().child(div().size(px(14.)).bg(rgb(current))))
+ .child(div().flex_1().min_w_0().child(text_field(input).no_clear().disabled(true).full_width())).into_any_element()
+}
+pub(crate) fn color_name_label(color:u32,label:impl Into<SharedString>) -> Div {
+    h_flex().items_center().gap_2().child(div().size(px(14.)).rounded(px(2.)).border_1().border_color(rgb(BORDER)).bg(rgb(color)))
+        .child(div().text_sm().child(label.into()))
+}
+pub(crate) fn color_radio_button(id:impl Into<ElementId>, selected:bool,color:u32,label:impl Into<SharedString>, on_click:impl Fn(&ClickEvent,&mut Window,&mut App)+'static)->Stateful<Div> {
+    let label=label.into();
+    h_flex().id(id).role(gpui_kit::Role::RadioButton).aria_label(label.clone()).aria_toggled(if selected {Toggled::True} else {Toggled::False})
+        .gap_2().items_center().px_1().py(px(3.)).cursor_pointer().child(radio_dot(selected)).child(color_name_label(color,label)).on_click(on_click)
+}
+pub(crate) fn take_sidebar_footer()->Option<ActionBar>{SIDEBAR_FOOTER.with(|c|c.borrow_mut().take())}
+pub(crate) fn input_dropdown(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, choices:Vec<String>, cx:&Context<SlideEditor>) -> AnyElement {
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    super::scenario::button_probe::record_input(input);
+    let current=input.read(cx).value().to_string();
+    let entries=choices.into_iter().map(|name| {let field=input.clone();let value=name.clone(); MenuItem::new("docx.style.doc.choice",name).on(move |_,w,cx|{field.update(cx,|i,cx|i.set_value(value.clone(),w,cx));cx.notify();}).into()}).collect();
+    div().w(FIELD_WIDTH).flex_none().child(Dropdown::with_button(id,dropdown_button(id,current),entries,false,0,&cx.weak_entity()).into_any_element()).into_any_element()
+}
+
 /// A color text input paired with a color swatch button that opens a color palette popup.
-pub(crate) fn color_text_field(
-    id: &'static str,
-    input: &Entity<gpui_kit::component::input::InputState>,
-    current_rgb: Option<ibis_doc_model::Rgb>,
-    palette_entries: Vec<MenuEntry>,
-    editor: &WeakEntity<SlideEditor>,
-) -> AnyElement {
+pub(crate) fn color_text_field(id:&'static str,input:&Entity<gpui_kit::component::input::InputState>,current_rgb:Option<ibis_doc_model::Rgb>,palette_entries:Vec<MenuEntry>,editor:&WeakEntity<SlideEditor>)->ColorTextField {
+    ColorTextField{id,input:input.clone(),current_rgb,palette_entries,editor:editor.clone(),allow_none:None}
+}
+#[derive(IntoElement)]
+pub(crate) struct ColorTextField {id:&'static str,input:Entity<gpui_kit::component::input::InputState>,current_rgb:Option<ibis_doc_model::Rgb>,palette_entries:Vec<MenuEntry>,editor:WeakEntity<SlideEditor>,allow_none:Option<bool>}
+impl ColorTextField {pub(crate) fn allow_none(mut self,value:bool)->Self{self.allow_none=Some(value);self}}
+impl RenderOnce for ColorTextField {
+ fn render(self,_:&mut Window,cx:&mut App)->impl IntoElement {
+    let id=self.id;let input=&self.input;let current_rgb=self.current_rgb;let editor=&self.editor;
     let swatch = match current_rgb {
         Some(c) => div()
             .w(px(14.))
@@ -2996,12 +3289,25 @@ pub(crate) fn color_text_field(
             .text_color(rgb(0xd93025))
             .child("×"),
     };
+    let mut palette_entries=self.palette_entries;
+    for entry in &mut palette_entries {
+        if let MenuEntry::Palette(p)=entry {
+            p.current=current_rgb;
+            if let Some(pick)=&p.pick {p.theme=crate::shell::color_palette::theme_rows(&editor.upgrade().map(|e|e.read(cx).current_theme_palette_colors()).unwrap_or([ibis_doc_model::Rgb(0);10]),pick,current_rgb);}
+            if self.allow_none==Some(false) {p.none=None;}
+            else if self.allow_none == Some(true) && p.none.is_none() {
+                if let Some(pick) = p.pick.clone() {
+                    p.none = Some(MenuItem::tr("_shell.no-fill").on(move |e, w, cx| pick(e, None, w, cx)));
+                }
+            }
+        }
+    }
     let entries = Rc::new(palette_entries);
     let ed = editor.clone();
-    let picker_btn = Button::new(SharedString::from(format!("{id}-swatch")))
+    let picker_btn = action_button(SharedString::from(format!("{id}-swatch")))
         .ghost()
         .xsmall()
-        .h(px(24.))
+        .h(px(24.)).min_h(px(24.)).max_h(px(24.))
         .px(px(4.))
         .border_1()
         .border_color(rgb(BORDER))
@@ -3013,15 +3319,30 @@ pub(crate) fn color_text_field(
                 .child(swatch)
                 .child(icon("arrow_drop_down", 14.0, rgb(ICON).into())),
         )
-        .dropdown_menu(move |m, window, cx| fill_menu(m.min_w(px(220.)), &entries, &ed, window, cx));
+        ;
+    let picker_btn=ColorPaletteDropdown::from_palette(id,picker_btn,(*entries).clone(),&ed);
 
     h_flex()
         .gap_1()
         .items_center()
         .w_full()
         .child(picker_btn)
-        .child(div().flex_1().min_w(px(64.)).child(clearable_text_field(input)))
+        .child(div().flex_1().min_w(px(64.)).child(text_field(input).no_clear().full_width()))
         .into_any_element()
+ }
+}
+
+/// The number at the start of a field's text and what follows it (a unit such as " cm", "pt", "%", "°", kept when a
+/// spinner writes the stepped value back). `None` when the text does not start with a number.
+pub(crate) fn split_number(raw: &str) -> Option<(f32, &str)> {
+    let text = raw.trim();
+    let end = text
+        .char_indices()
+        .find(|&(i, c)| !(c.is_ascii_digit() || c == '.' || ((c == '-' || c == '+') && i == 0)))
+        .map_or(text.len(), |(i, _)| i);
+    let value = text[..end].parse::<f32>().ok()?;
+    let unit = text[end..].trim_end_matches('+');
+    Some((value, unit))
 }
 
 /// How a [`SpinnerSpec`] steps when no explicit `steps` table is provided or outside its range.
@@ -3085,6 +3406,13 @@ impl SpinnerSpec {
         self.min = Some(min);
         self.max = Some(max);
         self
+    }
+
+    /// The value an empty (or not numeric) field steps from: 0, or the nearest end of the range when 0 is outside it.
+    pub fn empty_value(&self) -> f32 {
+        let lo = self.min.unwrap_or(f32::MIN);
+        let hi = self.max.unwrap_or(f32::MAX).max(lo);
+        0.0_f32.clamp(lo, hi)
     }
 
     pub fn step_value(&self, current: f32, up: bool) -> f32 {
@@ -3156,49 +3484,6 @@ impl SpinnerSpec {
         }
     }
 }
-
-/// Renders a numeric input field with `▲` / `▼` spinner buttons.
-pub(crate) fn spinner_field<F>(
-    id: &'static str,
-    input: &Entity<gpui_kit::component::input::InputState>,
-    spec: SpinnerSpec,
-    on_step: F,
-    cx: &mut Context<SlideEditor>,
-) -> AnyElement
-where
-    F: Fn(&mut SlideEditor, f32, &mut Window, &mut Context<SlideEditor>) + 'static,
-{
-    let on_step = Rc::new(on_step);
-    let step_btn = |btn_id: String, icon_name: &'static str, up: bool, input: Entity<gpui_kit::component::input::InputState>, on_step: Rc<F>, cx: &mut Context<SlideEditor>| {
-        Button::new(SharedString::from(btn_id))
-            .ghost()
-            .xsmall()
-            .w(px(18.))
-            .h(px(12.))
-            .px(px(0.))
-            .child(icon(icon_name, 12.0, rgb(ICON).into()))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                let raw = input.read(cx).value();
-                let trimmed = raw.trim().trim_end_matches('+').trim();
-                let current = trimmed.parse::<f32>().unwrap_or_else(|_| spec.min.unwrap_or(0.0));
-                let next = spec.step_value(current, up);
-                let formatted = spec.format_value(next);
-                input.update(cx, |s, cx| s.set_value(formatted, window, cx));
-                on_step(this, next, window, cx);
-            }))
-    };
-    let up_btn = step_btn(format!("{id}-up"), "keyboard_arrow_up", true, input.clone(), on_step.clone(), cx);
-    let down_btn = step_btn(format!("{id}-down"), "keyboard_arrow_down", false, input.clone(), on_step, cx);
-
-    h_flex()
-        .gap_1()
-        .items_center()
-        .w_full()
-        .child(div().flex_1().min_w(px(48.)).child(clearable_text_field(input)))
-        .child(v_flex().items_center().justify_center().child(up_btn).child(down_btn))
-        .into_any_element()
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -3306,11 +3591,23 @@ mod tests {
     }
 
     #[test]
+    fn split_number_keeps_the_unit() {
+        assert_eq!(super::split_number(" 2.5 cm"), Some((2.5, " cm")));
+        assert_eq!(super::split_number("-3"), Some((-3.0, "")));
+        assert_eq!(super::split_number("12+"), Some((12.0, "")));
+        assert_eq!(super::split_number("100%"), Some((100.0, "%")));
+        assert_eq!(super::split_number("abc"), None);
+    }
+
+    #[test]
     fn spinner_spec_steps_and_clamps() {
         let spec = super::SpinnerSpec::new(1.0).range(0.0, 10.0).integer_only();
         assert_eq!(spec.step_value(5.0, true), 6.0);
         assert_eq!(spec.step_value(10.0, true), 10.0);
         assert_eq!(spec.step_value(0.0, false), 0.0);
+        assert_eq!(spec.empty_value(), 0.0);
+        assert_eq!(super::SpinnerSpec::new(1.0).range(1.0, 9.0).empty_value(), 1.0);
+        assert_eq!(super::SpinnerSpec::new(1.0).range(-90.0, 90.0).empty_value(), 0.0);
 
         const TABLE: &[f32] = &[0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0];
         let table_spec = super::SpinnerSpec::new(0.5).steps(TABLE).min(0.0);

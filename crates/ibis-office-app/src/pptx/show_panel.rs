@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Presentation show properties panel (スライド ショーの設定).
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -198,34 +198,36 @@ impl SlideEditor {
 
         let mut body = v_flex().gap_2().px(px(18.)).py(px(8.))
             // 種類
-            .child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("pptx.show.type")))
-            .child(Button::new("pptx-show-type-presenter").small().ghost().label(if is_presenter { crate::shell::i18n::text("pptx.show-panel.presented-speaker-full-screen") } else { crate::shell::i18n::text("pptx.show-panel.presented-speaker-full-screen-2") }).on_click(cx.listener(|e, _, _, cx| e.set_show_panel_type(ShowType::Presenter, cx))))
-            .child(Button::new("pptx-show-type-browse").small().ghost().label(if is_browse { crate::shell::i18n::text("pptx.show-panel.browsed-individual-window") } else { crate::shell::i18n::text("pptx.show-panel.browsed-individual-window-2") }).on_click(cx.listener(|e, _, _, cx| e.set_show_panel_type(ShowType::Browse, cx))))
-            .child(Button::new("pptx-show-type-kiosk").small().ghost().label(if is_kiosk { crate::shell::i18n::text("pptx.show-panel.browsed-kiosk-full-screen") } else { crate::shell::i18n::text("pptx.show-panel.browsed-kiosk-full-screen-2") }).on_click(cx.listener(|e, _, _, cx| e.set_show_panel_type(ShowType::Kiosk { restart: None }, cx))))
+            .p_0().child(div().text_sm().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("pptx.show.type")))
+            .child(crate::shell::chrome::radio_button("pptx-show-type-presenter", is_presenter, false, crate::shell::i18n::text("pptx.show-panel.presented-speaker-full-screen-2"), cx.listener(|e, _, _, cx| e.set_show_panel_type(ShowType::Presenter, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-show-type-browse", is_browse, false, crate::shell::i18n::text("pptx.show-panel.browsed-individual-window-2"), cx.listener(|e, _, _, cx| e.set_show_panel_type(ShowType::Browse, cx))))
+            .child(crate::shell::chrome::radio_button("pptx-show-type-kiosk", is_kiosk, false, crate::shell::i18n::text("pptx.show-panel.browsed-kiosk-full-screen-2"), cx.listener(|e, _, _, cx| e.set_show_panel_type(ShowType::Kiosk { restart: None }, cx))))
             // スライドの表示
-            .child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("pptx.show-panel.show-slides")))
-            .child(Button::new("pptx-show-range-all").small().ghost().label(if range_kind == ShowRangeKind::All { crate::shell::i18n::text("pptx.show-panel.all") } else { crate::shell::i18n::text("pptx.show-panel.all-2") }).on_click(cx.listener(|e, _, _, cx| {
+            .child(div().text_sm().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("pptx.show-panel.show-slides")))
+            .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+            .child(crate::shell::chrome::radio_button("pptx-show-range-all", range_kind == ShowRangeKind::All, false, crate::shell::i18n::text("pptx.show-panel.all-2"), cx.listener(|e, _, _, cx| {
                 if let Some(p) = e.pptx_mut().and_then(|s| s.show_panel.as_mut()) {
                     p.all_slides = true;
                     p.range_kind = ShowRangeKind::All;
                 }
                 cx.notify();
             })))
-            .child(Button::new("pptx-show-range-custom").small().ghost().label(if range_kind == ShowRangeKind::Range { crate::shell::i18n::text("pptx.show-panel.from") } else { crate::shell::i18n::text("pptx.show-panel.from-2") }).on_click(cx.listener(|e, _, _, cx| {
+            .child(crate::shell::chrome::radio_button("pptx-show-range-custom", range_kind == ShowRangeKind::Range, false, crate::shell::i18n::text("pptx.show-panel.from-2"), cx.listener(|e, _, _, cx| {
                 if let Some(p) = e.pptx_mut().and_then(|s| s.show_panel.as_mut()) {
                     p.all_slides = false;
                     p.range_kind = ShowRangeKind::Range;
                 }
                 cx.notify();
             })))
-            .child(
-                h_flex().gap_2().items_center()
-                    .child(div().text_size(px(12.)).child(crate::shell::i18n::text("pptx.animation-ui.from")))
-                    .child(div().w(px(60.)).child(Input::new(&from).small().cleanable(true)))
-                    .child(div().text_size(px(12.)).child(crate::shell::i18n::text("pptx.show-panel.to")))
-                    .child(div().w(px(60.)).child(Input::new(&to).small().cleanable(true)))
             )
-            .child(Button::new("pptx-show-range-custom-show").small().ghost().label(if range_kind == ShowRangeKind::Custom { crate::shell::i18n::text("_pptx.custom-show") } else { crate::shell::i18n::text("_pptx.custom-show") }).on_click(cx.listener(|e, _, _, cx| {
+            .child(
+                h_flex().gap_2().items_center().flex_wrap().pl(px(28.))
+                    .child(div().text_sm().child(crate::shell::i18n::text("pptx.animation-ui.from")))
+                    .child(crate::shell::chrome::text_field(&from).disabled(range_kind != ShowRangeKind::Range).spinner("pptx-show-range-from", crate::shell::chrome::SpinnerSpec::new(1.0).min(1.0).integer_only(), cx, |_, _, _, _| {}))
+                    .child(div().text_sm().child(crate::shell::i18n::text("pptx.show-panel.to")))
+                    .child(crate::shell::chrome::text_field(&to).disabled(range_kind != ShowRangeKind::Range).spinner("pptx-show-range-to", crate::shell::chrome::SpinnerSpec::new(1.0).min(1.0).integer_only(), cx, |_, _, _, _| {}))
+            )
+            .child(crate::shell::chrome::radio_button("pptx-show-range-custom-show", range_kind == ShowRangeKind::Custom, false, crate::shell::i18n::text("_pptx.custom-show"), cx.listener(|e, _, _, cx| {
                 let first_id = e.presentation().custom_shows.first().map(|s| s.id);
                 if let Some(p) = e.pptx_mut().and_then(|s| s.show_panel.as_mut()) {
                     p.all_slides = false;
@@ -240,15 +242,15 @@ impl SlideEditor {
         if range_kind == ShowRangeKind::Custom {
             let custom_shows = self.presentation().custom_shows.clone();
             if custom_shows.is_empty() {
-                body = body.child(div().px(px(8.)).text_size(px(12.)).text_color(rgb(0x888888)).child(crate::shell::i18n::text("_pptx.no-custom-shows-have-been-defined")));
+                body = body.child(div().px(px(8.)).text_sm().text_color(rgb(0x888888)).child(crate::shell::i18n::text("_pptx.no-custom-shows-have-been-defined")));
             } else {
                 for cs in custom_shows {
                     let cs_id = cs.id;
                     let selected = selected_custom_show == Some(cs_id);
                     let label = format!("{} {}", if selected { "✓" } else { " " }, cs.name);
                     body = body.child(
-                        Button::new(ElementId::Name(format!("pptx-custom-show-select-{}", cs_id).into()))
-                            .small().ghost().label(label)
+                        crate::shell::chrome::action_button(ElementId::Name(format!("pptx-custom-show-select-{}", cs_id).into()))
+                            .small().label(label)
                             .on_click(cx.listener(move |e, _, _, cx| {
                                 if let Some(p) = e.pptx_mut().and_then(|s| s.show_panel.as_mut()) {
                                     p.range_kind = ShowRangeKind::Custom;
@@ -263,25 +265,18 @@ impl SlideEditor {
 
         body = body
             // オプション
-            .child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("pptx.show-panel.show-options")))
-            .child(Button::new("pptx-show-opt-loop").small().ghost().label(if loop_cont { crate::shell::i18n::text("pptx.show-panel.loop-continuously-until-esc") } else { crate::shell::i18n::text("pptx.show-panel.loop-continuously-until-esc-2") }).on_click(cx.listener(|e, _, _, cx| e.toggle_show_panel_option("loop", cx))))
-            .child(Button::new("pptx-show-opt-anim").small().ghost().label(if !animation { crate::shell::i18n::text("pptx.show-panel.show-without-animation") } else { crate::shell::i18n::text("pptx.show-panel.show-without-animation-2") }).on_click(cx.listener(|e, _, _, cx| e.toggle_show_panel_option("animation", cx))))
-            .child(Button::new("pptx-show-opt-narration").small().ghost().label(if !narration { crate::shell::i18n::text("pptx.show-panel.show-without-narration") } else { crate::shell::i18n::text("pptx.show-panel.show-without-narration-2") }).on_click(cx.listener(|e, _, _, cx| e.toggle_show_panel_option("narration", cx))))
-            .child(Button::new("pptx-show-opt-timings").small().ghost().label(if timings { crate::shell::i18n::text("pptx.show-panel.use-timings") } else { crate::shell::i18n::text("pptx.show-panel.use-timings-2") }).on_click(cx.listener(|e, _, _, cx| e.toggle_show_panel_option("timings", cx))));
+            .child(div().text_sm().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("pptx.show-panel.show-options")))
+            .child(crate::shell::chrome::checkbox_button("pptx-show-opt-loop", crate::shell::i18n::text("pptx.show-panel.loop-continuously-until-esc-2"), loop_cont, false, cx.listener(|e, _, _, cx| e.toggle_show_panel_option("loop", cx))))
+            .child(crate::shell::chrome::checkbox_button("pptx-show-opt-anim", crate::shell::i18n::text("pptx.show-panel.show-without-animation-2"), !animation, false, cx.listener(|e, _, _, cx| e.toggle_show_panel_option("animation", cx))))
+            .child(crate::shell::chrome::checkbox_button("pptx-show-opt-narration", crate::shell::i18n::text("pptx.show-panel.show-without-narration-2"), !narration, false, cx.listener(|e, _, _, cx| e.toggle_show_panel_option("narration", cx))))
+            .child(crate::shell::chrome::checkbox_button("pptx-show-opt-timings", crate::shell::i18n::text("pptx.show-panel.use-timings-2"), timings, false, cx.listener(|e, _, _, cx| e.toggle_show_panel_option("timings", cx))));
 
         if let Some(err) = error {
-            body = body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(err));
+            body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(err));
         }
-
-        body = body.child(
-            h_flex().gap_1()
-                .child(Button::new("pptx-show-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e, _, w, cx| e.apply_show_panel(w, cx))))
-                .child(Button::new("pptx-show-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e, _, w, cx| e.close_show_panel(w, cx))))
-        );
-
-        Some(SidebarPanel {
-            title: title.into(),
-            body: body.into_any_element(),
-        })
+        let panel_actions = crate::shell::chrome::action_bar()
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-show-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_show_panel(w, cx))))
+                .action(crate::shell::chrome::ActionDefinition::new("pptx-show-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_show_panel(w, cx))));
+        Some(SidebarPanel::with_footer(title, body.into_any_element(), panel_actions))
     }
 }

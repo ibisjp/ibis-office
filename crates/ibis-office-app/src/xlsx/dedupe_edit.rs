@@ -9,7 +9,7 @@
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, Command, SheetCommand, SlideId};
@@ -22,6 +22,7 @@ pub(crate) struct DedupePanel {
     /// What happened, or what is wrong.
     pub(crate) message: String,
     pub(crate) ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Bounds<Pixels>>>>,
+    scroll:ScrollHandle,
     slide: SlideId,
 }
 
@@ -54,6 +55,7 @@ impl SlideEditor {
             i.set_value(format!("{}:{}", ibis_doc_model::cell_name(r.first_column, r.first_row), ibis_doc_model::cell_name(r.last_column, r.last_row)), window, cx);
         });
         let panel = DedupePanel {
+            scroll:ScrollHandle::new(),
             range: input,
             columns: (r.first_column..=r.last_column).collect(),
             header,
@@ -70,7 +72,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.dedupe = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -169,124 +171,33 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let mut body = v_flex()
-            .gap_2()
-            .px(px(18.))
-            .py(px(8.))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .child(crate::shell::i18n::text("_shell.range"))
-                    .child(mark(
-                        "use-selection",
-                        Button::new("dedupe-use-selection")
-                            .xsmall()
-                            .ghost()
-                            .label(crate::shell::i18n::text("xlsx.subtotal-use-selection"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.refresh_dedupe_range_from_selection(window, cx);
-                            }))
-                            .into_any_element(),
-                    )),
-            )
-            .child(mark("range", Input::new(&p.range).small().cleanable(true).into_any_element()))
-            .child(mark(
-                "header",
-                Button::new("dedupe-header")
-                    .small()
-                    .label(crate::shell::i18n::text(if p.header { "fix.dedupe-edit.my-data-has-headers" } else { "fix.dedupe-edit.my-data-has-headers-off" }))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(p) = this.wb_mut().panels.dedupe.as_mut() {
-                            p.header = !p.header;
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ))
-            .child(crate::shell::i18n::text("fix.dedupe-edit.columns-compare"))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(mark(
-                        "all",
-                        Button::new("dedupe-all")
-                            .small()
-                            .label(crate::shell::i18n::text("fix.dedupe-edit.select-all"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let r = this.dedupe_range(cx);
-                                if let (Some(r), Some(p)) = (r, this.wb_mut().panels.dedupe.as_mut()) {
-                                    p.columns = (r.first_column..=r.last_column).collect();
-                                }
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    ))
-                    .child(mark(
-                        "none",
-                        Button::new("dedupe-none")
-                            .small()
-                            .label(crate::shell::i18n::text("fix.dedupe-edit.unselect-all"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(p) = this.wb_mut().panels.dedupe.as_mut() {
-                                    p.columns.clear();
-                                }
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    )),
-            );
-        if let Some(r) = r {
-            let sheet = self.current_sheet().map(|(_, s)| s);
-            for column in r.first_column..=r.last_column.min(r.first_column + 63) {
-                let on = p.columns.contains(&column);
-                // The heading's text, as Excel lists the columns with one.
-                let heading = sheet
-                    .filter(|_| p.header)
-                    .and_then(|s| s.cell(r.first_row, column))
-                    .map(|c| c.text.clone())
-                    .filter(|t| !t.is_empty());
-                let name = match heading {
-                    Some(h) => crate::shell::i18n::format("dedupe.column-heading", &[("column", &column_name(column)), ("heading", &h)]),
-                    None => crate::shell::i18n::format("dedupe.column", &[("column", &column_name(column))]),
-                };
-                body = body.child(mark(
-                    &format!("column-{}", column_name(column)),
-                    Button::new(("dedupe-column", column as usize))
-                        .small()
-                        .label(format!("{} {name}", if on { "☑" } else { "☐" }))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(p) = this.wb_mut().panels.dedupe.as_mut() {
-                                match p.columns.iter().position(|&c| c == column) {
-                                    Some(i) => {
-                                        p.columns.remove(i);
-                                    }
-                                    None => p.columns.push(column),
-                                }
-                            }
-                            cx.notify();
-                        }))
-                        .into_any_element(),
-                ));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        use crate::shell::chrome as chrome;
+        let mut body=chrome::panel_form().h_full().min_h_0()
+            .p_0().child(crate::shell::i18n::text("_shell.range"))
+            .child(mark("range",super::range_field::local_range_field(&p.range,"dedupe-range",false,cx).into_any_element()))
+            .child(mark("header",chrome::checkbox_button("dedupe-header",crate::shell::i18n::text("fix.dedupe-edit.my-data-has-headers"),p.header,false,cx.listener(|e,_,_,cx|{if let Some(p)=e.wb_mut().panels.dedupe.as_mut(){p.header=!p.header;}cx.notify();})).into_any_element()));
+        if let Some(r)=r {
+            let all=(r.first_column..=r.last_column).all(|c|p.columns.contains(&c));
+            let heading=chrome::checkbox_button("dedupe-all",crate::shell::i18n::text("fix.dedupe-edit.columns-compare"),all,false,cx.listener(move |e,_,_,cx|{if let Some(p)=e.wb_mut().panels.dedupe.as_mut(){p.columns=if all{vec![]}else{(r.first_column..=r.last_column).collect()};}cx.notify();}));
+            let header=div().px_2().h(px(36.)).flex().items_center().child(heading);
+            let sheet=self.current_sheet().map(|(_,s)|s);let mut rows=v_flex().w_full();
+            for column in r.first_column..=r.last_column {
+                let name=sheet.filter(|_|p.header).and_then(|s|s.cell(r.first_row,column)).map(|c|c.text.clone()).filter(|t|!t.is_empty()).unwrap_or_else(||column_name(column));
+                rows=rows.child(div().h(px(36.)).flex_none().px_2().flex().items_center().child(mark(&format!("column-{}",column_name(column)),chrome::checkbox_button(("dedupe-column",column as usize),name,p.columns.contains(&column),false,cx.listener(move |e,_,_,cx|{if let Some(p)=e.wb_mut().panels.dedupe.as_mut(){if let Some(i)=p.columns.iter().position(|c|*c==column){p.columns.remove(i);}else{p.columns.push(column);}}cx.notify();})).into_any_element())));
             }
+            body=body.child(chrome::table_fill("dedupe-columns",header.into_any_element(),rows.into_any_element(),p.scroll.clone()));
         }
-        body = body
-            .child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())))
-            .child(mark(
-                "apply",
-                Button::new("dedupe-apply").primary().small().label(crate::shell::i18n::text("fix.dedupe-edit.remove-duplicates")).on_click(cx.listener(|this, _, _, cx| this.apply_dedupe_panel(cx))).into_any_element(),
-            ))
-            .child(mark(
-                "close",
-                Button::new("dedupe-close")
-                    .small()
-                    .label(crate::shell::i18n::text("_shell.close"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.wb_mut().panels.dedupe = None;
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            ));
-        Some(SidebarPanel { title: "fix.dedupe-edit.remove-duplicates".into(), body: body.into_any_element() })
+        body=body.children(chrome::panel_message(&p.message));
+        let panel_terminal_actions=chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("dedupe-apply", "", crate::shell::chrome::ActionButtonKind::Primary).label(crate::shell::i18n::text("fix.dedupe-edit.remove-duplicates")).on_click(cx.listener(|e,_,_,cx|e.apply_dedupe_panel(cx)))))
+            .action(crate::shell::chrome::ActionDefinition::new("dedupe-close", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_shell.close")).on_click(cx.listener(|e,_,w,cx|e.close_panel_dialog(w,cx))));
+
+        Some(SidebarPanel::with_footer("fix.dedupe-edit.remove-duplicates", body.into_any_element(), panel_terminal_actions))
     }
 }

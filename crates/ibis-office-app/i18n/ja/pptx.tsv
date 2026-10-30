@@ -852,7 +852,7 @@ pptx.outline.untitled	（タイトルなし）
 pptx.replace-fonts	フォントの置換…
 pptx.replace-fonts.with	置換前のフォント
 pptx.replace-fonts.replace	置換後のフォント
-pptx.replace-fonts.fonts-used-presentation	プレゼンテーションで使用されているフォント:
+pptx.replace-fonts.fonts-used-presentation	プレゼンテーションで使用されているフォント
 pptx.replace-fonts.replaced-fonts-n-location-s	{n} 箇所のフォントを置換しました
 pptx.replace-fonts.font-replace-was-not-found	置換対象のフォントは見つかりませんでした
 pptx.table-style-options	表のスタイルオプション
@@ -896,27 +896,27 @@ pptx.show-settings.cancel	キャンセル
 pptx.show-panel.set-up-slide-show	スライド ショーの設定
 pptx.show.type	種類
 pptx.show-panel.presented-speaker-full-screen	● 発表者として使用する (全画面)
-pptx.show-panel.presented-speaker-full-screen-2	○ 発表者として使用する (全画面)
+pptx.show-panel.presented-speaker-full-screen-2	発表者として使用する (全画面)
 pptx.show-panel.browsed-individual-window	● 個人として閲覧する (ウィンドウ)
-pptx.show-panel.browsed-individual-window-2	○ 個人として閲覧する (ウィンドウ)
+pptx.show-panel.browsed-individual-window-2	個人として閲覧する (ウィンドウ)
 pptx.show-panel.browsed-kiosk-full-screen	● キオスク端末で表示する (全画面)
-pptx.show-panel.browsed-kiosk-full-screen-2	○ キオスク端末で表示する (全画面)
+pptx.show-panel.browsed-kiosk-full-screen-2	キオスク端末で表示する (全画面)
 pptx.show-panel.show-slides	スライドの表示
 pptx.show-panel.all	● すべて
-pptx.show-panel.all-2	○ すべて
+pptx.show-panel.all-2	すべて
 pptx.show-panel.from	● スライド指定
-pptx.show-panel.from-2	○ スライド指定
-pptx.animation-ui.from	開始:
-pptx.show-panel.to	〜 終了:
+pptx.show-panel.from-2	スライド指定
+pptx.animation-ui.from	開始
+pptx.show-panel.to	〜 終了
 pptx.show-panel.show-options	オプション
 pptx.show-panel.loop-continuously-until-esc	☑ Esc キーが押されるまで繰り返す
-pptx.show-panel.loop-continuously-until-esc-2	☐ Esc キーが押されるまで繰り返す
+pptx.show-panel.loop-continuously-until-esc-2	Esc キーが押されるまで繰り返す
 pptx.show-panel.show-without-animation	☑ アニメーションなしで再生する
-pptx.show-panel.show-without-animation-2	☐ アニメーションなしで再生する
+pptx.show-panel.show-without-animation-2	アニメーションなしで再生する
 pptx.show-panel.show-without-narration	☑ ナレーションなしで再生する
-pptx.show-panel.show-without-narration-2	☐ ナレーションなしで再生する
+pptx.show-panel.show-without-narration-2	ナレーションなしで再生する
 pptx.show-panel.use-timings	☑ タイミングを使用する
-pptx.show-panel.use-timings-2	☐ タイミングを使用する
+pptx.show-panel.use-timings-2	タイミングを使用する
 pptx.show-panel.please-enter-valid-slide-number	スライド番号には1以上の整数を入力してください
 pptx.misc.pause	一時停止
 pptx.comments.reopen	再開
@@ -1073,6 +1073,14 @@ pptx.chart-panel.type-combo-chart-cannot-changed	組合せグラフの種類は�
 pptx.misc.cannot-convert-between-axis-charts	軸を持つグラフと円グラフの間の変更はできません
 pptx.clip.playback	再生
 pptx.clip.play	再生/一時停止
+pptx.clip.bar.play	再生
+pptx.clip.bar.pause	一時停止
+pptx.clip.bar.seek	再生位置
+pptx.clip.bar.back	先頭へ戻る
+pptx.clip.bar.mute	ミュート
+pptx.clip.bar.unmute	ミュート解除
+pptx.clip.bar.volume	音量
+pptx.clip.bar.time	{current} / {total}
 pptx.clip.start	開始
 pptx.clip.start.on-click	クリック時
 pptx.clip.start.auto	自動
@@ -1219,8 +1227,8 @@ pptx.compat.no-issues	互換性の問題は見つかりませんでした
 pptx.compat.clean-desc	このプレゼンテーションは以前のバージョンの PowerPoint と完全に互換性があります。
 pptx.compat.significant-loss	機能の重大な低下
 pptx.compat.minor-loss	精度の軽微な低下
-pptx.compat.media-title	埋め込みメディア (ビデオ/オーディオ)
-pptx.compat.media-desc	以前のバージョンの PowerPoint ではメディアが再生できず、プレースホルダー画像として表示される場合があります。
+pptx.compat.media-title	リンクされたメディア (ビデオ/オーディオ)
+pptx.compat.media-desc	リンク先のファイルが無い PC ではメディアが再生できません。埋め込むと一緒に持ち運べます。
 pptx.compat.svg-title	SVG 形式の画像
 pptx.compat.svg-desc	PowerPoint 2016 以前では SVG 画像がサポートされていないため、ラスター画像に変換されるか表示されません。
 pptx.compat.advanced-chart-title	最新の特殊グラフ
@@ -1399,10 +1407,10 @@ pptx.chrome.fill-line	塗りつぶしと枠線
 pptx.chrome.slide-size	スライドのサイズ
 pptx.crop-panel.enter-finite-numbers-left-right	有限な数値を入力し、左右・上下の合計を100%未満にしてください
 pptx.crop-panel.keeps-picture-frame-negative	画像の枠を保持します。負の値で余白を追加します。
-pptx.crop-panel.left-percent	左 (%)
-pptx.crop-panel.top-percent	上 (%)
-pptx.crop-panel.right-percent	右 (%)
-pptx.crop-panel.bottom-percent	下 (%)
+pptx.crop-panel.left-percent	左
+pptx.crop-panel.top-percent	上
+pptx.crop-panel.right-percent	右
+pptx.crop-panel.bottom-percent	下
 pptx.crop-panel.crop-picture	画像のトリミング
 pptx.editing.click-drag-place-text-box	クリックまたはドラッグしてテキスト ボックスを置きます（Esc でやめる）
 pptx.editing.drag-place-shape-shift-square	ドラッグして図形を置きます（Shift で正方形・正円、Esc でやめる）
@@ -1411,13 +1419,13 @@ pptx.editing.group	グループ
 pptx.find.match-case	✓ 大文字小文字を区別
 pptx.find.whole-words	✓ 単語全体
 pptx.frame-panel.height-width-must-0-1584	高さ・幅は 0〜1584 cm、位置は −1584〜1584 cm、回転は角度の数値にしてください
-pptx.frame-panel.height-cm	高さ (cm)
-pptx.frame-panel.width-cm	幅 (cm)
-pptx.frame-panel.scale-height-percent	高さの倍率 (%)
-pptx.frame-panel.scale-width-percent	幅の倍率 (%)
-pptx.frame-panel.rotation-degrees	回転 (°)
-pptx.frame-panel.horizontal-position-cm-top-left	横位置 (cm、左上から)
-pptx.frame-panel.vertical-position-cm-top-left	縦位置 (cm、左上から)
+pptx.frame-panel.height-cm	高さ
+pptx.frame-panel.width-cm	幅
+pptx.frame-panel.scale-height-percent	高さの倍率
+pptx.frame-panel.scale-width-percent	幅の倍率
+pptx.frame-panel.rotation-degrees	回転
+pptx.frame-panel.horizontal-position-cm-top-left	横位置
+pptx.frame-panel.vertical-position-cm-top-left	縦位置
 pptx.frame-panel.size-position	サイズと位置
 pptx.glow-panel.target-shape-has-changed-reopen	対象の図形が変更されています。設定を開き直してください
 pptx.glow-panel.enter-radius-0-169093-20055118	半径は0〜169093.20055118 pt、色は6桁のRGB、濃さは0〜100%で入力してください
@@ -1486,21 +1494,21 @@ pptx.insets-panel.enter-finite-number-0-more	余白には0以上の有限な数�
 pptx.paragraph-panel.target-text-has-changed-confirm	対象の本文が変更されています。入力を確定し、パネルを開き直してください
 pptx.insets-panel.enter-text-scale-1-100	文字倍率には1〜100%を入力するか、空欄で現在値を保持してください
 pptx.insets-panel.text-scale-cannot-changed-target	この対象では文字倍率を変更できません。設定は適用されていません
-pptx.insets-panel.left-cm	左 (cm)
-pptx.insets-panel.top-cm	上 (cm)
-pptx.insets-panel.right-cm	右 (cm)
-pptx.insets-panel.bottom-cm	下 (cm)
-pptx.insets-panel.text-zoom-percent-blank-keep	文字表示倍率 (%、空欄で保持)
+pptx.insets-panel.left-cm	左
+pptx.insets-panel.top-cm	上
+pptx.insets-panel.right-cm	右
+pptx.insets-panel.bottom-cm	下
+pptx.insets-panel.text-zoom-percent-blank-keep	文字表示倍率
 pptx.insets-panel.internal-margins-text-zoom	内部余白と文字表示倍率
 pptx.mod.fit-slide-window	スライドをウィンドウに合わせる
 pptx.notes.click-add-notes	クリックしてスピーカー ノートを追加
 pptx.misc.enter-line-spacing-multiple	行間は0より大きい倍数（10倍まで）またはpt、前後は0〜4000 ptで入力してください
 pptx.paragraph-panel.default-line-spacing	既定の行間
-pptx.paragraph-panel.exactly-pt	固定値 (pt)
-pptx.paragraph-panel.alignment-mixed-font-sizes-keep	異なる文字サイズの配置（未選択なら保持）
+pptx.paragraph-panel.exactly-pt	固定値
+pptx.paragraph-panel.alignment-mixed-font-sizes-keep	異なる文字サイズの配置
 pptx.paragraph-panel.line-spacing-value	行間の値
-pptx.paragraph-panel.before-pt	段落前 (pt)
-pptx.paragraph-panel.after-pt	段落後 (pt)
+pptx.paragraph-panel.before-pt	段落前
+pptx.paragraph-panel.after-pt	段落後
 pptx.paragraph-panel.start-at	番号の開始値
 pptx.paragraph-panel.invalid-start-at	開始番号は 1 から 32767 の整数を指定してください
 pptx.misc.line-paragraph-spacing	行間と段落の間隔
@@ -1525,12 +1533,12 @@ pptx.slideshow.no-notes	（ノートはありません）
 pptx.timing-panel.enter-finite-numbers-duration-0	期間は0〜4294967.295秒、自動送りは0〜2147483.647秒の有限な数値を入力してください
 pptx.timing-panel.target-slide-transition-settings	対象のスライドまたは切り替え設定が変更されています。パネルを開き直してください
 pptx.timing-panel.timing-deleted-slide	削除されたスライドのタイミング
-pptx.timing-panel.transition-duration-s	切り替えの期間 (秒)
+pptx.timing-panel.transition-duration-s	切り替えの継続時間
 pptx.timing-panel.mouse-click	✓ クリックで進む
 pptx.timing-panel.mouse-click-2	クリックで進む
 pptx.timing-panel.after	✓ 指定時間後に進む
 pptx.timing-panel.after-2	指定時間後に進む
-pptx.timing-panel.advance-after-s	自動で進むまで (秒)
+pptx.timing-panel.advance-after-s	自動で進むまで
 pptx.chrome.strikethrough	取り消し線
 pptx.goto.section	セクション
 pptx.chrome.add-stop	stopを追加
@@ -1710,14 +1718,14 @@ pptx.notes-format.notes-could-not-saved-error	ノートを書き戻せません�
 pptx.notes-format.notes-formatting-closed-undo	ノートの書式編集を閉じました（取り消しの履歴は消えました）
 pptx.notes-format.select-notes-text-set-bold	ノートの文字を選んで、太字・色・サイズ・箇条書きなどを、スライドの文字と同じ操作で設定できます。
 pptx.notes-format.notes-formatting	ノートの書式編集
-pptx.notes-format.close-notes-formatting	ノートの書式編集を閉じる
+pptx.notes-format.close-notes-formatting	書式編集モードを終了する
 pptx.notes.edit-notes-formatting	ノートの書式を編集
 pptx.path-draw.custom-path-click-slide-place	カスタム軌跡：スライドをクリックして点を打ち、ダブルクリックか Enter で終わります（Esc で取りやめ）
 pptx.smartart.smartart-has-parts-cannot	この SmartArt には、図形に変換できないものが含まれています
 pptx.notes-format.handout-master-undo-history	配布資料マスター：閉じるときに、取り消しの履歴は消えます
 pptx.notes-format.handout-master-closed-undo-history	配布資料マスターを閉じました（取り消しの履歴は消えました）
 pptx.notes-format.move-resize-boxes-set-size	枠の位置と大きさを動かし、文字のサイズ・色・位置揃えを設定します（左上がヘッダー、右上が日付、左下がフッター、右下がページ番号）。印刷する配布資料に使われます。
-pptx.notes-format.close-handout-master	配布資料マスターを閉じる
+pptx.notes-format.close-handout-master	書式編集モードを終了する
 pptx.notes-format.handout-master	配布資料マスター
 pptx.print-panel.notes-pages-1-slide-its	ノート ページ（1 ページ 1 スライドとノート）
 pptx.modify-password.password-modify-uses-method-not	この書き込みパスワードの方式には対応していません
@@ -1731,8 +1739,8 @@ pptx.password-window.password-needed-edit-file	ファイルを編集するとき
 pptx.password-window.password-needed-edit-file-2	このファイルを編集するには、書き込みパスワードが必要です
 pptx.password-window.open-read-only	読み取り専用で開く
 pptx.password-window.remove-password-modify	書き込みパスワードを解除
-pptx.cell-size-panel.row-height-cm	行の高さ (cm)
-pptx.cell-size-panel.column-width-cm	列の幅 (cm)
+pptx.cell-size-panel.row-height-cm	行の高さ
+pptx.cell-size-panel.column-width-cm	列の幅
 pptx.cell-size-panel.cell-size	セルのサイズ
 pptx.cell-size-panel.height-width-must-numbers-0	高さ・幅は 0.25〜1584 cm の数値にしてください
 _pptx.title-value	タイトル: {value}
@@ -1798,29 +1806,29 @@ _pptx.hold	⏹️保持
 _pptx.hide	👻非表示
 _pptx.dim	🔅淡色
 _pptx.hide-on-next-click	⏭️次消去
-_pptx.time	時間:
-_pptx.delay	遅延:
-_pptx.direction	方向:
+_pptx.time	時間
+_pptx.delay	遅延
+_pptx.direction	方向
 _pptx.smooth-start	✓ 滑らかに開始
 _pptx.smooth-end	✓ 滑らかに終了
 _pptx.auto-reverse	✓ 自動反転
 _pptx.auto-reverse-2	自動反転
 _pptx.don-t-hide	消去しない
 _pptx.dim-2	淡色表示
-_pptx.after-animation	再生後の動作:
+_pptx.after-animation	再生後の動作
 _pptx.with-previous-2	直前と同時
 _pptx.after-previous-2	直前の後
-_pptx.duration	継続時間:
+_pptx.duration	継続時間
 _pptx.2-times	2回
 _pptx.3-times	3回
 _pptx.5-times	5回
 _pptx.10-times	10回
 _pptx.multiple-times	複数回
-_pptx.repeat	繰り返し:
+_pptx.repeat	繰り返し
 _pptx.rewind-when-done-playing	✓ 再生が終了したら巻き戻す
 _pptx.rewind-when-done-playing-2	再生が終了したら巻き戻す
 _pptx.normal-click-or-auto	通常進行（クリック・自動）
-_pptx.trigger-2	トリガー:
+_pptx.trigger-2	トリガー
 _pptx.clear	解除
 _pptx.give-each-slide-a-title-so-screen-reader-users-c	スクリーンリーダーの利用者がスライド間を移動できるよう、タイトルを設定してください。
 _pptx.add-alternative-text-so-people-with-low-vision-c	視覚障害者に画像やグラフの意味が伝わるよう、代替テキストを追加するか装飾用に指定してください。
@@ -1842,14 +1850,14 @@ _pptx.slide-n	スライド {n}
 _pptx.poster-image	ポスター画像
 _pptx.kind-background	背景の{kind}
 _pptx.slide-n-of-total	スライド {n} / {total}
-_pptx.left-indent-pt	左インデント (pt)
+_pptx.left-indent-pt	左インデント
 _pptx.outer-shadow-count-shapes	図形の外側影（{count}個の図形）
 _pptx.100	等倍
 _pptx.items	件
 _pptx.kind-count-shapes	{kind}（{count}個の対象）
 _pptx.return-to-normal-view	標準表示に戻る
-_pptx.first-line-indent-pt	最初の行のインデント (pt)
-_pptx.custom-show	● 目的別スライド ショー
+_pptx.first-line-indent-pt	最初の行のインデント
+_pptx.custom-show	目的別スライド ショー
 _pptx.add-captions	字幕を追加
 _pptx.n-of-total	{n} / {total} 件
 _pptx.type-label	種類: {label}
@@ -1873,7 +1881,7 @@ pptx.notes-master	ノート マスター
 pptx.notes-format.notes-master-undo-history	ノート マスター：閉じるときに、取り消しの履歴は消えます
 pptx.notes-format.notes-master-closed-undo-history	ノート マスターを閉じました（取り消しの履歴は消えました）
 pptx.notes-format.notes-master-help	スライドのイメージ・ノート・ヘッダー・日付・フッター・ページ番号の枠を動かし、大きさや文字の書式を変えます。ノートの階層ごとの文字の書式は変わりません
-pptx.notes-format.close-notes-master	ノート マスターを閉じる
+pptx.notes-format.close-notes-master	書式編集モードを終了する
 pptx.notes-format.notes-master	ノート マスター
 pptx.slideshow.notes-smaller	文字を小さく
 pptx.slideshow.notes-larger	文字を大きく
@@ -1917,24 +1925,24 @@ pptx.ink.effect.bronze	ブロンズ
 pptx.replace-fonts.substitute	代替フォントに設定
 pptx.replace-fonts.substitute-success	フォント「{target}」の代替フォントを「{substitute}」に設定しました
 pptx.replace-fonts.substitute-removed	フォント「{target}」の代替を解除しました
-pptx.replace-fonts.substitutions-title	設定中の代替フォント:
-pptx.replace-fonts.missing-fonts-title	不足しているフォント（代替または埋め込みを推奨）:
-pptx.replace-fonts.embedded-fonts-title	ファイルに埋め込まれているフォント:
+pptx.replace-fonts.substitutions-title	設定中の代替フォント
+pptx.replace-fonts.missing-fonts-title	不足しているフォント（代替または埋め込みを推奨）
+pptx.replace-fonts.embedded-fonts-title	ファイルに埋め込まれているフォント
 pptx.replace-fonts.embed-button	フォントを埋め込む
 pptx.replace-fonts.embed-success	フォント「{name}」をプレゼンテーションに埋め込みました
 pptx.replace-fonts.remove-embed	埋め込みを解除
 pptx.replace-fonts.remove-embed-success	フォント「{name}」の埋め込みを解除しました
 pptx.photo-album	フォト アルバム…
 pptx.photo-album.title	フォト アルバム
-pptx.photo-album.pictures-in-album	アルバムの写真枚数:
+pptx.photo-album.pictures-in-album	アルバムの写真枚数
 pptx.photo-album.move-up	上へ
 pptx.photo-album.move-down	下へ
 pptx.photo-album.remove	削除
 pptx.photo-album.picture-options	写真のオプション
 pptx.photo-album.bw-on	☑ すべて白黒
-pptx.photo-album.bw-off	☐ すべて白黒
+pptx.photo-album.bw-off	すべて白黒
 pptx.photo-album.captions-on	☑ キャプション表示
-pptx.photo-album.captions-off	☐ キャプション表示
+pptx.photo-album.captions-off	キャプション表示
 pptx.photo-album.album-layout	アルバムのレイアウト
 pptx.photo-album.layout.fit-to-slide	スライドに合わせる
 pptx.photo-album.layout.1pic	1枚の写真
@@ -2020,8 +2028,8 @@ pptx.audio.record	録音
 pptx.audio.stop	停止
 pptx.audio.record-title	オーディオの録音
 pptx.audio.recorded-sound-default	録音されたサウンド
-pptx.audio.sound-name	名前:
-pptx.audio.total-sound-length	録音時間:
+pptx.audio.sound-name	名前
+pptx.audio.total-sound-length	録音時間
 pptx.audio.status-ready	待機中
 pptx.audio.status-recording	録音中...
 pptx.audio.status-recorded	録音完了
@@ -2065,9 +2073,9 @@ pptx.3d-model.view.iso-bottom-left	等角 (左下)
 pptx.3d-model.view.iso-bottom-right	等角 (右下)
 pptx.3d-model.view.front-ortho	平行投影 (正面)
 pptx.3d-model.rotation	3軸回転 (X / Y / Z)
-pptx.3d-model.rot-x	X軸回転 (°)
-pptx.3d-model.rot-y	Y軸回転 (°)
-pptx.3d-model.rot-z	Z軸回転 (°)
+pptx.3d-model.rot-x	X軸回転
+pptx.3d-model.rot-y	Y軸回転
+pptx.3d-model.rot-z	Z軸回転
 pptx.3d-model.pan-zoom	パンとズーム
 pptx.3d-model.pan-left	← 左へパン
 pptx.3d-model.pan-right	右へパン →
@@ -2098,10 +2106,10 @@ pptx.3d-model.anim.leave	退場 (Leave)
 pptx.3d-model.web-note	デスクトップ版ではローカル3Dモデルの挿入・全操作に対応。Web版では既存モデルの表示・3軸回転・ビュー切替・サイズ変更に対応します。
 pptx.record-preview	録画のプレビュー…
 pptx.record-preview.title	録画プレビュー
-pptx.record-preview.play	プレビュー再生
+pptx.record-preview.play	再生
 pptx.record-preview.pause	一時停止
-pptx.record-preview.prev-slide	前のスライド
-pptx.record-preview.next-slide	次のスライド
+pptx.record-preview.prev-slide	前へ
+pptx.record-preview.next-slide	次へ
 pptx.record-preview.clear-timing	現在のスライド時間をクリア
 pptx.record-preview.set-5s	現在のスライド時間を5秒に設定
 pptx.record-preview.start-show	現在のスライドからショー開始
@@ -2119,8 +2127,8 @@ pptx.screen-reader.filter.table	表
 pptx.screen-reader.filter.chart	グラフ
 pptx.screen-reader.filter.media	画像・メディア
 pptx.screen-reader.filter.notes	ノート・コメント
-pptx.customize-ribbon	リボンとクイックアクセスの設定…
-pptx.customize-ribbon.title	リボンとクイックアクセスの設定
+pptx.customize-ribbon	ツールバーとクイックアクセスの設定…
+pptx.customize-ribbon.title	ツールバーとクイックアクセスの設定
 pptx.customize-ribbon.groups	ツールバー グループの表示
 pptx.customize-ribbon.group.slides	スライド
 pptx.customize-ribbon.group.font	フォント
@@ -2189,3 +2197,11 @@ pptx.chart.legend.trendline.poly	多項式 ({series})
 pptx.chart.legend.trendline.power	累乗 ({series})
 pptx.chart.legend.trendline.moving-avg	{period} 区間移動平均 ({series})
 pptx.tools.word-count	スライド {slides}、単語 {words}、文字（空白を除く） {chars}
+
+chart.data.add-row	行を追加
+chart.data.add-series	系列を追加
+pptx.common.automatic	自動
+pptx.common.seconds-unit	秒
+pptx.paragraph-panel.keep-existing	現在の設定を保持
+pptx.smartart.add-item-short	追加
+pptx.3d-model.zoom	ズーム

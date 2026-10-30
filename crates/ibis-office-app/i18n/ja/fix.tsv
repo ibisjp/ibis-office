@@ -118,11 +118,11 @@ xlsx.autorecover-settings	自動回復の設定…
 xlsx.autorecover.settings-title	自動回復の設定
 xlsx.autorecover.section-general	全般設定
 xlsx.autorecover.enabled-label	次の間隔で自動回復用データを保存する
-xlsx.autorecover.interval-label	保存間隔:
+xlsx.autorecover.interval-label	保存間隔
 xlsx.autorecover.interval-minutes-unit	分
 xlsx.autorecover.keep-unsaved-label	保存しないで終了する場合、最後に自動回復されたバージョンを残す
 xlsx.autorecover.section-location	保存先の場所
-xlsx.autorecover.location-label	自動回復用ファイルの場所:
+xlsx.autorecover.location-label	自動回復用ファイルの場所
 xlsx.autorecover.reset-location	既定の場所に戻す
 xlsx.autorecover.section-workbook	現在のブック
 xlsx.autorecover.disable-workbook-label	このブックの自動回復を行わない
@@ -158,13 +158,13 @@ xlsx.backupsave.default-loc-desc	新規ブックを保存する際の既定の�
 xlsx.backupsave.reset-default-loc	既定値に戻す
 xlsx.backupsave.section-backup	バックアップ ファイルの作成
 xlsx.backupsave.always-backup-label	上書き保存時に常にバックアップ ファイルを作成する
-xlsx.backupsave.backup-format-label	バックアップ形式:
+xlsx.backupsave.backup-format-label	バックアップ形式
 xlsx.backupsave.format-xlk	Excel 互換 (.xlk)
 xlsx.backupsave.format-xlsx	Excel ブック (.xlsx)
-xlsx.backupsave.backup-location-label	保存場所:
+xlsx.backupsave.backup-location-label	保存場所
 xlsx.backupsave.loc-same-folder	元のファイルと同じ場所
 xlsx.backupsave.loc-custom-folder	専用フォルダー
-xlsx.backupsave.custom-folder-label	バックアップ先フォルダー:
+xlsx.backupsave.custom-folder-label	バックアップ先フォルダー
 xlsx.backupsave.section-workbook	現在のブックの設定
 xlsx.backupsave.wb-backup-label	このブックで常にバックアップを作成する
 xlsx.backupsave.backup-now-btn	今すぐバックアップを作成
@@ -180,10 +180,10 @@ xlsx.backupsave.save-settings-btn	設定を保存
 xlsx.open-and-repair	破損ブックの修復…
 xlsx.repair.title	破損ブックの修復
 xlsx.repair.desc	破損して正常に開けない Excel ブックの修復、または数式・値のデータ抽出を行います。
-xlsx.repair.file-label	修復対象のファイル:
+xlsx.repair.file-label	修復対象のファイル
 xlsx.repair.browse-btn	参照…
 xlsx.repair.prompt-file	修復するブックを選択
-xlsx.repair.mode-label	修復方法の選択:
+xlsx.repair.mode-label	修復方法の選択
 xlsx.repair.mode-repair	修復（推奨）
 xlsx.repair.mode-repair-desc	できる限りのデータ、書式、数式を修復して開きます。
 xlsx.repair.mode-formulas	データの抽出: 数式を回復
@@ -258,7 +258,7 @@ pptx.insert-chart.contour	等高線
 pptx.insert-chart.contour-wireframe	ワイヤーフレーム等高線
 xlsx.pivot-chart-insert	ピボットグラフ…
 xlsx.pivot-chart	ピボットグラフ
-xlsx.pivot-chart-source	連動ピボットテーブル:
+xlsx.pivot-chart-source	連動ピボットテーブル
 xlsx.pivot-chart-open-fields	ピボットテーブルのフィールド…
 xlsx.pivot-chart-inserted	ピボットグラフを挿入しました
 xlsx.phonetic-toggle	ふりがなの表示/非表示

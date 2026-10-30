@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Numeric column width and row height controls for the caret's table cell.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input,InputEvent,InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent,InputState};
 use gpui_kit::component::{Selectable as _,Sizable as _,h_flex,v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Block,FlowTable,FlowCommand,RowHeight};
@@ -30,6 +30,7 @@ impl SlideEditor {
         match flow_command::blocks(d,container)?.get(index)? {Block::Table(t)=>Some(t),_=>None}
     }
     pub(crate) fn open_table_size(&mut self,window:&mut Window,cx:&mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(target)=self.table_at_caret() else{return};
         let Some(table)=self.caret_table().cloned() else{return};
         let Some(row)=table.rows.get(target.1) else{return};
@@ -89,15 +90,20 @@ impl SlideEditor {
     pub(crate) fn table_size_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel> {
         let edit=self.doc_state()?.table_size.as_ref()?;
         let fields=edit.fields.clone();let rule=edit.rule;let error=edit.error.clone();
-        let row=|label:&'static str,f:&Entity<InputState>|h_flex().gap_2().child(div().w(px(80.)).text_sm().child(crate::shell::i18n::text(label))).child(Input::new(f).small().cleanable(true));
-        let choice=|id:&'static str,label:&'static str,r:HeightRule|Button::new(id).small().label(crate::shell::i18n::text(label)).selected(rule==r).on_click(cx.listener(move|this,_,window,cx|this.choose_table_height(r,window,cx)));
+        let field_cx=&*cx;
+        // Column width and row height (pt): ▲▼ by 1 pt, applied as Enter applies them.
+        let row=|label:&'static str,i:usize|h_flex().gap_2().child(div().w(px(80.)).text_sm().child(crate::shell::i18n::text(label)))
+            .child(crate::shell::chrome::text_field(&fields[i]).full_width().unit("pt",px(22.)).spinner(format!("table-size-{i}"),crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,1584.0),field_cx,|this,_,window,cx|this.apply_table_size(window,cx)));
+        let choice=|id:&'static str,label:&'static str,r:HeightRule|crate::shell::chrome::radio_button(id, rule==r, false, crate::shell::i18n::text(label), cx.listener(move|this,_,window,cx|this.choose_table_height(r,window,cx)));
         let body=v_flex().gap_2().px(px(18.)).py(px(8.))
-            .child(div().text_sm().child(crate::shell::i18n::text("docx.table-size-panel.changes-width-column-where")))
-            .child(row("docx.table-size-panel.column-width-pt",&fields[0]))
-            .child(h_flex().gap_1().child(choice("row-auto","_shell.auto",HeightRule::Auto)).child(choice("row-minimum","_shell.at-least",HeightRule::AtLeast)).child(choice("row-exact","docx.common.exactly",HeightRule::Exact)))
-            .child(row("docx.table-size-panel.row-height-pt",&fields[1]))
+            .p_0().child(div().text_sm().child(crate::shell::i18n::text("docx.table-size-panel.changes-width-column-where")))
+            .child(row("docx.table-size-panel.column-width-pt",0))
+            .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow).child(choice("row-auto","_shell.auto",HeightRule::Auto)).child(choice("row-minimum","_shell.at-least",HeightRule::AtLeast)).child(choice("row-exact","docx.common.exactly",HeightRule::Exact)))
+            .child(row("docx.table-size-panel.row-height-pt",1))
             .children(error.map(|e|div().text_sm().child(e)))
-            .child(Button::new("table-size-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|this,_,window,cx|this.apply_table_size(window,cx))));
-        Some(SidebarPanel {title:crate::shell::i18n::text("docx.table-size-panel.table-column-width-row-height"),body:body.into_any_element()})
+            ;
+        let panel_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("table-size-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this,_,window,cx|this.apply_table_size(window,cx))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("docx.table-size-panel.table-column-width-row-height"), body.into_any_element(), panel_actions))
     }
 }

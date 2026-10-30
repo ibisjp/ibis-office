@@ -474,37 +474,7 @@ pub(crate) fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
                 })
                 .into(),
             SEP,
-            item("docx.ruler", "rule").checked(editor.ruler_open).on(|this, _, cx| {
-                this.ruler_open = !this.ruler_open;
-                cx.notify();
-            })
-            .into(),
-            item("docx.vertical-ruler", "straighten").checked(editor.vertical_ruler_open).disabled(!editor.ruler_open).on(|this, _, cx| {
-                this.toggle_vertical_ruler(cx);
-            })
-            .into(),
-            sub("docx.ruler-unit", "straighten", vec![
-                item("docx.ruler-unit.cm", "").checked(editor.ruler_unit == RulerUnit::Centimeters).disabled(!editor.ruler_open).on(|this, _, cx| {
-                    this.set_ruler_unit(RulerUnit::Centimeters, cx);
-                }).into(),
-                item("docx.ruler-unit.mm", "").checked(editor.ruler_unit == RulerUnit::Millimeters).disabled(!editor.ruler_open).on(|this, _, cx| {
-                    this.set_ruler_unit(RulerUnit::Millimeters, cx);
-                }).into(),
-                item("docx.ruler-unit.inch", "").checked(editor.ruler_unit == RulerUnit::Inches).disabled(!editor.ruler_open).on(|this, _, cx| {
-                    this.set_ruler_unit(RulerUnit::Inches, cx);
-                }).into(),
-                item("docx.ruler-unit.point", "").checked(editor.ruler_unit == RulerUnit::Points).disabled(!editor.ruler_open).on(|this, _, cx| {
-                    this.set_ruler_unit(RulerUnit::Points, cx);
-                }).into(),
-                item("docx.ruler-unit.pica", "").checked(editor.ruler_unit == RulerUnit::Picas).disabled(!editor.ruler_open).on(|this, _, cx| {
-                    this.set_ruler_unit(RulerUnit::Picas, cx);
-                }).into(),
-            ]),
-            item("docx.gridlines", "grid_on").checked(editor.gridlines_open).on(|this, _, cx| {
-                this.gridlines_open = !this.gridlines_open;
-                cx.notify();
-            })
-            .into(),
+            item("docx.ruler", "rule").on(|this, _, cx| this.open_ruler_panel(cx)).into(),
             item("docx.formatting-marks", "notes").checked(editor.formatting_marks_open).on(|this, _, cx| {
                 this.toggle_formatting_marks(cx);
             })

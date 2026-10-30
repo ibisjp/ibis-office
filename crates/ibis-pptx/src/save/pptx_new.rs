@@ -1286,19 +1286,6 @@ fn picture_xml(x: &Prefixes, picture: &Picture, xfrm: &str, id: u32, shape: ibis
     let (name, nv_pr, hlink) = match clip {
         Some((clip, (link, embed))) => {
             let (tag, name) = if clip.audio { ("audioFile", "Audio") } else { ("videoFile", "Movie") };
-            let vol_attr = match clip.options.volume {
-                ibis_doc_model::MediaVolume::High => " vol=\"100000\"",
-                ibis_doc_model::MediaVolume::Medium => " vol=\"66000\"",
-                ibis_doc_model::MediaVolume::Low => " vol=\"33000\"",
-                ibis_doc_model::MediaVolume::Mute => " vol=\"0\"",
-            };
-            let loop_attr = if clip.options.loop_until_stopped { " loop=\"1\"" } else { "" };
-            let rewind_attr = if clip.options.rewind { " rewind=\"1\"" } else { "" };
-            let auto_attr = if clip.options.start == ibis_doc_model::MediaStart::Automatically { " autoPlay=\"1\"" } else { "" };
-            let fs_attr = if clip.options.full_screen { " fullScreen=\"1\"" } else { "" };
-            let hide_stopped_attr = if clip.options.hide_while_not_playing { " showWhenStopped=\"0\"" } else { "" };
-            let narr_attr = if clip.options.hide_during_show { " isNarration=\"1\"" } else { "" };
-            let across_attr = if clip.options.play_across_slides { " playAcrossSlides=\"1\"" } else { "" };
             let mut children = String::new();
             if clip.options.trim_start_ms > 0 || clip.options.trim_end_ms > 0 {
                 let st_attr = if clip.options.trim_start_ms > 0 { format!(" st=\"{}\"", clip.options.trim_start_ms) } else { String::new() };
@@ -1330,9 +1317,9 @@ fn picture_xml(x: &Prefixes, picture: &Picture, xfrm: &str, id: u32, shape: ibis
                 children.push_str("</p14:captionTracks>");
             }
             let media_tag = if children.is_empty() {
-                format!("<p14:media xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" {r}embed=\"{embed}\"{vol_attr}{loop_attr}{rewind_attr}{auto_attr}{fs_attr}{hide_stopped_attr}{narr_attr}{across_attr}/>")
+                format!("<p14:media xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" {r}embed=\"{embed}\"/>")
             } else {
-                format!("<p14:media xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" {r}embed=\"{embed}\"{vol_attr}{loop_attr}{rewind_attr}{auto_attr}{fs_attr}{hide_stopped_attr}{narr_attr}{across_attr}>{children}</p14:media>")
+                format!("<p14:media xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" {r}embed=\"{embed}\">{children}</p14:media>")
             };
             // A linked file (no embedded copy): the file only.
             let nv_pr = if embed.is_empty() {

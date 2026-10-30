@@ -28,32 +28,32 @@ ibisOffice は、Word・Excel・PowerPoint の文書を、表示し、編集し�
 <table>
   <tr>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-Windows.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-Windows.zip">
         <img src="asset/download-windows.svg" alt="Download for Windows" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-Windows.zip"><code>ibisOffice-0.8.4-Windows.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-Windows.zip"><code>ibisOffice-0.8.5-Windows.zip</code></a><br>
       <small>Windows 10 / 11（64 ビット）</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-macOS.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-macOS.zip">
         <img src="asset/download-mac.svg" alt="Download for Mac" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-macOS.zip"><code>ibisOffice-0.8.4-macOS.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-macOS.zip"><code>ibisOffice-0.8.5-macOS.zip</code></a><br>
       <small>macOS 11 以降（Apple Silicon）</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-Linux.AppImage">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-Linux.AppImage">
         <img src="asset/download-linux.svg" alt="Download for Linux" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.4/ibisOffice-0.8.4-Linux.AppImage"><code>ibisOffice-0.8.4-Linux.AppImage</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.5/ibisOffice-0.8.5-Linux.AppImage"><code>ibisOffice-0.8.5-Linux.AppImage</code></a><br>
       <small>Linux x86_64</small>
     </td>
   </tr>
 </table>
 
-- **Windows**：`ibisOffice-0.8.4-Windows.zip` をダウンロードし、展開した `ibisOffice` フォルダの `ibisOffice.exe` を起動してください。
-- **macOS**：`ibisOffice-0.8.4-macOS.zip` をダウンロードし、展開した `ibisOffice.app` をアプリケーション フォルダに移してください。
-- **Linux**：`ibisOffice-0.8.4-Linux.AppImage` をダウンロードし、実行権限を付けて（`chmod +x`）、ダブルクリックしてください。主要なデスクトップ Linux（glibc 2.31 以降：Ubuntu、Debian、Fedora、Arch Linux など）で動作します。インストールも FUSE も不要です。
+- **Windows**：`ibisOffice-0.8.5-Windows.zip` をダウンロードし、展開した `ibisOffice` フォルダの `ibisOffice.exe` を起動してください。
+- **macOS**：`ibisOffice-0.8.5-macOS.zip` をダウンロードし、展開した `ibisOffice.app` をアプリケーション フォルダに移してください。
+- **Linux**：`ibisOffice-0.8.5-Linux.AppImage` をダウンロードし、実行権限を付けて（`chmod +x`）、ダブルクリックしてください。主要なデスクトップ Linux（glibc 2.31 以降：Ubuntu、Debian、Fedora、Arch Linux など）で動作します。インストールも FUSE も不要です。
 - **Web 版を試す**：インストールせずに、ブラウザで [playground](https://ibisjp.github.io/ibis-office/) を開いてください（WebGPU に対応したブラウザ）。見本の文書（Word・Excel・PowerPoint）を開いて、すぐに試せます。
 - **更新履歴**：各バージョンの変更内容は [CHANGELOG.md](CHANGELOG.md) をご覧ください。
 - **動画で見る**：ibisOffice の紹介動画（YouTube）。

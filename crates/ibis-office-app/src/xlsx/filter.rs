@@ -11,8 +11,8 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -184,26 +184,22 @@ impl SlideEditor {
     pub(crate) fn current_region(&self) -> Option<CellRange> {
         let (column, row) = self.current_cell()?;
         let (_, sheet) = self.current_sheet()?;
-        let filled = |r: u32, c: u32| sheet.cell(r, c).is_some_and(|x| !x.value.is_empty() || x.formula.is_some());
-        let mut r = CellRange { first_row: row, first_column: column, last_row: row, last_column: column };
+        // Index occupied coordinates in both directions. Boundary queries then
+        // visit one tree range instead of rescanning every already-grown row.
+        let occupied: std::collections::BTreeSet<(u32,u32)> = sheet.cells.iter()
+            .filter(|cell|!cell.value.is_empty() || cell.formula.is_some())
+            .map(|cell|(cell.row,cell.column)).collect();
+        let columns: std::collections::BTreeSet<(u32,u32)> = occupied.iter().map(|&(r,c)|(c,r)).collect();
+        let horizontal = |row, first, last| occupied.range((row,first)..=(row,last)).next().is_some();
+        let vertical = |column, first, last| columns.range((column,first)..=(column,last)).next().is_some();
+        let mut region = CellRange {first_row:row,last_row:row,first_column:column,last_column:column};
         loop {
-            let mut grown = r;
-            if r.first_row > 0 && (r.first_column..=r.last_column).any(|c| filled(r.first_row - 1, c)) {
-                grown.first_row -= 1;
-            }
-            if (r.first_column..=r.last_column).any(|c| filled(r.last_row + 1, c)) {
-                grown.last_row += 1;
-            }
-            if r.first_column > 0 && (r.first_row..=r.last_row).any(|x| filled(x, r.first_column - 1)) {
-                grown.first_column -= 1;
-            }
-            if (r.first_row..=r.last_row).any(|x| filled(x, r.last_column + 1)) {
-                grown.last_column += 1;
-            }
-            if grown == r {
-                return Some(r);
-            }
-            r = grown;
+            let old = region;
+            if old.first_row > 0 && horizontal(old.first_row-1,old.first_column,old.last_column) {region.first_row-=1;}
+            if old.last_row < ibis_calc::formula::MAX_ROW && horizontal(old.last_row+1,old.first_column,old.last_column) {region.last_row+=1;}
+            if old.first_column > 0 && vertical(old.first_column-1,old.first_row,old.last_row) {region.first_column-=1;}
+            if old.last_column < ibis_calc::formula::MAX_COLUMN && vertical(old.last_column+1,old.first_row,old.last_row) {region.last_column+=1;}
+            if old == region {return Some(region);}
         }
     }
 
@@ -430,7 +426,10 @@ impl SlideEditor {
         let current = f.columns.iter().find(|(c, _)| *c == column).map(|(_, x)| x.clone());
         let ticked: HashSet<String> = match &current {
             None => values.iter().cloned().collect(),
-            Some(ColumnFilter::Values(v)) => values.iter().filter(|x| v.iter().any(|y| y.to_lowercase() == x.to_lowercase())).cloned().collect(),
+            Some(ColumnFilter::Values(v)) => {
+                let selected: HashSet<_> = v.iter().map(|v|v.to_lowercase()).collect();
+                values.iter().filter(|x|selected.contains(&x.to_lowercase())).cloned().collect()
+            },
             Some(_) => rows.iter().filter(|r| !sheet.filtered_rows.contains(r)).map(|&r| sheet.cell(r, column).map_or(String::new(), |c| c.text.clone())).collect(),
         };
         let heading = sheet.cell(f.range.first_row, column).map(|c| c.text.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| ibis_doc_model::cell_name(column, 0).trim_end_matches('1').to_string());
@@ -724,15 +723,12 @@ impl SlideEditor {
         })
         .h_full();
         menu.child(div().h(px(1.)).my_1().bg(theme.border))
-            .child(crate::shell::chrome::clearable_text_field(&p.search))
+            .child(crate::shell::chrome::text_field(&p.search).full_width())
             .child(div().h(px(200.)).border_1().border_color(theme.border).rounded_sm().child(list))
             .child(
-                h_flex()
-                    .gap_2()
-                    .justify_end()
-                    .pt_1()
-                    .child(Button::new("filter-ok").primary().small().label("OK").disabled(none_ticked).on_click(cx.listener(|this, _, _, cx| this.filter_panel_ok(cx))))
-                    .child(Button::new("filter-cancel").small().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_filter_panel(cx)))),
+                crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("filter-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").disabled(none_ticked).on_click(cx.listener(|this, _, _, cx| this.filter_panel_ok(cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("filter-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_filter_panel(cx)))))),
             )
             .into_any_element()
     }
@@ -847,8 +843,8 @@ impl SlideEditor {
             body = body.child(
                 h_flex()
                     .gap_2()
-                    .child(Button::new(("filter-dialog-op", i)).small().w(px(160.)).label(format!("{current} ▾")).on_click(cx.listener(move |this, _, _, cx| this.with_condition(cx, |d| d.choosing = if d.choosing == Some(i) { None } else { Some(i) }))))
-                    .child(div().flex_1().child(crate::shell::chrome::clearable_text_field(&d.values[i]))),
+                    .child(crate::shell::chrome::action_button(("filter-dialog-op", i)).small().w(px(160.)).label(format!("{current} ▾")).on_click(cx.listener(move |this, _, _, cx| this.with_condition(cx, |d| d.choosing = if d.choosing == Some(i) { None } else { Some(i) }))))
+                    .child(div().flex_1().child(crate::shell::chrome::text_field(&d.values[i]).full_width())),
             );
             if d.choosing == Some(i) {
                 let mut list = v_flex().border_1().border_color(theme.border).rounded_sm();
@@ -879,11 +875,9 @@ impl SlideEditor {
         body.child(div().text_color(theme.muted_foreground).child(crate::shell::i18n::text("_xlsx.use-to-represent-any-single-character-use-to-rep")))
             .when_some(d.error.clone(), |b, e| b.child(div().text_color(theme.danger).child(e)))
             .child(
-                h_flex()
-                    .gap_2()
-                    .justify_end()
-                    .child(Button::new("filter-dialog-ok").primary().small().label("OK").on_click(cx.listener(|this, _, _, cx| this.filter_dialog_ok(cx))))
-                    .child(Button::new("filter-dialog-cancel").small().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_filter_panel(cx)))),
+                crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("filter-dialog-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|this, _, _, cx| this.filter_dialog_ok(cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("filter-dialog-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_filter_panel(cx)))))),
             )
             .into_any_element()
     }
@@ -896,17 +890,18 @@ impl SlideEditor {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(Button::new("filter-top-which").small().label(crate::shell::i18n::text(if d.top { "_xlsx.top" } else { "_xlsx.bottom" })).on_click(cx.listener(|this, _, _, cx| this.with_top(cx, |d| d.top = !d.top))))
-                    .child(div().w(px(70.)).child(crate::shell::chrome::clearable_text_field(&d.count)))
-                    .child(Button::new("filter-top-unit").small().label(crate::shell::i18n::text(if d.percent { "_xlsx.percent" } else { "_xlsx.items" })).on_click(cx.listener(|this, _, _, cx| this.with_top(cx, |d| d.percent = !d.percent)))),
+                    .child(crate::shell::chrome::action_button("filter-top-which").small().label(crate::shell::i18n::text(if d.top { "_xlsx.top" } else { "_xlsx.bottom" })).on_click(cx.listener(|this, _, _, cx| this.with_top(cx, |d| d.top = !d.top))))
+                    .child(div().w(px(70.)).child(
+                        // Applied by OK (not on Enter): a step only changes the box. Excel: 1–500 items or percent.
+                        crate::shell::chrome::text_field(&d.count).full_width().spinner("filter-top-count", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 500.0).integer_only(), cx, |_, _, _, _| {}),
+                    ))
+                    .child(crate::shell::chrome::action_button("filter-top-unit").small().label(crate::shell::i18n::text(if d.percent { "_xlsx.percent" } else { "_xlsx.items" })).on_click(cx.listener(|this, _, _, cx| this.with_top(cx, |d| d.percent = !d.percent)))),
             )
             .when_some(d.error.clone(), |b, e| b.child(div().text_color(theme.danger).child(e)))
             .child(
-                h_flex()
-                    .gap_2()
-                    .justify_end()
-                    .child(Button::new("filter-top-ok").primary().small().label("OK").on_click(cx.listener(|this, _, _, cx| this.filter_dialog_ok(cx))))
-                    .child(Button::new("filter-top-cancel").small().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_filter_panel(cx)))),
+                crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("filter-top-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|this, _, _, cx| this.filter_dialog_ok(cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("filter-top-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_filter_panel(cx)))))),
             )
             .into_any_element()
     }

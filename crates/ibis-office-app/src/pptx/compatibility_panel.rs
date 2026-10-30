@@ -74,10 +74,11 @@ pub(crate) fn check_presentation_compatibility(p: &Presentation) -> Compatibilit
 
             match &shape.kind {
                 ShapeKind::Picture(pic) => {
-                    // 1. 埋め込みメディア (ビデオ/オーディオ)
-                    if pic.clip.is_some() {
-                        significant.push(CompatibilityIssue {
-                            severity: CompatibilitySeverity::SignificantLoss,
+                    // 1. 動画・音声: 埋め込みは PowerPoint 2010 以降で再生できる（`p14:media`）ので問題にしない。
+                    // ファイルへのリンクは、そのファイルが無い PC では再生できない。
+                    if pic.clip.as_ref().is_some_and(|c| c.link.is_some()) {
+                        minor.push(CompatibilityIssue {
+                            severity: CompatibilitySeverity::MinorLoss,
                             slide_id: slide.id,
                             slide_number: slide_num,
                             shape_id: Some(shape.id),
@@ -402,7 +403,7 @@ impl SlideEditor {
             .gap_1()
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(text("pptx.compat.summary-hint").to_string()),
             );
@@ -425,7 +426,7 @@ impl SlideEditor {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(text("pptx.compat.clean-desc").to_string()),
                 )
@@ -436,7 +437,7 @@ impl SlideEditor {
         // 1. 重大な機能低下
         if !report.significant.is_empty() {
             let sig_header = div()
-                .text_xs()
+                .text_sm()
                 .font_weight(FontWeight::BOLD)
                 .text_color(cx.theme().danger)
                 .child(format!(
@@ -477,12 +478,12 @@ impl SlideEditor {
                             .items_center()
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(issue.title.clone()),
                             )
                             .child(
-                                Button::new(("jump-compat-sig", ix))
+                                crate::shell::chrome::action_button(("jump-compat-sig", ix))
                                     .xsmall()
                                     .outline()
                                     .label(jump_label)
@@ -493,7 +494,7 @@ impl SlideEditor {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(issue.description.clone()),
                     );
@@ -505,7 +506,7 @@ impl SlideEditor {
         // 2. 軽微な精度の低下
         if !report.minor.is_empty() {
             let minor_header = div()
-                .text_xs()
+                .text_sm()
                 .font_weight(FontWeight::BOLD)
                 .text_color(cx.theme().accent)
                 .child(format!(
@@ -548,7 +549,7 @@ impl SlideEditor {
                             .items_center()
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(issue.title.clone()),
                             )
@@ -556,16 +557,16 @@ impl SlideEditor {
                                 h_flex()
                                     .gap_1()
                                     .child(
-                                        Button::new(("fix-compat-minor", ix))
+                                        crate::shell::chrome::action_button(("fix-compat-minor", ix))
                                             .xsmall()
-                                            .ghost()
+
                                             .label(text("_shell.clear-formatting"))
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.resolve_pptx_compatibility_issue(global_ix, cx);
                                             })),
                                     )
                                     .child(
-                                        Button::new(("jump-compat-minor", ix))
+                                        crate::shell::chrome::action_button(("jump-compat-minor", ix))
                                             .xsmall()
                                             .outline()
                                             .label(jump_label)
@@ -577,7 +578,7 @@ impl SlideEditor {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(issue.description.clone()),
                     );
@@ -586,34 +587,25 @@ impl SlideEditor {
             }
         }
 
-        let bottom_actions = h_flex()
-            .gap_2()
-            .justify_end()
-            .child(
-                Button::new("compat-recheck")
-                    .label(text("pptx.compat.recheck"))
-                    .small()
+        let bottom_actions = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("compat-recheck", text("pptx.compat.recheck"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| this.recheck_pptx_compatibility(cx))),
             )
-            .child(
-                Button::new("compat-close")
-                    .label(text("_shell.close"))
-                    .small()
-                    .primary()
-                    .on_click(cx.listener(|this, _, _, cx| this.close_pptx_compatibility_panel(cx))),
-            );
+
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
 
         let content = v_flex()
             .p_4()
             .gap_3()
-            .child(header)
+            .p_0().child(header)
             .when(!msg.is_empty(), |el| {
                 el.child(
                     div()
                         .p_2()
                         .rounded_md()
                         .bg(cx.theme().primary.opacity(0.1))
-                        .text_xs()
+                        .text_sm()
                         .text_color(cx.theme().primary)
                         .child(msg),
                 )
@@ -621,11 +613,12 @@ impl SlideEditor {
             .children(clean_box)
             .child(issues_list)
             .child(div().h_2())
-            .child(bottom_actions);
+            ;
 
-        Some(SidebarPanel {
-            title: text("pptx.compatibility-check").into(),
-            body: content.into_any_element(),
-        })
+        let panel_terminal_actions = bottom_actions;
+        Some(SidebarPanel::with_footer(text("pptx.compatibility-check"), content.into_any_element(), panel_terminal_actions))
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1247,7 +1247,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             (0x000000, "pptx.text-outline.black"),
             (0xffffff, "pptx.text-outline.white"),
             (0xc00000, "pptx.text-outline.red"),
-            (0x4472c4, "pptx.text-outline.blue"),
+            (0x0070c0, "pptx.text-outline.blue"), // the standard blue; the theme row follows the presentation's theme, which may not have 4472C4
             (0xffc000, "pptx.text-outline.yellow"),
             (0x70ad47, "pptx.text-outline.green"),
         ] {
@@ -1986,7 +1986,7 @@ fn color_menu(editor: &SlideEditor, _id: &'static str, none: Option<SharedString
         .filter(|(rgb, _)| !matches!(rgb, 0x000000 | 0x404040 | 0x7f7f7f | 0xd9d9d9 | 0xffffff | 0x4472c4))
         .map(|&(rgb, id)| Swatch::with_id(id, Rgb(rgb), crate::shell::i18n::text(id), false, &pick))
         .collect();
-    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None })]
+    vec![MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None, current:None })]
 }
 
 fn fill_presets(background: bool) -> Vec<MenuEntry> {
@@ -2164,7 +2164,7 @@ pub(crate) fn table_borders_menu_items(enabled: bool) -> Vec<MenuEntry> {
                     sw.item.id = id;
                 }
             }
-            vec![MenuEntry::Palette(Palette { none: None, theme, standard, pick: Some(pick), more: None, button: None })]
+            vec![MenuEntry::Palette(Palette { none: None, theme, standard, pick: Some(pick), more: None, button: None, current:None })]
         }).into(),
     ]
 }
@@ -4139,63 +4139,8 @@ fn heading(text: impl Into<SharedString>) -> Div {
 }
 
 /// The sidebar: 書式設定オプション for the selection, or the slide's settings.
-pub(crate) fn sidebar(editor: &mut SlideEditor) -> Option<SidebarPanel> {
-    let cm = |emu: i64| format!("{:.2} cm", emu as f64 / 360_000.0);
-    let shapes = editor.selected_shapes();
-    if let Some(shape) = shapes.first() {
-        let mut body = div().px(px(18.)).py(px(8.));
-        if shapes.len() > 1 {
-            body = body.child(div().text_size(px(13.)).text_color(text_secondary()).child(crate::shell::i18n::format("pptx.chrome.count-shapes-selected", &[("count", &shapes.len())])));
-        }
-        if let ShapeKind::Auto(auto) = &shape.kind {
-            let fill = match &auto.fill {
-                Fill::None => crate::shell::i18n::text("_shell.none").to_string(),
-                Fill::Solid(c) => format!("#{:06X}", c.rgb.0),
-                Fill::Linear { .. } | Fill::TileLinear { .. } | Fill::Path { .. } => crate::shell::i18n::text("pptx.chrome.gradient").to_string(),
-                Fill::Image(_) | Fill::TileImage { .. } | Fill::Blip(_) => crate::shell::i18n::text("pptx.chrome.picture").to_string(),
-                Fill::Pattern { preset, .. } => crate::shell::i18n::format("pptx.chrome.pattern-preset", &[("preset", preset)]),
-            };
-            let line = auto.stroke.as_ref().map_or(crate::shell::i18n::text("_shell.none").to_string(), |s| {
-                let dash = if s.dashed { crate::shell::i18n::text("pptx.chrome.dashed").to_string() } else { String::new() };
-                crate::shell::i18n::format("_pptx.hex-width-pt-dash", &[("hex", &format!("{:06X}", s.color.rgb.0)), ("width", &(s.width as f64 / 12_700.0)), ("dash", &dash)])
-            });
-            body = body.child(heading(crate::shell::i18n::text("pptx.chrome.fill-line"))).child(field(crate::shell::i18n::text("pptx.common.fill"), fill)).child(field(crate::shell::i18n::text("_shell.line"), line));
-        }
-        body = body
-            .child(heading(crate::shell::i18n::text("_shell.size-rotation")))
-            .child(field(crate::shell::i18n::text("_shell.width"), cm(shape.frame.width)))
-            .child(field(crate::shell::i18n::text("_shell.height"), cm(shape.frame.height)))
-            .child(field(crate::shell::i18n::text("_shell.rotate"), format!("{}°", (shape.rotation as f64 / 60_000.0 * 10.0).round() / 10.0)))
-            .child(heading(crate::shell::i18n::text("_shell.position")))
-            .child(field("X".into(), cm(shape.frame.x)))
-            .child(field("Y".into(), cm(shape.frame.y)));
-        return Some(SidebarPanel { title: crate::shell::i18n::text("_shell.format-options"), body: body.into_any_element() });
-    }
-    let slide = editor.slide();
-    let index = editor.presentation().slide_index(editor.current_slide).unwrap_or(0) + 1;
-    let layout = slide.layout.and_then(|l| editor.presentation().layout(l)).map(|l| l.name.clone()).unwrap_or_else(|| "—".into());
-    let background = match &slide.background {
-        Fill::None => crate::shell::i18n::text("_shell.none").to_string(),
-        Fill::Solid(c) => format!("#{:06X}", c.rgb.0),
-        Fill::Linear { .. } | Fill::TileLinear { .. } | Fill::Path { .. } => crate::shell::i18n::text("pptx.chrome.gradient").to_string(),
-        Fill::Image(_) | Fill::TileImage { .. } | Fill::Blip(_) => crate::shell::i18n::text("pptx.chrome.picture").to_string(),
-        Fill::Pattern { preset, .. } => crate::shell::i18n::format("pptx.chrome.pattern-preset", &[("preset", preset)]),
-    };
-    let size = editor.presentation().slide_size;
-    let ratio = size.width as f64 / size.height.max(1) as f64;
-    let kind = if (ratio - 16.0 / 9.0).abs() < 0.01 { crate::shell::i18n::text("pptx.chrome.widescreen-16-9") } else if (ratio - 4.0 / 3.0).abs() < 0.01 { crate::shell::i18n::text("pptx.chrome.standard-4-3") } else { crate::shell::i18n::text("_shell.custom") };
-    let body = div()
-        .px(px(18.))
-        .py(px(8.))
-        .child(heading(crate::shell::i18n::format("pptx.chrome.slide-index", &[("index", &index)])))
-        .child(field(crate::shell::i18n::text("_shell.background"), background))
-        .child(field(crate::shell::i18n::text("_shell.layout"), layout))
-        .child(field(crate::shell::i18n::text("_shell.transitions"), transition_name(editor.slide().transition.as_ref())))
-        .child(heading(crate::shell::i18n::text("pptx.chrome.slide-size")))
-        .child(field(crate::shell::i18n::text("_shell.size"), kind.to_string()))
-        .child(field(crate::shell::i18n::text("_shell.width"), cm(size.width)))
-        .child(field(crate::shell::i18n::text("_shell.height"), cm(size.height)));
-    Some(SidebarPanel { title: crate::shell::i18n::text("_shell.slide"), body: body.into_any_element() })
+pub(crate) fn sidebar(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<SidebarPanel> {
+    super::sidebar_settings::sidebar(editor,window,cx)
 }
 
 pub(crate) fn reflection_preset(distance: i64, end_pos: i32) -> ibis_doc_model::Reflection {

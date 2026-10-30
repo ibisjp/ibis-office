@@ -43,7 +43,7 @@ fn word_char(c: char) -> bool {
 /// and where it starts; `None` outside a formula, inside a string, after a
 /// sheet's or table's name, or when the word is not a name's start.
 pub(crate) fn word_at(text: &str, caret: usize) -> Option<(usize, &str)> {
-    if !text.starts_with('=') || caret > text.len() || !text.is_char_boundary(caret) {
+    if !super::formula_reference::is_formula(text) || caret > text.len() || !text.is_char_boundary(caret) {
         return None;
     }
     let before = &text[..caret];
@@ -92,7 +92,7 @@ pub(crate) fn candidates(prefix: &str, names: &[String], tables: &[String]) -> V
 /// The function whose parentheses the caret (a byte offset) is in, and
 /// which of its arguments (from 0) it is at.
 pub(crate) fn call_at(text: &str, caret: usize) -> Option<(String, usize)> {
-    if !text.starts_with('=') || caret > text.len() {
+    if !super::formula_reference::is_formula(text) || caret > text.len() {
         return None;
     }
     let mut stack: Vec<(String, usize)> = Vec::new();

@@ -44,6 +44,7 @@ impl Swatch {
 /// The palette of a button or submenu.
 #[derive(Clone)]
 pub(crate) struct Palette {
+    pub current:Option<Rgb>,
     /// "None" (自動, 塗りつぶしなし…) first, as an item of its own.
     pub none: Option<MenuItem>,
     /// The theme's colours: the first row the colours themselves, the rows after them lighter and darker.
@@ -62,6 +63,8 @@ static ANY_RECENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 
 const SQUARE: f32 = 18.0;
 const GAP: f32 = 3.0;
+// Ten standard swatches per row, plus the popup and item insets.
+pub(crate) const PALETTE_WIDTH:f32=10.*SQUARE+9.*GAP+2.*(8.+4.+1.);
 
 fn name_of(rgb: Rgb) -> SharedString {
     format!("#{:06X}", rgb.0).into()
@@ -78,10 +81,11 @@ impl SlideEditor {
 }
 
 fn row(swatches: Vec<Swatch>, editor: &WeakEntity<SlideEditor>, id: &'static str, _button: Option<&'static str>) -> impl IntoElement {
-    h_flex().gap(px(GAP)).children(swatches.into_iter().enumerate().map(|(i, s)| {
+    h_flex().id(id).w_full().min_w_0().flex_wrap().gap(px(GAP)).children(swatches.into_iter().enumerate().map(|(i, s)| {
         let (editor, handler, rgb, label) = (editor.clone(), s.item.handler.clone(), s.rgb, s.item.label.clone());
-        div()
+        div().relative()
             .id(ElementId::Name(format!("{id}-{i}").into()))
+            .flex_none()
             .w(px(SQUARE))
             .h(px(SQUARE))
             .rounded(px(2.))
@@ -100,6 +104,10 @@ fn row(swatches: Vec<Swatch>, editor: &WeakEntity<SlideEditor>, id: &'static str
                     })
                     .ok();
             })
+            .child(canvas(|_,_,_|(),move|bounds,_,_,_|{
+                #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                crate::shell::scenario::button_probe::record_bounds(&format!("{id}-{i}"),bounds);
+            }).absolute().inset_0())
     }))
 }
 
@@ -115,6 +123,7 @@ fn section(title: Option<SharedString>, rows: Vec<AnyElement>) -> impl IntoEleme
 /// `palette` into `menu`, for the editor `editor`.
 pub(crate) fn fill_palette(mut menu: gpui_kit::component::menu::PopupMenu, palette: &Palette, editor: &WeakEntity<SlideEditor>, _cx: &mut Context<gpui_kit::component::menu::PopupMenu>) -> gpui_kit::component::menu::PopupMenu {
     use gpui_kit::component::menu::PopupMenuItem;
+    menu=menu.min_w(px(PALETTE_WIDTH)).max_w(px(PALETTE_WIDTH));
     let t = crate::shell::i18n::text;
     let button = palette.button;
     // 1. None.
@@ -130,12 +139,12 @@ pub(crate) fn fill_palette(mut menu: gpui_kit::component::menu::PopupMenu, palet
         menu = menu.item(PopupMenuItem::element(move |_, _| {
             let rows: Vec<AnyElement> = swatches.iter().enumerate().map(|(i, r)| row(r.clone(), &editor, theme_row_id(i), button).into_any_element()).collect();
             section(Some(title.clone()), rows)
-        }));
+        }).hoverable(false));
     }
     // 3. The standard colours.
     if !palette.standard.is_empty() {
         let (swatches, editor, title) = (palette.standard.clone(), editor.clone(), t("color.palette.standard"));
-        menu = menu.item(PopupMenuItem::element(move |_, _| section(Some(title.clone()), vec![row(swatches.clone(), &editor, "palette-standard", button).into_any_element()])));
+        menu = menu.item(PopupMenuItem::element(move |_, _| section(Some(title.clone()), vec![row(swatches.clone(), &editor, "palette-standard", button).into_any_element()])).hoverable(false));
     }
     // 4. Those used lately.
     // (The editor may be being updated now: whether some window has picked a colour is noted aside.)
@@ -149,12 +158,15 @@ pub(crate) fn fill_palette(mut menu: gpui_kit::component::menu::PopupMenu, palet
             }
             let swatches: Vec<Swatch> = recent.into_iter().map(|c| Swatch::new(c, name_of(c), false, &pick)).collect();
             section(Some(title.clone()), vec![row(swatches, &editor, "palette-recent", button).into_any_element()]).into_any_element()
-        }));
+        }).hoverable(false));
     }
     // 5. More colours.
-    if let Some(more) = &palette.more {
-        menu = menu.separator();
-        menu = menu.item(crate::shell::chrome::menu_item_row(more, editor));
+    if let Some(pick)=palette.pick.clone() {
+        let color=palette.current.or_else(||palette.theme.iter().flatten().chain(palette.standard.iter()).find(|s|s.item.checked).map(|s|s.rgb)).unwrap_or(Rgb(0));
+        let more=crate::shell::chrome::MenuItem::tr("color.palette.more").on(move|e,w,cx|e.open_color_picker_dialog(color,pick.clone(),w,cx));
+        menu=menu.separator().item(crate::shell::chrome::menu_item_row(&more,editor));
+    } else if let Some(more)=&palette.more {
+        menu=menu.separator().item(crate::shell::chrome::menu_item_row(more,editor));
     }
     menu
 }
@@ -241,5 +253,5 @@ impl Palette {
 pub(crate) fn simple_palette(none: Option<MenuItem>, theme: Option<&[Rgb; 10]>, colors: &[(SharedString, Rgb, &'static str)], current: Option<Rgb>, pick: PickColor) -> Vec<crate::shell::chrome::MenuEntry> {
     let theme = theme.map(|t| theme_rows(t, &pick, current)).unwrap_or_default();
     let standard = colors.iter().map(|(label, rgb, id)| Swatch::with_id(id, *rgb, label.clone(), current == Some(*rgb), &pick)).collect();
-    vec![crate::shell::chrome::MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None })]
+    vec![crate::shell::chrome::MenuEntry::Palette(Palette { none, theme, standard, pick: Some(pick), more: None, button: None, current })]
 }

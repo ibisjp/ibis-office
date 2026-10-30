@@ -8,9 +8,9 @@
 //! fills the column (計算列). The table's style is laid on the cells as
 //! Excel draws it (`ibis_pptx::styled_with_table`).
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use crate::shell::chrome::Checkbox;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -413,6 +413,7 @@ impl SlideEditor {
 
     /// テーブルの作成 / サイズ変更, under the formula bar.
     pub(crate) fn render_table_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.sheet_range_pick_active(){return None;}
         let d = self.sheet_state()?.table_dialog.as_ref()?;
         let is_resize = d.target_table.is_some();
         let title = if is_resize {
@@ -442,15 +443,13 @@ impl SlideEditor {
             .occlude()
             .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
             .child(desc)
-            .child(Input::new(&d.range).small().cleanable(true))
+            .child(super::range_field::local_range_field(&d.range,"table-dialog-range",false,cx))
             .when(!is_resize, |b| b.child(Checkbox::new("table-header").label(crate::shell::i18n::text("_xlsx.my-table-has-headers")).checked(d.header).on_click(cx.listener(|this, on: &bool, _, cx| this.set_table_dialog_header(*on, cx)))))
             .when_some(d.error.clone(), |b, e| b.child(div().text_xs().text_color(theme.danger).child(e)))
             .child(
-                h_flex()
-                    .gap_2()
-                    .justify_end()
-                    .child(Button::new("table-cancel").small().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, window, cx| this.close_table_dialog(window, cx))))
-                    .child(Button::new("table-ok").primary().small().label("OK").on_click(cx.listener(|this, _, window, cx| this.confirm_table_dialog(window, cx)))),
+                crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                    .action(crate::shell::chrome::ActionDefinition::new("table-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|this, _, window, cx| this.confirm_table_dialog(window, cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("table-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, window, cx| this.close_table_dialog(window, cx)))))),
             );
         Some(deferred(dialog).with_priority(1).into_any_element())
     }

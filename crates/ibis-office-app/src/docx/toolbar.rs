@@ -27,7 +27,7 @@ const STYLES: &[(&str, &str, &str)] = &[
 ];
 
 /// Text colours offered (Word's standard colours).
-const COLORS: &[(&str, &str, u32)] = &[
+pub(super) const COLORS: &[(&str, &str, u32)] = &[
     ("docx.color.black", "docx.toolbar.automatic-black", 0x000000),
     ("docx.color.dark-red", "_shell.dark-red", 0xc00000),
     ("docx.color.red", "_shell.red", 0xff0000),
@@ -474,7 +474,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         let standard: Vec<Swatch> = COLORS[1..].iter().map(|&(item_id, name, c)| Swatch::with_id(item_id, Rgb(c), crate::shell::i18n::text(name), current == Some(Rgb(c)), &pick)).collect();
         let none = MenuItem::new("docx.color.black", crate::shell::i18n::text("docx.toolbar.automatic-black")).icon("format_color_reset").checked(current == Some(Rgb(0))).on(|this, _, cx| this.set_text_color(Rgb(0), cx));
         let more = MenuItem::tr("docx.color.custom").on(|this, window, cx| this.open_color_edit(false, window, cx));
-        vec![MenuEntry::Palette(Palette { none: Some(none), theme, standard, pick: Some(pick), more: Some(more), button: None })]
+        vec![MenuEntry::Palette(Palette { none: Some(none), theme, standard, pick: Some(pick), more: Some(more), button: None, current:None })]
     };
     // 蛍光ペンの色: Word's sixteen, and "色なし".
     let highlight_menu: Vec<MenuEntry> = {
@@ -1603,13 +1603,20 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             .on(|this, window, cx| this.open_docx_template_panel(window, cx))
             .into(),
     );
-    file.insert(
-        print_at + 7,
-        MenuItem::tr("docx.file.convert-format")
-            .icon("swap_horiz")
-            .on(|this, window, cx| this.open_docx_convert_panel(window, cx))
-            .into(),
-    );
+
+
+    // Format conversion is a File > Export choice, not a separate settings screen.
+    for (id, key, format) in [
+        ("docx.file.export.doc", "docx.convert.format.doc", ibis_pptx::docx_convert::DocxConvertFormat::Doc),
+        ("docx.file.export.rtf", "docx.convert.format.rtf", ibis_pptx::docx_convert::DocxConvertFormat::Rtf),
+        ("docx.file.export.txt", "docx.convert.format.txt", ibis_pptx::docx_convert::DocxConvertFormat::Txt),
+        ("docx.file.export.html", "docx.convert.format.html", ibis_pptx::docx_convert::DocxConvertFormat::Html),
+        ("docx.file.export.odt", "docx.convert.format.odt", ibis_pptx::docx_convert::DocxConvertFormat::Odt),
+    ] {
+        let entry = MenuItem::new(id, crate::shell::i18n::text(key)).icon("description")
+            .on(move |editor, window, cx| editor.export_docx_format_dialog(format, window, cx)).into();
+        let _ = push_into(menus.items_mut(MenuId::File), "file.export", entry);
+    }
 
     menus.connect("tools.word-count", |this, window, cx| this.open_word_count_panel(window, cx));
     // The shell's items that every format shows: Word's Page Setup (the panel of 書式 > ページ設定), the dictionary (the thesaurus) and the
@@ -2034,7 +2041,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             standard,
             pick: Some(pick),
             more: None,
-            button: None,
+            button: None, current:None,
         })]
     };
     let dash_items: Vec<MenuEntry> = super::picture_panel::PICTURE_BORDER_DASHES.iter().map(|&(_label, d)| {
@@ -2371,7 +2378,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
                     standard,
                     pick: Some(pick),
                     more: Some(more),
-                    button: None,
+                    button: None, current:None,
                 })]
             };
             sub.items.push(crate::shell::chrome::Submenu::tr("docx.underline.colors", "format_color_text", colors).into());
@@ -2452,7 +2459,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
                     standard,
                     pick: Some(pick),
                     more: Some(more),
-                    button: None,
+                    button: None, current:None,
                 })]
             };
             sub.items.push(crate::shell::chrome::Submenu::new("docx.format.text.colors", "format_color_text", crate::shell::i18n::text("docx.toolbar.automatic"), text_colors).into());
@@ -2484,6 +2491,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             sub.items.push(MenuItem::tr("docx.text.baseline").checked(text_style.as_ref().is_some_and(|s| s.position == ibis_doc_model::VerticalPosition::Baseline)).disabled(!editing)
                 .on(|this, _, cx| this.apply_run_change(ibis_doc_model::RunChange::Position(ibis_doc_model::VerticalPosition::Baseline), cx)).into());
             sub.items.push(MenuItem::new("docx.text.ruby", crate::shell::i18n::text("docx.toolbar.phonetic-guide")).disabled(!editing).on(|this, window, cx| this.open_ruby(window, cx)).into());
+            sub.items.push(MenuItem::new("docx.text.fit-text", crate::shell::i18n::text("docx.fit-text.title")).disabled(!editing).on(|e,w,cx|e.open_fit_text(w,cx)).into());
             // 文字の囲み線 (Word's ホーム > 文字の囲み線).
             sub.items.push(
                 MenuItem::tr("docx.text.border")
@@ -3112,9 +3120,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.options.user-info").icon("person").on(|this, window, cx| this.open_user_info_panel(window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.file.repair").icon("cleaning_services").disabled(super::repair::damaged_document().is_none()).on(|this, window, cx| this.open_docx_repair_damaged(window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.template.attach").icon("extension").on(|this, window, cx| this.open_docx_template_panel(window, cx)).into());
-        menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.file.convert-format").icon("swap_horiz").on(|this, window, cx| this.open_docx_convert_panel(window, cx)).into());
     }
-    menus.connect("docx.file.convert-format", |this, window, cx| this.open_docx_convert_panel(window, cx));
     menus.connect("docx.protect.formatting", |this, _, cx| {
         let next = !this.is_formatting_protected();
         this.set_formatting_protection(next, cx);
@@ -3197,6 +3203,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.compare.footnotes", |this, _, cx| this.toggle_compare_option(5, cx));
     menus.connect("docx.compare.comments", |this, _, cx| this.toggle_compare_option(6, cx));
     menus.connect("docx.compare.fields", |this, _, cx| this.toggle_compare_option(7, cx));
+    menus.connect("docx.ruler", |this, _, cx| this.open_ruler_panel(cx));
     menus.connect("docx.vertical-ruler", |this, _, cx| this.toggle_vertical_ruler(cx));
     menus.connect("docx.ruler-unit.cm", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Centimeters, cx));
     menus.connect("docx.ruler-unit.mm", |this, _, cx| this.set_ruler_unit(crate::shell::editor::RulerUnit::Millimeters, cx));

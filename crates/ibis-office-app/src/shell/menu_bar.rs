@@ -36,6 +36,11 @@ const BAR_BOTTOM: f32 = 36.0 + 28.0;
 /// How often a hovered ▲ or ▼ scrolls by one line, in milliseconds.
 const SCROLL_MS: u64 = 70;
 const MENU_WIDTH: f32 = 280.0;
+/// Apply the same viewport limit to roots and arbitrarily deep submenus.
+pub(crate) fn fitted_menu_width(width:f32, viewport:f32)->f32 {
+    width.min(crate::shell::chrome::MENU_ITEM_MAX_WIDTH).min((viewport-2.*WINDOW_MARGIN).max(1.))
+}
+
 
 fn height_of(entry: &MenuEntry) -> f32 {
     match entry {
@@ -233,6 +238,8 @@ fn submenu_scroll_row(
                                 point(bounds.origin.x + bounds.size.width - px(10.), track_top),
                                 size(px(12.), px(items_h.max(16.0))),
                             );
+                            #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+                            crate::shell::scenario::button_probe::record_bounds("submenu-scroll-track", track_bounds);
                             let shown = ((view.end - view.start) as f32 / total as f32).clamp(0.05, 1.0);
                             let top_frac = (view.start as f32 / total as f32).clamp(0.0, 1.0 - shown);
                             let thumb_h = (items_h * shown).max(16.0);
@@ -272,14 +279,14 @@ fn submenu_scroll_row(
                                 }
                             };
 
+                            // This canvas owns only the scrollbar track. A menu-wide Bubble
+                            // stop would run before earlier row listeners and disable mouse clicks.
                             let state_down = state_canvas.clone();
                             let scroll_down = scroll_at.clone();
                             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                                 if phase == DispatchPhase::Capture && event.button == MouseButton::Left && track_bounds.contains(&event.position) {
                                     state_down.borrow_mut().dragging = true;
                                     scroll_down(event.position.y, window, cx);
-                                    cx.stop_propagation();
-                                } else if phase == DispatchPhase::Bubble && menu_bounds.contains(&event.position) {
                                     cx.stop_propagation();
                                 }
                             });
@@ -297,8 +304,6 @@ fn submenu_scroll_row(
                             window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
                                 if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
                                     state_up.borrow_mut().dragging = false;
-                                } else if phase == DispatchPhase::Bubble && menu_bounds.contains(&event.position) {
-                                    cx.stop_propagation();
                                 }
                             });
                         },
@@ -326,13 +331,14 @@ fn fill_submenu_window(
         s.start = view.start;
         (s.entries.clone(), view, s.width, s.editor.clone())
     };
+    let width=fitted_menu_width(width,f32::from(window.viewport_size().width));
     let mut menu = menu.min_w(px(width)).max_w(px(width)).scrollable(false);
     let has_up = view.cut && view.start > 0;
     let has_down = view.cut && view.end < entries.len();
     if has_up {
         menu = menu.item(submenu_scroll_row(-1, true, view, entries.clone(), state));
     }
-    menu = fill_menu_entries(menu, &entries[view.start..view.end], &editor, window, cx);
+    menu = fill_menu_entries(menu, &entries[view.start..view.end], width, &editor, window, cx);
     if has_down {
         menu = menu.item(submenu_scroll_row(1, !has_up, view, entries, state));
     }
@@ -351,9 +357,10 @@ pub(crate) fn fill_scrollable_popup_menu(
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     let room = SlideEditor::submenu_room(window);
+    let width=fitted_menu_width(width,f32::from(window.viewport_size().width));
     let view = visible(&entries, 0, room);
     if !view.cut {
-        return fill_menu_entries(menu.min_w(px(width)).max_w(px(width)).scrollable(false), &entries, editor, window, cx);
+        return fill_menu_entries(menu.min_w(px(width)).max_w(px(width)).scrollable(false), &entries, width, editor, window, cx);
     }
     let state = Rc::new(std::cell::RefCell::new(SubmenuScroll {
         entries: Rc::new(entries),
@@ -444,7 +451,7 @@ fn fill_window(menu: PopupMenu, open: &OpenMenuParts, window: &mut Window, cx: &
     if view.cut && view.start > 0 {
         menu = menu.item(scroll_row(-1, editor, bars));
     }
-    menu = fill_menu_entries(menu, &entries[view.start..view.end], editor, window, cx);
+    menu = fill_menu_entries(menu, &entries[view.start..view.end], *width, editor, window, cx);
     if view.cut && view.end < entries.len() {
         menu = menu.item(scroll_row(1, editor, bars));
     }
@@ -473,7 +480,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn submenu_room_for_viewport(viewport_h: f32) -> f32 {
-        ((viewport_h - BAR_BOTTOM - WINDOW_MARGIN) - 240.0).clamp(160.0, 460.0)
+        (viewport_h - 2.0 * WINDOW_MARGIN).max(ITEM_HEIGHT + MENU_PADDING)
     }
 
     /// Open menu `ix` (closing the one that is open).
@@ -482,7 +489,7 @@ impl SlideEditor {
         let Some((_, entries)) = menus.menus.into_iter().nth(ix) else {
             return;
         };
-        let width = menu_width_for_entries(&entries).max(MENU_WIDTH);
+        let width = fitted_menu_width(menu_width_for_entries(&entries).max(MENU_WIDTH),f32::from(window.viewport_size().width));
         let entries = Rc::new(entries);
         let editor = cx.entity().downgrade();
         let view = visible(&entries, 0, Self::menu_room(window));
@@ -517,7 +524,7 @@ impl SlideEditor {
             return;
         }
         open.start = view.start;
-        let width = menu_width_for_entries(&open.entries).max(MENU_WIDTH);
+        let width = fitted_menu_width(menu_width_for_entries(&open.entries).max(MENU_WIDTH),f32::from(window.viewport_size().width));
         let parts = OpenMenuParts { entries: open.entries.clone(), view, editor, bars: open.bars.clone(), width };
         open.popup.update(cx, |popup, cx| popup.rebuild(window, cx, move |menu, window, cx| fill_window(menu, &parts, window, cx)));
         cx.notify();
@@ -636,26 +643,41 @@ impl SlideEditor {
         let menus = self.menus();
         let open_ix = self.open_menu.as_ref().map(|o| o.ix);
         let room = Self::menu_room(window);
+        let logo_height=28.*0.8*0.8;
+        let menu_width=menus.menus.iter().map(|(id,_)|crate::shell::chrome::dropdown_list::label_width(window,&id.label(),14.)+16.).sum::<f32>();
+        let show_logo=f32::from(window.viewport_size().width)>=8.+menu_width+16.+logo_height*crate::shell::chrome::LOGO_ASPECT+12.;
+        // The logo is a button with the menu names' padding, so it needs no gap after it and starts a little further
+        // left: the menu names stay where they were before the logo became a button (4 + 8 + logo + 8 = 8 + logo + 12).
+        let leading=if show_logo{(8.+12.-2.*MENU_BAR_BUTTON_PADDING).max(0.)}else{8.};
         h_flex()
             .h(px(28.))
             .flex_shrink_0()
-            .pl(px(45.))
+            .pl(px(leading))
             .items_center()
             .bg(rgb(APP_BG))
+            .when(show_logo,|bar|bar.child(div().relative().child({
+                    // The logo opens the start window: a modal dialog leaves it available (`panel_dialog_allows_pointer`).
+                    let bounds=self.logo_bounds.clone();
+                    crate::shell::editor::bounds_observer(move |b,_,_|bounds.set(Some(b)))
+                }).child(
+                {
+                    let logo=menu_bar_button("editor-app-logo".into())
+                        .child(crate::shell::chrome::brand_logo("editor-app-logo-image",logo_height,false));
+                    // The Web version has one page and no start window: there the logo is only the mark.
+                    #[cfg(not(target_arch="wasm32"))]
+                    let logo=logo.cursor_pointer().tooltip(crate::shell::i18n::text("shell.start-window"))
+                        .on_click(cx.listener(|_,_,_,cx|crate::open_editor(None,None,cx)));
+                    logo
+                })))
             .children(menus.menus.into_iter().enumerate().map(|(ix, (id, _))| {
                 let selected = open_ix == Some(ix);
                 div()
                     .id(SharedString::from(format!("menu-{}", id.key())))
                     .relative()
                     .child(
-                        Button::new(SharedString::from(format!("menu-button-{}", id.key())))
-                            .ghost()
-                            .small()
+                        menu_bar_button(SharedString::from(format!("menu-button-{}", id.key())))
                             .label(id.label())
-                            .h(px(24.))
-                            .px(px(8.))
                             .text_size(px(14.))
-                            .rounded(px(4.))
                             .selected(selected)
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -683,6 +705,8 @@ impl SlideEditor {
                     }))
                     .when(selected, |d| d.child(self.render_open_menu(room, cx)))
             }))
+            .child(div().flex_1())
+
     }
 
     fn render_open_menu(&self, room: f32, cx: &mut Context<Self>) -> impl IntoElement {
@@ -719,6 +743,25 @@ impl SlideEditor {
     }
 }
 
+/// Height of a menu bar item's hover/selected rounded rectangle.
+pub(crate) const MENU_BAR_BUTTON_HEIGHT: f32 = 24.;
+/// Horizontal padding inside a menu bar item (the label or the logo).
+pub(crate) const MENU_BAR_BUTTON_PADDING: f32 = 8.;
+/// Corner radius of a menu bar item's hover/selected rectangle.
+pub(crate) const MENU_BAR_BUTTON_RADIUS: f32 = 4.;
+/// One menu bar item: the menus and the ibisOffice logo share its shape, hover and selected colours.
+pub(crate) fn menu_bar_button(id: SharedString) -> Button {
+    let button = Button::new(id.clone())
+        .ghost()
+        .small()
+        .h(px(MENU_BAR_BUTTON_HEIGHT))
+        .px(px(MENU_BAR_BUTTON_PADDING))
+        .rounded(px(MENU_BAR_BUTTON_RADIUS));
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    let button = crate::shell::scenario::button_probe::observe(button, id.into());
+    button
+}
+
 #[cfg(test)]
 mod tests {
     use super::{SlideEditor, visible};
@@ -740,9 +783,10 @@ mod tests {
         }
         assert_eq!(entries.len(), 25);
 
-        let room = SlideEditor::submenu_room_for_viewport(800.0);
+        assert!(!visible(&entries,0,SlideEditor::submenu_room_for_viewport(800.)).cut,"use the available height in a roomy window");
+        let room = SlideEditor::submenu_room_for_viewport(560.0);
         let initial = visible(&entries, 0, room);
-        assert!(initial.cut, "25-entry submenu in an 800px window must be scrollable (cut: true)");
+        assert!(initial.cut, "25-entry submenu in a 560px window must be scrollable (cut: true)");
         assert_eq!(initial.start, 0);
         assert!(initial.end < entries.len());
 

@@ -16,6 +16,7 @@ use gpui_kit::*;
 use ibis_doc_model::{CellRange, SlideId, cell_name, sheet_command::Axis};
 
 use crate::shell::icons::Material;
+use super::sheet_tab_scroll::{TAB_BUTTON_WIDTH, reveal_offset};
 use crate::shell::editor::{SlideEditor, SlideLayout, Tool, WorkspaceContent, sheet_of};
 
 /// Dragging with ⌘ held to deselect (unselect) a rectangle of cells.
@@ -50,6 +51,8 @@ actions!(
         ExtendJumpRight,
         /// Select the cell in column A of the selected row (Excel's Home).
         SelectRowStart,
+        SelectRowEnd,
+        ExtendRowEnd,
         /// Stretch the selected range to column A.
         ExtendRowStart,
         /// Select A1, or the top-left cell past frozen panes (Excel's Ctrl+Home).
@@ -321,7 +324,6 @@ fn bar_text(rows: Vec<impl IntoElement>, expanded: bool, scroll: Option<&ScrollH
 /// Build the searchable menu entries for the bottom-left sheet list button (#98).
 pub(crate) fn sheet_list_menu_entries(editor: &SlideEditor) -> Vec<crate::shell::chrome::MenuEntry> {
     let wb_sheets = editor.presentation().workbook.as_ref().map(|w| &w.sheets);
-    let scroll = editor.sheet_state().map(|s| s.tab_scroll.clone());
     editor
         .presentation()
         .slides
@@ -335,16 +337,13 @@ pub(crate) fn sheet_list_menu_entries(editor: &SlideEditor) -> Vec<crate::shell:
             let current = id == editor.current_slide;
             let name = slide.name.clone().unwrap_or_else(|| format!("Sheet{}", index + 1));
             let tab_color = sheet_of(slide).and_then(|(_, sheet)| sheet.tab_color);
-            let scroll = scroll.clone();
             crate::shell::chrome::MenuItem::new("xlsx.sheet-list.item", name)
                 .checked(current)
                 .swatch_opt(tab_color)
                 .on(move |this, window, cx| {
                     this.select_slide(id, window, cx);
                     this.focus_handle.focus(window, cx);
-                    if let Some(scroll) = &scroll {
-                        scroll.scroll_to_item(index);
-                    }
+                    this.request_sheet_tab_reveal(id, cx);
                 })
                 .into()
         })
@@ -409,24 +408,14 @@ impl SlideEditor {
         let bar_rect = self.sheet_state().map(|s| s.bar_bounds.clone());
         let expanded = self.sheet_state().is_some_and(|s| s.bar_expanded);
         let bar_scroll = self.sheet_state().map(|s| s.bar_scroll.clone());
-        // Widened and typing: the caret's line kept in view.
-        if let (true, Some(handle), Some(edit)) = (expanded, bar_scroll.as_ref(), self.cell_edit().filter(|e| e.slide == self.current_slide)) {
-            let (top, bottom) = (edit.caret_line() as f32 * BAR_LINE_HEIGHT, (edit.caret_line() + 1) as f32 * BAR_LINE_HEIGHT);
-            let seen = -f32::from(handle.offset().y);
-            let shown = BAR_EXPANDED_HEIGHT - 4.0;
-            if top < seen {
-                handle.set_offset(point(px(0.), px(-top)));
-            } else if bottom > seen + shown {
-                handle.set_offset(point(px(0.), px(-(bottom - shown))));
-            }
-        }
-        let editing_lines: Option<Vec<(usize, String)>> = self.cell_edit().filter(|e| e.slide == self.current_slide).map(|e| {
-            let lines = super::cell_edit::text_lines(&e.text);
-            if expanded { lines.into_iter().map(|(a, l)| (a, l.to_string())).collect() } else { vec![lines[e.caret_line()]].into_iter().map(|(a, l)| (a, l.to_string())).collect() }
-        });
-        let editing_bar_lines: Option<Vec<super::cell_edit::BarLine>> = self.cell_edit().filter(|e| e.slide == self.current_slide).and(editing_lines.as_ref()).map(|lines| {
-            let edit = self.cell_edit().unwrap();
-            lines.iter().map(|(a, l)| edit.bar_line(*a, l)).collect()
+        let bar_height=self.formula_bar_height(window);
+        let width=self.wb().bar_bounds.get().map_or((f32::from(window.viewport_size().width)-210.).max(1.),|b|(f32::from(b.size.width)-20.).max(1.));
+        let editing_lines: Option<Vec<(usize,String)>>=editing_text.as_ref().map(|text|super::formula_layout::visual_lines(text,width,window));
+        if let Some(lines)=&editing_lines {self.wb_mut().bar_visual_lines=lines.clone();self.wb_mut().bar_shapes=lines.iter().map(|(_,l)|std::rc::Rc::new(super::formula_layout::shape_bar_line(l,window))).collect();}
+        let editing_bar_lines=self.cell_edit().zip(editing_lines.as_ref()).map(|(edit,lines)|{
+            let row=self.wb().bar_caret_row.filter(|&i|lines.get(i).is_some_and(|(a,l)|(*a..=*a+l.encode_utf16().count()).contains(&edit.caret))).unwrap_or_else(||lines.iter().rposition(|(start,_)|*start<=edit.caret).unwrap_or(0));
+            if expanded {if let Some(handle)=&bar_scroll {let top=row as f32*BAR_LINE_HEIGHT;let seen=-f32::from(handle.offset().y);let shown=bar_height-4.;if top<seen{handle.set_offset(point(px(0.),px(-top)));}else if top+BAR_LINE_HEIGHT>seen+shown{handle.set_offset(point(px(0.),px(-(top+BAR_LINE_HEIGHT-shown))));}}}
+            lines.iter().enumerate().filter(|(i,_)|expanded||*i==row).map(|(i, (a,l))|{let mut line=edit.bar_line(*a,l);if i!=row{line.caret_byte=None;}line}).collect::<Vec<_>>()
         });
         let ghost_formula = (self.selection.is_none() && editing_text.is_none() && !self.formula_hidden_here())
             .then(|| self.current_sheet().zip(self.current_cell()).and_then(|((_, sheet), (column, row))| spilled_ghost_formula_on(sheet, row, column)))
@@ -472,9 +461,10 @@ impl SlideEditor {
             }
             _ => String::new(),
         };
+        if editing_text.is_none(){let lines=super::formula_layout::visual_lines(&content,width,window);self.wb_mut().bar_shapes=lines.iter().map(|(_,l)|std::rc::Rc::new(super::formula_layout::shape_bar_line(l,window))).collect();self.wb_mut().bar_visual_lines=lines;}
         let field = || {
-            div()
-                .h(px(if expanded { BAR_EXPANDED_HEIGHT } else { 22. }))
+            div().cursor_text()
+                .h(px(if expanded { bar_height } else { 22. }))
                 .px_2()
                 .flex()
                 .when(!expanded, |d| d.items_center())
@@ -483,8 +473,8 @@ impl SlideEditor {
                 .rounded_sm()
                 .bg(theme.background)
         };
-        h_flex()
-            .h(px(if expanded { BAR_EXPANDED_HEIGHT + 8. } else { 30. }))
+        let bar=h_flex()
+            .h(px(if expanded { bar_height + 8. } else { 30. }))
             .flex_shrink_0()
             .px_2()
             .gap_2()
@@ -495,10 +485,6 @@ impl SlideEditor {
             .border_b_1()
             .border_color(theme.border)
             .child({
-                let editor_weak = cx.entity().downgrade();
-                let editor_open = editor_weak.clone();
-                let editor_content = editor_weak.clone();
-                let menu_open = self.wb().jump.name_box_menu_open;
                 let arrow_color = theme.muted_foreground;
                 div()
                     .relative()
@@ -529,101 +515,23 @@ impl SlideEditor {
                             .flex()
                             .items_center()
                             .child(
-                                gpui_kit::component::popover::Popover::new("name-box-dropdown")
-                                    .anchor(Anchor::TopRight)
-                                    .open(menu_open)
-                                    .trigger(
-                                        Button::new("name-box-dropdown-btn")
-                                            .ghost()
-                                            .xsmall()
-                                            .w(px(18.))
-                                            .h(px(20.))
-                                            .px(px(0.))
-                                            .rounded(px(3.))
-                                            .child(crate::shell::chrome::icon("arrow_drop_down", 16.0, arrow_color)),
-                                    )
-                                    .on_open_change(move |open, _, cx| {
-                                        editor_open
-                                            .update(cx, |this, cx| {
-                                                this.wb_mut().jump.name_box_menu_open = *open;
+                                {
+                                    let current=self.name_box_text();
+                                    let entries=self.name_box_defined_names().into_iter().map(|name| {
+                                        let value=name.clone();
+                                        crate::shell::chrome::MenuItem::new("xlsx.name-box-item",name.clone()).checked(name.eq_ignore_ascii_case(&current))
+                                            .on(move|e,w,cx| {
+                                                if e.go_to_reference(&value,w,cx) {
+                                                    e.wb().jump.name_box.update(cx,|input,cx|input.set_value(value.clone(),w,cx));
+                                                    e.wb_mut().jump.name_box_shown=value.clone();e.focus_handle.focus(w,cx);
+                                                } else {e.status=Some(crate::shell::i18n::format("_xlsx.invalid-reference-text",&[("text",&value)]).into());}
                                                 cx.notify();
-                                            })
-                                            .ok();
-                                    })
-                                    .content(move |_, _, cx| {
-                                        let Some(ed) = editor_content.upgrade() else {
-                                            return div().into_any_element();
-                                        };
-                                        let (names, current_text) = {
-                                            let r = ed.read(cx);
-                                            (r.name_box_defined_names(), r.name_box_text())
-                                        };
-                                        if names.is_empty() {
-                                            return v_flex()
-                                                .min_w(px(120.))
-                                                .p(px(6.))
-                                                .text_size(px(12.))
-                                                .text_color(rgb(0x5f6368))
-                                                .child("—")
-                                                .into_any_element();
-                                        }
-                                        let ed_list = editor_content.clone();
-                                        div()
-                                            .id("name-box-menu-list")
-                                            .min_w(px(140.))
-                                            .max_h(px(240.))
-                                            .overflow_y_scroll()
-                                            .p(px(4.))
-                                            .flex()
-                                            .flex_col()
-                                            .gap(px(1.))
-                                            .children(names.into_iter().enumerate().map(|(idx, name)| {
-                                                let checked = name.eq_ignore_ascii_case(&current_text);
-                                                let ed_click = ed_list.clone();
-                                                let name_click = name.clone();
-                                                h_flex()
-                                                    .id(("name-box-item", idx))
-                                                    .h(px(28.))
-                                                    .px(px(8.))
-                                                    .gap(px(6.))
-                                                    .rounded(px(4.))
-                                                    .items_center()
-                                                    .cursor_pointer()
-                                                    .text_size(px(13.))
-                                                    .text_color(rgb(0x1f1f1f))
-                                                    .when(checked, |d| d.bg(rgb(0xd3e3fd)))
-                                                    .hover(|s| s.bg(if checked { Hsla::from(rgb(0xc2d7fa)) } else { crate::shell::palette::shade(0.0, 0.08) }))
-                                                    .child(
-                                                        div()
-                                                            .w(px(16.))
-                                                            .h(px(28.))
-                                                            .flex_none()
-                                                            .flex()
-                                                            .items_center()
-                                                            .justify_center()
-                                                            .when(checked, |d| d.child(crate::shell::chrome::icon("check", 16.0, rgb(0x1f1f1f).into()))),
-                                                    )
-                                                    .child(div().flex_1().truncate().child(name))
-                                                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                                    .on_click(move |_, window, cx| {
-                                                        let target_name = name_click.clone();
-                                                        ed_click
-                                                            .update(cx, |this, cx| {
-                                                                this.wb_mut().jump.name_box_menu_open = false;
-                                                                if this.go_to_reference(&target_name, window, cx) {
-                                                                    this.wb().jump.name_box.update(cx, |input, cx| input.set_value(target_name.clone(), window, cx));
-                                                                    this.wb_mut().jump.name_box_shown = target_name;
-                                                                    this.focus_handle.focus(window, cx);
-                                                                } else {
-                                                                    this.status = Some(crate::shell::i18n::format("_xlsx.invalid-reference-text", &[("text", &target_name)]).into());
-                                                                }
-                                                                cx.notify();
-                                                            })
-                                                            .ok();
-                                                    })
-                                            }))
-                                            .into_any_element()
-                                    }),
+                                            }).into()
+                                    }).collect();
+                                    crate::shell::chrome::Dropdown::with_button("name-box-dropdown",
+                                        Button::new("name-box-dropdown-btn").ghost().xsmall().w(px(18.)).h(px(20.)).px(px(0.)).rounded(px(3.))
+                                            .child(crate::shell::chrome::icon("arrow_drop_down",16.,arrow_color)),entries,true,0,&cx.weak_entity()).offset_x(px(18.+2.-110.)).into_any_element()
+                                },
                             ),
                     )
             })
@@ -643,6 +551,7 @@ impl SlideEditor {
             )
             .child(
                 field()
+                    .border_color(if editing_text.is_some()&&self.focus_handle.is_focused(window){crate::shell::palette::rgb(crate::shell::chrome::PRIMARY_BUTTON_BG).into()}else{theme.border})
                     .flex_1()
                     .min_w_0()
                     // A press on the bar types into the selected cell, as in Excel (the keys go to the cell).
@@ -651,6 +560,8 @@ impl SlideEditor {
                         cx.listener(|this, e: &MouseDownEvent, window, cx| {
                             if this.cell_edit().is_none() && this.selection.is_none() && this.current_cell().is_some() {
                                 this.begin_cell_edit(super::cell_edit::EditMode::Edit, true, cx);
+                                if let Some(edit)=this.cell_edit_mut(){edit.caret=0;}
+                                this.wb_mut().bar_caret_row=None;
                             }
                             // The caret goes where the bar was pressed.
                             if this.cell_edit().is_some() {
@@ -659,29 +570,33 @@ impl SlideEditor {
                             this.focus_handle.focus(window, cx);
                         }),
                     )
-                    .when_some(bar_rect, |d, rect| d.child(canvas(|_, _, _| {}, move |bounds, _, _, _| rect.set(Some(bounds))).absolute().size_full()))
+                    .when_some(bar_rect, |d, rect| d.child(canvas(|_, _, _| {}, move |bounds, _, w, _| {if rect.replace(Some(bounds))!=Some(bounds){w.refresh();}}).absolute().size_full()))
                     .relative()
                     .overflow_hidden()
                     .child(match editing_bar_lines {
                         Some(lines) => {
                             let fg = theme.foreground;
+                            let bar_focus=self.focus_handle.clone();
                             let rows = lines.into_iter().map(|bar_line| {
                                 let text = bar_line.text;
+                                let bar_focus=bar_focus.clone();
                                 let sel = bar_line.selection_bytes;
                                 let caret = bar_line.caret_byte;
                                 let overlay_text = text.clone();
                                 h_flex()
                                     .relative()
                                     .h(px(BAR_LINE_HEIGHT))
+                                    .w_full().min_w_0()
                                     .flex_shrink_0()
                                     .items_center()
                                     .whitespace_nowrap()
-                                    .child(div().child(SharedString::from(text)))
+                                    // The caret at the end of the text sits on the row's right edge, where it would be clipped.
+                                    .child(div().pr(px(2.)).child(SharedString::from(text)))
                                     .when(sel.is_some() || caret.is_some(), |d| {
                                         d.child(
                                             canvas(
                                                 |_, _, _| {},
-                                                move |bounds, _, window, _| {
+                                                move |bounds, _, window, _cx| {
                                                     let style = window.text_style();
                                                     let size = window.rem_size() * 0.875;
                                                     let shaped = if overlay_text.is_empty() {
@@ -711,10 +626,13 @@ impl SlideEditor {
                                                             ));
                                                         }
                                                     }
-                                                    if let Some(c) = caret {
-                                                        let cx = x_at(c);
+                                                    if let Some(c) = caret.filter(|_| bar_focus.is_focused(window) && crate::shell::caret::visible(format!("bar:{caret:?}:{}",overlay_text.len()),window,_cx)) {
+                                                        // Align the thin quad to device pixels: glyph advances are fractional,
+                                                        // and a subpixel quad may disappear during rasterization.
+                                                        let caret_x = window.pixel_snap(bounds.origin.x + x_at(c));
+                                                        let caret_top = window.pixel_snap(top);
                                                         window.paint_quad(fill(
-                                                            Bounds::new(point(bounds.origin.x + cx, top), gpui_kit::size(px(1.), px(14.))),
+                                                            Bounds::new(point(caret_x, caret_top), gpui_kit::size(px(1.), px(14.))),
                                                             fg,
                                                         ));
                                                     }
@@ -731,9 +649,8 @@ impl SlideEditor {
                             // Closed: the first line; widened: all of them.
                             // Spilled ghost formulas (#122 / issue #24) are rendered in gray (`theme.muted_foreground`).
                             let rows: Vec<Div> = if expanded {
-                                content
-                                    .split('\n')
-                                    .map(|l| {
+                                super::formula_layout::visual_lines(&content,width,window).into_iter()
+                                    .map(|(_,l)| {
                                         div()
                                             .h(px(BAR_LINE_HEIGHT))
                                             .flex_shrink_0()
@@ -771,7 +688,28 @@ impl SlideEditor {
             )
             // Over the sheet, under the name box.
             .when(self.wb().jump.goto_open, |d| d.relative().child(deferred(self.render_goto(cx)).with_priority(1)))
-            .when(self.wb().table_dialog.is_some(), |d| d.relative().children(self.render_table_dialog(cx)))
+            .when(self.wb().table_dialog.is_some(), |d| d.relative().children(self.render_table_dialog(cx)));
+        div().flex().flex_col().flex_shrink_0().child(bar).when(expanded,|d|d.child(self.formula_bar_splitter(cx)))
+    }
+
+    fn request_sheet_tab_reveal(&mut self, id: SlideId, cx: &mut Context<Self>) {
+        self.wb_mut().tab_reveal = Some(id);
+        cx.notify();
+    }
+
+    fn reveal_sheet_tab_after_layout(&mut self, id: SlideId, cx: &mut Context<Self>) {
+        if self.wb().tab_reveal != Some(id) { return; }
+        self.wb_mut().tab_reveal = None;
+        let Some(index) = self.presentation().slide_index(id) else { return; };
+        let scroll = &self.wb().tab_scroll;
+        let Some(tab) = scroll.bounds_for_item(index) else { return; };
+        let view = scroll.bounds();
+        let offset = scroll.offset();
+        let x = reveal_offset(f32::from(view.left()), f32::from(view.size.width), f32::from(tab.left()), f32::from(tab.size.width), f32::from(offset.x), f32::from(scroll.max_offset().x));
+        if px(x) != offset.x {
+            scroll.set_offset(point(px(x), offset.y));
+            cx.notify();
+        }
     }
 
     /// The tabs of the worksheets along the bottom, as in Excel.
@@ -839,10 +777,16 @@ impl SlideEditor {
                     cx.notify();
                 }))
                 .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                    if event.click_count() >= 2 {
+                    let clicks = event.click_count();
+                    let previous = this.wb_mut().tab_last_click.replace((id, clicks));
+                    // OS click counts follow the pointer, even when scrolling puts
+                    // a different tab there. Renaming requires consecutive clicks
+                    // on the same sheet within that OS click sequence.
+                    if clicks >= 2 && previous == Some((id, clicks - 1)) {
                         return this.begin_sheet_rename(id, window, cx);
                     }
                     this.select_slide(id, window, cx);
+                    this.request_sheet_tab_reveal(id, cx);
                     this.focus_handle.focus(window, cx);
                 }))
                 .map(|d| match self.wb().jump.renaming == Some(id) {
@@ -859,7 +803,7 @@ impl SlideEditor {
                 .flex_shrink_0()
                 .items_center()
                 .justify_center()
-                .w(px(28.))
+                .w(px(TAB_BUTTON_WIDTH))
                 .h_full()
                 .cursor_pointer()
                 .text_color(muted)
@@ -882,9 +826,7 @@ impl SlideEditor {
             button(id, "add").on_click(cx.listener(|this, _, window, cx| {
                 this.insert_sheet(window, cx);
                 // The new tab shows.
-                if let Some(index) = this.presentation().slide_index(this.current_slide) {
-                    this.wb().tab_scroll.scroll_to_item(index);
-                }
+                this.request_sheet_tab_reveal(this.current_slide, cx);
                 this.focus_handle.focus(window, cx);
             }))
         };
@@ -894,17 +836,17 @@ impl SlideEditor {
             .ghost()
             .small()
             .icon(Icon::new(Material("menu")).size(px(18.)))
-            .w(px(28.))
+            .w(px(TAB_BUTTON_WIDTH))
             .h_full()
             .flex_shrink_0();
-        let list = crate::shell::chrome::searchable_dropdown_button(
+        let list = crate::shell::chrome::Dropdown::with_button(
             "sheet-list",
             trigger,
             sheet_list_menu_entries(self),
             true,
             0,
             &editor,
-        );
+        ).into_any_element();
 
         // Determine whether the + button is placed inline (right of the last sheet tab)
         // or fixed on the right edge of the scroll view.
@@ -920,7 +862,7 @@ impl SlideEditor {
             // Right edge of the last tab from the content origin.
             let tabs_right = last_tab.right() - scroll_bounds.left() - scroll.offset().x;
             // Check if inline + button (28px) fits within the scroll viewport width.
-            let fits_inline = (tabs_right + px(28.)) <= scroll_bounds.size.width;
+            let fits_inline = (tabs_right + px(TAB_BUTTON_WIDTH)) <= scroll_bounds.size.width;
             !fits_inline || scroll.max_offset().x > px(0.5) || scroll.offset().x < px(-0.5)
         } else {
             // Fallback for initial render before bounds are laid out.
@@ -967,6 +909,15 @@ impl SlideEditor {
                             .track_scroll(&scroll)
                             .children(tab_elements),
                     )
+                    .when_some(self.wb().tab_reveal, |d, id| {
+                        let editor = cx.entity().downgrade();
+                        d.child(canvas(|_, _, _| (), move |_, _, _, cx| {
+                            let editor = editor.clone();
+                            // Run after the scroll container has recorded the newly selected
+                            // tab's layout, including its selected font weight and new tabs.
+                            cx.defer(move |cx| { let _ = editor.update(cx, |this, cx| this.reveal_sheet_tab_after_layout(id, cx)); });
+                        }).absolute().inset_0())
+                    })
                     .when(more_left, |d| d.child(shadow(true)))
                     .when(more_right, |d| d.child(shadow(false))),
             )
@@ -988,23 +939,25 @@ impl SlideEditor {
         let mut ys: Vec<f32> = sheet.row_offsets().into_iter().map(|o| to_px(content.slide_origin.y, shape.frame.y, o)).collect();
         let target_right_px = to_px(content.slide_origin.x, shape.frame.x, 0) + f32::from(content.size.width) + 2000.0;
         let target_bottom_px = to_px(content.slide_origin.y, shape.frame.y, 0) + f32::from(content.size.height) + 2000.0;
-        let default_col_px = (sheet.default_column as f32 * scale).max(1.0);
-        let default_row_px = (sheet.default_row as f32 * scale).max(1.0);
+        let last_column_emu: i64 = sheet.columns.iter().sum();
+        let last_row_emu: i64 = sheet.rows.iter().sum();
         let mut cur_x = *xs.last().unwrap_or(&0.0);
         let mut col_count = sheet.columns.len();
         while cur_x < target_right_px && col_count < 16_384 {
-            cur_x += default_col_px;
+            let extra = (col_count + 1 - sheet.columns.len()) as i64 * sheet.default_column;
+            cur_x = to_px(content.slide_origin.x, shape.frame.x, last_column_emu + extra);
             xs.push(cur_x);
             col_count += 1;
         }
         let mut cur_y = *ys.last().unwrap_or(&0.0);
         let mut row_count = sheet.rows.len();
         while cur_y < target_bottom_px && row_count < 1_048_576 {
-            cur_y += default_row_px;
+            let extra = (row_count + 1 - sheet.rows.len()) as i64 * sheet.default_row;
+            cur_y = to_px(content.slide_origin.y, shape.frame.y, last_row_emu + extra);
             ys.push(cur_y);
             row_count += 1;
         }
-        let range = self.selected_range().filter(|_| self.selection.is_none());
+        let range = self.selected_range().filter(|_| self.selection.is_none() || self.sheet_range_pick_active());
         let all_selected = range.is_some_and(|r| {
             r.first_column == 0
                 && r.first_row == 0
@@ -1217,7 +1170,7 @@ impl SlideEditor {
                 .top_0()
                 .left_0()
                 .size_full()
-                .when_some(active_drag_cursor, |d, cursor| d.cursor(cursor))
+                .when(self.link_hover,|d|d.cursor_pointer()).when_some(active_drag_cursor, |d, cursor| d.cursor(cursor))
                 .when(show_headings, |d| {
                     d.child(canvas(|_, _, _| {}, move |bounds, _, window, cx| painter(bounds, window, cx)).absolute().size_full())
                         // The headers take the pointer from the sheet under them,
@@ -1304,8 +1257,10 @@ impl SlideEditor {
                 .children(self.pivot_buttons(cx))
                 .children(popup)
                 .children(self.wb().list_popup.as_ref().map(|p| deferred(anchored().position(p.position).snap_to_window_with_margin(px(8.)).child(p.menu.clone())).with_priority(2)))
+                .children(self.render_validation_choices(cx))
                 .children(self.render_filter_panel(cx))
                 .children(self.render_pivot_popup(cx))
+                .children(self.render_formula_references(cx))
                 .children(self.render_completion(cx))
                 .children(self.render_comment_card(cx))
                 .children(self.render_all_notes(cx))
@@ -1317,7 +1272,7 @@ impl SlideEditor {
     /// the range tinted except its selected cell, as in Excel, and the fill
     /// handle at its corner, which drags out a range.
     pub(crate) fn render_cell_cursor(&self, scale: f32, cx: &mut Context<Self>) -> Option<Div> {
-        if self.selection.is_some() {
+        if self.selection.is_some() && !self.sheet_range_pick_active() {
             return None;
         }
         let (shape, sheet) = self.current_sheet()?;
@@ -1349,6 +1304,9 @@ impl SlideEditor {
         }
         let green = rgb(SELECTION_COLOR);
         let editing_here = self.cell_edit().is_some_and(|e| e.slide == self.current_slide);
+        let cut_source=self.wb().clip.as_ref().filter(|c|c.cut&&c.slide==self.current_slide).map(|c|c.range);
+        let cut_active=cut_source==Some(range);
+        let cut_frame=cut_source.filter(|r|*r!=range).map(|r|div().absolute().left(px(x(r.first_column)-x0-1.)).top(px(y(r.first_row)-y0-1.)).w(px(x(r.last_column+1)-x(r.first_column))).h(px(y(r.last_row+1)-y(r.first_row))).border_2().border_dashed().border_color(green));
         let window_alt = self.sheet_state().is_some_and(|s| s.fill_copy || s.cell_move.is_some_and(|m| m.copy));
         // Option held while hovering or dragging the fill handle: a copy, not a series (#11).
         let fill_copy = self.sheet_state().is_some_and(|s| s.fill_copy);
@@ -1375,6 +1333,7 @@ impl SlideEditor {
         }
         // The cell being typed into: its text over the cell, laid out as the cell is when not edited (`sheet_view::edit_layout`), with the caret.
         let editor = self.cell_edit().filter(|e| e.slide == self.current_slide).map(|e| {
+            let caret_focus=self.focus_handle.clone();
             let (ex0, ex1, ey0, ey1) = if let Some(m) = sheet.merge_at(e.row, e.column) {
                 (x(m.first_column), x(m.last_column + 1), y(m.first_row), y(m.last_row + 1))
             } else {
@@ -1389,7 +1348,7 @@ impl SlideEditor {
             let origin = (ex0 - shape.frame.x as f32 * scale, ey0 - shape.frame.y as f32 * scale);
             let runs = e.runs.clone().map(std::sync::Arc::new);
             let ts = WindowTextSystem::new(cx.text_system().clone());
-            let layout = std::rc::Rc::new(super::sheet_view::edit_layout(&ts, sheet, default_style, &self.resources, e.row, e.column, &e.text, runs, origin, (ex1 - ex0, ey1 - ey0), px_per_point));
+            let layout = std::rc::Rc::new(super::sheet_view::edit_layout(&ts, sheet, default_style, &self.resources, e.row, e.column, &e.text, runs, origin, (ex1 - ex0, ey1 - ey0), px_per_point, self.cell_editor_width(ex0)));
             *e.layout.borrow_mut() = Some(layout.clone());
             let default_font_name = sheet.styles.first().and_then(|s| s.font.as_deref()).unwrap_or("游ゴシック"); // i18n-ok（既定のフォント名）
             let effective_font = style.font.as_deref().unwrap_or(default_font_name);
@@ -1431,9 +1390,11 @@ impl SlideEditor {
                 .absolute()
                 .left(px(ex0 - x0 - 1.0))
                 .top(px(ey0 - y0 - 1.0))
+                .cursor_text()
                 .w(px(box_w + 1.0 + bar_w))
                 .h(px(visible_h + 1.0))
                 .bg(style.fill.map_or_else(|| white(), |c| rgb(c.0).into()))
+                .when(self.panel_message.is_some() && self.sheet_state().and_then(|s|s.validation_rejected)==Some((e.column,e.row)), |d|d.bg(rgb(0xfff1f5)))
                 .max_h(px(max_box_h + 1.0))
                 .overflow_hidden()
                 .border_1()
@@ -1503,7 +1464,7 @@ impl SlideEditor {
                                     shaped.paint(point(o.x + px(l.x_at(l.end)), o.y + px(l.baseline) - shaped.ascent), shaped.ascent + shaped.descent, TextAlign::Left, None, window, cx).ok();
                                 }
                             }
-                            if let Some(l) = painted.lines.get(painted.line_of(caret)) {
+                            if let Some(l) = painted.lines.get(painted.line_of(caret)).filter(|_| caret_focus.is_focused(window) && crate::shell::caret::visible(format!("cell:{caret}:{}",painted.lines.len()),window,cx)) {
                                 let cx0 = l.x_at(caret);
                                 window.paint_quad(fill(Bounds::new(point(o.x + px(cx0), o.y + px(l.baseline - l.ascent)), gpui_kit::size(px(1.0), px(l.ascent + l.descent))), rgb(0x000000)));
                             }
@@ -1559,7 +1520,9 @@ impl SlideEditor {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .bg(rgb(0xF2F2F2))
+                        .bg(rgb(HEADER_BACKGROUND))
+                        .rounded(px(4.))
+                        .hover(|d| d.bg(rgb(0xd6d6d6)))
                         .border_1()
                         .border_color(rgb(0xA6A6A6))
                         .text_size(px(side * 0.6))
@@ -1568,7 +1531,7 @@ impl SlideEditor {
                             cx.stop_propagation();
                             this.open_validation_list(e.position, window, cx);
                         }))
-                        .child("▼"),
+                        .child(crate::shell::chrome::icon("arrow_drop_down", 18., rgb(0x333333).into())),
                 );
             }
             if let Some((title, text)) = rule.prompt.clone() {
@@ -1715,7 +1678,9 @@ impl SlideEditor {
                 .border_2()
                 // While typing the box has its own frame: the selection's is not drawn.
                 .border_color(if editing_here { gpui::transparent_black() } else { green.into() })
+                .when(cut_active,|d|d.border_dashed())
                 .children(spill_frames)
+                .children(cut_frame)
                 .when(!editing_here, |d| {
                     // Paint the active selection's 2px green frame over any overlapping spill border edge.
                     d.child(
@@ -1726,7 +1691,8 @@ impl SlideEditor {
                             .w(px(x1 - x0 + 2.0))
                             .h(px(y1 - y0 + 2.0))
                             .border_2()
-                            .border_color(green),
+                            .border_color(green)
+                            .when(cut_active,|d|d.border_dashed()),
                     )
                 })
                 .children(tint)
@@ -1884,7 +1850,8 @@ impl SlideEditor {
                     let (l, tp, r, b) = (x(t.first_column), y(t.first_row), x(t.last_column + 1), y(t.last_row + 1));
                     div().absolute().left(px(l - x0 - 2.0)).top(px(tp - y0 - 2.0)).w(px(r - l + 2.0)).h(px(b - tp + 2.0)).border_2().border_color(green)
                 }))
-                .when(!editing_here, |d| {
+                .children(self.sheet_range_pick_handles(x1-x0,y1-y0))
+                .when(!editing_here && !self.sheet_range_pick_active(), |d| {
                     d.child(
                         // A little larger than it looks, to be easy to catch.
                         div()
@@ -1947,6 +1914,7 @@ impl SlideEditor {
         // Typing a formula where a reference may go (after `=`, `(`, `,` or
         // an operator): the cell pressed goes into it (dragging makes it a range).
         if self.point_reference(column, row, cx) {
+            if let Some(edit)=self.cell_edit_mut(){edit.reference_drag=true;}
             return;
         }
         // A double-click on the cell being typed into leaves it be; on
@@ -1955,6 +1923,7 @@ impl SlideEditor {
             return;
         }
         self.commit_cell_edit(cx);
+        if self.panel_message.is_some() { return; }
         if event.click_count >= 2 && !event.modifiers.shift {
             self.set_cell(column, row);
             if self.show_pivot_details(column, row, cx) {
@@ -1967,6 +1936,9 @@ impl SlideEditor {
             let adjusted = point(event.position.x + (new_offset.x - old_offset.x), event.position.y + (new_offset.y - old_offset.y));
             self.press_in_cell_text(adjusted, 1, false, cx);
             return;
+        }
+        if event.click_count==1&&!event.modifiers.shift&&!event.modifiers.platform&&self.current_sheet().is_some_and(|(_,s)|s.hyperlinks.iter().any(|h|h.range.first_row<=row&&row<=h.range.last_row&&h.range.first_column<=column&&column<=h.range.last_column)){
+            self.set_cell(column,row);self.follow_cell_link(window,cx);return;
         }
         // ⌘-click on a linked cell follows the link; elsewhere it adds a
         // range to those selected (Excel's Ctrl+クリック), or deselects if already selected.
@@ -2166,7 +2138,7 @@ impl SlideEditor {
         let runs = e.runs.clone().map(std::sync::Arc::new);
         let sheet_origin = (l as f32 * scale, t as f32 * scale);
         let default_style = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref());
-        let laid = super::sheet_view::edit_layout(&ts, sheet, default_style, &self.resources, e.row, e.column, &e.text, runs, sheet_origin, (w as f32 * scale, h as f32 * scale), px_per_point);
+        let laid = super::sheet_view::edit_layout(&ts, sheet, default_style, &self.resources, e.row, e.column, &e.text, runs, sheet_origin, (w as f32 * scale, h as f32 * scale), px_per_point, e.layout.borrow().as_ref().map_or(f32::MAX,|l|l.width));
         e.pixels_per_point.set(px_per_point);
         e.rect.set(Some(Bounds::new(origin, size(px(laid.width), px(laid.height)))));
         *e.layout.borrow_mut() = Some(std::rc::Rc::new(laid));
@@ -2392,11 +2364,15 @@ impl SlideEditor {
                 return;
             }
         }
+        if self.editing.is_none() && !self.selected_ids().is_empty(){self.nudge_selected(dx as i64,dy as i64,false,cx);return;}
         if self.editing.is_some() {
             return;
         }
+        if dx==0 && self.cell_edit().is_some_and(|e|e.dragging_in_bar) && self.formula_edit_command(if dy<0{"up"}else{"down"},Modifiers::default(),cx){return;}
         // While typing: ← → move the caret in Edit mode; otherwise the entry is finished first.
         if self.cell_edit().is_some() {
+            if dx==0 && self.completion_move(dy,cx){return;}
+            if self.formula_reference_key(dx,dy,false,false,cx){return;}
             if dy == 0 && self.cell_caret(dx, cx) {
                 return;
             }
@@ -2407,6 +2383,7 @@ impl SlideEditor {
                 return;
             }
             self.commit_cell_edit(cx);
+            if self.cell_edit().is_some() { return; }
         }
         let (Some((_, sheet)), Some((column, row))) = (self.current_sheet(), self.current_cell()) else {
             return;
@@ -2447,6 +2424,7 @@ impl SlideEditor {
         let Some((column, _)) = self.current_cell() else { return };
         let start = self.wb().tab_start.filter(|t| Some(t.1) == self.current_cell()).map_or(column, |t| t.0);
         self.commit_cell_edit(cx);
+        if self.cell_edit().is_some() { return; }
         self.move_cell(1, 0, window, cx);
         let here = self.current_cell();
         self.wb_mut().tab_start = here.map(|h| (start, h));
@@ -2462,6 +2440,7 @@ impl SlideEditor {
         match tab {
             Some((start, (_, row))) => {
                 self.commit_cell_edit(cx);
+                if self.cell_edit().is_some() { return; }
                 if row + 1 < MAX_SHEET_ROWS {
                     self.set_selection(Vec::new());
                     self.set_cell(start, row + 1);
@@ -2492,6 +2471,8 @@ impl SlideEditor {
         if self.editing.is_some() {
             return;
         }
+        if dx==0 && self.cell_edit().is_some_and(|e|e.dragging_in_bar) && self.formula_edit_command(if dy<0{"up"}else{"down"},Modifiers{shift:true,..Default::default()},cx){return;}
+        if self.formula_reference_key(dx,dy,true,false,cx){return;}
         // Typing in Edit mode: Shift+← → select text.
         if dy == 0 && self.cell_extend_selection(dx, cx) {
             return;
@@ -2788,7 +2769,6 @@ pub(crate) struct CellJump {
     /// press has put the caret where it was).
     select_on_release: bool,
     /// The name box dropdown menu is open.
-    pub(crate) name_box_menu_open: bool,
     /// The 参照先 field of the ジャンプ dialog.
     goto_input: Entity<InputState>,
     /// The ジャンプ dialog is open.
@@ -2843,7 +2823,6 @@ impl CellJump {
             name_box,
             name_box_shown: String::new(),
             select_on_release: false,
-            name_box_menu_open: false,
             goto_input,
             goto_open: false,
             goto_error: None,
@@ -3000,7 +2979,7 @@ fn range_name(range: CellRange) -> String {
 /// at a time over `sizes` (0 for a hidden row or column), as Excel does:
 /// from a filled cell with a filled one next to it, to the last filled one
 /// before an empty one; otherwise to the next filled one, or the edge.
-fn data_edge(at: u32, d: i32, sizes: &[i64], filled: impl Fn(u32) -> bool) -> u32 {
+pub(crate) fn data_edge(at: u32, d: i32, sizes: &[i64], filled: impl Fn(u32) -> bool) -> u32 {
     let next = |i: u32| {
         let mut i = i as i64 + d as i64;
         while (0..sizes.len() as i64).contains(&i) && sizes[i as usize] == 0 {
@@ -3048,14 +3027,20 @@ impl SlideEditor {
             .on_action(cx.listener(|this, _: &ExtendJumpLeft, _, cx| this.jump(Jump::Edge(-1, 0), true, cx)))
             .on_action(cx.listener(|this, _: &ExtendJumpRight, _, cx| this.jump(Jump::Edge(1, 0), true, cx)))
             .on_action(cx.listener(|this, _: &SelectRowStart, _, cx| this.jump(Jump::RowStart, false, cx)))
+            .on_action(cx.listener(|this, _: &SelectRowEnd, _, cx|{if !this.formula_edit_command("end",Modifiers::default(),cx){this.jump(Jump::Edge(1,0),false,cx)}}))
+            .on_action(cx.listener(|this, _: &ExtendRowEnd, _, cx|{if !this.formula_edit_command("end",Modifiers{shift:true,..Default::default()},cx){this.jump(Jump::Edge(1,0),true,cx)}}))
             .on_action(cx.listener(|this, _: &ExtendRowStart, _, cx| this.jump(Jump::RowStart, true, cx)))
             .on_action(cx.listener(|this, _: &SelectFirstCell, _, cx| this.jump(Jump::First, false, cx)))
             .on_action(cx.listener(|this, _: &ExtendFirstCell, _, cx| this.jump(Jump::First, true, cx)))
             .on_action(cx.listener(|this, _: &SelectLastCell, _, cx| this.jump(Jump::Last, false, cx)))
             .on_action(cx.listener(|this, _: &ExtendLastCell, _, cx| this.jump(Jump::Last, true, cx)))
             .on_action(cx.listener(|this, _: &EditCell, window, cx| {
-                if this.cells_take_typing(window, cx) && this.cell_edit().is_none() {
-                    this.begin_cell_edit(super::cell_edit::EditMode::Edit, true, cx);
+                if this.cells_take_typing(window, cx) {
+                    if this.cell_edit().is_none() {
+                        this.begin_cell_edit(super::cell_edit::EditMode::Edit, true, cx);
+                    } else {
+                        this.toggle_edit_mode(cx);
+                    }
                 }
             }))
             .on_action(cx.listener(|this, _: &CellBackspace, window, cx| {
@@ -3088,7 +3073,8 @@ impl SlideEditor {
             .on_action(cx.listener(|this, _: &SelectAllCells, _, cx| this.select_all_cells(cx)))
             .on_action(cx.listener(|this, _: &InsertLink, window, cx| this.open_link_panel(window, cx)))
             .on_action(cx.listener(|this, _: &CycleReference, _, cx| {
-                this.cycle_reference(cx);
+                if this.cell_edit().is_some() { this.cycle_reference(cx); }
+                else { this.repeat_sheet_edit(cx); }
             }))
             .on_action(cx.listener(|this, _: &CellEnter, window, cx| this.cell_enter(window, cx)))
             .on_action(cx.listener(|this, _: &CellFillSelection, _, cx| this.fill_selection_with_entry(cx)))
@@ -3144,6 +3130,9 @@ impl SlideEditor {
     /// Select the cell a key such as Ctrl+→ goes to, or (`extend`) stretch
     /// the selected range's far corner there.
     fn jump(&mut self, jump: Jump, extend: bool, cx: &mut Context<Self>) {
+        let key=match jump{Jump::First=>Some(("home",true)),Jump::Last=>Some(("end",true)),Jump::RowStart=>Some(("home",false)),Jump::Edge(dx,0) if extend&&dx!=0=>Some((if dx<0{"left"}else{"right"},true)),_=>None};
+        if let Some((key,control))=key{if self.formula_edit_command(key,Modifiers{control,shift:extend,..Default::default()},cx){return;}}
+        if let Jump::Edge(dx,dy)=jump {if self.formula_reference_key(dx,dy,extend,true,cx){return;}}
         if self.editing.is_some() {
             return;
         }
@@ -3676,21 +3665,17 @@ impl SlideEditor {
                             .on_click(cx.listener(|this, _, window, cx| this.open_goto_special_from_goto(window, cx)))
                     )
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("goto-cancel")
-                                    .small()
-                                    .label(crate::shell::i18n::text("_shell.cancel"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.close_goto(window, cx))),
-                            )
-                            .child(
-                                Button::new("goto-ok")
-                                    .primary()
-                                    .small()
+                        crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
+                            .action(
+                                crate::shell::chrome::ActionDefinition::new("goto-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
                                     .label("OK")
                                     .on_click(cx.listener(|this, _, window, cx| this.confirm_goto(window, cx))),
-                            ),
+                            )
+                            .action(
+                                crate::shell::chrome::ActionDefinition::new("goto-cancel", "", crate::shell::chrome::ActionButtonKind::Normal)
+                                    .label(crate::shell::i18n::text("_shell.cancel"))
+                                    .on_click(cx.listener(|this, _, window, cx| this.close_goto(window, cx))),
+                            ))),
                     )
             )
     }

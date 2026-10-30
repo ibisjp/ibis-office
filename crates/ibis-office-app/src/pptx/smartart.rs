@@ -25,7 +25,7 @@
 //! - テキスト ウィンドウ (PPTX-SMART-009):
 //!   SmartArt の全項目をリスト表示・並べ替え・編集可能なサイドバー パネル。
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -957,9 +957,28 @@ impl SlideEditor {
         for (i, shape) in new_shapes.into_iter().enumerate() {
             commands.push(Command::InsertShape { slide, index: at + i, shape });
         }
+        // Rebuilding the nodes and their group is one user operation and one Undo step.
+        // Preserve the old SmartArt group's native id; other groups remain untouched.
+        let mut groups = Vec::new();
+        let mut native_id = None;
+        for group in &self.slide().groups {
+            let mut leaves = Vec::new();
+            Self::collect_group_leaves(group, &mut leaves);
+            if leaves.iter().any(|id| old_leaves.contains(id)) {
+                native_id = Some(group.native_id.clone());
+            } else {groups.push(group.clone());}
+        }
+        let native_id = native_id.unwrap_or_else(|| {
+            let used = groups.iter().map(|g| g.native_id.as_str()).collect::<std::collections::HashSet<_>>();
+            let mut id = 20000u32;
+            while used.contains(id.to_string().as_str()) {id += 1;}
+            id.to_string()
+        });
+        let name = if style == SmartArtColorStyle::Colorful {format!("SmartArt: {}", kind.label())} else {format!("SmartArt: {} [{}]", kind.label(), style.code())};
+        groups.push(ibis_doc_model::ShapeGroup {has_unmodelled_children:false,native_id,name,children:new_ids.iter().copied().map(ibis_doc_model::GroupMember::Shape).collect()});
+        commands.push(Command::SetShapeGroups {slide,groups});
         if self.apply_pptx_commands_checked(vec![Command::Group(commands)], cx) {
             self.set_selection(new_ids.clone());
-            self.group_smartart(kind, style, cx);
             if let Some(target_idx) = select_item_index {
                 let item_shapes: Vec<ShapeId> = new_ids.into_iter().filter(|id| {
                     self.slide().shape(*id).and_then(|s| s.text_body()).is_some_and(|b| {
@@ -980,6 +999,7 @@ impl SlideEditor {
         let shown = self.pptx().is_some_and(|s| s.smartart_text_pane);
         if let Some(s) = self.pptx_mut() {
             s.smartart_text_pane = !shown;
+            s.smartart_reorder = Default::default();
         }
         self.sidebar_open = true;
         cx.notify();
@@ -1137,86 +1157,56 @@ impl SlideEditor {
 
         let data = self.selected_smartart_data();
         let selected_idx = self.selected_smartart_item_index();
-        let mut body = v_flex().gap_2().px(px(14.)).py(px(10.));
+        let mut body = v_flex().gap_2().px(px(14.)).py(px(10.)).p_0();
 
         if let Some((_, kind, style, _leaves, items, _frame)) = data {
-            let header = h_flex().gap_2().items_center()
+            let header = v_flex().w_full().min_w_0().gap_1()
                 .child(div().text_sm().font_weight(gpui_kit::FontWeight::BOLD).child(format!("{}: {}", t("pptx.smartart.change-layout"), kind.display_label())))
-                .child(div().text_xs().text_color(rgb(0x5f6368)).child(format!("({})", style.label())));
+                .child(div().text_sm().text_color(rgb(0x5f6368)).child(format!("({})", style.label())));
             body = body.child(header);
 
-            let mut list_box = v_flex().gap_1().p_1().border_1().border_color(rgb(0xdadce0)).rounded_md();
+            let reorder = self.pptx()?.smartart_reorder.clone();
+            let table_top = h_flex().w_full().justify_end().child(crate::shell::chrome::action_button("smart-add").small().label(t("pptx.smartart.add-item-short")).on_click(cx.listener(|e, _, _, cx| e.smartart_add_shape(cx))));
+            body = body.child(table_top);
+            let mut rows = Vec::new();
             for (i, text) in items.iter().enumerate() {
-                let is_selected_row = selected_idx == Some(i);
-                let row = h_flex()
-                    .id(("smart-row", i))
-                    .gap_1()
-                    .items_center()
-                    .py(px(2.))
-                    .px(px(4.))
-                    .rounded(px(4.))
-                    .cursor_pointer()
-                    .bg(if is_selected_row { rgb(0xe8f0fe).into() } else { gpui_kit::transparent_black() })
-                    .on_mouse_down(MouseButton::Left, cx.listener(move |e, _, _, cx| {
-                        e.select_smartart_item(i, cx);
-                    }))
+                let row = h_flex().id(("smart-row", i)).w_full().h_full().min_w_0().gap_1().items_center().px_1()
+                    .on_click(cx.listener(move |e, _, _, cx| e.select_smartart_item(i, cx)))
                     .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, window, cx| {
-                        cx.stop_propagation();
-                        e.open_smartart_text_pane_context_menu(i, event.position, window, cx);
+                        cx.stop_propagation(); e.open_smartart_text_pane_context_menu(i, event.position, window, cx);
                     }))
-                    .child(div().w(px(16.)).text_xs().text_color(rgb(0x5f6368)).child(format!("{}.", i + 1)))
-                    .child(div().flex_1().text_sm().child(text.clone()))
-                    .child(Button::new(("smart-up", i)).small().ghost().label("↑").disabled(i == 0).on_click(cx.listener(move |e, _, _, cx| {
-                        if let Some((_, kind, style, leaves, mut it, frame)) = e.selected_smartart_data() {
-                            if i > 0 && i < it.len() {
-                                it.swap(i, i - 1);
-                                let r: Vec<&str> = it.iter().map(String::as_str).collect();
-                                e.replace_smartart_shapes(&leaves, kind, style, &r, frame, cx);
+                    .child(div().w(px(20.)).text_sm().text_color(rgb(0x5f6368)).child(format!("{}.", i + 1)))
+                    .child(div().flex_1().min_w_0().overflow_hidden().text_sm().child(text.clone()))
+                    .child(crate::shell::chrome::data_table::row_controls(reorder.clone(), i, 0,
+                        crate::shell::chrome::action_button(("smart-del", i)).small().w(px(28.)).icon(crate::shell::chrome::icon("delete", 18., rgb(0x3c4043).into())).disabled(items.len() <= 1).on_click(cx.listener(move |e, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some((_, kind, style, leaves, mut it, frame)) = e.selected_smartart_data() {
+                                if it.len() > 1 && i < it.len() {it.remove(i); let r: Vec<&str> = it.iter().map(String::as_str).collect();e.replace_smartart_shapes(&leaves, kind, style, &r, frame, cx);}
                             }
-                        }
-                    })))
-                    .child(Button::new(("smart-down", i)).small().ghost().label("↓").disabled(i + 1 >= items.len()).on_click(cx.listener(move |e, _, _, cx| {
-                        if let Some((_, kind, style, leaves, mut it, frame)) = e.selected_smartart_data() {
-                            if i + 1 < it.len() {
-                                it.swap(i, i + 1);
-                                let r: Vec<&str> = it.iter().map(String::as_str).collect();
-                                e.replace_smartart_shapes(&leaves, kind, style, &r, frame, cx);
-                            }
-                        }
-                    })))
-                    .child(Button::new(("smart-del", i)).small().ghost().label("✕").disabled(items.len() <= 1).on_click(cx.listener(move |e, _, _, cx| {
-                        if let Some((_, kind, style, leaves, mut it, frame)) = e.selected_smartart_data() {
-                            if it.len() > 1 && i < it.len() {
-                                it.remove(i);
-                                let r: Vec<&str> = it.iter().map(String::as_str).collect();
-                                e.replace_smartart_shapes(&leaves, kind, style, &r, frame, cx);
-                            }
-                        }
-                    })));
-                list_box = list_box.child(row);
+                        }))))
+                    .child(crate::shell::chrome::icon("menu", 18., rgb(0x5f6368).into()).cursor_grab());
+                rows.push((i, row.into_any_element(), selected_idx == Some(i)));
             }
-            body = body.child(list_box);
-
-            let actions = h_flex().gap_1().flex_wrap()
-                .child(Button::new("smart-add").small().primary().label(t("pptx.smartart.add-shape")).on_click(cx.listener(|e, _, _, cx| e.smartart_add_shape(cx))))
-                .child(Button::new("smart-del-last").small().ghost().label(t("pptx.smartart.remove-shape")).disabled(items.len() <= 1).on_click(cx.listener(|e, _, _, cx| e.smartart_remove_shape(cx))))
-                .when(kind == SmartArtKind::OrganizationChart, |f| f.child(Button::new("smart-add-asst").small().ghost().label(t("pptx.smartart.add-assistant")).on_click(cx.listener(|e, _, _, cx| e.smartart_add_assistant(cx)))));
-            body = body.child(actions);
-
-            let color_row = h_flex().gap_1().flex_wrap().pt_2()
-                .child(div().w_full().text_xs().text_color(rgb(0x5f6368)).child(t("pptx.smartart.color")))
-                .child(Button::new("smart-col-0").small().ghost().label(t("pptx.smartart.color.colorful")).on_click(cx.listener(|e, _, _, cx| e.set_smartart_color_style(SmartArtColorStyle::Colorful, cx))))
-                .child(Button::new("smart-col-1").small().ghost().label(t("pptx.smartart.color.blue-short")).on_click(cx.listener(|e, _, _, cx| e.set_smartart_color_style(SmartArtColorStyle::Accent1, cx))))
-                .child(Button::new("smart-col-2").small().ghost().label(t("pptx.smartart.color.orange-short")).on_click(cx.listener(|e, _, _, cx| e.set_smartart_color_style(SmartArtColorStyle::Accent2, cx))))
-                .child(Button::new("smart-col-3").small().ghost().label(t("pptx.smartart.color.green-short")).on_click(cx.listener(|e, _, _, cx| e.set_smartart_color_style(SmartArtColorStyle::Accent3, cx))))
-                .child(Button::new("smart-col-4").small().ghost().label(t("pptx.smartart.color.outline-short")).on_click(cx.listener(|e, _, _, cx| e.set_smartart_color_style(SmartArtColorStyle::Outline, cx))));
-            body = body.child(color_row);
+            let table = crate::shell::chrome::data_table::DataTable::new("pptx-smartart-text-table", None, rows, cx).reorderable(reorder, |e, from, to, _, cx| {
+                if let Some((_, kind, style, leaves, mut it, frame)) = e.selected_smartart_data() {
+                    if from < it.len() && to < it.len() {let item = it.remove(from); it.insert(to, item);let r: Vec<&str> = it.iter().map(String::as_str).collect();e.replace_smartart_shapes(&leaves, kind, style, &r, frame, cx);}
+                }
+            });
+            body = body.child(table);
+            if kind == SmartArtKind::OrganizationChart {
+                body = body.child(crate::shell::chrome::action_button("smart-add-asst").small().label(t("pptx.smartart.add-assistant")).on_click(cx.listener(|e, _, _, cx| e.smartart_add_assistant(cx))));
+            }
+            let styles = [(SmartArtColorStyle::Colorful, "pptx.smartart.color.colorful"), (SmartArtColorStyle::Accent1, "pptx.smartart.color.accent1"), (SmartArtColorStyle::Accent2, "pptx.smartart.color.accent2"), (SmartArtColorStyle::Accent3, "pptx.smartart.color.accent3"), (SmartArtColorStyle::Outline, "pptx.smartart.color.outline")];
+            let selected = styles.iter().position(|(value, _)| *value == style).unwrap_or(0);
+            let choices = styles.into_iter().map(|(value, key)| crate::shell::chrome::preview_dropdown::PreviewChoice {
+                label: t(key),
+                content: std::rc::Rc::new(move || h_flex().w_full().gap_1().children((0..5).map(|i| {let (fill, stroke, _) = value.palette(i);div().flex_1().h(px(18.)).rounded(px(3.)).bg(rgb(fill.0)).border_1().border_color(rgb(stroke.unwrap_or(fill).0))})).into_any_element()),
+                choose: std::rc::Rc::new(move |e, _, cx| e.set_smartart_color_style(value, cx)),
+            }).collect();
+            body = body.child(crate::shell::chrome::dropdown_row(t("pptx.smartart.color"), crate::shell::chrome::preview_dropdown::preview_dropdown("pptx-smartart-color", choices, selected, cx)));
         } else {
             body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(t("pptx.smartart.select-prompt")));
         }
-
-        body = body.child(h_flex().pt_4().justify_end()
-            .child(Button::new("smart-close").small().ghost().label(t("_shell.close")).on_click(cx.listener(|e, _, _, cx| e.toggle_smartart_text_pane(cx)))));
 
         Some(SidebarPanel { title: title.into(), body: body.into_any_element() })
     }

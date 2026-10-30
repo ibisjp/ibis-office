@@ -97,3 +97,19 @@ pub(crate) fn get(key: &str) -> Option<String> {
 pub(crate) fn set(key: &str, value: &str) {
     store::set(key, value)
 }
+
+/// Run once at application initialization, before any settings are consumed.
+/// Keep the old version until every migration succeeds.
+pub(crate) fn migrate_on_startup() {
+    let previous=get("app.last-started-version");
+    let current=env!("IBIS_VERSION");
+    migrate(previous.as_deref(),current);
+    set("app.last-started-version",current);
+}
+fn version_parts(value:&str)->[u64;3]{let mut parts=[0;3];for (out,part) in parts.iter_mut().zip(value.trim_start_matches('v').split('.')){*out=part.split(|c:char|!c.is_ascii_digit()).next().unwrap_or("").parse().unwrap_or(0);}parts}
+/// Future version migrations belong here. Compare parsed numeric components,
+/// never version strings (0.10 is newer than 0.9).
+fn migrate(previous:Option<&str>,current:&str){
+    let _upgrade=previous.is_none_or(|v|version_parts(v)<version_parts(current));
+    // No setting migrations yet; explicit user preferences are preserved.
+}

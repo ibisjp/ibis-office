@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -125,7 +125,7 @@ impl SlideEditor {
         state.link = None;
         state.conditional_edit = None;
         state.sort_edit = None;
-        state.panels.close();
+        state.close_settings();
         state.panels.consolidate = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -199,50 +199,35 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
 
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
 
         // 1. 集計方法 (Function)
-        body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.function")));
-        let entity = cx.entity().downgrade();
-        body = body.child(mark(
-            "function",
-            Button::new("consolidate-fn")
-                .small()
-                .label(text(p.function.label()))
-                .dropdown_menu({
-                    let entity = entity.clone();
-                    move |menu, _, _| {
-                        ConsolidateFunction::ALL.iter().fold(menu, |menu, &f| {
-                            let entity = entity.clone();
-                            menu.item(PopupMenuItem::new(text(f.label())).on_click(move |_, _, cx| {
-                                entity
-                                    .update(cx, |this, cx| {
-                                        if let Some(p) = this.wb_mut().panels.consolidate.as_mut() {
-                                            p.function = f;
-                                        }
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }))
-                        })
-                    }
-                })
-                .into_any_element(),
-        ));
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.function")));
+        let choices = ConsolidateFunction::ALL.iter().map(|&f| {
+            crate::shell::chrome::MenuItem::new("consolidate-function",text(f.label())).checked(p.function==f).on(move|this,_,cx|{
+                if let Some(p)=this.wb_mut().panels.consolidate.as_mut(){p.function=f;}
+                cx.notify();
+            }).into()
+        }).collect();
+        body=body.child(mark("function",div().w(crate::shell::chrome::FIELD_WIDTH).child(crate::shell::chrome::Dropdown::from_entries("consolidate-fn",text(p.function.label()),choices,true,0,&cx.weak_entity()).into_any_element()).into_any_element()));
 
         // 2. 参照範囲 (Reference input)
-        body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.references")));
-        body = body.child(mark("reference-input", Input::new(&p.reference_input).small().cleanable(true).into_any_element()));
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.references")));
+        body = body.child(mark("reference-input", super::range_field::local_range_field(&p.reference_input,"consolidate-p-reference_input",false,cx).into_any_element()));
 
         // Add / Add Selection / Delete / Clear All buttons
         let sel_ref = p.selected_ref;
         let has_refs = !p.references.is_empty();
-        let mut btn_row = h_flex().gap_2().flex_wrap();
-        btn_row = btn_row.child(mark(
-            "add-ref",
-            Button::new("consolidate-add").primary()
-                .small()
+        let mut btn_row = crate::shell::chrome::action_bar();
+        btn_row = btn_row.action(mark_action("add-ref", crate::shell::chrome::ActionDefinition::new("consolidate-add", "", crate::shell::chrome::ActionButtonKind::Primary)
                 .label(text("fix.common.add"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     let raw = this
@@ -258,23 +243,13 @@ impl SlideEditor {
                         p.references.push(val);
                     }
                     cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        btn_row = btn_row.child(mark(
-            "add-selection",
-            Button::new("consolidate-add-selection")
-                .small()
+                }))));
+        btn_row = btn_row.action(mark_action("add-selection", crate::shell::chrome::ActionDefinition::new("consolidate-add-selection", "", crate::shell::chrome::ActionButtonKind::Normal)
                 .label(text("xlsx.consolidate-add-selection"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.add_consolidate_selection(window, cx);
-                }))
-                .into_any_element(),
-        ));
-        btn_row = btn_row.child(mark(
-            "del-ref",
-            Button::new("consolidate-del")
-                .small()
+                }))));
+        btn_row = btn_row.action(mark_action("del-ref", crate::shell::chrome::ActionDefinition::new("consolidate-del", "", crate::shell::chrome::ActionButtonKind::Destructive)
                 .disabled(sel_ref.is_none())
                 .label(text("_shell.delete"))
                 .on_click(cx.listener(|this, _, _, cx| {
@@ -287,27 +262,20 @@ impl SlideEditor {
                         }
                     }
                     cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        btn_row = btn_row.child(mark(
-            "clear-all-refs",
-            Button::new("consolidate-clear-all")
-                .small()
+                }))));
+        btn_row = btn_row.action(mark_action("clear-all-refs", crate::shell::chrome::ActionDefinition::new("consolidate-clear-all", "", crate::shell::chrome::ActionButtonKind::Destructive)
                 .disabled(!has_refs)
                 .label(text("xlsx.consolidate-clear-all"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.clear_all_consolidate_references(cx);
-                }))
-                .into_any_element(),
-        ));
+                }))));
         body = body.child(btn_row);
 
         // 3. 統合元範囲 (All references list)
-        body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.all-references")));
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.all-references")));
         let mut list_box = v_flex().gap_1().p(px(4.)).border_1().border_color(cx.theme().border).rounded_md().min_h(px(80.));
         if p.references.is_empty() {
-            list_box = list_box.child(div().text_size(px(12.)).text_color(cx.theme().muted).child(text("_xlsx.no-ranges-have-been-added")));
+            list_box = list_box.child(div().text_sm().text_color(cx.theme().muted).child(text("_xlsx.no-ranges-have-been-added")));
         } else {
             for (i, r_str) in p.references.iter().enumerate() {
                 let is_selected = Some(i) == sel_ref;
@@ -316,7 +284,7 @@ impl SlideEditor {
                     .px(px(6.))
                     .py(px(3.))
                     .rounded_sm()
-                    .text_size(px(12.))
+                    .text_sm()
                     .bg(if is_selected { cx.theme().accent.opacity(0.2) } else { hsla(0.0, 0.0, 0.0, 0.0) })
                     .child(SharedString::from(r_str.clone()));
                 list_box = list_box.child(mark(
@@ -339,15 +307,11 @@ impl SlideEditor {
         body = body.child(list_box);
 
         // 4. 統合の基準 (Use labels in)
-        body = body.child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).child(text("_xlsx.use-labels-in")));
+        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).child(text("_xlsx.use-labels-in")));
         let top_labels = p.top_labels;
         body = body.child(mark(
             "top-labels",
-            Button::new("consolidate-top")
-                .small()
-                .ghost()
-                .label(crate::shell::i18n::format("_xlsx.mark-top-row", &[("mark", &(if top_labels { "☑" } else { "☐" }))]))
-                .on_click(cx.listener(|this, _, _, cx| {
+            crate::shell::chrome::checkbox_button("consolidate-top", crate::shell::i18n::format("_xlsx.mark-top-row", &[("mark", &"")]).trim().to_string(), top_labels, false, cx.listener(|this, _, _, cx| {
                     if let Some(p) = this.wb_mut().panels.consolidate.as_mut() {
                         p.top_labels = !p.top_labels;
                     }
@@ -358,11 +322,7 @@ impl SlideEditor {
         let left_labels = p.left_labels;
         body = body.child(mark(
             "left-labels",
-            Button::new("consolidate-left")
-                .small()
-                .ghost()
-                .label(crate::shell::i18n::format("_xlsx.mark-left-column", &[("mark", &(if left_labels { "☑" } else { "☐" }))]))
-                .on_click(cx.listener(|this, _, _, cx| {
+            crate::shell::chrome::checkbox_button("consolidate-left", crate::shell::i18n::format("_xlsx.mark-left-column", &[("mark", &"")]).trim().to_string(), left_labels, false, cx.listener(|this, _, _, cx| {
                     if let Some(p) = this.wb_mut().panels.consolidate.as_mut() {
                         p.left_labels = !p.left_labels;
                     }
@@ -375,11 +335,7 @@ impl SlideEditor {
         let link = p.link;
         body = body.child(mark(
             "link",
-            Button::new("consolidate-link")
-                .small()
-                .ghost()
-                .label(crate::shell::i18n::format("_xlsx.mark-create-links-to-source-data", &[("mark", &(if link { "☑" } else { "☐" }))]))
-                .on_click(cx.listener(|this, _, _, cx| {
+            crate::shell::chrome::checkbox_button("consolidate-link", crate::shell::i18n::format("_xlsx.mark-create-links-to-source-data", &[("mark", &"")]).trim().to_string(), link, false, cx.listener(|this, _, _, cx| {
                     if let Some(p) = this.wb_mut().panels.consolidate.as_mut() {
                         p.link = !p.link;
                     }
@@ -389,30 +345,15 @@ impl SlideEditor {
         ));
 
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+            body = body.children(crate::shell::chrome::panel_message(&p.message));
         }
 
         // 6. Action buttons (OK / Close)
-        body = body.child(mark(
-            "apply",
-            Button::new("consolidate-apply").primary()
-                .small()
-                .label(text("OK"))
-                .on_click(cx.listener(|this, _, _, cx| this.apply_consolidate_panel(cx)))
-                .into_any_element(),
-        ));
-        body = body.child(mark(
-            "close",
-            Button::new("consolidate-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.consolidate = None;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
 
-        Some(SidebarPanel { title: text("_xlsx.consolidate").into(), body: body.into_any_element() })
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("consolidate-apply", "", crate::shell::chrome::ActionButtonKind::Primary)
+                .label(text("OK"))
+                .on_click(cx.listener(|this, _, _, cx| this.apply_consolidate_panel(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("_xlsx.consolidate"), body.into_any_element(), panel_terminal_actions))
     }
 }

@@ -12,7 +12,7 @@ use ibis_doc_model::slicer::{Slicer, layout, PAD};
 use ibis_doc_model::{EMU_PER_POINT, EmuRect};
 
 /// The colour (accent) of a style: Office's accent 1–6, from the style's number.
-fn accent(style: &str) -> u32 {
+pub(crate) fn accent(style: &str) -> u32 {
     const ACCENTS: [u32; 6] = [0x4472C4, 0xED7D31, 0xA5A5A5, 0xFFC000, 0x5B9BD5, 0x70AD47];
     let n = style.chars().last().and_then(|c| c.to_digit(10)).unwrap_or(1) as usize;
     if style.starts_with("SlicerStyleOther") {

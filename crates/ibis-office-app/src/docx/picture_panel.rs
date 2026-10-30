@@ -2,10 +2,11 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Numeric size controls for the inline picture at the caret.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input,InputEvent,InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::{InputEvent,InputState};
 use gpui_kit::component::{Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
+use gpui_kit::prelude::FluentBuilder as _;
 use crate::shell::palette::rgb;
 use ibis_doc_model::{FlowPos,FlowRunKind,FlowCommand,EmuSize,MediaId,PictureLook,Crop,Stroke,Color,Rgb,LineDash};
 use crate::shell::{chrome::SidebarPanel,editor::SlideEditor,icons::Material};
@@ -97,6 +98,7 @@ pub(crate) struct PictureEditState {
     pub(crate) decorative: bool,
     pub(crate) initial_decorative: bool,
     target:(FlowPos,MediaId,EmuSize),
+    ratio_size:EmuSize,
     initial:[String;2],
     error:Option<String>,
     _subscriptions:Vec<Subscription>,
@@ -129,13 +131,17 @@ impl SlideEditor {
         previous
     }
     pub(crate) fn open_picture_edit(&mut self,window:&mut Window,cx:&mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(target)=self.picture_at_caret() else{return};
         let initial=[format!("{:.2}",target.2.width as f64/12700.),format!("{:.2}",target.2.height as f64/12700.)];
         let fields=initial.clone().map(|value|cx.new(|cx|{
             let mut field=InputState::new(window,cx);field.set_value(value,window,cx);field
         }));
-        let mut subscriptions: Vec<Subscription> = fields.iter().map(|field|cx.subscribe_in(field,window,|this,_,event:&InputEvent,window,cx|{
-            if let InputEvent::PressEnter {..}=event {this.apply_picture_edit(window,cx);}
+        let mut subscriptions: Vec<Subscription> = fields.iter().map(|field|cx.subscribe_in(field,window,|this,input,event:&InputEvent,window,cx|{
+            if matches!(event,InputEvent::Change|InputEvent::PressEnter{..}) {
+                let raw=input.read(cx).value().to_string();this.apply_picture_edit(window,cx);
+                input.update(cx,|i,cx|{i.set_value(raw,window,cx);i.focus(window,cx);});
+            }
         })).collect();
         let look_now = self.picture_look_at_caret().unwrap_or_default();
         let crop_now = look_now.crop;
@@ -148,12 +154,13 @@ impl SlideEditor {
             field
         });
         subscriptions.push(cx.subscribe_in(&name_field, window, |this, _, event: &InputEvent, _window, cx| {
-            if let InputEvent::PressEnter { .. } = event { this.apply_picture_name(cx); }
+            if matches!(event,InputEvent::Change|InputEvent::PressEnter{..}) { this.apply_picture_name(cx); }
         }));
         let percent=|v:i32|{let p=v as f64/1000.;if p.fract()==0.{format!("{}",p as i64)}else{format!("{p:.1}")}};
         let crop=[crop_now.top,crop_now.bottom,crop_now.left,crop_now.right].map(|v|cx.new(|cx|{
             let mut field=InputState::new(window,cx);field.set_value(percent(v),window,cx);field
         }));
+        subscriptions.extend(crop.iter().map(|f|cx.subscribe_in(f,window,|e,_,event:&InputEvent,_,cx|{if matches!(event,InputEvent::Change|InputEvent::PressEnter{..}){e.apply_picture_crop(cx);}})));
         let alt_title = cx.new(|cx| {
             let mut field = InputState::new(window, cx);
             field.set_value(initial_alt.title.clone(), window, cx);
@@ -165,13 +172,13 @@ impl SlideEditor {
             field
         });
         subscriptions.push(cx.subscribe_in(&alt_title, window, |this, _, event: &InputEvent, window, cx| {
-            if let InputEvent::PressEnter { .. } = event { this.apply_picture_edit(window, cx); }
+            if matches!(event,InputEvent::Change|InputEvent::PressEnter{..}) { this.apply_picture_alt_text(cx); }
         }));
         subscriptions.push(cx.subscribe_in(&alt_desc, window, |this, _, event: &InputEvent, window, cx| {
-            if let InputEvent::PressEnter { .. } = event { this.apply_picture_edit(window, cx); }
+            if matches!(event,InputEvent::Change|InputEvent::PressEnter{..}) { this.apply_picture_alt_text(cx); }
         }));
         if let Some(state)=self.doc_state_mut() {
-            state.picture_edit=Some(PictureEditState {name_field,initial_name,fields,crop,keep_ratio:true,alt_title,alt_desc,initial_alt,decorative,initial_decorative:decorative,target,initial,error:None,_subscriptions:subscriptions});
+            state.picture_edit=Some(PictureEditState {name_field,initial_name,fields,crop,keep_ratio:true,alt_title,alt_desc,initial_alt,decorative,initial_decorative:decorative,target,ratio_size:target.2,initial,error:None,_subscriptions:subscriptions});
             state.table_size=None;state.font_edit=None; state.color_edit=None; state.paragraph_edit=None;state.style_edit=None;state.link=None;state.find=None;state.comments=None;
         }
         self.sidebar_open=true;cx.notify();
@@ -939,23 +946,24 @@ impl SlideEditor {
         self.change_picture_look(|l|l.crop=Crop {left,top,right,bottom},cx);
     }
     pub(crate) fn toggle_picture_ratio(&mut self,cx:&mut Context<Self>) {
-        if let Some(edit)=self.doc_state_mut().and_then(|s|s.picture_edit.as_mut()) {edit.keep_ratio=!edit.keep_ratio;}
+        if let Some(edit)=self.doc_state_mut().and_then(|s|s.picture_edit.as_mut()) {edit.keep_ratio=!edit.keep_ratio;if edit.keep_ratio{edit.ratio_size=edit.target.2;}}
         cx.notify();
     }
     pub(crate) fn apply_picture_edit(&mut self,window:&mut Window,cx:&mut Context<Self>) {
         let Some(edit)=self.doc_state().and_then(|s|s.picture_edit.as_ref()) else{return};
         let values=edit.fields.clone().map(|f|f.read(cx).value().trim().to_string());
         let target=edit.target;
+        let ratio=edit.ratio_size;
         let changed=[values[0]!=edit.initial[0],values[1]!=edit.initial[1]];
         let parsed=values.clone().map(|v|v.parse::<f64>().ok().filter(|v|v.is_finite() && *v>=0.01 && *v<=1584.));
         let mut size=match parsed { [Some(w),Some(h)]=>Some(EmuSize::new((w*12700.).round() as i64,(h*12700.).round() as i64)),_=>None };
         if edit.keep_ratio && changed.iter().any(|v|*v) {
             size=size.and_then(|mut size|{
-                if target.2.width<=0 || target.2.height<=0 {return None;}
+                if ratio.width<=0 || ratio.height<=0 {return None;}
                 match changed {
-                    [true,false]=>size.height=(size.width as f64*target.2.height as f64/target.2.width as f64).round() as i64,
-                    [false,true]=>size.width=(size.height as f64*target.2.width as f64/target.2.height as f64).round() as i64,
-                    [true,true]=>if (size.width as f64/size.height as f64-target.2.width as f64/target.2.height as f64).abs()>0.0001 {return None;},
+                    [true,false]=>size.height=(size.width as f64*ratio.height as f64/ratio.width as f64).round() as i64,
+                    [false,true]=>size.width=(size.height as f64*ratio.width as f64/ratio.height as f64).round() as i64,
+                    [true,true]=>if (size.width as f64/size.height as f64-ratio.width as f64/ratio.height as f64).abs()>0.0001 {return None;},
                     _=>{}
                 }
                 Some(size)
@@ -1002,6 +1010,7 @@ impl SlideEditor {
         }
     }
     pub(crate) fn open_picture_alt_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         self.open_picture_edit(window, cx);
         if let Some(state) = self.doc_state().and_then(|s| s.picture_edit.as_ref()) {
             state.alt_desc.update(cx, |f, cx| f.focus(window, cx));
@@ -1057,7 +1066,7 @@ impl SlideEditor {
 
     #[inline(never)]
     fn render_picture_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
         body = self.picture_panel_size_section(body, cx)?;
         body = self.picture_panel_color_section(body, cx);
         body = self.picture_panel_effects_section(body, cx)?;
@@ -1073,42 +1082,49 @@ impl SlideEditor {
         let ratio = edit.keep_ratio;
         let error = edit.error.clone();
         let geom_preset = self.picture_geometry_preset_at_caret();
-        let row = |label: &'static str, field: &Entity<InputState>| h_flex().gap_2().child(div().w(px(80.)).text_sm().child(crate::shell::i18n::text(label))).child(Input::new(field).small().cleanable(true));
+        let row = |label: &'static str, field: &Entity<InputState>| h_flex().gap_2().child(div().w(px(80.)).text_sm().child(crate::shell::i18n::text(label))).child(crate::shell::chrome::text_field(field).full_width());
+        let field_cx = &*cx;
+        type Step = fn(&mut SlideEditor, f32, &mut Window, &mut Context<SlideEditor>);
+        let spin_row = |label: &'static str, field: &Entity<InputState>, id: &'static str, spec: crate::shell::chrome::SpinnerSpec, on_step: Step| h_flex().gap_2()
+            .child(div().w(px(80.)).text_sm().child(crate::shell::i18n::text(label)))
+            .child(crate::shell::chrome::text_field(field).full_width().unit(if id.starts_with("picture-crop"){"%"}else{"pt"},px(22.)).spinner(id, spec, field_cx, on_step));
+        // Size (pt): Enter applies it, so does ▲▼. Crop (%): applied by its button only, ▲▼ only change the number.
+        let size_spec = crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 1584.0);
+        let crop_spec = crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 99.0);
+        let apply_size: Step = |this, _, window, cx| this.apply_picture_edit(window, cx);
+        let no_apply: Step = |e, _, _, cx| e.apply_picture_crop(cx);
         Some(
-            body.child(h_flex().gap_2()
-                .child(row("docx.picture.name", &name_field))
-                .child(Button::new("picture-name-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_picture_name(cx)))))
-                .child(row("docx.picture-panel.width-pt", &fields[0]))
-                .child(row("docx.picture-panel.height-pt", &fields[1]))
-                .child(Button::new("picture-ratio").small().label(crate::shell::i18n::text("docx.picture-panel.lock-aspect-ratio")).selected(ratio).on_click(cx.listener(|this, _, _, cx| this.toggle_picture_ratio(cx))))
+            body.child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("docx.picture.name"),crate::shell::chrome::text_field(&name_field).full_width()).flex_col().items_start().gap_1())
+                .child(spin_row("docx.picture-panel.width-pt", &fields[0], "picture-width", size_spec, apply_size))
+                .child(spin_row("docx.picture-panel.height-pt", &fields[1], "picture-height", size_spec, apply_size))
+                .child(crate::shell::chrome::checkbox_button("picture-ratio",crate::shell::i18n::text("docx.picture-panel.lock-aspect-ratio"),ratio,false,cx.listener(|this,_,_,cx|this.toggle_picture_ratio(cx))))
                 .children(error.map(|e| div().text_sm().child(e)))
                 .child(h_flex().gap_2()
-                    .child(Button::new("picture-size-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|this, _, window, cx| this.apply_picture_edit(window, cx))))
-                    .child(Button::new("picture-replace").small().label(crate::shell::i18n::text("_docx.change-picture")).on_click(cx.listener(|this, _, window, cx| this.doc_pick_replacement_picture(window, cx))))
-                    .child(Button::new("picture-compress").small().label(crate::shell::i18n::text("docx.picture.compress")).on_click(cx.listener(|this, _, window, cx| this.open_docx_compress_panel(window, cx)))))
+
+                    .child(crate::shell::chrome::action_button("picture-replace").small().label(crate::shell::i18n::text("_docx.change-picture")).on_click(cx.listener(|this, _, window, cx| this.doc_pick_replacement_picture(window, cx))))
+                    .child(crate::shell::chrome::action_button("picture-compress").small().label(crate::shell::i18n::text("docx.picture.compress")).on_click(cx.listener(|this, _, window, cx| this.open_docx_compress_panel(window, cx)))))
                 .child(div().pt_2().text_sm().child(crate::shell::i18n::text("fix.picture-panel.rotate-flip")))
                 .child(h_flex().gap_1().flex_wrap()
-                    .child(Button::new("picture-turn-left").small().label(crate::shell::i18n::text("fix.picture-panel.rotate-left-90")).on_click(cx.listener(|this, _, _, cx| this.turn_picture(-1, cx))))
-                    .child(Button::new("picture-turn-right").small().label(crate::shell::i18n::text("fix.picture-panel.rotate-right-90")).on_click(cx.listener(|this, _, _, cx| this.turn_picture(1, cx))))
-                    .child(Button::new("picture-flip-h").small().label(crate::shell::i18n::text("fix.picture-panel.flip-horizontal")).on_click(cx.listener(|this, _, _, cx| this.flip_picture(true, cx))))
-                    .child(Button::new("picture-flip-v").small().label(crate::shell::i18n::text("fix.picture-panel.flip-vertical")).on_click(cx.listener(|this, _, _, cx| this.flip_picture(false, cx)))))
-                .child(Button::new("picture-reset").small().label(crate::shell::i18n::text("docx.picture.reset")).on_click(cx.listener(|this, _, _, cx| this.reset_picture(cx))))
+                    .child(crate::shell::chrome::action_button("picture-turn-left").small().icon(crate::shell::icons::Material("rotate_90_degrees_ccw")).tooltip(crate::shell::i18n::text("fix.picture-panel.rotate-left-90")).on_click(cx.listener(|this, _, _, cx| this.turn_picture(-1, cx))))
+                    .child(crate::shell::chrome::action_button("picture-turn-right").small().icon(crate::shell::icons::Material("rotate_90_degrees_cw")).tooltip(crate::shell::i18n::text("fix.picture-panel.rotate-right-90")).on_click(cx.listener(|this, _, _, cx| this.turn_picture(1, cx))))
+                    .child(crate::shell::chrome::action_button("picture-flip-h").small().icon(crate::shell::icons::Material("flip")).tooltip(crate::shell::i18n::text("fix.picture-panel.flip-horizontal")).on_click(cx.listener(|this, _, _, cx| this.flip_picture(true, cx))))
+                    .child(crate::shell::chrome::action_button("picture-flip-v").small().icon(Icon::new(crate::shell::icons::Material("flip")).transform(gpui::Transformation::rotate(gpui::radians(std::f32::consts::FRAC_PI_2)))).tooltip(crate::shell::i18n::text("fix.picture-panel.flip-vertical")).on_click(cx.listener(|this, _, _, cx| this.flip_picture(false, cx)))))
+                .child(crate::shell::chrome::action_button("picture-reset").small().label(crate::shell::i18n::text("docx.picture.reset")).on_click(cx.listener(|this, _, _, cx| this.reset_picture(cx))))
                 .child(div().pt_2().text_sm().child(crate::shell::i18n::text("fix.picture-panel.crop")))
-                .child(row("_shell.top", &crop[0]))
-                .child(row("_shell.bottom", &crop[1]))
-                .child(row("_shell.left", &crop[2]))
-                .child(row("_shell.right", &crop[3]))
-                .child(Button::new("picture-crop-apply").primary().small().label(crate::shell::i18n::text("fix.picture-panel.apply-crop")).on_click(cx.listener(|this, _, _, cx| this.apply_picture_crop(cx))))
+                .child(spin_row("_shell.top", &crop[0], "picture-crop-top", crop_spec, no_apply))
+                .child(spin_row("_shell.bottom", &crop[1], "picture-crop-bottom", crop_spec, no_apply))
+                .child(spin_row("_shell.left", &crop[2], "picture-crop-left", crop_spec, no_apply))
+                .child(spin_row("_shell.right", &crop[3], "picture-crop-right", crop_spec, no_apply))
                 .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture.crop-to-shape.label")))
-                .child(h_flex().gap_1().flex_wrap()
-                    .child(Button::new("pic-crop-rect").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.rect")).selected(geom_preset.is_none()).on_click(cx.listener(|this, _, _, cx| this.crop_picture_to_shape(None, cx))))
-                    .child(Button::new("pic-crop-round-rect").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.round-rect")).selected(geom_preset == Some("roundRect")).on_click(cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("roundRect"), cx))))
-                    .child(Button::new("pic-crop-ellipse").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.ellipse")).selected(geom_preset == Some("ellipse")).on_click(cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("ellipse"), cx))))
-                    .child(Button::new("pic-crop-triangle").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.triangle")).selected(geom_preset == Some("triangle")).on_click(cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("triangle"), cx))))
-                    .child(Button::new("pic-crop-diamond").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.diamond")).selected(geom_preset == Some("diamond")).on_click(cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("diamond"), cx))))
-                    .child(Button::new("pic-crop-heart").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.heart")).selected(geom_preset == Some("heart")).on_click(cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("heart"), cx))))
-                    .child(Button::new("pic-crop-star5").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.star5")).selected(geom_preset == Some("star5")).on_click(cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("star5"), cx))))
-                    .child(Button::new("pic-crop-cloud").small().label(crate::shell::i18n::text("docx.picture.crop-to-shape.cloud")).selected(geom_preset == Some("cloud")).on_click(cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("cloud"), cx))))),
+                .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+                    .child(crate::shell::chrome::radio_button("pic-crop-rect",geom_preset.is_none(),false,crate::shell::i18n::text("docx.picture.crop-to-shape.rect"),cx.listener(|this, _, _, cx| this.crop_picture_to_shape(None, cx))))
+                    .child(crate::shell::chrome::radio_button("pic-crop-round-rect",geom_preset == Some("roundRect"),false,crate::shell::i18n::text("docx.picture.crop-to-shape.round-rect"),cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("roundRect"), cx))))
+                    .child(crate::shell::chrome::radio_button("pic-crop-ellipse",geom_preset == Some("ellipse"),false,crate::shell::i18n::text("docx.picture.crop-to-shape.ellipse"),cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("ellipse"), cx))))
+                    .child(crate::shell::chrome::radio_button("pic-crop-triangle",geom_preset == Some("triangle"),false,crate::shell::i18n::text("docx.picture.crop-to-shape.triangle"),cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("triangle"), cx))))
+                    .child(crate::shell::chrome::radio_button("pic-crop-diamond",geom_preset == Some("diamond"),false,crate::shell::i18n::text("docx.picture.crop-to-shape.diamond"),cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("diamond"), cx))))
+                    .child(crate::shell::chrome::radio_button("pic-crop-heart",geom_preset == Some("heart"),false,crate::shell::i18n::text("docx.picture.crop-to-shape.heart"),cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("heart"), cx))))
+                    .child(crate::shell::chrome::radio_button("pic-crop-star5",geom_preset == Some("star5"),false,crate::shell::i18n::text("docx.picture.crop-to-shape.star5"),cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("star5"), cx))))
+                    .child(crate::shell::chrome::radio_button("pic-crop-cloud",geom_preset == Some("cloud"),false,crate::shell::i18n::text("docx.picture.crop-to-shape.cloud"),cx.listener(|this, _, _, cx| this.crop_picture_to_shape(Some("cloud"), cx))))),
         )
     }
 
@@ -1120,29 +1136,29 @@ impl SlideEditor {
         let lum_now = self.picture_look_at_caret().and_then(|l| l.luminance);
         body.child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.picture-corrections")))
             .child(h_flex().gap_1().flex_wrap()
-                .child(Button::new("pic-bright-down").small().label(crate::shell::i18n::text("docx.picture-panel.brightness-10-percent")).on_click(cx.listener(|this, _, _, cx| this.adjust_picture_luminance(true, -10, cx))))
-                .child(Button::new("pic-bright-up").small().label(crate::shell::i18n::text("docx.picture-panel.brightness-plus-10-percent")).on_click(cx.listener(|this, _, _, cx| this.adjust_picture_luminance(true, 10, cx))))
-                .child(Button::new("pic-contrast-down").small().label(crate::shell::i18n::text("docx.picture-panel.contrast-10-percent")).on_click(cx.listener(|this, _, _, cx| this.adjust_picture_luminance(false, -10, cx))))
-                .child(Button::new("pic-contrast-up").small().label(crate::shell::i18n::text("docx.picture-panel.contrast-plus-10-percent")).on_click(cx.listener(|this, _, _, cx| this.adjust_picture_luminance(false, 10, cx)))))
+                .child(crate::shell::chrome::action_button("pic-bright-down").small().label(crate::shell::i18n::text("docx.picture-panel.brightness-10-percent")).on_click(cx.listener(|this, _, _, cx| this.adjust_picture_luminance(true, -10, cx))))
+                .child(crate::shell::chrome::action_button("pic-bright-up").small().label(crate::shell::i18n::text("docx.picture-panel.brightness-plus-10-percent")).on_click(cx.listener(|this, _, _, cx| this.adjust_picture_luminance(true, 10, cx))))
+                .child(crate::shell::chrome::action_button("pic-contrast-down").small().label(crate::shell::i18n::text("docx.picture-panel.contrast-10-percent")).on_click(cx.listener(|this, _, _, cx| this.adjust_picture_luminance(false, -10, cx))))
+                .child(crate::shell::chrome::action_button("pic-contrast-up").small().label(crate::shell::i18n::text("docx.picture-panel.contrast-plus-10-percent")).on_click(cx.listener(|this, _, _, cx| this.adjust_picture_luminance(false, 10, cx)))))
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.color-recolor")))
-            .child(h_flex().gap_1().flex_wrap()
-                .child(Button::new("pic-recolor-none").small().label(crate::shell::i18n::text("docx.picture-panel.no-recolor")).selected(duotone_now.is_none() && bilevel_now.is_none() && lum_now != Some((70_000, -70_000))).on_click(cx.listener(|this, _, _, cx| this.recolor_picture(None, cx))))
-                .child(Button::new("pic-recolor-gray").small().label(crate::shell::i18n::text("pptx.print-panel.grayscale")).selected(duotone_now == Some((Rgb(0x000000), Rgb(0xFFFFFF)))).on_click(cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Grayscale), cx))))
-                .child(Button::new("pic-recolor-sepia").small().label(crate::shell::i18n::text("docx.picture-panel.sepia")).selected(duotone_now == Some((Rgb(0x3F2300), Rgb(0xFFF3D6)))).on_click(cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Sepia), cx))))
-                .child(Button::new("pic-recolor-washout").small().label(crate::shell::i18n::text("docx.picture-panel.washout")).selected(lum_now == Some((70_000, -70_000))).on_click(cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Washout), cx))))
-                .child(Button::new("pic-recolor-bw50").small().label(crate::shell::i18n::text("docx.picture-panel.black-and-white")).selected(bilevel_now == Some(50_000)).on_click(cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::BlackAndWhite50), cx))))
-                .child(Button::new("pic-recolor-blue").small().label(crate::shell::i18n::text("_docx.blue")).selected(duotone_now == Some((Rgb(0x002060), Rgb(0xD9E1F2)))).on_click(cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Blue), cx))))
-                .child(Button::new("pic-recolor-green").small().label(crate::shell::i18n::text("_docx.green")).selected(duotone_now == Some((Rgb(0x004010), Rgb(0xE2EFDA)))).on_click(cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Green), cx))))
-                .child(Button::new("pic-recolor-red").small().label(crate::shell::i18n::text("_docx.red")).selected(duotone_now == Some((Rgb(0x600000), Rgb(0xFCE4D6)))).on_click(cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Red), cx))))
-                .child(Button::new("pic-recolor-orange").small().label(crate::shell::i18n::text("_docx.orange")).selected(duotone_now == Some((Rgb(0x803000), Rgb(0xFFE6CC)))).on_click(cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Orange), cx))))
-                .child(Button::new("pic-recolor-purple").small().label(crate::shell::i18n::text("docx.picture-panel.purple")).selected(duotone_now == Some((Rgb(0x400060), Rgb(0xF2E6FF)))).on_click(cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Purple), cx)))))
+            .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+                .child(crate::shell::chrome::radio_button("pic-recolor-none",duotone_now.is_none() && bilevel_now.is_none() && lum_now != Some((70_000, -70_000)),false,crate::shell::i18n::text("docx.picture-panel.no-recolor"),cx.listener(|this, _, _, cx| this.recolor_picture(None, cx))))
+                .child(crate::shell::chrome::radio_button("pic-recolor-gray",duotone_now == Some((Rgb(0x000000), Rgb(0xFFFFFF))),false,crate::shell::i18n::text("pptx.print-panel.grayscale"),cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Grayscale), cx))))
+                .child(crate::shell::chrome::radio_button("pic-recolor-sepia",duotone_now == Some((Rgb(0x3F2300), Rgb(0xFFF3D6))),false,crate::shell::i18n::text("docx.picture-panel.sepia"),cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Sepia), cx))))
+                .child(crate::shell::chrome::radio_button("pic-recolor-washout",lum_now == Some((70_000, -70_000)),false,crate::shell::i18n::text("docx.picture-panel.washout"),cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Washout), cx))))
+                .child(crate::shell::chrome::radio_button("pic-recolor-bw50",bilevel_now == Some(50_000),false,crate::shell::i18n::text("docx.picture-panel.black-and-white"),cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::BlackAndWhite50), cx))))
+                .child(crate::shell::chrome::radio_button("pic-recolor-blue",duotone_now == Some((Rgb(0x002060), Rgb(0xD9E1F2))),false,crate::shell::i18n::text("_docx.blue"),cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Blue), cx))))
+                .child(crate::shell::chrome::radio_button("pic-recolor-green",duotone_now == Some((Rgb(0x004010), Rgb(0xE2EFDA))),false,crate::shell::i18n::text("_docx.green"),cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Green), cx))))
+                .child(crate::shell::chrome::radio_button("pic-recolor-red",duotone_now == Some((Rgb(0x600000), Rgb(0xFCE4D6))),false,crate::shell::i18n::text("_docx.red"),cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Red), cx))))
+                .child(crate::shell::chrome::radio_button("pic-recolor-orange",duotone_now == Some((Rgb(0x803000), Rgb(0xFFE6CC))),false,crate::shell::i18n::text("_docx.orange"),cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Orange), cx))))
+                .child(crate::shell::chrome::radio_button("pic-recolor-purple",duotone_now == Some((Rgb(0x400060), Rgb(0xF2E6FF))),false,crate::shell::i18n::text("docx.picture-panel.purple"),cx.listener(|this, _, _, cx| this.recolor_picture(Some(PictureRecolor::Purple), cx)))))
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.saturation")))
-            .child(h_flex().gap_1().flex_wrap()
-                .child(Button::new("pic-sat-0").small().label("0%").selected(saturation_now == Some(0)).on_click(cx.listener(|this, _, _, cx| this.set_picture_saturation(Some(0), cx))))
-                .child(Button::new("pic-sat-50").small().label("50%").selected(saturation_now == Some(50_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_saturation(Some(50_000), cx))))
-                .child(Button::new("pic-sat-100").small().label("100%").selected(saturation_now.is_none() || saturation_now == Some(100_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_saturation(None, cx))))
-                .child(Button::new("pic-sat-200").small().label("200%").selected(saturation_now == Some(200_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_saturation(Some(200_000), cx))))
-                .child(Button::new("pic-sat-300").small().label("300%").selected(saturation_now == Some(300_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_saturation(Some(300_000), cx)))))
+            .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-sat-0","0%",saturation_now == Some(0)).on_click(cx.listener(|this, _, _, cx| this.set_picture_saturation(Some(0), cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-sat-50","50%",saturation_now == Some(50_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_saturation(Some(50_000), cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-sat-100","100%",saturation_now.is_none() || saturation_now == Some(100_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_saturation(None, cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-sat-200","200%",saturation_now == Some(200_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_saturation(Some(200_000), cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-sat-300","300%",saturation_now == Some(300_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_saturation(Some(300_000), cx)))))
     }
 
     #[inline(never)]
@@ -1154,32 +1170,32 @@ impl SlideEditor {
         let stroke_now = self.picture_stroke_at_caret();
         let opacity_now = self.picture_opacity_at_caret();
         let soft_edge_now = self.picture_soft_edge_at_caret();
-        let row = |label: &'static str, field: &Entity<InputState>| h_flex().gap_2().child(div().w(px(80.)).text_sm().child(crate::shell::i18n::text(label))).child(Input::new(field).small().cleanable(true));
+        let row = |label: &'static str, field: &Entity<InputState>| h_flex().gap_2().child(div().w(px(80.)).text_sm().child(crate::shell::i18n::text(label))).child(crate::shell::chrome::text_field(field).full_width());
         let mut body = body
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.transparency")))
-            .child(h_flex().gap_1().flex_wrap()
-                .child(Button::new("pic-trans-0").small().label("0%").selected(opacity_now.is_none()).on_click(cx.listener(|this, _, _, cx| this.set_picture_opacity(None, cx))))
-                .child(Button::new("pic-trans-15").small().label("15%").selected(opacity_now == Some(85_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_opacity(Some(85_000), cx))))
-                .child(Button::new("pic-trans-30").small().label("30%").selected(opacity_now == Some(70_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_opacity(Some(70_000), cx))))
-                .child(Button::new("pic-trans-50").small().label("50%").selected(opacity_now == Some(50_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_opacity(Some(50_000), cx))))
-                .child(Button::new("pic-trans-65").small().label("65%").selected(opacity_now == Some(35_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_opacity(Some(35_000), cx))))
-                .child(Button::new("pic-trans-80").small().label("80%").selected(opacity_now == Some(20_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_opacity(Some(20_000), cx)))))
+            .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+                .child(crate::shell::chrome::radio_button("pic-trans-0",opacity_now.is_none(),false,"0%",cx.listener(|this, _, _, cx| this.set_picture_opacity(None, cx))))
+                .child(crate::shell::chrome::radio_button("pic-trans-15",opacity_now == Some(85_000),false,"15%",cx.listener(|this, _, _, cx| this.set_picture_opacity(Some(85_000), cx))))
+                .child(crate::shell::chrome::radio_button("pic-trans-30",opacity_now == Some(70_000),false,"30%",cx.listener(|this, _, _, cx| this.set_picture_opacity(Some(70_000), cx))))
+                .child(crate::shell::chrome::radio_button("pic-trans-50",opacity_now == Some(50_000),false,"50%",cx.listener(|this, _, _, cx| this.set_picture_opacity(Some(50_000), cx))))
+                .child(crate::shell::chrome::radio_button("pic-trans-65",opacity_now == Some(35_000),false,"65%",cx.listener(|this, _, _, cx| this.set_picture_opacity(Some(35_000), cx))))
+                .child(crate::shell::chrome::radio_button("pic-trans-80",opacity_now == Some(20_000),false,"80%",cx.listener(|this, _, _, cx| this.set_picture_opacity(Some(20_000), cx)))))
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture-panel.soft-edge")))
-            .child(h_flex().gap_1().flex_wrap()
-                .child(Button::new("pic-soft-0").small().label(crate::shell::i18n::text("pptx.chrome.no-border")).selected(soft_edge_now.is_none()).on_click(cx.listener(|this, _, _, cx| this.set_picture_soft_edge(None, cx))))
-                .child(Button::new("pic-soft-1").small().label("1 pt").selected(soft_edge_now == Some(12_700)).on_click(cx.listener(|this, _, _, cx| this.set_picture_soft_edge(Some(12_700), cx))))
-                .child(Button::new("pic-soft-2").small().label("2.5 pt").selected(soft_edge_now == Some(31_750)).on_click(cx.listener(|this, _, _, cx| this.set_picture_soft_edge(Some(31_750), cx))))
-                .child(Button::new("pic-soft-5").small().label("5 pt").selected(soft_edge_now == Some(63_500)).on_click(cx.listener(|this, _, _, cx| this.set_picture_soft_edge(Some(63_500), cx))))
-                .child(Button::new("pic-soft-10").small().label("10 pt").selected(soft_edge_now == Some(127_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_soft_edge(Some(127_000), cx)))))
+            .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-soft-0",crate::shell::i18n::text("pptx.chrome.no-border"),soft_edge_now.is_none()).on_click(cx.listener(|this, _, _, cx| this.set_picture_soft_edge(None, cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-soft-1","1 pt",soft_edge_now == Some(12_700)).on_click(cx.listener(|this, _, _, cx| this.set_picture_soft_edge(Some(12_700), cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-soft-2","2.5 pt",soft_edge_now == Some(31_750)).on_click(cx.listener(|this, _, _, cx| this.set_picture_soft_edge(Some(31_750), cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-soft-5","5 pt",soft_edge_now == Some(63_500)).on_click(cx.listener(|this, _, _, cx| this.set_picture_soft_edge(Some(63_500), cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-soft-10","10 pt",soft_edge_now == Some(127_000)).on_click(cx.listener(|this, _, _, cx| this.set_picture_soft_edge(Some(127_000), cx)))))
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture.border.label")))
-            .child(h_flex().gap_1().flex_wrap()
-                .child(Button::new("pic-border-none").small().label(crate::shell::i18n::text("pptx.chrome.no-border")).selected(stroke_now.is_none()).on_click(cx.listener(|this, _, _, cx| this.clear_picture_border(cx))))
-                .child(Button::new("pic-border-w1").small().label("1 pt").selected(stroke_now.as_ref().is_some_and(|s| s.width == 12_700)).on_click(cx.listener(|this, _, _, cx| this.set_picture_border_width(12_700, cx))))
-                .child(Button::new("pic-border-w2").small().label("1.5 pt").selected(stroke_now.as_ref().is_some_and(|s| s.width == 19_050)).on_click(cx.listener(|this, _, _, cx| this.set_picture_border_width(19_050, cx))))
-                .child(Button::new("pic-border-w3").small().label("3 pt").selected(stroke_now.as_ref().is_some_and(|s| s.width == 38_100)).on_click(cx.listener(|this, _, _, cx| this.set_picture_border_width(38_100, cx))))
-                .child(Button::new("pic-border-w6").small().label("6 pt").selected(stroke_now.as_ref().is_some_and(|s| s.width == 76_200)).on_click(cx.listener(|this, _, _, cx| this.set_picture_border_width(76_200, cx)))))
+            .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic)
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-border-none",crate::shell::i18n::text("pptx.chrome.no-border"),stroke_now.is_none()).on_click(cx.listener(|this, _, _, cx| this.clear_picture_border(cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-border-w1","1 pt",stroke_now.as_ref().is_some_and(|s| s.width == 12_700)).on_click(cx.listener(|this, _, _, cx| this.set_picture_border_width(12_700, cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-border-w2","1.5 pt",stroke_now.as_ref().is_some_and(|s| s.width == 19_050)).on_click(cx.listener(|this, _, _, cx| this.set_picture_border_width(19_050, cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-border-w3","3 pt",stroke_now.as_ref().is_some_and(|s| s.width == 38_100)).on_click(cx.listener(|this, _, _, cx| this.set_picture_border_width(38_100, cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("pic-border-w6","6 pt",stroke_now.as_ref().is_some_and(|s| s.width == 76_200)).on_click(cx.listener(|this, _, _, cx| this.set_picture_border_width(76_200, cx)))))
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture.alt-text")))
-            .child(Button::new("picture-decorative").small().label(crate::shell::i18n::text("docx.picture.decorative")).selected(decorative).on_click(cx.listener(|this, _, _, cx| this.toggle_picture_decorative(cx))));
+            .child(crate::shell::chrome::checkbox_button("picture-decorative",crate::shell::i18n::text("docx.picture.decorative"),decorative,false,cx.listener(|this, _, _, cx| this.toggle_picture_decorative(cx))));
         if decorative {
             body = body.child(div().text_xs().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("docx.picture.decorative.hint")));
         } else {
@@ -1187,19 +1203,19 @@ impl SlideEditor {
                 .child(div().text_xs().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("docx.picture.alt-text.hint")))
                 .child(row("docx.picture.alt-text.title", &alt_title))
                 .child(row("docx.picture.alt-text.desc", &alt_desc))
-                .child(Button::new("picture-alt-text-apply").primary().small().label(crate::shell::i18n::text("docx.picture.alt-text.apply")).on_click(cx.listener(|this, _, _, cx| this.apply_picture_alt_text(cx))));
+;
         }
         let editing_wp = self.is_editing_wrap_points();
         let poly_opt = self.picture_wrap_polygon_at_caret();
         body = body
             .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture.edit-wrap-points")))
             .child(h_flex().gap_1().flex_wrap()
-                .child(Button::new("pic-wrap-points-toggle").small().label(crate::shell::i18n::text("docx.picture.edit-wrap-points")).selected(editing_wp).on_click(cx.listener(|this, _, _, cx| this.toggle_edit_wrap_points(cx))))
-                .child(Button::new("pic-wrap-points-rect").small().label(crate::shell::i18n::text("docx.picture.wrap-points.rect")).on_click(cx.listener(|this, _, _, cx| { this.apply_picture_wrap_polygon_preset("rect", cx); })))
-                .child(Button::new("pic-wrap-points-diamond").small().label(crate::shell::i18n::text("docx.picture.wrap-points.diamond")).on_click(cx.listener(|this, _, _, cx| { this.apply_picture_wrap_polygon_preset("diamond", cx); })))
-                .child(Button::new("pic-wrap-points-octagon").small().label(crate::shell::i18n::text("docx.picture.wrap-points.octagon")).on_click(cx.listener(|this, _, _, cx| { this.apply_picture_wrap_polygon_preset("octagon", cx); })))
-                .child(Button::new("pic-wrap-points-inset").small().label(crate::shell::i18n::text("docx.picture.wrap-points.inset")).on_click(cx.listener(|this, _, _, cx| { this.apply_picture_wrap_polygon_preset("inset", cx); })))
-                .child(Button::new("pic-wrap-points-reset").small().label(crate::shell::i18n::text("docx.picture.wrap-points.reset")).on_click(cx.listener(|this, _, _, cx| { this.reset_picture_wrap_points(cx); }))));
+                .child(crate::shell::chrome::checkbox_button("pic-wrap-points-toggle",crate::shell::i18n::text("docx.picture.edit-wrap-points"),editing_wp,false,cx.listener(|this, _, _, cx| this.toggle_edit_wrap_points(cx))))
+                .child(crate::shell::chrome::action_button("pic-wrap-points-rect").small().label(crate::shell::i18n::text("docx.picture.wrap-points.rect")).on_click(cx.listener(|this, _, _, cx| { this.apply_picture_wrap_polygon_preset("rect", cx); })))
+                .child(crate::shell::chrome::action_button("pic-wrap-points-diamond").small().label(crate::shell::i18n::text("docx.picture.wrap-points.diamond")).on_click(cx.listener(|this, _, _, cx| { this.apply_picture_wrap_polygon_preset("diamond", cx); })))
+                .child(crate::shell::chrome::action_button("pic-wrap-points-octagon").small().label(crate::shell::i18n::text("docx.picture.wrap-points.octagon")).on_click(cx.listener(|this, _, _, cx| { this.apply_picture_wrap_polygon_preset("octagon", cx); })))
+                .child(crate::shell::chrome::action_button("pic-wrap-points-inset").small().label(crate::shell::i18n::text("docx.picture.wrap-points.inset")).on_click(cx.listener(|this, _, _, cx| { this.apply_picture_wrap_polygon_preset("inset", cx); })))
+                .child(crate::shell::chrome::action_button("pic-wrap-points-reset").small().label(crate::shell::i18n::text("docx.picture.wrap-points.reset")).on_click(cx.listener(|this, _, _, cx| { this.reset_picture_wrap_points(cx); }))));
         if editing_wp || poly_opt.is_some() {
             let poly = poly_opt.unwrap_or_else(ibis_doc_model::WrapPolygon::default_rect_21600);
             let mut vertices = vec![poly.start];
@@ -1210,15 +1226,15 @@ impl SlideEditor {
                 body = body.child(
                     h_flex().gap_1().items_center()
                         .child(div().w(px(88.)).text_xs().child(format!("#{idx} ({pct_x}%, {pct_y}%)")))
-                        .child(Button::new(("wp-left", idx)).small().label("←").on_click(cx.listener(move |this, _, _, cx| { this.nudge_picture_wrap_point(idx, -1080, 0, cx); })))
-                        .child(Button::new(("wp-right", idx)).small().label("→").on_click(cx.listener(move |this, _, _, cx| { this.nudge_picture_wrap_point(idx, 1080, 0, cx); })))
-                        .child(Button::new(("wp-up", idx)).small().label("↑").on_click(cx.listener(move |this, _, _, cx| { this.nudge_picture_wrap_point(idx, 0, -1080, cx); })))
-                        .child(Button::new(("wp-down", idx)).small().label("↓").on_click(cx.listener(move |this, _, _, cx| { this.nudge_picture_wrap_point(idx, 0, 1080, cx); })))
-                        .child(Button::new(("wp-del", idx)).small().label("-").disabled(idx == 0 || poly.line_to.len() <= 3).on_click(cx.listener(move |this, _, _, cx| { this.remove_picture_wrap_point(idx, cx); })))
+                        .child(crate::shell::chrome::action_button(("wp-left", idx)).small().label("←").on_click(cx.listener(move |this, _, _, cx| { this.nudge_picture_wrap_point(idx, -1080, 0, cx); })))
+                        .child(crate::shell::chrome::action_button(("wp-right", idx)).small().label("→").on_click(cx.listener(move |this, _, _, cx| { this.nudge_picture_wrap_point(idx, 1080, 0, cx); })))
+                        .child(crate::shell::chrome::action_button(("wp-up", idx)).small().label("↑").on_click(cx.listener(move |this, _, _, cx| { this.nudge_picture_wrap_point(idx, 0, -1080, cx); })))
+                        .child(crate::shell::chrome::action_button(("wp-down", idx)).small().label("↓").on_click(cx.listener(move |this, _, _, cx| { this.nudge_picture_wrap_point(idx, 0, 1080, cx); })))
+                        .child(crate::shell::chrome::action_button(("wp-del", idx)).small().label("-").disabled(idx == 0 || poly.line_to.len() <= 3).on_click(cx.listener(move |this, _, _, cx| { this.remove_picture_wrap_point(idx, cx); })))
                 );
             }
             body = body.child(
-                Button::new("pic-wrap-points-add")
+                crate::shell::chrome::action_button("pic-wrap-points-add")
                     .small()
                     .label(crate::shell::i18n::text("docx.picture.wrap-points.add-vertex"))
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1287,8 +1303,10 @@ impl SlideEditor {
 
     /// Open the Selection Pane (オブジェクトの選択と表示).
     pub(crate) fn open_selection_pane(&mut self, cx: &mut Context<Self>) {
+        if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         if let Some(state) = self.doc_state_mut() {
             state.selection_pane = true;
+            state.selection_reorder = Default::default();
             state.picture_edit = None;
             state.table_size = None;
             state.font_edit = None;
@@ -1303,43 +1321,113 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// Selection Pane panel (オブジェクトの選択と表示).
+    /// All selectable drawing objects, including shapes/text boxes and inline pictures.
+    pub(crate) fn document_selection_objects(&self) -> Vec<SelectionObjectInfo> {
+        fn collect(blocks: &[ibis_doc_model::Block], objects: &mut Vec<SelectionObjectInfo>) {
+            for block in blocks {
+                match block {
+                    ibis_doc_model::Block::Paragraph(p) => {
+                        let mut offset = 0;
+                        for run in &p.runs {
+                            let data = match &run.kind {
+                                FlowRunKind::Shape(shape) => {
+                                    let (name, icon) = match &shape.kind {
+                                        ibis_doc_model::ShapeKind::Picture(picture) => (picture.name.clone(), "image"),
+                                        ibis_doc_model::ShapeKind::TextBox(body) => (body.text(), "text_fields"),
+                                        ibis_doc_model::ShapeKind::Auto(auto) => (auto.text.as_ref().map(|t| t.text()).unwrap_or_default(), "category"),
+                                        ibis_doc_model::ShapeKind::Chart(_) => (String::new(), "bar_chart"),
+                                        _ => (String::new(), "category"),
+                                    };
+                                    Some((name, icon, shape.floating.clone()))
+                                }
+                                FlowRunKind::Picture { look, .. } | FlowRunKind::PictureControl { look, .. } => Some((look.name.clone(), "image", None)),
+                                _ => None,
+                            };
+                            if let Some((name, icon, anchor)) = data {
+                                let name = if name.trim().is_empty() {
+                                    crate::shell::i18n::format("docx.selection-pane.object-number", &[("number", &(objects.len() + 1))])
+                                } else { name.lines().next().unwrap_or_default().chars().take(64).collect() };
+                                objects.push(SelectionObjectInfo { at: FlowPos::new(p.id, offset), name, icon, anchor });
+                            }
+                            offset += run.len();
+                        }
+                    }
+                    ibis_doc_model::Block::Table(table) => for row in &table.rows { for cell in &row.cells { collect(&cell.blocks, objects); } },
+                }
+            }
+        }
+        let mut objects = Vec::new();
+        if let Some(doc) = self.flow() { collect(&doc.body, &mut objects); }
+        // First row represents the foremost floating object; inline items keep document order.
+        objects.sort_by(|a, b| match (&a.anchor, &b.anchor) {
+            (Some(a), Some(b)) => b.relative_height.cmp(&a.relative_height),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        });
+        objects
+    }
+
+    /// Commit all changed Z positions in one document transaction (one Undo).
+    pub(crate) fn reorder_selection_objects(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        let mut objects = self.document_selection_objects().into_iter().filter(|o| o.anchor.is_some()).collect::<Vec<_>>();
+        if from == to || from >= objects.len() || to >= objects.len() { return; }
+        let moved = objects.remove(from);
+        objects.insert(to, moved);
+        let count = objects.len();
+        let commands = objects.into_iter().enumerate().filter_map(|(index, object)| {
+            let mut anchor = object.anchor?;
+            // relativeHeight is an ordering key; consecutive ranks give a strict order even if the source used ties.
+            let rank = u32::try_from(count - index).unwrap_or(u32::MAX);
+            if anchor.relative_height == rank { return None; }
+            anchor.relative_height = rank;
+            Some(FlowCommand::SetPictureFloating { at: object.at, anchor: Some(anchor) })
+        }).collect::<Vec<_>>();
+        self.run_flow(commands, cx);
+    }
+
+    /// Selection uses the app-wide table and its animated, Escape-cancellable drag behavior.
     pub(crate) fn selection_pane_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let is_open = self.doc_state().is_some_and(|s| s.selection_pane);
-        if !is_open { return None; }
-        let objects = self.document_picture_objects();
-        let current_at = self.picture_at_caret().map(|(at, ..)| at);
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.));
+        let state = self.doc_state()?;
+        if !state.selection_pane { return None; }
+        let reorder = state.selection_reorder.clone();
+        let objects = self.document_selection_objects();
+        let current_at = self.ordered_selection().map(|(start, _)| start);
+        let mut body = v_flex().gap_2().w_full().min_w_0();
         if objects.is_empty() {
-            body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("docx.selection-pane.empty")));
+            body = body.child(div().text_sm().text_color(crate::shell::chrome::text_secondary()).child(crate::shell::i18n::text("docx.selection-pane.empty")));
         } else {
-            body = body.child(div().text_xs().text_color(rgb(0x5f6368)).child(crate::shell::i18n::format("_docx.shapes-and-pictures-n", &[("n", &objects.len().to_string())])));
-            for obj in objects {
-                let at = obj.at;
-                let is_selected = current_at == Some(at);
-                let kind_label = if obj.is_floating { crate::shell::i18n::text("_docx.floating") } else { crate::shell::i18n::text("_docx.in-line-with-text") };
-                let bg_color = if is_selected { rgb(0xe8f0fe) } else { rgb(0xffffff) };
-                let id_key = (at.para as usize) << 16 | at.offset;
-                let item = h_flex()
-                    .id(("selection-item", id_key))
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(bg_color)
-                    .cursor_pointer()
+            let (floating, inline): (Vec<_>, Vec<_>) = objects.into_iter().partition(|o| o.anchor.is_some());
+            let header = || div().h_full().flex().items_center().px_2().text_sm().child(crate::shell::i18n::text("docx.selection-pane.object-name")).into_any_element();
+            let row = |index: usize, object: SelectionObjectInfo, draggable: bool| {
+                let at = object.at;
+                let selected = current_at == Some(at);
+                let item = h_flex().id(("selection-item", index)).size_full().items_center().gap_2().px_2().cursor_pointer()
+                    .bg(rgb(if selected { crate::shell::chrome::SELECTED_ROW_BG } else { 0xffffff }))
                     .hover(|s| s.bg(rgb(0xf1f3f4)))
-                    .child(Icon::new(Material(if obj.is_floating { "layers" } else { "image" })).size(px(16.)))
-                    .child(div().flex_1().text_sm().child(obj.name))
-                    .child(div().text_xs().text_color(rgb(0x80868b)).child(kind_label))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.select_picture_at(at, cx);
+                    .child(Icon::new(Material(object.icon)).size(px(16.)))
+                    .child(div().flex_1().min_w_0().overflow_hidden().text_sm().child(object.name))
+                    .when(draggable, |d| d.child(Icon::new(Material("menu")).size(px(18.))))
+                    .on_click(cx.listener(move |e, _, _, cx| {
+                        e.select_picture_at(at, cx);
+                        if let Some(s) = e.doc_state_mut() { s.shape_selected = draggable; s.selected_shapes.clear(); }
                     }));
-                body = body.child(item);
+                (index, item.into_any_element(), selected)
+            };
+            if !floating.is_empty() {
+                let rows = floating.into_iter().enumerate().map(|(i, o)| row(i, o, true)).collect();
+                body = body.child(crate::shell::chrome::data_table::DataTable::new("docx-selection-floating", Some(header()), rows, cx)
+                    .reorderable(reorder, |e, from, to, _, cx| e.reorder_selection_objects(from, to, cx)));
+            }
+            if !inline.is_empty() {
+                let rows = inline.into_iter().enumerate().map(|(i, o)| row(i, o, false)).collect();
+                body = body.child(div().text_sm().child(crate::shell::i18n::text("_docx.in-line-with-text")))
+                    .child(crate::shell::chrome::data_table::DataTable::new("docx-selection-inline", Some(header()), rows, cx));
             }
         }
         Some(SidebarPanel { title: crate::shell::i18n::text("docx.selection-pane.title"), body: body.into_any_element() })
     }
+
 }
 
 #[derive(Clone, Debug)]
@@ -1349,4 +1437,13 @@ pub(crate) struct PictureObjectInfo {
     pub(crate) is_floating: bool,
     #[allow(dead_code)]
     pub(crate) size: EmuSize,
+}
+
+
+#[derive(Clone, Debug)]
+pub(crate) struct SelectionObjectInfo {
+    pub(crate) at: FlowPos,
+    pub(crate) name: String,
+    pub(crate) icon: &'static str,
+    pub(crate) anchor: Option<ibis_doc_model::FloatingAnchor>,
 }

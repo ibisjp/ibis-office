@@ -677,6 +677,8 @@ fn write_paragraph_format(doc: &mut XmlDocument, p: NodeId, x: &Prefixes, have: 
         indent: 0,
         level: 0,
         space_before: 0,
+        // How a space before was written (percent or points) is a reading of it, not something the save writes.
+        space_before_exact: false,
         space_after: 0,
         line_spacing: None,
         bullet: None,

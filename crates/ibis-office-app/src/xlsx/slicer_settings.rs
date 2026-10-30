@@ -10,8 +10,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::slicer::{Slicer, SlicerSource};
@@ -132,7 +132,7 @@ impl SlideEditor {
             ui: Default::default(),
         };
         let state = self.wb_mut();
-        state.panels.close();
+        state.close_settings();
         state.panels.slicer_settings = Some(panel);
         self.sidebar_open = true;
         cx.notify();
@@ -221,10 +221,17 @@ impl SlideEditor {
                 }).absolute().top_0().left_0().size_full())
                 .into_any_element()
         };
-        let caption = |id: &str| div().text_size(px(13.)).child(text(id));
-        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.));
-        body = body.child(caption("xlsx.slicer-settings.name")).child(mark("name", Input::new(&p.name).small().cleanable(true).into_any_element()));
-        body = body.child(caption("xlsx.slicer-settings.caption")).child(mark("caption", Input::new(&p.caption).small().cleanable(true).into_any_element()));
+        let mark_action = |id: &str, action: crate::shell::chrome::ActionDefinition| {
+            let ui = p.ui.clone();
+            let id = id.to_string();
+            action.on_bounds(move |bounds, _, _| {
+                    ui.borrow_mut().insert(id.clone(), bounds);
+                })
+        };
+        let caption = |id: &str| div().text_sm().child(text(id));
+        let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
+        body = body.child(caption("xlsx.slicer-settings.name")).child(mark("name", crate::shell::chrome::text_field(&p.name).full_width().into_any_element()));
+        body = body.child(caption("xlsx.slicer-settings.caption")).child(mark("caption", crate::shell::chrome::text_field(&p.caption).full_width().into_any_element()));
         body = body.child(mark(
             "show-caption",
             super::toggle::toggle_row(
@@ -243,11 +250,7 @@ impl SlideEditor {
         let sort_radio = |id: &'static str, on: bool, label: &'static str, desc: bool| {
             mark(
                 id,
-                Button::new(id)
-                    .small()
-                    .ghost()
-                    .label(format!("{} {}", if on { "◉" } else { "○" }, text(label)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::radio_button(id, on, false, text(label), cx.listener(move |this, _, _, cx| {
                         if let Some(p) = this.wb_mut().panels.slicer_settings.as_mut() {
                             p.descending = desc;
                         }
@@ -257,30 +260,16 @@ impl SlideEditor {
             )
         };
         body = body.child(caption("_xlsx.sort-2")).child(
-            gpui_kit::component::h_flex()
-                .gap_1()
+            crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                 .child(sort_radio("sort-asc", !descending, "_xlsx.ascending", false))
                 .child(sort_radio("sort-desc", descending, "_xlsx.descending", true)),
         );
         body = body.child(caption("xlsx.slicer-settings.style"));
-        let mut styles_row = gpui_kit::component::h_flex().gap_1().flex_wrap();
-        for &(style_id, label) in SLICER_STYLES {
-            let selected = current_style == style_id;
-            let style_owned = style_id.to_string();
-            let btn = Button::new(SharedString::from(format!("slicer-style-{style_id}")))
-                .small()
-                .label(format!("{} {label}", if selected { "◉" } else { "○" }))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(p) = this.wb_mut().panels.slicer_settings.as_mut() {
-                        p.style = style_owned.clone();
-                    }
-                    cx.notify();
-                }));
-            styles_row = styles_row.child(mark(&format!("style-{style_id}"), btn.into_any_element()));
-        }
-        body = body.child(styles_row);
-        body = body.child(caption("xlsx.slicer-settings.columns")).child(mark("columns", Input::new(&p.columns).small().cleanable(true).into_any_element()));
-        body = body.child(caption("xlsx.slicer-settings.height")).child(mark("height", Input::new(&p.height).small().cleanable(true).into_any_element()));
+        let choices=SLICER_STYLES.iter().map(|&(style,label)|{let owned=style.to_string();crate::shell::chrome::dropdown::ColorPaletteItem::single(label.into(),super::slicer_view::accent(style),Rc::new(move|e,_,cx|{if let Some(p)=e.wb_mut().panels.slicer_settings.as_mut(){p.style=owned.clone();}cx.notify();}))}).collect();
+        let selected=SLICER_STYLES.iter().position(|(style,_)|*style==current_style).unwrap_or(0);
+        body=body.child(crate::shell::chrome::ColorPaletteDropdown::new("slicer-style-dropdown",choices,selected,&cx.weak_entity()));
+        body = body.child(caption("xlsx.slicer-settings.columns")).child(mark("columns", crate::shell::chrome::text_field(&p.columns).full_width().spinner("slicer-columns", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 20.0).integer_only(), cx, |_, _, _, _| {}).into_any_element()));
+        body = body.child(caption("xlsx.slicer-settings.height")).child(mark("height", crate::shell::chrome::text_field(&p.height).unit("pt",px(20.)).spinner("slicer-height", crate::shell::chrome::SpinnerSpec::new(1.0).range(5.0, 200.0), cx, |_, _, _, _| {}).into_any_element()));
         if !p.pivots.is_empty() {
             body = body.child(caption("xlsx.slicer-settings.connections"));
             for (i, (name, on)) in p.pivots.iter().enumerate() {
@@ -304,21 +293,11 @@ impl SlideEditor {
             }
         }
         if !p.message.is_empty() {
-            body = body.child(div().text_size(px(12.)).child(SharedString::from(p.message.clone())));
+            body = body.children(crate::shell::chrome::panel_message(&p.message));
         }
-        body = body.child(mark("apply", Button::new("slicer-settings-ok").primary().small().label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_slicer_settings_panel(cx))).into_any_element()));
-        body = body.child(mark(
-            "close",
-            Button::new("slicer-settings-close")
-                .small()
-                .label(text("_shell.close"))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.wb_mut().panels.slicer_settings = None;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        ));
-        Some(SidebarPanel { title: text("xlsx.slicer-settings.title"), body: body.into_any_element() })
+        let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("slicer-settings-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_slicer_settings_panel(cx)))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(text("xlsx.slicer-settings.title"), body.into_any_element(), panel_terminal_actions))
     }
 }
 

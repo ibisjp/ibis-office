@@ -71,6 +71,89 @@ pub(crate) fn font_file_metrics(data: &[u8], index: u32) -> Option<(f32, f32)> {
     (ascent > 0.0 && descent >= 0.0).then(|| (ascent / em, descent / em))
 }
 
+/// What Microsoft Excel's row height follows in a font's file (`xlsx::row_fit`): `OS/2`'s `usWinAscent` and `usWinDescent`, `hhea`'s
+/// ascender, descender and lineGap, `head`'s unitsPerEm, and the rows of the `VDMX` group Windows' GDI reads its ascent and descent
+/// from, if the font has one for the DEFAULT charset at 1:1. `None` when the file cannot be read.
+pub(crate) struct WinRowMetrics {
+    pub(crate) win_ascent: f64,
+    pub(crate) win_descent: f64,
+    pub(crate) hhea_ascent: f64,
+    pub(crate) hhea_descent: f64,
+    pub(crate) hhea_line_gap: f64,
+    pub(crate) units_per_em: f64,
+    /// The VDMX group of the DEFAULT charset for square pixels: (ppem, yMax, yMin) of each row it has.
+    pub(crate) vdmx: Option<Vec<(u16, i16, i16)>>,
+}
+
+pub(crate) fn font_file_win_row_metrics(data: &[u8], index: u32) -> Option<WinRowMetrics> {
+    let u16_at = |at: usize| -> Option<u16> { Some(u16::from_be_bytes([*data.get(at)?, *data.get(at + 1)?])) };
+    let i16_at = |at: usize| -> Option<i16> { u16_at(at).map(|v| v as i16) };
+    let u32_at = |at: usize| -> Option<u32> { Some(u32::from_be_bytes([*data.get(at)?, *data.get(at + 1)?, *data.get(at + 2)?, *data.get(at + 3)?])) };
+    let offset = if data.starts_with(b"ttcf") {
+        if index >= u32_at(8)? {
+            return None;
+        }
+        u32_at(12 + 4 * index as usize)? as usize
+    } else {
+        0
+    };
+    let tables = u16_at(offset + 4)? as usize;
+    let find = |tag: &[u8; 4]| -> Option<usize> {
+        (0..tables).find_map(|i| {
+            let record = offset + 12 + 16 * i;
+            (data.get(record..record + 4)? == tag).then(|| u32_at(record + 8).map(|o| o as usize)).flatten()
+        })
+    };
+    let units_per_em = f64::from(u16_at(find(b"head")? + 18)?);
+    let os2 = find(b"OS/2")?;
+    let (win_ascent, win_descent) = (f64::from(u16_at(os2 + 74)?), f64::from(u16_at(os2 + 76)?));
+    let hhea = find(b"hhea")?;
+    let (hhea_ascent, hhea_descent, hhea_line_gap) = (f64::from(i16_at(hhea + 4)?), f64::from(i16_at(hhea + 6)?), f64::from(i16_at(hhea + 8)?));
+    let vdmx = find(b"VDMX").and_then(|v| {
+        // The ratio records: bCharSet, xRatio, yStartRatio, yEndRatio; a group per record, its offset from the table's start.
+        let ratios = u16_at(v + 4)? as usize;
+        let at = (0..ratios).find(|&i| {
+            let r = v + 6 + 4 * i;
+            let byte = |k: usize| data.get(r + k).copied().unwrap_or(0);
+            let (set, x, y0, y1) = (byte(0), byte(1), byte(2), byte(3));
+            // Square pixels (aspect 1:1) are in the record's range of y/x (x = 0: any).
+            set == 1 && (x == 0 || (y0 <= x && x <= y1.max(y0)))
+        })?;
+        let group = v + usize::from(u16_at(v + 6 + 4 * ratios + 2 * at)?);
+        let rows = u16_at(group)? as usize;
+        (0..rows).map(|i| Some((u16_at(group + 4 + 6 * i)?, i16_at(group + 6 + 6 * i)?, i16_at(group + 8 + 6 * i)?))).collect::<Option<Vec<_>>>()
+    });
+    (units_per_em > 0.0).then_some(WinRowMetrics { win_ascent, win_descent, hhea_ascent, hhea_descent, hhea_line_gap, units_per_em, vdmx })
+}
+
+/// Whether the font in `data` (the `index`th of a collection) says it supports the Japanese code page (932, Shift_JIS):
+/// bit 17 of `OS/2` `ulCodePageRange1` (a table of version 1 or later). Word makes the lines of such typefaces 1.3 times
+/// their Windows ascent plus descent (docx `flow_layout::lead_em`).
+pub(crate) fn font_file_has_japanese(data: &[u8], index: u32) -> bool {
+    let u16_at = |at: usize| -> Option<u16> { Some(u16::from_be_bytes([*data.get(at)?, *data.get(at + 1)?])) };
+    let u32_at = |at: usize| -> Option<u32> { Some(u32::from_be_bytes([*data.get(at)?, *data.get(at + 1)?, *data.get(at + 2)?, *data.get(at + 3)?])) };
+    let read = || -> Option<bool> {
+        let offset = if data.starts_with(b"ttcf") {
+            if index >= u32_at(8)? {
+                return None;
+            }
+            u32_at(12 + 4 * index as usize)? as usize
+        } else {
+            0
+        };
+        let tables = u16_at(offset + 4)? as usize;
+        let os2 = (0..tables).find_map(|i| {
+            let record = offset + 12 + 16 * i;
+            (data.get(record..record + 4)? == b"OS/2").then(|| u32_at(record + 8).map(|o| o as usize)).flatten()
+        })?;
+        if u16_at(os2)? < 1 {
+            return None;
+        }
+        Some(u32_at(os2 + 78)? & (1 << 17) != 0)
+    };
+    read().unwrap_or(false)
+}
+
 /// The ascent and descent (ems) Office gives the typeface `name` (as a
 /// document names it), from the fonts it ships (`OS/2`); `None` for other
 /// typefaces.
@@ -243,5 +326,54 @@ mod tests {
         let data = include_bytes!("../../fonts/carlito/Carlito-Regular.ttf");
         let (a, d) = font_file_metrics(data, 0).unwrap();
         assert!((a - 0.9521).abs() < 1e-3 && (d - 0.2686).abs() < 1e-3, "{a} {d}");
+    }
+
+    #[test]
+    fn win_row_metrics_read_os2_hhea_and_vdmx() {
+        // Carlito has Calibri's metrics (usWinAscent 1950, usWinDescent 550 of 2048, hhea 1950, -550, 0) and no VDMX table.
+        let data = include_bytes!("../../fonts/carlito/Carlito-Regular.ttf");
+        let m = font_file_win_row_metrics(data, 0).unwrap();
+        assert_eq!((m.win_ascent, m.win_descent, m.units_per_em), (1950.0, 550.0, 2048.0));
+        assert_eq!((m.hhea_ascent, m.hhea_descent, m.hhea_line_gap), (1950.0, -550.0, 0.0));
+        assert!(m.vdmx.is_none());
+        // A made-up font of four tables: head, OS/2, hhea and a VDMX with one ratio record (charset given, 1:1) and a group of
+        // two rows (ppem 11: yMax 9, yMin -3; ppem 12: yMax 10, yMin -3).
+        let tables: [(&[u8; 4], Vec<u8>); 4] = [
+            (b"head", { let mut t = vec![0u8; 54]; t[18..20].copy_from_slice(&1000u16.to_be_bytes()); t }),
+            (b"OS/2", { let mut t = vec![0u8; 78]; t[74..76].copy_from_slice(&900u16.to_be_bytes()); t[76..78].copy_from_slice(&200u16.to_be_bytes()); t }),
+            (b"hhea", { let mut t = vec![0u8; 36]; t[4..6].copy_from_slice(&800i16.to_be_bytes()); t[6..8].copy_from_slice(&(-150i16).to_be_bytes()); t[8..10].copy_from_slice(&90i16.to_be_bytes()); t }),
+            (b"VDMX", {
+                // version, numRecs, numRatios, one ratio (set, x 1, y 1..1), its group's offset (12), then the group.
+                let mut t = vec![0u8, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 12];
+                t.extend_from_slice(&[0, 2, 11, 12]);
+                for (ppem, hi, lo) in [(11u16, 9i16, -3i16), (12, 10, -3)] {
+                    t.extend_from_slice(&ppem.to_be_bytes());
+                    t.extend_from_slice(&hi.to_be_bytes());
+                    t.extend_from_slice(&lo.to_be_bytes());
+                }
+                t
+            }),
+        ];
+        let build = |charset: u8| {
+            let mut out = vec![0u8; 12 + 16 * 4];
+            out[4..6].copy_from_slice(&4u16.to_be_bytes());
+            for (i, (tag, body)) in tables.iter().enumerate() {
+                let at = out.len();
+                let mut body = body.clone();
+                if *tag == b"VDMX" {
+                    body[6] = charset;
+                }
+                out.extend_from_slice(&body);
+                let rec = 12 + 16 * i;
+                out[rec..rec + 4].copy_from_slice(*tag);
+                out[rec + 8..rec + 12].copy_from_slice(&(at as u32).to_be_bytes());
+            }
+            out
+        };
+        let m = font_file_win_row_metrics(&build(1), 0).unwrap();
+        assert_eq!((m.win_ascent, m.win_descent, m.units_per_em), (900.0, 200.0, 1000.0));
+        assert_eq!((m.hhea_ascent, m.hhea_descent, m.hhea_line_gap), (800.0, -150.0, 90.0));
+        assert_eq!(m.vdmx, Some(vec![(11, 9, -3), (12, 10, -3)]));
+        assert!(font_file_win_row_metrics(&build(0), 0).unwrap().vdmx.is_none(), "a VDMX group of another charset does not count");
     }
 }

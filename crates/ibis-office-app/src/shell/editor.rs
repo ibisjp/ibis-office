@@ -333,6 +333,7 @@ pub struct SlideEditor {
     #[cfg(target_os = "windows")]
     wheel_notches: f32,
     pub(crate) document: Document,
+    pub(crate) document_memory: super::document_memory::DocumentMemoryStore,
     pub(crate) current_slide: SlideId,
     pub(crate) selection: Option<ShapeId>,
     pub(crate) tool: Tool,
@@ -352,6 +353,9 @@ pub struct SlideEditor {
     /// scrollbar lies between the tabs' left edge and the slider).
     pub(crate) status_layout: std::rc::Rc<std::cell::Cell<[f32; 3]>>,
     /// Where the zoom percentage button of the status bar was painted (for the scenarios to press it).
+    pub(crate) zoom_controls_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    /// The menu bar's logo (it opens the start window), where it was last drawn.
+    pub(crate) logo_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     pub(crate) zoom_trigger_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     _zoom_subscription: Subscription,
     /// The status bar's list of zooms is open.
@@ -369,6 +373,9 @@ pub struct SlideEditor {
     /// Whether the toolbar font size pulldown is open (#120).
     pub(crate) font_size_menu_open: bool,
     /// The input state inside the toolbar font size pulldown (#120).
+    pub(crate) font_size_edit_input:Entity<InputState>,
+    pub(crate) font_size_edit_dirty:bool,
+    _font_size_edit_subscription:Subscription,
     pub(crate) font_size_input: Entity<InputState>,
     _font_size_input_subscription: Subscription,
     /// Scroll handle for the toolbar font size pulldown candidate list (#127, #149).
@@ -385,6 +392,7 @@ pub struct SlideEditor {
     pub(crate) toolbar_search_selected: std::collections::HashMap<&'static str, Option<usize>>,
     /// Which searchable dropdown menu is currently open (#98, #103).
     pub(crate) toolbar_search_open: Option<&'static str>,
+    pub(crate) toolbar_search_popup_items: Option<(&'static str, Vec<crate::shell::chrome::MenuItem>)>,
     /// Scroll handle for the right-pane sidebar body (#151).
     pub(crate) sidebar_scroll: ScrollHandle,
     /// The slide show, while the presentation is shown full screen.
@@ -430,6 +438,16 @@ pub struct SlideEditor {
     pub(crate) format: FormatState,
     /// The sidebar is asked for (the title row's toggle, a panel opened). Whether it is on screen is `right_pane`.
     pub(crate) sidebar_open: bool,
+    pub(crate) sidebar_layout: std::rc::Rc<std::cell::Cell<super::chrome::panel::PanelMeasurements>>,
+    pub(crate) active_table_reorder: Option<std::rc::Rc<std::cell::RefCell<super::chrome::data_table::RowReorder>>>,
+    pub(crate) link_hover: bool,
+    pub(crate) link_text_positions: std::cell::RefCell<std::collections::HashMap<(ibis_doc_model::ShapeId,Option<(usize,usize)>),crate::render::rich_text::TextPositions>>,
+    pub(crate) link_popup: Option<super::links::LinkPopup>,
+    pub(crate) theme_colors_ui: super::theme_colors::ThemeColorsUi,
+    pub(crate) panel_dialog: super::panel_dialog::PanelDialogState,
+    _panel_dialog_keystrokes: Subscription,
+    pub(crate) ruler_settings_open: bool,
+    pub(crate) ruler_settings_ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Bounds<Pixels>>>>,
     /// Whether the right pane is on screen and whether its toggle can show it, as `render_sidebar` found them this
     /// frame (it runs before the title row and the menus): the one place their buttons read, so a button never says
     /// "shown" for a pane that is not there.
@@ -506,6 +524,7 @@ pub struct SlideEditor {
     pub(crate) window_number: Option<usize>,
     /// Whether the save confirmation dialog is open (shown when closing the last window with unsaved edits).
     pub(crate) save_confirm_dialog_open: bool,
+    pub(crate) panel_message: Option<SharedString>,
     /// Whether the save confirmation was asked by closing the window (its close button, or quitting the app) rather
     /// than by ファイル > 閉じる: once answered, the window goes instead of showing the start view (GitHub issue #27).
     pub(crate) close_window_after_confirm: bool,
@@ -554,11 +573,40 @@ static NEXT_DOCUMENT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 
 impl SlideEditor {
     pub fn new(mut presentation: Presentation, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        crate::track_start_window(cx.entity_id(),Some(window.window_handle()),true,cx);
+        let owner = window.window_handle();
+        let editor = cx.weak_entity();
+        let panel_dialog_keystrokes = cx.intercept_keystrokes(move |event, window, app| {
+            if window.window_handle() == owner {
+                editor.update(app, |this, cx| {
+                    if this.panel_message.is_some() && matches!(event.keystroke.key.as_str(), "enter" | "escape") {
+                        this.dismiss_panel_message(cx);
+                        cx.stop_propagation(); return;
+                    }
+                    if this.interaction_layer().is_confirmation() { return; }
+                    // Reorder capture outlives a format's focus/action context. Cancel it before
+                    // DOCX's CancelFormatBrush or a focused input can consume Escape.
+                    if event.keystroke.key == "escape" && this.cancel_table_reorder(window, cx) {
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if event.keystroke.key=="escape" && this.dismiss_toolbar_dropdown(window,cx) {cx.stop_propagation();return;}
+                    if this.validation_list_key(&event.keystroke, cx) { cx.stop_propagation(); return; }
+                    if this.sheet_range_pick_key(&event.keystroke, window, cx) { return; }
+                    if event.keystroke.key=="escape" && this.panel_dialog.key==Some("sort_level_editor") && this.toolbar_search_open.is_none(){this.close_panel_dialog(window,cx);cx.stop_propagation();return;}
+                    if let Some(id)=this.toolbar_search_open.filter(|id|this.toolbar_search_inputs.get(id).is_some_and(|input|input.read(cx).focus_handle(cx).is_focused(window))) {
+                        if this.toolbar_dropdown_keystroke(id,&event.keystroke,window,cx) {cx.stop_propagation();return;}
+                    }
+                    this.modal_viewport_keystroke(&event.keystroke, window, cx);
+                }).ok();
+            }
+        });
         // NOW, TODAY and a date typed without its year read the local time.
         ibis_calc::eval::convert::set_clock(crate::clock::calc_clock);
         let resources = Resources::new(&presentation, cx);
         crate::docx::flow_layout::expand_pages(&mut presentation, &resources, None);
         crate::xlsx::pivot::fit_built_pivots(&mut presentation, &resources, &window.text_system().clone());
+        crate::xlsx::row_fit::fit_measured_rows(&mut presentation, &resources);
         let current_slide = presentation.slides[0].id;
         // Logarithmic, so equal distances on the slider are equal zoom ratios.
         let zoom_slider = cx.new(|_| {
@@ -591,6 +639,13 @@ impl SlideEditor {
             if let InputEvent::PressEnter { .. } = event {
                 this.apply_zoom_dialog(window, cx);
             }
+        });
+        let font_size_edit_input=cx.new(|cx|InputState::new(window,cx));
+        let font_size_edit_subscription=cx.subscribe_in(&font_size_edit_input,window,|e,input,event:&InputEvent,w,cx|match event {
+            InputEvent::Change if input.read(cx).focus_handle(cx).is_focused(w)=>{e.font_size_edit_dirty=true;},
+            InputEvent::PressEnter{..}=>e.commit_toolbar_font_size(w,cx),
+            InputEvent::Blur=>{e.font_size_edit_dirty=false;cx.notify();},
+            _=>{}
         });
         let font_size_input = cx.new(|cx| InputState::new(window, cx));
         let font_size_input_subscription = cx.subscribe_in(&font_size_input, window, |this, input, event: &InputEvent, window, cx| {
@@ -641,6 +696,7 @@ impl SlideEditor {
             #[cfg(target_os = "windows")]
             wheel_notches: 0.0,
             document: Document::new(presentation),
+            document_memory: Default::default(),
             current_slide,
             selection: None,
             tool: Tool::Select,
@@ -652,6 +708,8 @@ impl SlideEditor {
             zoom_slider,
             status_layout: Default::default(),
             zoom_trigger_bounds: Default::default(),
+            zoom_controls_bounds: Default::default(),
+            logo_bounds: Default::default(),
             _zoom_subscription: zoom_subscription,
             zoom_menu_open: false,
             zoom_input,
@@ -661,6 +719,7 @@ impl SlideEditor {
             _zoom_dialog_subscription: zoom_dialog_subscription,
             entity_id,
             font_size_menu_open: false,
+            font_size_edit_input,font_size_edit_dirty:false,_font_size_edit_subscription:font_size_edit_subscription,
             font_size_input,
             _font_size_input_subscription: font_size_input_subscription,
             font_size_scroll: ScrollHandle::new(),
@@ -670,6 +729,7 @@ impl SlideEditor {
             toolbar_search_scrolls: Default::default(),
             toolbar_search_selected: Default::default(),
             toolbar_search_open: None,
+            toolbar_search_popup_items: None,
             sidebar_scroll: ScrollHandle::new(),
             slideshow: None,
             resources,
@@ -692,6 +752,16 @@ impl SlideEditor {
             loading: false,
             format,
             sidebar_open: true,
+            sidebar_layout:Default::default(),
+            active_table_reorder:None,
+            link_hover: false,
+            link_text_positions: Default::default(),
+            link_popup: None,
+            theme_colors_ui: Default::default(),
+            panel_dialog: Default::default(),
+            _panel_dialog_keystrokes: panel_dialog_keystrokes,
+            ruler_settings_open: false,
+            ruler_settings_ui: Default::default(),
             right_pane: Default::default(),
             symbol: None,
             outline_open: false,
@@ -729,6 +799,7 @@ impl SlideEditor {
             document_id: NEXT_DOCUMENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             window_number: None,
             save_confirm_dialog_open: false,
+            panel_message: None,
             close_window_after_confirm: false,
             office_path_confirm_dialog_open: false,
             side_by_side: false,
@@ -787,6 +858,7 @@ impl SlideEditor {
         crate::docx::flow_layout::expand_pages(&mut presentation, &self.resources, Some(&name));
         crate::clock::debug_timing::report("load: expand_pages", timing);
         crate::xlsx::pivot::fit_built_pivots(&mut presentation, &self.resources, &window.text_system().clone());
+        crate::xlsx::row_fit::fit_measured_rows(&mut presentation, &self.resources);
         // A presentation's date fields show today, as PowerPoint's do.
         if presentation.flow.is_none() && presentation.workbook.is_none() {
             presentation.refresh_dates(&crate::clock::local_now(), &ibis_pptx::script_pieces);
@@ -801,6 +873,7 @@ impl SlideEditor {
         let is_reading = presentation.flow.as_ref().is_some_and(|f| f.view_mode == ibis_doc_model::DocumentViewMode::Reading);
         let is_outline = presentation.flow.as_ref().is_some_and(|f| f.view_mode == ibis_doc_model::DocumentViewMode::Outline);
         self.document = Document::new(presentation);
+        self.document_memory = Default::default();
         self.source = None;
         #[cfg(not(target_family = "wasm"))]
         {
@@ -823,6 +896,7 @@ impl SlideEditor {
         window.set_window_title(&format!("{name} - ibisOffice"));
         self.file_name = Some(name);
         self.has_document = true;
+        crate::track_start_window(cx.entity_id(),None,false,cx);
         self.loading = false;
         self.workbook_id = NEXT_WORKBOOK_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.document_id = NEXT_DOCUMENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -941,6 +1015,10 @@ impl SlideEditor {
                     };
                     this.load(opened.presentation, doc_name, window, cx);
                     this.source = Some(std::sync::Arc::new(opened.source));
+                    // A presentation opens without the speaker notes, as a new one does (the title row's notes button shows them).
+                    if let Some(state) = this.pptx_mut() {
+                        state.notes_hidden = true;
+                    }
                     if is_ppsx {
                         this.start_slideshow(window, cx);
                     }
@@ -994,7 +1072,7 @@ impl SlideEditor {
                         this.source = Some(loaded.source);
                         this.path = None;
                         this.document.set_file(None);
-                    } else if path.extension().is_some_and(|e| ["xls", "ods", "ppt", "pps", "pot", "odp", "otp", "odt", "ott"].iter().any(|x| e.eq_ignore_ascii_case(x))) {
+                    } else if path.extension().is_some_and(|e| ["xls", "ods", "ppt", "pps", "pot", "odp", "otp", "odt", "ott", "doc", "rtf", "txt", "text", "html", "htm", "pdf"].iter().any(|x| e.eq_ignore_ascii_case(x))) {
                         // An old workbook or presentation (or an OpenDocument workbook) is read as a new .xlsx or .pptx: saving asks where, and leaves the old file as it is.
                         let stem = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                         let extension = match ibis_pptx::Kind::of(&loaded.presentation) {
@@ -1129,6 +1207,8 @@ impl SlideEditor {
         if self.loading {
             self.loading = false;
             self.has_document = false;
+        crate::track_start_window(cx.entity_id(),None,true,cx);
+        self.document_memory = Default::default();
             self.file_name = None;
         }
         self.set_status(status, cx);
@@ -1280,6 +1360,8 @@ impl SlideEditor {
         self.load(Presentation::new(), SharedString::default(), window, cx);
         self.list_scroll.set_offset(Point::default());
         self.has_document = false;
+        crate::track_start_window(cx.entity_id(),None,true,cx);
+        self.document_memory = Default::default();
         self.closed += 1;
         self.file_name = None;
         self.workbook_id = 0;
@@ -1555,10 +1637,12 @@ impl SlideEditor {
     /// (away from you), a notch by `WHEEL_ZOOM_STEP`, a trackpad smoothly.
     /// Whether the wheel was taken for zooming.
     pub(crate) fn on_wheel_zoom(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.panel_dialog.active && self.panel_dialog.bounds.is_some_and(|b| b.contains(&event.position)) { return false; }
         if !wheel_zooms(&event.modifiers, zoom_modifier_is_mac()) || !self.has_document {
             return false;
         }
         let Some(ws) = self.workspace_bounds else { return false };
+        if !ws.contains(&event.position) { return false; }
         let factor = match event.delta {
             // A notch at a time: some systems send several lines for one.
             ScrollDelta::Lines(delta) if delta.y > 0.0 => WHEEL_ZOOM_STEP,
@@ -1581,6 +1665,7 @@ impl SlideEditor {
             return false;
         }
         let Some(ws) = self.workspace_bounds else { return false };
+        if !ws.contains(&event.position) { return false; }
         let factor = 1.0 + event.delta;
         if factor > 0.0 && factor != 1.0 {
             let anchor = event.position - ws.origin;
@@ -1661,17 +1746,7 @@ impl SlideEditor {
                 }))
         });
 
-        div()
-            .id("zoom-dialog-backdrop")
-            .absolute()
-            .inset_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000066))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            // The release too: the sheet under a dialog would take it after the dialog's button has closed the file.
-            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        super::panel_dialog::confirmation_surface("zoom-dialog-backdrop")
             .child(
                 v_flex()
                     .id("zoom-dialog")
@@ -1748,13 +1823,12 @@ impl SlideEditor {
                             .justify_end()
                             .gap_2()
                             .child(
-                                Button::new("zoom-dialog-cancel")
+                                crate::shell::chrome::action_button("zoom-dialog-cancel")
                                     .label(crate::shell::i18n::text("_shell.cancel"))
                                     .on_click(cx.listener(|this, _, _, cx| this.close_zoom_dialog(cx))),
                             )
                             .child(
-                                Button::new("zoom-dialog-ok")
-                                    .primary()
+                                crate::shell::chrome::primary_button("zoom-dialog-ok")
                                     .label(crate::shell::i18n::text("OK"))
                                     .on_click(cx.listener(|this, _, window, cx| this.apply_zoom_dialog(window, cx))),
                             ),
@@ -1764,6 +1838,7 @@ impl SlideEditor {
 
     /// Open a new window duplicating current presentation or open path.
     pub(crate) fn new_window(&mut self, cx: &mut App) {
+        let document_memory=self.document_memory.clone();
         if self.is_workbook() {
             let wb_id = if self.workbook_id == 0 {
                 let id = NEXT_WORKBOOK_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1787,6 +1862,7 @@ impl SlideEditor {
             crate::open_window_with(cx, move |editor, window, cx| {
                 editor.load(pres, name.clone(), window, cx);
                 editor.document = doc;
+                editor.document_memory=document_memory.clone();
                 editor.set_file_path(path);
                 editor.source = source;
                 editor.workbook_id = wb_id;
@@ -1819,6 +1895,7 @@ impl SlideEditor {
             crate::open_window_with(cx, move |editor, window, cx| {
                 editor.load(pres, name.clone(), window, cx);
                 editor.document = doc;
+                editor.document_memory=document_memory.clone();
                 editor.set_file_path(path);
                 editor.source = source;
                 editor.document_id = doc_id;
@@ -2515,17 +2592,7 @@ impl SlideEditor {
         let title = crate::shell::i18n::text("window.open-in-office.confirm-title");
         let message = crate::shell::i18n::format("window.open-in-office.specify-path", &[("app", &self.office_app_name())]);
 
-        div()
-            .id("office-path-confirm-dialog-backdrop")
-            .absolute()
-            .inset_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000066))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            // The release too: the sheet under a dialog would take it after the dialog's button has closed the file.
-            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        super::panel_dialog::confirmation_surface("office-path-confirm-dialog-backdrop")
             .child(
                 v_flex()
                     .id("office-path-confirm-dialog")
@@ -2555,13 +2622,12 @@ impl SlideEditor {
                             .justify_end()
                             .gap_2()
                             .child(
-                                Button::new("office-path-confirm-cancel")
+                                crate::shell::chrome::action_button("office-path-confirm-cancel")
                                     .label(crate::shell::i18n::text("_shell.cancel"))
                                     .on_click(cx.listener(|this, _, _, cx| this.close_office_path_confirm_dialog(cx))),
                             )
                             .child(
-                                Button::new("office-path-confirm-ok")
-                                    .primary()
+                                crate::shell::chrome::primary_button("office-path-confirm-ok")
                                     .label("OK")
                                     .on_click(cx.listener(|this, _, window, cx| this.confirm_office_path_dialog(window, cx))),
                             ),
@@ -2593,17 +2659,7 @@ impl SlideEditor {
         });
         let message = crate::shell::i18n::text("fix.editor.do-you-want-save-changes");
 
-        div()
-            .id("save-confirm-dialog-backdrop")
-            .absolute()
-            .inset_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000066))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            // The release too: the sheet under a dialog would take it after the dialog's button has closed the file.
-            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        super::panel_dialog::confirmation_surface("save-confirm-dialog-backdrop")
             .child(
                 v_flex()
                     .id("save-confirm-dialog")
@@ -2633,18 +2689,17 @@ impl SlideEditor {
                             .justify_end()
                             .gap_2()
                             .child(
-                                Button::new("save-confirm-cancel")
+                                crate::shell::chrome::action_button("save-confirm-cancel")
                                     .label(crate::shell::i18n::text("_shell.cancel"))
                                     .on_click(cx.listener(|this, _, _, cx| this.close_save_confirm_dialog(cx))),
                             )
                             .child(
-                                Button::new("save-confirm-discard")
+                                crate::shell::chrome::action_button("save-confirm-discard")
                                     .label(crate::shell::i18n::text("fix.editor.don-t-save"))
                                     .on_click(cx.listener(|this, _, window, cx| this.confirm_discard_and_close(window, cx))),
                             )
                             .child(
-                                Button::new("save-confirm-save")
-                                    .primary()
+                                crate::shell::chrome::primary_button("save-confirm-save")
                                     .label(crate::shell::i18n::text("_shell.save"))
                                     .on_click(cx.listener(|this, _, window, cx| this.confirm_save_and_close(window, cx))),
                             ),
@@ -3025,7 +3080,18 @@ impl SlideEditor {
             return;
         }
         self.commit_edit(window, cx);
+        let (order, was) = (self.presentation().slides.iter().map(|s| s.id).collect::<Vec<_>>(), self.current_slide);
         self.document.undo();
+        // Undoing the creation of the sheet being shown leaves the sheet beside it (the one before, else after), as Excel does.
+        if self.presentation().slide(was).is_none() {
+            if let Some(at) = order.iter().position(|&id| id == was) {
+                let near = order[..at].iter().rev().chain(order[at + 1..].iter()).find(|&&id| self.presentation().slide(id).is_some());
+                if let Some(&id) = near {
+                    self.current_slide = id;
+                }
+            }
+        }
+        self.refresh_chart_source_field_after_history(window,cx);
         self.sync_sheet_zoom();
         self.sync_document_view_mode();
         self.fix_selection();
@@ -3041,6 +3107,7 @@ impl SlideEditor {
         }
         self.commit_edit(window, cx);
         self.document.redo();
+        self.refresh_chart_source_field_after_history(window,cx);
         self.sync_sheet_zoom();
         self.sync_document_view_mode();
         self.fix_selection();
@@ -3094,6 +3161,8 @@ impl SlideEditor {
     }
 
     pub(crate) fn cancel_tool(&mut self, _: &CancelTool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sheet_range_pick_active(){self.finish_sheet_range_pick(true,window,cx);return;}
+        if self.cancel_table_reorder(window,cx){return;}
         if let Some(show) = self.slideshow.as_mut() {
             if let Some(rehearsal) = show.rehearsal.as_mut() {
                 if rehearsal.dialog_open {
@@ -3492,6 +3561,7 @@ impl SlideEditor {
                 typing: false,
                 cell: None,
                 cell_anchor: None,
+            added_body: None,
             },
             positions: Default::default(),
             goal_x: None,
@@ -3540,6 +3610,7 @@ impl SlideEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.panel_dialog_is_modal() { cx.stop_propagation(); return; }
         self.commit_edit(window, cx);
         self.focus_handle.focus(window, cx);
         match self.tool {
@@ -3559,6 +3630,7 @@ impl SlideEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.panel_dialog_is_modal() { cx.stop_propagation(); return; }
         if self.tool == Tool::TextBox {
             // Drawing a text box may start on top of another shape.
             return self.on_workspace_down(event, window, cx);
@@ -3603,7 +3675,7 @@ impl SlideEditor {
         }
         self.commit_edit(window, cx);
         self.focus_handle.focus(window, cx);
-        if event.modifiers.shift || event.modifiers.platform || event.modifiers.control {
+        if super::selection_handles::additive(event.modifiers) {
             let mut ids = self.selected_ids();
             if ids.contains(&shape) {
                 ids.retain(|&id| id != shape);
@@ -3611,12 +3683,8 @@ impl SlideEditor {
                 ids.push(shape);
             }
             self.set_selection(ids);
-        } else if self.selected_ids().len() > 1 && self.selected_ids().contains(&shape) {
-            let mut ids = self.selected_ids();
-            ids.retain(|&id| id != shape);
-            ids.push(shape);
-            self.set_selection(ids);
-        } else {
+            return cx.notify();
+        } else if !self.selected_ids().contains(&shape) {
             self.set_selection(vec![shape]);
         }
         if let Some(origin) = self.slide().shape(shape).map(|s| s.frame) {
@@ -3666,6 +3734,9 @@ impl SlideEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.move_formula_reference_drag(event,cx){return;}
+        if self.sheet_range_pick_move(event,window,cx) { return; }
+        self.update_link_hover(event,cx);
         if self.ink_move(event.position, event.pressed_button == Some(MouseButton::Left), cx) {
             return;
         }
@@ -3738,6 +3809,8 @@ impl SlideEditor {
     }
 
     pub(crate) fn on_pointer_up(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(edit)=self.cell_edit_mut(){edit.reference_drag=false;}
+        if self.sheet_range_pick_up(window,cx) { return; }
         if self.ink_release(cx) {
             return;
         }
@@ -3775,6 +3848,15 @@ impl SlideEditor {
         match drag {
             Drag::Move { shape, start, current, .. } | Drag::Resize { shape, start, current, .. } => {
                 if !moved(start, current) {
+                    if matches!(drag,Drag::Move{..}) {
+                        self.set_selection(vec![shape]);
+                        let at=layout.to_emu(start);
+                        let border=self.slide().shape(shape).is_some_and(|s|super::selection_handles::on_border((s.frame.x as f32,s.frame.y as f32,s.frame.width as f32,s.frame.height as f32),s.rotation,(at.x as f32,at.y as f32),3./layout.scale));
+                        if !border && self.slide().shape(shape).is_some_and(|s|matches!(s.kind,ShapeKind::TextBox(_)|ShapeKind::Auto(_))){
+                            self.begin_edit(shape,false,window,cx);
+                            if let Some(edit)=self.editing.as_mut(){edit.pending_click=Some(current);}
+                        }
+                    }
                     return cx.notify();
                 }
                 let Some(current_shape) = self.slide().shape(shape) else { return };
@@ -3935,10 +4017,30 @@ impl Render for SlideEditor {
             self.zoom_menu_open = false;
         }
         with_format!(self, before_render(self, window, cx));
+        if self.interaction_layer().is_confirmation() {
+            if self.panel_dialog.drag.take().is_some() {window.release_pointer();}
+            self.cancel_table_reorder(window,cx);
+            self.suspend_sheet_range_drag(window);
+        }
         let theme = cx.theme();
         v_flex()
-            .id("slide-editor")
+            .id("slide-editor").relative()
+            .child(crate::xlsx::range_field::event_surface(cx))
             .key_context(CONTEXT)
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                if this.sheet_range_pick_down(event,window,cx) {cx.stop_propagation();return;}
+                if !this.panel_dialog_allows_pointer(event.position, window) { cx.stop_propagation();return; }
+                if this.interaction_layer().is_confirmation() {return;}
+                if this.handle_document_link_pointer(event,window,cx){cx.stop_propagation();}
+            }))
+            .capture_any_mouse_up(cx.listener(|this, event: &MouseUpEvent, window, cx| {
+                if this.sheet_range_pick_up(window,cx) {cx.stop_propagation();return;}
+                if this.panel_dialog.drag.take().is_some() { cx.notify(); }
+                if !this.panel_dialog_allows_pointer(event.position, window) { cx.stop_propagation(); }
+            }))
+            .capture_key_down(cx.listener(Self::panel_dialog_key))
+            .capture_key_down(cx.listener(|e,event:&KeyDownEvent,w,cx|{if e.sheet_state().is_some()&&e.formula_edit_key(event,w,cx){w.prevent_default();cx.stop_propagation();}}))
+            .map(|d| self.guard_panel_actions(d, cx))
             .on_modifiers_changed(cx.listener(|this, e: &ModifiersChangedEvent, _, cx| {
                 if let Some(state) = this.sheet_state_mut() {
                     let mut changed = false;
@@ -3968,6 +4070,8 @@ impl Render for SlideEditor {
                 #[cfg(target_family = "wasm")]
                 let _ = (paths, cx);
             }))
+            .on_action(cx.listener(|e,_:&crate::AddPresentationSlide,w,cx|{if e.kind()==ibis_pptx::Kind::Presentation{e.add_slide(w,cx);}}))
+            .on_action(cx.listener(|e,_:&crate::DuplicatePresentationSelection,w,cx|{if e.kind()==ibis_pptx::Kind::Presentation{if e.selected_shapes().is_empty(){e.duplicate_current_slide(w,cx);}else{e.duplicate_selected(cx);}}}))
             .on_action(cx.listener(Self::undo))
             .on_action(cx.listener(Self::redo))
             .on_action(cx.listener(Self::delete_selection))
@@ -4069,7 +4173,9 @@ impl Render for SlideEditor {
                 }
             }))
             // Drags are tracked on the whole window so they continue past the slide.
-            .on_mouse_move(cx.listener(Self::on_pointer_move))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                if !this.move_panel_dialog(event, window, cx) { Self::on_pointer_move(this, event, window, cx); }
+            }))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_pointer_up))
             .size_full()
             .bg(theme.background)
@@ -4092,9 +4198,7 @@ impl Render for SlideEditor {
             // The slide show takes the whole window, in place of the rest.
             .when_some(self.render_slideshow(window, cx), |d, show| d.child(show))
             .when(!self.show_in_main(), |d| self.render_window(d, window, cx))
-            .when(self.zoom_dialog_open, |d| d.child(self.render_zoom_dialog(window, cx)))
-            .when(self.save_confirm_dialog_open, |d| d.child(self.render_save_confirm_dialog(window, cx)))
-            .when(self.office_path_confirm_dialog_open, |d| d.child(self.render_office_path_confirm_dialog(window, cx)))
+            .map(|d| self.render_dialog_stack(d, window, cx))
     }
 }
 
@@ -4125,13 +4229,13 @@ impl SlideEditor {
                 true
             }
         };
-        let body = with_format!(self, render_body(self, window, cx));
         let sidebar = if focus {
             self.right_pane = Default::default();
             None
         } else {
             self.render_sidebar(window, cx)
         };
+        let body = with_format!(self, render_body(self, window, cx));
         d.when(!compact && !focus && show_title_row, |d| d.child(self.render_title_row(window, cx)))
             .when(!compact && !focus && show_menu_bar, |d| d.child(self.render_menu_bar(window, cx)))
             .when(!focus && show_toolbar, |d| d.child(self.render_toolbar(window, cx)))
@@ -4149,6 +4253,10 @@ impl SlideEditor {
     }
 
     /// Apply a font size (in points) chosen or typed in the toolbar font size pulldown (#120).
+    pub(crate) fn commit_toolbar_font_size(&mut self,window:&mut Window,cx:&mut Context<Self>){
+        if self.font_size_edit_dirty && let Ok(value)=self.font_size_edit_input.read(cx).value().trim().parse::<f32>() && value.is_finite() && (1.0..=1638.).contains(&value) {self.font_size_edit_dirty=false;self.set_toolbar_font_size(value,window,cx);}
+        self.focus_handle.focus(window,cx);cx.notify();
+    }
     pub(crate) fn set_toolbar_font_size(&mut self, pt: f32, window: &mut Window, cx: &mut Context<Self>) {
         match self.format.kind() {
             ibis_pptx::Kind::Document => {
@@ -4156,10 +4264,9 @@ impl SlideEditor {
                 if self.apply_box_edit_run_change(&ibis_doc_model::RunChange::Size(hundredths), cx) {
                     return;
                 }
-                let half_pt = (pt * 2.0).round().clamp(2.0, 3276.0) as u32;
                 self.apply_text_properties(
                     ibis_doc_model::RunFormat {
-                        size: Some(half_pt),
+                        size: Some(hundredths),
                         ..Default::default()
                     },
                     cx,
@@ -4239,6 +4346,40 @@ impl SlideEditor {
         input
     }
 
+    /// Dismiss the top dropdown before any parent-dialog action, independent of input focus.
+    pub(crate) fn dismiss_toolbar_dropdown(&mut self,window:&mut Window,cx:&mut Context<Self>)->bool {
+        let Some(id)=self.toolbar_search_open.take() else{return false;};
+        self.toolbar_search_popup_items=None;
+        self.toolbar_search_selected.insert(id,None);
+        crate::shell::chrome::set_current_toolbar_open(self.font_size_menu_open,None);
+        if self.panel_dialog.active {if let Some(focus)=self.panel_dialog.focus.as_ref(){focus.focus(window,cx);}}
+        else {self.focus_handle.focus(window,cx);}
+        cx.notify();true
+    }
+
+    /// Own list navigation before input bindings, including lists without a search field.
+    fn toolbar_dropdown_keystroke(&mut self,id:&'static str,key:&Keystroke,window:&mut Window,cx:&mut Context<Self>)->bool {
+        let items=self.toolbar_search_popup_items.as_ref().filter(|(popup,_)|*popup==id).map(|(_,items)|items.clone()).unwrap_or_else(||self.searchable_menu_items_for(id));
+        let search=items.len()>20;
+        match key.key.as_str() {
+            "enter"=>{self.activate_top_toolbar_search_match(id,window,cx);true}
+            "escape"=>self.dismiss_toolbar_dropdown(window,cx),
+            "up"|"down"|"pageup"|"pagedown"=>{
+                let query=if search {self.toolbar_search_inputs.get(id).map(|i|i.read(cx).value().to_string()).unwrap_or_default()}else{String::new()};
+                let matched=crate::shell::chrome::filter_menu_items(&items,&query);
+                let row_h=28.;let max_rows=(((f32::from(window.viewport_size().height)-214.).max(224.)/row_h).floor() as usize).max(8);
+                let visible=items.len().clamp(1,max_rows);let page=visible.saturating_sub(1).max(1) as isize;
+                let delta=match key.key.as_str(){"up"=>-1,"down"=>1,"pageup"=>-page,_=>page};
+                if let Some(index)=crate::shell::chrome::step_enabled_menu_index(&matched,self.toolbar_search_selected.get(id).copied().flatten(),delta){
+                    self.toolbar_search_selected.insert(id,Some(index));
+                    if let Some(scroll)=self.toolbar_search_scrolls.get(id){crate::shell::chrome::scroll_row_into_view(scroll,index,row_h,visible as f32*row_h);}
+                    cx.notify();
+                }true
+            }
+            _=>!search && key.key_char.is_some(),
+        }
+    }
+
     /// When Enter is pressed in a searchable dropdown menu, execute the keyboard-selected item or (if a query is typed) the top matched item (#98, #103, #127).
     pub(crate) fn activate_top_toolbar_search_match(
         &mut self,
@@ -4254,7 +4395,9 @@ impl SlideEditor {
         if query.trim().is_empty() && selected_idx.is_none() {
             return;
         }
-        let items = self.searchable_menu_items_for(id);
+        let items = self.toolbar_search_popup_items.as_ref()
+            .filter(|(popup, _)| *popup == id).map(|(_, items)| items.clone())
+            .unwrap_or_else(|| self.searchable_menu_items_for(id));
         let matched = crate::shell::chrome::filter_menu_items(&items, &query);
         let chosen = if let Some(idx) = selected_idx {
             matched.get(idx).filter(|item| !item.disabled && item.handler.is_some()).cloned()
@@ -4279,6 +4422,9 @@ impl SlideEditor {
 
     /// Return the menu items for a searchable dropdown button `id` (#98, #103, #127).
     pub(crate) fn searchable_menu_items_for(&self, id: &str) -> Vec<crate::shell::chrome::MenuItem> {
+        if let Some(entries) = self.doc_font_menu_entries(id) {
+            return crate::shell::chrome::flatten_menu_entries(&entries);
+        }
         if id == "menu-search" {
             return crate::shell::chrome::collect_searchable_menu_items(&self.menus());
         }

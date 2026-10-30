@@ -2,8 +2,8 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Arbitrary shape glow with frozen targets and serialization preflight.
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::{ButtonVariants as _};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -22,6 +22,12 @@ pub(super) fn value(fields: &[Entity<InputState>], cx: &App) -> Option<(Color, i
     let emu = (radius * 12_700.).round();
     if !radius.is_finite() || radius < 0. || emu > i32::MAX as f64 { return None; }
     Some((color(&fields[1],&fields[2],cx)?,emu as i64))
+}
+/// A field of the effect panels (glow, shadow, gradient, pattern): `None` is a colour code (RRGGBB, no ✕, 2026-10-23
+/// ユーザー); a number has ▲▼ by `spec`. These panels apply with 適用, so ▲▼ only change the field.
+pub(super) fn effect_field(input:&Entity<InputState>,id:String,spec:Option<crate::shell::chrome::SpinnerSpec>,cx:&Context<SlideEditor>)->crate::shell::chrome::TextField {
+    let field=crate::shell::chrome::text_field(input).full_width();
+    match spec {Some(spec)=>field.spinner(id,spec,cx,|_,_,_,_|{}),None=>field.no_clear()}
 }
 pub(super) fn color(rgb_field:&Entity<InputState>,opacity_field:&Entity<InputState>,cx:&App)->Option<Color> {
     let text=rgb_field.read(cx).value();let hex=text.trim().trim_start_matches('#');
@@ -72,10 +78,14 @@ impl SlideEditor {
 
     pub(crate) fn glow_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel> {
         let p=self.pptx()?.glow_panel.as_ref()?;let fields=p.fields.clone();let error=p.error.clone();let title=crate::shell::i18n::format("_pptx.glow-count-shapes", &[("count", &p.targets.len())]);
-        let mut body=v_flex().gap_2().px(px(18.)).py(px(8.));
-        for (label,field) in [crate::shell::i18n::text("pptx.glow-panel.radius-pt"),crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::i18n::text("pptx.gradient-panel.intensity-percent")].into_iter().zip(fields) {body=body.child(div().text_size(px(13.)).child(label)).child(Input::new(&field).small().cleanable(true));}
-        if let Some(error)=error {body=body.child(div().text_size(px(12.)).text_color(rgb(0xb3261e)).child(error));}
-        body=body.child(h_flex().gap_1().child(Button::new("pptx-glow-apply").primary().small().label(crate::shell::i18n::text("_shell.apply")).on_click(cx.listener(|e,_,w,cx|e.apply_glow_panel(w,cx)))).child(Button::new("pptx-glow-cancel").small().ghost().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|e,_,w,cx|e.close_glow_panel(w,cx)))));
-        Some(SidebarPanel {title:title.into(),body:body.into_any_element()})
+        let mut body=v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
+        for (i,(label,field)) in [crate::shell::i18n::text("pptx.glow-panel.radius-pt"),crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::i18n::text("pptx.gradient-panel.intensity-percent")].into_iter().zip(fields).enumerate() {
+            use crate::shell::chrome::SpinnerSpec;
+            let spec=[Some(SpinnerSpec::new(1.0).range(0.0,150.0)),None,Some(SpinnerSpec::new(1.0).range(0.0,100.0))][i];
+            body=body.child(div().text_sm().child(label)).child(effect_field(&field,format!("pptx-glow-field-{i}"),spec,cx));
+        }
+        if let Some(error)=error {body=body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));}
+        let panel_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("pptx-glow-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,w,cx|e.apply_glow_panel(w,cx)))).action(crate::shell::chrome::ActionDefinition::new("pptx-glow-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,w,cx|e.close_glow_panel(w,cx))));
+        Some(SidebarPanel::with_footer(title, body.into_any_element(), panel_actions))
     }
 }
