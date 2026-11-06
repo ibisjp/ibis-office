@@ -14,7 +14,7 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | Lucide | アイコン（`assets/icons/`） | ISC |
 | Material Symbols（Google） | タイトル行・メニュー・ツールバー・サイドバーのアイコン（実行ファイルに埋め込み） | Apache-2.0 |
 
-## Rust の部品（409 件）
+## Rust の部品（411 件）
 
 | 名前 | 版 | ライセンス | 入手先 |
 |---|---|---|---|
@@ -272,6 +272,7 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | rayon | 1.12.0 | MIT OR Apache-2.0 | https://github.com/rayon-rs/rayon |
 | rayon-core | 1.13.0 | MIT OR Apache-2.0 | https://github.com/rayon-rs/rayon |
 | read-fonts | 0.37.0 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations |
+| read-fonts | 0.39.2 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations |
 | read-fonts | 0.41.0 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations |
 | reborrow | 0.5.5 | MIT | https://github.com/sarah-ek/reborrow/ |
 | ref-cast | 1.0.27 | MIT OR Apache-2.0 | https://github.com/dtolnay/ref-cast |
@@ -317,6 +318,7 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | simplecss | 0.2.2 | Apache-2.0 OR MIT | https://github.com/linebender/simplecss |
 | siphasher | 1.0.3 | MIT/Apache-2.0 | https://github.com/jedisct1/rust-siphash |
 | skrifa | 0.40.0 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations |
+| skrifa | 0.42.1 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations |
 | skrifa | 0.44.0 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations |
 | slab | 0.4.12 | MIT | https://github.com/tokio-rs/slab |
 | slotmap | 1.1.1 | Zlib | https://github.com/orlp/slotmap |
@@ -786,7 +788,7 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 - **globwalk 0.8.1**：Copyright (c) 2017 Gilad Naaman
 - **glow 0.17.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **gpui-base 0.6.6**：Copyright 2024 - 2026 Longbridge <https://longbridge.com> / copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
-- **gpui-component 0.6.6**：Copyright 2024 - 2026 Longbridge <https://longbridge.com> / copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
+- **gpui-component 0.6.6**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright 2024 - 2026 Longbridge <https://longbridge.com>
 - **gpui-component-macros 0.6.6**：Copyright 2024 - 2026 Longbridge <https://longbridge.com> / copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **gpui-kit-assets 0.6.6**：Copyright (c) 2026 Lucide Icons and Contributors / copyright notice and this permission notice appear in all copies. / Copyright (c) 2013-present Cole Bemis
 - **gpui-pre 0.3.6**：Copyright 2022 - 2025 Zed Industries, Inc. / copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
@@ -912,6 +914,7 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 - **rayon 1.12.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2010 The Rust Project Developers
 - **rayon-core 1.13.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2010 The Rust Project Developers
 - **read-fonts 0.37.0**：Copyright 2019 Colin Rothfels / Copyright (c) 2019 Colin Rothfels
+- **read-fonts 0.39.2**：Copyright 2019 Colin Rothfels / Copyright (c) 2019 Colin Rothfels
 - **read-fonts 0.41.0**：Copyright 2019 Fontations Developers / Copyright (c) 2019 Fontations Developers
 - **reborrow 0.5.5**：Copyright (c) 2022 sarah
 - **ref-cast 1.0.27**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
@@ -954,6 +957,7 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 - **simplecss 0.2.2**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2018 Reizner Evgeniy
 - **siphasher 1.0.3**：Copyright 2012-2016 The Rust Project Developers. / Copyright 2016-2026 Frank Denis.
 - **skrifa 0.40.0**：Copyright 2019 Colin Rothfels / Copyright (c) 2019 Colin Rothfels
+- **skrifa 0.42.1**：Copyright 2019 Colin Rothfels / Copyright (c) 2019 Colin Rothfels
 - **skrifa 0.44.0**：Copyright 2019 Fontations Developers / Copyright (c) 2019 Fontations Developers
 - **slab 0.4.12**：Copyright (c) 2019 Carl Lerche
 - **slotmap 1.1.1**：Copyright (c) 2021 Orson Peters <orsonpeters@gmail.com>
