@@ -132,8 +132,16 @@ pub(crate) fn page_element(document: &Arc<FlowDocument>, index: usize, frame: Em
                             if top > visible.origin.y + visible.size.height || top + px(size_px * 2.0) < visible.origin.y {
                                 continue;
                             }
+                            let mut prev_char = None;
                             for ((i, c), dx) in text.char_indices().zip(offsets.iter()) {
-                                let s = &text[i..i + c.len_utf8()];
+                                // The selectors and joined characters of a cluster are drawn with its first character (as one glyph: an
+                                // IVS's variant form, an emoji sequence).
+                                let joined = crate::render::rich_text::joins_previous(prev_char, c);
+                                prev_char = Some(c);
+                                if joined {
+                                    continue;
+                                }
+                                let s = &text[i..crate::render::rich_text::cluster_end(text, i)];
                                 if s.trim().is_empty() {
                                     continue;
                                 }

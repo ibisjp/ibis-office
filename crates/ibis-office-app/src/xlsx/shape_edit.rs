@@ -858,11 +858,13 @@ impl SlideEditor {
         let format = ibis_doc_model::MediaFormat::from_path(name);
         let (w, h) = crate::pptx::editing::validated_picture_size(format, &data)?;
         let (x, y) = self.sheet_insertion_origin();
-        // 96 DPI: 1 px = 9,525 EMU. Cap initial dimensions to 4,000,000 EMU (~420px).
+        // 96 DPI: 1 px = 9,525 EMU. A pasted picture keeps that size, as Excel pastes it (a 1282x801 screenshot
+        // comes in at 961.4x600.7 pt on Excel for Windows: test/github-issue/103). A picture inserted from a file is
+        // capped at 4,000,000 EMU (~420px).
         let max_dim = 4_000_000i64;
         let mut w_emu = w as i64 * 9_525;
         let mut h_emu = h as i64 * 9_525;
-        if w_emu > max_dim || h_emu > max_dim {
+        if !paste && (w_emu > max_dim || h_emu > max_dim) {
             let scale = (max_dim as f64 / w_emu as f64).min(max_dim as f64 / h_emu as f64);
             w_emu = (w_emu as f64 * scale) as i64;
             h_emu = (h_emu as f64 * scale) as i64;
@@ -1576,9 +1578,9 @@ impl SlideEditor {
                 if let Some((sheet, kind, frame)) = target_info {
                     match kind {
                         ShapeKind::Picture(mut pic) => {
-                            if let Some(png) = super::copy_picture::render_sheet_range_to_png(&sheet, range) {
-                                let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Png, png.clone());
-                                self.resources.add_picture(media, ibis_doc_model::MediaFormat::Png, &png);
+                            if let Some(png) = super::copy_picture::sheet_range_svg(&sheet, range).map(String::into_bytes) {
+                                let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Svg, png.clone());
+                                self.resources.add_picture(media, ibis_doc_model::MediaFormat::Svg, &png);
                                 pic.media = media;
                                 commands.push(Command::SetKind {
                                     slide: slide_id,
@@ -1650,7 +1652,7 @@ impl SlideEditor {
 
                 match &shape.kind {
                     ShapeKind::Picture(pic) => {
-                        if let Some(png) = super::copy_picture::render_sheet_range_to_png(sheet, range) {
+                        if let Some(png) = super::copy_picture::sheet_range_svg(sheet, range).map(String::into_bytes) {
                             let current_data = p.media(pic.media).map(|m| &*m.data);
                             if current_data != Some(&png) {
                                 let (w_emu, h_emu) = super::copy_picture::sheet_range_emu_size(sheet, range);
@@ -1685,8 +1687,8 @@ impl SlideEditor {
         }
 
         for (shape_id, mut pic, frame, png, (w_emu, h_emu)) in picture_updates {
-            let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Png, png.clone());
-            self.resources.add_picture(media, ibis_doc_model::MediaFormat::Png, &png);
+            let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Svg, png.clone());
+            self.resources.add_picture(media, ibis_doc_model::MediaFormat::Svg, &png);
             pic.media = media;
             commands.push(Command::SetKind {
                 slide: slide_id,
@@ -1984,24 +1986,13 @@ impl SlideEditor {
 
     /// Insert a screenshot specifically from the clipboard (image or copied image files).
     pub(crate) fn insert_sheet_screenshot_from_clipboard(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
-        if let Some(item) = cx.read_from_clipboard() {
+        let item = cx.read_from_clipboard();
+        if let Some(item) = &item {
             for entry in item.entries() {
                 match entry {
-                    gpui::ClipboardEntry::Image(image) => {
-                        let ext = match image.format {
-                            gpui::ImageFormat::Png => "png",
-                            gpui::ImageFormat::Jpeg => "jpg",
-                            gpui::ImageFormat::Gif => "gif",
-                            gpui::ImageFormat::Svg => "svg",
-                            gpui::ImageFormat::Bmp => "bmp",
-                            _ => "png",
-                        };
-                        let name = format!("Screenshot.{}", ext);
-                        return self.insert_sheet_picture(&name, image.bytes.clone(), cx);
-                    }
                     gpui::ClipboardEntry::ExternalPaths(paths) => {
                         for path in paths.paths() {
-                            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg"));
+                            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "emf" | "wmf"));
                             if let (true, Ok(data)) = (ok, std::fs::read(path)) {
                                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Screenshot.png".into());
                                 return self.insert_sheet_picture(&name, data, cx);
@@ -2011,6 +2002,10 @@ impl SlideEditor {
                     _ => {}
                 }
             }
+        }
+        // The picture itself: a drawing (SVG, a metafile) or a bitmap, named by what its bytes are.
+        if let Some((name, bytes)) = crate::native_shape_clipboard::clipboard_picture(item.as_ref()) {
+            return self.insert_sheet_picture(&name, bytes, cx);
         }
         None
     }

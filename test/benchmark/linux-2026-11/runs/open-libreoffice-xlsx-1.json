@@ -1,0 +1,52 @@
+{
+ "end": 9.308,
+ "last_change": 9.308,
+ "end_video_frame": 9,
+ "first_change": 0.104,
+ "window_end": 9.308,
+ "doc_changes_count": 4,
+ "doc_changes": [
+  [
+   0.104,
+   0.15628
+  ],
+  [
+   8.567,
+   0.15628
+  ],
+  [
+   9.062,
+   0.59723
+  ],
+  [
+   9.308,
+   0.14843
+  ]
+ ],
+ "recorded_until": 17.317,
+ "grabs": 1610,
+ "capped": false,
+ "tag": "open-libreoffice-xlsx-1",
+ "scenario": "open",
+ "app": "libreoffice",
+ "kind": "xlsx",
+ "run": 1,
+ "file": "coffee-chain-sales-report.xlsx",
+ "command": [
+  "soffice26",
+  "/tmp/ibis-bench-v1ja787d/coffee-chain-sales-report.xlsx"
+ ],
+ "rects": [
+  [
+   0.0,
+   "320 140 1280 800"
+  ]
+ ],
+ "cap": 45,
+ "measured_at": "2026-11-03 19:49:52",
+ "load_before": [
+  0.92,
+  0.84,
+  0.64
+ ]
+}

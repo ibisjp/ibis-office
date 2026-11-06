@@ -40,7 +40,7 @@ impl SlideEditor {
             let mut offset=0;
             for run in &p.runs {
                 let next=offset+run.len();
-                let hidden=!super::flow_layout::showing_markup() && matches!(run.revision.as_ref().map(|r|&r.kind),Some(RevisionKind::Delete));
+                let hidden=!self.resources.markup_view.showing_markup() && matches!(run.revision.as_ref().map(|r|&r.kind),Some(RevisionKind::Delete));
                 if offset<b && next>a && !hidden {
                     let names=[run.style.font.clone(),run.style.east_asian_font.clone(),run.style.cs_font.clone()];
                     if let Some(common)=fonts.as_mut() {for i in 0..3 {if common[i]!=names[i] {common[i]=None;}}} else {fonts=Some(names);}
@@ -78,7 +78,7 @@ impl SlideEditor {
         if !changed.into_iter().any(|v|v) || self.apply_text_properties(properties,cx) {
             let document=self.flow().unwrap().clone();
             if let Some(edit)=self.doc_state_mut().and_then(|s|s.font_edit.as_mut()) {edit.initial=values;edit.document=document;edit.error=None;}
-            if !self.panel_dialog_is_modal() { self.focus_handle.focus(window,cx); }
+            if !self.dialog_is_modal() { self.focus_handle.focus(window,cx); }
         }
         cx.notify();
     }

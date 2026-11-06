@@ -145,6 +145,8 @@ fn format_copy_items(editor: &SlideEditor) -> Vec<MenuEntry> {
 pub(crate) fn crop_items() -> Vec<MenuEntry> {
     use ibis_doc_model::Crop;
     vec![
+        MenuItem::new("pptx.crop.mode", "_shell.crop-mode").icon("crop").on(|e, w, cx| e.begin_crop_mode(w, cx)).into(),
+        MenuEntry::Separator,
         MenuItem::tr("pptx.crop.left").on(|e, _, cx| e.crop_selected_pictures(Crop { left: 10_000, ..Default::default() }, cx)).into(),
         MenuItem::tr("pptx.crop.right").on(|e, _, cx| e.crop_selected_pictures(Crop { right: 10_000, ..Default::default() }, cx)).into(),
         MenuItem::tr("pptx.crop.top").on(|e, _, cx| e.crop_selected_pictures(Crop { top: 10_000, ..Default::default() }, cx)).into(),
@@ -1013,17 +1015,13 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.photo-album").icon("photo_library").on(|e, w, cx| e.open_photo_album_panel(w, cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.3d-model").icon("view_in_ar").on(|e, w, cx| e.pick_3d_model(w, cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.insert-object").icon("attachment").on(|e, w, cx| e.pick_insert_object(w, cx)).into());
-    menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.math").icon("functions").on(|e, w, cx| e.open_pptx_math_panel(w, cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::new("pptx.ink", crate::shell::i18n::text("xlsx.ink")).icon("draw").on(|e, w, cx| e.open_pptx_ink_panel(w, cx)).into());
-    menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.video").icon("movie").on(|e, w, cx| e.pick_clip(false, w, cx)).into());
-    menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.audio").icon("music_note").on(|e, w, cx| e.pick_clip(true, w, cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.video-link").icon("movie").on(|e, w, cx| e.pick_clip_link(false, w, cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.audio-link").icon("music_note").on(|e, w, cx| e.pick_clip_link(true, w, cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.audio-record").icon("mic").on(|e, w, cx| e.open_audio_record_panel(w, cx)).into());
     let has_clip = editor.selected_clip_options().is_some();
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.clip.caption.add").icon("closed_caption").disabled(!has_clip).on(|e, _, cx| e.add_selected_clip_caption(&crate::shell::i18n::text("_pptx.caption-track-language"), "ja-JP", &crate::shell::i18n::text("_pptx.caption-template"), cx)).into());
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.clip.caption.clear").icon("delete").disabled(!has_clip).on(|e, _, cx| e.clear_selected_clip_captions(cx)).into());
-    menus.items_mut(MenuId::Insert).push(MenuItem::tr("pptx.link").icon("link").on(|e, w, cx| e.slide_open_link_panel(w, cx)).into());
     let has_sections = !editor.presentation().sections.is_empty();
     let zoom_shape = editor.selected_shapes().first().map(|s| s.id).filter(|id| {
         matches!(editor.slide().shape_links.get(id), Some(ibis_doc_model::SlideLink::Slide(_)))
@@ -1151,19 +1149,6 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         cx.notify();
     });
     menus.connect("slideshow.settings", |this, window, cx| this.open_show_panel(window, cx));
-    {
-        let custom_shows = editor.presentation().custom_shows.clone();
-        let mut custom_items: Vec<MenuEntry> = Vec::new();
-        for cs in custom_shows {
-            let cs_id = cs.id;
-            custom_items.push(MenuItem::new("pptx.custom-show-item", cs.name).icon("play_arrow").on(move |e, w, cx| e.start_custom_slideshow(cs_id, w, cx)).into());
-        }
-        if !custom_items.is_empty() {
-            custom_items.push(MenuEntry::Separator);
-        }
-        custom_items.push(MenuItem::tr("slideshow.settings").icon("settings").on(|e, w, cx| e.open_show_panel(w, cx)).into());
-        menus.items_mut(MenuId::Slide).push(Submenu::tr("slideshow.custom-shows", "filter_none", custom_items).into());
-    }
     menus.items_mut(MenuId::Slide).push(MenuItem::tr("slideshow.rehearse-timings").icon("schedule").on(|e, w, cx| e.start_rehearsal(w, cx)).into());
     if editor.pptx().is_some_and(|s|s.section_panel.is_some()) {
         menus.items_mut(MenuId::Slide).push(Submenu::tr("pptx.section-actions", "view_quilt",vec![MenuItem::tr("pptx.section.apply").on(|e,w,cx|e.apply_section_panel(w,cx)).into(),MenuItem::tr("pptx.section.cancel").on(|e,w,cx|e.close_section_panel(w,cx)).into()]).into());
@@ -2244,63 +2229,9 @@ fn table_style_options_button(editor: &SlideEditor) -> ToolItem {
         .into()
 }
 
-/// The transitions offered (画面切り替え), with PowerPoint's names.
-pub(crate) const TRANSITIONS: [(&str, &str); 16] = [
-    ("cut", "transition.cut"),
-    ("morph", "transition.morph"),
-    ("fade", "transition.fade"),
-    ("push", "transition.push"),
-    ("wipe", "transition.wipe"),
-    ("split", "transition.split"),
-    ("cover", "transition.cover"),
-    ("pull", "transition.pull"),
-    ("randomBar", "transition.randomBar"),
-    ("circle", "transition.circle"),
-    ("dissolve", "transition.dissolve"),
-    ("zoom", "transition.zoom"),
-    ("vortex", "transition.vortex"),
-    ("ripple", "transition.ripple"),
-    ("glitter", "transition.glitter"),
-    ("wheel", "transition.wheel"),
-];
-
-/// The directions (効果オプション) offered for each transition effect.
-pub(crate) fn transition_directions(effect: &str) -> &'static [(&'static str, &'static str)] {
-    match effect {
-        "push" | "wipe" | "cover" | "pull" => &[
-            ("d", "transition.dir.down"),
-            ("l", "transition.dir.left"),
-            ("r", "transition.dir.right"),
-            ("u", "transition.dir.up"),
-        ],
-        "split" => &[
-            ("in", "transition.dir.split-in"),
-            ("out", "transition.dir.split-out"),
-            ("horzIn", "transition.dir.horz-in"),
-            ("horzOut", "transition.dir.horz-out"),
-        ],
-        "morph" => &[
-            ("byObject", "transition.dir.by-object"),
-            ("byWord", "transition.dir.by-word"),
-            ("byChar", "transition.dir.by-char"),
-        ],
-        "randomBar" => &[
-            ("horz", "transition.dir.horz"),
-            ("vert", "transition.dir.vert"),
-        ],
-        "circle" | "zoom" => &[
-            ("in", "transition.dir.in"),
-            ("out", "transition.dir.out"),
-        ],
-        "wheel" => &[
-            ("1", "transition.dir.spokes-1"),
-            ("2", "transition.dir.spokes-2"),
-            ("3", "transition.dir.spokes-3"),
-            ("4", "transition.dir.spokes-4"),
-            ("8", "transition.dir.spokes-8"),
-        ],
-        _ => &[],
-    }
+/// The directions (効果のオプション) offered for each transition effect: (what the model keeps, the i18n id of its name).
+pub(crate) fn transition_directions(effect: &str) -> Vec<(&'static str, &'static str)> {
+    ibis_doc_model::transition_catalog::effect_of(effect).map_or_else(Vec::new, |e| e.options.iter().map(|o| (o.token, o.key)).collect())
 }
 
 /// The name shown for a slide's transition.
@@ -2309,8 +2240,8 @@ pub(crate) fn transition_name(t: Option<&ibis_doc_model::Transition>) -> String 
         None => crate::shell::i18n::text("_shell.none").to_string(),
         Some(t) if t.effect.is_empty() => crate::shell::i18n::text("pptx.chrome.none-timing-only").to_string(),
         Some(t) => {
-            let name = TRANSITIONS.iter().find(|(e, _)| *e == t.effect).map_or(t.effect.clone(), |(_, id)| crate::shell::i18n::text(id).to_string());
-            let dir_name = t.direction.as_deref().and_then(|d| transition_directions(&t.effect).iter().find(|(dir, _)| *dir == d).map(|(_, id)| crate::shell::i18n::text(id).to_string()));
+            let name = ibis_doc_model::transition_catalog::effect_of(&t.effect).map_or(t.effect.clone(), |e| crate::shell::i18n::text(e.key).to_string());
+            let dir_name = Some(t.direction.as_deref().unwrap_or("")).and_then(|d| transition_directions(&t.effect).iter().find(|(dir, _)| *dir == d).map(|(_, id)| crate::shell::i18n::text(id).to_string())).filter(|_| t.direction.is_some());
             let mut display = match dir_name {
                 Some(dir) => format!("{name} ({dir})"),
                 None => name,
@@ -2333,15 +2264,16 @@ pub(crate) fn transition_name(t: Option<&ibis_doc_model::Transition>) -> String 
     }
 }
 
-fn transition_direction_items(editor: &SlideEditor) -> Vec<MenuEntry> {
+pub(crate) fn transition_direction_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let current = editor.slide().transition.clone();
     let effect = current.as_ref().map(|t| t.effect.as_str()).unwrap_or("");
     let dirs = transition_directions(effect);
-    let current_dir = current.as_ref().and_then(|t| t.direction.as_deref());
+    let current_dir = current.as_ref().map(|t| ibis_doc_model::transition_catalog::effective_token(&t.effect, t.direction.as_deref()).unwrap_or(""));
     dirs.iter()
         .map(|&(dir, id)| {
             let on = current_dir == Some(dir);
-            MenuItem::tr(id).checked(on).on(move |this, _, cx| this.set_transition_direction(Some(dir), cx)).into()
+            // The option with no attributes is the effect's plain form: no direction.
+            MenuItem::tr(id).checked(on).on(move |this, _, cx| this.set_transition_direction(Some(dir).filter(|d| !d.is_empty()), cx)).into()
         })
         .collect()
 }
@@ -2413,8 +2345,9 @@ pub(crate) fn transition_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     let mut items: Vec<MenuEntry> = vec![
         MenuItem::tr("transition.none").checked(current.as_ref().is_none_or(|t| t.effect.is_empty())).on(|this, _, cx| this.set_transition(None, cx)).into(),
     ];
-    items.extend(TRANSITIONS.iter().map(|(effect, id)| {
-        let on = current.as_ref().is_some_and(|t| t.effect == *effect);
+    items.extend(ibis_doc_model::transition_catalog::EFFECTS.iter().map(|e| {
+        let (effect, id) = (e.id, e.key);
+        let on = current.as_ref().is_some_and(|t| t.effect == effect);
         MenuItem::tr(id).checked(on).on(move |this, _, cx| this.set_transition(Some(effect), cx)).into()
     }));
     items.push(MenuEntry::Separator);

@@ -7,7 +7,7 @@
 
 use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::input::{InputState, InputEvent};
-use gpui_kit::component::slider::{SliderState, SliderEvent, Slider};
+use gpui_kit::component::slider::{SliderState, SliderEvent};
 use crate::shell::chrome::Checkbox;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -19,6 +19,9 @@ use ibis_doc_model::{
 
 use crate::pptx::animation_ui;
 use crate::shell::chrome::{MenuId, MenuItem, Menus, SidebarPanel};
+
+/// The narrowest the zoom, width and height tracks of the 3D model pane are drawn; a row goes to two lines (the slider on the full width) before the track gets narrower.
+const THREED_SLIDER_TRACK: Pixels = px(100.);
 use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
 
@@ -418,9 +421,8 @@ impl SlideEditor {
     }
 
     /// PPTX-THREED-011: 3D モデルへのアニメーション効果（到着・ターンテーブル・スイング・ジャンプしてターン・退場）を適用.
-    pub(crate) fn apply_3d_model_animation(&mut self, kind: ThreeDAnimationKind, cx: &mut Context<Self>) {
-        let Some(id) = self.target_3d_model_shape_id() else { return };
-        let slide = self.current_slide;
+    /// The effect of `kind` on `id`.
+    fn threed_animation_of(kind: ThreeDAnimationKind, id: ShapeId) -> ibis_doc_model::Animation {
         let mut anim = match kind {
             ThreeDAnimationKind::Arrive => {
                 let mut a = animation_ui::effect(id, AnimationClass::Entrance, AnimationLook::Float(AnimationSide::Bottom));
@@ -445,10 +447,30 @@ impl SlideEditor {
             }
         };
         anim.duration = 1500;
+        anim
+    }
+
+    /// The 3D model effect the shape has now (the panel's choice), if its animation is one of them.
+    fn current_3d_model_animation(&self, id: ShapeId) -> Option<ThreeDAnimationKind> {
+        let current = self.slide().animations.iter().find(|a| a.shape == id)?;
+        ThreeDAnimationKind::ALL.into_iter().find(|&kind| {
+            let built = Self::threed_animation_of(kind, id);
+            current.class == built.class && current.look == built.look && current.auto_reverse == built.auto_reverse
+        })
+    }
+
+    /// The panel's choice: the model has this one effect (the others it had are replaced), or none (`None`).
+    pub(crate) fn set_3d_model_animation(&mut self, kind: Option<ThreeDAnimationKind>, cx: &mut Context<Self>) {
+        let Some(id) = self.target_3d_model_shape_id() else { return };
+        let slide = self.current_slide;
         let mut animations = self.slide().animations.clone();
         animations.retain(|a| a.shape != id);
-        animations.push(anim);
+        animations.extend(kind.map(|k| Self::threed_animation_of(k, id)));
         self.run(vec![Command::SetAnimations { slide, animations }], cx);
+    }
+
+    pub(crate) fn apply_3d_model_animation(&mut self, kind: ThreeDAnimationKind, cx: &mut Context<Self>) {
+        self.set_3d_model_animation(Some(kind), cx);
     }
 
     pub(crate) fn threed_model_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
@@ -480,18 +502,19 @@ impl SlideEditor {
             }
         }
         let mut pan_buttons = h_flex().gap_1();
-        for (id, icon, dx, dy) in [("3d-pan-l", "arrow_left", -63_500, 0), ("3d-pan-r", "arrow_forward", 63_500, 0), ("3d-pan-u", "arrow_upward", 0, -63_500), ("3d-pan-d", "arrow_downward", 0, 63_500)] {
+        for (id, icon, dx, dy) in [("3d-pan-l", "arrow_back", -63_500, 0), ("3d-pan-r", "arrow_forward", 63_500, 0), ("3d-pan-u", "arrow_upward", 0, -63_500), ("3d-pan-d", "arrow_downward", 0, 63_500)] {
             pan_buttons = pan_buttons.child(crate::shell::chrome::action_button(id).small().w(px(28.)).icon(crate::shell::chrome::icon(icon, 18., rgb(0x3c4043).into())).on_click(cx.listener(move |this, _, _, cx| this.pan_selected_3d_model(dx, dy, cx))));
         }
         let mut pan_zoom_controls = v_flex().gap_2().child(div().child(text("pptx.3d-model.pan-zoom"))).child(pan_buttons);
-        if let Some(slider) = p.sliders.first() {pan_zoom_controls = pan_zoom_controls.child(crate::shell::chrome::control_row(text("pptx.3d-model.zoom"), Slider::new(slider)));}
+        if let Some(slider) = p.sliders.first() {pan_zoom_controls = pan_zoom_controls.child(crate::shell::chrome::slider_row(text("pptx.3d-model.zoom"), crate::shell::chrome::slider("3d-zoom", slider).value(cx).unit("%").track_min_width(THREED_SLIDER_TRACK)));}
         let mut size_reset_controls = v_flex().gap_2().child(div().child(text("pptx.3d-model.pos-size")));
         for (i, key) in ["pptx.frame-panel.width-cm", "pptx.frame-panel.height-cm"].into_iter().enumerate() {
-            if let Some(slider) = p.sliders.get(i + 1) {size_reset_controls = size_reset_controls.child(crate::shell::chrome::control_row(text(key), Slider::new(slider)));}
+            if let Some(slider) = p.sliders.get(i + 1) {size_reset_controls = size_reset_controls.child(crate::shell::chrome::slider_row(text(key), crate::shell::chrome::slider(["3d-width", "3d-height"][i], slider).value(cx).unit("cm").unit_width(px(24.)).track_min_width(THREED_SLIDER_TRACK)));}
         }
-        size_reset_controls = size_reset_controls.child(v_flex().gap_1().items_start()
-            .child(crate::shell::chrome::action_button("3d-reset").small().label(text("pptx.3d-model.reset")).on_click(cx.listener(|this, _, w, cx| {this.reset_selected_3d_model(false, cx);this.sync_3d_panel_controls(w, cx);})))
-            .child(crate::shell::chrome::action_button("3d-reset-size").small().label(text("pptx.3d-model.reset-size")).on_click(cx.listener(|this, _, w, cx| {this.reset_selected_3d_model(true, cx);this.sync_3d_panel_controls(w, cx);}))));
+        size_reset_controls = size_reset_controls.child(crate::shell::chrome::button_group([
+            crate::shell::chrome::ButtonGroupItem::new("3d-reset", text("pptx.3d-model.reset")).on_click(cx.listener(|this, _, w, cx| {this.reset_selected_3d_model(false, cx);this.sync_3d_panel_controls(w, cx);})),
+            crate::shell::chrome::ButtonGroupItem::new("3d-reset-size", text("pptx.3d-model.reset-size")).on_click(cx.listener(|this, _, w, cx| {this.reset_selected_3d_model(true, cx);this.sync_3d_panel_controls(w, cx);})),
+        ]));
 
         let mut scene_row = h_flex().gap_1().flex_wrap();
         for idx in 1..=4u8 {
@@ -521,18 +544,17 @@ impl SlideEditor {
                     })),
             );
 
-        let mut anim_row = h_flex().gap_1().flex_wrap();
-        for ak in ThreeDAnimationKind::ALL {
-            anim_row = anim_row.child(
-                crate::shell::chrome::action_button(SharedString::from(format!("3d-anim-{ak:?}")))
-                    .small()
-
-                    .label(text(ak.label_key()))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.apply_3d_model_animation(ak, cx);
-                    })),
-            );
-        }
+        // The effects are not toggles: a click APPLIES the effect (it replaces the shape's animation; there is no off state).
+        // One effect at a time (choosing another replaces it), so it is a radio group, with "none" to remove it.
+        let current_anim = self.target_3d_model_shape_id().and_then(|id| self.current_3d_model_animation(id));
+        let has_anim = self.target_3d_model_shape_id().is_some_and(|id| self.slide().animations.iter().any(|a| a.shape == id));
+        let anim_row = crate::shell::chrome::radio_group()
+            .child(crate::shell::chrome::radio_button("3d-anim-none", !has_anim, false, text("_shell.none"),
+                cx.listener(|this, _, _, cx| this.set_3d_model_animation(None, cx))))
+            .children(ThreeDAnimationKind::ALL.into_iter().map(|ak| {
+                crate::shell::chrome::radio_button(SharedString::from(format!("3d-anim-{ak:?}")), current_anim == Some(ak), false, text(ak.label_key()),
+                    cx.listener(move |this, _, _, cx| this.set_3d_model_animation(Some(ak), cx)))
+            }));
 
         let body = v_flex()
             .gap_3()
@@ -544,9 +566,7 @@ impl SlideEditor {
             .child(size_reset_controls)
             .child(scene_controls)
             .child(div().text_sm().font_weight(FontWeight::BOLD).child(text("pptx.3d-model.animations")))
-            .child(anim_row)
-            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(text("pptx.3d-model.web-note")))
-            ;
+            .child(anim_row);
 
         Some(SidebarPanel { title: text("pptx.3d-model.title"), body: body.into_any_element() })
     }
@@ -556,16 +576,27 @@ impl SlideEditor {
 // 2. PPTX-RECORD-009: 録画プレビュー (RecordPreviewPanel)
 // =============================================================================
 
-#[derive(Clone, Debug, Default)]
+/// The seconds the stepper of the recording preview offers until the user changes it (the same as the "5 seconds" choice of the slide timing menu).
+const DEFAULT_SLIDE_SECONDS: f32 = 5.;
+
+#[derive(Clone, Debug)]
 pub(crate) struct RecordPreviewPanel {
     pub(crate) open: bool,
     pub(crate) playing: bool,
+    /// The slide time (seconds) the "set" button gives the current slide, edited in the panel.
+    pub(crate) seconds: f32,
+}
+
+impl Default for RecordPreviewPanel {
+    fn default() -> Self {
+        Self { open: false, playing: false, seconds: DEFAULT_SLIDE_SECONDS }
+    }
 }
 
 impl SlideEditor {
     pub(crate) fn open_record_preview_panel(&mut self, cx: &mut Context<Self>) {
         if let Some(s) = self.pptx_mut() {
-            s.record_preview = Some(RecordPreviewPanel { open: true, playing: false });
+            s.record_preview = Some(RecordPreviewPanel { open: true, playing: false, seconds: DEFAULT_SLIDE_SECONDS });
         }
         self.sidebar_open = true;
         cx.notify();
@@ -619,6 +650,14 @@ impl SlideEditor {
         let mut t = self.slide().transition.clone().unwrap_or_else(|| Transition::new(""));
         t.after = after_ms;
         self.run(vec![Command::SetTransition { slide, transition: Some(t) }], cx);
+    }
+
+    /// The seconds the panel's "set" button gives the current slide.
+    pub(crate) fn record_preview_set_seconds(&mut self, seconds: f32, cx: &mut Context<Self>) {
+        if let Some(rp) = self.pptx_mut().and_then(|s| s.record_preview.as_mut()) {
+            rp.seconds = seconds;
+        }
+        cx.notify();
     }
 
     pub(crate) fn record_preview_next_slide(&mut self, cx: &mut Context<Self>) -> bool {
@@ -700,27 +739,22 @@ impl SlideEditor {
                             })),
                     ),
             )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .flex_wrap()
-                    .child(
-                        crate::shell::chrome::action_button("rec-prev-set-5s")
-                            .small()
-                            .label(text("pptx.record-preview.set-5s"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.record_preview_set_slide_timing_ms(Some(5000), cx);
-                            })),
-                    )
-                    .child(
-                        crate::shell::chrome::destructive_button("rec-prev-clear",cx)
-                            .small()
-                            .label(text("pptx.record-preview.clear-timing"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.record_preview_set_slide_timing_ms(None, cx);
-                            })),
-                    ),
-            )
+            // The slide's time, set at once as it is edited: "click" (the slide waits for a click: no time) or "auto" (it advances by itself after the seconds of the stepper).
+            .child(crate::shell::chrome::radio_group()
+                .child(crate::shell::chrome::radio_button("rec-prev-click", cur_after_ms.is_none(), false, text("pptx.record-preview.on-click"),
+                    cx.listener(|this, _, _, cx| this.record_preview_set_slide_timing_ms(None, cx))))
+                .child(crate::shell::chrome::radio_button("rec-prev-auto", cur_after_ms.is_some(), false, text("pptx.record-preview.automatic"),
+                    cx.listener(|this, _, _, cx| {
+                        let s = this.pptx().and_then(|s| s.record_preview.as_ref()).map_or(DEFAULT_SLIDE_SECONDS, |r| r.seconds);
+                        this.record_preview_set_slide_timing_ms(Some((s * 1000.).round() as u32), cx);
+                    }))))
+            .child(crate::shell::chrome::control_row(
+                text("pptx.record-preview.seconds"),
+                crate::shell::chrome::number_stepper("rec-prev-seconds", cur_after_ms.map_or(rp.seconds, |ms| ms as f32 / 1000.), cx, |e, v, _, cx| {
+                    e.record_preview_set_seconds(v, cx);
+                    e.record_preview_set_slide_timing_ms(Some((v * 1000.).round() as u32), cx);
+                }).range(0.1, 3600.).step(0.5).unit(text("pptx.anim.unit.seconds")).plain().disabled(cur_after_ms.is_none()),
+            ))
             ;
 
         let panel_terminal_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("rec-prev-start-show", text("pptx.record-preview.start-show"), crate::shell::chrome::ActionButtonKind::Normal)

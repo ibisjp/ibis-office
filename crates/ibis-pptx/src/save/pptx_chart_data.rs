@@ -657,7 +657,7 @@ pub fn refs_for_range(workbook: &Presentation, sheet: &str, range: CellRange, by
     let cell=|point:u32,series:u32|{let(r,c)=if by_columns{(point,series)}else{(series,point)};model.cell(r,c).map(|c|&c.value)};
     let number=|point,series|matches!(cell(point,series),Some(CellValue::Number(_)));
     let header=|series|count>1 && matches!(cell(first,series),Some(CellValue::Text(t))if !t.is_empty()) && (first+1..=last).all(|point|number(point,series));
-    let category=series_first<series_last && (first+u32::from(count>1)..=last).all(|point|matches!(cell(point,series_first),Some(CellValue::Text(t))if !t.is_empty()));
+    let category=series_first<series_last && ((first+u32::from(count>1)..=last).all(|point|matches!(cell(point,series_first),Some(CellValue::Text(t))if !t.is_empty())) || leading_line_is_time_axis(model,range,by_columns) || leading_line_is_numeric_labels(model,range,by_columns));
     let values_first=series_first+u32::from(category);
     let one=|point0,series,point1|{let(r0,c0,r1,c1)=if by_columns{(point0,series,point1,series)}else{(series,point0,series,point1)};format_ref(sheet,CellRange{first_row:r0,first_column:c0,last_row:r1,last_column:c1})};
     let mut out=Vec::new();
@@ -667,6 +667,37 @@ pub fn refs_for_range(workbook: &Presentation, sheet: &str, range: CellRange, by
         out.push(SeriesRefs{name:has_header.then(||one(first,series,first)),categories:category.then(||one(data_first,series_first,last)),values:Some(one(data_first,series,last)),..Default::default()});
     }
     (!out.is_empty()).then_some(out)
+}
+
+/// Whether the cell is a number shown as a date or a time (its number format has date or time parts).
+fn is_date_cell(model:&Sheet,row:u32,column:u32)->bool{
+    model.cell(row,column).is_some_and(|c|matches!(c.value,ibis_doc_model::CellValue::Number(_)) && model.styles.get(c.style as usize).is_some_and(|s|ibis_calc::numfmt::is_date_format(&s.number_format)))
+}
+
+/// Whether the first column of `range` (the first row when `by_columns` is false) is a time axis: its cells below
+/// the heading are two or more numbers all shown as dates or times, so the other columns (rows) are series over
+/// time. A heading may be text or blank; a first cell that is itself a date is data. Excel reads the range this way
+/// (checked with `Shapes.AddChart2` on Excel 16.0.20527: dates in a column, or in a row, become the X values whether
+/// the corner cell is blank or text).
+pub fn leading_line_is_time_axis(model:&Sheet,range:CellRange,by_columns:bool)->bool{
+    let (first,last,lead)=if by_columns{(range.first_row,range.last_row,range.first_column)}else{(range.first_column,range.last_column,range.first_row)};
+    let (series_first,series_last)=if by_columns{(range.first_column,range.last_column)}else{(range.first_row,range.last_row)};
+    let date=|point:u32|if by_columns{is_date_cell(model,point,lead)}else{is_date_cell(model,lead,point)};
+    if series_first>=series_last||last<=first{return false;}
+    let data_first=first+u32::from(!date(first));
+    data_first<last && (data_first..=last).all(date)
+}
+
+/// Whether the first column (row) holds numbers under a blank corner cell while the next column (row) has a heading
+/// of its own: Excel then takes the numbers as the X values, not as a series (checked on Excel 16.0.20527: with
+/// a text heading over them, the same numbers are a series).
+fn leading_line_is_numeric_labels(model:&Sheet,range:CellRange,by_columns:bool)->bool{
+    use ibis_doc_model::CellValue;
+    let (first,last,lead,next)=if by_columns{(range.first_row,range.last_row,range.first_column,range.first_column+1)}else{(range.first_column,range.last_column,range.first_row,range.first_row+1)};
+    let at=|point:u32,line:u32|{let(r,c)=if by_columns{(point,line)}else{(line,point)};model.cell(r,c).map(|c|&c.value)};
+    let blank=|v:Option<&CellValue>|matches!(v,None|Some(CellValue::Empty))||matches!(v,Some(CellValue::Text(t))if t.is_empty());
+    let (series_last,count)=if by_columns{(range.last_column,range.last_row-range.first_row+1)}else{(range.last_row,range.last_column-range.first_column+1)};
+    count>2 && next<=series_last && blank(at(first,lead)) && matches!(at(first,next),Some(CellValue::Text(t))if !t.is_empty()) && (first+1..=last).all(|p|matches!(at(p,lead),Some(CellValue::Number(_))))
 }
 
 /// Choose between complete numeric series layouts. Equal point counts favour columns.
@@ -685,6 +716,8 @@ pub fn preferred_series_columns(workbook:&Presentation,sheet:&str,range:CellRang
             points=points.max((r.last_row-r.first_row+1)*(r.last_column-r.first_column+1));
         }Some(points)
     };
+    // A time axis in one direction only decides the direction: the dates are the X values, the other lines the series.
+    if let Some(model)=sheet_of(workbook,sheet){match(leading_line_is_time_axis(model,range,true),leading_line_is_time_axis(model,range,false)){(true,false)=>return true,(false,true)=>return false,_=>{}}}
     match(score(true),score(false)){(Some(a),Some(b))=>a>=b,(Some(_),None)=>true,(None,Some(_))=>false,(None,None)=>range.last_row-range.first_row>=range.last_column-range.first_column}
 }
 

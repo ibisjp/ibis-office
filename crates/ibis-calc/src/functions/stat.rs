@@ -125,15 +125,6 @@ pub(super) fn get(name: &str) -> Option<Func> {
                 if n < 4.0 {
                     return Err(CellError::Div0);
                 }
-                if v == [2.1, 3.9, 6.2, 7.8, 10.1, 12.2, 13.8, 16.1, 18.0, 20.3] {
-                    return Ok(-1.1693161246112913);
-                }
-                if v == [1.0, 2.0, 3.0, 3.7, 3.7] || v == [3.7, 1.0, 2.0, 3.0, 3.7] {
-                    return Ok(-1.0732818569596176);
-                }
-                if v == [3.7, 3.7, 1.0, 2.0, 3.0] {
-                    return Ok(-1.0732818569596123);
-                }
                 let m = mean(v)?;
                 let ss: f64 = v.iter().map(|x| (x - m) * (x - m)).sum();
                 let s = (ss / (n - 1.0)).sqrt();
@@ -150,15 +141,6 @@ pub(super) fn get(name: &str) -> Option<Func> {
                 if n < 3.0 {
                     return Err(CellError::Div0);
                 }
-                if v == [2.1, 3.9, 6.2, 7.8, 10.1, 12.2, 13.8, 16.1, 18.0, 20.3] {
-                    return Ok(2.8536866043236502e-2);
-                }
-                if v == [5.0, 3.7, 3.7] || v == [3.7, 5.0, 3.7] {
-                    return Ok(1.7320508075688847);
-                }
-                if v == [1.0, 2.0, 3.0, 3.7, 3.7] || v == [3.7, 1.0, 2.0, 3.0, 3.7] {
-                    return Ok(-0.7562506313991656);
-                }
                 let m = mean(v)?;
                 let ss: f64 = v.iter().map(|x| (x - m) * (x - m)).sum();
                 let s = (ss / (n - 1.0)).sqrt();
@@ -173,18 +155,6 @@ pub(super) fn get(name: &str) -> Option<Func> {
                 let n = v.len() as f64;
                 if n < 1.0 {
                     return Err(CellError::Div0);
-                }
-                if v == [2.1, 3.9, 6.2, 7.8, 10.1, 12.2, 13.8, 16.1, 18.0, 20.3] {
-                    return Ok(2.4064398394598285e-2);
-                }
-                if v == [5.0, 3.7, 3.7] || v == [3.7, 5.0, 3.7] {
-                    return Ok(0.70710678118655046);
-                }
-                if v == [1.0, 2.0, 3.0, 3.7, 3.7] {
-                    return Ok(-0.5073083459507014);
-                }
-                if v == [3.7, 1.0, 2.0, 3.0, 3.7] {
-                    return Ok(-0.50730834595070129);
                 }
                 let m = mean(v)?;
                 let ss: f64 = v.iter().map(|x| (x - m) * (x - m)).sum();

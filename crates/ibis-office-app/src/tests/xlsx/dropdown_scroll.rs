@@ -35,7 +35,7 @@ pub(super) fn run(){
     let (outer,cell)=s.with(|e,_|(e.wb().validation_choices.as_ref().unwrap().bounds.get().unwrap(),e.validation_cell_bounds(0,0).unwrap()));
     assert!(outer.size.width>cell.size.width+px(21.));assert!(outer.size.width<=px(600.));
     drag(&mut s,scroll);s.key("escape");
-    crate::shell::chrome::FORCED_SIDEBAR.with(|c|c.set(Some((panel,"scrollbar-test",crate::shell::panel_dialog::PanelMode::Sidebar))));let _cleanup=Cleanup;
+    crate::shell::chrome::FORCED_SIDEBAR.with(|c|c.set(Some((panel,"scrollbar-test",crate::shell::dialog::DialogMode::Sidebar))));let _cleanup=Cleanup;
     s.update(|e,_,cx|{e.sidebar_open=true;cx.notify();});
     let scroll=s.with(|e,_|e.sidebar_scroll.clone());drag(&mut s,scroll);
 }

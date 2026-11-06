@@ -19,7 +19,7 @@ use crate::{Error, cfb};
 /// Whether `data` is a compound file (an old Office file).
 pub fn is_xls(data: &[u8]) -> bool {
     // (A password-protected package is a compound file too: not an old workbook.)
-    cfb::is_cfb(data) && !ibis_ooxml::encryption::is_encrypted(data) && !crate::ppt::is_ppt(data)
+    cfb::is_cfb(data) && !ibis_ooxml::encryption::is_encrypted(data) && !crate::ppt::is_ppt(data) && !crate::docx_convert::is_doc(data)
 }
 
 fn bad(what: &str) -> Error {

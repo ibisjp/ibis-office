@@ -127,6 +127,20 @@ pub fn decode(eot: &[u8]) -> Result<Vec<u8>, Error> {
     mtx(&data)
 }
 
+/// What the licence of a plain TrueType / OpenType font file allows for embedded use (its OS/2 `fsType`; a font with no OS/2 table
+/// is unrestricted). `None` if the data is not a TrueType or OpenType file (a collection is not one).
+pub fn embedding_of_font(ttf: &[u8]) -> Option<Embedding> {
+    if !matches!(ttf.get(..4)?, [0, 1, 0, 0] | b"OTTO" | b"true") {
+        return None;
+    }
+    let be16 = |at: usize| -> Option<usize> { Some(u16::from_be_bytes(ttf.get(at..at + 2)?.try_into().ok()?) as usize) };
+    let be32 = |at: usize| -> Option<usize> { Some(u32::from_be_bytes(ttf.get(at..at + 4)?.try_into().ok()?) as usize) };
+    let tables = be16(4)?;
+    let Some(os2) = (0..tables).map(|i| 12 + 16 * i).find(|&at| ttf.get(at..at + 4) == Some(b"OS/2")) else { return Some(Embedding::Installable) };
+    let fs_type = be16(be32(os2 + 8)? + 8)?;
+    Some(Embedding::from_fs_type(fs_type as u16))
+}
+
 /// The family a TrueType font belongs to, as systems group it: the
 /// typographic family (name ID 16) if present, else the family (ID 1).
 /// "Poppins SemiBold" is in family "Poppins".

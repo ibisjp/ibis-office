@@ -50,7 +50,7 @@ const THEME_NAMES: [&str; 10] = ["_xlsx.background-1", "_xlsx.text-1", "_xlsx.ba
 pub(super) const FILLS: &[(&str, u32)] = &[("_xlsx.light-yellow", 0xfff2cc), ("_shell.light-green", 0xe2efda), ("_shell.light-blue", 0xddebf7), ("_xlsx.light-orange", 0xfce4d6), ("_xlsx.light-gray", 0xededed), ("_shell.yellow", 0xffff00), ("_shell.green", 0x92d050), ("_shell.blue", 0x9bc2e6), ("_shell.gray", 0xbfbfbf), ("_xlsx.black", 0x000000)];
 pub(super) const COLORS: &[(&str, u32)] = &[("_xlsx.black", 0x000000), ("_shell.dark-red", 0xc00000), ("_shell.red", 0xff0000), ("_shell.orange", 0xffc000), ("_shell.yellow", 0xffff00), ("_shell.light-green", 0x92d050), ("_shell.green", 0x00b050), ("_shell.light-blue", 0x00b0f0), ("_shell.blue", 0x0070c0), ("_shell.dark-blue", 0x002060), ("_shell.purple", 0x7030a0), ("_shell.white", 0xffffff)];
 /// Number formats of 表示形式の詳細 (123 ▼).
-pub(super) const NUMBER_FORMATS: &[(&str, &str)] = &[
+pub(crate) const NUMBER_FORMATS: &[(&str, &str)] = &[
     ("_xlsx.general", "General"),
     ("_xlsx.number", "#,##0"),
     ("_xlsx.number-2-decimal-places-2", "#,##0.00"),
@@ -64,6 +64,26 @@ pub(super) const NUMBER_FORMATS: &[(&str, &str)] = &[
     ("_xlsx.scientific", "0.00E+00"),
     ("_xlsx.text", "@"),
 ];
+
+/// The Material icon of a number format of [`NUMBER_FORMATS`] (shown in the toolbar's 123 menu and in the format pane's 表示形式
+/// drop-down); a code that is not in the list is the user-defined one.
+pub(crate) fn number_format_icon(code: &str) -> &'static str {
+    match code {
+        "General" => "123",
+        "#,##0" => "numbers",
+        "#,##0.00" => "decimal_increase",
+        "\"¥\"#,##0;\"¥\"\\-#,##0" => "payments",
+        "_ \"¥\"* #,##0_ ;_ \"¥\"* \\-#,##0_ ;_ \"¥\"* \"-\"_ ;_ @_ " => "account_balance",
+        "yyyy/m/d" => "calendar_month",
+        "yyyy\"年\"m\"月\"d\"日\"" => "event", // i18n-ok（表示形式の書式コード（ファイルに保存される値））
+        "h:mm" => "schedule",
+        "0%" => "percent",
+        "# ?/?" => "pie_chart",
+        "0.00E+00" => "science",
+        "@" => "text_fields",
+        _ => "tune",
+    }
+}
 
 impl SlideEditor {
     /// The selected cell's format (reflecting pending or run styles when editing a cell or worksheet shape).
@@ -671,6 +691,9 @@ impl SlideEditor {
     pub(crate) fn merge_cells(&mut self, center: bool, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let Some(range) = self.selected_range() else { return };
+        if self.pivot_refuses_ranges(&[range], cx) {
+            return;
+        }
         let slide = self.current_slide;
         self.run_sheet(vec![Command::Sheet(SheetCommand::Merge { slide, range, center })], cx);
     }
@@ -828,6 +851,9 @@ impl SlideEditor {
         };
         let slide = self.current_slide;
         let at = if after { last + 1 } else { first };
+        if self.pivot_refuses_lines(axis == Axis::Rows, first, last, Some(at), cx) {
+            return;
+        }
         self.run_sheet(vec![Command::Sheet(SheetCommand::Insert { slide, axis, at, count: last - first + 1 })], cx);
     }
 
@@ -842,6 +868,9 @@ impl SlideEditor {
             Axis::Rows => (r.first_row, r.last_row),
             Axis::Columns => (r.first_column, r.last_column),
         };
+        if self.pivot_refuses_lines(axis == Axis::Rows, first, last, None, cx) {
+            return;
+        }
         let slide = self.current_slide;
         self.run_sheet(vec![Command::Sheet(SheetCommand::Delete { slide, axis, at: first, count: last - first + 1 })], cx);
     }
@@ -1194,7 +1223,7 @@ impl SlideEditor {
         self.run_sheet(vec![Command::Sheet(SheetCommand::Hide { slide, axis, first, last, hidden: collapse })], cx);
     }
 
-    /// シートを複製: a copy right after it, named as Excel names it (「月次売上 (2)」).
+    /// シートを複製: a copy right after it, named as Excel names it (「月次売上 (2)」; a number in parentheses at the end is counted up: 「業務管理(2610)」→「業務管理(2611)」).
     pub(crate) fn copy_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.workbook_protection_refuses(cx) {
             return;
@@ -1202,14 +1231,7 @@ impl SlideEditor {
         self.commit_cell_edit(cx);
         let slide = self.current_slide;
         let Some(base) = self.slide().name.clone() else { return };
-        let mut n = 2;
-        let name = loop {
-            let name = format!("{base} ({n})");
-            if ibis_doc_model::sheet_ops::valid_sheet_name(self.presentation(), &name, None) {
-                break name;
-            }
-            n += 1;
-        };
+        let name = ibis_doc_model::sheet_ops::copy_sheet_name(self.presentation(), &base);
         let (new_slide, shape) = (self.document.ids().new_slide_id(), self.document.ids().new_shape_id());
         self.run_sheet(vec![Command::Sheet(SheetCommand::CopySheet { slide, name, new_slide, shape })], cx);
         if self.presentation().slide(new_slide).is_some() {
@@ -1686,9 +1708,9 @@ pub(crate) fn shape_highlight_color_menu(editor: &SlideEditor) -> Vec<MenuEntry>
 pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
     let style = editor.current_style();
     let format = |change: StyleChange| move |this: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>| this.format_cells(change.clone(), cx);
-    let mut number_menu: Vec<MenuEntry> = NUMBER_FORMATS.iter().map(|&(name, code)| MenuItem::new("xlsx.number-format", crate::shell::i18n::text(name)).checked(style.number_format == code).on(format(StyleChange::NumberFormat(code.into()))).into()).collect();
+    let mut number_menu: Vec<MenuEntry> = NUMBER_FORMATS.iter().map(|&(name, code)| MenuItem::new("xlsx.number-format", crate::shell::i18n::text(name)).icon(number_format_icon(code)).checked(style.number_format == code).on(format(StyleChange::NumberFormat(code.into()))).into()).collect();
     number_menu.push(MenuEntry::Separator);
-    number_menu.push(MenuItem::tr("xlsx.number-format-custom").on(|this, window, cx| this.open_custom_format(window, cx)).into());
+    number_menu.push(MenuItem::tr("xlsx.number-format-custom").icon(number_format_icon("")).on(|this, window, cx| this.open_custom_format(window, cx)).into());
     let default_font = style.font.clone().unwrap_or_else(|| "游ゴシック".into()); // i18n-ok（既定のフォント名（スタイルに保存される値））
     let font = editor.toolbar_font_display(&default_font);
     let font_menu = crate::shell::font_list::build_font_menu_entries(
@@ -1827,8 +1849,8 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         ToolButton::new("fill", "format_color_fill", "_shell.fill-color").palette(editor, "fill", 0xffff00, cell_color_menu(editor, true)).into(),
         ToolButton::new("border-color", "border_color", "_shell.border-color").palette(editor, "border-color", 0x000000, toolbar_border_color_menu(editor)).into(),
         ToolButton::new("sheet-list", "menu", "").searchable().single_select().hidden().menu(crate::xlsx::sheet_ui::sheet_list_menu_entries(editor)).into(),
-        // A split button as Excel's: the left half draws the border last chosen (the bottom border at first), with its icon.
-        ToolButton::new("borders", "border_bottom", "_shell.line")
+        // A split button as Excel's: the left half draws the border last chosen (格子 at first), with its icon.
+        ToolButton::new("borders", "border_all", "_shell.line")
             .menu(vec![
                 border("xlsx.border-all", "border_all", "_xlsx.all-borders", "all"),
                 border("xlsx.border-outside", "border_outer", "_xlsx.outside-borders", "outside"),
@@ -1845,7 +1867,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
                 Submenu::tr("xlsx.border-styles", "border_all", border_styles).into(),
                 Submenu::tr("xlsx.border-colors", "palette", border_colors).into(),
             ])
-            .last_used(editor, "borders", |i| i.id.starts_with("xlsx.border-") && i.id != "xlsx.border-color", |i| i.id == "xlsx.border-bottom", true)
+            .last_used(editor, "borders", |i| i.id.starts_with("xlsx.border-") && i.id != "xlsx.border-color", |i| i.id == "xlsx.border-all", true)
             .into(),
         // A split button as Excel's: the left half is 結合して中央揃え (and takes the merge off where the selection has one).
         ToolButton::new("merge", "cell_merge", "_shell.merge-cells")
@@ -2020,7 +2042,6 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         "tools.spelling",
         vec![
             MenuItem::tr("xlsx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_sheet_spelling(w, cx)).into(),
-            MenuItem::tr("pptx.spelling.check").icon("spellcheck").on(|e, w, cx| e.open_sheet_spelling(w, cx)).into(),
             MenuItem::tr("xlsx.thesaurus").icon("menu_book").on(|e, w, cx| e.open_sheet_thesaurus(w, cx)).into(),
         ],
     );
@@ -2098,6 +2119,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
         ("xlsx.move-sheet-left", MenuItem::tr("xlsx.move-sheet-right").on(|this, _, cx| this.move_sheet(1, cx))),
         ("xlsx.move-sheet-right", MenuItem::tr("xlsx.move-sheet-first").on(|this, _, cx| this.move_sheet_to_edge(true, cx))),
         ("xlsx.move-sheet-first", MenuItem::tr("xlsx.move-sheet-last").on(|this, _, cx| this.move_sheet_to_edge(false, cx))),
+        ("xlsx.move-sheet-last", MenuItem::tr("xlsx.move-copy-sheet").on(|this, _, cx| this.open_sheet_transfer(cx))),
     ] {
         let mut entry: MenuEntry = entry.into();
         for (_, entries) in menus.menus.iter_mut() {
@@ -2208,6 +2230,15 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             Err(back) => find_and_select_menu = back,
         }
     }
+    // 編集 > フォントの置換… (after 検索と選択; the same item as the document and presentation screens').
+    let mut replace_fonts_menu: MenuEntry = MenuItem::tr("edit.replace-fonts").icon("font_download").on(|this, window, cx| this.open_replace_fonts_panel(window, cx)).into();
+    for (_, entries) in menus.menus.iter_mut() {
+        match insert_after(entries, "xlsx.find-and-select", replace_fonts_menu) {
+            Ok(()) => break,
+            Err(back) => replace_fonts_menu = back,
+        }
+    }
+    menus.connect("edit.replace-fonts", |this, window, cx| this.open_replace_fonts_panel(window, cx));
     // 編集 > オブジェクトの選択と表示 (Excel's ホーム > 編集 / ページ レイアウト > 配置)
     let sel_pane_open = editor.sheet_state().is_some_and(|s| s.panels.selection_pane.is_some());
     let mut sel_pane_edit: MenuEntry = MenuItem::tr("xlsx.selection-pane").icon("visibility").checked(sel_pane_open).on(|this, window, cx| { this.toggle_xlsx_selection_pane(window, cx); }).into();
@@ -2239,7 +2270,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             }
         }).into(),
         MenuEntry::Separator,
-        MenuItem::tr(if has_note { "xlsx.note-edit" } else { "xlsx.note-new" }).icon("note_add").shortcut("⇧F2").on(|this, window, cx| this.open_note_panel(window, cx)).into(),
+        MenuItem::tr(if has_note { "xlsx.note-edit" } else { "xlsx.note-new" }).icon("note_add").shortcut("⇧F2").on(|this, window, cx| this.begin_note_edit(window, cx)).into(),
         MenuItem::tr("xlsx.note-delete").icon("delete").disabled(!has_note).on(|this, _, cx| this.delete_notes(cx)).into(),
         MenuEntry::Separator,
         MenuItem::tr("xlsx.previous-comment").icon("arrow_back").disabled(!has_any_comments).on(|this, _, cx| this.select_next_comment(false, cx)).into(),
@@ -2271,16 +2302,9 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             })
             .into(),
     ];
-    let mut page_setup_menu: MenuEntry = MenuItem::tr("xlsx.page-setup").icon("settings").on(|this, _, cx| this.open_page_setup(cx)).into();
-    for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "file.page-setup", page_setup_menu) {
-            Ok(()) => break,
-            Err(back) => page_setup_menu = back,
-        }
-    }
     let mut margins_menu: MenuEntry = MenuItem::tr("xlsx.margins").icon("crop_portrait").on(|this, _, cx| this.open_page_setup(cx)).into();
     for (_, entries) in menus.menus.iter_mut() {
-        match insert_after(entries, "xlsx.page-setup", margins_menu) {
+        match insert_after(entries, "file.page-setup", margins_menu) {
             Ok(()) => break,
             Err(back) => margins_menu = back,
         }
@@ -3010,6 +3034,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             s.find = None;
         }
         this.open_names(window, cx);
+        this.names_open_dialog(None, window, cx);
     }).into());
     data.push(crate::shell::chrome::Submenu::tr("xlsx.use-in-formula", "label", use_name_items).into());
     data.push(crate::shell::chrome::Submenu::tr("xlsx.create-from-selection", "new_label", create_names_items).into());
@@ -3352,7 +3377,6 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     });
     menus.connect("xlsx.clear-comments", |this, _, cx| this.delete_threaded_comments_and_notes(cx));
     menus.connect("file.page-setup", |this, _, cx| this.open_page_setup(cx));
-    menus.connect("xlsx.page-setup", |this, _, cx| this.open_page_setup(cx));
     menus.connect("xlsx.margins", |this, _, cx| this.open_page_setup(cx));
     menus.connect("xlsx.header-footer", |this, window, cx| this.open_header_footer_edit(super::header_footer_edit::HfTarget::Header, window, cx));
     menus.connect("xlsx.spelling.check", |this, window, cx| this.open_sheet_spelling(window, cx));
@@ -3468,6 +3492,7 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
             s.find = None;
         }
         this.open_names(window, cx);
+        this.names_open_dialog(None, window, cx);
     });
     menus.connect("xlsx.remove-duplicates", |this, window, cx| this.open_dedupe_panel(window, cx));
     menus.connect("xlsx.scenario-manager", |this, window, cx| this.open_scenario_manager(window, cx));
@@ -3963,7 +3988,14 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
 
     // 画像のトリミング (xlsx.crop)
     let is_picture = editor.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Picture(_)));
+    let can_crop_mode = editor.can_crop_mode();
     let crop_items: Vec<MenuEntry> = vec![
+        MenuItem::new("xlsx.crop.mode", "_shell.crop-mode")
+            .icon("crop")
+            .disabled(!can_crop_mode)
+            .on(|this, w, cx| this.begin_crop_mode(w, cx))
+            .into(),
+        MenuEntry::Separator,
         MenuItem::tr("xlsx.crop.left")
             .disabled(!is_picture)
             .on(|this, _, cx| this.crop_selected_pictures(ibis_doc_model::Crop { left: 10_000, ..Default::default() }, cx))
@@ -4618,7 +4650,6 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     // 編集 > オートSUM (Excel's ホーム > 編集 > オートSUM)
     let autosum_submenu = vec![
         MenuItem::new("xlsx.autosum", crate::shell::i18n::text("_xlsx.sum")).icon("functions").shortcut("⌥=").on(|this, _, cx| this.auto_function("SUM", cx)).into(),
-        MenuItem::new("xlsx.autosum.sum", crate::shell::i18n::text("_xlsx.sum")).icon("functions").on(|this, _, cx| this.auto_function("SUM", cx)).into(),
         MenuItem::new("xlsx.autosum.average", crate::shell::i18n::text("_xlsx.average")).on(|this, _, cx| this.auto_function("AVERAGE", cx)).into(),
         MenuItem::new("xlsx.autosum.count", crate::shell::i18n::text("_xlsx.count-numbers")).on(|this, _, cx| this.auto_function("COUNT", cx)).into(),
         MenuItem::new("xlsx.autosum.max", crate::shell::i18n::text("_xlsx.max")).on(|this, _, cx| this.auto_function("MAX", cx)).into(),
@@ -4626,7 +4657,6 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     ];
     edit.insert(at + 3, crate::shell::chrome::Submenu::new("xlsx.autosum-menu", "functions", crate::shell::i18n::text("_shell.functions"), autosum_submenu).into());
     menus.connect("xlsx.autosum", |this, _, cx| this.auto_function("SUM", cx));
-    menus.connect("xlsx.autosum.sum", |this, _, cx| this.auto_function("SUM", cx));
     menus.connect("xlsx.autosum.average", |this, _, cx| this.auto_function("AVERAGE", cx));
     menus.connect("xlsx.autosum.count", |this, _, cx| this.auto_function("COUNT", cx));
     menus.connect("xlsx.autosum.max", |this, _, cx| this.auto_function("MAX", cx));
@@ -4773,13 +4803,9 @@ pub(crate) fn menus(editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("xlsx.pivot-grand-rows", |this, _, cx| this.toggle_pivot_row_grand_totals(cx));
     menus.connect("xlsx.pivot-grand-cols", |this, _, cx| this.toggle_pivot_col_grand_totals(cx));
     menus.connect("xlsx.pivot-repeat-labels", |this, _, cx| this.toggle_pivot_repeat_item_labels(cx));
-    menus.connect("xlsx.pivot-clear", |this, _, cx| this.clear_pivot_fields(cx));
-    menus.connect("xlsx.pivot-select", |this, _, cx| this.select_entire_pivot(cx));
     menus.connect("xlsx.pivot-move", |this, window, cx| this.open_pivot_move(window, cx));
-    menus.connect("xlsx.pivot-blank-rows", |this, _, cx| this.toggle_pivot_blank_rows(cx));
     menus.connect("xlsx.pivot-row-headers", |this, _, cx| this.toggle_pivot_row_headers(cx));
     menus.connect("xlsx.pivot-col-headers", |this, _, cx| this.toggle_pivot_col_headers(cx));
-    menus.connect("xlsx.pivot-styles", |this, _, cx| this.set_pivot_style("PivotStyleLight16", cx));
     menus.connect("xlsx.recommended-charts", |this, window, cx| this.open_recommended_charts(window, cx));
     menus.connect("xlsx.thesaurus", |this, window, cx| this.open_sheet_thesaurus(window, cx));
     menus.connect("tools.dictionary", |this, window, cx| this.open_sheet_thesaurus(window, cx));

@@ -450,7 +450,7 @@ impl SlideEditor {
         let indices = m.visible_recipient_indices();
         let selected = m.selected();
         let compact = self
-            .panel_dialog
+            .dialog
             .bounds
             .is_some_and(|b| f32::from(b.size.width) < 600.);
         let reorder=m.row_reorder.clone();
@@ -536,8 +536,7 @@ impl SlideEditor {
         let mixed = checked > 0 && !all;
         let header_checkbox = || {
             chrome::Checkbox::new("merge-header-all")
-                .checked(all)
-                .indeterminate(mixed)
+                .shown(&if mixed { chrome::Shown::Mixed } else { chrome::Shown::One(all) })
                 .disabled(eligible.is_empty())
                 .accessibility_label(tr("merge.review.select-all-header"))
                 .on_click(

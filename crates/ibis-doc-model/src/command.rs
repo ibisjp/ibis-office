@@ -80,6 +80,8 @@ pub enum Command {
     /// Replace a slide (the same id) with `slide`: レイアウトの適用
     /// (see [`Presentation::with_layout`]), and its own inverse.
     SetSlide { slide: Slide },
+    /// Replace the guides: those of `slide`, or of the normal view (`None`); its own inverse.
+    SetGuides { slide: Option<SlideId>, guides: Vec<crate::model::SlideGuide> },
     /// Set a slide's background (背景の書式設定).
     SetBackground { slide: SlideId, fill: Fill },
     /// Change the presentation canvas, preserving every shape and the notes page size.
@@ -167,6 +169,8 @@ pub enum Command {
     SetShapeHidden { slide: SlideId, shape: ShapeId, hidden: bool },
     /// ズーム後に元へ戻る: a zoom shape returns to its origin slide after viewing (or not).
     SetShapeReturnToZoom { slide: SlideId, shape: ShapeId, return_to_zoom: bool },
+    /// The picture `shape` is a ズーム object (PowerPoint's スライド/セクション/サマリー ズーム) or is not one (`None`).
+    SetZoomObject { slide: SlideId, shape: ShapeId, zoom: Option<crate::model::ZoomObject> },
     /// ズームの背景: a zoom shape shows the slide background or has a transparent background (`showBg`).
     SetShapeZoomShowBg { slide: SlideId, shape: ShapeId, show_bg: Option<bool> },
     /// ズームの継続時間: zoom transition duration in milliseconds (`dur`).
@@ -269,6 +273,18 @@ impl Presentation {
             if takes_layouts {
                 return self.apply(Command::Group(vec![command, Command::SetOwnFrame { slide, shape, own: true }]));
             }
+        }
+        // A worksheet's page range reaches the shapes on it (sheet_command.rs `used_extents`).
+        let on_sheet = |p: &Self, slide: SlideId| p.workbook.is_some() && p.slide(slide).is_some_and(|s| s.shapes.iter().any(|s| matches!(s.kind, ShapeKind::Sheet(_))));
+        if let Command::InsertShape { slide, .. }
+        | Command::InsertShapes { slide, .. }
+        | Command::RemoveShape { slide, .. }
+        | Command::RemoveShapes { slide, .. }
+        | Command::SetFrame { slide, .. }
+        | Command::SetTransform { slide, .. } = &command
+            && on_sheet(self, *slide)
+        {
+            return crate::sheet_command::with_printed_extent(self, |p| p.apply_one(command));
         }
         self.apply_one(command)
     }
@@ -827,6 +843,17 @@ impl Presentation {
                 };
                 Ok(Command::SetShapeFormula { slide, shape, formula: old })
             }
+            Command::SetZoomObject { slide, shape, zoom } => {
+                let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
+                if s.shape(shape).is_none() {
+                    return Err(EditError::NoSuchShape(shape));
+                }
+                let old = match zoom {
+                    Some(z) => s.zoom_objects.insert(shape, z),
+                    None => s.zoom_objects.remove(&shape),
+                };
+                Ok(Command::SetZoomObject { slide, shape, zoom: old })
+            }
             Command::SetShapeReturnToZoom { slide, shape, return_to_zoom } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 if s.shape(shape).is_none() {
@@ -883,6 +910,13 @@ impl Presentation {
                 target.flip_v = flip_v;
                 Ok(Command::SetConnectorFrame { slide, shape, frame: old_frame, flip_h: old_flip_h, flip_v: old_flip_v })
             }
+            Command::SetGuides { slide, guides } => match slide {
+                None => Ok(Command::SetGuides { slide: None, guides: std::mem::replace(&mut self.guides, guides) }),
+                Some(id) => {
+                    let s = self.slide_mut(id).ok_or(EditError::NoSuchSlide(id))?;
+                    Ok(Command::SetGuides { slide, guides: std::mem::replace(&mut s.guides, guides) })
+                }
+            },
             Command::SetBackdropHidden { slide, hidden } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 let was = std::mem::replace(&mut s.hide_backdrop, hidden);

@@ -275,8 +275,8 @@ impl SlideEditor {
     pub(crate) fn on_header_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         let default_size = self.default_font_size_pt();
         if event.pressed_button.is_none() {
-            let cell = self.cell_under(event.position);
-            self.show_comment_card(cell, cx);
+            self.comment_pointer_moved(event.position, cx);
+            self.note_pointer_moved(event.position, cx);
         }
         let geometry = self.header_geometry();
         let Some(state) = self.sheet_state_mut() else { return };
@@ -400,8 +400,8 @@ impl SlideEditor {
             let column = first + i as u32;
             // No wider than Excel lets a column be (255 characters).
             let size = fitted_width(widest).min((max_column_width_pt(self.default_font_size_pt()) * EMU_PER_POINT as f32) as Emu);
-            // Fitted, the column is the sheet's to widen again (not a width set by hand).
-            commands.push(Command::Sheet(SheetCommand::SetColumnWidthAuto { slide, first: column, last: column, size }));
+            // Fitted, the column is the sheet's to widen again (not a width set by hand), and the width is saved.
+            commands.push(Command::Sheet(SheetCommand::SetColumnWidthFitted { slide, first: column, last: column, size }));
         }
         crate::debug_timing::report("fit columns: measure", started);
         if commands.is_empty() {

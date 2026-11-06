@@ -637,7 +637,7 @@ impl SlideEditor {
         };
 
         // 1ステップの Undo/Redo で置換を実行
-        let commands = Self::replacement_commands(&doc, start, end, replacement, None).0;
+        let commands = Self::replacement_commands(&self.resources.markup_view, &doc, start, end, replacement, None).0;
         if !commands.is_empty() {
             self.run_flow(commands, cx);
 

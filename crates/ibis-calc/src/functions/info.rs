@@ -4,7 +4,7 @@
 //! Information functions.
 
 use super::{Func, arg_num, err, number};
-use crate::eval::{Ctx, Value, to_number};
+use crate::eval::{Array, Ctx, Value, to_number};
 use crate::formula::Expr;
 use crate::value::CellError;
 
@@ -24,15 +24,24 @@ pub(super) fn get(name: &str) -> Option<Func> {
         "ISREF" => |c, a| Value::Bool(matches!(c.eval(&a[0]), Value::Ref(_))),
         "ISOMITTED" => |c, a| Value::Bool(matches!(a[0], Expr::Missing) || matches!(c.eval(&a[0]), Value::Omitted)),
         "ISFORMULA" => |c, a| match c.eval(&a[0]) {
+            // A range gives one answer per cell (Excel).
             Value::Ref(r) => {
                 let area = r[0];
-                Value::Bool(c.book.formula(area.sheet, area.first_row, area.first_column).is_some())
+                let (rows, columns) = (area.rows().min(1_048_576) as usize, area.columns().min(16_384) as usize);
+                let data: Vec<Value> = (0..rows * columns)
+                    .map(|k| Value::Bool(c.book.formula(area.sheet, area.first_row + (k / columns) as u32, area.first_column + (k % columns) as u32).is_some()))
+                    .collect();
+                if data.len() == 1 { data[0].clone() } else { Value::Array(std::rc::Rc::new(crate::eval::Array::new(rows, columns, data))) }
             }
             Value::Error(e) => err(e),
             _ => err(CellError::Value),
         },
         "N" => |c, a| {
             let v = match c.eval(&a[0]) {
+                // An array holding function values: each is #VALUE! (a function is no number).
+                Value::Array(a) if a.data.iter().any(|v| matches!(v, Value::Lambda(_))) => {
+                    return Value::Array(std::rc::Rc::new(crate::eval::Array::new(a.rows, a.columns, vec![Value::Error(CellError::Value); a.data.len()])));
+                }
                 Value::Ref(r) if !r.is_empty() => {
                     let area = r[0];
                     c.cell_value(area.sheet, area.first_row, area.first_column)
@@ -45,12 +54,22 @@ pub(super) fn get(name: &str) -> Option<Func> {
                 Value::Number(n) => number(n),
                 Value::Bool(b) => number(if b { 1.0 } else { 0.0 }),
                 Value::Error(e) => err(e),
+                Value::Lambda(_) => err(CellError::Value),
                 _ => number(0.0),
             }
         },
         "TYPE" => |c, a| {
-            let v = match c.eval(&a[0]) {
-                Value::Ref(r) if r.len() > 1 => return err(CellError::Value),
+            // The argument is taken as an array (Excel: `TYPE(A1:A2+0)` is 64 in every row).
+            let previous = c.in_array_context;
+            c.in_array_context = true;
+            let evaluated = c.eval(&a[0]);
+            c.in_array_context = previous;
+            let v = match evaluated {
+                // Checked against Excel for Mac 16.114 (dynamic arrays), #69: a range of
+                // more than one cell is 64 wherever the formula is (no implicit
+                // intersection); a union such as (A1,A2) is an error (16).
+                Value::Ref(r) if r.len() > 1 => return number(16.0),
+                Value::Ref(r) if r.first().is_some_and(|a| !a.is_cell()) => return number(64.0),
                 Value::Ref(r) => c.deref_implicit(&r),
                 v => v,
             };
@@ -159,32 +178,53 @@ fn cell(c: &mut Ctx, a: &[Expr]) -> Value {
         Ok(t) => t.to_lowercase(),
         Err(e) => return err(e),
     };
-    let area = match a.get(1).map(|e| c.eval(e)) {
-        Some(Value::Ref(r)) => r[0],
-        Some(Value::Error(e)) => return err(e),
-        Some(_) => return err(CellError::Value),
-        None => crate::eval::Area::cell(c.sheet, c.row, c.column),
-    };
-    let _ = arg_num;
-    match what.as_str() {
+    match a.get(1).map(|e| c.eval(e)) {
+        Some(Value::Ref(r)) => cell_of(c, &what, &r),
+        Some(Value::Error(e)) => err(e),
+        // Each element of an array that is a reference is read as one; the others are #VALUE!.
+        Some(Value::Array(x)) => {
+            let data: Vec<Value> = x.data.iter().map(|v| match v {
+                Value::Ref(r) => cell_of(c, &what, r),
+                _ => err(CellError::Value),
+            }).collect();
+            Value::Array(std::rc::Rc::new(Array::new(x.rows, x.columns, data)))
+        }
+        Some(_) => err(CellError::Value),
+        None => cell_of(c, &what, &[crate::eval::Area::cell(c.sheet, c.row, c.column)]),
+    }
+}
+
+/// CELL of the reference `areas` (the first area's cell for most infos; the address of a union lists them all).
+fn cell_of(c: &mut Ctx, what: &str, areas: &[crate::eval::Area]) -> Value {
+    let Some(&area) = areas.first() else { return err(CellError::Ref) };
+    match what {
         "row" => number(area.first_row as f64 + 1.0),
         "col" => number(area.first_column as f64 + 1.0),
         "address" => {
-            let r = crate::formula::AreaRef {
-                sheet: None,
-                start: crate::formula::Corner { row: area.first_row, column: area.first_column, row_fixed: true, column_fixed: true },
-                end: crate::formula::Corner { row: area.first_row, column: area.first_column, row_fixed: true, column_fixed: true },
-                whole_columns: false,
-                whole_rows: false,
-            };
-            let mut text = crate::formula::write_reference(&r);
-            if area.sheet != c.sheet {
-                // Another sheet's cell: its book and sheet in quotes, as `'[Book1.xlsx]Sheet1'!$B$2`.
-                let book = crate::eval::convert::workbook_file().and_then(|p| p.rsplit(['/', '\\']).next().map(str::to_string)).unwrap_or_else(|| "Book1".to_string());
-                let sheet = c.book.sheet_name(area.sheet).replace('\'', "''");
-                text = format!("'[{book}]{sheet}'!{text}");
-            }
-            Value::Text(text)
+            // The first area is only its first cell, the others are whole (Excel: `$A$1,$C$1:$C$2` for `(A1:A2,C1:C2)`).
+            let texts: Vec<String> = areas
+                .iter()
+                .enumerate()
+                .map(|(n, area)| {
+                    let (last_row, last_column) = if n == 0 { (area.first_row, area.first_column) } else { (area.last_row, area.last_column) };
+                    let r = crate::formula::AreaRef {
+                        sheet: None,
+                        start: crate::formula::Corner { row: area.first_row, column: area.first_column, row_fixed: true, column_fixed: true },
+                        end: crate::formula::Corner { row: last_row, column: last_column, row_fixed: true, column_fixed: true },
+                        whole_columns: false,
+                        whole_rows: false,
+                    };
+                    let mut text = crate::formula::write_reference(&r);
+                    if area.sheet != c.sheet {
+                        // Another sheet's cell: its book and sheet in quotes, as `'[Book1.xlsx]Sheet1'!$B$2`.
+                        let book = crate::eval::convert::workbook_file().and_then(|p| p.rsplit(['/', '\\']).next().map(str::to_string)).unwrap_or_else(|| "Book1".to_string());
+                        let sheet = c.book.sheet_name(area.sheet).replace('\'', "''");
+                        text = format!("'[{book}]{sheet}'!{text}");
+                    }
+                    text
+                })
+                .collect();
+            Value::Text(texts.join(","))
         }
         "filename" => {
             // The path, the book's name in brackets and the sheet's: empty before the workbook is saved.
@@ -218,7 +258,7 @@ fn cell(c: &mut Ctx, a: &[Expr]) -> Value {
                 c.unsupported = true;
                 return err(CellError::Value);
             };
-            match what.as_str() {
+            match what {
                 "color" => number(f64::from(format_flags(&info.number_format).1)),
                 "parentheses" => number(f64::from(format_flags(&info.number_format).2)),
                 "format" => Value::Text(format_code(&info.number_format)),

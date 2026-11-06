@@ -40,6 +40,8 @@ pub(crate) struct HelpPanels {
     pub(crate) spelling: Option<super::spelling_panel::SpellPanel>,
     /// データの編集 of a chart inserted in the document: the panel and where the chart is.
     pub(crate) chart: Option<(crate::pptx::chart_panel::ChartPanel, ibis_doc_model::FlowPos)>,
+    /// The grid of that chart's data (the spreadsheet screen's editor, grid only).
+    pub(crate) chart_data: Option<crate::pptx::chart_data::DataWindow>,
 }
 
 /// 挿入 > 目次 > 目次の更新… (Word's 目次の更新 Update Table of Contents dialog):

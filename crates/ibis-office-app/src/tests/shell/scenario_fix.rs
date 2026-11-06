@@ -9,6 +9,9 @@ use crate::shell::scenario::Scenario;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
+        ("shell::issue111_write_password_xlsx", issue111_write_password_xlsx),
+        ("shell::issue111_write_password_xlsx_legacy_hash", issue111_write_password_xlsx_legacy_hash),
+        ("shell::issue111_write_password_docx", issue111_write_password_docx),
         ("shell::shared_radio_group_layouts", shared_radio_group_layouts),
         ("shell::fix72_font_dropdown_preview", fix72_font_dropdown_preview),
         ("shell::fix75_start_window_closes_with_cmd_w", fix75_start_window_closes_with_cmd_w),
@@ -72,6 +75,10 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix_docx_kerning", fix_docx_kerning),
         ("shell::fix_docx_widow_and_suppress_lines", fix_docx_widow_and_suppress_lines),
         ("shell::about_shows_powered_by", about_shows_powered_by),
+        ("shell::about_update_available_button", about_update_available_button),
+        ("shell::about_closes_with_escape_and_enter", about_closes_with_escape_and_enter),
+        ("shell::about_dialog_in_window_for_the_browser", about_dialog_in_window_for_the_browser),
+        ("shell::help_check_update_item", help_check_update_item),
         ("shell::start_view_new_and_select", start_view_new_and_select),
         ("shell::fix_docx_image_look", fix_docx_image_look),
         ("shell::fix17_print_is_bound", fix17_print_is_bound),
@@ -127,6 +134,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix_xlsx_file004_file007_templates", fix_xlsx_file004_file007_templates),
         ("shell::fix_xlsx_sec021_accessibility_check", fix_xlsx_sec021_accessibility_check),
         ("shell::fix_xlsx_sec019_print_targets", fix_xlsx_sec019_print_targets),
+        ("shell::fix_issue93_xlsx_print_panel", fix_issue93_xlsx_print_panel),
         ("shell::fix_xlsx_sec016_custom_header_footer", fix_xlsx_sec016_custom_header_footer),
         ("shell::fix_xlsx_object001_insert_shape_and_textbox", fix_xlsx_object001_insert_shape_and_textbox),
         ("shell::fix_xlsx_object008_selection_pane_align_and_frame", fix_xlsx_object008_selection_pane_align_and_frame),
@@ -160,6 +168,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix123_no_quick_analysis_button_on_multi_cell_selection", fix123_no_quick_analysis_button_on_multi_cell_selection),
         ("shell::fix124_no_mini_toolbar_on_body_text_selection", fix124_no_mini_toolbar_on_body_text_selection),
         ("shell::fix_embed_view_mode_and_bars", fix_embed_view_mode_and_bars),
+        ("shell::fix72_infobar_hidden_under_view_only", fix72_infobar_hidden_under_view_only),
         ("shell::fix152_156_xlsx_shape_underline_and_multi_shape_text_format", fix152_156_xlsx_shape_underline_and_multi_shape_text_format),
         ("shell::fix135_xlsx_split_view_comprehensive", fix135_xlsx_split_view_comprehensive),
         ("shell::fix157_xlsx_fill_border_gridline_pixel_alignment_across_zooms", fix157_xlsx_fill_border_gridline_pixel_alignment_across_zooms),
@@ -471,8 +480,8 @@ fn fix17_print_is_bound() {
 
 /// Closes the modal command panel (Undo and the menus are the document's, so they come after it).
 fn close_modal_panel(s: &mut Scenario) {
-    if s.with(|e, _| e.panel_dialog_is_modal()) {
-        s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    if s.with(|e, _| e.dialog_is_modal()) {
+        s.update(|e, window, cx| e.close_dialog(window, cx));
     }
 }
 
@@ -544,6 +553,129 @@ fn about_shows_powered_by() {
     assert_eq!(crate::shell::about_window::PROJECT_URL, "https://github.com/ibisjp/ibis-office");
     assert_eq!(crate::shell::about_window::version_line(), format!("バージョン {}", env!("IBIS_VERSION")));
     s.screenshot_of(handle.into(), "about");
+}
+
+/// The About window ends with a centred 閉じる button, and Esc or Enter closes that window (the main window stays).
+fn about_closes_with_escape_and_enter() {
+    use crate::shell::about_window;
+    use gpui_kit::Keystroke;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let main_windows = s.window_count();
+    for key in ["escape", "enter"] {
+        s.menu("help.about");
+        let handle = about_window::handle().expect("the About window is open");
+        assert_eq!(s.window_count(), main_windows + 1);
+        s.screenshot_of(handle.into(), &format!("about-close-{key}"));
+        let keystroke = Keystroke::parse(key).unwrap();
+        s.update_window(handle.into(), |w, app| w.dispatch_keystroke(keystroke, app));
+        s.settle();
+        assert_eq!(s.window_count(), main_windows, "{key} closes the About window");
+    }
+}
+
+/// The browser (wasm) has one window only, so there ヘルプ > ibisOffice について is a modal dialog inside the window
+/// (`InteractionLayer::About`), not a second window. It shows the same content ("Powered by ibisOffice" and its link
+/// are NOTICE's term), no window is opened, and the 閉じる button, Esc and Enter close it. (The menu item itself
+/// chooses this path only when `cfg!(target_family = "wasm")`; here the dialog is shown directly.)
+fn about_dialog_in_window_for_the_browser() {
+    use crate::shell::dialog::InteractionLayer;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let windows = s.window_count();
+    for key in ["escape", "enter"] {
+        s.update(|e, _, cx| e.show_about(cx));
+        s.settle();
+        assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::About);
+        assert_eq!(s.window_count(), windows, "the dialog opens no window");
+        s.screenshot(&format!("about-dialog-{key}"));
+        s.key(key);
+        assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::Document, "{key} closes the dialog");
+    }
+    // The close button.
+    s.update(|e, _, cx| e.show_about(cx));
+    s.settle();
+    s.update(|e, _, cx| e.dismiss_about(cx));
+    assert!(!s.with(|e, _| e.about_open));
+    assert_eq!(s.window_count(), windows);
+}
+
+/// Issue #92: when the start-up check found a newer version, the About window shows 「新しいバージョンがあります。」 under the
+/// version (a link-coloured button with no frame and no underline); a click asks the start-up question again, even with the
+/// setting 起動時に更新を確かめる off and after it was refused. No newer version: no button. The check is replaced by a
+/// version put in (no network).
+fn about_update_available_button() {
+    use crate::shell::{about_window, update};
+    use gpui_kit::{MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point, px};
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    // Nothing found: the window has no such button, and a click anywhere asks nothing.
+    update::set_available_for_test(None);
+    assert!(!about_window::update_available());
+    s.menu("help.about");
+    let handle = about_window::handle().expect("the About window is open");
+    let size = s.update_window(handle.into(), |w, _| w.bounds().size);
+    s.screenshot_of(handle.into(), "about-no-update");
+    let click_column = |s: &mut Scenario, y: f32| {
+        let position = point(size.width / 2.0, px(y));
+        s.update_window(handle.into(), |w, app| {
+            for event in [
+                PlatformInput::MouseMove(MouseMoveEvent { position, ..Default::default() }),
+                PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
+                PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
+            ] {
+                w.dispatch_event(event, app);
+            }
+        });
+        s.settle();
+    };
+    for y in (40..160).step_by(6) {
+        click_column(&mut s, y as f32);
+    }
+    assert!(update::asked_again_for_test().is_empty(), "no update found: nothing asks");
+    s.close_window(handle.into());
+    // A newer version found at start-up (the setting off does not matter: the click is the user's own).
+    crate::shell::settings::set("check-updates", "0");
+    update::set_available_for_test(Some("99.0.0"));
+    assert!(about_window::update_available());
+    s.menu("help.about");
+    let handle = about_window::handle().expect("the About window is open");
+    let size = s.update_window(handle.into(), |w, _| w.bounds().size);
+    s.screenshot_of(handle.into(), "about-update-available");
+    let mut asked = 0;
+    for y in (40..200).step_by(4) {
+        let before = update::asked_again_for_test().len();
+        let position = point(size.width / 2.0, px(y as f32));
+        s.update_window(handle.into(), |w, app| {
+            for event in [
+                PlatformInput::MouseMove(MouseMoveEvent { position, ..Default::default() }),
+                PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
+                PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
+            ] {
+                w.dispatch_event(event, app);
+            }
+        });
+        s.settle();
+        if update::asked_again_for_test().len() > before {
+            asked = y;
+            break;
+        }
+    }
+    assert!(asked > 0, "the button was clicked");
+    assert_eq!(update::asked_again_for_test(), vec!["99.0.0".to_string()]);
+    // The button is above "Powered by ibisOffice" and below the version line, in link colour, without an underline.
+    s.close_window(handle.into());
+    update::set_available_for_test(None);
+}
+
+/// Issue #92: ヘルプ > 更新を確認 is in the menu of every screen, and using it makes the user's own check (the setting
+/// 起動時に更新を確かめる off or not; no network in the test).
+fn help_check_update_item() {
+    use crate::shell::update;
+    for path in ["test/editing/xlsx-sales.xlsx"] {
+        let mut s = Scenario::open(path);
+        crate::shell::settings::set("check-updates", "0");
+        let before = update::checked_now_for_test();
+        s.menu("help.check-update");
+        assert_eq!(update::checked_now_for_test(), before + 1, "更新を確認 checks");
+    }
 }
 
 /// DOCX-IMAGE-003/004: the picture at the caret is turned, flipped and cut from
@@ -656,7 +788,7 @@ fn fix_docx_tab_stops() {
     // Set first tab stop: 72.0 pt, Right, leader: true
     s.update(|e, window, cx| {
         e.choose_tab_align(TabAlign::Right, cx);
-        e.choose_tab_leader(true, cx);
+        e.choose_tab_leader(ibis_doc_model::TabLeader::Dot, cx);
         if let Some(edit) = e.doc_state_mut().and_then(|st| st.tab_edit.as_mut()) {
             let field = edit.pos_field.clone();
             field.update(cx, |i, cx| i.set_value("72", window, cx));
@@ -667,7 +799,7 @@ fn fix_docx_tab_stops() {
     // Set second tab stop: 144.0 pt, Center, leader: false
     s.update(|e, window, cx| {
         e.choose_tab_align(TabAlign::Center, cx);
-        e.choose_tab_leader(false, cx);
+        e.choose_tab_leader(ibis_doc_model::TabLeader::None, cx);
         if let Some(edit) = e.doc_state_mut().and_then(|st| st.tab_edit.as_mut()) {
             let field = edit.pos_field.clone();
             field.update(cx, |i, cx| i.set_value("144", window, cx));
@@ -692,10 +824,10 @@ fn fix_docx_tab_stops() {
     assert_eq!(applied.len(), 2);
     assert_eq!(applied[0].position, 72 * 12_700);
     assert_eq!(applied[0].align, TabAlign::Right);
-    assert!(applied[0].leader);
+    assert!(applied[0].leader.is_some());
     assert_eq!(applied[1].position, 144 * 12_700);
     assert_eq!(applied[1].align, TabAlign::Center);
-    assert!(!applied[1].leader);
+    assert!(!applied[1].leader.is_some());
 
     // Save and reload
     s.save_as("tab-stops.docx");
@@ -704,7 +836,7 @@ fn fix_docx_tab_stops() {
     assert_eq!(reloaded_tabs.len(), 2, "tab stops kept by saving and reopening");
     assert_eq!(reloaded_tabs[0].position, 72 * 12_700);
     assert_eq!(reloaded_tabs[0].align, TabAlign::Right);
-    assert!(reloaded_tabs[0].leader);
+    assert!(reloaded_tabs[0].leader.is_some());
 
     // Undo restores to original
     s.key("cmd-z");
@@ -2296,16 +2428,16 @@ fn fix_docx_find_special_characters() {
     // 検索テスト: ^s (ノーブレークスペース) で検索
     let doc = s.document();
     let query_nbsp = "NBSP^sTEST";
-    let matches_nbsp = crate::docx::find::find_all(&doc, query_nbsp);
+    let matches_nbsp = crate::docx::find::find_all(&Default::default(), &doc, query_nbsp);
     assert_eq!(matches_nbsp.len(), 1, "found 1 NBSP match with ^s");
 
     // 検索テスト: 大文字 ^S でも検索できることを確認
-    let matches_nbsp_upper = crate::docx::find::find_all(&doc, "NBSP^STEST");
+    let matches_nbsp_upper = crate::docx::find::find_all(&Default::default(), &doc, "NBSP^STEST");
     assert_eq!(matches_nbsp_upper.len(), 1, "found 1 NBSP match with ^S");
 
     // 検索テスト: ^~ (改行しないハイフン) で検索
     let query_hyph = "HYPH^~TEST";
-    let matches_hyph = crate::docx::find::find_all(&doc, query_hyph);
+    let matches_hyph = crate::docx::find::find_all(&Default::default(), &doc, query_hyph);
     assert_eq!(matches_hyph.len(), 1, "found 1 non-breaking hyphen match with ^~");
 
     // 3. 置換テスト: 特殊文字への置換（replace_all）
@@ -2328,11 +2460,11 @@ fn fix_docx_find_special_characters() {
     assert!(p_after_page.runs.iter().any(|r| r.kind == ibis_doc_model::FlowRunKind::PageBreak), "runs contain FlowRunKind::PageBreak");
 
     // 検索テスト: 置換された手動改ページを ^m で検索
-    let matches_page = crate::docx::find::find_all(&doc_after_page, "BEFORE^mAFTER");
+    let matches_page = crate::docx::find::find_all(&Default::default(), &doc_after_page, "BEFORE^mAFTER");
     assert_eq!(matches_page.len(), 1, "found 1 PageBreak match with ^m");
 
     // 検索テスト: 大文字 ^M でも検索できることを確認
-    let matches_page_upper = crate::docx::find::find_all(&doc_after_page, "BEFORE^MAFTER");
+    let matches_page_upper = crate::docx::find::find_all(&Default::default(), &doc_after_page, "BEFORE^MAFTER");
     assert_eq!(matches_page_upper.len(), 1, "found 1 PageBreak match with ^M");
 
     // 5. Undo で元に戻ることを確認
@@ -2373,7 +2505,7 @@ fn fix_docx_find_whole_words() {
     let doc_typed = s.document();
 
     // 1. 通常検索（単語単位オフ）: "テスト" は 5 箇所すべてでヒットする
-    let all_matches = crate::docx::find::find_all(&doc_typed, "テスト");
+    let all_matches = crate::docx::find::find_all(&Default::default(), &doc_typed, "テスト");
     assert_eq!(all_matches.len(), 5, "finds 5 matches without whole_words");
 
     // 2. 単語単位検索（whole_words = true）
@@ -3141,7 +3273,7 @@ fn fix_docx_table_of_figures() {
         assert_eq!(p.style.as_deref(), Some("TableofFigures"), "entry has TableofFigures style ID");
         assert_eq!(p.style.as_deref().and_then(|id| doc.styles.styles.get(id)).map(|st| st.name.as_str()), Some("table of figures"), "entry style name is 'table of figures'");
         // 右揃えタブリーダーの検証
-        assert!(p.direct.tabs.iter().any(|t| t.stop.as_ref().is_some_and(|s| s.align == TabAlign::Right && s.leader)), "has right-aligned tab stop with leader");
+        assert!(p.direct.tabs.iter().any(|t| t.stop.as_ref().is_some_and(|s| s.align == TabAlign::Right && s.leader.is_some())), "has right-aligned tab stop with leader");
         // Text, Tab, PageRef の検証
         assert!(p.runs.iter().any(|r| matches!(&r.kind, FlowRunKind::Text(_))), "has text run");
         assert!(p.runs.iter().any(|r| matches!(&r.kind, FlowRunKind::Tab)), "has tab run");
@@ -3167,7 +3299,7 @@ fn fix_docx_table_of_figures() {
 
     // カレットを図表目次の最初の段落に戻す
     s.click_text(FlowPos::new(p0.id, 0));
-    s.menu("docx.toc.update");
+    s.menu("docx.toc.update-entire-table");
 
     let entries_updated = tof(&s.document());
     assert_eq!(entries_updated.len(), 3, "table of figures now has 3 entries after update");
@@ -3650,7 +3782,7 @@ fn fix_xlsx_sec008_threaded_comments() {
     });
     s.menu("insert.comment");
     assert!(s.with(|e, _| e.wb().panels.threaded_comment.is_some()));
-    assert_eq!(s.with(|e, _| e.wb().panels.threaded_comment.as_ref().unwrap().cell), (2, 2));
+    assert_eq!(s.with(|e, _| e.wb().panels.threaded_comment.as_ref().unwrap().anchor.unwrap()), (2, 2));
 
     // 2. 新規コメントを投稿
     s.update(|e, window, cx| {
@@ -3979,6 +4111,32 @@ fn fix_xlsx_sec019_print_targets() {
 
     // 7. 後片付け
     let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// Issue #93: ファイル > 印刷 in 表計算画面 asks what to print first (the panel, as 文書画面 does), not the PDF at once.
+fn fix_issue93_xlsx_print_panel() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.update(|e, window, cx| e.print(window, cx));
+    s.settle();
+    s.with(|e, _| {
+        assert!(e.sidebar_open);
+        assert!(e.sheet_state().is_some_and(|st| st.print_panel && !st.page_setup), "the print dialog is open (not the page setup)");
+    });
+    // The target chosen in the panel is what the PDF is made of.
+    s.update(|e, _, cx| e.set_print_what(crate::xlsx::PrintWhat::EntireWorkbook, cx));
+    s.with(|e, _| assert_eq!(e.print_what(), crate::xlsx::PrintWhat::EntireWorkbook));
+    // キャンセル closes it and prints nothing; 作業中のシート is kept as chosen.
+    s.update(|e, _, cx| e.close_xlsx_print_panel(cx));
+    s.with(|e, _| assert!(e.sheet_state().is_some_and(|st| !st.page_setup && !st.print_panel)));
+    // The page setup opened from its own menu has no print foot.
+    s.update(|e, _, cx| e.open_page_setup(cx));
+    s.with(|e, _| assert!(e.sheet_state().is_some_and(|st| st.page_setup && !st.print_panel)));
+    // 印刷 makes the PDF through the same path as 文書画面 (the file is opened by the PDF app, not under test).
+    let pdf = std::env::temp_dir().join(format!("test-issue93-{}.pdf", std::process::id()));
+    let job = s.with(|e, _| e.write_pdf_with(pdf.clone(), true)).expect("the print job");
+    assert!(job().is_ok());
+    assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
+    let _ = std::fs::remove_file(&pdf);
 }
 
 /// XLSX-SEC-016: ヘッダー・フッターのコード（カスタム ヘッダー・フッター編集UI、左・中・右セクション入力、フィールドコード挿入、ページ設定連携）:
@@ -5329,7 +5487,7 @@ fn fix_xlsx_object014_shape_formula_textlink() {
     assert_eq!(saved.slides[0].shapes.len(), initial_shapes);
 }
 
-/// XLSX-IMAGE-019: セル・グラフ・オブジェクトを画像としてコピー (Copy as Picture)
+/// XLSX-IMAGE-019: セル・グラフ・オブジェクトを図としてコピー (Copy as Picture)
 fn fix_xlsx_image019_copy_as_picture() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     let initial_shapes = s.with(|e, _| e.slide().shapes.len());
@@ -5344,7 +5502,7 @@ fn fix_xlsx_image019_copy_as_picture() {
     s.menu("xlsx.copy-as-picture");
 
     s.with(|e, cx| {
-        assert_eq!(e.status.as_deref(), Some("選択範囲を画像としてコピーしました"));
+        assert_eq!(e.status.as_deref(), Some("選択範囲を図としてコピーしました"));
         let clip = cx.read_from_clipboard().expect("clipboard item exists");
         let entry = clip.entries().iter().find(|e| matches!(e, gpui_kit::ClipboardEntry::Image(_))).expect("image entry exists");
         if let gpui_kit::ClipboardEntry::Image(img) = entry {
@@ -5371,7 +5529,7 @@ fn fix_xlsx_image019_copy_as_picture() {
     s.menu("xlsx.copy-as-picture");
 
     s.with(|e, cx| {
-        assert_eq!(e.status.as_deref(), Some("画像を画像としてコピーしました"));
+        assert_eq!(e.status.as_deref(), Some("画像を図としてコピーしました"));
         let clip = cx.read_from_clipboard().expect("clipboard item exists");
         let entry = clip.entries().iter().find(|e| matches!(e, gpui_kit::ClipboardEntry::Image(_))).expect("image entry exists");
         if let gpui_kit::ClipboardEntry::Image(img) = entry {
@@ -5388,7 +5546,7 @@ fn fix_xlsx_image019_copy_as_picture() {
     s.menu("xlsx.copy-as-picture");
 
     s.with(|e, cx| {
-        assert_eq!(e.status.as_deref(), Some("オブジェクトを画像としてコピーしました"));
+        assert_eq!(e.status.as_deref(), Some("オブジェクトを図としてコピーしました"));
         let clip = cx.read_from_clipboard().expect("clipboard item exists");
         let entry = clip.entries().iter().find(|e| matches!(e, gpui_kit::ClipboardEntry::Image(_))).expect("image entry exists");
         if let gpui_kit::ClipboardEntry::Image(img) = entry {
@@ -5484,10 +5642,10 @@ fn fix_xlsx_image016_svg_insert_and_color() {
         assert_eq!(stroke.color, ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x2b579a)));
     });
 
-    // 5. SVG 画像を画像としてコピー（xlsx.copy-as-picture）
+    // 5. SVG 画像を図としてコピー（xlsx.copy-as-picture）
     s.menu("xlsx.copy-as-picture");
     s.with(|e, cx| {
-        assert_eq!(e.status.as_deref(), Some("画像を画像としてコピーしました"));
+        assert_eq!(e.status.as_deref(), Some("画像を図としてコピーしました"));
         let clip = cx.read_from_clipboard().expect("clipboard item exists");
         let entry = clip.entries().iter().find(|e| matches!(e, gpui_kit::ClipboardEntry::Image(_))).expect("image entry exists");
         if let gpui_kit::ClipboardEntry::Image(img) = entry {
@@ -7906,7 +8064,7 @@ fn fix105_106_107_xlsx_side_panels_layout_and_controls() {
     });
     assert!(has_ok && has_link && !has_cancel, "Paste Special has OK and Paste Link, and no Cancel button");
 
-    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    s.update(|e, window, cx| e.close_dialog(window, cx));
 
     // #105a: Custom Views panel — add, select, apply, and delete a custom view.
     s.menu("xlsx.custom-views");
@@ -7939,7 +8097,7 @@ fn fix105_106_107_xlsx_side_panels_layout_and_controls() {
         "custom view deleted"
     );
 
-    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    s.update(|e, window, cx| e.close_dialog(window, cx));
 
     // #105b: Goto Special panel — radio rows and "選択" button without redundant "閉じる" button.
     s.menu("xlsx.goto-special");
@@ -7952,7 +8110,7 @@ fn fix105_106_107_xlsx_side_panels_layout_and_controls() {
     s.update(|e, _, cx| e.apply_goto_special(cx));
     s.settle();
 
-    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    s.update(|e, window, cx| e.close_dialog(window, cx));
 
     // #106: Arrange Windows panel — radio rows, checkbox, and "実行" button without redundant Cancel button.
     s.menu("xlsx.arrange-all");
@@ -8710,6 +8868,8 @@ fn fix_embed_view_mode_and_bars() {
     });
     s.settle();
     assert!(s.with(|e, _| e.is_read_only() && e.show_menu_bar && e.show_toolbar && !e.sidebar_open));
+    // #72: view=1 では文書画面（DOCX）の「閲覧モード」情報バー（編集に切り替える）を出さない。
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "no viewing infobar under view=1");
     s.screenshot("view-only-menubar-and-toolbar");
 
     // 3. Simulate `?view=1&menuBar=0&toolBar=0` (both hidden).
@@ -8732,6 +8892,22 @@ fn fix_embed_view_mode_and_bars() {
     s.settle();
     assert!(s.with(|e, _| e.is_read_only() && !e.show_menu_bar && e.show_toolbar));
     s.screenshot("view-only-toolbar");
+
+}
+
+/// #72: one decision (`infobar_kind`) for the three screens: under `?view=1` none of them shows an information bar.
+fn fix72_infobar_hidden_under_view_only() {
+    use crate::shell::embed::resolve_embed_query_options;
+    for path in ["test/editing/docx-report.docx", "test/editing/xlsx-sales.xlsx", "test/editing/pptx-plan.pptx"] {
+        let mut s = Scenario::open(path);
+        s.update(|e, _, cx| {
+            e.read_only = resolve_embed_query_options("?view=1").2;
+            cx.notify();
+        });
+        s.settle();
+        assert!(s.with(|e, _| e.is_read_only() && e.infobar_kind().is_none()), "{path}: no information bar under view=1");
+        assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "{path}: no information bar drawn under view=1");
+    }
 }
 
 /// #135: Comprehensive test for Excel (.xlsx) Split View:
@@ -9792,7 +9968,7 @@ fn fix152_156_xlsx_shape_underline_and_multi_shape_text_format() {
 fn fix127_149_toolbar_font_and_font_size_combo_filter_reset_and_keys() {
     use crate::shell::chrome::{
         FONT_SIZE_CANDIDATES, filter_menu_items, filtered_font_size_candidates,
-        set_current_toolbar_open, step_enabled_menu_index,
+        step_enabled_menu_index,
     };
 
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
@@ -9809,7 +9985,6 @@ fn fix127_149_toolbar_font_and_font_size_combo_filter_reset_and_keys() {
         e.font_size_input.update(cx, |input, cx| {
             input.set_value("11", window, cx);
         });
-        set_current_toolbar_open(true, None);
         cx.notify();
     });
     s.settle();
@@ -9870,7 +10045,6 @@ fn fix127_149_toolbar_font_and_font_size_combo_filter_reset_and_keys() {
     s.update(|e, window, cx| {
         e.font_size_menu_open = false;
         e.font_size_filtering = false;
-        set_current_toolbar_open(false, None);
         e.font_size_edit_input.update(cx, |input, cx| {
             input.focus(window, cx);
             input.replace_all("16", window, cx);
@@ -9926,7 +10100,6 @@ fn fix127_149_toolbar_font_and_font_size_combo_filter_reset_and_keys() {
     s.update(|e, window, cx| {
         let input = e.ensure_toolbar_search_input("font", window, cx);
         e.toolbar_search_open = Some("font");
-        set_current_toolbar_open(false, Some("font"));
         input.update(cx, |st, cx| {
             st.set_value("", window, cx);
         });
@@ -10113,9 +10286,9 @@ fn fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer() {
     // Every input box in `doc_page_setup_panel` must have the same width and the exact same left X coordinate (`origin.x`),
     // ensuring vertical alignment across margins (mm), document grid (行/pt/字), start page, paper size (mm), and header/footer (mm).
     let expected_x = field_bounds[0].1;
-    // Each row's mark covers the standard field (`FIELD_WIDTH`) with its spinner, the gap (8px) and the unit (72px).
+    // Each row's mark covers the standard field (`FIELD_WIDTH`) with its spinner: the unit is drawn inside the field's box, after the text.
     let field_width = f32::from(crate::shell::chrome::FIELD_WIDTH);
-    let expected_w = field_width + 8.0 + 72.0;
+    let expected_w = field_width;
     for (k, x, w) in &field_bounds {
         assert!(
             (*x - expected_x).abs() <= 0.5,
@@ -10123,14 +10296,14 @@ fn fix150_151_right_pane_clearable_inputs_and_page_setup_sticky_footer() {
         );
         assert!(
             (*w - expected_w).abs() <= 0.5,
-            "input {k} width w={w} must be {expected_w}px (the standard field {field_width}px + the gap and the unit's 72px)"
+            "input {k} width w={w} must be {expected_w}px (the standard field, the unit inside it)"
         );
     }
 
     // 2. Scroll the right-pane body down (`sidebar_scroll`) and verify that `field-0` scrolls up
     // while the sticky footer `apply` ("OK") button stays fixed at the exact same bottom Y coordinate!
     s.update(|e, _, cx| {
-        e.panel_dialog.scroll.set_offset(point(px(0.0), px(-120.0)));
+        e.dialog.scroll.set_offset(point(px(0.0), px(-120.0)));
         cx.notify();
     });
     s.settle();
@@ -10187,7 +10360,7 @@ fn shared_radio_group_layouts() {
     s.update(|e, w, cx| e.open_page_setup_panel(w, cx));
     s.settle();
     s.update(|e, _, cx| {
-        e.panel_dialog.bounds.as_mut().unwrap().size.width = gpui_kit::px(320.);
+        e.dialog.bounds.as_mut().unwrap().size.width = gpui_kit::px(320.);
         cx.notify();
     });
     s.settle();
@@ -10206,7 +10379,7 @@ fn shared_radio_group_layouts() {
     }
     // Bring the direction group into the viewport, then exercise the real shared button's handler.
     s.update(|e, _, cx| {
-        e.panel_dialog.scroll.set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-300.)));
+        e.dialog.scroll.set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-300.)));
         cx.notify();
     });
     s.settle();
@@ -10233,4 +10406,73 @@ fn shared_radio_group_layouts() {
     assert!(s.with(|e, _| e.wb().panels.goto_special.as_ref().unwrap().ui.borrow().contains_key("numbers")),
         "clicking Constants displays its type choices");
     s.screenshot("radio-column");
+}
+
+
+/// GitHub #111: a file with a password to modify (書き込みパスワード) is read-only until the password is given. A wrong
+/// password is refused; the right one makes the file editable. Not given (読み取り専用), the file is not written over
+/// (名前を付けて保存 is), and the password stays in the copy. The file is made by the Office format's own rules: the
+/// salt and the password (UTF-16LE), SHA-512, 100000 rounds (`fileSharing` of the workbook).
+fn issue111_write_password_xlsx() {
+    let mut s = Scenario::open("test/editing/xlsx-write-password.xlsx");
+    assert!(s.with(|e, _| e.presentation().modify_verifier.is_some()), "fileSharing is read");
+    assert!(s.with(|e, _| e.is_modify_locked() && e.is_read_only()), "locked at open");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "the information bar asks for the password");
+    // Typing into a cell is refused while locked.
+    s.click_cell("D5");
+    s.enter("locked-edit", "enter");
+    assert_eq!(s.value("D5"), ibis_doc_model::CellValue::Empty, "no edit while locked");
+    // Overwriting the file is refused; saving under another name is not.
+    let own = s.with(|e, _| e.path.clone()).expect("the file has a path");
+    let err = s.update(|e, window, _| e.save_to(own.clone(), window)).expect_err("no overwrite while locked");
+    assert!(err.contains("名前を付けて保存") || err.contains("Save As"), "{err}");
+    let copy = s.save_as("copy-of-locked.xlsx");
+    assert!(copy.exists());
+    let reopened = crate::read_file(&copy).expect("read the copy");
+    assert_eq!(reopened.presentation.modify_verifier, s.with(|e, _| e.presentation().modify_verifier.clone()), "the password is in the copy");
+    // A wrong password is refused, the right one unlocks (UTF-16LE of the password, not its UTF-8).
+    assert!(s.update(|e, _, cx| e.unlock_modify("ibis124", cx)).is_err());
+    assert!(s.update(|e, _, cx| e.unlock_modify("IBIS123", cx)).is_err());
+    assert!(s.with(|e, _| e.is_modify_locked()));
+    assert!(s.update(|e, _, cx| e.unlock_modify("ibis123", cx)).is_ok());
+    assert!(s.with(|e, _| !e.is_modify_locked() && !e.is_read_only()));
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "no bar once unlocked");
+    s.click_cell("D5");
+    s.enter("unlocked-edit", "enter");
+    assert_eq!(s.value("D5"), ibis_doc_model::CellValue::Text("unlocked-edit".into()), "editable once unlocked");
+    // And the file can be written over.
+    s.update(|e, window, _| e.save_to(own, window)).expect("save over once unlocked");
+}
+
+/// #111: the old 16-bit hash (`reservationPassword`) of an Excel 97-2003 style file, checked the same way.
+fn issue111_write_password_xlsx_legacy_hash() {
+    let mut s = Scenario::open("test/editing/xlsx-write-password-legacy.xlsx");
+    let verifier = s.with(|e, _| e.presentation().modify_verifier.clone()).expect("reservationPassword is read");
+    assert_eq!(verifier.algorithm_sid, ibis_doc_model::ModifyVerifier::LEGACY_SID);
+    assert_eq!(verifier.hash, "D84E");
+    assert!(s.with(|e, _| e.is_modify_locked() && e.is_read_only()));
+    assert!(s.update(|e, _, cx| e.unlock_modify("ibis124", cx)).is_err());
+    assert!(s.update(|e, _, cx| e.unlock_modify("ibis123", cx)).is_ok());
+    assert!(s.with(|e, _| !e.is_read_only()));
+}
+
+/// #111: a document's `w:writeProtection` (SHA-512, 100000 rounds) the same way: the text is not typed into until the
+/// password is given.
+fn issue111_write_password_docx() {
+    let mut s = Scenario::open("test/editing/docx-write-password.docx");
+    assert!(s.with(|e, _| e.presentation().modify_verifier.is_some()), "writeProtection is read");
+    assert!(s.with(|e, _| e.is_modify_locked() && e.is_viewing_mode()), "locked at open");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "the information bar asks for the password");
+    let (id, before) = s.paragraph(0);
+    s.click_text(ibis_doc_model::FlowPos::new(id, 0));
+    s.type_text("XYZ");
+    assert_eq!(s.paragraph(0).1, before, "no typing while locked");
+    let own = s.with(|e, _| e.path.clone()).expect("the file has a path");
+    assert!(s.update(|e, window, _| e.save_to(own, window)).is_err(), "no overwrite while locked");
+    assert!(s.update(|e, _, cx| e.unlock_modify("ibis", cx)).is_err());
+    assert!(s.update(|e, _, cx| e.unlock_modify("ibis123", cx)).is_ok());
+    assert!(s.with(|e, _| !e.is_modify_locked() && !e.is_viewing_mode()));
+    s.click_text(ibis_doc_model::FlowPos::new(id, 0));
+    s.type_text("XYZ");
+    assert_eq!(s.paragraph(0).1, format!("XYZ{before}"), "typing once unlocked");
 }

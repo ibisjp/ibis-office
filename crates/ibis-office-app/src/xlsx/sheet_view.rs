@@ -30,6 +30,9 @@ const ROOM_PADDING_PT: f32 = match ibis_pptx::EXCEL_METRICS {
     ibis_pptx::ExcelMetrics::Windows => 2.5 * 0.75,
     ibis_pptx::ExcelMetrics::Mac => 2.0,
 };
+/// Where a printed cell's text starts: 21 of the printer's pixels (1/600 inch) from the column's left, whatever the Normal font (Excel for
+/// Windows' PDFs of `pad-*.xlsx`: Calibri 11 and 20, ＭＳ Ｐゴシック 11, 游ゴシック 11, Arial 10).
+const PRINTED_TEXT_PADDING_PT: f32 = 21.0 * 72.0 / 600.0;
 // The text's distance from the cell's sides and its shift from the padded
 // box, in points, as Excel for Mac prints a cell: in its PDF of xlsx-XALN
 // (columns by ECMA-376's width formula) the pen of left-aligned text starts
@@ -98,13 +101,14 @@ struct TextItem {
 /// whole point (half up) of the sheet: in Excel's PDFs every advance (the
 /// font's width plus the `Tc` and TJ adjustments) is one, 43 893 of the
 /// 43 902 advances in the xlsx references. `px_per_point` is the pixels of
-/// one sheet point.
-fn whole_point_advances(line: &mut ShapedLine, px_per_point: f32) {
+/// one sheet point. `printed`: laid out as Excel for Windows prints it, each advance a whole pixel of the printer (1/600 inch): its PDFs of
+/// `colw-sweep.xlsx` draw 10.5 pt 游ゴシック at 10.56 pt, a kana 10.56 pt on, and break the lines by those (GitHub issue #68).
+fn whole_point_advances(line: &mut ShapedLine, px_per_point: f32, printed: bool) {
     if px_per_point <= 0.0 {
         return;
     }
-    // Excel for Windows rounds to a whole pixel (0.75 pt), the Mac's to a point.
-    let unit = px_per_point * ibis_pptx::EXCEL_METRICS.pixel_pt() as f32;
+    // Excel for Windows rounds to a whole pixel (0.75 pt) on the screen and to the printer's (0.12 pt) in print, the Mac's to a point.
+    let unit = px_per_point * if printed { 72.0 / 600.0 } else { ibis_pptx::EXCEL_METRICS.pixel_pt() as f32 };
     let old: Vec<f32> = line.runs.iter().flat_map(|r| r.glyphs.iter().map(|g| f32::from(g.position.x))).collect();
     if old.is_empty() {
         return;
@@ -341,7 +345,7 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                         }
                         let run = TextRun { len: text.len(), font: font.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
                         let mut line = window.text_system().shape_line(SharedString::from(text.to_string()), px(size), &[run], None);
-                        whole_point_advances(&mut line, px_per_point);
+                        whole_point_advances(&mut line, px_per_point, *sheet.printed);
                         let width = f32::from(line.width);
                         let line = Rc::new(line);
                         SHAPED_TEXTS.with(|c| {
@@ -369,7 +373,24 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                 }
                 let items = layout.items.borrow();
                 let measured = layout.measured.borrow();
-                for t in found.iter().flat_map(|&i| items[i as usize].as_deref().unwrap_or(&[])) {
+                // The hyperlinks of the cells shown: where their text is drawn is kept for the pointer (`link_text_at`).
+                let links: Vec<&ibis_doc_model::Hyperlink> = if print || sheet.hyperlinks.is_empty() {
+                    Vec::new()
+                } else {
+                    let rows = found.iter().map(|&i| layout.cell_ids[i as usize].0);
+                    let (lo, hi) = (rows.clone().min().unwrap_or(0), rows.max().unwrap_or(0));
+                    sheet.hyperlinks.iter().filter(|h| h.range.first_row <= hi && lo <= h.range.last_row).collect()
+                };
+                let mut link_polys: HashMap<(u32, u32), Vec<Vec<(f64, f64)>>> = HashMap::new();
+                if !links.is_empty() {
+                    for &i in &found {
+                        let (r, c) = layout.cell_ids[i as usize];
+                        if links.iter().any(|h| (h.range.first_row..=h.range.last_row).contains(&r) && (h.range.first_column..=h.range.last_column).contains(&c)) {
+                            link_polys.insert((r, c), Vec::new());
+                        }
+                    }
+                }
+                for (ci, t) in found.iter().flat_map(|&i| items[i as usize].as_deref().unwrap_or(&[]).iter().map(move |t| (i as usize, t))) {
                     let Some(clip) = shown(t.clip) else { continue };
                     // Shaped pieces, or room of a fixed width.
                     let shaped: Vec<Result<ShapedLine, f32>> = t
@@ -401,7 +422,7 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                                 Some(line) => line.restyled(&[run]),
                                 None => {
                                     let mut line = window.text_system().shape_line(SharedString::from(p.text.clone()), px(size), &[run], None);
-                                    whole_point_advances(&mut line, px_per_point);
+                                    whole_point_advances(&mut line, px_per_point, *sheet.printed);
                                     line
                                 }
                             })
@@ -419,6 +440,22 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                     let (clip_left, clip_top, clip_w, clip_h) = t.clip;
                     let (start, end) = (x.max(clip_left), (x + total + gap * count.saturating_sub(1) as f32).min(clip_left + clip_w));
                     let is_angled = t.rotation >= 1 && t.rotation <= 180;
+                    if let Some(polys) = link_polys.get_mut(&layout.cell_ids[ci]) {
+                        let lines = shaped.iter().filter_map(|l| l.as_ref().ok());
+                        let ascent = lines.clone().map(|l| f32::from(l.ascent)).fold(0.0, f32::max);
+                        let descent = lines.map(|l| f32::from(l.descent)).fold(0.0, f32::max);
+                        if ascent + descent > 0.0 {
+                            let span = total + gap * count.saturating_sub(1) as f32;
+                            let corners = [(0.0, -ascent), (span, -ascent), (span, descent), (0.0, descent)];
+                            let (sin, cos) = if is_angled { text_angle(t.rotation).to_radians().sin_cos() } else { (0.0, 1.0) };
+                            let (ox, oy) = if is_angled { (t.left, t.baseline) } else { (x, t.baseline) };
+                            let turned: Vec<(f32, f32)> = corners.iter().map(|&(u, v)| (ox + u * cos - v * sin, oy + u * sin + v * cos)).collect();
+                            let cut = clip_to_box(&turned, (clip_left, clip_top, clip_left + clip_w, clip_top + clip_h));
+                            if cut.len() >= 3 {
+                                polys.push(cut.iter().map(|&(a, b)| (a as f64 / scale as f64, b as f64 / scale as f64)).collect());
+                            }
+                        }
+                    }
                     if !is_angled && (start < t.cell.0 - 0.5 || end > t.cell.1 + 0.5) {
                         run_on.push((start, end, clip_top, clip_top + clip_h));
                     }
@@ -435,12 +472,7 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                             }
                         }
                         if is_angled {
-                            let angle_degrees = if t.rotation <= 90 {
-                                -(t.rotation as f32)
-                            } else {
-                                (t.rotation - 90) as f32
-                            };
-                            let angle = angle_degrees.to_radians();
+                            let angle = text_angle(t.rotation).to_radians();
                             let (sin, cos) = angle.sin_cos();
                             let scale = window.scale_factor();
                             let x0 = t.left;
@@ -571,6 +603,21 @@ pub(crate) fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res:
                                     window.paint_quad(fill(Bounds::new(point(x, u_y2 - px(2.0 * d_px)), size(px(lw), px(d_px))), color));
                                 }
                             }
+                        }
+                    });
+                }
+                if !link_polys.is_empty() {
+                    let key = Arc::as_ptr(&sheet) as usize;
+                    LINK_TEXT.with(|m| {
+                        let mut m = m.borrow_mut();
+                        if m.len() > LINK_TEXT_MAX {
+                            m.clear();
+                        }
+                        // A pane that shows none of a cell's text (the other side of a frozen row or column, scrolled away) draws
+                        // nothing of it, but the text is still where the pane that shows it put it (sheet-local, not window-local):
+                        // only a pane that drew some of it writes.
+                        for ((r, c), polys) in link_polys.into_iter().filter(|(_, polys)| !polys.is_empty()) {
+                            m.insert((key, r, c), polys);
                         }
                     });
                 }
@@ -747,6 +794,7 @@ thread_local! {
 /// Forget the layouts kept: they hold their sheets, so that an edit would copy every cell of a big sheet before changing one (the layout of the changed sheet is made again at the next draw).
 pub(crate) fn release_layouts() {
     LAYOUTS.with(|cache| cache.borrow_mut().clear());
+    LINK_TEXT.with(|m| m.borrow_mut().clear());
     PRINT_REGIONS.with(|cache| cache.borrow_mut().clear());
     SHAPED_TEXTS.with(|cache| cache.borrow_mut().clear());
 }
@@ -931,6 +979,8 @@ struct Layout {
     grid: Vec<Quad>,
     /// The cells' text, laid out at the first paint (by shaped widths).
     cells: Vec<CellText>,
+    /// The (row, column) of each of `cells`.
+    cell_ids: Vec<(u32, u32)>,
     /// The cells by the bands of the sheet they are in.
     cell_bands: std::cell::OnceCell<Bands>,
     /// Each cell's text items, made as the cell is first shown.
@@ -953,6 +1003,54 @@ struct Layout {
 }
 
 const SHAPED_TEXTS_MAX: usize = 100_000;
+
+const LINK_TEXT_MAX: usize = 50_000;
+
+thread_local! {
+    /// Where the text of the cells with a hyperlink was drawn, as the paint laid it out: the sheet (its address), row and column
+    /// give the rectangles (corners, sheet-local EMU) the text covers, turned for rotated text, cut to what is shown of the cell
+    /// and the empty cells it runs on to. The pointer asks `link_text_at`, so the click and the pointer use what is drawn.
+    static LINK_TEXT: std::cell::RefCell<HashMap<(usize, u32, u32), Vec<Vec<(f64, f64)>>>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// The angle (degrees, counter-clockwise negative as the canvas turns) of text of the cell's rotation (1 to 180).
+fn text_angle(rotation: u8) -> f32 {
+    if rotation <= 90 { -(rotation as f32) } else { (rotation - 90) as f32 }
+}
+
+/// The cell (column, row) whose hyperlink text is drawn at the point (sheet-local EMU), if any.
+pub(crate) fn link_text_at(sheet: &Arc<Sheet>, x: f64, y: f64) -> Option<(u32, u32)> {
+    let key = Arc::as_ptr(sheet) as usize;
+    LINK_TEXT.with(|m| {
+        m.borrow().iter().find_map(|(&(k, r, c), polys)| {
+            (k == key && sheet.hyperlinks.iter().any(|h| (h.range.first_row..=h.range.last_row).contains(&r) && (h.range.first_column..=h.range.last_column).contains(&c))
+                && polys.iter().any(|poly| point_in_convex(poly, x, y)))
+            .then_some((c, r))
+        })
+    })
+}
+
+/// For the scenarios: the box (left, top, right, bottom; sheet-local EMU) around the first piece of hyperlink text drawn for the cell (stacked text is one per letter).
+#[cfg(all(target_os = "macos", feature = "scenarios"))]
+pub(crate) fn link_text_box(sheet: &Arc<Sheet>, row: u32, column: u32) -> Option<(f64, f64, f64, f64)> {
+    let key = Arc::as_ptr(sheet) as usize;
+    LINK_TEXT.with(|m| {
+        let m = m.borrow();
+        let points = m.get(&(key, row, column))?.first()?.iter();
+        points.fold(None, |b, &(x, y)| Some(b.map_or((x, y, x, y), |(l, t, r, bo): (f64, f64, f64, f64)| (l.min(x), t.min(y), r.max(x), bo.max(y)))))
+    })
+}
+
+fn point_in_convex(poly: &[(f64, f64)], x: f64, y: f64) -> bool {
+    let (mut pos, mut neg) = (false, false);
+    for k in 0..poly.len() {
+        let (a, b) = (poly[k], poly[(k + 1) % poly.len()]);
+        let cross = (b.0 - a.0) * (y - a.1) - (b.1 - a.1) * (x - a.0);
+        pos |= cross > 0.0;
+        neg |= cross < 0.0;
+    }
+    !(pos && neg)
+}
 
 thread_local! {
     /// The texts shaped so far for measuring: (width, the shaped line), by `measured_key` and the scale.
@@ -1066,6 +1164,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
         gradients: Vec::new(),
         grid: Vec::new(),
         cells: Vec::new(),
+        cell_ids: Vec::new(),
         cell_bands: Default::default(),
         items: Default::default(),
         measured: Default::default(),
@@ -1242,6 +1341,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             } else {
                 right
             };
+            out.cell_ids.push((cell.row, cell.column));
             out.cells.push(CellText {
                 text: shown_text,
                 kind: if image_failure.is_some() { CellKind::Error } else if is_formula_display { CellKind::Text } else { display.kind },
@@ -1253,6 +1353,8 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                 row_gap: None,
                 runs: if image_failure.is_some() || is_formula_display { None } else { cell.runs.clone() },
                 phonetic: sheet.show_phonetic.then(|| cell.phonetic.clone()).flatten(),
+                printed: *sheet.printed,
+                text_extra: (range.first_column..=range.last_column).filter_map(|c| sheet.printed_text_extra.get(c as usize)).sum::<i64>() as f32 * scale,
             });
         }
         let diag_up = style.diagonal_up.as_ref().or_else(|| {
@@ -2321,6 +2423,10 @@ struct CellText {
     runs: Option<Arc<Vec<ibis_doc_model::CellRun>>>,
     /// The phonetic reading of the cell (furigana/ruby), shown when sheet's show_phonetic is true.
     phonetic: Option<Arc<str>>,
+    /// Laid out as Excel for Windows prints it (`Sheet::printed`).
+    printed: bool,
+    /// How much wider than its box the text may be printed (`Sheet::printed_text_extra`), in pixels.
+    text_extra: f32,
 }
 
 /// The font a cell's text is drawn in, with its measures.
@@ -2345,10 +2451,10 @@ pub(crate) fn text_width_pt(text: &str, style: &CellStyle, res: &Resources, ts: 
     GlyphWidths::new(style, res, ts).width(text)
 }
 
-fn printed_shaped_width(ts: &WindowTextSystem, text: &str, font: &Font, size: f32, px_per_point: f32) -> f32 {
+fn printed_shaped_width(ts: &WindowTextSystem, text: &str, font: &Font, size: f32, px_per_point: f32, printed: bool) -> f32 {
     let run = TextRun { len: text.len(), font: font.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
     let mut line = ts.shape_line(SharedString::from(text.to_owned()), px(size * px_per_point), &[run], None);
-    whole_point_advances(&mut line, px_per_point);
+    whole_point_advances(&mut line, px_per_point, printed);
     f32::from(line.width) / px_per_point
 }
 
@@ -2395,7 +2501,7 @@ fn measure_printed_text_regions(sheet: &Sheet, res: &Resources) -> Vec<EmuRect> 
         let laid = layout(sheet, scale, &context, None, Part::Rows(from, to));
         let text_system = WindowTextSystem::new(Arc::clone(res.text_system()));
         let measure = |text: &str, font: &Font, size: f32| {
-            printed_shaped_width(&text_system, text, font, size, 1.0)
+            printed_shaped_width(&text_system, text, font, size, 1.0, *sheet.printed)
         };
         for cell in &laid.cells {
             let mut items = Vec::new();
@@ -2468,7 +2574,7 @@ pub(crate) fn shown_texts(sheet: &Sheet, res: &Resources, window: &Window) -> Ve
     let measure = |text: &str, font: &Font, size: f32| -> f32 {
         let run = TextRun { len: text.len(), font: font.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
         let mut line = window.text_system().shape_line(SharedString::from(text.to_string()), px(size), &[run], None);
-        whole_point_advances(&mut line, 1.0);
+        whole_point_advances(&mut line, 1.0, *sheet.printed);
         f32::from(line.width)
     };
     let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
@@ -2909,7 +3015,11 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         && ((style.wrap && !matches!(kind, CellKind::Number | CellKind::Boolean))
             || matches!(align, CellAlign::Justify | CellAlign::Distributed)
             || matches!(vertical, CellVerticalAlign::Justify | CellVerticalAlign::Distributed));
-    let room = (right - left - 2.0 * ROOM_PADDING_PT * px_per_point - if align == CellAlign::Distributed { 2.0 * indent } else { indent }).max(0.0);
+    // Printed by Excel for Windows, the text has the column of `printed_text_column_pt` less the 21 of the printer's pixels (1/600 inch) it
+    // starts in by: its PDFs of `colw-sweep.xlsx` (Calibri 11, columns 85 to 95 characters wide by halves, 游ゴシック 10.5 pt text at 10.56 pt)
+    // fit the characters of 88 pixels each that this holds, at all 21 widths, and no more (GitHub issue #68).
+    let padding = if cell.printed { PRINTED_TEXT_PADDING_PT } else { 2.0 * ROOM_PADDING_PT };
+    let room = (right - left + cell.text_extra - padding * px_per_point - if align == CellAlign::Distributed { 2.0 * indent } else { indent }).max(0.0);
 
     let is_vertical = style.rotation == 255;
     // Each line, and whether it ends its paragraph (justified text is
@@ -3268,7 +3378,6 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         let align = match align {
             CellAlign::Justify if !ends.get(i).copied().unwrap_or(true) => CellAlign::Distributed,
             CellAlign::Justify => CellAlign::Left,
-            CellAlign::Distributed if ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Windows => CellAlign::Center,
             a => a,
         };
         let r_i = line_ratios.get(i).copied().unwrap_or(1.0);
@@ -3384,7 +3493,8 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         let (pad_left, pad_right) = if align == CellAlign::Fill {
             (CELL_PADDING_PT * px_per_point, CELL_PADDING_PT * px_per_point)
         } else {
-            (TEXT_PAD_LEFT_PT * px_per_point, TEXT_PAD_RIGHT_PT * px_per_point)
+            // Printed by Excel for Windows, the text starts the 21 printer's pixels in (`PRINTED_TEXT_PADDING_PT`).
+            (if cell.printed { PRINTED_TEXT_PADDING_PT } else { TEXT_PAD_LEFT_PT } * px_per_point, TEXT_PAD_RIGHT_PT * px_per_point)
         };
         let num_pad = if kind == CellKind::Number { TEXT_PAD_NUM_LEFT_PT * px_per_point } else { 0.0 };
         let (l, r) = match align {
@@ -3450,9 +3560,12 @@ pub(crate) struct EditPiece {
     pub(crate) shaped: Option<ShapedLine>,
     pub(crate) x: f32,
     pub(crate) width: f32,
-    /// Where it starts in the text (bytes) and its length.
+    /// Where it starts in the text (bytes) and its length: the characters it shows and the tabs after them (a tab is
+    /// kept in the text but drawn as nothing, `text_items`).
     pub(crate) start: usize,
     pub(crate) len: usize,
+    /// Where, from `start`, the tabs it holds are: the shaped line has no room for them.
+    pub(crate) tabs: Vec<usize>,
 }
 
 /// A line of the text being typed: where its glyphs are, in pixels from the cell's top-left.
@@ -3474,7 +3587,9 @@ impl EditLine {
         let b = b.clamp(self.start, self.end);
         for p in &self.pieces {
             if b >= p.start && b <= p.start + p.len {
-                return p.x + p.shaped.as_ref().map_or(if b > p.start { p.width } else { 0.0 }, |s| f32::from(s.x_for_index(b - p.start)));
+                let rel = b - p.start;
+                let shown = rel - p.tabs.iter().filter(|&&t| t < rel).count();
+                return p.x + p.shaped.as_ref().map_or(if b > p.start { p.width } else { 0.0 }, |s| f32::from(s.x_for_index(shown)));
             }
         }
         self.pieces.last().map_or(self.x0, |p| p.x + p.width)
@@ -3522,7 +3637,17 @@ pub(crate) fn cell_or_default_style(sheet: &Sheet, default_style: Option<&CellSt
 pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: Option<&CellStyle>, res: &Resources, row: u32, column: u32, text: &str, runs: Option<Arc<Vec<ibis_doc_model::CellRun>>>, origin: (f32, f32), cell: (f32, f32), px_per_point: f32, max_width: f32) -> EditLayout {
     let own = sheet.cell(row, column);
     let mut style = cell_or_default_style(sheet, default_style, row, column);
-    let kind = own.map_or(CellKind::Text, |c| c.kind);
+    // What is typed is text, whatever the cell held: laid out as a number or a logical value it would not wrap, and show as
+    // `#` across the cell when it does not fit (GitHub issue #105: a long formula edited again). It keeps the place the
+    // value had (a number at the right, a logical value in the middle) while the cell's alignment is General.
+    let kind = CellKind::Text;
+    if style.align == CellAlign::General {
+        match own.map_or(CellKind::Text, |c| c.kind) {
+            CellKind::Number if style.number_format != "@" => style.align = CellAlign::Right,
+            CellKind::Boolean | CellKind::Error => style.align = CellAlign::Center,
+            _ => {}
+        }
+    }
     let original_wrap = style.wrap;
     let multi = text.contains('\n');
     style.wrap = style.wrap || multi;
@@ -3541,12 +3666,12 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
     let measure = |t: &str, f: &Font, size: f32| -> f32 {
         let run = TextRun { len: t.len(), font: f.clone(), color: black(), background_color: None, underline: None, strikethrough: None };
         let mut line = ts.shape_line(SharedString::from(t.to_string()), px(size), &[run], None);
-        whole_point_advances(&mut line, px_per_point);
+        whole_point_advances(&mut line, px_per_point, false);
         f32::from(line.width)
     };
     // Bottom-aligned single lines share their row's baseline, the highest any of them asks for.
     let gap_of = |s: &CellStyle, t: &str| -> Option<f32> {
-        let probe = CellText { text: t.to_string(), kind: CellKind::Text, general: None, style: s.clone(), font: font.clone(), rect: (0.0, 0.0, 0.0, 0.0), spans: [(0.0, 0.0); 3], row_gap: None, runs: None, phonetic: None };
+        let probe = CellText { text: t.to_string(), kind: CellKind::Text, general: None, style: s.clone(), font: font.clone(), rect: (0.0, 0.0, 0.0, 0.0), spans: [(0.0, 0.0); 3], row_gap: None, runs: None, phonetic: None, printed: false, text_extra: 0.0 };
         bottom_gap(&probe)
     };
     let mut row_gap = gap_of(&style, text);
@@ -3571,6 +3696,8 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
         row_gap,
         runs: runs.clone(),
         phonetic: None,
+        printed: false,
+        text_extra: 0.0,
     };
     let total = |t: &TextItem| -> f32 { t.pieces.iter().map(|p| p.advance.unwrap_or_else(|| measure(&p.text, if p.plain { &t.plain } else { &t.font }, p.size))).sum() };
     // The widest line, to give a box that does not wrap the room it needs.
@@ -3599,16 +3726,19 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
     let mut lines = Vec::new();
     let mut cursor = 0usize;
     let ascent = font.ascent;
+    // The text a line is drawn from, without the tabs; the colours of the cell references are found in it.
+    let plain = text.replace('\t', "");
     for t in &items {
         let line_text: String = t.pieces.iter().map(|p| p.text.as_str()).collect();
-        // The line's place in the text: after the previous line, over a line break.
-        let start = text[cursor..].find(&line_text).map_or(cursor, |i| cursor + i);
-        let end = start + line_text.len();
-        let mut piece_at=start;
+        // The line's place in the text: after the previous line, over a line break. The line holds the text without its
+        // tabs (`text_items` draws a tab as nothing), so the text is read along with it, the tabs passed over.
+        let (start, end) = locate_line(text, cursor, &line_text);
+        let spans = piece_spans(text, start, end, t.pieces.iter().map(|p| p.text.len()));
         let shaped: Vec<(Option<ShapedLine>, f32)> = t
             .pieces
             .iter()
-            .map(|p| {let piece_start=piece_at;piece_at+=p.text.len();match p.advance {
+            .zip(&spans)
+            .map(|(p, (piece_start, _, _))| {let piece_start=*piece_start-text[..*piece_start].matches('\t').count();match p.advance {
                 Some(a) => (None, a),
                 None => {
                     let f = match &p.run {
@@ -3622,12 +3752,13 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
                         font: f,
                         color,
                         background_color: None,
-                        underline: None,
+                        // A part in its own underline (a note's text is edited in the same layout), else the cell's.
+                        underline: p.run.as_ref().map_or(t.underline, |r| r.underline).enabled().then(|| UnderlineStyle { thickness: px((p.size / 14.0).max(0.5)), color: Some(color), wavy: false }),
                         strikethrough: p.run.as_ref().map_or(t.strike, |r| r.strike).then(|| StrikethroughStyle { thickness: px((p.size / 14.0).max(0.5)), color: Some(color) }),
                     };
-                    let runs=super::formula_reference::color_runs(text,piece_start,p.text.len(),run);
+                    let runs=super::formula_reference::color_runs(&plain,piece_start,p.text.len(),run);
                     let mut line = ts.shape_line(SharedString::from(p.text.clone()), px(p.size), &runs, None);
-                    whole_point_advances(&mut line, px_per_point);
+                    whole_point_advances(&mut line, px_per_point, false);
                     let w = f32::from(line.width);
                     (Some(line), w)
                 }
@@ -3638,11 +3769,9 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
         let (mut x, _) = compute_text_x(t.align, t.left, t.right, sum, shaped.len(), trailing, 0, px_per_point);
         x -= origin.0;
         let x0 = x;
-        let mut at = start;
         let mut pieces = Vec::new();
-        for ((line, w), p) in shaped.into_iter().zip(&t.pieces) {
-            pieces.push(EditPiece { shaped: line, x, width: w, start: at, len: p.text.len() });
-            at += p.text.len();
+        for ((line, w), (piece_start, len, tabs)) in shaped.into_iter().zip(spans) {
+            pieces.push(EditPiece { shaped: line, x, width: w, start: piece_start, len, tabs });
             x += w;
         }
         let big = biggest(t);
@@ -3671,6 +3800,69 @@ pub(crate) fn edit_layout(ts: &WindowTextSystem, sheet: &Sheet, default_style: O
         }
     }
     EditLayout { lines, width: right, height: bottom }
+}
+
+/// Where the line drawn as `line` (the text without its tabs) is in `text`, as bytes from `cursor` on: the tabs between its
+/// characters, and those before and after them up to the line break, belong to it. Always at character boundaries.
+/// A line that is not found in the text (a character that was drawn as room only) takes what is left up to the line break.
+fn locate_line(text: &str, cursor: usize, line: &str) -> (usize, usize) {
+    let cursor = cursor.min(text.len());
+    let matched = |from: usize| -> Option<usize> {
+        let mut at = from;
+        for (i, c) in line.chars().enumerate() {
+            if i > 0 {
+                while text[at..].starts_with('\t') {
+                    at += 1;
+                }
+            }
+            if !text[at..].starts_with(c) {
+                return None;
+            }
+            at += c.len_utf8();
+        }
+        Some(at)
+    };
+    let found = text[cursor..].char_indices().map(|(i, _)| cursor + i).chain(std::iter::once(text.len())).find_map(|from| matched(from).map(|end| (from, end)));
+    let (mut start, mut end) = found.unwrap_or_else(|| (cursor, cursor + text[cursor..].find(['\n', '\r']).unwrap_or(text.len() - cursor)));
+    while start > cursor && text[..start].ends_with('\t') {
+        start -= 1;
+    }
+    while text[end..].starts_with('\t') {
+        end += 1;
+    }
+    (start, end)
+}
+
+/// The place in `text` of each piece of a line that is at `start..end`, which are `lengths` long without the tabs:
+/// (start, length, where the tabs are from the start). The tabs belong to the piece before them (those at the front, to the
+/// first), so the pieces meet and cover the line.
+fn piece_spans(text: &str, start: usize, end: usize, lengths: impl Iterator<Item = usize>) -> Vec<(usize, usize, Vec<usize>)> {
+    let lengths: Vec<usize> = lengths.collect();
+    let mut at = start;
+    let mut out = Vec::new();
+    for (i, n) in lengths.iter().enumerate() {
+        let from = at;
+        let mut tabs = Vec::new();
+        let mut taken = 0;
+        while at < end {
+            let Some(c) = text[at..].chars().next() else { break };
+            if c == '\t' {
+                tabs.push(at - from);
+                at += 1;
+            } else if taken < *n {
+                taken += c.len_utf8();
+                at += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if i + 1 == lengths.len() {
+            // Nothing is left over: what the pieces did not take (a fallback) goes to the last.
+            at = end;
+        }
+        out.push((from, at - from, tabs));
+    }
+    out
 }
 
 /// The parts of `runs` between the characters `from` and `to` of their text.
@@ -3766,32 +3958,35 @@ pub(crate) fn line_pitch(typeface: Option<&str>, japanese: bool) -> Option<f32> 
 }
 
 /// Break `text` into lines no wider than `room` (by `width`), as Excel
-/// wraps: between any two characters of Japanese, but back to the last
-/// space when a line would end inside a Latin word, and never putting a
-/// closing mark (、。）」…) at the start of a line. A line broken at a space
-/// keeps the space at its end: Excel aligns it with the space's width (in
-/// its PDF of XALN, "The quick " right-aligned starts 3 pt left of "The
-/// quick", centred 1 pt left).
+/// wraps: where `line_break::may_break` allows with Excel's kinsoku (between
+/// two characters of Japanese, but not before a closing mark nor after an
+/// opening one, going back over as many of them as there are; in Latin text
+/// after a space, a hyphen or a dash, not inside a word, a number or a path,
+/// but next to a character of East Asian Width "A" (— ² é) as next to a kanji:
+/// Excel for Windows' PDFs of `kinsoku-*-probe.xlsx`, GitHub issue #68), else
+/// before the character that does not fit. A line broken at a space keeps the
+/// space at its end: Excel aligns it with the space's width (in its PDF of
+/// XALN, "The quick " right-aligned starts 3 pt left of "The quick", centred
+/// 1 pt left). Spaces past the edge stay on the line.
 fn wrap(text: &str, room: f32, width: impl Fn(&str) -> f32) -> Vec<(String, bool)> {
-    let closing = |c: char| "、。，．・：；？！）］｝」』】〕〉》’”)]}.,:;!?ー々ぁぃぅぇぉっゃゅょァィゥェォッャュョ".contains(c); // i18n-ok（閉じ括弧の類の文字（禁則処理の文字集合））
+    use crate::render::line_break::{Kinsoku, LatinBreaks, may_break};
     let mut out = Vec::new();
     for paragraph in text.lines() {
         let mut line: Vec<char> = Vec::new();
         for c in paragraph.chars() {
             line.push(c);
             let s: String = line.iter().collect();
-            if line.len() == 1 || width(&s) <= room {
+            // Spaces past the edge stay on the line, but not the ideographic space: it wraps as a kanji does (Excel's PDF of corpus 082:
+            // a cell's leading 「　　」 stays alone on its first line).
+            if line.len() == 1 || (c.is_whitespace() && c != '\u{3000}') || width(&s) <= room {
                 continue;
             }
             // `c` does not fit: where does the line end?
-            let mut at = line.len() - 1;
-            if let Some(space) = line[..at].iter().rposition(|&x| x == ' ') {
-                // Back to the last ASCII space on the line, if any.
-                at = space + 1;
-            } else if closing(c) && at > 1 {
-                // A closing mark takes the character before it along.
-                at -= 1;
-            }
+            // The line ends where the characters allow, not at an ASCII space it holds: in Excel for Mac and for Windows (screen and PDF)
+            // "か updateFields のとき、開いたときに目次を作|り直す" keeps the Japanese after the space on the line, and a line breaks
+            // between "１ ダミー甲" characters, not at the space (checked with autofit row heights and PDFs of cells that would take one
+            // line more if the last space ended the line, and `ascii-space-wrap.xlsx`'s PDFs).
+            let at = (1..line.len()).rev().find(|&k| may_break(line[k - 1], line[k], Some(Kinsoku::EXCEL), LatinBreaks { ambiguous_wide: true, ..LatinBreaks::default() })).unwrap_or(line.len() - 1);
             let rest: Vec<char> = line.split_off(at);
             let done: String = line.iter().collect();
             out.push((done, false));
@@ -3804,15 +3999,69 @@ fn wrap(text: &str, room: f32, width: impl Fn(&str) -> f32) -> Vec<(String, bool
 
 #[cfg(test)]
 mod tests {
-    use super::{Bands, CellText, CellFont, text_items, fill_sources};
+    use super::{Bands, CellText, CellFont, text_items, fill_sources, wrap};
     use ibis_doc_model::{CellAlign, CellKind, CellStyle};
     use gpui_kit::font;
+
+    /// The lines of `text` wrapped in `room` characters (each one wide).
+    fn wrapped(text: &str, room: usize) -> Vec<String> {
+        wrap(text, room as f32, |t| t.chars().count() as f32).into_iter().map(|(l, _)| l).collect()
+    }
+
+    /// Issue 68, X1: Excel does not end a line with an opening bracket or `＄ ￥ $ ¥ £ #`.
+    #[test]
+    fn wrap_keeps_line_end_characters_off_the_line_end() {
+        assert_eq!(wrapped("あいうえお「かき", 6), vec!["あいうえお", "「かき"]);
+        assert_eq!(wrapped("あいうえお＄かき", 6), vec!["あいうえお", "＄かき"]);
+        assert_eq!(wrapped("あいうえお$かき", 6), vec!["あいうえお", "$かき"]);
+    }
+
+    /// Issue 68, X2: ゎ ヮ ヵ ヶ ゝ ゞ ヽ ヾ ゛ ゜ ％ ℃ ° ′ ″ % and the half-width ｡ ｣ ､ ･ ﾞ ｯ ｰ do not start a line.
+    #[test]
+    fn wrap_keeps_more_characters_off_the_line_start() {
+        for c in "ゎヮヵヶゝゞヽヾ゛゜％℃°′″%｡｣､･ﾞｯｰ".chars() {
+            assert_eq!(wrapped(&format!("あいうえお{c}かき"), 5), vec!["あいうえ".to_string(), format!("お{c}かき")], "{c}");
+        }
+    }
+
+    /// Issue 68, X3: characters that may not start a line take the ones before them, as many as follow each other (`」。`).
+    #[test]
+    fn wrap_takes_a_run_of_closing_marks_down_together() {
+        assert_eq!(wrapped("あいうえお」。かき", 5), vec!["あいうえ", "お」。かき"]);
+        assert_eq!(wrapped("あいうえお」」かき", 5), vec!["あいうえ", "お」」かき"]);
+        // The mark that overflows follows another one: both go down with the character before them (not only the one that overflows).
+        assert_eq!(wrapped("あいうえ」。かき", 5), vec!["あいう", "え」。かき"]);
+        assert_eq!(wrapped("あいうえ」」」かき", 5), vec!["あいう", "え」」」か", "き"]);
+    }
+
+    /// A line is not ended at an ASCII space it holds: Excel for Mac and for Windows keep the Japanese after "updateFields " on the line
+    /// (screen row heights by autofit and PDFs, 2026-11-04). Widths as Excel for Windows' screen sets them: a full-width character 15 px,
+    /// a Latin one 7 px; the room is 478 px, where the 42nd character ends the line.
+    #[core::prelude::v1::test]
+    fn wrap_does_not_end_a_line_at_an_ascii_space_it_holds() {
+        let text = "目次が更新要（dirty）か updateFields のとき、開いたときに目次を作り直すようにした。Word で同じ挙動を確認。"; // i18n-ok: Excel's own wrapped cell text
+        let width = |t: &str| t.chars().map(|c| if c.is_ascii() { 7.0 } else { 15.0 }).sum::<f32>();
+        let lines: Vec<String> = wrap(text, 478.0, width).into_iter().map(|(l, _)| l).collect();
+        assert_eq!(lines, vec!["目次が更新要（dirty）か updateFields のとき、開いたときに目次を作", "り直すようにした。Word で同じ挙動を確認。"]); // i18n-ok: Excel's own wrapped cell text
+        // A line that starts with a space keeps it (no empty first line), and the text goes on to the character that does not fit.
+        assert_eq!(wrapped(" あいうえおかきくけこ", 6), vec![" あいうえお", "かきくけこ"]); // i18n-ok: wrap test text
+        assert_eq!(wrapped("あ いうえおかきくけこ", 6), vec!["あ いうえお", "かきくけこ"]); // i18n-ok: wrap test text
+    }
+
+    /// Issue 68, X4: a Latin word, a number or a URL moves down whole; a line ends only after a space, a hyphen or a dash.
+    #[test]
+    fn wrap_does_not_cut_latin_words_numbers_and_urls() {
+        assert_eq!(wrapped("あいうえおwell-knownかき", 8), vec!["あいうえお", "well-", "knownかき"]);
+        assert_eq!(wrapped("あいうえお1,234,567.89かき", 14), vec!["あいうえお", "1,234,567.89かき"]);
+        assert_eq!(wrapped("あいうえお3.14%かき", 8).first().map(String::as_str), Some("あいうえお"));
+        assert_eq!(wrapped("あいうabc—defかき", 7), vec!["あいうabc—", "defかき"]);
+    }
 
     /// A stacked (rotation 255) text with a line break: the break is not a character to shape (`shape_line` panics on a
     /// newline in debug), so no piece holds one and the letters stack on.
     #[test]
     fn stacked_text_with_a_line_break_shapes_no_newline() {
-        let cell = CellText { runs: None, phonetic: None,
+        let cell = CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: "ab\ncd".into(), kind: CellKind::Text, general: None,
             style: CellStyle { rotation: 255, wrap: true, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -3827,10 +4076,35 @@ mod tests {
         assert_eq!(out.len(), 4);
     }
 
+    /// GitHub issue #75: text set to "distributed" (均等割り付け) is laid out as one piece a character and spread over the
+    /// cell's width (it was set as centred text, close together).
+    #[test]
+    fn distributed_text_spreads_over_the_cells_width() {
+        let cell = CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
+            text: "家族手当制度がある".into(), kind: CellKind::Text, general: None,
+            style: CellStyle { align: CellAlign::Distributed, font_size: 1000, ..Default::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
+            rect: (0., 0., 200., 20.), spans: [(0., 200.); 3], row_gap: None,
+        };
+        let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 10.;
+        let mut out = Vec::new();
+        text_items(&cell, 1., &measure, &mut out);
+        assert_eq!(out.len(), 1);
+        let item = &out[0];
+        assert_eq!(item.align, CellAlign::Distributed);
+        assert_eq!(item.pieces.len(), 9, "one piece a character");
+        let total: f32 = item.pieces.iter().map(|p| measure(&p.text, &item.font, p.size)).sum();
+        let (x, gap) = super::compute_text_x(item.align, item.left, item.right, total, item.pieces.len(), false, 0, 1.);
+        // Nine characters of 10 in a cell of 200 (less its padding): the room between them is shared.
+        assert!(gap > 1.0, "the characters are not spread (gap {gap})");
+        let end = x + total + gap * 8.0;
+        assert!((end - item.right).abs() < 0.01, "the last character ends at the cell's right padding: {end} vs {}", item.right);
+    }
+
     #[test]
     fn vertical_justify_places_single_line_at_top_and_spreads_multiple_lines() {
         use ibis_doc_model::CellVerticalAlign;
-        let make = |text: &str| CellText { runs: None, phonetic: None,
+        let make = |text: &str| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { vertical: CellVerticalAlign::Justify, wrap: true, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -3852,7 +4126,7 @@ mod tests {
     #[test]
     fn vertical_distributed_places_single_line_at_center_and_spreads_multiple_lines() {
         use ibis_doc_model::CellVerticalAlign;
-        let make = |text: &str| CellText { runs: None, phonetic: None,
+        let make = |text: &str| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { vertical: CellVerticalAlign::Distributed, wrap: true, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -3893,7 +4167,7 @@ mod tests {
         use ibis_doc_model::CellRun;
         let run = |t: &str, bold: bool| CellRun { text: t.into(), font: None, size: None, bold: Some(bold), italic: None, underline: None, strike: None, color: None };
         let runs = vec![run("AAAA BBBB ", true), run("CCCC DDDD", false)];
-        let cell = CellText { runs: Some(std::sync::Arc::new(runs.clone())), phonetic: None,
+        let cell = CellText { runs: Some(std::sync::Arc::new(runs.clone())), phonetic: None, printed: false, text_extra: 0.0,
             text: "AAAA BBBB CCCC DDDD".into(), kind: CellKind::Text, general: None,
             style: CellStyle { wrap: true, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -3913,7 +4187,7 @@ mod tests {
 
     #[test]
     fn fill_repeats_complete_entries_and_clips_long_entries() {
-        let make = |text: &str| CellText { runs: None, phonetic: None,
+        let make = |text: &str| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { align: CellAlign::Fill, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -4039,7 +4313,7 @@ mod tests {
     #[test]
     fn centred_text_sits_on_the_cells_middle_at_a_whole_point() {
         use super::{compute_text_x, TEXT_LEFT_OFFSET_PX, TEXT_PAD_LEFT_PT, TEXT_PAD_NUM_LEFT_PT, TEXT_PAD_RIGHT_PT};
-        let make = |text: &str, kind: CellKind, align: CellAlign| CellText { runs: None, phonetic: None,
+        let make = |text: &str, kind: CellKind, align: CellAlign| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: text.into(), kind, general: None,
             style: CellStyle { align, font_size: 1000, ..Default::default() },
             font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2 },
@@ -4069,7 +4343,7 @@ mod tests {
     fn broken_lines_show_unwrapped_as_far_as_the_cell_goes() {
         use ibis_doc_model::CellVerticalAlign;
         // Issue #17: a cell of a text file, its lines broken but not wrapped, shows them one under another.
-        let make = |vert: CellVerticalAlign, height: f32| CellText { runs: None, phonetic: None,
+        let make = |vert: CellVerticalAlign, height: f32| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: "Line 1\nLine 2\nLine 3\nLine 4".into(),
             kind: CellKind::Text,
             general: None,
@@ -4094,7 +4368,7 @@ mod tests {
     #[test]
     fn vertical_overflow_places_center_and_bottom_without_clamping_to_top() {
         use ibis_doc_model::CellVerticalAlign;
-        let make = |vert: CellVerticalAlign| CellText { runs: None, phonetic: None,
+        let make = |vert: CellVerticalAlign| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: "Line 1\nLine 2\nLine 3".into(),
             kind: CellKind::Text,
             general: None,
@@ -4129,7 +4403,7 @@ mod tests {
     #[test]
     fn shrink_to_fit_bottom_align_maintains_original_font_size_baseline() {
         use ibis_doc_model::CellVerticalAlign;
-        let make = |shrink: bool, text_len: usize| CellText { runs: None, phonetic: None,
+        let make = |shrink: bool, text_len: usize| CellText { runs: None, phonetic: None, printed: false, text_extra: 0.0,
             text: "A".repeat(text_len),
             kind: CellKind::Text,
             general: None,
@@ -4166,6 +4440,8 @@ mod tests {
         let mut cell = CellText {
             runs: None,
             phonetic: Some("トウキョウ".into()),
+            printed: false,
+            text_extra: 0.0,
             text: "東京".into(),
             kind: CellKind::Text,
             general: None,

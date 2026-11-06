@@ -14,7 +14,7 @@ use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::input::{InputState,InputEvent};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
-use ibis_calc::input::{DateOrder, Typed, parse_date_in_order, parse_input};
+use ibis_calc::input::{DateOrder, Typed, parse_date_in_order, parse_imported};
 use ibis_doc_model::{CellEdit, CellInput, CellRange, CellValue, Command, SheetCommand, SlideId, StyleChange};
 use ibis_pptx::csv::{ImportOptions, TextEncoding};
 
@@ -140,7 +140,7 @@ pub(crate) fn cells_of(rows: &[Vec<String>], columns: &[ColumnType], origin: (u3
                     formats.push((one, "@".to_string()));
                     CellInput::Value(CellValue::Text(field.clone()))
                 }
-                _ => match parse_input(field, date1904) {
+                _ => match parse_imported(field, date1904) {
                     Typed::Formula(f) => CellInput::Formula(f),
                     Typed::Value(v, format) => {
                         if let Some(code) = format {

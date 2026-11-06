@@ -31,6 +31,10 @@ fn signed_amount(value: &str, scale: f64, max: f64) -> Option<i64> {
     let scaled = (value * scale).round();
     (value.is_finite() && scaled.abs() <= max).then_some(scaled as i64)
 }
+/// The label column and the font-alignment dropdown are 1.5 times the usual width (the labels are long; 2026-11-04 user).
+const LABEL_SCALE: f32 = 1.5;
+const DROPDOWN_SCALE: f32 = 1.5;
+
 impl SlideEditor {
     pub(crate) fn open_paragraph_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_marked(cx);
@@ -164,8 +168,8 @@ impl SlideEditor {
         let choices = [(FontAlign::Auto, "_shell.auto"), (FontAlign::Top, "_shell.top"), (FontAlign::Center, "_shell.center"), (FontAlign::Baseline, "pptx.chrome.baseline"), (FontAlign::Bottom, "_shell.bottom")];
         let selected = font_align.map(|value| choices.iter().position(|(v, _)| *v == value).unwrap_or(0));
         let entries = choices.iter().map(|&(value, key)| crate::shell::chrome::MenuItem::new("pptx.paragraph.font-align", crate::shell::i18n::text(key)).checked(font_align == Some(value)).on(move |e, _, cx| e.set_paragraph_panel_font_align(value, cx)).into()).collect();
-        let dropdown = crate::shell::chrome::Dropdown::from_entries("pptx-paragraph-font-align",selected.map(|i| crate::shell::i18n::text(choices[i].1)).unwrap_or_else(|| crate::shell::i18n::text("pptx.paragraph-panel.keep-existing")),entries,true,0,&cx.weak_entity()).into_any_element();
-        body = body.child(crate::shell::chrome::dropdown_row(crate::shell::i18n::text("pptx.paragraph-panel.alignment-mixed-font-sizes-keep"), dropdown));
+        let dropdown = crate::shell::chrome::Dropdown::from_entries("pptx-paragraph-font-align",selected.map(|i| crate::shell::i18n::text(choices[i].1)).unwrap_or_else(|| crate::shell::i18n::text("pptx.paragraph-panel.keep-existing")),entries,true,0,&cx.weak_entity()).button_width(crate::shell::chrome::FIELD_WIDTH * DROPDOWN_SCALE).into_any_element();
+        body = body.child(crate::shell::chrome::control_row::dropdown_row(crate::shell::i18n::text("pptx.paragraph-panel.alignment-mixed-font-sizes-keep"), dropdown).label_scale(LABEL_SCALE));
         for (i, (label, field)) in [
             crate::shell::i18n::text("pptx.paragraph-panel.line-spacing-value"),
             crate::shell::i18n::text("pptx.paragraph-panel.before-pt"),
@@ -187,7 +191,7 @@ impl SlideEditor {
             };
             let mut field = crate::shell::chrome::text_field(&field).spinner(format!("pptx-paragraph-field-{i}"), spec, cx, |_, _, _, _| {});
             if (i == 0 && mode == Mode::Points) || (1..=4).contains(&i) { field = field.unit("pt", px(24.)); }
-            body = body.child(crate::shell::chrome::text_field_row(label, field));
+            body = body.child(crate::shell::chrome::control_row::text_field_row(label, field).label_scale(LABEL_SCALE));
         }
         if let Some(error) = error { body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error)); }
         let panel_actions = crate::shell::chrome::action_bar()

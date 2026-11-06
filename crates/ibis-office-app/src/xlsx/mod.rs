@@ -16,6 +16,11 @@ mod quick_analysis;
 pub(crate) mod paste_special_dialog;
 pub(crate) mod copy_picture;
 pub(crate) mod names;
+pub(crate) mod names_list;
+pub(crate) mod names_panel;
+pub(crate) mod paste_names;
+pub(crate) mod paste_names_dialog;
+pub(crate) mod sheet_transfer;
 pub(crate) mod page_layout;
 pub(crate) mod print;
 pub(crate) mod validation;
@@ -58,8 +63,12 @@ pub(crate) mod filter;
 pub(crate) mod format_more;
 pub(crate) mod autocomplete;
 pub(crate) mod pivot;
+pub(crate) mod pivot_fields;
+pub(crate) mod pivot_pane;
+pub(crate) mod pivot_protect;
 pub(crate) mod row_fit;
 pub(crate) mod table_design;
+pub(crate) mod table_style_preview;
 pub(crate) mod header_footer;
 pub(crate) mod header_footer_edit;
 pub(crate) mod find;
@@ -73,6 +82,7 @@ pub(crate) mod scenarios;
 pub(crate) mod corpus_report;
 pub(crate) mod sheet_ui;
 mod sheet_tab_scroll;
+pub(crate) mod sheet_tab_drag;
 mod right_pane;
 pub(crate) mod sheet_view;
 pub(crate) mod slicer;
@@ -104,6 +114,7 @@ pub(crate) mod sparkline_dialog;
 pub(crate) mod row_col_size;
 pub(crate) mod subtotal_dialog;
 pub(crate) mod pivot_group;
+pub(crate) mod pivot_drill;
 pub(crate) mod pivot_options;
 pub(crate) mod trace;
 pub(crate) mod formula_audit;
@@ -196,7 +207,7 @@ pub(crate) struct State {
     /// The formats 書式のコピー picked up (rows of the range), waiting for a range.
     pub(crate) painter: Option<Vec<Vec<ibis_doc_model::CellStyle>>>,
     /// The name manager, when open in the sidebar.
-    pub(crate) names: Option<names::NamesPanel>,
+    pub(crate) names: Option<names_panel::NamesPanel>,
     /// The data validation panel, when open in the sidebar.
     pub(crate) validation: Option<validation::ValidationPanel>,
     /// A pending Yes/No/Cancel confirmation for a `warning`-style data validation rule.
@@ -210,6 +221,12 @@ pub(crate) struct State {
     pub(crate) filter_panel: Option<filter::FilterPanel>,
     /// The cell whose comment (thread or note) shows, the pointer on it.
     pub(crate) comment_hover: Option<(u32, u32)>,
+    /// The hover card of the selected cell's note (notes.rs).
+    pub(crate) note_card: notes::NoteCard,
+    /// The scroll of the hover card of a comment that is taller than the card may be.
+    pub(crate) comment_scroll: ScrollHandle,
+    /// How long the pointer has been on the comment mark, and the timers that keep the card (comment_card.rs).
+    pub(crate) comment_popup: comment_card::PopupTimers,
     /// テーブルの作成, while open.
     pub(crate) table_dialog: Option<table_edit::TableDialog>,
     /// グラフの書式, when open in the sidebar.
@@ -226,12 +243,14 @@ pub(crate) struct State {
     pub(crate) link: Option<links::LinkPanel>,
     /// ページ設定, when open in the sidebar.
     pub(crate) page_setup: bool,
+    /// ファイル > 印刷 の印刷ダイアログ, when open.
+    pub(crate) print_panel: bool,
     /// カスタム ヘッダー・フッター編集, when open in the sidebar.
     pub(crate) header_footer_edit: Option<header_footer_edit::HeaderFooterEditPanel>,
     /// 表示形式（ユーザー定義）, when open in the sidebar.
     pub(crate) custom_format: Option<custom_format::FormatPanel>,
     /// Which sections of セルの書式設定 are open (表示形式・配置・フォント・罫線・塗りつぶし・保護), kept while the window lives.
-    pub(crate) format_open: [bool; 6],
+    pub(crate) format_tab: usize,
     pub(crate) conditional_edit: Option<conditional_edit::ConditionalPanel>,
     pub(crate) sort_edit: Option<sort_edit::SortPanel>,
     /// The panels of the editing basics (重複の削除, 区切り位置, …).
@@ -242,9 +261,11 @@ pub(crate) struct State {
     pub(crate) border_line: ibis_doc_model::BorderLine,
     pub(crate) border_color: ibis_doc_model::Rgb,
     /// A sheet tab being dragged.
-    pub(crate) tab_drag: Option<SlideId>,
+    pub(crate) tab_drag: Option<sheet_tab_drag::TabDrag>,
     /// What the right pane was last made for (`right_pane.rs`).
     pub(crate) right_key: Option<right_pane::RightKey>,
+    /// The fields pane the current cell opened in a pivot table (`pivot_pane.rs`).
+    pub(crate) pivot_pane: pivot_pane::PivotPane,
     /// Scrolling of the sheet tabs along the bottom.
     pub(crate) tab_scroll: ScrollHandle,
     pub(crate) tab_reveal: Option<SlideId>,
@@ -285,6 +306,7 @@ pub(crate) const STATUS_SUMMARY_DEFAULT: u8 = STATUS_SUMMARY_AVG | STATUS_SUMMAR
 pub(crate) fn key_bindings() -> Vec<KeyBinding> {
     use sheet_ui::*;
     let c = Some(crate::shell::editor::SHEET_CONTEXT);
+    let p = Some(find::FIND_PANEL_CONTEXT);
     let m = |k: &str| format!("{}-{k}", crate::secondary_modifier());
     vec![
         // Typing into cells (cell_edit.rs): F2 edits; Backspace and Delete
@@ -306,6 +328,24 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(&m("\\"), ClearCellFormats, c),
         KeyBinding::new("tab", CellTab, c),
         KeyBinding::new(&m("k"), InsertLink, c),
+        KeyBinding::new(&m("f"), OpenSheetFind, c),
+        KeyBinding::new(&m("shift-h"), OpenSheetFind, c),
+        // The same keys with the focus in the find panel's fields.
+        KeyBinding::new(&m("f"), OpenSheetFind, p),
+        KeyBinding::new(&m("shift-h"), OpenSheetFind, p),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-g", SheetFindNext, p),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-g", SheetFindPrevious, p),
+        // ⌘G / ⇧⌘G: Mac only (Excel for Mac). Windows and Linux have no such key here.
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-g", SheetFindNext, c),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-g", SheetFindPrevious, c),
+        // F3 is Find Next (Shift+F3 is Find Previous while the find panel is open, and Insert Function otherwise: see the InsertFunction handler).
+        KeyBinding::new("f3", SheetFindNext, c),
+        KeyBinding::new("f3", SheetFindNext, p),
+        KeyBinding::new("shift-f3", SheetFindPrevious, p),
         KeyBinding::new(&m("a"), SelectAllCells, c),
         KeyBinding::new("enter", CellEnter, c),
         KeyBinding::new("ctrl-enter", CellFillSelection, c),
@@ -369,8 +409,10 @@ impl FormatEditor for Workbook {
 
     fn sidebar(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<crate::shell::chrome::SidebarPanel> {
         let chain = |editor: &mut SlideEditor, cx: &mut Context<SlideEditor>| {
-            editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel")).or_else(|| editor.custom_format_panel(cx)).or_else(|| editor.page_setup_panel(cx).map(|panel| panel.modal_named("page_setup_panel"))).or_else(|| editor.header_footer_edit_panel(cx)).or_else(|| editor.cell_link_panel(cx).map(|panel| panel.modal_named("cell_link_panel"))).or_else(|| editor.sheet_find_panel(cx)).or_else(|| editor.sheet_spelling_panel(cx).map(|panel| panel.modal_named("sheet_spelling_panel"))).or_else(|| editor.validation_panel(cx).map(|panel| panel.modal_named("validation_panel"))).or_else(|| editor.names_panel(cx).map(|panel|panel.modal_named("names_panel"))).or_else(|| editor.conditional_panel(cx).map(|panel|panel.modal_named("conditional_panel"))).or_else(|| editor.sort_panel(cx).map(|panel| if editor.wb().sort_edit.as_ref().is_some_and(|p|p.editor.is_some()){panel.modal_named("sort_level_editor")}else{panel})).or_else(|| editor.edit_panel(cx)).or_else(|| editor.sheet_chart_panel(cx))
+            editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel")).or_else(|| editor.custom_format_panel(cx)).or_else(|| editor.page_setup_panel(cx).map(|panel| panel.modal_named("page_setup_panel"))).or_else(|| editor.xlsx_print_panel(cx).map(|panel| panel.modal_named("xlsx_print_panel"))).or_else(|| editor.header_footer_edit_panel(cx)).or_else(|| editor.cell_link_panel(cx).map(|panel| panel.modal_named("cell_link_panel"))).or_else(|| editor.sheet_find_panel(cx)).or_else(|| editor.sheet_spelling_panel(cx).map(|panel| panel.modal_named("sheet_spelling_panel"))).or_else(|| editor.validation_panel(cx).map(|panel| panel.modal_named("validation_panel"))).or_else(|| editor.names_panel(cx)).or_else(|| editor.conditional_panel(cx).map(|panel|panel.modal_named(if editor.wb().conditional_edit.as_ref().is_some_and(|p|!p.manager&&p.parent.is_some()){"conditional_rule_editor"}else{"conditional_panel"}))).or_else(|| editor.sort_panel(cx).map(|panel| if editor.wb().sort_edit.as_ref().is_some_and(|p|p.editor.is_some()){panel.modal_named("sort_level_editor")}else{panel})).or_else(|| editor.edit_panel(cx)).or_else(|| editor.sheet_chart_panel(cx))
         };
+        // The pane's input fields show the document's values (Undo, Redo, another cell, an external update).
+        editor.sync_format_panel(window, cx);
         let panel = chain(editor, cx);
         // No tabs: the pane shows what is selected (right_pane.rs).
         if editor.sync_right_pane(panel.is_some(), window, cx) { chain(editor, cx) } else { panel }
@@ -420,7 +462,7 @@ impl FormatEditor for Workbook {
             _ => None,
         });
         conditional::apply_ahead(sheets.collect());
-        FormatState::Workbook(State { range_pick: None, range_pick_click_release: false, cells: HashMap::new(), cell_ends: HashMap::new(), cell_drag: false, deselect_drag: None, split_drag: None, jump: sheet_ui::CellJump::new(window, cx), cell_edit: None, bar_bounds: Default::default(), bar_expanded: false, bar_visual_lines: Vec::new(), bar_caret_row:None, bar_shapes:Vec::new(), bar_scroll: ScrollHandle::new(), clip: None, header_geometry: Default::default(), header_drag: None, timeline_drag: None, control_drag: None, ruler_margin_drag: None, header_select: None, header_hover: None, header_popup: None, fill_source: None, cell_move: None, fill_copy: false, move_overwrite: None, tab_start: None, painter: None, names: None, validation: None, validation_warning: None, list_popup: None, validation_choices: None, validation_rejected: None, validation_message_bounds: None, filter_panel: None, comment_hover: None, table_dialog: None, chart_edit: None, last_fill: None, last_paste: None, find: None, spelling: None, link: None, page_setup: false, header_footer_edit: None, custom_format: None, format_open: [true; 6], conditional_edit: None, sort_edit: None, panels: Default::default(), links_notice: crate::shell::settings_window::links_warning_enabled() && presentation.workbook.as_ref().is_some_and(|w| w.external_books.iter().any(|b| !b.broken && !b.name.is_empty())), border_line: ibis_doc_model::BorderLine::Thin, border_color: ibis_doc_model::Rgb::BLACK, tab_drag: None, tab_scroll: ScrollHandle::new(), tab_reveal: None, tab_last_click: None, right_key: None, show_formula_bar: true, validation_circles: false, unlocked_ranges: HashSet::new(), trace_arrows: Vec::new(), calc_warmup_started: false, print_what: PrintWhat::ActiveSheet, shape_selection: Vec::new(), always_create_backup: None, show_all_notes: false, design_mode: false, status_summary_mask: STATUS_SUMMARY_DEFAULT })
+        FormatState::Workbook(State { range_pick: None, range_pick_click_release: false, cells: HashMap::new(), cell_ends: HashMap::new(), cell_drag: false, deselect_drag: None, split_drag: None, jump: sheet_ui::CellJump::new(window, cx), cell_edit: None, bar_bounds: Default::default(), bar_expanded: false, bar_visual_lines: Vec::new(), bar_caret_row:None, bar_shapes:Vec::new(), bar_scroll: ScrollHandle::new(), clip: None, header_geometry: Default::default(), header_drag: None, timeline_drag: None, control_drag: None, ruler_margin_drag: None, header_select: None, header_hover: None, header_popup: None, fill_source: None, cell_move: None, fill_copy: false, move_overwrite: None, tab_start: None, painter: None, names: None, validation: None, validation_warning: None, list_popup: None, validation_choices: None, validation_rejected: None, validation_message_bounds: None, filter_panel: None, comment_hover: None, note_card: Default::default(), comment_scroll: ScrollHandle::new(), comment_popup: Default::default(), table_dialog: None, chart_edit: None, last_fill: None, last_paste: None, find: None, spelling: None, link: None, page_setup: false, print_panel: false, header_footer_edit: None, custom_format: None, format_tab: 0, conditional_edit: None, sort_edit: None, panels: Default::default(), links_notice: crate::shell::settings_window::links_warning_enabled() && presentation.workbook.as_ref().is_some_and(|w| w.external_books.iter().any(|b| !b.broken && !b.name.is_empty())), border_line: ibis_doc_model::BorderLine::Thin, border_color: ibis_doc_model::Rgb::BLACK, tab_drag: None, tab_scroll: ScrollHandle::new(), tab_reveal: None, tab_last_click: None, right_key: None, pivot_pane: Default::default(), show_formula_bar: true, validation_circles: false, unlocked_ranges: HashSet::new(), trace_arrows: Vec::new(), calc_warmup_started: false, print_what: PrintWhat::ActiveSheet, shape_selection: Vec::new(), always_create_backup: None, show_all_notes: false, design_mode: false, status_summary_mask: STATUS_SUMMARY_DEFAULT })
     }
 
     /// A worksheet at its own zoom, as Excel shows it.
@@ -637,6 +679,9 @@ impl FormatEditor for Workbook {
             .flex_col()
             .flex_1()
             .min_h_0();
+        if let Some(bar) = editor.render_infobar(cx) {
+            body = body.child(bar);
+        }
         if show_formula_bar {
             body = body.child(editor.render_formula_bar(window, cx));
         }
@@ -649,10 +694,15 @@ impl FormatEditor for Workbook {
         if let Some(banner) = editor.render_links_banner(cx) {
             body = body.child(banner);
         }
-        body
-            .child(div().flex().flex_row().flex_1().min_h_0().child(editor.render_workspace(window, cx)))
-            .child(editor.render_sheet_tabs(cx))
-            .into_any_element()
+        // The data grid embedded in a chart's pane (its data lives on one sheet) shows no sheet tabs; a workbook
+        // with several sheets (one that was read, whose series point into more than one) shows them, to reach and add sheets.
+        let tabs = editor.shows_sheet_tabs();
+        let body = body.child(div().flex().flex_row().flex_1().min_h_0().child(editor.render_workspace(window, cx)));
+        if tabs {
+            body.child(editor.render_sheet_tabs(cx)).into_any_element()
+        } else {
+            body.into_any_element()
+        }
     }
 }
 
@@ -662,6 +712,12 @@ fn sheet_zoom(sheet: &ibis_doc_model::Sheet) -> f32 {
 }
 
 impl SlideEditor {
+    /// Whether the sheet tabs are shown: always, except in the data grid embedded in a chart's pane, where only a workbook of
+    /// several sheets has them (a chart's data is on one sheet, and a new sheet would be out of its series' reach).
+    pub(crate) fn shows_sheet_tabs(&self) -> bool {
+        !self.grid_only || self.presentation().slides.len() > 1
+    }
+
     /// The workbook's state. Only for code that runs with a workbook open
     /// (the workbook's views and actions); elsewhere use `sheet_state`.
     pub(crate) fn wb(&self) -> &State {
@@ -678,18 +734,10 @@ impl SlideEditor {
         if self.cell_caret_page(forward, cx) {
             return;
         }
-        let (Some(content), Some(ws)) = (self.workspace_content(), self.workspace_bounds) else { return };
+        let Some((page, step_rows, default_row)) = self.sheet_page_geometry() else { return };
+        let Some(ws) = self.workspace_bounds else { return };
         let offset = self.workspace_scroll.offset();
-        // Less the column headers, which cover the top of the view.
-        let headings = self.current_sheet().map_or(true, |(_, s)| s.headings);
-        let head_h = if headings { sheet_ui::COLUMN_HEADER_HEIGHT } else { 0.0 };
-        let page = (f32::from(ws.size.height) - head_h).max(1.0);
-        let scale = content.scale;
-        let default_row = self.current_sheet().map_or(20 * ibis_doc_model::EMU_PER_POINT, |(_, s)| {
-            if s.default_row > 0 { s.default_row } else { 20 * ibis_doc_model::EMU_PER_POINT }
-        });
-        let row_h_px = (default_row as f32 * scale).max(1.0);
-        let step_rows = ((page / row_h_px).round() as u32).max(1);
+        let scale = self.workspace_content().map_or(1.0, |c| c.scale);
 
         let (column, row) = self.current_cell().unwrap_or((0, 0));
         let new_row = if forward {
@@ -705,6 +753,49 @@ impl SlideEditor {
         let top = (-f32::from(offset.y) + if forward { page } else { -page }).clamp(0.0, max);
         self.workspace_scroll.set_offset(point(offset.x, px(-top)));
         self.scroll_cell_into_view();
+        cx.notify();
+    }
+
+    /// The height of a screen of cells in pixels (less the column headers, which cover the top of the view), the
+    /// number of default-height rows in it, and the default row height in EMU.
+    fn sheet_page_geometry(&self) -> Option<(f32, u32, i64)> {
+        let (content, ws) = (self.workspace_content()?, self.workspace_bounds?);
+        let headings = self.current_sheet().map_or(true, |(_, s)| s.headings);
+        let head_h = if headings { sheet_ui::COLUMN_HEADER_HEIGHT } else { 0.0 };
+        let page = (f32::from(ws.size.height) - head_h).max(1.0);
+        let default_row = self.current_sheet().map_or(20 * ibis_doc_model::EMU_PER_POINT, |(_, s)| {
+            if s.default_row > 0 { s.default_row } else { 20 * ibis_doc_model::EMU_PER_POINT }
+        });
+        let row_h_px = (default_row as f32 * content.scale).max(1.0);
+        Some((page, ((page / row_h_px).round() as u32).max(1), default_row))
+    }
+
+    /// Shift+PageDown / Shift+PageUp: stretch the selected range by a screen, the end that moves staying in view.
+    pub(crate) fn extend_sheet_page(&mut self, forward: bool, cx: &mut Context<Self>) {
+        if self.editing.is_some() || self.cell_edit().is_some() {
+            return;
+        }
+        let (Some((_, step_rows, _)), Some((column, row))) = (self.sheet_page_geometry(), self.current_cell()) else { return };
+        let end_row = self.sheet_state().and_then(|s| s.cell_ends.get(&self.current_slide).copied()).map_or(row, |e| e.1);
+        let new_row = if forward { (end_row + step_rows).min(sheet_ui::MAX_SHEET_ROWS - 1) } else { end_row.saturating_sub(step_rows) };
+        let end_column = self.sheet_state().and_then(|s| s.cell_ends.get(&self.current_slide).copied()).map_or(column, |e| e.0);
+        let slide = self.current_slide;
+        let was_kept = self.selected_ranges().len() > 1;
+        if (end_column, new_row) == (column, row) {
+            self.wb_mut().cell_ends.remove(&slide);
+        } else {
+            self.wb_mut().cell_ends.insert(slide, (end_column, new_row));
+        }
+        self.extra_ranges_follow(was_kept);
+        // A screen scrolls with the selection, and the end is then brought into view.
+        if let (Some((page, _, _)), Some(ws)) = (self.sheet_page_geometry(), self.workspace_bounds) {
+            let offset = self.workspace_scroll.offset();
+            let (default_row, scale) = (self.current_sheet().map_or(20 * ibis_doc_model::EMU_PER_POINT, |(_, s)| s.default_row.max(1)), self.workspace_content().map_or(1.0, |c| c.scale));
+            let max = ((sheet_ui::MAX_SHEET_ROWS as i64 * default_row) as f32 * scale - f32::from(ws.size.height)).max(0.0);
+            let top = (-f32::from(offset.y) + if forward { page } else { -page }).clamp(0.0, max);
+            self.workspace_scroll.set_offset(point(offset.x, px(-top)));
+        }
+        self.scroll_selection_end_into_view();
         cx.notify();
     }
 }

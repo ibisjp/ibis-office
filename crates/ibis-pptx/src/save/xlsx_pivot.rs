@@ -358,6 +358,9 @@ fn table_xml(p: &PivotTable, cache_id: u32) -> String {
     out += &format!(r#"<pivotFields count="{}">"#, p.fields.len());
     for (i, f) in p.fields.iter().enumerate() {
         out += "<pivotField";
+        if let Some(n) = p.aliases.field(i) {
+            out += &format!(r#" name="{}""#, esc(n));
+        }
         let axis = match p.place_of(i).map(|(a, _)| a).filter(|a| *a != PivotAxis::Values) {
             Some(PivotAxis::Row) => Some("axisRow"),
             Some(PivotAxis::Column) => Some("axisCol"),
@@ -415,7 +418,8 @@ fn table_xml(p: &PivotTable, cache_id: u32) -> String {
                 let count = group_items.len() + if default_subtotal { 1 } else { 0 };
                 out += &format!(r#"><items count="{count}">"#);
                 for idx in 0..group_items.len() {
-                    out += &format!(r#"<item x="{idx}"/>"#);
+                    let sd = if f.items.get(idx).is_some_and(|it| it.collapsed) { r#" sd="0""# } else { "" };
+                    out += &format!(r#"<item{sd} x="{idx}"/>"#);
                 }
                 if default_subtotal {
                     out += r#"<item t="default"/>"#;
@@ -432,7 +436,9 @@ fn table_xml(p: &PivotTable, cache_id: u32) -> String {
                 out += &format!(r#"><items count="{count}">"#);
                 for it in data_items {
                     if let Some(x) = it.x {
-                        out += &format!(r#"<item x="{x}"{}/>"#, if it.hidden { r#" h="1""# } else { "" });
+                        let alias = f.shared.get(x as usize).and_then(|v| p.aliases.item(i, &ibis_doc_model::pivot_item_key(v)));
+                        let n_attr = alias.map(|n| format!(r#" n="{}""#, esc(n))).unwrap_or_default();
+                        out += &format!(r#"<item{n_attr}{} x="{x}"{}/>"#, if it.collapsed { r#" sd="0""# } else { "" }, if it.hidden { r#" h="1""# } else { "" });
                     }
                 }
                 for k in 0..calc_count {
@@ -654,6 +660,10 @@ pub(crate) fn write_pivots(package: &mut Package, sheet_part: &str, workbook: &s
                         if let Some(fields) = doc.child(root, "cacheFields") {
                             let nodes: Vec<_> = doc.children_named(fields, "cacheField").collect();
                             for (i, (node, f)) in nodes.into_iter().zip(&n.fields).enumerate() {
+                                // A group field of the file keeps its group items (not shared items of the source).
+                                if f.group_base.is_some() {
+                                    continue;
+                                }
                                 let Some(shared) = doc.child(node, "sharedItems") else { continue };
                                 let doc_count = doc.children(shared).iter().filter(|&&c| doc.is_element(c)).count();
                                 let axis = n.place_of(i).map(|(a, _)| a);

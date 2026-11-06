@@ -591,7 +591,7 @@ impl SlideEditor {
                 let mut row4 = crate::shell::chrome::action_bar();
                 row4 = row4.action(mark_action("scenario-close", crate::shell::chrome::ActionDefinition::new("sc-close-btn", "", crate::shell::chrome::ActionButtonKind::Normal)
                         .label(text("_shell.close"))
-                        .on_click(cx.listener(|e, _, w, cx| e.close_panel_dialog(w, cx)))));
+                        .on_click(cx.listener(|e, _, w, cx| e.close_dialog(w, cx)))));
                 panel_fixed_actions = panel_fixed_actions.actions((row4).into_definitions());
             }
             ScenarioDialogMode::AddOrEdit => {

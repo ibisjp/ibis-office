@@ -39,23 +39,36 @@ pub(super) fn get(name: &str) -> Option<Func> {
             let i = c.eval_scalar_or_array(&a[0]);
             let date1904 = c.date1904();
             match i {
+                // An array of indexes: one value for each, the choices spread the same way (a single row, column or value repeats; past the end of a longer array is #N/A).
                 Value::Array(arr) => {
-                    let data = arr
-                        .data
-                        .iter()
-                        .map(|v| match to_number(v, date1904) {
-                            Ok(n) if n >= 1.0 && (n as usize) < a.len() => {
-                                let v = c.eval_scalar_or_array(&a[n as usize]);
-                                match v {
-                                    Value::Array(x) => x.data.first().cloned().unwrap_or(Value::Empty),
-                                    v => v,
-                                }
-                            }
-                            Ok(_) => err(CellError::Value),
-                            Err(e) => err(e),
-                        })
-                        .collect();
-                    array_value(arr.rows, arr.columns, data)
+                    let mut choices: Vec<Rc<Array>> = Vec::new();
+                    for e in &a[1..] {
+                        match c.eval_array(e) {
+                            Value::Array(x) => choices.push(x),
+                            Value::Error(e) => choices.push(Rc::new(Array::new(1, 1, vec![err(e)]))),
+                            v => choices.push(Rc::new(Array::new(1, 1, vec![v]))),
+                        }
+                    }
+                    let rows = choices.iter().map(|x| x.rows).chain([arr.rows]).max().unwrap_or(1);
+                    let columns = choices.iter().map(|x| x.columns).chain([arr.columns]).max().unwrap_or(1);
+                    let at = |x: &Array, i: usize, j: usize| -> Value {
+                        let (ri, cj) = (if x.rows == 1 { 0 } else { i }, if x.columns == 1 { 0 } else { j });
+                        if ri < x.rows && cj < x.columns { x.get(ri, cj).clone() } else { err(CellError::NA) }
+                    };
+                    let mut data = Vec::with_capacity(rows * columns);
+                    for i in 0..rows {
+                        for j in 0..columns {
+                            data.push(match at(&arr, i, j) {
+                                Value::Error(e) => err(e),
+                                v => match to_number(&v, date1904) {
+                                    Ok(n) if n >= 1.0 && (n.trunc() as usize) <= choices.len() => empty_zero(at(&choices[n.trunc() as usize - 1], i, j)),
+                                    Ok(_) => err(CellError::Value),
+                                    Err(e) => err(e),
+                                },
+                            });
+                        }
+                    }
+                    array_value(rows, columns, data)
                 }
                 v => match to_number(&v, date1904) {
                     Ok(n) if n >= 1.0 && (n.trunc() as usize) < a.len() => match c.eval(&a[n.trunc() as usize]) {
@@ -100,10 +113,18 @@ pub(super) fn get(name: &str) -> Option<Func> {
             array_value(x.columns, x.rows, data)
         },
         "FORMULATEXT" => |c, a| match c.eval(&a[0]) {
-            Value::Ref(r) => match c.book.formula(r[0].sheet, r[0].first_row, r[0].first_column) {
-                Some(f) => Value::Text(format!("={f}")),
-                None => err(CellError::NA),
-            },
+            // A range gives the text of each cell.
+            Value::Ref(r) => {
+                let area = r[0];
+                let (rows, columns) = (area.rows().min(1_048_576) as usize, area.columns().min(16_384) as usize);
+                let data: Vec<Value> = (0..rows * columns)
+                    .map(|k| match c.book.formula(area.sheet, area.first_row + (k / columns) as u32, area.first_column + (k % columns) as u32) {
+                        Some(f) => Value::Text(format!("={f}")),
+                        None => err(CellError::NA),
+                    })
+                    .collect();
+                if data.len() == 1 { data[0].clone() } else { array_value(rows, columns, data) }
+            }
             Value::Error(e) => err(e),
             _ => err(CellError::NA),
         },
@@ -193,7 +214,7 @@ pub(super) fn get(name: &str) -> Option<Func> {
         "CHOOSECOLS" => |c, a| choose_lines(c, a, false),
         "TRIMRANGE" => trimrange,
         "SINGLE" => |c, a| match c.eval(&a[0]) {
-            Value::Ref(r) => c.deref_implicit(&r),
+            Value::Ref(r) => c.implicit_ref(&r),
             Value::Array(x) => x.data.first().cloned().unwrap_or(Value::Empty),
             v => v,
         },
@@ -224,6 +245,8 @@ fn row_column(c: &mut Ctx, a: &[Expr], row: bool) -> Value {
         None | Some(Expr::Missing) => Area::cell(c.sheet, c.row, c.column),
         Some(e) => match c.eval(e) {
             Value::Ref(r) if r.len() == 1 => r[0],
+            // Several areas have no one row or column.
+            Value::Ref(_) => return err(CellError::Ref),
             Value::Error(e) => return err(e),
             _ => return err(CellError::Value),
         },
@@ -300,34 +323,81 @@ fn address(c: &mut Ctx, a: &[Expr]) -> Value {
 }
 
 fn index(c: &mut Ctx, a: &[Expr]) -> Value {
-    let num = |c: &mut Ctx, i: usize| -> Result<f64, CellError> {
-        match a.get(i) {
-            None | Some(Expr::Missing) => Ok(0.0),
-            Some(_) => arg_num(c, a, i).map(f64::trunc),
+    let given = |i: usize| a.get(i).is_some_and(|e| !matches!(e, Expr::Missing));
+    let part = |c: &mut Ctx, i: usize| -> Value { if given(i) { c.eval_scalar_or_array(&a[i]) } else { Value::Number(0.0) } };
+    let (row_v, column_v) = (part(c, 1), part(c, 2));
+    let which = match a.get(3) {
+        None => Ok(1.0),
+        Some(_) => match arg_num(c, a, 3).map(f64::trunc) {
+            Ok(n) if n >= 1.0 => Ok(n),
+            Ok(_) => Err(CellError::Value),
+            Err(e) => Err(e),
+        },
+    };
+    let base = c.eval(&a[0]);
+    let number_of = |c: &mut Ctx, v: &Value| -> Result<f64, CellError> {
+        match v {
+            Value::Error(e) => Err(*e),
+            v => to_number(v, c.date1904()).map(f64::trunc),
         }
     };
-    let (row, column) = match (num(c, 1), num(c, 2)) {
-        (Ok(r), Ok(col)) => (r, col),
+    // An array of rows or columns: the result is as big as they are (a row or column of one repeats), each place being INDEX of the two numbers there.
+    if matches!(row_v, Value::Array(_)) || matches!(column_v, Value::Array(_)) {
+        let as_array = |v: &Value| match v {
+            Value::Array(x) => x.clone(),
+            v => Rc::new(Array::new(1, 1, vec![v.clone()])),
+        };
+        let (rv, cv) = (as_array(&row_v), as_array(&column_v));
+        let (rows, columns) = (rv.rows.max(cv.rows), rv.columns.max(cv.columns));
+        let at = |x: &Array, i: usize, j: usize| -> Value {
+            let (ri, cj) = (if x.rows == 1 { 0 } else { i }, if x.columns == 1 { 0 } else { j });
+            if ri < x.rows && cj < x.columns { x.get(ri, cj).clone() } else { err(CellError::NA) }
+        };
+        let mut data = Vec::with_capacity(rows * columns);
+        for i in 0..rows {
+            for j in 0..columns {
+                let (r, cl) = (number_of(c, &at(&rv, i, j)), number_of(c, &at(&cv, i, j)));
+                let one = match (r, cl) {
+                    (Ok(r), Ok(cl)) if r >= 0.0 && cl >= 0.0 => index_pick(c, base.clone(), a.len(), r, cl, which),
+                    (Err(e), _) | (_, Err(e)) => err(e),
+                    _ => err(CellError::Value),
+                };
+                // Where INDEX gives a row or column, the place holds its first value.
+                data.push(match one {
+                    Value::Ref(r) => match c.ref_to_array(&r) {
+                        Value::Array(x) => x.data.first().cloned().unwrap_or(Value::Empty),
+                        v => v,
+                    },
+                    Value::Array(x) => x.data.first().cloned().unwrap_or(Value::Empty),
+                    v => v,
+                });
+            }
+        }
+        return array_value(rows, columns, data);
+    }
+    let (row, column) = match (number_of(c, &row_v), number_of(c, &column_v)) {
+        (Ok(r), Ok(cl)) => (r, cl),
         (Err(e), _) | (_, Err(e)) => return err(e),
     };
     if row < 0.0 || column < 0.0 {
         return err(CellError::Value);
     }
-    match c.eval(&a[0]) {
+    index_pick(c, base, a.len(), row, column, which)
+}
+
+/// INDEX of one row number and one column number (`argc` is how many arguments the formula has).
+fn index_pick(_c: &mut Ctx, base: Value, argc: usize, row: f64, column: f64, which: Result<f64, CellError>) -> Value {
+    match base {
         Value::Ref(areas) => {
-            let which = match a.get(3) {
-                None => 1.0,
-                Some(_) => match num(c, 3) {
-                    Ok(n) if n >= 1.0 => n,
-                    Ok(_) => return err(CellError::Value),
-                    Err(e) => return err(e),
-                },
+            let which = match which {
+                Ok(n) => n,
+                Err(e) => return err(e),
             };
             let Some(area) = areas.get(which as usize - 1).copied() else { return err(CellError::Ref) };
             // A single row or column: one number picks along it.
-            let (row, column) = if a.len() == 2 && area.rows() == 1 { (1.0, row) } else { (row, column) };
+            let (row, column) = if argc == 2 && area.rows() == 1 { (1.0, row) } else { (row, column) };
             // One number for a range of several rows and columns.
-            if a.len() == 2 && area.rows() > 1 && area.columns() > 1 {
+            if argc == 2 && area.rows() > 1 && area.columns() > 1 {
                 return err(CellError::Ref);
             }
             if row > area.rows() as f64 || column > area.columns() as f64 {
@@ -343,7 +413,7 @@ fn index(c: &mut Ctx, a: &[Expr]) -> Value {
                 Value::Array(x) => x,
                 other => Rc::new(Array::new(1, 1, vec![other])),
             };
-            let (row, column) = if a.len() == 2 && arr.rows == 1 { (1.0, row) } else { (row, column) };
+            let (row, column) = if argc == 2 && arr.rows == 1 { (1.0, row) } else { (row, column) };
             if row > arr.rows as f64 || column > arr.columns as f64 {
                 return err(CellError::Ref);
             }
@@ -363,10 +433,21 @@ fn offset(c: &mut Ctx, a: &[Expr]) -> Value {
         Value::Error(e) => return err(e),
         _ => return err(CellError::Value),
     };
+    // An array where a number is wanted: an array of #VALUE! of its shape, a reference cannot be one element of an array (Excel, #106).
+    let given: Vec<Option<Value>> = (1..5)
+        .map(|i| match a.get(i) {
+            None | Some(Expr::Missing) => None,
+            Some(e) => Some(c.eval_scalar_or_array(e)),
+        })
+        .collect();
+    if given.iter().flatten().any(|v| matches!(v, Value::Array(_))) {
+        let values = given.into_iter().map(|v| v.unwrap_or(Value::Number(0.0))).collect();
+        return c.map_values(values, &mut |_, _| err(CellError::Value));
+    }
     let num = |c: &mut Ctx, i: usize, d: f64| -> Result<f64, CellError> {
-        match a.get(i) {
-            None | Some(Expr::Missing) => Ok(d),
-            Some(_) => arg_num(c, a, i).map(f64::trunc),
+        match given.get(i - 1) {
+            Some(Some(v)) => to_number(v, c.date1904()).map(f64::trunc),
+            _ => Ok(d),
         }
     };
     let (rows, columns, height, width) = match (num(c, 1, 0.0), num(c, 2, 0.0), num(c, 3, area.rows() as f64), num(c, 4, area.columns() as f64)) {
@@ -842,9 +923,23 @@ fn xlookup(c: &mut Ctx, a: &[Expr]) -> Value {
         Value::Lambda(_) => return err(CellError::Value),
         v => Rc::new(Array::new(1, 1, vec![v])),
     };
-    let results = match arg_array(c, &a[2]) {
-        Ok(t) => t,
-        Err(e) => return err(e),
+    // A range of results stays a reference: the found row or column is a reference too (Excel).
+    let previous = c.in_array_context;
+    c.in_array_context = true;
+    let results_value = c.eval(&a[2]);
+    c.in_array_context = previous;
+    let results_area = match &results_value {
+        Value::Ref(r) if r.len() == 1 && r[0].sheet == r[0].last_sheet => Some(r[0]),
+        _ => None,
+    };
+    let results = match match results_value {
+        Value::Ref(r) => c.ref_to_array(&r),
+        Value::Omitted => Value::Empty,
+        v => v,
+    } {
+        Value::Array(t) => t,
+        Value::Error(e) => return err(e),
+        v => Rc::new(Array::new(1, 1, vec![v])),
     };
     let (mode, search) = match (opt_int(c, a, 4, 0), opt_int(c, a, 5, 1)) {
         (Ok(m), Ok(s)) => (m, s),
@@ -859,6 +954,7 @@ fn xlookup(c: &mut Ctx, a: &[Expr]) -> Value {
         return err(CellError::Value);
     }
     let key_value = c.eval_scalar_or_array(&a[0]);
+    let key_is_array = matches!(key_value, Value::Array(_));
     let not_found = a.get(3).filter(|e| !matches!(e, Expr::Missing)).cloned();
     let one = |c: &mut Ctx, key: &Value| -> Value {
         if let Value::Error(e) = key {
@@ -867,6 +963,15 @@ fn xlookup(c: &mut Ctx, a: &[Expr]) -> Value {
         match xsearch(&keys.data, key, mode, search) {
             Err(e) => err(e),
             Ok(Some(_)) if mismatch => err(CellError::Value),
+            Ok(Some(i)) if results_area.is_some() && !key_is_array => {
+                let area = results_area.unwrap_or_else(|| Area::cell(0, 0, 0));
+                let found = if vertical {
+                    Area { first_row: area.first_row + i as u32, last_row: area.first_row + i as u32, ..area }
+                } else {
+                    Area { first_column: area.first_column + i as u32, last_column: area.first_column + i as u32, ..area }
+                };
+                Value::Ref(Rc::new(vec![found]))
+            }
             Ok(Some(i)) => {
                 if vertical {
                     if results.columns == 1 {
@@ -881,7 +986,14 @@ fn xlookup(c: &mut Ctx, a: &[Expr]) -> Value {
                 }
             }
             Ok(None) => match &not_found {
-                Some(e) => empty_zero(c.eval_scalar_or_array(e)),
+                Some(e) => {
+                    // The not-found argument is given as it is: a cell stays a reference.
+                    let v = c.eval(e);
+                    match v {
+                        Value::Ref(r) if !key_is_array && !c.in_array_context => Value::Ref(r),
+                        v => empty_zero(c.scalar_or_array_of(v)),
+                    }
+                }
                 None => err(CellError::NA),
             },
         }
@@ -1152,36 +1264,42 @@ fn take_drop(c: &mut Ctx, a: &[Expr], take: bool) -> Value {
     c.in_array_context=true;
     let value=c.eval(&a[0]);
     c.in_array_context=previous;
-    let area = match (take,&value) {
-        (true,Value::Ref(r)) if r.len() == 1 && r[0].sheet == r[0].last_sheet => Some(r[0]),
+    // A range stays a reference (TAKE and DROP both: GitHub #101).
+    let area = match &value {
+        Value::Ref(r) if r.len() == 1 && r[0].sheet == r[0].last_sheet => Some(r[0]),
         _ => None,
     };
-    let x=if area.is_some(){None}else{
-        let value=match value{Value::Ref(r)=>c.ref_to_array(&r),Value::Omitted=>Value::Empty,v=>v};
-        Some(match value{
-            Value::Array(a)=>a,
-            Value::Error(e)=>return err(e),
-            Value::Lambda(_)=>return err(CellError::Value),
-            v=>Rc::new(Array::new(1,1,vec![v])),
+    // The counts: a value, or an array of them (the result is then an array, a place for each pair of counts).
+    let mut count_values = Vec::new();
+    for i in 1..=2 {
+        count_values.push(match a.get(i) {
+            None | Some(Expr::Missing) => None,
+            Some(e) => Some(c.eval_scalar_or_array(e)),
+        });
+    }
+    let as_array = |v: &Option<Value>| -> Option<Rc<Array>> {
+        match v {
+            Some(Value::Array(x)) => Some(x.clone()),
+            _ => None,
+        }
+    };
+    let count_of = |c: &mut Ctx, v: &Value| -> Result<i64, CellError> {
+        match v {
+            Value::Error(e) => Err(*e),
+            v => to_number(v, c.date1904()).map(|n| n.trunc() as i64),
+        }
+    };
+    let x = if area.is_some() { None } else {
+        let value = match value { Value::Ref(r) => c.ref_to_array(&r), Value::Omitted => Value::Empty, v => v };
+        Some(match value {
+            Value::Array(a) => a,
+            Value::Error(e) => return err(e),
+            v => Rc::new(Array::new(1, 1, vec![v])),
         })
     };
     let (rows, columns) = match area {
         Some(a) => (a.rows() as usize, a.columns() as usize),
-        None => { let x=x.as_ref().unwrap(); (x.rows,x.columns) },
-    };
-    let rows_arg = match a.get(1) {
-        None | Some(Expr::Missing) => None,
-        Some(_) => match arg_num(c, a, 1) {
-            Ok(n) => Some(n.trunc() as i64),
-            Err(e) => return err(e),
-        },
-    };
-    let cols_arg = match a.get(2) {
-        None | Some(Expr::Missing) => None,
-        Some(_) => match arg_num(c, a, 2) {
-            Ok(n) => Some(n.trunc() as i64),
-            Err(e) => return err(e),
-        },
+        None => { let x = x.as_ref().unwrap(); (x.rows, x.columns) },
     };
     let range = |n: Option<i64>, len: usize| -> Option<(usize, usize)> {
         let len = len as i64;
@@ -1196,32 +1314,70 @@ fn take_drop(c: &mut Ctx, a: &[Expr], take: bool) -> Value {
         };
         (e > s).then_some((s as usize, e as usize))
     };
-    if take && (rows_arg == Some(0) || cols_arg == Some(0)) {
-        return err(CellError::Value);
-    }
-    let (Some((r0, r1)), Some((c0, c1))) = (range(rows_arg, rows), range(cols_arg, columns)) else {
-        return err(CellError::Value);
+    // One result for one pair of counts.
+    let one = |rows_arg: Option<i64>, cols_arg: Option<i64>| -> Value {
+        // Nothing left (a count of 0 for TAKE, or everything dropped) is #CALC!.
+        let (Some((r0, r1)), Some((c0, c1))) = (range(rows_arg, rows), range(cols_arg, columns)) else {
+            return err(CellError::Calc);
+        };
+        if let Some(area) = area {
+            return Value::Ref(Rc::new(vec![Area {
+                first_row: area.first_row + r0 as u32, last_row: area.first_row + r1 as u32 - 1,
+                first_column: area.first_column + c0 as u32, last_column: area.first_column + c1 as u32 - 1,
+                ..area
+            }]));
+        }
+        let x = x.as_ref().unwrap();
+        let mut data = Vec::new();
+        for r in r0..r1 {
+            for col in c0..c1 {
+                data.push(x.get(r, col).clone());
+            }
+        }
+        if r1 - r0 == 1 && c1 - c0 == 1 {
+            if let Some(Value::Error(e)) = data.first() {
+                return Value::Error(*e);
+            }
+        }
+        array_value(r1 - r0, c1 - c0, data)
     };
-    if let Some(area) = area {
-        return Value::Ref(Rc::new(vec![Area {
-            first_row: area.first_row+r0 as u32, last_row: area.first_row+r1 as u32-1,
-            first_column: area.first_column+c0 as u32, last_column: area.first_column+c1 as u32-1,
-            ..area
-        }]));
+    let (rows_array, cols_array) = (as_array(&count_values[0]), as_array(&count_values[1]));
+    if rows_array.is_none() && cols_array.is_none() {
+        let mut counts = [None, None];
+        for (k, v) in count_values.iter().enumerate() {
+            if let Some(v) = v {
+                match count_of(c, v) {
+                    Ok(n) => counts[k] = Some(n),
+                    Err(e) => return err(e),
+                }
+            }
+        }
+        return one(counts[0], counts[1]);
     }
-    let x=x.unwrap();
-    let mut data = Vec::new();
-    for r in r0..r1 {
-        for col in c0..c1 {
-            data.push(x.get(r, col).clone());
+    // Arrays of counts: a place for each pair, holding that TAKE or DROP (a reference where the data is one; a cell shows it as #VALUE!).
+    let shape = |x: &Option<Rc<Array>>| x.as_ref().map_or((1, 1), |x| (x.rows, x.columns));
+    let ((r1, c1), (r2, c2)) = (shape(&rows_array), shape(&cols_array));
+    let (out_rows, out_columns) = (r1.max(r2), c1.max(c2));
+    let pick = |c: &mut Ctx, v: &Option<Value>, arr: &Option<Rc<Array>>, i: usize, j: usize| -> Result<Option<i64>, CellError> {
+        match (v, arr) {
+            (None, _) => Ok(None),
+            (Some(_), Some(x)) => {
+                let (ri, cj) = (if x.rows == 1 { 0 } else { i }, if x.columns == 1 { 0 } else { j });
+                if ri < x.rows && cj < x.columns { count_of(c, &x.get(ri, cj).clone()).map(Some) } else { Err(CellError::NA) }
+            }
+            (Some(v), None) => count_of(c, v).map(Some),
+        }
+    };
+    let mut data = Vec::with_capacity(out_rows * out_columns);
+    for i in 0..out_rows {
+        for j in 0..out_columns {
+            data.push(match (pick(c, &count_values[0], &rows_array, i, j), pick(c, &count_values[1], &cols_array, i, j)) {
+                (Ok(r), Ok(cl)) => one(r, cl),
+                (Err(e), _) | (_, Err(e)) => err(e),
+            });
         }
     }
-    if r1 - r0 == 1 && c1 - c0 == 1 {
-        if let Some(Value::Error(e)) = data.first() {
-            return Value::Error(*e);
-        }
-    }
-    array_value(r1 - r0, c1 - c0, data)
+    array_value(out_rows, out_columns, data)
 }
 
 fn expand(c: &mut Ctx, a: &[Expr]) -> Value {
@@ -1229,19 +1385,12 @@ fn expand(c: &mut Ctx, a: &[Expr]) -> Value {
         Ok(t) => t,
         Err(e) => return err(e),
     };
-    let dim = |c: &mut Ctx, i: usize, d: usize| -> Result<usize, CellError> {
-        match a.get(i) {
-            None | Some(Expr::Missing) => Ok(d),
-            Some(_) => {
-                let n = arg_num(c, a, i)?.trunc();
-                if n < d as f64 { Err(CellError::Value) } else { Ok(n as usize) }
-            }
-        }
-    };
-    let (rows, columns) = match (dim(c, 1, x.rows), dim(c, 2, x.columns)) {
-        (Ok(r), Ok(col)) => (r, col),
-        (Err(e), _) | (_, Err(e)) => return err(e),
-    };
+    let given: Vec<Option<Value>> = (1..3)
+        .map(|i| match a.get(i) {
+            None | Some(Expr::Missing) => None,
+            Some(e) => Some(c.eval_scalar_or_array(e)),
+        })
+        .collect();
     let pad = match a.get(3) {
         None | Some(Expr::Missing) => err(CellError::NA),
         Some(e) => match c.eval(e) {
@@ -1255,6 +1404,28 @@ fn expand(c: &mut Ctx, a: &[Expr]) -> Value {
             }
             v => v,
         },
+    };
+    // Where the new size is an array, EXPAND runs once for each element and gives the first value of each (Excel, #106).
+    if given.iter().flatten().any(|v| matches!(v, Value::Array(_))) {
+        let values = given.into_iter().enumerate().map(|(i, v)| v.unwrap_or(Value::Number(if i == 0 { x.rows } else { x.columns } as f64))).collect();
+        return c.map_values(values, &mut |c, vs| match expand_to(c, &x, &vs[0], &vs[1], &pad) {
+            Value::Array(r) => r.data.first().cloned().unwrap_or(Value::Empty),
+            v => v,
+        });
+    }
+    let dim = |i: usize, d: usize| -> Value { given[i].clone().unwrap_or(Value::Number(d as f64)) };
+    expand_to(c, &x, &dim(0, x.rows), &dim(1, x.columns), &pad)
+}
+
+fn expand_to(c: &mut Ctx, x: &Array, rows: &Value, columns: &Value, pad: &Value) -> Value {
+    let date1904 = c.date1904();
+    let dim = |v: &Value, d: usize| -> Result<usize, CellError> {
+        let n = to_number(v, date1904)?.trunc();
+        if n < d as f64 { Err(CellError::Value) } else { Ok(n as usize) }
+    };
+    let (rows, columns) = match (dim(rows, x.rows), dim(columns, x.columns)) {
+        (Ok(r), Ok(col)) => (r, col),
+        (Err(e), _) | (_, Err(e)) => return err(e),
     };
     let Some(len) = rows.checked_mul(columns).filter(|&len| len <= isize::MAX as usize / std::mem::size_of::<Value>()) else {
         return err(CellError::Num);

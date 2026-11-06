@@ -17,6 +17,7 @@ use ibis_doc_model::{CellRange, SlideId, cell_name, sheet_command::Axis};
 
 use crate::shell::icons::Material;
 use super::sheet_tab_scroll::{TAB_BUTTON_WIDTH, reveal_offset};
+use super::sheet_tab_drag;
 use crate::shell::editor::{SlideEditor, SlideLayout, Tool, WorkspaceContent, sheet_of};
 
 /// Dragging with ⌘ held to deselect (unselect) a rectangle of cells.
@@ -63,6 +64,10 @@ actions!(
         SelectLastCell,
         /// Stretch the selected range to the last cell in use.
         ExtendLastCell,
+        /// Stretch the selected range a screen down (Excel's Shift+PageDown).
+        ExtendPageDown,
+        /// Stretch the selected range a screen up (Excel's Shift+PageUp).
+        ExtendPageUp,
         /// Edit the selected cell's content (Excel's F2).
         EditCell,
         /// Backspace: a character while typing, else the selected cells' values.
@@ -93,6 +98,11 @@ actions!(
         SelectAllCells,
         /// Open the link panel (⌘K).
         InsertLink,
+        /// 検索と置換 (⌘F, Ctrl+F).
+        OpenSheetFind,
+        /// 次を検索・前を検索 (macOS の ⌘G・⇧⌘G).
+        SheetFindNext,
+        SheetFindPrevious,
         /// F4: cycle the reference while typing a formula.
         CycleReference,
         /// Enter: finish the entry and go down (to where the Tabs began, after Tabs).
@@ -182,7 +192,7 @@ pub(crate) fn row_header_width_for_rows(max_row: usize) -> f32 {
     ROW_HEADER_WIDTH + (digits.saturating_sub(4) as f32) * 8.0
 }
 /// Room kept for the workspace's scrollbars when a cell is scrolled into view.
-pub(super) const SCROLLBAR_ROOM: f32 = 14.0;
+pub(crate) const SCROLLBAR_ROOM: f32 = 14.0;
 
 /// The tint over the selected range (Excel's translucent grey).
 const RANGE_TINT: u32 = 0x2020201a;
@@ -403,7 +413,7 @@ impl SlideEditor {
             self.scroll_range_into_view(true);
         }
         let theme = cx.theme();
-        let editing_text = self.cell_edit().filter(|e| e.slide == self.current_slide).map(|e| e.text.clone());
+        let editing_text = self.cell_edit().filter(|e| e.slide == self.current_slide && e.note.is_none()).map(|e| e.text.clone());
         // While typed into, the bar shows the caret and the selection as the cell does.
         let bar_rect = self.sheet_state().map(|s| s.bar_bounds.clone());
         let expanded = self.sheet_state().is_some_and(|s| s.bar_expanded);
@@ -697,6 +707,101 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// The button went down on a sheet tab: note it. It becomes a drag when the pointer moves (`tab_drag_moved`).
+    fn begin_tab_press(&mut self, id: SlideId, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.click_count > 1 || self.wb().jump.renaming.is_some() {
+            return;
+        }
+        let slides: Vec<SlideId> = self.presentation().slides.iter().map(|s| s.id).collect();
+        if slides.len() < 2 {
+            return;
+        }
+        let scroll = self.wb().tab_scroll.clone();
+        let (view, offset) = (scroll.bounds(), f32::from(scroll.offset().x));
+        let tabs: Vec<(SlideId, f32)> = slides.iter().enumerate().filter_map(|(i, id)| scroll.bounds_for_item(i).map(|b| (*id, f32::from(b.size.width)))).collect();
+        let Some(tab) = slides.iter().position(|s| *s == id).and_then(|i| scroll.bounds_for_item(i)) else { return };
+        if tabs.len() != slides.len() {
+            return;
+        }
+        let locked = self.workbook_structure_locked();
+        let press = (f32::from(event.position.x), f32::from(event.position.y));
+        let drag = sheet_tab_drag::TabDrag::press(id, press, &tabs, f32::from(tab.left()) + offset, (f32::from(view.left()), f32::from(view.right())), locked);
+        self.wb_mut().tab_drag = Some(drag);
+        self.focus_handle.focus(window, cx);
+    }
+
+    /// The pointer moved while the button is down on a tab. Whether the drag took the event.
+    fn tab_drag_moved(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) -> bool {
+        if !self.is_workbook() || self.wb().tab_drag.is_none() {
+            return false;
+        }
+        if event.pressed_button != Some(MouseButton::Left) {
+            // The button went up where this window did not see it.
+            self.wb_mut().tab_drag = None;
+            cx.notify();
+            return false;
+        }
+        let (x, y) = (f32::from(event.position.x), f32::from(event.position.y));
+        let scroll = self.wb().tab_scroll.clone();
+        let drag = self.wb_mut().tab_drag.as_mut().expect("a tab drag");
+        if !drag.active {
+            let (dx, dy) = (x - drag.press.0, y - drag.press.1);
+            if (dx * dx + dy * dy).sqrt() < sheet_tab_drag::START_DISTANCE {
+                return false;
+            }
+            if drag.locked {
+                self.wb_mut().tab_drag = None;
+                self.workbook_protection_refuses(cx);
+                return false;
+            }
+            drag.active = true;
+        }
+        // Near an end of the strip the strip scrolls, so tabs beyond can be reached.
+        let (offset, max) = (f32::from(scroll.offset().x), f32::from(scroll.max_offset().x));
+        let step = sheet_tab_drag::edge_scroll(x, drag.view);
+        let offset = if step != 0. {
+            let moved = (offset + step).clamp(-max.max(0.), 0.);
+            scroll.set_offset(point(px(moved), scroll.offset().y));
+            moved
+        } else {
+            offset
+        };
+        drag.moved(x, offset);
+        cx.notify();
+        true
+    }
+
+    /// The button went up: the tabs stay in the order they were shown in (one step to undo). Whether the drag took the event.
+    fn tab_drag_released(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.is_workbook() {
+            return false;
+        }
+        let Some(drag) = self.wb_mut().tab_drag.take() else { return false };
+        if !drag.active {
+            return false;
+        }
+        cx.notify();
+        let Some(wb) = self.presentation().workbook.clone() else { return true };
+        let position = |id: SlideId| wb.sheets.iter().position(|s| s.slide == Some(id));
+        let Some(from) = position(drag.id) else { return true };
+        // `MoveSheet` takes the place among all the sheets, the hidden ones too, once the sheet is taken out.
+        let after_removal = |p: usize| if from < p { p - 1 } else { p };
+        let (previous, next) = drag.neighbours();
+        let to = match (previous.and_then(position), next.and_then(position)) {
+            (Some(p), _) => Some(after_removal(p) + 1),
+            (None, Some(n)) => Some(after_removal(n)),
+            (None, None) => None,
+        };
+        if self.current_slide != drag.id {
+            self.select_slide(drag.id, window, cx);
+        }
+        if let Some(to) = to.filter(|_| drag.changed()) {
+            self.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::MoveSheet { slide: drag.id, to })], cx);
+        }
+        self.request_sheet_tab_reveal(drag.id, cx);
+        true
+    }
+
     fn reveal_sheet_tab_after_layout(&mut self, id: SlideId, cx: &mut Context<Self>) {
         if self.wb().tab_reveal != Some(id) { return; }
         self.wb_mut().tab_reveal = None;
@@ -717,7 +822,9 @@ impl SlideEditor {
         let theme = cx.theme();
         let green = rgb(SELECTION_COLOR);
         let (background, border, muted, hover) = (theme.background, theme.border, theme.muted_foreground, theme.muted);
-        let tabs = self.presentation().slides.iter().enumerate().map(|(index, slide)| {
+        let drag = self.wb().tab_drag.as_ref().filter(|d| d.active);
+        let positions = drag.map(|d| d.positions()).unwrap_or_default();
+        let make_tab = |index: usize, slide: &ibis_doc_model::Slide, overlay: bool| {
             let id = slide.id;
             let current = id == self.current_slide;
             let name = slide.name.clone().unwrap_or_else(|| format!("Sheet{}", index + 1));
@@ -725,8 +832,8 @@ impl SlideEditor {
             // when active and when inactive.
             let tab_color = sheet_of(slide).and_then(|(_, sheet)| sheet.tab_color);
             let tab_fill = tab_color.map(|c| rgb(c.0));
-            div()
-                .id(("sheet-tab", id.0))
+            let tab = div()
+                .id(if overlay { ("sheet-tab-drag", id.0) } else { ("sheet-tab", id.0) })
                 .relative()
                 .flex()
                 .flex_shrink_0()
@@ -735,13 +842,12 @@ impl SlideEditor {
                 .px_4()
                 .border_r_1()
                 .border_color(border)
-                .cursor_pointer()
                 .map(|d| {
-                    if current {
+                    if current || overlay {
                         let bar = tab_fill.unwrap_or(green);
-                        d.bg(background).text_color(green).font_weight(FontWeight::SEMIBOLD).child(
-                            div().absolute().left_0().right_0().bottom_0().h(px(if tab_fill.is_some() { 4. } else { 2. })).bg(bar),
-                        )
+                        let d = d.bg(background).text_color(if current { green.into() } else { muted });
+                        let d = if current { d.font_weight(FontWeight::SEMIBOLD) } else { d };
+                        d.child(div().absolute().left_0().right_0().bottom_0().h(px(if tab_fill.is_some() { 4. } else if current { 2. } else { 0. })).bg(bar))
                     } else if let Some(fill) = tab_fill {
                         d.text_color(muted).hover(move |s| s.bg(hover)).child(
                             div().absolute().left_0().right_0().bottom_0().h(px(4.)).bg(fill),
@@ -749,33 +855,17 @@ impl SlideEditor {
                     } else {
                         d.text_color(muted).hover(move |s| s.bg(hover))
                     }
-                })
-                // A tab dragged onto another moves there (as in Excel).
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &MouseDownEvent, _, _| {
-                    if let Some(s) = this.sheet_state_mut() {
-                        s.tab_drag = Some(id);
-                    }
-                }))
+                });
+            if overlay {
+                // The tab that is dragged: lifted, with a drop shadow.
+                return tab.shadow(vec![BoxShadow { color: hsla(0., 0., 0., 0.35), offset: point(px(0.), px(2.)), blur_radius: px(10.), spread_radius: px(0.), inset: false }]).child(SharedString::from(name));
+            }
+            tab
+                .cursor_pointer()
+                // A tab dragged along the strip moves there (as in Excel): the press only notes where it was;
+                // the drag begins when the pointer has moved (see `sheet_tab_drag.rs`).
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, window, cx| this.begin_tab_press(id, e, window, cx)))
                 .on_mouse_down(MouseButton::Right, cx.listener(move |this, e: &MouseDownEvent, window, cx| this.on_tab_right_down(id, e, window, cx)))
-                .on_mouse_up(MouseButton::Left, cx.listener(move |this, _: &MouseUpEvent, window, cx| {
-                    let Some(from) = this.sheet_state_mut().and_then(|s| s.tab_drag.take()) else { return };
-                    if from == id {
-                        return;
-                    }
-                    if this.workbook_protection_refuses(cx) {
-                        return;
-                    }
-                    let Some(wb) = this.presentation().workbook.clone() else { return };
-                    let Some(to) = wb.sheets.iter().position(|s| s.slide == Some(id)) else { return };
-                    if this.current_slide != from {
-                        this.select_slide(from, window, cx);
-                    }
-                    let slide = this.current_slide;
-                    if let Err(err) = this.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::MoveSheet { slide, to })]) {
-                        log::warn!("moving the sheet rejected: {err}");
-                    }
-                    cx.notify();
-                }))
                 .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                     let clicks = event.click_count();
                     let previous = this.wb_mut().tab_last_click.replace((id, clicks));
@@ -793,6 +883,31 @@ impl SlideEditor {
                     true => d.child(div().w(px(140.)).child(Input::new(&self.wb().jump.tab_rename).small())),
                     false => d.child(SharedString::from(name)),
                 })
+        };
+        // While a tab is dragged the others are in the order of the drop, with the room of the dragged tab left
+        // open; the ones that changed places slide from where they were.
+        let slides = &self.presentation().slides;
+        let shown: Vec<(usize, &ibis_doc_model::Slide)> = match drag {
+            Some(d) => d.order.iter().filter_map(|id| slides.iter().enumerate().find(|(_, s)| s.id == *id)).collect(),
+            None => slides.iter().enumerate().collect(),
+        };
+        let tabs = shown.into_iter().map(|(index, slide)| {
+            let id = slide.id;
+            let Some(d) = drag else { return make_tab(index, slide, false).into_any_element() };
+            if id == d.id {
+                return div().id(("sheet-tab-gap", id.0)).flex_shrink_0().h_full().w(px(d.width(id))).into_any_element();
+            }
+            let tab = make_tab(index, slide, false);
+            match (d.starts.get(&id), positions.get(&id)) {
+                (Some(&from), Some(&to)) if (from - to).abs() > 0.5 => tab
+                    .with_animation(
+                        SharedString::from(format!("sheet-tab-slide-{}-{}", d.generation, id.0)),
+                        Animation::new(std::time::Duration::from_millis(160)).with_easing(|t| 1. - (1. - t).powi(3)),
+                        move |tab, t| tab.left(px((from - to) * (1. - t))),
+                    )
+                    .into_any_element(),
+                _ => tab.into_any_element(),
+            }
         });
         // At the left, as Excel: ◀ ▶ scroll the tabs, ≡ lists the sheets.
         let scroll = self.wb().tab_scroll.clone();
@@ -831,7 +946,6 @@ impl SlideEditor {
             }))
         };
         let editor = cx.entity().downgrade();
-        crate::shell::chrome::set_current_toolbar_open(self.font_size_menu_open, self.toolbar_search_open);
         let trigger = Button::new("sheet-list")
             .ghost()
             .small()
@@ -909,6 +1023,40 @@ impl SlideEditor {
                             .track_scroll(&scroll)
                             .children(tab_elements),
                     )
+                    .child({
+                        let editor = cx.entity().downgrade();
+                        // The mouse events of a tab drag go to the window, not to a tab: the pointer leaves the tabs.
+                        canvas(|_, _, _| (), move |_, _, window, _| {
+                            let moved = editor.clone();
+                            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                                if phase != DispatchPhase::Capture { return; }
+                                let mut took = false;
+                                let _ = moved.update(cx, |this, cx| took = this.tab_drag_moved(event, cx));
+                                if took { cx.stop_propagation(); }
+                            });
+                            let released = editor.clone();
+                            window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                                if phase != DispatchPhase::Capture || event.button != MouseButton::Left { return; }
+                                let mut took = false;
+                                let _ = released.update(cx, |this, cx| took = this.tab_drag_released(window, cx));
+                                if took { cx.stop_propagation(); }
+                            });
+                        }).absolute().inset_0()
+                    })
+                    .when_some(drag, |d, drag| {
+                        // The dragged tab: the picture of the tab itself under the pointer, only sideways.
+                        match slides.iter().enumerate().find(|(_, s)| s.id == drag.id) {
+                            Some((index, slide)) => d.child(
+                                deferred(
+                                    anchored()
+                                        .position(point(px(drag.dragged_left()), scroll.bounds().top()))
+                                        .child(h_flex().h(px(30.)).child(make_tab(index, slide, true))),
+                                )
+                                .with_priority(3),
+                            ),
+                            None => d,
+                        }
+                    })
                     .when_some(self.wb().tab_reveal, |d, id| {
                         let editor = cx.entity().downgrade();
                         d.child(canvas(|_, _, _| (), move |_, _, _, cx| {
@@ -1255,90 +1403,43 @@ impl SlideEditor {
                 .children(extra_shape_frames)
                 .children(self.filter_buttons(cx))
                 .children(self.pivot_buttons(cx))
+                .children(self.pivot_drill_buttons(cx))
                 .children(popup)
-                .children(self.wb().list_popup.as_ref().map(|p| deferred(anchored().position(p.position).snap_to_window_with_margin(px(8.)).child(p.menu.clone())).with_priority(2)))
+                .children(self.wb().list_popup.as_ref().map(|p| deferred(anchored().anchor(p.anchor).position(p.position).snap_to_window_with_margin(px(8.)).child(p.menu.clone())).with_priority(2)))
                 .children(self.render_validation_choices(cx))
                 .children(self.render_filter_panel(cx))
                 .children(self.render_pivot_popup(cx))
                 .children(self.render_formula_references(cx))
                 .children(self.render_completion(cx))
                 .children(self.render_comment_card(cx))
-                .children(self.render_all_notes(cx))
+                .children(self.render_notes(cx))
                 .into_any_element(),
         )
     }
 
-    /// The frame around the selected range, in the slide's coordinates:
-    /// the range tinted except its selected cell, as in Excel, and the fill
-    /// handle at its corner, which drags out a range.
-    pub(crate) fn render_cell_cursor(&self, scale: f32, cx: &mut Context<Self>) -> Option<Div> {
-        if self.selection.is_some() && !self.sheet_range_pick_active() {
+    /// The cell being typed into, in the workspace: its text over the cell, laid out as the cell is when not edited
+    /// (`sheet_view::edit_layout`), with the caret. It is one element in one place (not part of the sheet, which the
+    /// frozen panes draw again clipped): in the pane its cell is in, scrolled as that pane is.
+    pub(crate) fn render_cell_editor(&self, content: WorkspaceContent, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.page_layout_shown() {
             return None;
         }
+        let scale = content.scale;
         let (shape, sheet) = self.current_sheet()?;
-        let range = self.selected_range()?;
         let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
-        let at_x = |offsets: &[i64], i: u32| {
-            let len = offsets.len();
-            if (i as usize) < len {
-                offsets[i as usize]
-            } else {
-                let last = offsets.last().copied().unwrap_or(0);
-                last + (i as usize - (len - 1)) as i64 * sheet.default_column
-            }
-        };
-        let at_y = |offsets: &[i64], i: u32| {
-            let len = offsets.len();
-            if (i as usize) < len {
-                offsets[i as usize]
-            } else {
-                let last = offsets.last().copied().unwrap_or(0);
-                last + (i as usize - (len - 1)) as i64 * sheet.default_row
-            }
-        };
-        let x = |c: u32| shape.frame.x as f32 * scale + (at_x(&xs, c) as f32 * scale).round();
-        let y = |r: u32| shape.frame.y as f32 * scale + (at_y(&ys, r) as f32 * scale).round();
-        let (x0, x1, y0, y1) = (x(range.first_column), x(range.last_column + 1), y(range.first_row), y(range.last_row + 1));
-        if x1 <= x0 || y1 <= y0 {
-            return None;
-        }
-        let green = rgb(SELECTION_COLOR);
-        let editing_here = self.cell_edit().is_some_and(|e| e.slide == self.current_slide);
-        let cut_source=self.wb().clip.as_ref().filter(|c|c.cut&&c.slide==self.current_slide).map(|c|c.range);
-        let cut_active=cut_source==Some(range);
-        let cut_frame=cut_source.filter(|r|*r!=range).map(|r|div().absolute().left(px(x(r.first_column)-x0-1.)).top(px(y(r.first_row)-y0-1.)).w(px(x(r.last_column+1)-x(r.first_column))).h(px(y(r.last_row+1)-y(r.first_row))).border_2().border_dashed().border_color(green));
-        let window_alt = self.sheet_state().is_some_and(|s| s.fill_copy || s.cell_move.is_some_and(|m| m.copy));
-        // Option held while hovering or dragging the fill handle: a copy, not a series (#11).
-        let fill_copy = self.sheet_state().is_some_and(|s| s.fill_copy);
-        // The tint: the range less the selected cell (or its merged range).
-        let mut tint = Vec::new();
-        if let Some((column, row)) = self.current_cell() {
-            let single = CellRange { first_row: row, first_column: column, last_row: row, last_column: column };
-            let cell = sheet.merge_at(row, column).unwrap_or(single);
-            if cell != range {
-                let (cx0, cx1, cy0, cy1) = (x(cell.first_column), x(cell.last_column + 1), y(cell.first_row), y(cell.last_row + 1));
-                for (l, t, r, b) in [(x0, y0, x1, cy0), (x0, cy1, x1, y1), (x0, cy0, cx0, cy1), (cx1, cy0, x1, cy1)] {
-                    if r > l && b > t {
-                        tint.push(div().absolute().left(px(l - x0 - 1.0)).top(px(t - y0 - 1.0)).w(px(r - l)).h(px(b - t)).bg(rgba(RANGE_TINT)));
-                    }
-                }
-            }
-        }
-        // The ranges 条件を選択してジャンプ selected with it: tinted.
-        for r in self.selected_ranges().into_iter().skip(1) {
-            let (l, t, rr, b) = (x(r.first_column), y(r.first_row), x(r.last_column + 1), y(r.last_row + 1));
-            if rr > l && b > t {
-                tint.push(div().absolute().left(px(l - x0 - 1.0)).top(px(t - y0 - 1.0)).w(px(rr - l)).h(px(b - t)).bg(rgba(RANGE_TINT)));
-            }
-        }
+        let at_x = |i: u32| if (i as usize) < xs.len() { xs[i as usize] } else { xs.last().copied().unwrap_or(0) + (i as usize - (xs.len().max(1) - 1)) as i64 * sheet.default_column };
+        let at_y = |i: u32| if (i as usize) < ys.len() { ys[i as usize] } else { ys.last().copied().unwrap_or(0) + (i as usize - (ys.len().max(1) - 1)) as i64 * sheet.default_row };
+        let x = |c: u32| shape.frame.x as f32 * scale + (at_x(c) as f32 * scale).round();
+        let y = |r: u32| shape.frame.y as f32 * scale + (at_y(r) as f32 * scale).round();
         // The cell being typed into: its text over the cell, laid out as the cell is when not edited (`sheet_view::edit_layout`), with the caret.
-        let editor = self.cell_edit().filter(|e| e.slide == self.current_slide).map(|e| {
+        self.cell_edit().filter(|e| e.slide == self.current_slide && e.note.is_none()).map(|e| {
             let caret_focus=self.focus_handle.clone();
             let (ex0, ex1, ey0, ey1) = if let Some(m) = sheet.merge_at(e.row, e.column) {
                 (x(m.first_column), x(m.last_column + 1), y(m.first_row), y(m.last_row + 1))
             } else {
                 (x(e.column), x(e.column + 1), y(e.row), y(e.row + 1))
             };
+            let delta = self.cell_pane_delta(content, e.row, e.column);
             let default_style = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref());
             let style = super::sheet_view::cell_or_default_style(sheet, default_style, e.row, e.column);
             let px_per_point = ibis_doc_model::EMU_PER_POINT as f32 * scale;
@@ -1348,7 +1449,7 @@ impl SlideEditor {
             let origin = (ex0 - shape.frame.x as f32 * scale, ey0 - shape.frame.y as f32 * scale);
             let runs = e.runs.clone().map(std::sync::Arc::new);
             let ts = WindowTextSystem::new(cx.text_system().clone());
-            let layout = std::rc::Rc::new(super::sheet_view::edit_layout(&ts, sheet, default_style, &self.resources, e.row, e.column, &e.text, runs, origin, (ex1 - ex0, ey1 - ey0), px_per_point, self.cell_editor_width(ex0)));
+            let layout = std::rc::Rc::new(super::sheet_view::edit_layout(&ts, sheet, default_style, &self.resources, e.row, e.column, &e.text, runs, origin, (ex1 - ex0, ey1 - ey0), px_per_point, self.cell_editor_width(ex0, delta.x)));
             *e.layout.borrow_mut() = Some(layout.clone());
             let default_font_name = sheet.styles.first().and_then(|s| s.font.as_deref()).unwrap_or("游ゴシック"); // i18n-ok（既定のフォント名）
             let effective_font = style.font.as_deref().unwrap_or(default_font_name);
@@ -1360,19 +1461,21 @@ impl SlideEditor {
                 .map(|suffix| (suffix, self.resources.font(&ibis_doc_model::TextStyle { font: Some(effective_font.to_string()), ..Default::default() })));
             let selection = e.selection().map(|r| (super::cell_edit::byte_at(&e.text, r.start), super::cell_edit::byte_at(&e.text, r.end)));
             let caret = e.caret_byte();
+            // The displayed line the caret is on (where two lines meet, the one it was put on).
+            let shown_line = e.displayed_line(&layout);
             let rect = e.rect.clone();
             let painted = layout.clone();
             let (box_w, box_h) = (layout.width, layout.height);
             // Lines more than fit down to the bottom of the sheet view (above the sheet tab bar): the box stops there
             // and scrolls with a scroll bar always shown, following the caret when it moves (issue #17).
             const SCROLLBAR_W: f32 = 10.0;
-            let max_box_h = self.max_edit_box_height_px(e.row, ey0, ey1, px_per_point);
+            let max_box_h = self.max_edit_box_height_px(e.row, e.column, ey0, ey1, px_per_point);
             let visible_h = box_h.min(max_box_h);
             let max_scroll = (box_h - visible_h).max(0.0);
             let overflows = max_scroll > 0.5;
             let mut scroll_y = e.scroll_y.get().clamp(0.0, max_scroll);
             if overflows && e.followed_caret.get() != Some(e.caret) {
-                if let Some(l) = layout.lines.get(layout.line_of(caret)) {
+                if let Some(l) = layout.lines.get(shown_line) {
                     let (line_top, line_bottom) = (l.baseline - l.ascent - 2.0, l.baseline + l.descent + 2.0);
                     if line_top < scroll_y {
                         scroll_y = line_top.max(0.0);
@@ -1385,11 +1488,22 @@ impl SlideEditor {
             e.scroll_y.set(if overflows { scroll_y } else { 0.0 });
             let scroll_cell = e.scroll_y.clone();
             let paint_scroll = e.scroll_y.clone();
-            let bar_w = if overflows { SCROLLBAR_W } else { 0.0 };
-            div()
+            // The room of the scroll bar is always at the right, whether or not it is shown, so that the lines do not move when
+            // the text grows past the bottom and the bar comes.
+            let bar_w = SCROLLBAR_W;
+            // Where the box is in the workspace: the cell's place in the content, under the scroll of the pane it is in
+            // (a frozen row or column does not scroll on its axis), held in at the headers (and the frozen panes it scrolls under).
+            let mut offset = self.workspace_scroll.offset();
+            if self.fit_cell_editor_scroll(e, f32::from(content.slide_origin.y + offset.y + delta.y) + ey0, visible_h + 1.0) {
+                offset = self.workspace_scroll.offset();
+                cx.notify();
+            }
+            let (box_left, box_top) = (f32::from(content.slide_origin.x + offset.x + delta.x) + ex0, f32::from(content.slide_origin.y + offset.y + delta.y) + ey0);
+            let (clip_left, clip_top) = self.cell_editor_clip(content, e.row, e.column);
+            let box_div = div()
                 .absolute()
-                .left(px(ex0 - x0 - 1.0))
-                .top(px(ey0 - y0 - 1.0))
+                .left(px(box_left - clip_left))
+                .top(px(box_top - clip_top))
                 .cursor_text()
                 .w(px(box_w + 1.0 + bar_w))
                 .h(px(visible_h + 1.0))
@@ -1464,7 +1578,7 @@ impl SlideEditor {
                                     shaped.paint(point(o.x + px(l.x_at(l.end)), o.y + px(l.baseline) - shaped.ascent), shaped.ascent + shaped.descent, TextAlign::Left, None, window, cx).ok();
                                 }
                             }
-                            if let Some(l) = painted.lines.get(painted.line_of(caret)).filter(|_| caret_focus.is_focused(window) && crate::shell::caret::visible(format!("cell:{caret}:{}",painted.lines.len()),window,cx)) {
+                            if let Some(l) = painted.lines.get(shown_line).filter(|_| caret_focus.is_focused(window) && crate::shell::caret::visible(format!("cell:{caret}:{}",painted.lines.len()),window,cx)) {
                                 let cx0 = l.x_at(caret);
                                 window.paint_quad(fill(Bounds::new(point(o.x + px(cx0), o.y + px(l.baseline - l.ascent)), gpui_kit::size(px(1.0), px(l.ascent + l.descent))), rgb(0x000000)));
                             }
@@ -1473,7 +1587,103 @@ impl SlideEditor {
                     .absolute()
                     .size_full(),
                 )
-        });
+            ;
+            div().absolute().left(px(clip_left)).top(px(clip_top)).right_0().bottom_0().overflow_hidden().child(box_div).into_any_element()
+        })
+    }
+
+    /// How far a cell's place in the workspace is from where the scrolled sheet puts it (`slide_layout`): on an axis
+    /// with frozen (or split) panes, a cell in the first pane does not scroll with the sheet.
+    pub(crate) fn cell_pane_delta(&self, content: WorkspaceContent, row: u32, column: u32) -> Point<Pixels> {
+        let Some((_, sheet)) = self.current_sheet() else { return Point::default() };
+        let (columns, rows) = sheet.frozen.or_else(|| self.split_panes().map(|p| p.at)).unwrap_or((0, 0));
+        let (split_x, split_y) = self.frozen_split(content).unwrap_or((None, None));
+        let (offset, lead, shift) = (self.workspace_scroll.offset(), self.main_pane_lead(), self.pane_shift());
+        let range = sheet.merge_at(row, column);
+        let (first_row, first_column) = range.map_or((row, column), |m| (m.first_row, m.first_column));
+        point(
+            if split_x.is_some() && first_column < columns { shift.x - offset.x } else { lead.x },
+            if split_y.is_some() && first_row < rows { shift.y - offset.y } else { lead.y },
+        )
+    }
+
+    /// The left and top, in the workspace, of what the box of a cell is cut to: the headers, and the frozen panes
+    /// when its cell scrolls under them (a cell in a frozen pane is not cut at its edge).
+    pub(crate) fn cell_editor_clip(&self, content: WorkspaceContent, row: u32, column: u32) -> (f32, f32) {
+        let Some((_, sheet)) = self.current_sheet() else { return (0.0, 0.0) };
+        let (columns, rows) = sheet.frozen.or_else(|| self.split_panes().map(|p| p.at)).unwrap_or((0, 0));
+        let (split_x, split_y) = self.frozen_split(content).unwrap_or((None, None));
+        let (head_w, head_h) = if sheet.headings { (row_header_width(sheet), COLUMN_HEADER_HEIGHT) } else { (0.0, 0.0) };
+        let (first_row, first_column) = sheet.merge_at(row, column).map_or((row, column), |m| (m.first_row, m.first_column));
+        (
+            if split_x.is_some() && first_column >= columns { split_x.unwrap_or(head_w) } else { head_w },
+            if split_y.is_some() && first_row >= rows { split_y.unwrap_or(head_h) } else { head_h },
+        )
+    }
+
+    /// The frame around the selected range, in the slide's coordinates:
+    /// the range tinted except its selected cell, as in Excel, and the fill
+    /// handle at its corner, which drags out a range.
+    pub(crate) fn render_cell_cursor(&self, scale: f32, cx: &mut Context<Self>) -> Option<Div> {
+        if self.selection.is_some() && !self.sheet_range_pick_active() {
+            return None;
+        }
+        let (shape, sheet) = self.current_sheet()?;
+        let range = self.selected_range()?;
+        let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
+        let at_x = |offsets: &[i64], i: u32| {
+            let len = offsets.len();
+            if (i as usize) < len {
+                offsets[i as usize]
+            } else {
+                let last = offsets.last().copied().unwrap_or(0);
+                last + (i as usize - (len - 1)) as i64 * sheet.default_column
+            }
+        };
+        let at_y = |offsets: &[i64], i: u32| {
+            let len = offsets.len();
+            if (i as usize) < len {
+                offsets[i as usize]
+            } else {
+                let last = offsets.last().copied().unwrap_or(0);
+                last + (i as usize - (len - 1)) as i64 * sheet.default_row
+            }
+        };
+        let x = |c: u32| shape.frame.x as f32 * scale + (at_x(&xs, c) as f32 * scale).round();
+        let y = |r: u32| shape.frame.y as f32 * scale + (at_y(&ys, r) as f32 * scale).round();
+        let (x0, x1, y0, y1) = (x(range.first_column), x(range.last_column + 1), y(range.first_row), y(range.last_row + 1));
+        if x1 <= x0 || y1 <= y0 {
+            return None;
+        }
+        let green = rgb(SELECTION_COLOR);
+        let editing_here = self.cell_edit().is_some_and(|e| e.slide == self.current_slide);
+        let cut_source=self.wb().clip.as_ref().filter(|c|c.cut&&c.slide==self.current_slide).map(|c|c.range);
+        let cut_active=cut_source==Some(range);
+        let cut_frame=cut_source.filter(|r|*r!=range).map(|r|div().absolute().left(px(x(r.first_column)-x0-1.)).top(px(y(r.first_row)-y0-1.)).w(px(x(r.last_column+1)-x(r.first_column))).h(px(y(r.last_row+1)-y(r.first_row))).border_2().border_dashed().border_color(green));
+        let window_alt = self.sheet_state().is_some_and(|s| s.fill_copy || s.cell_move.is_some_and(|m| m.copy));
+        // Option held while hovering or dragging the fill handle: a copy, not a series (#11).
+        let fill_copy = self.sheet_state().is_some_and(|s| s.fill_copy);
+        // The tint: the range less the selected cell (or its merged range).
+        let mut tint = Vec::new();
+        if let Some((column, row)) = self.current_cell() {
+            let single = CellRange { first_row: row, first_column: column, last_row: row, last_column: column };
+            let cell = sheet.merge_at(row, column).unwrap_or(single);
+            if cell != range {
+                let (cx0, cx1, cy0, cy1) = (x(cell.first_column), x(cell.last_column + 1), y(cell.first_row), y(cell.last_row + 1));
+                for (l, t, r, b) in [(x0, y0, x1, cy0), (x0, cy1, x1, y1), (x0, cy0, cx0, cy1), (cx1, cy0, x1, cy1)] {
+                    if r > l && b > t {
+                        tint.push(div().absolute().left(px(l - x0 - 1.0)).top(px(t - y0 - 1.0)).w(px(r - l)).h(px(b - t)).bg(rgba(RANGE_TINT)));
+                    }
+                }
+            }
+        }
+        // The ranges 条件を選択してジャンプ selected with it: tinted.
+        for r in self.selected_ranges().into_iter().skip(1) {
+            let (l, t, rr, b) = (x(r.first_column), y(r.first_row), x(r.last_column + 1), y(r.last_row + 1));
+            if rr > l && b > t {
+                tint.push(div().absolute().left(px(l - x0 - 1.0)).top(px(t - y0 - 1.0)).w(px(rr - l)).h(px(b - t)).bg(rgba(RANGE_TINT)));
+            }
+        }
         let flash_ghosts: Vec<AnyElement> = self
             .flash_fill_preview()
             .into_iter()
@@ -1696,7 +1906,6 @@ impl SlideEditor {
                     )
                 })
                 .children(tint)
-                .children(editor)
                 .children(flash_ghosts)
                 .children(validation)
                 .children(validation_warning)
@@ -1937,8 +2146,8 @@ impl SlideEditor {
             self.press_in_cell_text(adjusted, 1, false, cx);
             return;
         }
-        if event.click_count==1&&!event.modifiers.shift&&!event.modifiers.platform&&self.current_sheet().is_some_and(|(_,s)|s.hyperlinks.iter().any(|h|h.range.first_row<=row&&row<=h.range.last_row&&h.range.first_column<=column&&column<=h.range.last_column)){
-            self.set_cell(column,row);self.follow_cell_link(window,cx);return;
+        if event.click_count==1&&!event.modifiers.shift&&!event.modifiers.platform{
+            if let Some((c,r))=self.link_cell_under(event.position){self.set_cell(c,r);if self.follow_cell_link(window,cx){return;}}
         }
         // ⌘-click on a linked cell follows the link; elsewhere it adds a
         // range to those selected (Excel's Ctrl+クリック), or deselects if already selected.
@@ -2057,18 +2266,31 @@ impl SlideEditor {
         if self.page_layout_shown() {
             return self.page_layout_at(position);
         }
+        let local = self.workspace_bounds.map_or(position, |ws| position - ws.origin);
+        let content = self.workspace_content();
+        let split = content.and_then(|c| self.frozen_split(c));
+        let (in_x, in_y) = match split {
+            Some((sx, sy)) => (sx.is_some_and(|x| f32::from(local.x) < x), sy.is_some_and(|y| f32::from(local.y) < y)),
+            None => (false, false),
+        };
+        self.sheet_layout_pane(in_x, in_y)
+    }
+
+    /// The layout of a pane: `frozen_x` / `frozen_y` for the frozen columns / rows (not scrolled on that axis), else the scrolled part.
+    fn sheet_layout_pane(&self, frozen_x: bool, frozen_y: bool) -> Option<SlideLayout> {
         let mut layout = self.slide_layout()?;
         let (Some(ws), Some(content)) = (self.workspace_bounds, self.workspace_content()) else { return Some(layout) };
-        let Some((split_x, split_y)) = self.frozen_split(content) else { return Some(layout) };
-        let local = position - ws.origin;
+        if self.frozen_split(content).is_none() {
+            return Some(layout);
+        }
         let shift = self.pane_shift();
         let main_lead = self.main_pane_lead();
-        if split_x.is_some_and(|x| f32::from(local.x) < x) {
+        if frozen_x {
             layout.origin.x = ws.origin.x + content.slide_origin.x + shift.x;
         } else {
             layout.origin.x += main_lead.x;
         }
-        if split_y.is_some_and(|y| f32::from(local.y) < y) {
+        if frozen_y {
             layout.origin.y = ws.origin.y + content.slide_origin.y + shift.y;
         } else {
             layout.origin.y += main_lead.y;
@@ -2132,7 +2354,8 @@ impl SlideEditor {
         let (t, b) = (at(&ys, range.first_row, sheet.default_row), at(&ys, range.last_row + 1, sheet.default_row));
         let scale = f32::from(layout.to_px(1_000_000)) / 1_000_000.0;
         let px_per_point = ibis_doc_model::EMU_PER_POINT as f32 * scale;
-        let origin = point(layout.origin.x + layout.to_px(shape.frame.x + l), layout.origin.y + layout.to_px(shape.frame.y + t));
+        let delta = self.workspace_content().map_or(Point::default(), |c| self.cell_pane_delta(c, e.row, e.column));
+        let origin = point(layout.origin.x + delta.x + layout.to_px(shape.frame.x + l), layout.origin.y + delta.y + layout.to_px(shape.frame.y + t));
         let (w, h) = (r - l, b - t);
         let ts = WindowTextSystem::new(cx.text_system().clone());
         let runs = e.runs.clone().map(std::sync::Arc::new);
@@ -2178,6 +2401,44 @@ impl SlideEditor {
     }
 
     /// The cell under a window position, if it is on the worksheet.
+    /// The cell with a hyperlink whose drawn text is under the pointer: the click opens its link, the pointer is the hand. Only the
+    /// text as the paint laid it out counts (not the rest of the cell), so a click elsewhere in the cell selects it.
+    pub(crate) fn link_cell_under(&self, position: Point<Pixels>) -> Option<(u32, u32)> {
+        let (layout, (shape, sheet)) = self.sheet_layout_at(position).zip(self.current_sheet())?;
+        let p = layout.to_emu(position);
+        super::sheet_view::link_text_at(sheet, (p.x - shape.frame.x) as f64, (p.y - shape.frame.y) as f64)
+    }
+
+    /// For the scenarios: the window box (left, top, right, bottom) of the hyperlink text drawn in the cell.
+    #[cfg(all(target_os = "macos", feature = "scenarios"))]
+    pub(crate) fn link_text_window_box(&self, column: u32, row: u32) -> Option<(f32, f32, f32, f32)> {
+        let (shape, sheet) = self.current_sheet()?;
+        let (frozen_columns, frozen_rows) = sheet.frozen.unwrap_or((0, 0));
+        let layout = self.sheet_layout_pane(column < frozen_columns, row < frozen_rows)?;
+        let (l, t, r, b) = super::sheet_view::link_text_box(sheet, row, column)?;
+        let at = |x: f64, y: f64| (f32::from(layout.origin.x) + (shape.frame.x as f64 + x) as f32 * layout.scale, f32::from(layout.origin.y) + (shape.frame.y as f64 + y) as f32 * layout.scale);
+        let (x0, y0) = at(l, t);
+        let (x1, y1) = at(r, b);
+        Some((x0, y0, x1, y1))
+    }
+
+    /// The cell whose comment mark (the corner triangle) the pointer is on: only the square that holds the triangle counts, not
+    /// the rest of the cell. A thread's mark is 6 pt, a note's 4.5 pt (what `sheet_view` draws).
+    pub(crate) fn comment_mark_under(&self, position: Point<Pixels>) -> Option<(u32, u32)> {
+        let (layout, (shape, sheet)) = self.sheet_layout_at(position).zip(self.current_sheet())?;
+        let p = layout.to_emu(position);
+        let (x, y) = (p.x - shape.frame.x, p.y - shape.frame.y);
+        let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
+        let threads = sheet.threads.iter().map(|t| (t.column, t.row, 6.0_f64));
+        let notes = sheet.comments.iter().filter(|c| !sheet.threads.iter().any(|t| (t.column, t.row) == (c.column, c.row))).map(|c| (c.column, c.row, 4.5_f64));
+        threads.chain(notes).find_map(|(column, row, points)| {
+            let last_column = sheet.merges.iter().find(|m| (m.first_column, m.first_row) == (column, row)).map_or(column, |m| m.last_column);
+            let (right, top) = (*xs.get(last_column as usize + 1)?, *ys.get(row as usize)?);
+            let size = (points * ibis_doc_model::EMU_PER_POINT as f64) as i64;
+            ((right - size..=right).contains(&x) && (top..=top + size).contains(&y)).then_some((column, row))
+        })
+    }
+
     pub(crate) fn cell_under(&self, position: Point<Pixels>) -> Option<(u32, u32)> {
         let (layout, (shape, sheet)) = self.sheet_layout_at(position).zip(self.current_sheet())?;
         let p = layout.to_emu(position);
@@ -2211,22 +2472,25 @@ impl SlideEditor {
                 )
             }
             None => {
+                // The page reaches what the sheet uses, which can be past its frame (a spill past the grid it was
+                // read with): not cut at the frame.
                 let page = self.presentation().size_of(self.slide());
-                (frame.x, frame.y, frame.x + page.width.min(frame.width), frame.y + page.height.min(frame.height))
+                (frame.x, frame.y, page.width.max(frame.x), page.height.max(frame.y))
             }
         };
         let to_px = |emu: i64| emu as f32 * scale;
-        let (fl, ft, fr, fb) = (to_px(frame.x), to_px(frame.y), to_px(frame.right()), to_px(frame.bottom()));
+        let (fl, ft) = (to_px(frame.x), to_px(frame.y));
         let (pl, pt, pr, pb) = (to_px(x0), to_px(y0), to_px(x1), to_px(y1));
         let grey = rgba(OUTSIDE_PRINT_AREA);
-        let rect = |l: f32, t: f32, r: f32, b: f32| {
-            (r > l && b > t).then(|| div().absolute().left(px(l)).top(px(t)).w(px(r - l)).h(px(b - t)).bg(grey))
-        };
+        // Everything outside the page range is grey, to the end of the cells drawn (Excel greys the whole grid
+        // past it): the bands to the right and below reach the slide's drawn edge (`render_slide`), which goes
+        // past the sheet's frame and the page to fill the window.
+        let band = |l: f32, t: f32| div().absolute().left(px(l)).top(px(t)).bg(grey);
         let shades = if layout_view || lines_layer { [None, None, None, None] } else { [
-            rect(fl, ft, fr, pt),
-            rect(fl, pb, fr, fb),
-            rect(fl, pt.max(ft), pl, pb.min(fb)),
-            rect(pr, pt.max(ft), fr, pb.min(fb)),
+            (pt > ft).then(|| band(fl, ft).right_0().h(px(pt - ft))),
+            Some(band(fl, pb.max(ft)).right_0().bottom_0()),
+            (pl > fl && pb > pt).then(|| band(fl, pt.max(ft)).w(px(pl - fl)).h(px(pb - pt.max(ft)))),
+            (pb > pt).then(|| band(pr, pt.max(ft)).right_0().h(px(pb - pt.max(ft)))),
         ] };
         let w = PRINT_AREA_LINE_WIDTH;
         // Where the pages break: a dashed blue line at an automatic break, a
@@ -2382,6 +2646,10 @@ impl SlideEditor {
             if dx == 0 && self.completion_move(dy, cx) {
                 return;
             }
+            // The arrows stop at the ends of a note's text.
+            if self.note_edit().is_some() {
+                return;
+            }
             self.commit_cell_edit(cx);
             if self.cell_edit().is_some() { return; }
         }
@@ -2417,6 +2685,10 @@ impl SlideEditor {
     /// Tab: as → (after finishing the entry), remembering the column the
     /// Tabs began at for Enter.
     pub(crate) fn cell_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A note's box keeps its text (Esc or a click elsewhere leaves it).
+        if self.note_edit().is_some() {
+            return;
+        }
         // The formula's list open: Tab puts in the item chosen.
         if self.completion_accept(cx) {
             return;
@@ -2432,6 +2704,11 @@ impl SlideEditor {
 
     /// Enter: down a row; after Tabs, back to the column they began at (Excel).
     pub(crate) fn cell_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // In a note's box Enter breaks the line.
+        if self.note_edit().is_some() {
+            self.cell_line_break(cx);
+            return;
+        }
         if self.sheet_state().is_some_and(|s| s.panels.cells_dialog.is_some()) {
             self.apply_cells_dialog(cx);
             return;
@@ -2511,7 +2788,7 @@ impl SlideEditor {
             self.wb_mut().cell_ends.insert(slide, end);
         }
         self.extra_ranges_follow(was_kept);
-        self.scroll_cell_into_view();
+        self.scroll_selection_end_into_view();
         cx.notify();
     }
 
@@ -2536,12 +2813,30 @@ impl SlideEditor {
     /// and name box do) on each axis it is not in view, with the range at
     /// the view's top or left, past frozen panes.
     pub(crate) fn scroll_range_into_view(&mut self, top_left: bool) {
+        let Some(range) = self.selected_range() else { return };
+        self.scroll_given_range_into_view(range, top_left);
+    }
+
+    /// Scroll the workspace so the end of the selection that moves (the cell opposite the selected cell, which
+    /// Shift+arrows, Shift+Ctrl+arrows, Shift+PageUp/Down, Shift+Home/End and a drag move) is in view, as Excel does.
+    /// Following the whole selected range instead stops following when the range is wider than the view: the
+    /// range's far edge is never reached by the scrolling, which keeps the range's start in view. Without an
+    /// extended selection this is the selected cell.
+    pub(crate) fn scroll_selection_end_into_view(&mut self) {
+        let Some((column, row)) = self.sheet_state().and_then(|s| s.cell_ends.get(&self.current_slide).copied()).or_else(|| self.current_cell()) else { return };
+        let Some((_, sheet)) = self.current_sheet() else { return };
+        // The end cell may be in a merged range: all of it comes into view.
+        let range = sheet.merge_at(row, column).unwrap_or(CellRange { first_row: row, last_row: row, first_column: column, last_column: column });
+        self.scroll_given_range_into_view(range, false);
+    }
+
+    fn scroll_given_range_into_view(&mut self, range: CellRange, top_left: bool) {
         if self.page_layout_shown() {
             self.page_layout_scroll_into_view();
             return;
         }
-        let (Some(content), Some(ws), Some((shape, sheet)), Some(range)) =
-            (self.workspace_content(), self.workspace_bounds, self.current_sheet(), self.selected_range())
+        let (Some(content), Some(ws), Some((shape, sheet))) =
+            (self.workspace_content(), self.workspace_bounds, self.current_sheet())
         else {
             return;
         };
@@ -2678,21 +2973,52 @@ impl SlideEditor {
         self.workspace_scroll.set_offset(point(px(x), px(y)));
     }
 
-    /// Maximum height (in pixels) the cell-edit box for `row` may grow to: from the cell's top down to the bottom of
-    /// the sheet view (the top of the sheet tab bar), at least the cell's own height (`ey1 - ey0`).
-    pub(crate) fn max_edit_box_height_px(&self, row: u32, ey0: f32, ey1: f32, px_per_point: f32) -> f32 {
+    /// Maximum height (in pixels) the cell-edit box of a cell may grow to (GitHub issue #105): the main view, the area of the
+    /// cells, from under the column headers (and the frozen rows when the cell scrolls under them) down to the bottom of the
+    /// sheet view (the top of the sheet tab bar). A box that would hang below it is brought up by scrolling the sheet
+    /// (`fit_cell_editor_scroll`); the cell of a frozen row does not scroll, so its box has only what is below the cell. At least
+    /// the cell's own height (`ey1 - ey0`).
+    pub(crate) fn max_edit_box_height_px(&self, row: u32, column: u32, ey0: f32, ey1: f32, px_per_point: f32) -> f32 {
         let cell_h = (ey1 - ey0).max(1.0);
-        let (Some(content), Some(ws), Some((_, sheet))) = (self.workspace_content(), self.workspace_bounds, self.current_sheet()) else {
+        let (Some(content), Some(ws)) = (self.workspace_content(), self.workspace_bounds) else {
             return (409.5 * px_per_point).max(cell_h);
         };
-        let (_, frozen_rows) = sheet.frozen.unwrap_or((0, 0));
-        let shift_y = if row < frozen_rows {
-            f32::from(self.pane_shift().y)
-        } else {
-            f32::from(self.workspace_scroll.offset().y)
-        };
-        let cell_top_in_ws = f32::from(content.slide_origin.y) + ey0 + shift_y;
-        (f32::from(ws.size.height) - cell_top_in_ws - 2.0).max(cell_h)
+        let view_h = f32::from(ws.size.height) - SCROLLBAR_ROOM - 2.0;
+        if self.cell_editor_scrolls(row, column) {
+            return (view_h - self.cell_editor_clip(content, row, column).1).max(cell_h);
+        }
+        let cell_top_in_ws = f32::from(content.slide_origin.y) + ey0 + f32::from(self.pane_shift().y);
+        (view_h - cell_top_in_ws).max(cell_h)
+    }
+
+    /// Whether the cell's row scrolls with the sheet (it is not in the frozen or split rows at the top).
+    fn cell_editor_scrolls(&self, row: u32, column: u32) -> bool {
+        let Some((_, sheet)) = self.current_sheet() else { return true };
+        let (_, rows) = sheet.frozen.or_else(|| self.split_panes().map(|p| p.at)).unwrap_or((0, 0));
+        let first_row = sheet.merge_at(row, column).map_or(row, |m| m.first_row);
+        first_row >= rows
+    }
+
+    /// Scroll the sheet up so that the box of the cell being edited, `box_h` high with its top at `box_top` in the
+    /// workspace, does not go below the bottom of the sheet view (GitHub issue #105). It does so once for each height of the
+    /// box (not on every paint), so the wheel can still move the sheet while a box is open.
+    fn fit_cell_editor_scroll(&self, e: &super::cell_edit::CellEdit, box_top: f32, box_h: f32) -> bool {
+        let Some(ws) = self.workspace_bounds else { return false };
+        if !self.cell_editor_scrolls(e.row, e.column) {
+            return false;
+        }
+        let key = (box_h * 2.0) as i64;
+        if e.fitted_height.get() == Some(key) {
+            return false;
+        }
+        e.fitted_height.set(Some(key));
+        let over = box_top + box_h - (f32::from(ws.size.height) - SCROLLBAR_ROOM - 2.0);
+        if over <= 0.0 {
+            return false;
+        }
+        let offset = self.workspace_scroll.offset();
+        self.workspace_scroll.set_offset(point(offset.x, offset.y - px(over)));
+        true
     }
 
     /// Scroll horizontally so a span of `width_px` starting at `first_column`'s left edge is in view: if it fits
@@ -3034,6 +3360,8 @@ impl SlideEditor {
             .on_action(cx.listener(|this, _: &ExtendFirstCell, _, cx| this.jump(Jump::First, true, cx)))
             .on_action(cx.listener(|this, _: &SelectLastCell, _, cx| this.jump(Jump::Last, false, cx)))
             .on_action(cx.listener(|this, _: &ExtendLastCell, _, cx| this.jump(Jump::Last, true, cx)))
+            .on_action(cx.listener(|this, _: &ExtendPageDown, _, cx| this.extend_sheet_page(true, cx)))
+            .on_action(cx.listener(|this, _: &ExtendPageUp, _, cx| this.extend_sheet_page(false, cx)))
             .on_action(cx.listener(|this, _: &EditCell, window, cx| {
                 if this.cells_take_typing(window, cx) {
                     if this.cell_edit().is_none() {
@@ -3072,6 +3400,9 @@ impl SlideEditor {
             .on_action(cx.listener(|this, _: &CellTab, window, cx| this.cell_tab(window, cx)))
             .on_action(cx.listener(|this, _: &SelectAllCells, _, cx| this.select_all_cells(cx)))
             .on_action(cx.listener(|this, _: &InsertLink, window, cx| this.open_link_panel(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenSheetFind, window, cx| this.open_sheet_find(window, cx)))
+            .on_action(cx.listener(|this, _: &SheetFindNext, window, cx| this.sheet_find_shortcut(true, window, cx)))
+            .on_action(cx.listener(|this, _: &SheetFindPrevious, window, cx| this.sheet_find_shortcut(false, window, cx)))
             .on_action(cx.listener(|this, _: &CycleReference, _, cx| {
                 if this.cell_edit().is_some() { this.cycle_reference(cx); }
                 else { this.repeat_sheet_edit(cx); }
@@ -3111,8 +3442,15 @@ impl SlideEditor {
             }))
             .on_action(cx.listener(|this, _: &ToggleShowFormulas, _, cx| this.toggle_show_formulas(cx)))
             .on_action(cx.listener(|this, _: &ReapplyFilter, _, cx| this.reapply_auto_filter(cx)))
-            .on_action(cx.listener(|this, _: &EditNote, window, cx| this.open_note_panel(window, cx)))
-            .on_action(cx.listener(|this, _: &InsertFunction, window, cx| this.insert_function_action(window, cx)))
+            .on_action(cx.listener(|this, _: &EditNote, window, cx| this.begin_note_edit(window, cx)))
+            // Shift+F3 is Find Previous while the find panel is open, and Insert Function otherwise.
+            .on_action(cx.listener(|this, _: &InsertFunction, window, cx| {
+                if this.sheet_state().is_some_and(|st| st.find.is_some()) {
+                    this.sheet_find_shortcut(false, window, cx);
+                } else {
+                    this.insert_function_action(window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &PreviousComment, _, cx| this.select_next_comment(false, cx)))
             .on_action(cx.listener(|this, _: &NextComment, _, cx| this.select_next_comment(true, cx)))
             .on_action(cx.listener(|this, _: &ToggleShowAllNotes, _, cx| this.toggle_show_all_notes(cx)))
@@ -3197,7 +3535,7 @@ impl SlideEditor {
             self.set_selection(Vec::new());
             self.set_cell(to.0, to.1);
         }
-        self.scroll_cell_into_view();
+        self.scroll_selection_end_into_view();
         cx.notify();
     }
 

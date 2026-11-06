@@ -159,16 +159,12 @@ _xlsx.comparison-value-or-formula-e-g-10-a1-0	Comparison value or formula (e.g. 
 _xlsx.second-comparison-value-or-formula	Second comparison value or formula
 _xlsx.the-sheet-or-rule-has-changed-reopen-it	The sheet or rule has changed. Reopen it.
 _xlsx.enter-a-valid-range-or-formula-and-a-6-digit-fil	Enter a valid range or formula and a 6-digit fill color.
-_xlsx.fill-color-rgb	Fill Color (RGB)
-_xlsx.stop-if-true-on	Stop If True: On
-_xlsx.stop-if-true-off	Stop If True: Off
 _xlsx.update-rule	Update Rule
 _xlsx.add-rule	Add Rule
 _xlsx.add-as-copy	Add as Copy
 _xlsx.delete-rules-in-selection	Delete Rules in Selection
 _xlsx.stop-on	Stop: On
 _xlsx.stop-off	Stop: Off
-_xlsx.apply-to-selection	Apply to Selection
 _xlsx.number-format-custom	Number Format (Custom)
 _xlsx.the-sheet-has-changed-reopen-it	The sheet has changed. Reopen it.
 _xlsx.enter-a-valid-cell-range	Enter a valid cell range.
@@ -482,7 +478,7 @@ _xlsx.please-enter-a-formula-2	Please enter a formula
 _xlsx.items-2	Items
 _xlsx.no-fields-available	No fields available
 xlsx.pivot-group	Group…
-xlsx.pivot-ungroup	Ungroup
+xlsx.pivot-ungroup	Ungroup PivotTable
 _xlsx.table-or-range	Table or range
 _xlsx.where-to-place-the-pivottable	Where to place the PivotTable
 _xlsx.new-worksheet	New worksheet
@@ -695,9 +691,6 @@ xlsx.alt-text.description	Description
 xlsx.alt-text.hint	Enter a description of the image or shape to be read by screen readers.
 xlsx.alt-text.apply	Apply
 xlsx.comment-delete	Delete Comment
-comment.cell	Comment on cell {cell}
-_xlsx.type-a-reply-and-press-enter	Type a reply and press Enter
-_xlsx.post	Post
 xlsx.export-xltx	Excel Template (.xltx)
 xlsx.new-from-template	New from Template…
 xlsx.accessibility-check	Check Accessibility…
@@ -1048,10 +1041,8 @@ xlsx.fill-down	Fill Down
 xlsx.fill-right	Fill Right
 _xlsx.indent	Indent
 _xlsx.set-size	Set size
-_xlsx.size-points	Size (points)
-_xlsx.sample	Sample
-_xlsx.set-font	Set font
-_xlsx.font-name	Font name
+_xlsx.sample	Sample: 
+_xlsx.font-name	Font
 _xlsx.locked	Locked
 _xlsx.locked-and-hidden-take-effect-when-the-sheet-is	Locked and Hidden take effect when the sheet is protected.
 _xlsx.top-2	Top
@@ -1728,9 +1719,10 @@ xlsx.solver.non-negative	Make Unconstrained Variables Non-Negative
 xlsx.solver.method	Select a Solving Method
 xlsx.solver.precision	Constraint Precision
 xlsx.solver.convergence	Convergence
-xlsx.solver.integer-tolerance	Integer Optimality (%)
+xlsx.solver.integer-tolerance	Integer Optimality
 xlsx.solver.max-iterations	Max Iterations (blank: none)
-xlsx.solver.max-time	Max Time in seconds (blank: none)
+xlsx.solver.max-time	Max Time (blank: none)
+xlsx.solver.max-time-unit	s
 xlsx.solver.solve	Solve
 xlsx.solver.keep	Keep Solver Solution
 xlsx.solver.restore	Restore Original Values
@@ -2136,8 +2128,8 @@ xlsx.control-properties.step	Incremental change
 xlsx.control-properties.page	Page change
 xlsx.control-properties.three-d	3-D shading
 xlsx.control-properties.font	Font family
-xlsx.control-properties.font-size	Font size (pt)
-xlsx.control-properties.text-color	Text color (#RRGGBB)
+xlsx.control-properties.font-size	Font size
+xlsx.control-properties.text-color	Text color
 xlsx.design-mode	Design Mode
 xlsx.design-mode.enabled	Design Mode: Enabled
 xlsx.design-mode.disabled	Design Mode: Disabled
@@ -2180,7 +2172,7 @@ xlsx.chart-ex.treemap	Treemap Settings
 xlsx.chart-ex.treemap-overlapping	Overlapping parent labels
 xlsx.chart-ex.funnel	Funnel Settings
 xlsx.chart-ex.pareto	Pareto Settings
-xlsx.chart-ex.gap-width	Gap Width (%)
+xlsx.chart-ex.gap-width	Gap Width
 xlsx.chart-ex.apply-gap	Apply Gap Width
 xlsx.image.curl-missing	curl was not found.
 xlsx.paste-picture	Picture
@@ -2328,7 +2320,7 @@ xlsx.picture.compress.web	Web (150 ppi)
 xlsx.picture.compress.email	E-mail (96 ppi)
 xlsx.picture.compress.delete-crop	Delete Cropped Areas and Compress
 _xlsx.row-height	Row Height…
-_xlsx.row-height-pt	Row Height (pt)
+_xlsx.row-height-pt	Row Height
 _xlsx.column-width	Column Width…
 _xlsx.column-width-chars	Column Width (characters)
 _xlsx.presets	Presets
@@ -2456,6 +2448,16 @@ xlsx.names.scope.workbook	Workbook
 xlsx.names.scope.sheet	Current Sheet
 xlsx.move-sheet-first	Move to Beginning
 xlsx.move-sheet-last	Move to End
+xlsx.move-copy-sheet	Move or Copy
+xlsx.sheet-transfer.title	Move or Copy Sheet
+xlsx.sheet-transfer.book	To book
+xlsx.sheet-transfer.before	Before sheet
+xlsx.sheet-transfer.to-end	(move to end)
+xlsx.sheet-transfer.copy	Create a copy
+xlsx.sheet-transfer.this-book	{name} (this book)
+xlsx.sheet-transfer.closed	The destination workbook was closed.
+xlsx.sheet-transfer.last-sheet	A workbook must keep at least one sheet, so this one cannot move to another workbook. Create a copy, or add a sheet first.
+xlsx.sheet-transfer.failed	The sheet could not be moved or copied.
 xlsx.unhide-all-sheets	Unhide All Sheets
 xlsx.status-bar-summary	Status Bar Summary
 xlsx.status-summary-average	Average
@@ -2468,7 +2470,6 @@ xlsx.cf.preset-red	Light Red Fill with Dark Red Text
 xlsx.cf.preset-yellow	Yellow Fill with Dark Yellow Text
 xlsx.cf.preset-green	Green Fill with Dark Green Text
 xlsx.cf.preset-red-text	Red Text
-xlsx.cf.text-color-rgb	Text color (RGB)
 xlsx.cf.filter-sheet	This Worksheet
 xlsx.cf.filter-selection	Current Selection
 xlsx.validation.apply-same	Apply these changes to all other cells with the same settings
@@ -2586,7 +2587,7 @@ xlsx.word-count.sheet	Entire sheet
 xlsx.word-count.cells	Cells with data
 xlsx.page-break-preview-page	Page {page}
 _xlsx.headings	Show Headings
-xlsx.delete-menu	Delete
+xlsx.delete-menu	Delete Rows, Columns, Cells
 xlsx.sheet-menu	Sheet
 xlsx.view-mode	View Mode
 xlsx.insert-cells-menu	Insert
@@ -2660,8 +2661,6 @@ xlsx.cf.other-rule	Other rule
 xlsx.cf.manage-title	Conditional formatting rules
 xlsx.cf.edit-title	Edit conditional formatting rule
 
-xlsx.cf.move-up	Move rule up
-xlsx.cf.move-down	Move rule down
 
 xlsx.sort-level.edit	Edit sort condition
 
@@ -2684,3 +2683,150 @@ xlsx.shape-panel.rotation	Rotation
 xlsx.shape-panel.horizontal	Horizontal position
 xlsx.shape-panel.vertical	Vertical position
 chart.ui.first-cell-name	Use the first cell as the series name
+xlsx.infobar.final.title	Marked as Final
+xlsx.infobar.final.message	An author has marked this workbook as final to discourage editing.
+xlsx.infobar.final.edit-anyway	Edit Anyway
+xlsx.print-panel.title	Print
+xlsx.print-panel.note	In this environment, Print makes a PDF and opens it in the default app. Print it from that app.
+xlsx.paste-names.title	Name Conflict
+xlsx.paste-names.title-duplicate	Duplicate Name
+xlsx.paste-names.exists	The name '{name}' already exists. To use that name, click Yes. To rename '{name}' for this paste, click No and enter a new name.
+xlsx.paste-names.duplicate	The same name already exists on the destination sheet.
+xlsx.paste-names.new-name	New name
+xlsx.paste-names.invalid	This name can't be used. Enter a name that isn't in use.
+xlsx.paste-names.yes-to-all	Yes to All
+xlsx.print-panel.scale-100	100%
+xlsx.status.mode-enter	Enter
+xlsx.status.mode-edit	Edit
+xlsx.names.title	Name Manager
+xlsx.names.search.placeholder	Search names and references
+xlsx.names.filter.button	Filter
+xlsx.names.filter.scope-all	Scope: All
+xlsx.names.filter.scope-book	Scope: Workbook
+xlsx.names.filter.scope-sheet	Scope: Sheet {sheet}
+xlsx.names.filter.kind-range	Type: Range
+xlsx.names.filter.kind-constant	Type: Constant
+xlsx.names.filter.kind-formula	Type: Formula
+xlsx.names.filter.kind-lambda	Type: LAMBDA
+xlsx.names.filter.errors-only	Names with errors only
+xlsx.names.filter.hide-helpers	Hide helper names (starting with _ or ¥)
+xlsx.names.filter.clear	Clear filters
+xlsx.names.count	{total} names
+xlsx.names.count-filtered	Showing {shown} of {total}
+xlsx.names.col.name	Name
+xlsx.names.col.value	Value
+xlsx.names.col.ref	Refers To
+xlsx.names.col.scope	Scope
+xlsx.names.col.kind	Type
+xlsx.names.kind.error	Error: invalid reference
+xlsx.names.value.function	(function)
+xlsx.names.empty.none	No names yet
+xlsx.names.empty.nomatch	No names match
+xlsx.names.scope.book	Workbook
+xlsx.names.dialog.title-new	New name
+xlsx.names.dialog.title-edit	Edit name
+xlsx.names.dialog.name	Name
+xlsx.names.dialog.scope	Scope
+xlsx.names.dialog.ref	Refers to
+xlsx.names.dialog.current-value	Current value
+xlsx.names.dialog.lambda-args	Parameters
+xlsx.names.dialog.arg-required	Required
+xlsx.names.dialog.arg-optional	Optional
+xlsx.names.dialog.length	{n} characters
+xlsx.names.dialog.error-ref	The referenced sheet or cell was deleted. Choose a new reference.
+xlsx.names.action.add	Add
+xlsx.names.action.update	Update
+xlsx.names.action.cancel	Cancel
+xlsx.names.action.edit-row	Edit: {name}
+xlsx.names.action.delete-row	Delete: {name}
+xlsx.names.action.more	More actions
+xlsx.names.menu.paste	Paste list into sheet ({n} shown names at {cell})
+xlsx.names.menu.copy	Copy shown names as TSV
+xlsx.names.menu.create-from-selection	Create from selection (top row)
+xlsx.names.menu.create-left	Create from selection (left column)
+xlsx.names.menu.create-both	Create from selection (top row and left column)
+xlsx.names.menu.delete-errors	Delete all names with errors ({n})
+xlsx.names.err.empty	Enter a name
+xlsx.names.err.cell-ref	A name cannot look like a cell reference
+xlsx.names.err.first-char	The first character must be a letter, _ or ¥
+xlsx.names.err.chars	Spaces and symbols other than . and _ are not allowed
+xlsx.names.err.dupe-book	A name with this name already exists in the workbook
+xlsx.names.err.dupe-sheet	A name already exists in sheet "{sheet}"
+xlsx.names.err.ref-empty	Enter a reference or a formula
+xlsx.names.status.invalid-name	"{name}" cannot be used as a name
+xlsx.names.toast.added	Added name "{name}"
+xlsx.names.toast.updated	Updated name "{name}"
+xlsx.names.toast.deleted	Deleted name "{name}" (Undo restores it)
+xlsx.names.toast.pasted	Pasted {n} names at {cell} (Undo restores them)
+xlsx.names.toast.deleted-errors	Deleted {n} names with errors (Undo restores them)
+xlsx.names.toast.copied	Copied {n} names
+xlsx.cf.fill-color	Fill color
+xlsx.cf.text-color	Text color
+xlsx.cf.stop-if-true	Stop if true
+xlsx.cf.no-rules	There are no rules
+xlsx.format-pane.tab-format	Format
+xlsx.format-pane.tab-border	Borders
+xlsx.format-pane.tab-protection	Protection
+xlsx.table-design.tab-design	Design
+xlsx.table-design.tab-commands	Commands
+xlsx.pivot-fields.search-placeholder	Search fields
+xlsx.pivot-fields.count-all	{n} fields
+xlsx.pivot-fields.count-found	{n} of {total} fields
+xlsx.pivot-fields.hint	Drag a field, or tick it, to place it
+xlsx.pivot-fields.column-field	Field
+xlsx.pivot-fields.column-area	Placed in
+xlsx.pivot-fields.no-match	No matching fields
+xlsx.pivot-fields.layout-title	Layout
+xlsx.pivot-fields.layout-note	Summarized in this order
+xlsx.pivot-fields.drop-here	Drag a field here
+xlsx.pivot-fields.action.value-settings	Value Field Settings
+xlsx.pivot-fields.action.field-settings	Field Settings
+xlsx.pivot-fields.action.remove	Remove {name} from the layout
+xlsx.pivot-field.title	Field Settings
+xlsx.pivot-value.title	Value Field Settings
+xlsx.pivot-value.tab-summarize	Summarize Values By
+xlsx.pivot-value.tab-show-as	Show Values As
+xlsx.pivot-value.source-name	Source name
+xlsx.pivot-value.custom-name	Custom name
+xlsx.pivot-value.summarize-by	Summarize value field by
+xlsx.pivot-value.summarize-help	Choose the type of calculation that you want to use to summarize data from the selected field
+xlsx.pivot-value.number-format	Number format
+xlsx.pivot-value.sample	Sample: {sample}
+xlsx.pivot-value.show-as	Show values as
+xlsx.pivot-value.base-field	Base field
+xlsx.pivot-value.base-item	Base item
+xlsx.pivot-value.not-needed	(not needed)
+xlsx.pivot-value.fn.sum	Sum
+xlsx.pivot-value.fn.count	Count
+xlsx.pivot-value.fn.average	Average
+xlsx.pivot-value.fn.max	Max
+xlsx.pivot-value.fn.min	Min
+xlsx.pivot-value.fn.product	Product
+xlsx.pivot-value.fn.count-numbers	Count Numbers
+xlsx.pivot-value.fn.stddev	StdDev
+xlsx.pivot-value.fn.stddevp	StdDevp
+xlsx.pivot-value.fn.var	Var
+xlsx.pivot-value.fn.varp	Varp
+xlsx.format-pane.category	Number Format
+xlsx.format-pane.angle	Degrees
+xlsx.format-pane.size	Size
+xlsx.format-pane.style	Style
+xlsx.recommended-charts.menu	Recommended Charts...
+xlsx.pivot-expand-collapse	Expand/Collapse
+xlsx.pivot-expand	Expand
+xlsx.pivot-collapse	Collapse
+xlsx.pivot-expand-field	Expand Field
+xlsx.pivot-collapse-field	Collapse Field
+xlsx.pivot-select-an-item	Select the cell of an item with a +/- button
+xlsx.pivot.cannot-change-part	You cannot change this part of a PivotTable report.
+xlsx.pivot.affects-pivot	We can't make this change for the selected cells because it will affect a PivotTable. Use the field list to change the report. If you're trying to insert or delete cells, move the PivotTable and try again.
+xlsx.pivot.name-exists	The PivotTable field name already exists.
+xlsx.pivot.name-null	Cannot enter a null value as an item or field name in a PivotTable report.
+xlsx.pivot.name-formula	Cannot enter a formula for an item or field name in a PivotTable report.
+xlsx.pivot.not-an-item	'{item}' is not an item in this field.
+xlsx.format-pane.live-update	Live Update
+xlsx.format-pane.rotation-numeric	Numeric
+xlsx.format-pane.underline	Underline
+xlsx.format-pane.stop-color	Stop Color
+xlsx.format-pane.stop-position	Stop Position
+xlsx.format-pane.remove-stop	Remove Stop

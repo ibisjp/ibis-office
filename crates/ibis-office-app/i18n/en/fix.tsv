@@ -85,9 +85,6 @@ fix.validation.enter-source	Enter the source.
 fix.validation.enter-formula	Enter a formula.
 fix.validation.validation-rule-set	The validation rule is set.
 fix.validation.validation-rules-cleared	The validation rules are cleared.
-note.cell	Note on {cell}
-fix.notes.type-note	Type a note
-fix.notes.delete-note	Delete Note
 xlsx.protect-sheet	Protect Sheet…
 xlsx.unprotect-sheet	Unprotect Sheet…
 xlsx.lock-cells	Lock Cell
@@ -212,12 +209,13 @@ fix.symbols.circled-numbers-units	Circled Numbers and Units
 fix.symbols.symbols-special-characters	Symbols and Special Characters
 about.version	Version {version}
 about.license	Provided under AGPL-3.0-only or a commercial license.
+about.update-available	A new version is available.
 fix.picture-panel.rotate-flip	Rotate and Flip
 fix.picture-panel.rotate-left-90	Rotate Left 90°
 fix.picture-panel.rotate-right-90	Rotate Right 90°
 fix.picture-panel.flip-horizontal	Flip Horizontal
 fix.picture-panel.flip-vertical	Flip Vertical
-fix.picture-panel.crop	Crop (%)
+fix.picture-panel.crop	Crop
 fix.picture-panel.apply-crop	Apply Crop
 fix.picture-panel.enter-crop-number-0-up	Enter the crop as a number from 0 up to under 100 (%).
 fix.picture-panel.top-plus-bottom-left-plus	Top plus bottom, and left plus right, must each be under 100%.
@@ -250,7 +248,7 @@ fix.chart-edit.bar-pie	Bar of Pie
 fix.chart-edit.split-series	Split Series By
 fix.chart-edit.percent	%
 fix.chart-edit.split-position-value	Split Position / Value
-fix.chart-edit.second-plot-size	Second Plot Size (%)
+fix.chart-edit.second-plot-size	Second Plot Size
 fix.chart-edit.enter-number-split-position-value	Enter a number for the split position / value.
 fix.chart-edit.enter-integer-between-5-200	Enter an integer between 5 and 200 for the second plot size.
 pptx.insert-chart.stock-hlc	Stock (High-Low-Close)
@@ -485,3 +483,8 @@ fix.move.overwrite	Do you want to replace the contents of the destination cells?
 fix.move.ok	OK
 fix.menu.search-placeholder	Search
 fix.menu.not-found	Not found
+help.check-update	Check for Updates
+fix.update.latest	ibisOffice is up to date.
+fix.update.latest.detail	You have version {current}.
+fix.update.check-failed	Could not check for updates.
+fix.update.check-failed.detail	Make sure you are connected to the internet and try again.

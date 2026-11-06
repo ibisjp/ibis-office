@@ -1143,12 +1143,22 @@ fn date_section(value: f64, section: &Section, date1904: bool, mut out: Formatte
                         None => text.push_str(DAYS[dow]),
                     },
                 },
-                DatePart::JaDay(n) => {
-                    text.push_str(DAYS_JA[dow]);
-                    if *n >= 4 {
-                        text.push_str("曜日");
+                // `aaa`/`aaaa` are the locale's short/long weekday: Japanese by default and under `[$-411]`, but under
+                // another locale tag they are `ddd`/`dddd` (Excel: `[$-409]aaaa` is Wednesday, `[$-407]aaaa` Mittwoch).
+                DatePart::JaDay(n) => match section.locale {
+                    Some(l) if l & 0x3FF != 0x11 => match (names, *n >= 4) {
+                        (Some(nm), true) => text.push_str(nm.days[dow]),
+                        (Some(nm), false) => text.push_str(nm.days_short[dow]),
+                        (None, true) => text.push_str(DAYS[dow]),
+                        (None, false) => text.push_str(&DAYS[dow][..3]),
+                    },
+                    _ => {
+                        text.push_str(DAYS_JA[dow]);
+                        if *n >= 4 {
+                            text.push_str("曜日");
+                        }
                     }
-                }
+                },
                 DatePart::Hour(n) => {
                     let v = if twelve { hour12(h) } else { h };
                     if *n >= 2 { text.push_str(&num(format!("{:02}", v), false)) } else { text.push_str(&num(v.to_string(), false)) }
@@ -1245,6 +1255,40 @@ mod tests {
         let v = CellValue::Number(46308.0 + 14.0 / 24.0 + 5.0 / 1440.0);
         let show = |code: &str| format(&v, code, false).text;
         assert_eq!(show("[$-409]dddd, mmmm d, yyyy"), "Tuesday, October 13, 2026");
+        // Japanese locale: dddd/ddd/mmmm/mmm/mmmmm as Excel (ja) shows them (measured, Excel 16.0 build 20527).
+        assert_eq!(show("[$-411]dddd"), "火曜日");
+        assert_eq!(show("[$-411]ddd"), "火");
+        assert_eq!(show("[$-411]m/d(ddd)"), "10/13(火)");
+        assert_eq!(show("[$-ja-JP]dddd"), "火曜日");
+        assert_eq!(show("[$-1010411]dddd"), "火曜日");
+        assert_eq!(show("[$-411]mmmm d"), "10月 13");
+        assert_eq!(show("[$-411]mmm d"), "10 13");
+        assert_eq!(show("[$-411]mmmmm"), "1");
+        // Eras with a locale and a weekday (Excel 16.0 build 20527 on 2026-10-14: R8.10.14 水 and the like).
+        let w = CellValue::Number(46309.6);
+        let showw = |code: &str| format(&w, code, false).text;
+        assert_eq!(showw("[$-ja-JP]ge.m.d ddd"), "R8.10.14 水");
+        assert_eq!(showw("[$-411]ge.m.d ddd"), "R8.10.14 水");
+        assert_eq!(showw("[$-ja-JP]gggee/m/d(ddd)"), "令和08/10/14(水)");
+        assert_eq!(showw("[$-411]ggge\"年\"m\"月\"d\"日\" dddd"), "令和8年10月14日 水曜日");
+        assert_eq!(showw("ge.m.d ddd"), "R8.10.14 Wed");
+        assert_eq!(showw("ge.m.d aaa"), "R8.10.14 水");
+        assert_eq!(showw("[$-ja]ddd"), "水");
+        assert_eq!(showw("[$-JP]ddd"), "Wed");
+        assert_eq!(showw("[$-0411]dddd"), "水曜日");
+        assert_eq!(showw("[$-409]ge.m.d ddd").ends_with("Wed"), true);
+        // Without a locale: dddd is English, aaaa Japanese; with another locale tag aaaa follows the locale.
+        assert_eq!(show("dddd"), "Tuesday");
+        assert_eq!(show("ddd"), "Tue");
+        assert_eq!(show("aaaa"), "火曜日");
+        assert_eq!(show("aaa"), "火");
+        assert_eq!(show("[$-409]aaaa"), "Tuesday");
+        assert_eq!(show("[$-409]aaa"), "Tue");
+        assert_eq!(show("[$-en-US]aaaa"), "Tuesday");
+        assert_eq!(show("[$-407]aaaa"), "Dienstag");
+        assert_eq!(show("[$-804]aaa"), "周二");
+        assert_eq!(show("yyyy/m/d aaaa"), "2026/10/13 火曜日");
+        assert_eq!(show("[$-409]yyyy/m/d aaaa"), "2026/10/13 Tuesday");
         assert_eq!(show("[$-407]dddd, d. mmmm yyyy"), "Dienstag, 13. Oktober 2026");
         assert_eq!(show("[$-407]ddd d mmm"), "Di 13 Okt");
         assert_eq!(show("[$-40C]dddd d mmmm yyyy"), "mardi 13 octobre 2026");

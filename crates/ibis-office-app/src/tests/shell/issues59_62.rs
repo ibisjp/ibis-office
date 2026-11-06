@@ -12,6 +12,8 @@ pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
     ("docx::issue60_vertical_symbols_and_ime",vertical),
     ("pptx::issue62_slide_shortcuts",shortcuts),
     ("pptx::issue62_text_glow_outline",glow_outline),
+    ("pptx::issue91_glow_formula_and_outline_anchor",glow_91),
+    ("pptx::issue91_text_glow_is_one_smooth_blur",glow_smooth),
 ]}
 fn center(b:Bounds<Pixels>)->(f32,f32){(f32::from(b.center().x),f32::from(b.center().y))}
 fn recent_remove(){
@@ -72,4 +74,56 @@ fn glow_outline(){
     let expansion=right_edges[1]as f32-right_edges[0]as f32;
     // An 8pt centred outline adds 4pt; account for the actual output pixel density.
     assert!((expansion-4.*pixels_per_point).abs()<=2.,"glow follows the outside of the outline: {right_edges:?}");
+}
+
+/// issue #91: PowerPoint's glow of a shape is the shape grown by half the radius and blurred with a Gaussian
+/// of a sixth of it (fitted to its PDFs, tasks/doc/glow-measurements-20261030.md); the glow of outlined text sits
+/// the same distance outside the outline's outer edge whatever the outline's width (measured: 3.37pt for a
+/// 44pt, 10pt glow with outlines of 0, 2 and 6pt), so the outline's width is not part of the radius.
+fn glow_91(){
+    use ibis_doc_model::{Color,EmuRect,Rgb,Shape};
+    for r in [10.0_f32,20.0,40.0,80.0]{let(spread,blur)=crate::render::shape_view::glow_spread_blur(r);assert!((spread-r/2.).abs()<1e-4&&(blur-r/6.).abs()<1e-4,"glow of {r}: {spread} {blur}");}
+    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Presentation,w,cx));
+    let p=s.with(|e,_|e.presentation().clone());let mut gaps=Vec::new();
+    for width in [0,8*12700]{
+        let mut shape=Shape::text_box(ibis_doc_model::ShapeId(9999),EmuRect::new(0,0,4000000,2000000),"O");let body=shape.text_body_mut().unwrap();body.style.font_size=7200;body.style.font=Some("Arial".into());for run in body.paragraphs.iter_mut().flat_map(|p|&mut p.runs){run.style.font_size=Some(7200);run.style.outline=Some((Rgb(0),width.max(1)));run.style.glow=Some((Color::opaque(Rgb(0xff0000)),4*12700));if width==0{run.style.outline=None;}}
+        let rendered=crate::native_shape_clipboard::image_fallback(&p,&[shape]).unwrap();let pixels=image::load_from_memory(&rendered.bytes).unwrap().to_rgba8();
+        let ink=pixels.enumerate_pixels().filter(|(_,_,p)|p[3]>200&&p[0]<60&&p[1]<60&&p[2]<60).map(|(x,_,_)|x).max().expect("the text");
+        let glow=pixels.enumerate_pixels().filter(|(_,_,p)|p[0]>p[1].saturating_add(5)&&p[0]>p[2].saturating_add(5)).map(|(x,_,_)|x).max().expect("a red glow");
+        gaps.push(glow as f32-ink as f32);
+    }
+    assert!((gaps[0]-gaps[1]).abs()<=2.,"the glow is as far outside the text's outer edge with an outline as without: {gaps:?}");
+}
+
+/// issue #91: the glow of text is one Gaussian blur of the grown glyphs (not letters stacked in rings, which stepped): across the edge of a
+/// vertical stem the glow's alpha falls without a step, and its size is Windows PowerPoint's: the distances from the edge at which the
+/// alpha is 50 %, 10 % and 2 % are those measured there (`target/glow91/measure-table.tsv`, Arial H, 176 slides of
+/// `tasks/doc/glow-measurements-20261106.md`) within 5 % (and a pixel). The PNGs are written to `target/glow91/` to look at.
+fn glow_smooth(){
+    use ibis_doc_model::{Color,EmuRect,Rgb,Shape};
+    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Presentation,w,cx));
+    let p=s.with(|e,_|e.presentation().clone());
+    // (size pt, rad pt, d50, d10, d02 in pt): rows of the measurement table.
+    let measured:[(u32,i64,f32,f32,f32);9]=[(12,10,1.250,1.864,2.225),(24,5,1.125,1.629,1.910),(24,30,6.250,9.156,10.925),(44,10,3.000,4.500,5.425),(72,5,2.250,3.289,3.931),(72,30,12.958,19.250,22.800),(130,5,3.169,4.725,5.675),(130,10,6.875,10.031,11.925),(130,30,20.094,29.500,34.925)];
+    for (size,rad,d50,d10,d02) in measured{
+        let mut shape=Shape::text_box(ibis_doc_model::ShapeId(9999),EmuRect::new(0,0,6000000,3000000),"H");let body=shape.text_body_mut().unwrap();body.style.font_size=size*100;body.style.font=Some("Arial".into());body.style.align=ibis_doc_model::TextAlign::Center;for para in &mut body.paragraphs{para.align=Some(ibis_doc_model::TextAlign::Center);}
+        for run in body.paragraphs.iter_mut().flat_map(|p|&mut p.runs){run.style.font_size=Some(size*100);run.style.glow=Some((Color::opaque(Rgb(0x00a000)),rad*12700));}
+        let rendered=crate::native_shape_clipboard::image_fallback(&p,&[shape]).unwrap();
+        std::fs::create_dir_all("target/glow91").unwrap();std::fs::write(format!("target/glow91/glow-{size}-{rad}.png"),&rendered.bytes).unwrap();
+        let pixels=image::load_from_memory(&rendered.bytes).unwrap().to_rgba8();let per_point=pixels.width() as f32/(6000000./12700.);
+        // The stem's middle row: alpha of the glow from the stem's left edge outwards.
+        let rows:Vec<u32>=pixels.enumerate_pixels().filter(|(_,_,q)|q[0]<60&&q[1]<60).map(|(_,y,_)|y).collect();let y=(rows.iter().min().unwrap()+rows.iter().max().unwrap())/2;let row:Vec<f32>=(0..pixels.width()).map(|x|1.-pixels.get_pixel(x,y)[0] as f32/255.).collect();
+        let ink=(0..pixels.width()).find(|&x|{let q=pixels.get_pixel(x,y);q[0]<60&&q[1]<60}).expect("the stem");
+        let profile:Vec<f32>=(0..ink).rev().map(|x|row[x as usize]).collect();
+        let at=|t:f32|profile.iter().position(|a|*a<t).unwrap_or(profile.len()) as f32/per_point;
+        eprintln!("glow91 {size}pt rad {rad}pt: 50% {:.2}pt (PowerPoint {d50}), 10% {:.2}pt ({d10}), 2% {:.2}pt ({d02}), {per_point:.2} px/pt",at(0.5),at(0.1),at(0.02));
+        let steepest=profile.windows(2).map(|w|(w[0]-w[1]).abs()).fold(0.,f32::max);
+        assert!(profile.windows(2).all(|w|w[1]<=w[0]+0.02),"the glow only falls away from the stem: {profile:?}");
+        // A Gaussian edge of deviation sigma falls at most 1/(sigma*sqrt(2*pi)) per point: no step beyond that (and a rounding).
+        let sigma=(d10-d50)/1.28;let smooth=1./(sigma*2.5066*per_point);
+        assert!(steepest<=smooth*1.5+0.03,"no step across the edge: {steepest} per pixel, a smooth edge {smooth}");
+        for (got,want,name) in [(at(0.5),d50,"50%"),(at(0.1),d10,"10%"),(at(0.02),d02,"2%")]{
+            assert!((got-want).abs()<=want*0.05+1.0/per_point,"{size}pt rad {rad}pt: the {name} distance is {got:.2}pt, PowerPoint's {want}pt");
+        }
+    }
 }

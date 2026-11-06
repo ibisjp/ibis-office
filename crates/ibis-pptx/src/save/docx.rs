@@ -82,37 +82,134 @@ pub struct SourceMap {
 
 /// Whether two documents have the same content (the file name, which the
 /// viewer sets, aside).
+///
+/// Every field of [`FlowDocument`] is named here: compared, or listed as one the file does not hold (a view setting, a cache). A field
+/// added to the model does not compile until it is put in one of the two, so a change to it cannot be left out of the saving.
 fn same_document(a: &FlowDocument, b: &FlowDocument) -> bool {
-    a.page == b.page && a.header == b.header && a.footer == b.footer && a.body == b.body && a.styles == b.styles && last_section(a) == last_section(b)
-        && a.footnotes == b.footnotes && a.endnotes == b.endnotes && a.comments == b.comments && a.track_changes == b.track_changes && a.watermark == b.watermark && a.section_watermarks == b.section_watermarks
-        && a.page_color == b.page_color && a.properties == b.properties
-        && a.mark_as_final == b.mark_as_final && a.read_only_recommended == b.read_only_recommended
-        && a.update_fields == b.update_fields && a.note_separators == b.note_separators && a.mail_merge_type == b.mail_merge_type && a.mail_merge_field_map == b.mail_merge_field_map && a.view_mode == b.view_mode
-        && a.no_line_start == b.no_line_start && a.no_line_end == b.no_line_end
-        && a.protection == b.protection && a.lock_tracking == b.lock_tracking
-        && a.formatting_protection == b.formatting_protection
-        && a.interaction_mode == b.interaction_mode
-        && a.do_not_compress_images == b.do_not_compress_images
-        && a.default_image_dpi == b.default_image_dpi
-        && a.discard_image_editing_data == b.discard_image_editing_data
-        && a.save_frequency == b.save_frequency
-        && a.embed_true_type_fonts == b.embed_true_type_fonts
-        && a.embed_system_fonts == b.embed_system_fonts
-        && a.save_subset_fonts == b.save_subset_fonts
-        && a.compatibility_mode == b.compatibility_mode
-        && a.use_fe_layout == b.use_fe_layout
-        && a.do_not_expand_shift_return == b.do_not_expand_shift_return
-        && a.attached_template == b.attached_template
-        && a.link_styles == b.link_styles
-        && a.strict_first_and_last_chars == b.strict_first_and_last_chars
-        && a.theme_font_lang == b.theme_font_lang
-        && a.shape_groups == b.shape_groups
-}
-
-/// The rest of the last section: its other headers and footers and settings.
-#[allow(clippy::type_complexity)]
-fn last_section(d: &FlowDocument) -> (&[Block], &[Block], &[Block], &[Block], bool, bool, &Option<String>, &Option<(u32, String)>, bool, [bool; 6]) {
-    (&d.header_first, &d.footer_first, &d.header_even, &d.footer_even, d.title_page, d.even_and_odd, &d.page_number_format, &d.page_chapter, d.restart_numbering, d.linked)
+    let FlowDocument {
+        // Compared: what the file holds.
+        page,
+        header,
+        footer,
+        body,
+        header_first,
+        footer_first,
+        header_even,
+        footer_even,
+        title_page,
+        even_and_odd,
+        page_number_format,
+        page_chapter,
+        restart_numbering,
+        linked,
+        footnotes,
+        endnotes,
+        comments,
+        track_changes,
+        styles,
+        watermark,
+        section_watermarks,
+        page_color,
+        properties,
+        mark_as_final,
+        no_line_start,
+        no_line_end,
+        strict_first_and_last_chars,
+        theme_font_lang,
+        read_only_recommended,
+        update_fields,
+        note_separators,
+        mail_merge_type,
+        mail_merge_field_map,
+        lock_tracking,
+        doc_variables,
+        attached_template,
+        link_styles,
+        view_mode,
+        protection,
+        formatting_protection,
+        interaction_mode,
+        do_not_compress_images,
+        default_image_dpi,
+        discard_image_editing_data,
+        save_frequency,
+        embed_true_type_fonts,
+        embed_system_fonts,
+        save_subset_fonts,
+        compatibility_mode,
+        use_fe_layout,
+        do_not_expand_shift_return,
+        shape_groups,
+        // Not written by the saving: the viewer's own state, what layout reads, or numbering of the session.
+        file_name: _,
+        file_size: _,
+        default_tab_stop: _,
+        id_floor: _,
+        paragraph_spacing_preset: _,
+        style_set_preset: _,
+        show_field_codes: _,
+        form_design_mode: _,
+        compress_punctuation: _,
+        font_table: _,
+        balance_single_double_byte_width: _,
+        ul_trail_space: _,
+        adjust_line_height_in_table: _,
+        do_not_use_html_paragraph_auto_spacing: _,
+        split_pg_break_and_para_mark: _,
+        compat_mode: _,
+    } = a;
+    *page == b.page
+        && *header == b.header
+        && *footer == b.footer
+        && *body == b.body
+        && *header_first == b.header_first
+        && *footer_first == b.footer_first
+        && *header_even == b.header_even
+        && *footer_even == b.footer_even
+        && *title_page == b.title_page
+        && *even_and_odd == b.even_and_odd
+        && *page_number_format == b.page_number_format
+        && *page_chapter == b.page_chapter
+        && *restart_numbering == b.restart_numbering
+        && *linked == b.linked
+        && *footnotes == b.footnotes
+        && *endnotes == b.endnotes
+        && *comments == b.comments
+        && *track_changes == b.track_changes
+        && *styles == b.styles
+        && *watermark == b.watermark
+        && *section_watermarks == b.section_watermarks
+        && *page_color == b.page_color
+        && *properties == b.properties
+        && *mark_as_final == b.mark_as_final
+        && *no_line_start == b.no_line_start
+        && *no_line_end == b.no_line_end
+        && *strict_first_and_last_chars == b.strict_first_and_last_chars
+        && *theme_font_lang == b.theme_font_lang
+        && *read_only_recommended == b.read_only_recommended
+        && *update_fields == b.update_fields
+        && *note_separators == b.note_separators
+        && *mail_merge_type == b.mail_merge_type
+        && *mail_merge_field_map == b.mail_merge_field_map
+        && *lock_tracking == b.lock_tracking
+        && *doc_variables == b.doc_variables
+        && *attached_template == b.attached_template
+        && *link_styles == b.link_styles
+        && *view_mode == b.view_mode
+        && *protection == b.protection
+        && *formatting_protection == b.formatting_protection
+        && *interaction_mode == b.interaction_mode
+        && *do_not_compress_images == b.do_not_compress_images
+        && *default_image_dpi == b.default_image_dpi
+        && *discard_image_editing_data == b.discard_image_editing_data
+        && *save_frequency == b.save_frequency
+        && *embed_true_type_fonts == b.embed_true_type_fonts
+        && *embed_system_fonts == b.embed_system_fonts
+        && *save_subset_fonts == b.save_subset_fonts
+        && *compatibility_mode == b.compatibility_mode
+        && *use_fe_layout == b.use_fe_layout
+        && *do_not_expand_shift_return == b.do_not_expand_shift_return
+        && *shape_groups == b.shape_groups
 }
 
 /// A section's settings its `w:sectPr` holds (besides its headers').
@@ -198,6 +295,54 @@ fn run_looks(body: &ibis_doc_model::TextBody) -> Vec<Vec<(String, bool, bool, bo
             out
         })
         .collect()
+}
+
+/// Which characters of a text body are 縦中横 (and how), paragraph by paragraph: (the run's text, its `TateChuYoko`).
+fn tcy_marks(body: &ibis_doc_model::TextBody) -> Vec<Vec<(String, ibis_doc_model::TateChuYoko)>> {
+    body.paragraphs
+        .iter()
+        .map(|p| p.runs.iter().filter(|r| !r.text.is_empty()).map(|r| (r.text.clone(), r.style.tate_chu_yoko.unwrap_or_default())).collect())
+        .collect()
+}
+
+/// The paragraphs of a new text box when some of its text is 縦中横 (`w:eastAsianLayout`, after the size in CT_RPr's order), run by run.
+fn tcy_paragraph_xml(body: &ibis_doc_model::TextBody, esc: &dyn Fn(&str) -> String, u_xml: &dyn Fn(bool, ibis_doc_model::Underline) -> String) -> Option<String> {
+    use ibis_doc_model::TateChuYoko;
+    let on = |r: &ibis_doc_model::Run| matches!(r.style.tate_chu_yoko, Some(TateChuYoko::Fit | TateChuYoko::Grow));
+    if !body.paragraphs.iter().flat_map(|p| &p.runs).any(on) {
+        return None;
+    }
+    Some(
+        body.paragraphs
+            .iter()
+            .map(|p| {
+                let runs: String = p
+                    .runs
+                    .iter()
+                    .filter(|r| !r.text.is_empty())
+                    .map(|r| {
+                        let half = (r.style.font_size.unwrap_or(body.style.font_size) + 25) / 50;
+                        let color = r.style.color.unwrap_or(body.style.color).0 & 0xffffff;
+                        let scale = r.style.char_scale.filter(|s| *s != 100).map(|s| format!("<w:w w:val=\"{s}\"/>")).unwrap_or_default();
+                        let layout = match r.style.tate_chu_yoko {
+                            Some(TateChuYoko::Fit) => r#"<w:eastAsianLayout w:vert="1" w:vertCompress="1"/>"#,
+                            Some(TateChuYoko::Grow) => r#"<w:eastAsianLayout w:vert="1"/>"#,
+                            _ => "",
+                        };
+                        let rpr = format!(
+                            "{}{}{}{}{scale}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>{layout}",
+                            if r.style.bold.unwrap_or(body.style.bold) { "<w:b/><w:bCs/>" } else { "" },
+                            if r.style.italic.unwrap_or(body.style.italic) { "<w:i/><w:iCs/>" } else { "" },
+                            u_xml(r.style.underline, r.style.underline_kind),
+                            if color != ibis_doc_model::TextStyle::default().color.0 & 0xffffff { format!("<w:color w:val=\"{color:06X}\"/>") } else { String::new() },
+                        );
+                        format!(r#"<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r>"#, esc(&r.text))
+                    })
+                    .collect();
+                format!("<w:p>{runs}</w:p>")
+            })
+            .collect(),
+    )
 }
 
 fn txbx_text(doc: &XmlDocument, content: NodeId) -> String {
@@ -3723,7 +3868,9 @@ impl Writer<'_> {
         );
         // Each run with its own look when the paragraphs have runs that differ (a part of the text bold…); else a run per line.
         let looks = run_looks(body);
-        let paragraphs: String = if looks.iter().any(|p| p.len() > 1) && looks.len() == body.paragraphs.len() {
+        let paragraphs: String = if let Some(x) = tcy_paragraph_xml(body, &esc, &u_xml) {
+            x
+        } else if looks.iter().any(|p| p.len() > 1) && looks.len() == body.paragraphs.len() {
             looks
                 .iter()
                 .map(|p| {
@@ -3855,7 +4002,9 @@ impl Writer<'_> {
             if color != ibis_doc_model::TextStyle::default().color { format!("<w:color w:val=\"{:06X}\"/>", color.0 & 0xffffff) } else { String::new() },
         );
         let looks = run_looks(body);
-        let paragraphs: String = if looks.iter().any(|p| p.len() > 1) && looks.len() == body.paragraphs.len() {
+        let paragraphs: String = if let Some(x) = tcy_paragraph_xml(body, &esc, &u_xml) {
+            x
+        } else if looks.iter().any(|p| p.len() > 1) && looks.len() == body.paragraphs.len() {
             looks
                 .iter()
                 .map(|p| {
@@ -4068,13 +4217,41 @@ impl Writer<'_> {
 
     /// The paragraphs of the text box in `node` written run by run as `body` has its runs (the paragraph properties and the first
     /// run's properties of each paragraph are kept). Nothing happens when the paragraphs are not the same in number.
-    fn write_runs_by_look(&mut self, node: NodeId, body: &ibis_doc_model::TextBody) {
-        let Some(content) = self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent") else { return };
-        let paragraphs: Vec<NodeId> = self.doc.children_named(content, "p").collect();
-        if paragraphs.len() != body.paragraphs.len() {
-            return;
+    fn write_runs_by_look(&mut self, node: NodeId, body: &ibis_doc_model::TextBody) -> bool {
+        let contents: Vec<NodeId> = self.doc.descendants(node).into_iter().filter(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent").collect();
+        // A box with a table or a content control among its paragraphs is left to the caller.
+        if contents.is_empty() || contents.iter().any(|&c| self.doc.children(c).iter().any(|&b| self.doc.is_element(b) && self.doc.local_name(b) != "p")) {
+            return false;
         }
-        for (p, model) in paragraphs.into_iter().zip(&body.paragraphs) {
+        for content in contents {
+            self.write_content_from_model(content, body);
+        }
+        true
+    }
+
+    /// The paragraphs of one `w:txbxContent`, written run by run from the model: a model paragraph that continues the line before
+    /// (`line_break`) is a `w:br` of the paragraph before it, and a paragraph keeps its properties.
+    fn write_content_from_model(&mut self, content: NodeId, body: &ibis_doc_model::TextBody) {
+        let mut groups: Vec<Vec<&ibis_doc_model::Paragraph>> = Vec::new();
+        for model in &body.paragraphs {
+            match groups.last_mut() {
+                Some(group) if model.line_break => group.push(model),
+                _ => groups.push(vec![model]),
+            }
+        }
+        let mut old: Vec<NodeId> = self.doc.children_named(content, "p").collect();
+        let Some(&last) = old.last() else { return };
+        // Paragraphs there are no more of are removed; those that are new are copies of the last one.
+        for extra in old.split_off(groups.len().min(old.len())) {
+            self.doc.detach(extra);
+        }
+        while old.len() < groups.len() {
+            let copy = self.doc.deep_clone(last);
+            let end = self.doc.children(content).len();
+            self.doc.insert(content, end, copy);
+            old.push(copy);
+        }
+        for (p, group) in old.into_iter().zip(groups) {
             let first_run = self.doc.children_named(p, "r").next();
             let old_pr = first_run.and_then(|r| self.doc.child(r, "rPr"));
             let template = old_pr.map(|n| self.doc.deep_clone(n));
@@ -4083,6 +4260,18 @@ impl Writer<'_> {
                     self.doc.detach(c);
                 }
             }
+            for (line, model) in group.into_iter().enumerate() {
+                if line > 0 {
+                    let r = self.doc.append_element(p, &self.w("r"));
+                    self.doc.append_element(r, &self.w("br"));
+                }
+                self.write_model_runs(p, model, body, template);
+            }
+        }
+    }
+
+    fn write_model_runs(&mut self, p: NodeId, model: &ibis_doc_model::Paragraph, body: &ibis_doc_model::TextBody, template: Option<NodeId>) {
+        {
             for run in model.runs.iter().filter(|r| !r.text.is_empty()) {
                 let r = self.doc.append_element(p, &self.w("r"));
                 let rpr = match &template {
@@ -4107,6 +4296,26 @@ impl Writer<'_> {
                 let color = run.style.color.unwrap_or(body.style.color);
                 if color != ibis_doc_model::TextStyle::default().color || self.doc.child(rpr, "color").is_some() {
                     self.val(rpr, "color", Some(&format!("{:06X}", color.0 & 0xffffff)), o);
+                }
+                // 文字の拡大縮小 (`w:w`): what 縦中横's 行の幅に合わせる shrinks the run by (`w:vertCompress` shrinks nothing of itself).
+                self.val(rpr, "w", run.style.char_scale.filter(|s| *s != 100).map(|s| s.to_string()).as_deref(), o);
+                // 縦中横 (`w:eastAsianLayout`): 行の幅に合わせる is `w:vertCompress`.
+                match run.style.tate_chu_yoko {
+                    Some(mode @ (ibis_doc_model::TateChuYoko::Fit | ibis_doc_model::TateChuYoko::Grow)) => {
+                        let e = self.ensure(rpr, "eastAsianLayout", o);
+                        self.doc.set_attr(e, "w:vert", "1");
+                        if mode == ibis_doc_model::TateChuYoko::Fit {
+                            self.doc.set_attr(e, "w:vertCompress", "1");
+                        } else {
+                            self.doc.remove_attr(e, "w:vertCompress");
+                        }
+                    }
+                    _ => {
+                        if let Some(e) = self.doc.child(rpr, "eastAsianLayout") {
+                            self.doc.remove_attr(e, "w:vert");
+                            self.doc.remove_attr(e, "w:vertCompress");
+                        }
+                    }
                 }
                 let t = self.doc.append_element(r, &self.w("t"));
                 if needs_space_preserve(&run.text) {
@@ -4217,6 +4426,10 @@ impl Writer<'_> {
             self.doc.set_attr(body_pr, "anchor", anchor_val);
         }
         let text = body.text();
+        // Whether the text is the one the box was read with: the model is compared with the model (not with the XML's `w:t`
+        // texts, which leave out a `w:br`, a table or a content control, so the same text would look changed and the paragraphs
+        // be written again, losing their runs).
+        let text_unchanged = old_body.is_some_and(|old| old.text() == text);
         // The text's formatting (bold, italic, size, colour) of the first run, from the
         // model and from the old element: a change goes to every run of the box.
         // The values a body's first run is drawn with.
@@ -4293,14 +4506,20 @@ impl Writer<'_> {
         // The text is the same but a part of it is formatted differently (bold words, another size…): the paragraphs are written
         // run by run, each with the formatting the model gives it.
         if let Some(old_body) = old_body
-            && txbx_text(self.doc, self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent").unwrap_or(node)) == text
-            && run_looks(body) != run_looks(old_body)
+            && (text_unchanged || txbx_text(self.doc, self.doc.descendants(node).into_iter().find(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent").unwrap_or(node)) == text)
+            && (run_looks(body) != run_looks(old_body) || tcy_marks(body) != tcy_marks(old_body))
         {
-            self.write_runs_by_look(node, body);
+            if self.write_runs_by_look(node, body) {
+                return;
+            }
+        }
+        // The text changed: the paragraphs are written again from the model, run by run, so the words that were bold, coloured or
+        // italic still are, and a line break is still one.
+        if !text_unchanged && self.write_runs_by_look(node, body) {
             return;
         }
         for content in self.doc.descendants(node).into_iter().filter(|&n| self.doc.is_element(n) && self.doc.local_name(n) == "txbxContent").collect::<Vec<_>>() {
-            if txbx_text(self.doc, content) == text {
+            if text_unchanged || txbx_text(self.doc, content) == text {
                 continue;
             }
             let old: Vec<NodeId> = self.doc.children_named(content, "p").collect();
@@ -6142,6 +6361,9 @@ impl Writer<'_> {
                             name: pic.name.clone(),
                             linked_file: None,
                             soft_edge: pic.soft_edge,
+                            shadow: pic.shadow,
+                            reflection: pic.reflection.clone(),
+                            clear: pic.clear,
                             effects: pic.effects,
                             geometry: pic.geometry.clone(),
                         };
@@ -6607,13 +6829,6 @@ impl Writer<'_> {
                     None => self.doc.remove_attr(fonts, "w:cs"),
                 }
             }
-            if f0.east_asia_hint != f1.east_asia_hint {
-                match f1.east_asia_hint {
-                    Some(true)=>self.doc.set_attr(fonts,"w:hint","eastAsia"),
-                    Some(false)=>self.doc.set_attr(fonts,"w:hint","default"),
-                    None=>self.doc.remove_attr(fonts,"w:hint"),
-                }
-            }
             if self.doc.attributes(fonts).is_empty() {
                 self.doc.detach(fonts);
             }
@@ -6741,15 +6956,22 @@ impl Writer<'_> {
                 }
             }
         }
-        if f0.tate_chu_yoko != f1.tate_chu_yoko {
+        if f0.tate_chu_yoko != f1.tate_chu_yoko || f0.tate_chu_yoko_fit != f1.tate_chu_yoko_fit {
             match f1.tate_chu_yoko {
                 Some(true) => {
                     let e = self.ensure(rpr, "eastAsianLayout", o);
                     self.doc.set_attr(e, "w:vert", "1");
+                    // 行の幅に合わせる: `w:vertCompress` (Word writes it only when on).
+                    if f1.tate_chu_yoko_fit == Some(true) {
+                        self.doc.set_attr(e, "w:vertCompress", "1");
+                    } else {
+                        self.doc.remove_attr(e, "w:vertCompress");
+                    }
                 }
                 Some(false) => {
                     if let Some(e) = self.doc.child(rpr, "eastAsianLayout") {
                         self.doc.remove_attr(e, "w:vert");
+                        self.doc.remove_attr(e, "w:vertCompress");
                     }
                 }
                 None => {}
@@ -6990,20 +7212,12 @@ impl Writer<'_> {
                 for change in &b.tabs {
                     let e = self.doc.append_element(tabs, &name);
                     let (val, leader) = match change.stop {
-                        None => ("clear", false),
-                        Some(t) => (
-                            match t.align {
-                                ibis_doc_model::TabAlign::Left => "left",
-                                ibis_doc_model::TabAlign::Center => "center",
-                                ibis_doc_model::TabAlign::Right => "right",
-                                ibis_doc_model::TabAlign::Decimal => "decimal",
-                            },
-                            t.leader,
-                        ),
+                        None => ("clear", None),
+                        Some(t) => (t.align.xml_name(), t.leader.xml_name()),
                     };
                     self.doc.set_attr(e, "w:val", val);
-                    if leader {
-                        self.doc.set_attr(e, "w:leader", "dot");
+                    if let Some(leader) = leader {
+                        self.doc.set_attr(e, "w:leader", leader);
                     }
                     self.doc.set_attr(e, "w:pos", &(change.position / 635).to_string());
                 }
@@ -7700,6 +7914,14 @@ fn existing_chart_part(package: &Package, map: &SourceMap, old: &[Block], id: ib
     let reference = doc.descendants(at).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "chart").ok_or_else(fail)?;
     let rid = doc.attributes(reference).iter().find(|a| a.name.ends_with(":id") && !a.name.starts_with("xmlns")).map(|a| a.value.clone()).ok_or_else(fail)?;
     package.relationships(&source.part)?.into_iter().find(|r| r.id == rid).and_then(|r| r.target_part(&source.part)).ok_or_else(fail)
+}
+
+/// The chart part of the `ordinal`th chart (in document order) of the document `package` was read as (`flow`).
+pub(crate) fn chart_part_by_ordinal(package: &Package, map: &SourceMap, flow: &ibis_doc_model::FlowDocument, ordinal: usize) -> Result<String, Error> {
+    let mut charts = Vec::new();
+    charts_in(&flow.body, &mut charts);
+    let (id, _) = charts.get(ordinal).ok_or_else(|| unsupported("このグラフの変更"))?;
+    existing_chart_part(package, map, &flow.body, *id)
 }
 
 /// The media of the pictures in `blocks` (tables' too).

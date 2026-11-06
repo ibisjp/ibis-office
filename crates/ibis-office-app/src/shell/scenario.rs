@@ -71,8 +71,8 @@ pub(crate) mod dialog_apply;
 pub(crate) mod button_probe;
 #[path = "../tests/shell/hyperlinks.rs"]
 mod hyperlink_scenarios;
-#[path = "../tests/shell/panel_dialog.rs"]
-mod panel_dialog_scenarios;
+#[path = "../tests/shell/dialog.rs"]
+mod dialog_scenarios;
 #[path = "../tests/shell/merge_workflow.rs"]
 mod merge_workflow_scenarios;
 #[path = "../tests/shell/ui_refinements.rs"]
@@ -97,21 +97,39 @@ mod editing_20261028;
 mod followup_20261028;
 #[path="../tests/shell/issues64_65.rs"]
 mod issues64_65;
+#[path="../tests/shell/issues83.rs"]
+mod issues83;
+#[path="../tests/shell/issue108_paste.rs"]
+mod issue108_paste;
+#[path="../tests/shell/issue105_editor.rs"]
+mod issue105_editor;
+#[path="../tests/shell/find_shortcuts.rs"]
+mod find_shortcuts;
+#[path="../tests/shell/file_watch.rs"]
+mod file_watch_scenarios;
 #[path = "../tests/shell/dropdown.rs"]
 mod dropdown;
+#[path = "../tests/shell/popup_guard.rs"]
+mod popup_guard_scenarios;
 #[path = "../tests/shell/segment_control_ui.rs"]
 mod segment_control_ui;
 #[path = "../tests/shell/panel_catalog.rs"]
 mod panel_catalog;
+#[path = "../tests/shell/common_parts.rs"]
+mod common_parts;
+#[path = "../tests/shell/input_components_rendering.rs"]
+mod input_components_rendering;
 
 #[path = "../tests/shell/menu_viewport.rs"]
 mod menu_viewport;
+#[path = "../tests/shell/comments_common.rs"]
+mod comments_common;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     use crate::shell::format::FormatEditor;
     let mut all = crate::shell::scenario_examples::all();
     all.extend(crate::native_quit_scenarios::all());
-    all.extend(panel_dialog_scenarios::all());
+    all.extend(dialog_scenarios::all());
     all.push(("shell::submenu_viewport_fit",menu_viewport::run));
     all.extend(hyperlink_scenarios::all());
     all.extend(dialog_apply::all());
@@ -125,15 +143,31 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(editing_20261028::all());
     all.extend(followup_20261028::all());
     all.extend(issues64_65::all());
+    all.extend(issues83::all());
+    all.extend(issue108_paste::all());
+    all.extend(issue105_editor::all());
+    all.extend(find_shortcuts::all());
+    all.extend(file_watch_scenarios::all());
+    all.extend(comments_common::all());
     all.push(("shell::dropdown_item_attributes",dropdown::run));
     all.push(("shell::toolbar_style_common_dropdown",dropdown::toolbar_style));
     all.extend(xlsx_ink_followup::all());
+    all.extend(popup_guard_scenarios::all());
     all.extend(segment_control_ui::all());
+    all.extend(common_parts::all());
+    all.extend(input_components_rendering::all());
     all.extend(merge_workflow_scenarios::all());
     all.extend(crate::shell::scenario_i18n::all());
     all.extend(crate::shell::scenario_fix::all());
+    all.extend(crate::shell::scenario_open_save::all());
     all.extend(crate::shell::scenario_menus::all());
+    all.extend(crate::shell::scenario_menu_search::all());
     all.extend(<crate::pptx::Presentation as FormatEditor>::scenarios());
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    {
+        all.extend(crate::export_print::export_print_tests::all());
+        all.extend(crate::pptx::text_rect::all());
+    }
     all.extend(<crate::xlsx::Workbook as FormatEditor>::scenarios());
     all.extend(<crate::docx::Document as FormatEditor>::scenarios());
     all
@@ -144,6 +178,12 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
     let mut out: Vec<(&'static str, fn())> = vec![("shell::dump_all_right_panels", panel_catalog::dump_all_right_panels)];
     out.extend(ui_followup::ignored());
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    out.extend(crate::docx::typeset68::ignored());
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    out.extend(crate::docx::layout_tests::ignored());
+    #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+    out.extend(crate::docx::layout_tests_grid::ignored());
     #[cfg(target_os = "macos")]
     {
         out.extend(crate::pptx::corpus_report::ignored());
@@ -435,17 +475,17 @@ impl Scenario {
             if is_tmpl {
                 let tmpl_name = crate::shell::file_actions::new_file_name(ibis_pptx::Kind::of(&loaded.presentation));
                 e.load(loaded.presentation, tmpl_name, window, cx);
-                e.source = Some(loaded.source);
+                e.set_loaded_source(loaded.source);
                 e.path = None;
             } else if is_old_presentation {
                 // An old presentation is read as a new .pptx: saving asks where.
                 let stem = full.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 e.load(loaded.presentation, format!("{stem}.pptx").into(), window, cx);
-                e.source = Some(loaded.source);
+                e.set_loaded_source(loaded.source);
                 e.path = None;
             } else {
                 e.load(loaded.presentation, name, window, cx);
-                e.source = Some(loaded.source);
+                e.set_loaded_source(loaded.source);
                 e.set_file_path(Some(full.clone()));
             }
             if full.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_slideshow) {
@@ -479,7 +519,19 @@ impl Scenario {
     }
 
     fn start_sized(width: f32) -> Self {
-        let lock = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // A second Scenario opened while the first is alive (in one test) waits for it for ever: say so after 30 s.
+        let mut waits = 0u32;
+        let lock = loop {
+            match ONE_AT_A_TIME.try_lock() {
+                Ok(lock) => break lock,
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    waits += 1;
+                    assert!(waits < 1500, "a Scenario was opened while another is still alive (drop the first, or split the test): it would wait for ever");
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+            }
+        };
         // The scenarios read the UI in Japanese, whatever the system's
         // language and the user's setting.
         crate::shell::i18n::show(crate::shell::i18n::Language::Japanese);
@@ -573,6 +625,38 @@ impl Scenario {
     pub(crate) fn with<R>(&mut self, f: impl FnOnce(&SlideEditor, &App) -> R) -> R {
         let editor = self.editor.clone();
         self.cx.update(|app| f(editor.read(app), app))
+    }
+
+    /// データの編集: type into the chart's data grid (the spreadsheet screen's editor in the pane) the name of
+    /// series `series` (`index` None) or its `index`th value, as a number when `text` is one, else as text.
+    /// The grid's cell is found from the ranges the series take their data from.
+    pub(crate) fn chart_grid_set(&mut self, series: usize, index: Option<usize>, text: &str) {
+        use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, SheetCommand};
+        let (view, refs) = self.with(|e, _| {
+            let open = e.chart_data_window().expect("the chart's data grid");
+            (open.view.clone(), open.refs.clone())
+        });
+        let formula = match index {
+            None => refs[series].name.clone(),
+            Some(_) => refs[series].values.clone(),
+        };
+        let (_, range) = ibis_pptx::parse_ref(formula.as_deref().expect("a range")).expect("a reference");
+        let (row, column) = match index {
+            None => (range.first_row, range.first_column),
+            Some(i) if range.first_column == range.last_column => (range.first_row + i as u32, range.first_column),
+            Some(i) => (range.first_row, range.first_column + i as u32),
+        };
+        let value = match text.parse::<f64>() {
+            Ok(n) => CellValue::Number(n),
+            Err(_) => CellValue::Text(text.into()),
+        };
+        self.with_app(|app| {
+            view.update(app, |d, cx| {
+                let slide = d.current_slide;
+                d.run(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row, column, input: CellInput::Value(value) }] })], cx);
+            })
+        });
+        self.settle();
     }
 
     /// Run `f` with mutable access to the app context.
@@ -873,7 +957,7 @@ impl Scenario {
         let name: SharedString = path.file_name().unwrap().to_string_lossy().into_owned().into();
         self.update(|e, window, cx| {
             e.load(loaded.presentation, name, window, cx);
-            e.source = Some(loaded.source);
+            e.set_loaded_source(loaded.source);
             e.set_file_path(Some(path));
         });
         self.settle();

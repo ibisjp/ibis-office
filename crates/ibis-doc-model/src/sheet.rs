@@ -816,6 +816,10 @@ pub struct Sheet {
     /// Columns whose width the user (or the file: `customWidth="1"`) fixed. A column outside this set
     /// widens by itself when a number wider than it is entered, and its width is not saved (as in Excel).
     pub custom_columns: std::collections::BTreeSet<u32>,
+    /// Columns whose current width the sheet chose by itself (a number entered that is wider than the column). Such a width is
+    /// not saved, so the file opens with the column as it was (as Excel's). Every other change of a width is saved: fixed by hand,
+    /// fitted to the contents, hidden or shown again.
+    pub widened_columns: std::collections::BTreeSet<u32>,
     /// Cells with a value or a visible format, in row-major order.
     pub cells: Cells,
     pub styles: Vec<CellStyle>,
@@ -866,6 +870,13 @@ pub struct Sheet {
     /// How many rows the file prints (0: all of `rows`). Rows past it hold only a height (`<row ht customHeight/>` with no cell):
     /// Excel keeps them but prints no page for them, so printing lays the sheet out without them. Not saved.
     pub printed_rows: Unsaved<u32>,
+    /// The sheet is laid out as Excel for Windows prints it (a PDF): its text in the printer's units. Not saved.
+    pub printed: Unsaved<bool>,
+    /// The width the file gives each column of a `<col width>` of its own, in characters (the `columns` are its pixels on the
+    /// screen): Excel for Windows breaks a printed cell's text in a column of ECMA-376's width with the printer's digit. Not saved.
+    pub column_chars: Unsaved<std::collections::BTreeMap<u32, f64>>,
+    /// Printed (`printed`), how much wider than `columns` each column's text may be (EMU; see `column_chars`). Not saved.
+    pub printed_text_extra: Unsaved<Vec<Emu>>,
     /// The font of each `<col>` of the file (first column, last column, typeface, size in hundredths of a point; `None` and 0 when
     /// the column has no style of its own, so it is the Normal font): a cell no one wrote takes its column's style, and Excel
     /// measures a row by all the cells of it, the unwritten ones too. Not saved.
@@ -972,12 +983,16 @@ impl Default for Sheet {
             measured_rows: Unsaved::default(),
             fitted_rows: Unsaved::default(),
             printed_rows: Unsaved::default(),
+            printed: Unsaved::default(),
+            column_chars: Unsaved::default(),
+            printed_text_extra: Unsaved::default(),
             column_fonts: Unsaved::default(),
             row_fonts: Unsaved::default(),
             written_fonts: Unsaved::default(),
             hidden_rows: std::collections::BTreeMap::new(),
             custom_rows: std::collections::BTreeSet::new(),
             custom_columns: std::collections::BTreeSet::new(),
+            widened_columns: std::collections::BTreeSet::new(),
             hidden_columns: std::collections::BTreeMap::new(),
             spills: std::collections::BTreeMap::new(),
             conditional: Vec::new(),
@@ -1500,6 +1515,30 @@ pub struct SheetComment {
     pub column: u32,
     pub author: String,
     pub text: String,
+    /// The text's parts in their own fonts (the `r` elements of `comments.xml`), their texts together `text`; empty for
+    /// a plain text.
+    pub runs: Vec<CellRun>,
+    /// The note's box (its legacy drawing shape); `None` takes the box Excel gives a new note.
+    pub rect: Option<NoteRect>,
+}
+
+/// A note's box, relative to the top right corner of its cell (EMU): where its top left corner is and its size, as
+/// the VML shape's `x:Anchor` and `style` give them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NoteRect {
+    pub dx: Emu,
+    pub dy: Emu,
+    pub width: Emu,
+    pub height: Emu,
+}
+
+impl NoteRect {
+    /// The box Excel gives a new note (the legacy drawing's 108 pt x 59.25 pt, a little right of the cell and above its top),
+    /// kept in the sheet (not above its top edge) when the cell is at `top` EMU from it.
+    pub fn default_for(top: Emu) -> Self {
+        let point = crate::EMU_PER_POINT;
+        NoteRect { dx: 12 * point, dy: (-8 * point).max(-top), width: 108 * point, height: (59.25 * point as f64) as Emu }
+    }
 }
 
 /// A threaded comment (`threadedComment`): the first post on a cell and
@@ -1605,6 +1644,18 @@ pub struct Validation {
     /// The message for a value it refuses, if shown (style `stop`,
     /// `warning`, `information`; title; text).
     pub error: Option<(String, String, String)>,
+}
+
+impl Validation {
+    /// The cell the rule's relative references count from: the top-left corner of the rectangle that
+    /// holds all of its ranges, whatever their order in `sqref` (Excel writes `sqref="C1:C5 A1:A5"` with
+    /// a formula relative to A1; measured with Excel 16.0 build 20527). `None` for a rule with no range.
+    /// Every place that reads or moves a rule's formulas takes the base from here.
+    pub fn base(&self) -> Option<(u32, u32)> {
+        let row = self.ranges.iter().map(|r| r.first_row).min()?;
+        let column = self.ranges.iter().map(|r| r.first_column).min()?;
+        Some((row, column))
+    }
 }
 
 /// A conditional format: its ranges and rules.
@@ -2065,23 +2116,31 @@ pub enum CellGradient {
     Path { path: GradientPath, focus: [u32; 4], stops: Vec<(u16, Rgb)> },
 }
 
+/// The stops of a cell gradient in the order of their positions (the order a `gradientFill` is written and drawn in; a stable
+/// sort, so stops at the same position keep their order).
+pub fn sorted_stops(stops: &[(u16, Rgb)]) -> Vec<(u16, Rgb)> {
+    let mut sorted = stops.to_vec();
+    sorted.sort_by_key(|s| s.0);
+    sorted
+}
+
 impl CellGradient {
     /// Convert to drawing [`Fill`] for gradient rendering.
     pub fn to_fill(&self) -> Fill {
         match self {
             Self::Linear { degree, stops } => {
                 let angle = *degree as i32 * 60_000;
-                let stops = stops.iter().map(|(pos, col)| GradientStop {
-                    position: *pos as u32 * 100,
-                    color: Color::opaque(*col),
+                let stops = sorted_stops(stops).into_iter().map(|(pos, col)| GradientStop {
+                    position: pos as u32 * 100,
+                    color: Color::opaque(col),
                 }).collect();
                 Fill::Linear { angle, scaled: false, stops }
             }
             Self::Path { path, focus, stops } => {
                 let focus = focus.map(|v| v as i32);
-                let stops = stops.iter().map(|(pos, col)| GradientStop {
-                    position: *pos as u32 * 100,
-                    color: Color::opaque(*col),
+                let stops = sorted_stops(stops).into_iter().map(|(pos, col)| GradientStop {
+                    position: pos as u32 * 100,
+                    color: Color::opaque(col),
                 }).collect();
                 Fill::Path { path: *path, focus, stops }
             }

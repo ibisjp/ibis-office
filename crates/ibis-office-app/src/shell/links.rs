@@ -75,7 +75,7 @@ impl SlideEditor {
     /// Map a document hit once at the workspace boundary. Child render layers
     /// (selection marks, page canvases) must not swallow hyperlink gestures.
     pub(crate) fn doc_link_under_pointer(&self,p:Point<Pixels>)->Option<ibis_doc_model::FlowPos>{
-        if !self.is_document()||self.panel_dialog_is_modal(){return None;}
+        if !self.is_document()||self.dialog_is_modal(){return None;}
         let ws=self.workspace_bounds?;if !ws.contains(&p){return None;}
         let top=self.doc_split.is_some_and(|ratio|p.y<ws.origin.y+(ws.size.height-px(6.))*ratio);
         let sizes=self.page_sizes();
@@ -102,16 +102,7 @@ impl SlideEditor {
         }
         let next = match self.format.kind() {
             ibis_pptx::Kind::Document =>self.doc_link_under_pointer(event.position).is_some(),
-            ibis_pptx::Kind::Workbook => self.cell_under(event.position).is_some_and(|(c, r)| {
-                self.current_sheet().is_some_and(|(_, s)| {
-                    s.hyperlinks.iter().any(|h| {
-                        h.range.first_row <= r
-                            && r <= h.range.last_row
-                            && h.range.first_column <= c
-                            && c <= h.range.last_column
-                    })
-                })
-            }),
+            ibis_pptx::Kind::Workbook => self.link_cell_under(event.position).is_some(),
             ibis_pptx::Kind::Presentation => self
                 .slide_layout()
                 .is_some_and(|l| self.slide_link_at(l.to_emu(event.position)).is_some()),

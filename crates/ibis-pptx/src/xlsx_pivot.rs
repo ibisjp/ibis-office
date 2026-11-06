@@ -74,7 +74,7 @@ pub(crate) fn read_pivot(table: Node, cache: Option<Node>, part: &str, cache_par
     let cache_fields: Vec<Node> = cache.and_then(|c| child(c, "cacheFields")).into_iter().flat_map(|f| children(f, "cacheField")).collect();
     let pivot_fields: Vec<Node> = child(table, "pivotFields").into_iter().flat_map(|f| children(f, "pivotField")).collect();
     let count = cache_fields.len().max(pivot_fields.len());
-    let fields = (0..count)
+    let fields: Vec<PivotField> = (0..count)
         .map(|i| {
             let cf = cache_fields.get(i).copied();
             let pf = pivot_fields.get(i).copied();
@@ -169,17 +169,33 @@ pub(crate) fn read_pivot(table: Node, cache: Option<Node>, part: &str, cache_par
                 }
             });
             let formula = cf.and_then(|c| attr(c, "formula")).map(str::to_string);
+            // A group field the file defines (年 (日付)): the cache field it groups, and its group items' names.
+            let group_base = cf
+                .filter(|c| attr(*c, "databaseField") == Some("0"))
+                .and_then(|c| child(c, "fieldGroup"))
+                .filter(|fg| child(*fg, "rangePr").is_some())
+                .and_then(|fg| attr_i64(fg, "base"))
+                .map(|b| b.max(0) as u32);
             let all_shared_nodes: Vec<Node> = cf
                 .and_then(|c| child(c, "sharedItems"))
                 .into_iter()
                 .flat_map(|s| s.children().filter(|n| n.is_element()))
                 .collect();
-            let shared: Vec<CellValue> = all_shared_nodes
+            let mut shared: Vec<CellValue> = all_shared_nodes
                 .iter()
                 .copied()
                 .filter(|&n| !flag(n, "f", false))
                 .map(shared_item)
                 .collect();
+            if group_base.is_some() && shared.is_empty() {
+                shared = cf
+                    .and_then(|c| child(c, "fieldGroup"))
+                    .and_then(|fg| child(fg, "groupItems"))
+                    .into_iter()
+                    .flat_map(|g| g.children().filter(|n| n.is_element()))
+                    .map(shared_item)
+                    .collect();
+            }
             PivotField {
                 name: cf.and_then(|c| attr(c, "name")).unwrap_or("").to_string(),
                 formula,
@@ -199,6 +215,8 @@ pub(crate) fn read_pivot(table: Node, cache: Option<Node>, part: &str, cache_par
                         x: attr_i64(it, "x").map(|x| x.max(0) as u32),
                         hidden: flag(it, "h", false),
                         kind: attr(it, "t").filter(|t| *t != "data").map(str::to_string),
+                        // `sd="0"`: 詳細の表示 off (the − button folded to +).
+                        collapsed: !flag(it, "sd", true),
                     })
                     .collect(),
                 compact: pf.map_or(compact, |p| flag(p, "compact", true)),
@@ -218,6 +236,7 @@ pub(crate) fn read_pivot(table: Node, cache: Option<Node>, part: &str, cache_par
                         p.descendants().find(|n| n.tag_name().name() == "pivotField" && attr_bool(*n, "fillDownLabels").is_some()).and_then(|n| attr_bool(n, "fillDownLabels"))
                     })
                 }),
+                group_base,
             }
         })
         .collect();
@@ -235,6 +254,7 @@ pub(crate) fn read_pivot(table: Node, cache: Option<Node>, part: &str, cache_par
         last_column: flag(s, "showLastColumn", false),
     });
     let text = |name: &str| attr(table, name).map(str::to_string);
+    let aliases = aliases_of(table, &fields);
     Some(PivotTable {
         name: attr(table, "name").unwrap_or("").to_string(),
         part: Some(part.to_string()),
@@ -312,6 +332,7 @@ pub(crate) fn read_pivot(table: Node, cache: Option<Node>, part: &str, cache_par
         preserve_formatting: flag(table, "useAutoFormatting", true),
         multiple_field_filters: flag(table, "multipleFieldFilters", false),
         show_drill: flag(table, "showDrill", true),
+        aliases,
         calculated_items: cache
             .and_then(|c| child(c, "calculatedItems"))
             .into_iter()
@@ -459,4 +480,26 @@ pub fn rebuilt_pivot(presentation: &ibis_doc_model::Presentation, slide: ibis_do
     let colors = crate::xlsx::SheetColors::new(&theme, None);
     crate::table_style::apply_pivot_style(&mut out, index, &built.rows, &built.columns, None, &colors);
     Some(out)
+}
+
+/// The names the user gave fields (`pivotField/@name`) and items (`item/@n`).
+fn aliases_of(table: Node, fields: &[PivotField]) -> ibis_doc_model::PivotAliases {
+    let mut out = ibis_doc_model::PivotAliases::default();
+    let Some(pfs) = child(table, "pivotFields") else { return out };
+    for (i, pf) in children(pfs, "pivotField").enumerate() {
+        let Some(field) = fields.get(i) else { break };
+        if let Some(n) = attr(pf, "name").filter(|n| !n.is_empty() && *n != field.name) {
+            out.fields.push((i as u32, n.to_string()));
+        }
+        for it in pf.children().filter(|n| n.is_element() && n.tag_name().name() == "items").flat_map(|n| children(n, "item")) {
+            let (Some(n), Some(x)) = (attr(it, "n"), attr_i64(it, "x")) else { continue };
+            if let Some(v) = field.shared.get(x.max(0) as usize) {
+                let key = ibis_doc_model::pivot_item_key(v);
+                if key != n {
+                    out.items.push((i as u32, key, n.to_string()));
+                }
+            }
+        }
+    }
+    out
 }

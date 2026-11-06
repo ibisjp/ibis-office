@@ -100,9 +100,9 @@ actions!(
         ToggleCharacterShading,
         /// 検索と置換 (⌘F, ⇧⌘H).
         OpenFind,
-        /// 次を検索 (⌘G, F3).
+        /// 次を検索 (macOS の ⌘G, F3).
         FindNext,
-        /// 前を検索 (⇧⌘G, ⇧F3).
+        /// 前を検索 (macOS の ⇧⌘G, ⇧F3).
         FindPrevious,
         /// ジャンプ (⌥⌘G, F5).
         OpenGoTo,
@@ -187,6 +187,7 @@ actions!(
 /// The keys of a document's text (Word's, with ⌘ on a Mac).
 pub(crate) fn key_bindings() -> Vec<KeyBinding> {
     let c = Some(TEXT_CONTEXT);
+    let p = Some(super::find::FIND_PANEL_CONTEXT);
     let m = |k: &str| if cfg!(target_os = "macos") { format!("cmd-{k}") } else { format!("ctrl-{k}") };
     let word = |k: &str| if cfg!(target_os = "macos") { format!("alt-{k}") } else { format!("ctrl-{k}") };
     let outline = |k: &str| if cfg!(target_os = "macos") { format!("ctrl-shift-{k}") } else { format!("alt-shift-{k}") };
@@ -279,10 +280,22 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new(&m("f"), OpenFind, c),
         KeyBinding::new(&m("k"), OpenLink, c),
         KeyBinding::new(&m("shift-h"), OpenFind, c),
-        KeyBinding::new(&m("g"), FindNext, c),
-        KeyBinding::new(&m("shift-g"), FindPrevious, c),
+        // ⌘G / ⇧⌘G are Mac only (Windows and Linux: F3 / Shift+F3; Ctrl+G is not Find Next).
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-g", FindNext, c),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-g", FindPrevious, c),
         KeyBinding::new("f3", FindNext, c),
         KeyBinding::new("shift-f3", FindPrevious, c),
+        // The same keys with the focus in the find panel's fields.
+        KeyBinding::new(&m("f"), OpenFind, p),
+        KeyBinding::new(&m("shift-h"), OpenFind, p),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-g", FindNext, p),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-g", FindPrevious, p),
+        KeyBinding::new("f3", FindNext, p),
+        KeyBinding::new("shift-f3", FindPrevious, p),
         KeyBinding::new("alt-cmd-g", OpenGoTo, c),
         KeyBinding::new("alt-ctrl-g", OpenGoTo, c),
         KeyBinding::new("f5", OpenGoTo, c),
@@ -402,14 +415,14 @@ fn class(c: char) -> u8 {
 /// Model positions in a deletion remain stable for saving/undo, but are not
 /// caret stops in the final view. A boundary shared by hidden text is represented
 /// by the end of the hidden run, so Left and Right each cross a visible character.
-fn hidden_range(p: &FlowParagraph, offset: usize) -> Option<(usize, usize)> {
+fn hidden_range(view: &crate::docx::flow_layout::MarkupView, p: &FlowParagraph, offset: usize) -> Option<(usize, usize)> {
     let mut at = 0;
     for r in &p.runs {
         let end = at + r.len();
         if at <= offset && offset < end {
-            let is_del = !crate::docx::flow_layout::showing_markup()
+            let is_del = !view.showing_markup()
                 && matches!(r.revision.as_ref().map(|v| &v.kind), Some(ibis_doc_model::RevisionKind::Delete));
-            let is_vanish = r.style.hidden && !crate::docx::flow_layout::showing_hidden_text();
+            let is_vanish = r.style.hidden && !view.show_hidden_text;
             if is_del || is_vanish {
                 return Some((at, end));
             }
@@ -420,14 +433,14 @@ fn hidden_range(p: &FlowParagraph, offset: usize) -> Option<(usize, usize)> {
 }
 
 /// A position strictly inside a hidden or deleted run (not at its endpoints).
-fn hidden_range_strictly_inside(p: &FlowParagraph, offset: usize) -> Option<(usize, usize)> {
+fn hidden_range_strictly_inside(view: &crate::docx::flow_layout::MarkupView, p: &FlowParagraph, offset: usize) -> Option<(usize, usize)> {
     let mut at = 0;
     for r in &p.runs {
         let end = at + r.len();
         if at < offset && offset < end {
-            let is_del = !crate::docx::flow_layout::showing_markup()
+            let is_del = !view.showing_markup()
                 && matches!(r.revision.as_ref().map(|v| &v.kind), Some(ibis_doc_model::RevisionKind::Delete));
-            let is_vanish = r.style.hidden && !crate::docx::flow_layout::showing_hidden_text();
+            let is_vanish = r.style.hidden && !view.show_hidden_text;
             if is_del || is_vanish {
                 return Some((at, end));
             }
@@ -439,15 +452,15 @@ fn hidden_range_strictly_inside(p: &FlowParagraph, offset: usize) -> Option<(usi
 
 /// In final view, deleted text cannot supply the caret's character format.
 /// Prefer the preceding visible run, then following text, then the mark.
-pub(super) fn visible_format_at(p: &FlowParagraph, offset: usize) -> (RunFormat, Option<String>, ibis_doc_model::FlowRunStyle) {
-    if crate::docx::flow_layout::showing_markup() && crate::docx::flow_layout::showing_hidden_text() || offset > p.len() { return p.format_at(offset); }
+pub(super) fn visible_format_at(view: &crate::docx::flow_layout::MarkupView, p: &FlowParagraph, offset: usize) -> (RunFormat, Option<String>, ibis_doc_model::FlowRunStyle) {
+    if view.showing_markup() && view.show_hidden_text || offset > p.len() { return p.format_at(offset); }
     let mut at = 0;
     let mut previous: Option<&ibis_doc_model::FlowRun> = None;
     let value = |r: &ibis_doc_model::FlowRun| (r.format.clone(), r.char_style.clone(), r.style.clone());
     for run in &p.runs {
         let end = at + run.len();
-        let is_del = !crate::docx::flow_layout::showing_markup() && matches!(run.revision.as_ref().map(|r| &r.kind), Some(ibis_doc_model::RevisionKind::Delete));
-        let is_vanish = run.style.hidden && !crate::docx::flow_layout::showing_hidden_text();
+        let is_del = !view.showing_markup() && matches!(run.revision.as_ref().map(|r| &r.kind), Some(ibis_doc_model::RevisionKind::Delete));
+        let is_vanish = run.style.hidden && !view.show_hidden_text;
         if run.len() > 0 && !is_del && !is_vanish {
             if offset == 0 || (offset > at && offset <= end) { return value(run); }
             if end <= offset { previous = Some(run); }
@@ -475,18 +488,18 @@ pub(super) fn after_tracked_delete(doc: &FlowDocument, from: FlowPos, to: FlowPo
 }
 
 /// Visible pieces of a single-paragraph selection, in safe deletion order.
-pub(super) fn visible_delete_commands(p: &FlowParagraph, from: usize, to: usize) -> Vec<FlowCommand> {
+pub(super) fn visible_delete_commands(view: &crate::docx::flow_layout::MarkupView, p: &FlowParagraph, from: usize, to: usize) -> Vec<FlowCommand> {
     let mut ranges: Vec<(usize, usize)> = Vec::new();
-    for (offset, _) in visible_chars(p).into_iter().filter(|(o, _)| from <= *o && *o < to) {
+    for (offset, _) in visible_chars(view, p).into_iter().filter(|(o, _)| from <= *o && *o < to) {
         if let Some(last) = ranges.last_mut().filter(|last| last.1 == offset) { last.1 += 1; }
         else { ranges.push((offset, offset + 1)); }
     }
     ranges.into_iter().rev().map(|(from, to)| FlowCommand::Delete { from: FlowPos::new(p.id, from), to: FlowPos::new(p.id, to) }).collect()
 }
 
-pub(super) fn visible_chars(p: &FlowParagraph) -> Vec<(usize, char)> {
+pub(super) fn visible_chars(view: &crate::docx::flow_layout::MarkupView, p: &FlowParagraph) -> Vec<(usize, char)> {
     let mut ranges = Vec::new();
-    if !crate::docx::flow_layout::showing_markup() {
+    if !view.showing_markup() {
         let mut at = 0;
         for r in &p.runs {
             let end = at + r.len();
@@ -501,8 +514,8 @@ pub(super) fn visible_chars(p: &FlowParagraph) -> Vec<(usize, char)> {
     }).collect()
 }
 
-fn selected_paragraph_text(p: &FlowParagraph, from: usize, to: usize) -> String {
-    visible_chars(p).into_iter().filter(|(o, c)| from <= *o && *o < to && *c != '\u{fffc}')
+fn selected_paragraph_text(view: &crate::docx::flow_layout::MarkupView, p: &FlowParagraph, from: usize, to: usize) -> String {
+    visible_chars(view, p).into_iter().filter(|(o, c)| from <= *o && *o < to && *c != '\u{fffc}')
         .map(|(_, c)| if matches!(c, '\u{b}' | '\u{c}' | '\u{e}') { '\n' } else { c }).collect()
 }
 
@@ -565,7 +578,7 @@ impl SlideEditor {
             state.anchor = None;
         }
         if let Some(c) = state.comments.as_mut() {
-            c.active_comment_id = active_comment_id;
+            c.active = active_comment_id.map(|id| id.to_string());
         }
         self.resources.hide_document_text = !self.show_document_text && in_hf;
         cx.notify();
@@ -750,20 +763,20 @@ impl SlideEditor {
         Some(FlowPos::new(line.para, offset))
     }
 
-    pub(super) fn paragraph_of(&self, id: u32) -> Option<&FlowParagraph> {
+    pub(crate) fn paragraph_of(&self, id: u32) -> Option<&FlowParagraph> {
         flow_command::paragraph(self.flow()?, id)
     }
 
     fn visible_position(&self, mut pos: FlowPos) -> FlowPos {
         if let Some(p) = self.paragraph_of(pos.para) {
-            while let Some((_, end)) = hidden_range(p, pos.offset) { pos.offset = end; }
+            while let Some((_, end)) = hidden_range(&self.resources.markup_view, p, pos.offset) { pos.offset = end; }
         }
         pos
     }
 
     fn selection_endpoint(&self, mut pos: FlowPos) -> FlowPos {
         if let Some(p) = self.paragraph_of(pos.para) {
-            while let Some((_, end)) = hidden_range_strictly_inside(p, pos.offset) { pos.offset = end; }
+            while let Some((_, end)) = hidden_range_strictly_inside(&self.resources.markup_view, p, pos.offset) { pos.offset = end; }
         }
         pos
     }
@@ -799,7 +812,7 @@ impl SlideEditor {
         if forward && pos.offset < len {
             let mut o = pos.offset;
             while o < len {
-                if let Some((_, end)) = self.paragraph_of(pos.para).and_then(|p| hidden_range(p, o)) { o = end; continue; }
+                if let Some((_, end)) = self.paragraph_of(pos.para).and_then(|p| hidden_range(&self.resources.markup_view, p, o)) { o = end; continue; }
                 let m = mark(o);
                 o += 1;
                 if !m {
@@ -813,7 +826,7 @@ impl SlideEditor {
             let mut skipped_deletion = false;
             while o > 0 {
                 o -= 1;
-                if let Some((start, _)) = self.paragraph_of(pos.para).and_then(|p| hidden_range(p, o)) {
+                if let Some((start, _)) = self.paragraph_of(pos.para).and_then(|p| hidden_range(&self.resources.markup_view, p, o)) {
                     o = start;
                     skipped_deletion = true;
                     continue;
@@ -847,7 +860,7 @@ impl SlideEditor {
 
     fn word_step(&self, pos: FlowPos, forward: bool) -> FlowPos {
         let Some(p) = self.paragraph_of(pos.para) else { return pos };
-        let chars = visible_chars(p);
+        let chars = visible_chars(&self.resources.markup_view, p);
         let mut o = chars.partition_point(|(offset, _)| *offset < pos.offset);
         if forward {
             if o >= chars.len() { return self.step(pos, true); }
@@ -868,7 +881,7 @@ impl SlideEditor {
     /// The visible word around `pos` (a double click).
     pub(crate) fn word_at(&self, pos: FlowPos) -> (FlowPos, FlowPos) {
         let Some(p) = self.paragraph_of(pos.para) else { return (pos, pos) };
-        let chars = visible_chars(p);
+        let chars = visible_chars(&self.resources.markup_view, p);
         if chars.is_empty() { let pos = self.visible_position(pos); return (pos, pos); }
         let at = chars.partition_point(|(offset, _)| *offset < pos.offset).min(chars.len() - 1);
         let k = class(chars[at].1);
@@ -1227,7 +1240,7 @@ impl SlideEditor {
     /// or move them into a different paragraph without their source XML.
     /// Keep the document and redo history intact until that writeback exists.
     fn reject_hidden_history_range(&mut self, start: FlowPos, end: FlowPos, cx: &mut Context<Self>) -> bool {
-        if start.para == end.para || super::flow_layout::showing_markup() { return false; }
+        if start.para == end.para || self.resources.markup_view.showing_markup() { return false; }
         let Some(doc) = self.flow() else { return false; };
         if doc.track_changes { return false; }
         let (Some((container, first)), Some((other, last))) = (flow_command::locate(doc, start.para), flow_command::locate(doc, end.para)) else { return false; };
@@ -1547,8 +1560,8 @@ impl SlideEditor {
         if start != end {
             if track {
                 commands.push(FlowCommand::TrackDelete { from: start, to: end, author: who.author.clone(), date: who.date.clone() });
-            } else if start.para == end.para && !super::flow_layout::showing_markup() {
-                if let Some(p) = flow_command::paragraph(doc, start.para) { commands.extend(visible_delete_commands(p, start.offset, end.offset)); }
+            } else if start.para == end.para && !self.resources.markup_view.showing_markup() {
+                if let Some(p) = flow_command::paragraph(doc, start.para) { commands.extend(visible_delete_commands(&self.resources.markup_view, p, start.offset, end.offset)); }
             } else {
                 commands.push(FlowCommand::Delete { from: start, to: end });
             }
@@ -1559,10 +1572,10 @@ impl SlideEditor {
         // The formatting typed: a button pressed with no selection, else the
         // text before the caret (what the selection started with).
         let format = self.doc_state().and_then(|s| s.pending.clone()).or_else(|| {
-            if !replacing && super::flow_layout::showing_markup() { return None; }
+            if !replacing && self.resources.markup_view.showing_markup() { return None; }
             let p = flow_command::paragraph(doc, original_start.para)?;
             let offset = if replacing { original_start.offset + 1 } else { original_start.offset };
-            let (format, char_style, _) = visible_format_at(p, offset);
+            let (format, char_style, _) = visible_format_at(&self.resources.markup_view, p, offset);
             Some(InsertFormat { format, char_style })
         });
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
@@ -1661,7 +1674,7 @@ impl SlideEditor {
         for &(from, to) in ranges.iter().rev() {
             let format = pending.clone().or_else(|| {
                 let p = flow_command::paragraph(doc, from.para)?;
-                let (format, char_style, _) = visible_format_at(p, from.offset + 1);
+                let (format, char_style, _) = visible_format_at(&self.resources.markup_view, p, from.offset + 1);
                 Some(InsertFormat { format, char_style })
             });
             if from != to {
@@ -2910,8 +2923,8 @@ impl SlideEditor {
         if start != end {
             let commands = if track {
                 vec![FlowCommand::TrackDelete { from: start, to: end, author: who.author, date: who.date }]
-            } else if start.para == end.para && !crate::docx::flow_layout::showing_markup() {
-                visible_delete_commands(self.paragraph_of(start.para).unwrap(), start.offset, end.offset)
+            } else if start.para == end.para && !self.resources.markup_view.showing_markup() {
+                visible_delete_commands(&self.resources.markup_view, self.paragraph_of(start.para).unwrap(), start.offset, end.offset)
             } else { vec![FlowCommand::Delete { from: start, to: end }] };
             if self.run_flow(commands, cx) {
                 self.set_caret(start, false, cx);
@@ -2976,7 +2989,7 @@ impl SlideEditor {
         let (format, _, style) = if start != end {
             p.format_at(start.offset + 1)
         } else {
-            visible_format_at(p, start.offset)
+            visible_format_at(&self.resources.markup_view, p, start.offset)
         };
         Some((format, style))
     }
@@ -2987,7 +3000,7 @@ impl SlideEditor {
             return;
         }
         // A selection of several ranges: all of them, as one step.
-        if self.has_extra_selections() && self.flow().is_some_and(|d| !d.track_changes && (super::flow_layout::showing_markup() || !order(d).iter().filter_map(|&id| flow_command::paragraph(d, id)).any(|p| p.runs.iter().any(|r| r.revision.is_some())))) {
+        if self.has_extra_selections() && self.flow().is_some_and(|d| !d.track_changes && (self.resources.markup_view.showing_markup() || !order(d).iter().filter_map(|&id| flow_command::paragraph(d, id)).any(|p| p.runs.iter().any(|r| r.revision.is_some())))) {
             let ranges = self.selection_ranges();
             let (extras, anchor, caret) = self.doc_state().map(|s| (s.extra_selections.clone(), s.anchor, s.caret)).unwrap_or_default();
             let commands = ranges.into_iter().map(|(from, to)| FlowCommand::SetRunFormat { from, to, change: change.clone() }).collect();
@@ -3001,7 +3014,7 @@ impl SlideEditor {
             let Some(p) = self.paragraph_of(start.para) else { return };
             let (mut format, char_style, _) = match self.doc_state().and_then(|s| s.pending.clone()) {
                 Some(f) => (f.format, f.char_style, p.mark.clone()),
-                None => visible_format_at(p, start.offset),
+                None => visible_format_at(&self.resources.markup_view, p, start.offset),
             };
             change.apply(&mut format);
             if let Some(state) = self.doc_state_mut() {
@@ -3018,7 +3031,7 @@ impl SlideEditor {
             let (Some((container, first)), Some((other, last))) = (flow_command::locate(doc, start.para), flow_command::locate(doc, end.para)) else { return false };
             container == other && first <= last && flow_command::blocks(doc, container).is_some_and(|blocks| blocks[first..=last].iter().any(|b| matches!(b, Block::Table(_))))
         });
-        if whole_table || self.flow().is_some_and(|doc| doc.track_changes) || !super::flow_layout::showing_markup() {
+        if whole_table || self.flow().is_some_and(|doc| doc.track_changes) || !self.resources.markup_view.showing_markup() {
             self.apply_selected_text_format(|format| change.apply(format), cx);
             if let (Some((a, c)), Some(state)) = (anchor, self.doc_state_mut()) {
                 state.anchor = Some(a);
@@ -3150,7 +3163,7 @@ impl SlideEditor {
         };
 
         let new_to = if from.para == to.para {
-            let selected = self.paragraph_of(from.para).map(|p| selected_paragraph_text(p, from.offset, to.offset)).unwrap_or_default();
+            let selected = self.paragraph_of(from.para).map(|p| selected_paragraph_text(&self.resources.markup_view, p, from.offset, to.offset)).unwrap_or_default();
             let new_len = conversion.apply(&selected).chars().count();
             FlowPos::new(from.para, from.offset + new_len)
         } else {
@@ -3820,14 +3833,14 @@ impl SlideEditor {
         let order = order(doc);
         let (Some(i), Some(j)) = (order.iter().position(|&p| p == start.para), order.iter().position(|&p| p == end.para)) else {
             // Header or footer: one paragraph.
-            return self.paragraph_of(start.para).map(|p| selected_paragraph_text(p, start.offset, end.offset)).unwrap_or_default();
+            return self.paragraph_of(start.para).map(|p| selected_paragraph_text(&self.resources.markup_view, p, start.offset, end.offset)).unwrap_or_default();
         };
         let mut out = Vec::new();
         for (k, id) in order[i..=j].iter().enumerate() {
             let Some(p) = self.paragraph_of(*id) else { continue };
             let a = if k == 0 { start.offset } else { 0 };
             let b = if i + k == j { end.offset } else { p.len() };
-            out.push(selected_paragraph_text(p, a, b));
+            out.push(selected_paragraph_text(&self.resources.markup_view, p, a, b));
         }
         out.join("\n")
     }
@@ -4069,21 +4082,14 @@ impl SlideEditor {
 
     /// A picture another app copied (the clipboard holds an image and no text) pasted at the caret.
     pub(crate) fn paste_clipboard_image(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(item) = cx.read_from_clipboard() else { return false };
-        if item.text().is_some_and(|t| !t.is_empty()) {
+        let item = cx.read_from_clipboard();
+        if item.as_ref().is_some_and(|i| i.text().is_some_and(|t| !t.is_empty())) {
             return false;
         }
-        let Some(ClipboardEntry::Image(image)) = item.entries().iter().find(|e| matches!(e, ClipboardEntry::Image(_))) else { return false };
-        let format = match image.format {
-            ImageFormat::Png => ibis_doc_model::MediaFormat::Png,
-            ImageFormat::Jpeg => ibis_doc_model::MediaFormat::Jpeg,
-            ImageFormat::Gif => ibis_doc_model::MediaFormat::Gif,
-            ImageFormat::Bmp => ibis_doc_model::MediaFormat::Bmp,
-            ImageFormat::Tiff => ibis_doc_model::MediaFormat::Tiff,
-            ImageFormat::Svg => ibis_doc_model::MediaFormat::Svg,
-            _ => return false,
-        };
-        self.doc_insert_picture(image.bytes.clone(), format, cx);
+        // A drawing (SVG, a metafile) or a bitmap, named by what its bytes are.
+        let Some((name, bytes)) = crate::native_shape_clipboard::clipboard_picture(item.as_ref()) else { return false };
+        let format = ibis_doc_model::MediaFormat::from_path(&name);
+        self.doc_insert_picture(bytes, format, cx);
         true
     }
 
@@ -4549,7 +4555,17 @@ impl SlideEditor {
     pub(crate) fn doc_insert_picture(&mut self, data: Vec<u8>, format: ibis_doc_model::MediaFormat, cx: &mut Context<Self>) {
         let Some((_, caret)) = self.text_selection() else { return };
         let Some(doc) = self.flow() else { return };
-        let (w, h) = picture_pixels(&data).unwrap_or((400, 300));
+        // A metafile is saved as it is and drawn on screen as the SVG it draws (or the bitmap it holds).
+        let screen: Option<(ImageFormat, Vec<u8>)> = match format {
+            ibis_doc_model::MediaFormat::Emf => match ibis_emf::emf_picture(&data) {
+                Some(ibis_emf::Picture::Svg(svg)) => Some((ImageFormat::Svg, svg.into_bytes())),
+                Some(ibis_emf::Picture::Image(_, bytes)) => crate::native_shape_clipboard::sniff_picture(&bytes, "png").and_then(|(ext, b)| Some((match ext { "jpg" => ImageFormat::Jpeg, "gif" => ImageFormat::Gif, "bmp" => ImageFormat::Bmp, _ => ImageFormat::Png }, b))),
+                None => None,
+            },
+            ibis_doc_model::MediaFormat::Wmf => ibis_emf::wmf_to_svg(&data).map(|svg| (ImageFormat::Svg, svg.into_bytes())),
+            _ => None,
+        };
+        let (w, h) = picture_pixels(screen.as_ref().map_or(&data, |(_, bytes)| bytes)).unwrap_or((400, 300));
         let (mut cx_emu, mut cy_emu) = (w as i64 * 9525, h as i64 * 9525);
         let room = doc.page.size.width - doc.page.left - doc.page.right;
         if cx_emu > room && cx_emu > 0 {
@@ -4569,6 +4585,8 @@ impl SlideEditor {
         let media = self.document.ids().add_media(format, data.clone());
         if let Some(f) = image_format {
             self.resources.images.insert(media, Arc::new(Image::from_bytes(f, data)));
+        } else if let Some((f, bytes)) = screen {
+            self.resources.images.insert(media, Arc::new(Image::from_bytes(f, bytes)));
         }
         let size = ibis_doc_model::EmuSize::new(cx_emu, cy_emu);
         if self.run_flow(vec![FlowCommand::InsertPicture { at: caret, media, size }], cx) {
@@ -6459,7 +6477,7 @@ impl SlideEditor {
         doc: &FlowDocument,
         range: Option<(FlowPos, FlowPos)>,
         accept: bool,
-        filter: Option<&std::collections::HashSet<String>>,
+        filter: Option<&std::collections::BTreeSet<String>>,
     ) -> Option<Vec<FlowCommand>> {
         fn contains(blocks: &[Block], id: u32) -> bool {
             blocks.iter().any(|b| match b {
@@ -6535,7 +6553,8 @@ impl SlideEditor {
             return;
         }
         let Some(doc) = self.flow() else { return };
-        let filter = self.reviewer_filter.as_ref();
+        let filter = self.resources.markup_view.shown_reviewers.clone();
+        let filter = filter.as_deref();
         let Some(commands) = Self::story_revision_commands_filter(doc, None, accept, filter) else {
             return;
         };
@@ -7218,7 +7237,7 @@ impl SlideEditor {
     pub(crate) fn toggle_formatting_marks(&mut self, cx: &mut Context<Self>) {
         self.formatting_marks_open = !self.formatting_marks_open;
         let show_hidden = self.formatting_marks_options.is_hidden_text_visible(self.formatting_marks_open);
-        super::flow_layout::set_show_hidden_text(show_hidden);
+        self.resources.markup_view.show_hidden_text = show_hidden;
         self.relayout_now(cx);
         cx.notify();
     }
@@ -7407,7 +7426,7 @@ impl SlideEditor {
     pub(crate) fn toggle_show_hidden_text(&mut self, cx: &mut Context<Self>) {
         self.formatting_marks_options.show_hidden_text = !self.formatting_marks_options.show_hidden_text;
         let show_hidden = self.formatting_marks_options.is_hidden_text_visible(self.formatting_marks_open);
-        super::flow_layout::set_show_hidden_text(show_hidden);
+        self.resources.markup_view.show_hidden_text = show_hidden;
         self.relayout_now(cx);
         cx.notify();
     }
@@ -7543,157 +7562,6 @@ impl SlideEditor {
         self.set_theme_font_lang(Some(tfl), cx);
     }
 
-    /// Word 標準の情報バー（編集制限 / 最終版 / 読み取り専用の推奨 / 閲覧モード）。
-    pub(crate) fn render_docx_infobar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.is_protection_read_only() {
-            Some(Self::docx_infobar_banner(
-                "docx-infobar-protected-readonly",
-                crate::shell::i18n::text("docx.infobar.protect.readonly.title"),
-                "docx.infobar.protect.readonly.message",
-                "infobar-btn-stop-protection",
-                "docx.infobar.protect.stop",
-                |this, _, cx| this.stop_protection(cx),
-                cx,
-            ))
-        } else if self.is_protection_comments() {
-            Some(Self::docx_infobar_banner(
-                "docx-infobar-protected-comments",
-                crate::shell::i18n::text("docx.infobar.protect.comments.title"),
-                "docx.infobar.protect.comments.message",
-                "infobar-btn-stop-protection",
-                "docx.infobar.protect.stop",
-                |this, _, cx| this.stop_protection(cx),
-                cx,
-            ))
-        } else if self.is_protection_forms() {
-            Some(Self::docx_infobar_banner(
-                "docx-infobar-protected-forms",
-                crate::shell::i18n::text("docx.infobar.protect.forms.title"),
-                "docx.infobar.protect.forms.message",
-                "infobar-btn-stop-protection",
-                "docx.infobar.protect.stop",
-                |this, _, cx| this.stop_protection(cx),
-                cx,
-            ))
-        } else if self.is_formatting_protected() {
-            Some(Self::docx_infobar_banner(
-                "docx-infobar-protected-formatting",
-                crate::shell::i18n::text("docx.infobar.protect.formatting.title"),
-                "docx.infobar.protect.formatting.message",
-                "infobar-btn-stop-protection",
-                "docx.infobar.protect.stop",
-                |this, _, cx| this.stop_protection(cx),
-                cx,
-            ))
-        } else if self.is_mark_as_final() {
-            Some(Self::docx_infobar_banner(
-                "docx-infobar-final",
-                crate::shell::i18n::text("docx.infobar.final.title"),
-                "docx.infobar.final.message",
-                "infobar-btn-edit-anyway",
-                "docx.infobar.final.edit-anyway",
-                |this, _, cx| this.edit_anyway(cx),
-                cx,
-            ))
-        } else if self.is_read_only_recommended() && !self.is_read_only_dismissed() {
-            Some(Self::docx_infobar_banner(
-                "docx-infobar-readonly",
-                crate::shell::i18n::text("docx.infobar.readonly.title"),
-                "docx.infobar.readonly.message",
-                "infobar-btn-enable-editing",
-                "docx.infobar.readonly.enable-editing",
-                |this, _, cx| this.dismiss_read_only(cx),
-                cx,
-            ))
-        } else if self.is_read_mode() {
-            Some(Self::docx_infobar_banner(
-                "docx-infobar-readmode",
-                crate::shell::i18n::text("docx.infobar.readmode.title"),
-                "docx.infobar.readmode.message",
-                "infobar-btn-exit-readmode",
-                "docx.infobar.readmode.exit",
-                |this, window, cx| this.set_read_mode(false, window, cx),
-                cx,
-            ))
-        } else if self.is_viewing_mode() {
-            Some(Self::docx_infobar_banner(
-                "docx-infobar-viewing",
-                crate::shell::i18n::text("docx.infobar.viewing.title"),
-                "docx.infobar.viewing.message",
-                "infobar-btn-switch-to-editing",
-                "docx.infobar.viewing.edit",
-                |this, window, cx| this.set_interaction_mode(ibis_doc_model::DocumentInteractionMode::Editing, window, cx),
-                cx,
-            ))
-        } else if self.is_docx_compatibility_mode() {
-            let mode_name = self.docx_compatibility_mode_name();
-            let title_text: SharedString = format!("{} ({})", crate::shell::i18n::text("docx.infobar.compat.title"), mode_name).into();
-            Some(Self::docx_infobar_banner(
-                "docx-infobar-compat",
-                title_text,
-                "docx.infobar.compat.message",
-                "infobar-btn-convert-compat",
-                "docx.infobar.compat.convert",
-                |this, _, cx| this.convert_docx_to_current_format(cx),
-                cx,
-            ))
-        } else {
-            None
-        }
-    }
-
-    #[inline(never)]
-    fn docx_infobar_banner(
-        bar_id: &'static str,
-        title: SharedString,
-        msg_key: &'static str,
-        btn_id: &'static str,
-        btn_key: &'static str,
-        on_click: fn(&mut Self, &mut Window, &mut Context<Self>),
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        div()
-            .id(bar_id)
-            .w_full()
-            .bg(rgb(0xfff4ce))
-            .border_b_1()
-            .border_color(rgb(0xedebe9))
-            .px(px(16.))
-            .py(px(6.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .min_w_0()
-                    .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).text_color(rgb(0x323130)).child(title))
-                    .child(div().text_size(px(12.)).text_color(rgb(0x605e5c)).child(crate::shell::i18n::text(msg_key))),
-            )
-            .child(
-                div()
-                    .id(btn_id)
-                    .px(px(12.))
-                    .py(px(4.))
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(0x8a8886))
-                    .bg(rgb(0xffffff))
-                    .text_size(px(12.))
-                    .text_color(rgb(0x323130))
-                    .cursor_pointer()
-                    .hover(|h| h.bg(rgb(0xf3f2f1)))
-                    .child(crate::shell::i18n::text(btn_key))
-                    .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx))),
-            )
-            .into_any_element()
-    }
-
     /// Escape キー押下時の処理 (Immersive Reader 解除 > Focus Mode 解除 > Read Mode / Viewing Mode 解除 > 書式のコピー/貼り付け解除)。
     pub(crate) fn handle_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.doc_state().is_some_and(|s| s.shape_drag.is_some() || s.draw_box.is_some() || s.dragging) {
@@ -7734,12 +7602,22 @@ impl SlideEditor {
 
     /// 変更履歴の表示モードを取得。
     pub(crate) fn markup_display_mode(&self) -> crate::docx::flow_layout::MarkupDisplayMode {
-        crate::docx::flow_layout::markup_display_mode()
+        self.resources.markup_view.mode
+    }
+
+    /// 変更履歴を描くか（すべての変更履歴・シンプルな変更履歴）。この窓の表示で決まる。
+    pub(crate) fn showing_markup(&self) -> bool {
+        self.resources.markup_view.showing_markup()
+    }
+
+    /// 隠し文字を表示しているか。この窓の表示で決まる。
+    pub(crate) fn showing_hidden_text(&self) -> bool {
+        self.resources.markup_view.show_hidden_text
     }
 
     /// 変更履歴の表示モードを設定（シンプルな変更履歴・すべての変更履歴・変更履歴なし・元の文書）。
     pub(crate) fn set_markup_display_mode(&mut self, mode: crate::docx::flow_layout::MarkupDisplayMode, cx: &mut Context<Self>) {
-        crate::docx::flow_layout::set_markup_display_mode(mode);
+        self.resources.markup_view.mode = mode;
         self.relayout_now(cx);
         cx.notify();
     }
@@ -7814,30 +7692,25 @@ impl SlideEditor {
 
     /// すべての校閲者が表示対象か（DOCX-REVIEW-005）。
     pub(crate) fn is_all_reviewers(&self) -> bool {
-        self.reviewer_filter.is_none()
+        self.resources.markup_view.shown_reviewers.is_none()
     }
 
     /// 特定の校閲者が表示対象か（DOCX-REVIEW-005）。
     pub(crate) fn is_reviewer_shown(&self, author: &str) -> bool {
-        self.reviewer_filter.as_ref().map_or(true, |set| set.contains(author))
+        self.resources.markup_view.is_reviewer_shown(author)
     }
 
     /// 「すべての校閲者」の表示・非表示を一括設定（DOCX-REVIEW-005）。
     pub(crate) fn set_all_reviewers(&mut self, on: bool, cx: &mut Context<Self>) {
-        if on {
-            self.reviewer_filter = None;
-        } else {
-            self.reviewer_filter = Some(std::collections::HashSet::new());
-        }
-        crate::docx::flow_layout::set_shown_reviewers(self.reviewer_filter.clone());
+        self.resources.markup_view.shown_reviewers = if on { None } else { Some(Default::default()) };
         cx.notify();
     }
 
     /// 特定の校閲者の表示・非表示をトグル切替（DOCX-REVIEW-005）。
     pub(crate) fn toggle_reviewer(&mut self, author: &str, cx: &mut Context<Self>) {
         let all_authors = self.revision_authors();
-        let mut set = match &self.reviewer_filter {
-            Some(s) => s.clone(),
+        let mut set: std::collections::BTreeSet<String> = match &self.resources.markup_view.shown_reviewers {
+            Some(s) => (**s).clone(),
             None => all_authors.iter().cloned().collect(),
         };
         if set.contains(author) {
@@ -7845,12 +7718,7 @@ impl SlideEditor {
         } else {
             set.insert(author.to_string());
         }
-        if set.len() == all_authors.len() {
-            self.reviewer_filter = None;
-        } else {
-            self.reviewer_filter = Some(set);
-        }
-        crate::docx::flow_layout::set_shown_reviewers(self.reviewer_filter.clone());
+        self.resources.markup_view.shown_reviewers = if set.len() == all_authors.len() { None } else { Some(Arc::new(set)) };
         cx.notify();
     }
 

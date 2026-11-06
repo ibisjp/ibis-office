@@ -43,14 +43,17 @@ pub(crate) fn get_preview(font_name: &str) -> Option<FontPreview> {
 /// Retrieves or synchronously renders and caches the preview image for `font_name`.
 /// OS font references are immediately dropped upon rendering.
 pub(crate) fn get_or_render_preview(font_name: &str, display_name: &str) -> Option<FontPreview> {
-    let cache_key = format!("{font_name}\t{display_name}");
+    // The glyphs are baked in the chrome's text colour of the appearance now (dark text on light, light text on dark), so the
+    // cache is per appearance: a bitmap drawn for the light chrome is unreadable on the dark one (#114).
+    let text = text_color();
+    let cache_key = format!("{font_name}\t{display_name}\t{:02x}{:02x}{:02x}", text[0], text[1], text[2]);
     if let Some(existing) = get_preview(&cache_key) {
         return Some(existing);
     }
 
     #[cfg(target_os = "macos")]
     {
-        if let Some((bmp_bytes, width, height)) = render_preview_bmp_macos(font_name, display_name) {
+        if let Some((bmp_bytes, width, height)) = render_preview_bmp_macos(font_name, display_name, text) {
             let preview = FontPreview {
                 image: Arc::new(Image::from_bytes(ImageFormat::Bmp, bmp_bytes)),
                 width,
@@ -65,14 +68,20 @@ pub(crate) fn get_or_render_preview(font_name: &str, display_name: &str) -> Opti
 
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (font_name, display_name);
+        let _ = (font_name, display_name, text);
     }
 
     None
 }
 
+/// The colour of the chrome's text now (`TEXT` of the chrome, turned for the dark appearance), as `[r, g, b]`.
+fn text_color() -> [u8; 3] {
+    let c = crate::shell::palette::rgb(crate::shell::chrome::TEXT);
+    [(c.r * 255.0).round() as u8, (c.g * 255.0).round() as u8, (c.b * 255.0).round() as u8]
+}
+
 #[cfg(target_os = "macos")]
-fn render_preview_bmp_macos(font_name: &str, display_name: &str) -> Option<(Vec<u8>, f32, f32)> {
+fn render_preview_bmp_macos(font_name: &str, display_name: &str, text: [u8; 3]) -> Option<(Vec<u8>, f32, f32)> {
     use core_foundation::attributed_string::CFMutableAttributedString;
     use core_foundation::base::{CFRange, TCFType};
     use core_foundation::string::CFString;
@@ -132,19 +141,19 @@ fn render_preview_bmp_macos(font_name: &str, display_name: &str) -> Option<(Vec<
     drop(string);
     drop(ct_font);
 
-    // 6. Convert CoreText glyph coverage into straight-alpha UI text color (#1f1f1f)
+    // 6. Convert CoreText glyph coverage into straight-alpha UI text color (`text`)
     // with transparent background (alpha = 0).
     for chunk in buffer.chunks_exact_mut(4) {
         let a = chunk[3];
         if a == 0 {
-            chunk[0] = 0x1f;
-            chunk[1] = 0x1f;
-            chunk[2] = 0x1f;
+            chunk[0] = text[0];
+            chunk[1] = text[1];
+            chunk[2] = text[2];
             chunk[3] = 0;
         } else if chunk[0] == 0 && chunk[1] == 0 && chunk[2] == 0 {
-            chunk[0] = 0x1f;
-            chunk[1] = 0x1f;
-            chunk[2] = 0x1f;
+            chunk[0] = text[0];
+            chunk[1] = text[1];
+            chunk[2] = text[2];
             chunk[3] = a;
         } else {
             let a_u16 = a as u16;
@@ -242,7 +251,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_font_preview_has_transparent_background_and_visible_glyphs() {
-        let (bmp, w, h) = render_preview_bmp_macos("Helvetica", "Helvetica").expect("renders Helvetica");
+        let (bmp, w, h) = render_preview_bmp_macos("Helvetica", "Helvetica", [0x1f, 0x1f, 0x1f]).expect("renders Helvetica");
         assert!(w > 10.0 && h == 18.0);
         let decoded = image::load_from_memory_with_format(&bmp, image::ImageFormat::Bmp)
             .expect("decodes rendered font BMP")

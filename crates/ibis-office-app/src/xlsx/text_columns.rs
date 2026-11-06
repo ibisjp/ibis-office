@@ -13,7 +13,7 @@ use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
-use ibis_calc::input::{Typed, parse_date_in_order, parse_input};
+use ibis_calc::input::{Typed, parse_date_in_order, parse_imported};
 use ibis_doc_model::{CellEdit, CellInput, CellRange, CellValue, Command, SheetCommand, SlideId, StyleChange};
 use super::import_text::ColumnType;
 use gpui_kit::component::menu::DropdownMenu as _;
@@ -60,7 +60,7 @@ pub(crate) fn convert_parts(
                         CellInput::Value(CellValue::Text(part.clone()))
                     }
                 }
-                _ => match parse_input(part, date1904) {
+                _ => match parse_imported(part, date1904) {
                     Typed::Formula(f) => CellInput::Formula(f),
                     Typed::Value(v, format) => {
                         let general = sheet.is_none_or(|s| s.cell(to_row, column).is_none_or(|c| s.styles.get(c.style as usize).is_none_or(|st| st.number_format == "General")));

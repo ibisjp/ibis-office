@@ -69,7 +69,9 @@ fn assert_reads_back(saved: &[u8], edited: &Presentation) {
             assert_eq!(p, q, "sheet {:?}", a.name);
         }
         assert_eq!(cx.len(), cy.len(), "sheet {:?}", a.name);
-        assert_eq!(x.comments, y.comments, "sheet {:?} comments", a.name);
+        // (A note's box is read from its drawing: the model's may have none yet.)
+        let bare = |s: &ibis_doc_model::Sheet| s.comments.iter().cloned().map(|mut c| { c.rect = None; c }).collect::<Vec<_>>();
+        assert_eq!(bare(x), bare(y), "sheet {:?} comments", a.name);
     }
 }
 
@@ -1070,7 +1072,8 @@ fn filter_empty_include_save_and_undo_redo() {
 #[test]
 fn arraytotext_empty_arrays_save_and_undo_redo() {
     let (original,opened)=open("xlsx-sales.xlsx");let mut d=Document::new(opened.presentation.clone());let (s,shape)=(d.ids().new_slide_id(),d.ids().new_shape_id());let mut edits=vec![];let mut row=0;for source in ["TAKE({1;2},0)","FILTER({1;2},{FALSE;FALSE})"]{edits.push(CellEdit {row,column:0,input:CellInput::Formula(source.into())});for (i,suffix) in ["",",0",",1"].into_iter().enumerate(){edits.push(CellEdit {row,column:i as u32+1,input:CellInput::Formula(format!("ARRAYTOTEXT({source}{suffix})"))});}row+=1;}
-    d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"空配列文字".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let bytes=save(&opened,d.presentation(),"arraytotext-empty.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();for col in 0..4{assert_eq!(value(&p,"空配列文字",0,col),CellValue::Error(ibis_doc_model::CellError::Value));}assert_eq!(value(&p,"空配列文字",1,0),CellValue::Error(ibis_doc_model::CellError::Calc));for col in 1..4{assert_eq!(value(&p,"空配列文字",1,col),CellValue::Error(ibis_doc_model::CellError::Value));}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"arraytotext-empty-redo.xlsx"),bytes);
+    d.execute(vec![Command::Sheet(SheetCommand::AddSheet {index:1,name:"空配列文字".into(),slide:s,shape}),Command::Sheet(SheetCommand::SetCells {slide:s,edits})]).unwrap();let bytes=save(&opened,d.presentation(),"arraytotext-empty.xlsx");assert_reads_back(&bytes,d.presentation());let p=ibis_pptx::read(&bytes).unwrap();// Excel for Mac 16.114 (2026-11-02): an empty TAKE or FILTER is #CALC!, and ARRAYTOTEXT of it (no, 0 or 1 format) is that #CALC!.
+    for row in 0..2{for col in 0..4{assert_eq!(value(&p,"空配列文字",row,col),CellValue::Error(ibis_doc_model::CellError::Calc));}}assert!(d.undo());assert_eq!(opened.source.save(d.presentation(),SaveOptions::default()).unwrap(),original);assert!(d.redo());assert_eq!(save(&opened,d.presentation(),"arraytotext-empty-redo.xlsx"),bytes);
 }
 
 #[test]
@@ -2063,8 +2066,7 @@ fn cell_comments_roundtrip_and_editing() {
                 row: 1,
                 column: 1,
                 author: "Reviewer".into(),
-                text: "Please verify quarterly numbers".into(),
-            }),
+                text: "Please verify quarterly numbers".into(), ..Default::default() }),
         }),
         Command::Sheet(SheetCommand::SetComment {
             slide: s,
@@ -2074,8 +2076,7 @@ fn cell_comments_roundtrip_and_editing() {
                 row: 2,
                 column: 2,
                 author: "Manager".into(),
-                text: "Approved\nWith note".into(),
-            }),
+                text: "Approved\nWith note".into(), ..Default::default() }),
         }),
     ]).unwrap();
 
@@ -2106,8 +2107,7 @@ fn cell_comments_roundtrip_and_editing() {
                 row: 1,
                 column: 1,
                 author: "Reviewer".into(),
-                text: "Updated comment text".into(),
-            }),
+                text: "Updated comment text".into(), ..Default::default() }),
         }),
         Command::Sheet(SheetCommand::SetComment {
             slide: s,
@@ -7056,6 +7056,22 @@ fn conditional_iconset_custom_no_icon_and_reverse_roundtrip() {
     assert_eq!(redone_sheet.conditional.len(), base_len + 2);
 }
 
+/// N3: opening a CSV keeps a sign-led word as text (a telephone number, "- note", "-----"); a formula typed
+/// into a cell is another entrance and keeps its own rule.
+#[test]
+fn csv_open_keeps_sign_led_text_as_text() {
+    use ibis_doc_model::CellValue;
+    let src = "名前,電話\r\n山田,+81-90-1234-5678\r\n- 備考,-----\r\n+x,-5\r\n";
+    let opened = ibis_pptx::open(src.as_bytes().to_vec()).expect("CSV open succeeds");
+    let sheet = sheet_of_slide(&opened.presentation.slides[0]).expect("sheet exists");
+    for (row, column, text) in [(1, 1, "+81-90-1234-5678"), (2, 0, "- 備考"), (2, 1, "-----"), (3, 0, "+x")] {
+        let cell = sheet.cell(row, column).unwrap();
+        assert!(cell.formula.is_none(), "({row},{column}) is not a formula");
+        assert_eq!(cell.value, CellValue::Text(text.into()), "({row},{column})");
+    }
+    assert_eq!(sheet.cell(3, 1).unwrap().value, CellValue::Number(-5.0));
+}
+
 #[test]
 fn csv_shift_jis_utf8_and_tsv_roundtrip() {
     use ibis_pptx::csv::{sheet_to_csv, sheet_to_csv_sjis, sheet_to_tsv, decode};
@@ -7887,7 +7903,7 @@ fn a_rewritten_pivot_cache_keeps_its_extensions() {
     let field = &mut sheet.pivots[0].fields[1];
     field.shared.push(CellValue::Text("Z".into()));
     let at = field.items.len() - 1;
-    field.items.insert(at, ibis_doc_model::PivotItem { x: Some(2), hidden: false, kind: None });
+    field.items.insert(at, ibis_doc_model::PivotItem { x: Some(2), hidden: false, kind: None, collapsed: false });
     d.execute(vec![Command::Sheet(SheetCommand::ReplaceSheet { slide: slide_id, sheet: Box::new(sheet) })]).unwrap();
     let saved = save(&opened, d.presentation(), "pivot-cache-rewritten.xlsx");
     let package = ibis_ooxml::Package::open(saved).unwrap();
@@ -9518,6 +9534,7 @@ fn timeline_insert_move_style_grouped_filter_and_delete_roundtrip() {
                 x: Some(i),
                 kind: None,
                 hidden: false,
+                collapsed: false,
             })
             .collect();
     }

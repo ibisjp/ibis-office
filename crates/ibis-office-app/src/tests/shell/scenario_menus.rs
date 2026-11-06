@@ -21,6 +21,10 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::menus_xlsx_no_empty_submenu", menus_xlsx_no_empty_submenu),
         ("shell::menus_pptx_no_empty_submenu", menus_pptx_no_empty_submenu),
         ("shell::menus_pptx_selected_no_empty_submenu", menus_pptx_selected_no_empty_submenu),
+        ("shell::menus_docx_no_duplicate_labels", menus_docx_no_duplicate_labels),
+        ("shell::menus_xlsx_no_duplicate_labels", menus_xlsx_no_duplicate_labels),
+        ("shell::menus_pptx_no_duplicate_labels", menus_pptx_no_duplicate_labels),
+        ("shell::menus_pptx_selected_no_duplicate_labels", menus_pptx_selected_no_duplicate_labels),
     ]
 }
 
@@ -262,4 +266,73 @@ fn menus_pptx_no_dead_items() {
     assert!(new.is_empty(), "pptx: menu items shown but with no handler in any state (make them, or list them as not made): {new:?}");
     let made: Vec<_> = PPTX_DEAD.iter().filter(|id| !never.contains(id)).collect();
     assert!(made.is_empty(), "pptx: these items work now, take them out of the list: {made:?}");
+}
+
+/// Two entries of one list (a menu or a submenu) that show the same name: the user cannot tell them apart. Items of one id
+/// repeated with their own names (the list of custom shows, the layouts) are told apart by their names, so they are not counted
+/// unless the names are the same too. The same name in two lists (なし, 左揃え) is not counted: each sits under its own heading.
+/// The pairs in the lists are known ones; a new pair fails the scenario (2026-11-04).
+/// Looked at on 2026-11-04: the same command in two forms was merged into one, and two commands of one name were given
+/// the names Office gives them (コントロールのグループ化 and グループ化 of shapes, the picture control's and the gallery's
+/// reset, the PivotTable's グループ解除). What is left is only what is told apart by a heading: the animations of an
+/// effect's entrance and exit. A new pair must be told apart by its name, not listed here.
+const SAME_LABEL: &[(&str, &str)] = &[
+    ("add.pptx.anim.in.fade", "add.pptx.anim.out.fade"),
+    ("add.pptx.anim.in.wipe", "add.pptx.anim.out.wipe"),
+    ("add.pptx.anim.in.zoom", "add.pptx.anim.out.zoom"),
+];
+
+fn sibling_labels(entries: &[MenuEntry], found: &mut Vec<(String, &'static str, &'static str)>, total: &mut usize) {
+    let mut seen: Vec<(String, &'static str)> = Vec::new();
+    for entry in entries {
+        let (label, id) = match entry {
+            MenuEntry::Item(i) => (i.label.to_string(), i.id),
+            MenuEntry::Submenu(sub) => (sub.label.to_string(), sub.id),
+            _ => continue,
+        };
+        *total += 1;
+        for (label2, id2) in &seen {
+            if *label2 == label {
+                found.push((label.clone(), id2, id));
+            }
+        }
+        seen.push((label, id));
+        if let MenuEntry::Submenu(sub) = entry {
+            sibling_labels(&sub.items, found, total);
+        }
+    }
+}
+
+fn check_labels(s: &mut Scenario, what: &str) {
+    let (found, total) = s.with(|e, _| {
+        let (mut found, mut total) = (Vec::new(), 0);
+        for (_, entries) in &e.menus().menus {
+            sibling_labels(entries, &mut found, &mut total);
+        }
+        (found, total)
+    });
+    eprintln!("{what}: {total} entries, same names in one list: {found:?}");
+    let unknown: Vec<_> = found.iter().filter(|(_, a, b)| !SAME_LABEL.contains(&(*a, *b)) && !SAME_LABEL.contains(&(*b, *a))).collect();
+    assert!(unknown.is_empty(), "{what}: two entries of one list with the same name (rename one, or list the pair): {unknown:?}");
+}
+
+fn menus_docx_no_duplicate_labels() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    check_labels(&mut s, "docx");
+}
+
+fn menus_xlsx_no_duplicate_labels() {
+    let mut s = Scenario::open("test/editing/xlsx-compatibility-v1.xlsx");
+    check_labels(&mut s, "xlsx");
+}
+
+fn menus_pptx_no_duplicate_labels() {
+    let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
+    check_labels(&mut s, "pptx, nothing selected");
+}
+
+fn menus_pptx_selected_no_duplicate_labels() {
+    let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
+    s.key("cmd-a");
+    check_labels(&mut s, "pptx, everything selected");
 }

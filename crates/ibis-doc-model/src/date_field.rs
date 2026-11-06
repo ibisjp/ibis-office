@@ -227,22 +227,22 @@ pub fn parse_iso8601(s: &str) -> Option<LocalTime> {
     if s.len() < 10 {
         return None;
     }
-    let year: i64 = s[0..4].parse().ok()?;
+    let year: i64 = s.get(0..4)?.parse().ok()?;
     if s.as_bytes().get(4) != Some(&b'-') {
         return None;
     }
-    let month: u32 = s[5..7].parse().ok()?;
+    let month: u32 = s.get(5..7)?.parse().ok()?;
     if s.as_bytes().get(7) != Some(&b'-') {
         return None;
     }
-    let day: u32 = s[8..10].parse().ok()?;
+    let day: u32 = s.get(8..10)?.parse().ok()?;
     let mut hour = 0;
     let mut minute = 0;
     let mut second = 0;
     if s.len() >= 19 && (s.as_bytes().get(10) == Some(&b'T') || s.as_bytes().get(10) == Some(&b' ')) {
-        hour = s[11..13].parse().ok()?;
-        minute = s[14..16].parse().ok()?;
-        second = s[17..19].parse().ok()?;
+        hour = s.get(11..13)?.parse().ok()?;
+        minute = s.get(14..16)?.parse().ok()?;
+        second = s.get(17..19)?.parse().ok()?;
     }
     let days = days_from_civil(year, month, day);
     let weekday = (days + 4).rem_euclid(7) as u32;
@@ -271,6 +271,15 @@ pub fn picture(instruction: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A multi-byte character inside the date must give `None`, not a panic from slicing by byte position.
+    #[test]
+    fn iso8601_with_multibyte_character_is_none() {
+        assert!(parse_iso8601("20\u{e9}6-10-08T12:00:00Z").is_none());
+        assert!(parse_iso8601("2026-1\u{e9}-08").is_none());
+        assert!(parse_iso8601("2026-10-08T12:\u{e9}0:00Z").is_none());
+        assert!(parse_iso8601("2026-10-08T12:00:00Z").is_some());
+    }
     use super::*;
 
     #[test]

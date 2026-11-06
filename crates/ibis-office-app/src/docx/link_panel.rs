@@ -204,7 +204,7 @@ impl SlideEditor {
         let address=p.address.read(cx).value().trim().to_string();let target=p.target;
         if address.is_empty(){return;}
         if let Some(s)=self.doc_state_mut(){s.anchor=Some(target.0);s.caret=Some(target.1);}
-        if self.apply_link_to_selection(&address,cx){self.close_panel_dialog(window,cx);}
+        if self.apply_link_to_selection(&address,cx){self.close_dialog(window,cx);}
     }
 
     pub(crate) fn link_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
@@ -218,7 +218,7 @@ impl SlideEditor {
         let panel_actions = crate::shell::chrome::action_bar()
                     .action(crate::shell::chrome::ActionDefinition::new("link-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).disabled(address.read(cx).value().trim().is_empty()).on_click(cx.listener(|this,_,w,cx|this.apply_doc_link(w,cx))))
             .action(crate::shell::chrome::dialog_cancel_definition(cx))
-                    .when(self.link_at_selection().is_some(),|bar|bar.action(crate::shell::chrome::ActionDefinition::new("link-remove", crate::shell::i18n::text("_shell.remove-link"), crate::shell::chrome::ActionButtonKind::Destructive).on_click(cx.listener(|this, _, w, cx| {this.set_link("", cx);this.close_panel_dialog(w,cx);})))) ;
+                    .when(self.link_at_selection().is_some(),|bar|bar.action(crate::shell::chrome::ActionDefinition::new("link-remove", crate::shell::i18n::text("_shell.remove-link"), crate::shell::chrome::ActionButtonKind::Destructive).on_click(cx.listener(|this, _, w, cx| {this.set_link("", cx);this.close_dialog(w,cx);})))) ;
         Some(SidebarPanel::with_footer(crate::shell::i18n::text("_shell.link"), body.into_any_element(), panel_actions))
     }
 }

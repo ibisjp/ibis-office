@@ -103,7 +103,8 @@ pub struct Section {
     pub dbnum: Option<u8>,
     /// `[$-411]`: the Japanese locale.
     pub japanese: bool,
-    /// `[$-407]` and the like: the locale (LCID) whose month and day names a date shows, when it is not English or Japanese.
+    /// `[$-407]`, `[$-409]`, `[$-411]` and the like: the locale (LCID) whose month and day names a date shows (and whose
+    /// language `aaa`/`aaaa` follow). `None` without a locale tag: English `ddd`/`dddd`, Japanese `aaa`/`aaaa`.
     pub locale: Option<u16>,
     /// Whether the format code contains invalid tokens (e.g. unquoted 'n' or single 'B').
     pub invalid: bool,
@@ -225,19 +226,26 @@ fn parse_section(s: &str) -> Section {
                         push_literal(&mut section.tokens, text);
                     }
                     let locale = rest.rsplit('-').next().unwrap_or("").to_ascii_lowercase();
+                    // A tag such as `de-DE`: all of it after the first `-`; else the last part.
+                    let tag = rest.split_once('-').map_or("", |(_, t)| t);
+                    let lcid = super::locale::lcid_of(tag).or_else(|| super::locale::lcid_of(&locale));
                     match locale.as_str() {
-                        "411" | "ja" | "jp" => section.japanese = true,
                         // The system's long date and time.
                         "f800" | "sysdate" => system = Some("yyyy\"年\"m\"月\"d\"日\" aaaa"),
                         "f400" | "systime" => system = Some("h:mm:ss"),
-                        other => {
-                            // A tag such as `de-DE`: all of it after the first `-`; else the last part.
-                            let tag = rest.split_once('-').map_or("", |(_, t)| t);
-                            let lcid = super::locale::lcid_of(tag).or_else(|| super::locale::lcid_of(other));
-                            if lcid.is_some_and(|l| super::locale::names(l).is_some()) {
-                                section.locale = lcid;
-                            }
+                        "411" | "ja" => {
+                            section.japanese = true;
+                            section.locale = Some(0x0411);
                         }
+                        _ if lcid.is_some_and(|l| l & 0x3FF == 0x11) => {
+                            section.japanese = true;
+                            section.locale = Some(0x0411);
+                        }
+                        // An explicit locale (`[$-409]`) also gives `aaa`/`aaaa` its weekday names: Excel shows `[$-409]aaaa`
+                        // as Wednesday. Only a tag after a `-` is a locale; `[$USD]` is a currency.
+                        _ if rest.contains('-') && lcid.is_some() => section.locale = lcid,
+                        _ if lcid.is_some_and(|l| super::locale::names(l).is_some()) => section.locale = lcid,
+                        _ => {}
                     }
                 } else if l.starts_with("dbnum") {
                     section.dbnum = l[5..].parse().ok();

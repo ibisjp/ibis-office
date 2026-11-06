@@ -27,16 +27,17 @@ pub(crate) struct RecommendedChartsPanel {
 /// The kinds of chart 挿入 > グラフ offers on a sheet, in menu order: the
 /// item's id, its icon and the kind (`None` for a separator).
 pub(crate) fn chart_items() -> Vec<MenuEntry> {
+    // 「おすすめグラフ...」 first, then every kind as a picture (a 4:3 chart of the selected cells over its name),
+    // two to a row (`menu_tiles.rs`).
     let mut items = vec![
-        MenuItem::tr("xlsx.recommended-charts").icon("insert_chart").on(|this: &mut SlideEditor, window, cx| this.open_recommended_charts(window, cx)).into(),
+        MenuItem::new("xlsx.recommended-charts", crate::shell::i18n::text("xlsx.recommended-charts.menu")).icon("insert_chart").on(|this: &mut SlideEditor, window, cx| this.open_recommended_charts(window, cx)).into(),
         MenuEntry::Separator,
     ];
-    items.extend(chart_items_with(SlideEditor::insert_sheet_chart));
+    items.extend(chart_items_with_thumbs(SlideEditor::insert_sheet_chart, true));
     // The kinds of Excel 2016 (chartEx), a workbook's only: over the selected cells.
     let item = |id: &'static str, icon: &'static str, kind: NewChartKind| -> MenuEntry {
-        MenuItem::tr(id).icon(icon).on(move |this: &mut SlideEditor, window, cx| this.insert_sheet_chart(kind, window, cx)).into()
+        MenuItem::tr(id).icon(icon).on(move |this: &mut SlideEditor, window, cx| this.insert_sheet_chart(kind, window, cx)).thumb(move |editor, width| editor.chart_kind_thumbnail(kind, width)).into()
     };
-    items.push(MenuEntry::Separator);
     items.push(item("pptx.insert-chart.waterfall", "waterfall_chart", NewChartKind::Waterfall));
     items.push(item("pptx.insert-chart.histogram", "bar_chart", NewChartKind::Histogram));
     items.push(item("pptx.insert-chart.pareto", "bar_chart", NewChartKind::Pareto));
@@ -49,8 +50,14 @@ pub(crate) fn chart_items() -> Vec<MenuEntry> {
 
 /// The same menu, each item calling `insert` with its kind (a document's, a sheet's).
 pub(crate) fn chart_items_with(insert: fn(&mut SlideEditor, NewChartKind, &mut Window, &mut Context<SlideEditor>)) -> Vec<MenuEntry> {
+    chart_items_with_thumbs(insert, false)
+}
+
+/// The same, each item with its picture (`thumbs`) for a grid in the menu, or without for a list of names.
+pub(crate) fn chart_items_with_thumbs(insert: fn(&mut SlideEditor, NewChartKind, &mut Window, &mut Context<SlideEditor>), thumbs: bool) -> Vec<MenuEntry> {
     let item = move |id: &'static str, icon: &'static str, kind: NewChartKind| -> MenuEntry {
-        MenuItem::tr(id).icon(icon).on(move |this: &mut SlideEditor, window, cx| insert(this, kind, window, cx)).into()
+        let item = MenuItem::tr(id).icon(icon).on(move |this: &mut SlideEditor, window, cx| insert(this, kind, window, cx));
+        if thumbs { item.thumb(move |editor, width| editor.chart_kind_thumbnail(kind, width)).into() } else { item.into() }
     };
     vec![
         item("pptx.insert-chart.column", "bar_chart", NewChartKind::ClusteredColumn),
@@ -230,6 +237,52 @@ fn fallback_series_refs(
     }
 }
 
+type PreviewKey = (String, u32, u64);
+thread_local! {
+    /// The charts of `chart_preview`, by kind, shape and cells.
+    static PREVIEWS: std::cell::RefCell<std::collections::HashMap<PreviewKey, Option<std::rc::Rc<ibis_doc_model::Chart>>>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The cells a new chart of `kind` is read from, as the series it shows (as 挿入 > グラフ inserts it, and the
+/// recommended-charts panel and the menu's pictures draw it).
+fn refs_for_new_chart(current: &ibis_doc_model::Presentation, sheet: &str, range: CellRange, kind: NewChartKind) -> Vec<ibis_pptx::SeriesRefs> {
+    // Prefer the orientation supported by the cell types, then point count.
+    let scatter = matches!(kind, NewChartKind::Scatter | NewChartKind::ScatterSmooth | NewChartKind::ScatterLines);
+    // X-Y charts and stock charts read their own layout (X column, date, high, low, close), so Excel's rule applies: in columns unless the range is wider than tall.
+    let by_columns = if scatter || matches!(kind, NewChartKind::Bubble | NewChartKind::StockHLC | NewChartKind::StockOHLC | NewChartKind::StockVHLC | NewChartKind::StockVOHLC) {
+        range.last_row - range.first_row >= range.last_column - range.first_column
+    } else {
+        ibis_pptx::preferred_series_columns(current,sheet,range)
+    };
+    // A scatter chart: the first column the X values, a heading row of text above numbers.
+    let bubble = matches!(kind, NewChartKind::Bubble);
+    let is_stock = matches!(kind, NewChartKind::StockHLC | NewChartKind::StockOHLC | NewChartKind::StockVHLC | NewChartKind::StockVOHLC);
+    let refs = if matches!(kind, NewChartKind::Treemap | NewChartKind::Sunburst) {
+        // A hierarchy: the columns of text are its levels, the last column the sizes.
+        ex_refs_of_hierarchy(current, sheet, range)
+    } else if kind.is_chart_ex() {
+        // One series: the categories (not for a histogram) and the values; or one column of numbers.
+        ibis_pptx::refs_for_range(current, sheet, range, true).or_else(|| ex_refs_of_column(current, sheet, range))
+    } else if bubble {
+        ibis_pptx::bubble_refs_for_range(current, sheet, range, by_columns)
+            .or_else(|| ibis_pptx::bubble_refs_for_range(current, sheet, range, !by_columns))
+    } else if is_stock {
+        ibis_pptx::stock_refs_for_range(current, sheet, range, kind, by_columns)
+            .or_else(|| ibis_pptx::stock_refs_for_range(current, sheet, range, kind, !by_columns))
+    } else {
+        if scatter {
+            ibis_pptx::scatter_refs_for_range(current, sheet, range, by_columns)
+                .or_else(|| ibis_pptx::scatter_refs_for_range(current, sheet, range, !by_columns))
+        } else {
+            None
+        }
+        .or_else(|| ibis_pptx::refs_for_range(current, sheet, range, by_columns))
+        .or_else(|| ibis_pptx::refs_for_range(current, sheet, range, !by_columns))
+    }
+    .or_else(|| fallback_series_refs(current, sheet, range, kind, by_columns));
+    refs.unwrap_or_default()
+}
+
 impl SlideEditor {
     /// The cells a chart is made of: the selected range, or (a single cell
     /// selected) the table around it. If that range has no numeric cells,
@@ -289,41 +342,7 @@ impl SlideEditor {
         let Some(name) = self.presentation().slide(slide).and_then(|s| s.name.clone()) else { return };
         let sheet = ibis_pptx::quote_sheet(&name);
         let current = self.presentation().clone();
-        // Prefer the orientation supported by the cell types, then point count.
-        let scatter = matches!(kind, NewChartKind::Scatter | NewChartKind::ScatterSmooth | NewChartKind::ScatterLines);
-        // X-Y charts and stock charts read their own layout (X column, date, high, low, close), so Excel's rule applies: in columns unless the range is wider than tall.
-        let by_columns = if scatter || matches!(kind, NewChartKind::Bubble | NewChartKind::StockHLC | NewChartKind::StockOHLC | NewChartKind::StockVHLC | NewChartKind::StockVOHLC) {
-            range.last_row - range.first_row >= range.last_column - range.first_column
-        } else {
-            ibis_pptx::preferred_series_columns(&current,&sheet,range)
-        };
-        // A scatter chart: the first column the X values, a heading row of text above numbers.
-        let bubble = matches!(kind, NewChartKind::Bubble);
-        let is_stock = matches!(kind, NewChartKind::StockHLC | NewChartKind::StockOHLC | NewChartKind::StockVHLC | NewChartKind::StockVOHLC);
-        let refs = if matches!(kind, NewChartKind::Treemap | NewChartKind::Sunburst) {
-            // A hierarchy: the columns of text are its levels, the last column the sizes.
-            ex_refs_of_hierarchy(&current, &sheet, range)
-        } else if kind.is_chart_ex() {
-            // One series: the categories (not for a histogram) and the values; or one column of numbers.
-            ibis_pptx::refs_for_range(&current, &sheet, range, true).or_else(|| ex_refs_of_column(&current, &sheet, range))
-        } else if bubble {
-            ibis_pptx::bubble_refs_for_range(&current, &sheet, range, by_columns)
-                .or_else(|| ibis_pptx::bubble_refs_for_range(&current, &sheet, range, !by_columns))
-        } else if is_stock {
-            ibis_pptx::stock_refs_for_range(&current, &sheet, range, kind, by_columns)
-                .or_else(|| ibis_pptx::stock_refs_for_range(&current, &sheet, range, kind, !by_columns))
-        } else {
-            if scatter {
-                ibis_pptx::scatter_refs_for_range(&current, &sheet, range, by_columns)
-                    .or_else(|| ibis_pptx::scatter_refs_for_range(&current, &sheet, range, !by_columns))
-            } else {
-                None
-            }
-            .or_else(|| ibis_pptx::refs_for_range(&current, &sheet, range, by_columns))
-            .or_else(|| ibis_pptx::refs_for_range(&current, &sheet, range, !by_columns))
-        }
-        .or_else(|| fallback_series_refs(&current, &sheet, range, kind, by_columns))
-        .unwrap_or_default();
+        let refs = refs_for_new_chart(&current, &sheet, range, kind);
         // Below the data, as wide as five columns of it can be.
         let (x, _) = self.sheet_insertion_origin();
         let y = self.current_sheet().map_or(952_500, |(shape, sheet)| shape.frame.y + sheet.row_offsets().get(range.last_row as usize + 1).copied().unwrap_or(0) + 190_500);
@@ -360,19 +379,95 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// A picture of the chart `kind` would make of `range`, `width` pixels wide and `ratio` (height over width) as
+    /// tall: a tile of the recommended-charts panel (5:3) and of the 挿入 > グラフ menu (4:3) draw it with this one
+    /// part. The chart is the one inserting `kind` makes (`refs_for_new_chart`), drawn by the sheet's chart view.
+    pub(crate) fn chart_preview_element(&self, kind: NewChartKind, range: CellRange, width: f32, ratio: f32) -> AnyElement {
+        const WIDTH_EMU: i64 = 4_572_000;
+        let frame = EmuRect::new(0, 0, WIDTH_EMU, (WIDTH_EMU as f32 * ratio).round() as i64);
+        match self.chart_preview(kind, range, frame, ratio) {
+            Some(chart) => crate::render::chart_view::chart_element(&chart, frame, width / WIDTH_EMU as f32, &self.resources).into_any_element(),
+            None => div().size_full().bg(rgb(0xf5f5f5)).into_any_element(),
+        }
+    }
+
+    /// The 4:3 picture of the chart `kind` in the 挿入 > グラフ menu: the chart of the selected cells.
+    pub(crate) fn chart_kind_thumbnail(&self, kind: NewChartKind, width: f32) -> AnyElement {
+        let range = self.chart_source_range().unwrap_or(CellRange { first_row: 0, first_column: 0, last_row: 0, last_column: 0 });
+        self.chart_preview_element(kind, range, width, 3.0 / 4.0)
+    }
+
+    /// The chart `kind` makes of `range` (kept while the cells, the kind and the shape do not change: the menu draws
+    /// dozens of them on every frame).
+    fn chart_preview(&self, kind: NewChartKind, range: CellRange, frame: EmuRect, ratio: f32) -> Option<std::rc::Rc<ibis_doc_model::Chart>> {
+        let source = self.source.as_ref()?;
+        let name = self.slide().name.clone().unwrap_or_default();
+        let key = (format!("{kind:?}"), ratio.to_bits(), self.chart_data_fingerprint(&name, range));
+        if let Some(found) = PREVIEWS.with(|cache| cache.borrow().get(&key).cloned()) {
+            return found;
+        }
+        let sheet = ibis_pptx::quote_sheet(&name);
+        let refs = refs_for_new_chart(self.presentation(), &sheet, range, kind);
+        let made = source.new_sheet_chart(self.presentation(), self.current_slide, ibis_doc_model::ShapeId(u64::MAX), frame, kind, refs).ok();
+        let chart = match made {
+            Some(ibis_doc_model::Shape { kind: ibis_doc_model::ShapeKind::Chart(chart), .. }) => Some(std::rc::Rc::new(*chart)),
+            _ => None,
+        };
+        PREVIEWS.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.len() > 256 {
+                cache.clear();
+            }
+            cache.insert(key, chart.clone());
+        });
+        chart
+    }
+
+    /// A number that changes when the sheet's name, the range or a cell of the range (the first 512) does.
+    fn chart_data_fingerprint(&self, sheet: &str, range: CellRange) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (sheet, range.first_row, range.last_row, range.first_column, range.last_column).hash(&mut hasher);
+        if let Some((_, model)) = self.current_sheet() {
+            let mut seen = 0;
+            'cells: for row in range.first_row..=range.last_row {
+                for column in range.first_column..=range.last_column {
+                    match model.cell(row, column).map(|c| &c.value) {
+                        Some(CellValue::Number(n)) => (1u8, n.to_bits()).hash(&mut hasher),
+                        Some(CellValue::Text(t)) => (2u8, t).hash(&mut hasher),
+                        Some(_) => 3u8.hash(&mut hasher),
+                        None => 0u8.hash(&mut hasher),
+                    }
+                    seen += 1;
+                    if seen >= 512 {
+                        break 'cells;
+                    }
+                }
+            }
+        }
+        hasher.finish()
+    }
+
     /// Returns the list of recommended chart types `(NewChartKind, label_id, icon_name)` for the current selection (#128).
     pub(crate) fn recommended_chart_candidates(&self) -> Vec<(NewChartKind, &'static str, &'static str)> {
         let range = self.chart_source_range().unwrap_or(CellRange { first_row: 0, first_column: 0, last_row: 0, last_column: 0 });
         let rows = (range.last_row - range.first_row).max(1);
         let cols = (range.last_column - range.first_column).max(1);
-        if rows <= 1 || cols <= 1 {
+        // A time axis (dates or times down the first column, or across the first row) makes the line chart the first
+        // choice, as in Excel: the dates are the X values and every other column (row) a series over time.
+        let time_axis = self.current_sheet().is_some_and(|(_, sheet)| {
+            let name = self.slide().name.clone().unwrap_or_default();
+            let by_columns = ibis_pptx::preferred_series_columns(self.presentation(), &ibis_pptx::quote_sheet(&name), range);
+            ibis_pptx::leading_line_is_time_axis(sheet, range, by_columns)
+        });
+        if !time_axis && (rows <= 1 || cols <= 1) {
             vec![
                 (NewChartKind::ClusteredColumn, "pptx.insert-chart.column", "bar_chart"),
                 (NewChartKind::Pie, "pptx.insert-chart.pie", "pie_chart"),
                 (NewChartKind::ClusteredBar, "pptx.insert-chart.bar", "bar_chart"),
                 (NewChartKind::Line, "pptx.insert-chart.line", "insert_chart"),
             ]
-        } else if rows >= 6 && cols <= 3 {
+        } else if time_axis || (rows >= 6 && cols <= 3) {
             vec![
                 (NewChartKind::Line, "pptx.insert-chart.line", "insert_chart"),
                 (NewChartKind::ClusteredColumn, "pptx.insert-chart.column", "bar_chart"),
@@ -442,14 +537,7 @@ impl SlideEditor {
         }
         let mut tiles=Vec::new();
         for (idx,(kind,label_id,_))in candidates.iter().enumerate(){
-            let preview=self.source.as_ref().and_then(|source|{
-                let name=self.slide().name.clone().unwrap_or_default();let sheet=ibis_pptx::quote_sheet(&name);
-                let refs=if matches!(kind,NewChartKind::Scatter|NewChartKind::ScatterLines|NewChartKind::ScatterSmooth){ibis_pptx::scatter_refs_for_range(self.presentation(),&sheet,range,true)}else{ibis_pptx::refs_for_range(self.presentation(),&sheet,range,true)}.or_else(||fallback_series_refs(self.presentation(),&sheet,range,*kind,true)).unwrap_or_default();
-                source.new_sheet_chart(self.presentation(),self.current_slide,ibis_doc_model::ShapeId(u64::MAX),EmuRect::new(0,0,4572000,2743200),*kind,refs).ok()
-            });
-            let preview=if let Some(ibis_doc_model::Shape{kind:ibis_doc_model::ShapeKind::Chart(c),..})=preview{
-                crate::render::chart_view::chart_element(&c,EmuRect::new(0,0,4572000,2743200),220./4572000.,&self.resources).into_any_element()
-            }else{div().size_full().bg(rgb(0xf5f5f5)).into_any_element()};
+            let preview=self.chart_preview_element(*kind,range,220.,0.6);
             tiles.push(v_flex().id(SharedString::from(format!("rec-chart-{idx}"))).flex_1().min_w_0().gap_1().p_2().rounded(px(6.)).cursor_pointer().border_1().border_color(if idx==selected{rgb(PRIMARY_BUTTON_BG).into()}else{cx.theme().border}).hover(|d|d.bg(rgb(0xf3f4f6))).child(div().relative().w_full().h(px(132.)).overflow_hidden().child(preview)).child(div().text_size(px(12.)).child(crate::shell::i18n::text(label_id))).on_click(cx.listener(move |e,_,_,cx|{if let Some(p)=e.wb_mut().panels.recommended_charts.as_mut(){p.selected=idx;}cx.notify();})).into_any_element());
         }
         let mut iter=tiles.into_iter();while let Some(first)=iter.next(){let mut row=h_flex().w_full().gap_2().items_stretch().child(first);if let Some(second)=iter.next(){row=row.child(second);}else{row=row.child(div().flex_1());}body=body.child(row);}

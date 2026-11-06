@@ -501,6 +501,9 @@ impl SlideEditor {
                 Submenu::tr("pptx.grid-and-guides", "grid_on", vec![
                     MenuItem::tr("pptx.gridlines").icon("grid_on").shortcut("⇧F9").checked(self.is_pptx_gridlines_enabled()).on(|this, _, cx| this.toggle_pptx_gridlines(cx)).into(),
                     MenuItem::tr("pptx.guides").icon("straighten").shortcut("⌥F9").checked(self.is_pptx_guides_enabled()).on(|this, _, cx| this.toggle_pptx_guides(cx)).into(),
+                    MenuItem::tr("pptx.guides.add-vertical").icon("vertical_align_center").on(|e, _, cx| e.add_guide(false, cx)).into(),
+                    MenuItem::tr("pptx.guides.add-horizontal").icon("horizontal_rule").on(|e, _, cx| e.add_guide(true, cx)).into(),
+                    MenuItem::tr("pptx.guides.remove-all").icon("delete_sweep").disabled(self.guide_list().is_empty()).on(|e, _, cx| e.remove_all_guides(cx)).into(),
                     MenuEntry::Separator,
                     MenuItem::tr("pptx.snap-to-grid").checked(self.is_pptx_snap_to_grid_enabled()).on(|this, _, cx| this.toggle_pptx_snap_to_grid(cx)).into(),
                     MenuItem::tr("pptx.snap-to-shape").checked(self.is_pptx_snap_to_shape_enabled()).on(|this, _, cx| this.toggle_pptx_snap_to_shape(cx)).into(),

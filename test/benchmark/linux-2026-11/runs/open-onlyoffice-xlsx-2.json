@@ -1,0 +1,54 @@
+{
+ "end": 13.332,
+ "last_change": 13.332,
+ "end_video_frame": 9,
+ "first_change": 0.09,
+ "window_end": 13.475,
+ "doc_changes_count": 3,
+ "doc_changes": [
+  [
+   0.09,
+   0.04824
+  ],
+  [
+   1.389,
+   0.03915
+  ],
+  [
+   13.332,
+   0.19144
+  ]
+ ],
+ "recorded_until": 21.333,
+ "grabs": 2009,
+ "capped": false,
+ "loading_box": [
+  [
+   1.431,
+   13.336
+  ]
+ ],
+ "tag": "open-onlyoffice-xlsx-2",
+ "scenario": "open",
+ "app": "onlyoffice",
+ "kind": "xlsx",
+ "run": 2,
+ "file": "coffee-chain-sales-report.xlsx",
+ "command": [
+  "onlyoffice10",
+  "/tmp/ibis-bench-g7rm0ou5/coffee-chain-sales-report.xlsx"
+ ],
+ "rects": [
+  [
+   0.0,
+   "293 115 1334 850"
+  ]
+ ],
+ "cap": 45,
+ "measured_at": "2026-11-03 19:56:12",
+ "load_before": [
+  0.74,
+  0.88,
+  0.75
+ ]
+}

@@ -284,13 +284,6 @@ fn besselj(x: f64, n: i32) -> Result<f64, CellError> {
         return Ok(bessj0(x));
     }
     if n == 1 {
-        // Excel Analysis ToolPak legacy artifact at x=10 (A&S 9.4.6 variant)
-        if (x - 10.0).abs() < 1e-12 {
-            return Ok(0.043472249652254151);
-        }
-        if (x - 100.0).abs() < 1e-12 {
-            return Ok(-0.07714535200539635);
-        }
         return Ok(bessj1(x));
     }
     let tox = 2.0 / ax;

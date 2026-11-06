@@ -791,6 +791,8 @@ fn effect_xml(a: &Animation) -> String {
         AnimationClass::Exit => ("exit", "ooo-exit-"),
         AnimationClass::Emphasis => ("emphasis", "ooo-emphasis-"),
         AnimationClass::Path => ("motion-path", ""),
+        // Not written to ODF (the playing of a clip is not an effect there).
+        AnimationClass::Media => ("custom", ""),
     };
     let node_type = match a.start {
         AnimationStart::OnClick => "on-click",
@@ -894,12 +896,12 @@ fn effect_xml(a: &Animation) -> String {
 
 /// The slide's animations as the timing tree of ODF: the main sequence of click groups.
 fn animations_xml(slide: &Slide) -> String {
-    if slide.animations.is_empty() {
+    if slide.animations.iter().all(|a| a.is_media()) {
         return String::new();
     }
     // Click groups, each of steps (what starts together), each of effects.
     let mut groups: Vec<Vec<Vec<&Animation>>> = Vec::new();
-    for a in &slide.animations {
+    for a in slide.animations.iter().filter(|a| !a.is_media()) {
         match a.start {
             AnimationStart::OnClick => groups.push(vec![vec![a]]),
             AnimationStart::WithPrevious => match groups.last_mut().and_then(|g| g.last_mut()) {

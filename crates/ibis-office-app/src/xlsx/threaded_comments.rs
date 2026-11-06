@@ -1,77 +1,54 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! コメントスレッド (Threaded Comments): 挿入 > コメント (⌥⌘M) opens the
-//! sidebar's panel with the selected cell's thread to write, reply, resolve
-//! and delete.
+//! コメントスレッド (Threaded Comments): 挿入 > コメント (⌥⌘M) opens the sidebar's comments panel
+//! (shell/comments.rs, the one panel of the three formats): all the threads of the sheet by cell, the
+//! selected cell's marked, and the field for a new comment (the cell has none) or an answer.
+//! This part is the workbook's side of it: the model's operations and the order of the list.
 
-use gpui_kit::component::button::{ButtonVariants as _};
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::*;
 use ibis_doc_model::{Command, SheetCommand, ThreadPost, ThreadedComment};
+use gpui_kit::*;
 
 use crate::shell::chrome::SidebarPanel;
+use crate::shell::comments::{self, CommentFormat, CommentPanelState, CommentPost, CommentTarget, CommentThread};
 use crate::shell::editor::SlideEditor;
-use crate::shell::i18n::text;
-use super::comment_card::post_time;
 
-pub(crate) struct ThreadedCommentPanel {
-    /// The cell (column, row).
-    pub(crate) cell: (u32, u32),
-    pub(crate) input: Entity<InputState>,
-    pub(crate) ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Bounds<Pixels>>>>,
-    _subscription: Subscription,
+/// The panel's state: the comments' common one, with a cell (column, row) as the place of a new comment.
+pub(crate) type ThreadedCommentPanel = CommentPanelState<(u32, u32)>;
+
+/// The workbook's comments for `shell::comments`.
+pub(crate) struct XlsxComments;
+
+/// A thread's id as the panel names it: its GUID, else its cell.
+fn thread_key(t: &ThreadedComment) -> String {
+    if t.id.is_empty() { format!("cell:{},{}", t.column, t.row) } else { t.id.clone() }
 }
 
-/// A new GUID for a threaded comment, from clock and counter.
-fn new_guid() -> String {
-    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let seed = (crate::clock::unix_millis() as u64) ^ COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-    let mix = |mut x: u64| {
-        x ^= x >> 33;
-        x = x.wrapping_mul(0xff51_afd7_ed55_8ccd);
-        x ^= x >> 33;
-        x = x.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-        x ^ (x >> 33)
-    };
-    let (a, b) = (mix(seed), mix(seed ^ 0x5555_5555_5555_5555));
-    format!("{{{:08X}-{:04X}-4{:03X}-{:04X}-{:012X}}}", a >> 32, (a >> 16) & 0xffff, a & 0xfff, 0x8000 | (b >> 48) & 0x3fff, b & 0xffff_ffff_ffff)
-}
+impl XlsxComments {
+    fn find(editor: &SlideEditor, key: &str) -> Option<ThreadedComment> {
+        editor.current_sheet()?.1.threads.iter().find(|t| thread_key(t) == key).cloned()
+    }
 
-fn current_datetime() -> String {
-    let date = crate::docx::comments::comment_author().date;
-    let trimmed = date.trim_end_matches('Z');
-    format!("{trimmed}.00")
-}
-
-impl SlideEditor {
-    /// Open the threaded comment of the selected cell.
-    pub(crate) fn open_threaded_comment_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit_cell_edit(cx);
-        let (Some((column, row)), Some((_, sheet))) = (self.current_cell(), self.current_sheet()) else { return };
-        let has_thread = sheet.thread_at(row, column).is_some();
-        let placeholder = if has_thread {
-            crate::shell::i18n::text("_xlsx.type-a-reply-and-press-enter")
-        } else {
-            crate::shell::i18n::text("_shell.type-a-comment-and-press-enter")
-        };
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
-        let subscription = cx.subscribe_in(&input, window, |this, input, event: &InputEvent, window, cx| {
-            if let InputEvent::PressEnter { .. } = event {
-                let text = input.read(cx).value().to_string();
-                this.send_threaded_comment(&text, window, cx);
+    fn set(editor: &mut SlideEditor, t: &ThreadedComment, thread: Option<ThreadedComment>) -> bool {
+        let slide = editor.current_slide;
+        match editor.document.execute(vec![Command::Sheet(SheetCommand::SetThreadedComment { slide, row: t.row, column: t.column, thread })]) {
+            Ok(_) => true,
+            Err(err) => {
+                editor.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
+                false
             }
-        });
-        input.update(cx, |i, cx| i.focus(window, cx));
-        let panel = ThreadedCommentPanel {
-            cell: (column, row),
-            input,
-            ui: Default::default(),
-            _subscription: subscription,
-        };
-        let s = self.wb_mut();
+        }
+    }
+}
+
+impl CommentFormat for XlsxComments {
+    type Anchor = (u32, u32);
+
+    fn state(editor: &SlideEditor) -> Option<&ThreadedCommentPanel> { editor.sheet_state()?.panels.threaded_comment.as_ref() }
+    fn state_mut(editor: &mut SlideEditor) -> Option<&mut ThreadedCommentPanel> { editor.sheet_state_mut()?.panels.threaded_comment.as_mut() }
+    fn install(editor: &mut SlideEditor, state: ThreadedCommentPanel) { editor.wb_mut().panels.threaded_comment = Some(state); }
+    fn close_others(editor: &mut SlideEditor) {
+        let s = editor.wb_mut();
         s.custom_format = None;
         s.page_setup = false;
         s.names = None;
@@ -81,86 +58,120 @@ impl SlideEditor {
         s.conditional_edit = None;
         s.sort_edit = None;
         s.close_settings();
-        s.panels.threaded_comment = Some(panel);
-        self.sidebar_open = true;
-        cx.notify();
+    }
+    fn close(editor: &mut SlideEditor) { editor.wb_mut().panels.threaded_comment = None; }
+
+    fn threads(editor: &SlideEditor) -> Vec<CommentThread> {
+        let Some((_, sheet)) = editor.current_sheet() else { return Vec::new() };
+        let mut all: Vec<&ThreadedComment> = sheet.threads.iter().collect();
+        all.sort_by_key(|t| (t.row, t.column));
+        all.into_iter()
+            .map(|t| CommentThread {
+                id: thread_key(t),
+                anchor: Some(ibis_doc_model::cell_name(t.column, t.row)),
+                posts: t
+                    .posts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| CommentPost { id: i.to_string(), author: p.author.clone(), date: p.date.clone(), text: p.text.clone(), editable: comments::is_own(&p.author) })
+                    .collect(),
+                resolved: t.done,
+            })
+            .collect()
     }
 
-    /// Submit a comment (new thread if cell has none, or reply to existing).
+    fn active_thread(editor: &SlideEditor) -> Option<String> {
+        let (column, row) = editor.current_cell()?;
+        editor.current_sheet()?.1.thread_at(row, column).map(thread_key)
+    }
+
+    fn new_prompt(_editor: &SlideEditor, anchor: Option<&(u32, u32)>) -> SharedString {
+        comments::cell_prompt(&anchor.map(|&(c, r)| ibis_doc_model::cell_name(c, r)).unwrap_or_default())
+    }
+
+    /// The field follows the selected cell (`live_target`): it is never fixed when the panel opens.
+    fn open_target(_editor: &SlideEditor, _anchor: Option<&(u32, u32)>) -> Option<CommentTarget> { None }
+
+    fn live_target(editor: &SlideEditor) -> Option<CommentTarget> {
+        let (column, row) = editor.current_cell()?;
+        match editor.current_sheet()?.1.thread_at(row, column) {
+            Some(t) => Some(CommentTarget::Reply(thread_key(t))),
+            None => Some(CommentTarget::New),
+        }
+    }
+
+    fn anchor_now(editor: &SlideEditor) -> Option<(u32, u32)> { editor.current_cell() }
+
+    fn add(editor: &mut SlideEditor, &(column, row): &(u32, u32), text: &str, _cx: &mut Context<SlideEditor>) -> bool {
+        let who = comments::author_and_date();
+        let date = format!("{}.00", who.date.trim_end_matches('Z'));
+        let post = ThreadPost { author: who.author, date, text: text.to_string() };
+        let thread = ThreadedComment { id: comments::new_guid(), row, column, posts: vec![post], done: false };
+        Self::set(editor, &thread.clone(), Some(thread))
+    }
+
+    fn reply(editor: &mut SlideEditor, key: &str, text: &str, _cx: &mut Context<SlideEditor>) -> bool {
+        let Some(mut t) = Self::find(editor, key) else { return false };
+        let who = comments::author_and_date();
+        t.posts.push(ThreadPost { author: who.author, date: format!("{}.00", who.date.trim_end_matches('Z')), text: text.to_string() });
+        Self::set(editor, &t.clone(), Some(t))
+    }
+
+    fn edit(editor: &mut SlideEditor, key: &str, post: &str, text: &str, _cx: &mut Context<SlideEditor>) -> bool {
+        let Some(mut t) = Self::find(editor, key) else { return false };
+        let Some(p) = post.parse::<usize>().ok().and_then(|i| t.posts.get_mut(i)) else { return false };
+        p.text = text.to_string();
+        Self::set(editor, &t.clone(), Some(t))
+    }
+
+    fn set_resolved(editor: &mut SlideEditor, key: &str, resolved: bool, _cx: &mut Context<SlideEditor>) {
+        if let Some(mut t) = Self::find(editor, key) {
+            t.done = resolved;
+            Self::set(editor, &t.clone(), Some(t));
+        }
+    }
+
+    fn delete(editor: &mut SlideEditor, key: &str, _cx: &mut Context<SlideEditor>) {
+        if let Some(t) = Self::find(editor, key) {
+            Self::set(editor, &t, None);
+        }
+    }
+
+    fn goto(editor: &mut SlideEditor, key: &str, _cx: &mut Context<SlideEditor>) {
+        if let Some(t) = Self::find(editor, key) {
+            editor.set_cell(t.column, t.row);
+            editor.scroll_range_into_view(true);
+        }
+    }
+}
+
+impl SlideEditor {
+    /// Open the comments' panel on the selected cell (the cell's thread, or the field for a new one).
+    pub(crate) fn open_threaded_comment_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit(cx);
+        let Some(cell) = self.current_cell() else { return };
+        comments::open::<XlsxComments>(self, Some(cell), window, cx);
+    }
+
+    /// Submit a comment (a new thread if the selected cell has none, else an answer).
     pub(crate) fn send_threaded_comment(&mut self, body: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let text = body.trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        let Some(p) = self.sheet_state().and_then(|s| s.panels.threaded_comment.as_ref()) else { return };
-        let (column, row) = p.cell;
-        let Some((_, sheet)) = self.current_sheet() else { return };
-        let slide = self.current_slide;
-        let author = crate::shell::user_name::user_name().to_string();
-        let date = current_datetime();
-        let existing = sheet.thread_at(row, column).cloned();
-
-        let thread = match existing {
-            Some(mut t) => {
-                t.posts.push(ThreadPost { author, date, text });
-                t
-            }
-            None => ThreadedComment {
-                id: new_guid(),
-                row,
-                column,
-                posts: vec![ThreadPost { author, date, text }],
-                done: false,
-            },
-        };
-
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetThreadedComment {
-            slide,
-            row,
-            column,
-            thread: Some(thread),
-        })]) {
-            self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
-        }
-        if let Some(panel) = self.sheet_state().and_then(|s| s.panels.threaded_comment.as_ref()) {
-            panel.input.update(cx, |i, cx| {
-                i.set_value("", window, cx);
-                i.set_placeholder(crate::shell::i18n::text("_xlsx.type-a-reply-and-press-enter"), window, cx);
-            });
-        }
-        cx.notify();
+        comments::send::<XlsxComments>(self, body, window, cx);
     }
 
-    /// Toggle resolved/reopened state of a threaded comment.
+    /// Toggle resolved/reopened state of the threaded comment of a cell.
     pub(crate) fn resolve_threaded_comment(&mut self, row: u32, column: u32, done: bool, cx: &mut Context<Self>) {
-        let Some((_, sheet)) = self.current_sheet() else { return };
-        let Some(mut thread) = sheet.thread_at(row, column).cloned() else { return };
-        thread.done = done;
-        let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetThreadedComment {
-            slide,
-            row,
-            column,
-            thread: Some(thread),
-        })]) {
-            self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
-        }
+        let Some(key) = self.current_sheet().and_then(|(_, s)| s.thread_at(row, column).map(thread_key)) else { return };
+        XlsxComments::set_resolved(self, &key, done, cx);
         cx.notify();
     }
 
-    /// Delete a cell's threaded comment.
+    /// Delete a cell's threaded comment (the menu's コメントの削除: the panel closes with it).
     pub(crate) fn delete_threaded_comment(&mut self, row: u32, column: u32, cx: &mut Context<Self>) {
-        let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetThreadedComment {
-            slide,
-            row,
-            column,
-            thread: None,
-        })]) {
-            self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
+        if let Some(key) = self.current_sheet().and_then(|(_, s)| s.thread_at(row, column).map(thread_key)) {
+            XlsxComments::delete(self, &key, cx);
         }
-        if self.wb().panels.threaded_comment.as_ref().is_some_and(|p| p.cell == (column, row)) {
-            self.wb_mut().panels.threaded_comment = None;
+        if XlsxComments::state(self).is_some_and(|p| p.anchor == Some((column, row))) {
+            XlsxComments::close(self);
         }
         cx.notify();
     }
@@ -188,142 +199,16 @@ impl SlideEditor {
         if let Err(err) = self.document.execute(commands) {
             self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
         }
-        if let Some(p) = self.wb().panels.threaded_comment.as_ref() {
-            let (c, r) = p.cell;
+        if let Some((c, r)) = self.wb().panels.threaded_comment.as_ref().and_then(|p| p.anchor) {
             if ranges.iter().any(|rng| (rng.first_row..=rng.last_row).contains(&r) && (rng.first_column..=rng.last_column).contains(&c)) {
                 self.wb_mut().panels.threaded_comment = None;
-            }
-        }
-        if let Some(p) = self.wb().panels.note.as_ref() {
-            let (c, r) = p.cell;
-            if ranges.iter().any(|rng| (rng.first_row..=rng.last_row).contains(&r) && (rng.first_column..=rng.last_column).contains(&c)) {
-                self.wb_mut().panels.note = None;
             }
         }
         cx.notify();
     }
 
-    /// The sidebar panel for the selected cell's threaded comment.
+    /// The sidebar's comments panel of the sheet.
     pub(crate) fn threaded_comment_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let p = self.sheet_state()?.panels.threaded_comment.as_ref()?;
-        let (column, row) = p.cell;
-        let input = p.input.clone();
-        let (_, sheet) = self.current_sheet()?;
-        let thread = sheet.thread_at(row, column).cloned();
-        let theme = cx.theme().clone();
-
-        let mark = |id: &str, child: AnyElement| {
-            let ui = p.ui.clone();
-            let id = id.to_string();
-            div()
-                .relative()
-                .child(child)
-                .child(canvas(|_, _, _| {}, move |bounds, _, _, _| {
-                    ui.borrow_mut().insert(id.clone(), bounds);
-                }).absolute().top_0().left_0().size_full())
-                .into_any_element()
-        };
-
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
-        body = body.child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(crate::shell::i18n::format("comment.cell", &[("cell", &ibis_doc_model::cell_name(column, row))])),
-        );
-
-        if let Some(t) = &thread {
-            let done = t.done;
-            let mut thread_card = v_flex()
-                .gap_2()
-                .p(px(8.))
-                .rounded(px(6.))
-                .border_1()
-                .border_color(theme.border)
-                .bg(if done { theme.muted } else { theme.background });
-
-            for (i, post) in t.posts.iter().enumerate() {
-                thread_card = thread_card.child(
-                    v_flex()
-                        .gap(px(2.))
-                        .when(i > 0, |d| d.pl_3().border_t_1().border_color(theme.border).pt_1())
-                        .child(
-                            h_flex()
-                                .justify_between()
-                                .child(div().font_weight(FontWeight::SEMIBOLD).text_sm().child(post.author.clone()))
-                                .child(div().text_sm().text_color(theme.muted_foreground).child(post_time(&post.date))),
-                        )
-                        .child(div().text_sm().child(post.text.clone())),
-                );
-            }
-
-            if done {
-                thread_card = thread_card.child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(crate::shell::i18n::text("_shell.resolved")),
-                );
-            }
-
-            let act_row = h_flex()
-                .gap_1()
-                .child(
-                    mark(
-                        "resolve",
-                        crate::shell::chrome::action_button("comment-resolve")
-                            .small()
-
-                            .label(crate::shell::i18n::text(if done { "pptx.comments.reopen" } else { "_shell.resolve" }))
-                            .on_click(cx.listener(move |this, _, _, cx| this.resolve_threaded_comment(row, column, !done, cx)))
-                            .into_any_element(),
-                    ),
-                )
-                .child(
-                    mark(
-                        "delete",
-                        crate::shell::chrome::destructive_button("comment-delete",cx)
-                            .small()
-                            .label(crate::shell::i18n::text("_shell.delete"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.delete_threaded_comment(row, column, cx);
-                                this.focus_handle.focus(window, cx);
-                            }))
-                            .into_any_element(),
-                    ),
-                );
-
-            thread_card = thread_card.child(act_row);
-            body = body.child(thread_card);
-        }
-
-        // Input field and send button
-        let input_area = v_flex()
-            .gap_1()
-            .child(mark("input", crate::shell::chrome::text_field(&input).full_width().into_any_element()))
-            .child(
-                h_flex()
-                    .justify_end()
-                    .child(
-                        mark(
-                            "send",
-                            crate::shell::chrome::primary_button("comment-send")
-                                .small()
-                                .label(crate::shell::i18n::text(if thread.is_some() { "_shell.reply" } else { "_xlsx.post" }))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    let text = input.read(cx).value().to_string();
-                                    this.send_threaded_comment(&text, window, cx);
-                                }))
-                                .into_any_element(),
-                        ),
-                    ),
-            );
-
-        body = body.child(input_area);
-
-        Some(SidebarPanel {
-            title: text("_shell.comment"),
-            body: body.into_any_element(),
-        })
+        comments::panel::<XlsxComments>(self, cx)
     }
 }

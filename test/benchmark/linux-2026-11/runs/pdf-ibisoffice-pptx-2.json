@@ -1,0 +1,26 @@
+{
+ "tag": "pdf-ibisoffice-pptx-2",
+ "scenario": "pdf",
+ "app": "ibisoffice",
+ "kind": "pptx",
+ "run": 2,
+ "file": "earnings-presentation.pptx",
+ "seconds": 2.818,
+ "returncode": 0,
+ "pdf_bytes": 39814953,
+ "pages": 31,
+ "command": [
+  "ibisOffice-0.8.5-Linux.AppImage",
+  "--export",
+  "pdf",
+  "--out-dir",
+  "pdf",
+  "earnings-presentation.pptx"
+ ],
+ "measured_at": "2026-11-03 18:54:43",
+ "load_before": [
+  0.6,
+  0.34,
+  0.2
+ ]
+}

@@ -9,6 +9,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("xlsx::issue65_formula_editor", editor),
         ("xlsx::issue64_general_numbers", numbers),
+        ("xlsx::issue105_reedit_long_formula", reedit_long_formula),
+        ("xlsx::cell_editor_frozen_panes", frozen_panes_editor),
     ]
 }
 fn workbook() -> Scenario {
@@ -168,4 +170,114 @@ fn numbers() {
         "-12345678901"
     );
     s.screenshot("general-number-digits");
+}
+
+/// Issue #105: a long formula committed and edited again shows its text (wrapped from the cell), not `#` filled
+/// across the cell as a number that does not fit.
+fn reedit_long_formula() {
+    let mut s = workbook();
+    s.click_cell("A1");
+    let text = format!("={}", vec!["100000000"; 55].join("+"));
+    s.enter(&text, "enter");
+    s.click_cell("A1");
+    s.key("f2");
+    let shown: Vec<String> = s.with(|e, _| {
+        let layout = e.cell_edit().unwrap().layout.borrow().clone().unwrap();
+        layout.lines.iter().map(|l| l.pieces.iter().map(|p| {
+            p.shaped.as_ref().map_or(String::new(), |sh| sh.text.to_string())
+        }).collect::<String>()).collect()
+    });
+    assert!(shown.len() > 1, "wrapped: {shown:?}");
+    assert_eq!(shown.concat(), text, "the whole formula shows, no #");
+    s.screenshot("reedit-long-formula");
+}
+
+/// The window position (the middle of what shows of it) and top-left of a cell, found as a press finds it (`cell_under`).
+fn cell_on_screen(s: &mut Scenario, cell: (u32, u32)) -> ((f32, f32), (f32, f32)) {
+    s.with(|e, _| {
+        let ws = e.workspace_bounds.unwrap();
+        let (mut sum, mut n, mut min) = ((0.0f32, 0.0f32), 0.0f32, (f32::MAX, f32::MAX));
+        let mut y = f32::from(ws.origin.y) + 2.0;
+        while y < f32::from(ws.bottom()) - 14.0 {
+            let mut x = f32::from(ws.origin.x) + 2.0;
+            while x < f32::from(ws.right()) - 14.0 {
+                if e.cell_under(point(px(x), px(y))) == Some(cell) {
+                    sum = (sum.0 + x, sum.1 + y);
+                    n += 1.0;
+                    min = (min.0.min(x), min.1.min(y));
+                }
+                x += 2.0;
+            }
+            y += 2.0;
+        }
+        assert!(n > 0.0, "the cell {cell:?} is on screen");
+        ((sum.0 / n, sum.1 / n), min)
+    })
+}
+
+/// The box of the cell being typed into (one rect, painted once), with panes frozen at C3, columns only, rows only, and split.
+fn frozen_panes_editor() {
+    let both = [("corner", (1u32, 1u32)), ("frozen-column", (0, 7)), ("frozen-row", (4, 1)), ("scrolled", (4, 7))];
+    pane_editor("C3", "xlsx.freeze", &both, true);
+    pane_editor("C1", "xlsx.freeze", &[("frozen-column", (0, 7)), ("scrolled", (4, 7))], true);
+    pane_editor("A3", "xlsx.freeze", &[("frozen-row", (4, 1)), ("scrolled", (4, 7))], true);
+    pane_editor("C3", "xlsx.split", &both, false);
+}
+
+fn pane_editor(at: &str, menu: &str, cells: &[(&str, (u32, u32))], scroll_both: bool) {
+    use crate::xlsx::scenarios::SheetSteps as _;
+    let mut s = workbook();
+    for (cell, text) in [("A8", "alpha beta gamma"), ("B2", "bravo charlie delta"), ("E2", "echo foxtrot golf"), ("E8", "hotel india juliet"), ("A1", "x"), ("A2", "kilo lima mike"), ("B1", "november oscar papa"), ("E1", "quebec romeo sierra")] {
+        s.click_cell(cell);
+        s.enter(text, "enter");
+    }
+    s.click_cell(at);
+    s.menu(menu);
+    let tag = format!("{menu}-{at}").replace('.', "-");
+    let centre = s.with(|e, _| {
+        let ws = e.workspace_bounds.unwrap();
+        (f32::from(ws.origin.x + ws.size.width / 2.0), f32::from(ws.origin.y + ws.size.height / 2.0))
+    });
+    // Scrolled down and to the right: the cells in the scrolled panes are now other ones.
+    s.wheel(centre, -45.0);
+    s.wheel_xy(centre, -200.0, 0.0);
+    let offset = s.with(|e, _| e.workspace_scroll.offset());
+    if scroll_both {
+        assert!(offset.x < px(-100.0) && offset.y < px(-30.0), "{tag}: the sheet scrolls both ways: {offset:?}");
+    }
+    let split = s.with(|e, _| e.workspace_content().and_then(|c| e.frozen_split(c))).unwrap();
+    let (frozen_columns, frozen_rows) = s.with(|e, _| {
+        let (columns, rows) = e.current_sheet().unwrap().1.frozen.or_else(|| e.split_panes().map(|p| p.at)).unwrap();
+        (columns, rows)
+    });
+    for &(name, cell) in cells {
+        let (middle, corner) = cell_on_screen(&mut s, cell);
+        s.double_click(middle);
+        let (row, column) = s.with(|e, _| { let c = e.cell_edit().expect("editing"); (c.row, c.column) });
+        assert_eq!((column, row), cell, "{tag} {name}: the press begins the edit of the cell under it");
+        let (rect, ws, lines, text) = s.with(|e, _| {
+            let c = e.cell_edit().unwrap();
+            (c.rect.get().expect("the box is placed"), e.workspace_bounds.unwrap(), c.layout.borrow().clone().unwrap(), c.text.clone())
+        });
+        s.screenshot(&format!("pane-edit-{tag}-{name}"));
+        // One box, at the cell's own corner: where the press finds that cell.
+        assert!((f32::from(rect.origin.x) - corner.0).abs() <= 3.0 && (f32::from(rect.origin.y) - corner.1).abs() <= 3.0, "{tag} {name}: box at the cell {rect:?} vs {corner:?}");
+        // Not under the panes its cell is not in.
+        if let (Some(split_x), true) = (split.0, cell.0 >= frozen_columns) {
+            assert!(f32::from(rect.origin.x) >= f32::from(ws.origin.x) + split_x - 3.0, "{tag} {name}: not left of the first columns");
+        }
+        if let (Some(split_y), true) = (split.1, cell.1 >= frozen_rows) {
+            assert!(f32::from(rect.origin.y) >= f32::from(ws.origin.y) + split_y - 3.0, "{tag} {name}: not above the first rows");
+        }
+        // The press at a character puts the caret before it.
+        let line = &lines.lines[0];
+        for byte in [5usize, 11] {
+            let (x, y) = (f32::from(rect.origin.x) + line.x_at(byte) + 0.5, f32::from(rect.origin.y) + line.baseline - line.ascent / 2.0);
+            s.click((x, y));
+            let caret = s.with(|e, _| e.cell_edit().expect("still editing").caret);
+            assert_eq!(caret, byte, "{tag} {name}: caret at the pressed character of {text:?}");
+        }
+        s.key("escape");
+        assert!(s.with(|e, _| e.cell_edit().is_none()));
+    }
 }

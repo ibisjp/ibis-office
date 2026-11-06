@@ -313,6 +313,9 @@ pub(crate) struct ParaProps {
     pub(crate) bullet_size: Option<Option<u32>>,
     pub(crate) tabs: Option<Vec<ibis_doc_model::TextTabStop>>,
     pub(crate) default_tab: Option<Emu>,
+    /// `hangingPunct` and `latinLnBrk`.
+    pub(crate) hanging_punct: Option<bool>,
+    pub(crate) latin_line_break: Option<bool>,
     pub(crate) run: RunProps,
 }
 
@@ -345,6 +348,13 @@ impl ParaProps {
         }
         if let Some(v) = attr_i64(node, "defTabSz") {
             self.default_tab = Some(v.max(0));
+        }
+        let flag = |name: &str| attr(node, name).map(|v| matches!(v, "1" | "true" | "on"));
+        if let Some(v) = flag("hangingPunct") {
+            self.hanging_punct = Some(v);
+        }
+        if let Some(v) = flag("latinLnBrk") {
+            self.latin_line_break = Some(v);
         }
         for n in elements(node) {
             match n.tag_name().name() {

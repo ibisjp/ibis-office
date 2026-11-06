@@ -73,7 +73,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::corpus_report_xlsx_wrap_at_ascii_space", corpus_report_xlsx_wrap_at_ascii_space),
         ("xlsx::corpus_report_xlsx_shape_text_clipped_at_shape_bottom", corpus_report_xlsx_shape_text_clipped_at_shape_bottom),
         ("xlsx::corpus_report_xlsx_center_across_wrapped_header_uses_the_whole_range", corpus_report_xlsx_center_across_wrapped_header_uses_the_whole_range),
-        ("xlsx::corpus_report_xlsx_distributed_header_not_spread", corpus_report_xlsx_distributed_header_not_spread),
+        ("xlsx::corpus_report_xlsx_distributed_header_spread", corpus_report_xlsx_distributed_header_spread),
         ("xlsx::corpus_report_xlsx_rich_text_small_run_sets_line_pitch", corpus_report_xlsx_rich_text_small_run_sets_line_pitch),
         ("xlsx::corpus_report_xlsx_yugothic_fit_to_page_scale", corpus_report_xlsx_yugothic_fit_to_page_scale),
         ("xlsx::corpus_report_xlsx_overflow_text_from_outside_print_area_has_white_ground", corpus_report_xlsx_overflow_text_from_outside_print_area_has_white_ground),
@@ -707,19 +707,20 @@ pub(crate) fn corpus_report_xlsx_ms_font_wrapped_line_pitch() {
     assert!(wrong.is_empty(), "行送りが大きい：{wrong:#?}");
 }
 
-/// xlsx-C003-b2 折り返すセルの半角スペースを折り返しの位置にしない。Excel は、行があふれるとき、その行にある直近の半角スペースの
-/// 後ろで折り返す（先頭が半角スペースなら 1 行目は空行になり、本文は 2 行目から。文中の半角スペースの後ろで行が終わる）。
+/// xlsx-C003-b2 折り返すセルの半角スペースは、行を終える位置にならない（2026-11-04 に、本物の Excel で測り直した）。
+/// 本物の Excel（Mac 16.x と Windows の Microsoft 365 16.0.20527）の PDF と、行の高さの自動調整（画面）で、半角スペースを含む行は、スペースの
+/// 後ろでなく、文字が入る所まで続く（「か updateFields のとき、開いたときに目次を作」のスペースの後ろの和文も同じ行に入る。半角スペースで
+/// 行を終えると 1 行増える文で、Mac・Windows とも増えない）。先頭が半角スペースでも 1 行目は空行にならず、スペースの幅だけ字下げされる。
 /// ＭＳ 明朝 9、幅 52 の列、折り返し・上揃え。B1 は先頭が半角スペースの文、B2 は文中に「１ ダミー甲の者」を含む文（全角スペースで始まる）。
-/// Excel は B1 の 1 行目を空行にして本文を 2 行目（セルの上端から約 13pt 下）から、B2 は「１」で行を終えて次の行を「ダミー甲」から始める。
-/// ibisOffice は半角スペースを見ず、B1 の本文を 1 行目（セルの上端から 3pt 下）から、B2 を文字の間で折る。
+/// Excel は B1 の本文を 1 行目（セルの上端 36pt の約 1〜3pt 下）から、B2 の 1 行目を「…「１ ダミー甲の者（一年以」まで続ける。
 pub(crate) fn corpus_report_xlsx_wrap_at_ascii_space() {
     let pdf = export_pdf("ascii-space-wrap.xlsx", "ascii_space_wrap");
     let pages = pdf_pages(&pdf);
     let lines = &pages[0];
     let first = lines.iter().filter(|l| l.compact().starts_with("注意事項の説明文")).map(|l| l.y0).reduce(f32::min).expect("B1 の本文");
-    assert!(first >= 49.0, "B1（先頭が半角スペース）の本文の 1 行目の位置 {first}pt（セルの上端は 36pt。Excel は 1 行目が空行で 52pt 付近）");
-    let after_space = lines.iter().any(|l| l.compact().starts_with("ダミー甲"));
-    assert!(after_space, "B2 の「１ ダミー甲」の半角スペースの後ろで行が変わる（「ダミー甲」で始まる行が無い）：{:?}", lines.iter().map(|l| l.compact()).collect::<Vec<_>>());
+    assert!(first < 45.0, "B1（先頭が半角スペース）の本文の 1 行目の位置 {first}pt（セルの上端は 36pt。Excel は 1 行目から本文）");
+    let kept = lines.iter().any(|l| l.compact().starts_with("一項目の見出しの文面。「１ダミー甲の者"));
+    assert!(kept, "B2 の「１ ダミー甲」は半角スペースで行を終えない：{:?}", lines.iter().map(|l| l.compact()).collect::<Vec<_>>());
 }
 
 /// xlsx-C003-b4 縦位置の指定が無い（下揃え）一行の文字が、低い行で上の罫線に接する。
@@ -794,18 +795,19 @@ pub(crate) fn corpus_report_xlsx_zero_size_text_box_draws_nothing() {
 }
 
 /// xlsx-C007-b5（todo-xlsx の H012）`horizontal="distributed"`（均等割り付け）の見出しの文字を、セルの幅いっぱいに散らして並べる。
-/// 実文書の正解 PDF では、見出し（ＭＳ 明朝 9・10pt）は散らさず中央に並び、長い見出しは折り返して中央に並ぶ。
-/// 見出し「ダミー甲」（4 字）と「ダミー丙丁」（5 字）、9pt。ibisOffice はどちらもセルの幅いっぱいの 54pt に散らす（「ダ ミ ー 甲」）。散らさなければ 36pt と 45pt。許容は字数 × 9pt + 4pt まで。
-/// ※ 正解は Excel for the web 由来の見え方の可能性がある（確度は低い。Excel のデスクトップ版が均等割り付けを散らすかは未確認）。
-pub(crate) fn corpus_report_xlsx_distributed_header_not_spread() {
+/// 見出し「ダミー甲」（4 字）と「ダミー丙丁」（5 字）、9pt、セルの幅 54pt。
+/// 以前はこの文書の正解 PDF（散らさず中央に並ぶ）に合わせて中央に寄せていたが、GitHub の issue #75 で「Excel は文字をセルの幅いっぱいに
+/// 等間隔で並べる」と報告があり、散らす（セルの幅の近くまで広がる）ことにした（2026-10-31）。散らさなければ 36pt と 45pt。
+/// 正解 PDF が Excel のデスクトップ版のものかは未確認（Excel for the web 由来の可能性があった）。
+pub(crate) fn corpus_report_xlsx_distributed_header_spread() {
     let pdf = export_pdf("distributed-header.xlsx", "distributed_header");
     let pages = pdf_pages(&pdf);
-    let spread: Vec<String> = pages[0]
+    let not_spread: Vec<String> = pages[0]
         .iter()
-        .filter(|l| ["ダミー甲", "ダミー丙丁"].contains(&l.compact().as_str()) && l.x1 - l.x0 > l.compact().chars().count() as f32 * 9.0 + 4.0)
+        .filter(|l| ["ダミー甲", "ダミー丙丁"].contains(&l.compact().as_str()) && l.x1 - l.x0 <= l.compact().chars().count() as f32 * 9.0 + 4.0)
         .map(|l| format!("「{}」の幅 {:.1}pt", l.text, l.x1 - l.x0))
         .collect();
-    assert!(spread.is_empty(), "見出しが散らされる：{spread:?}");
+    assert!(not_spread.is_empty(), "見出しが散らされない（#75）：{not_spread:?}");
 }
 
 /// xlsx-C007-b6 リッチテキストで文字の大きさが混ざる折り返しセルの行間が広く（9pt の run の行も 11pt の行と同じ行送り）、

@@ -1,0 +1,27 @@
+{
+ "tag": "pdf-libreoffice-docx-2",
+ "scenario": "pdf",
+ "app": "libreoffice",
+ "kind": "docx",
+ "run": 2,
+ "file": "securities-registration-statement.docx",
+ "seconds": 2.502,
+ "returncode": 0,
+ "pdf_bytes": 4505234,
+ "pages": 154,
+ "command": [
+  "soffice26",
+  "--headless",
+  "--convert-to",
+  "pdf",
+  "--outdir",
+  "pdf",
+  "securities-registration-statement.docx"
+ ],
+ "measured_at": "2026-11-03 18:54:13",
+ "load_before": [
+  0.23,
+  0.25,
+  0.17
+ ]
+}

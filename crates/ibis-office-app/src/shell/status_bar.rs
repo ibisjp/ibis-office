@@ -9,7 +9,6 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarAxis, ScrollbarHandle};
-use gpui_kit::component::slider::Slider;
 use gpui_kit::component::{ActiveTheme as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -27,6 +26,11 @@ impl SlideEditor {
             (Tool::TextBox, _, _) => crate::shell::i18n::text("status.hint.textbox"),
             (_, true, _) => crate::shell::i18n::text("status.hint.esc"),
             (_, _, Some(status)) => status.clone(),
+            // A cell being typed into: Excel's 入力 (Enter) or 編集 (Edit), which the arrows tell apart.
+            _ if self.cell_edit().is_some() => crate::shell::i18n::text(match self.cell_edit().map(|e| e.mode) {
+                Some(crate::xlsx::cell_edit::EditMode::Edit) => "xlsx.status.mode-edit",
+                _ => "xlsx.status.mode-enter",
+            }),
             _ if crate::render::web_image::curl_missing_notice() => "xlsx.image.curl-missing".into(),
             _ => "".into(),
         };
@@ -151,7 +155,7 @@ impl SlideEditor {
                 zoom_step_button("zoom-out", IconName::Minus, "view.zoom-out", at_min)
                     .when(!at_min, |d| d.on_click(cx.listener(|this, _, window, cx| this.step_zoom(false, window, cx)))),
             )
-            .child(div().w(px(120.)).child(Slider::new(&self.zoom_slider)))
+            .child(div().w(px(120.)).child(crate::shell::chrome::slider("zoom-slider", &self.zoom_slider)))
             .child(
                 zoom_step_button("zoom-in", IconName::Plus, "view.zoom-in", at_max)
                     .when(!at_max, |d| d.on_click(cx.listener(|this, _, window, cx| this.step_zoom(true, window, cx)))),

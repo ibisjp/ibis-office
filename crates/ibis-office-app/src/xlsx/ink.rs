@@ -741,6 +741,38 @@ impl SlideEditor {
         }
     }
 
+    /// The ink strokes of the sheet.
+    fn ink_ids(&self) -> Vec<ShapeId> {
+        self.slide().shapes.iter().filter(|s| self.slide().shape_names.get(&s.id).is_some_and(|n| is_ink_name(n)) && stroke_points(s).is_some()).map(|s| s.id).collect()
+    }
+
+    fn ink_selected_ids(&self) -> Vec<ShapeId> {
+        self.selected_ids().into_iter().filter(|id| self.slide().shape(*id).is_some_and(|s| stroke_points(s).is_some())).collect()
+    }
+
+    /// すべてのインクを選択.
+    pub(crate) fn ink_select_all(&mut self, cx: &mut Context<Self>) {
+        let ids = self.ink_ids();
+        self.set_selection(ids);
+        cx.notify();
+    }
+
+    /// 選択インクを消去 (one step).
+    pub(crate) fn ink_erase_selected(&mut self, cx: &mut Context<Self>) {
+        let (slide, shapes) = (self.current_slide, self.ink_selected_ids());
+        if !shapes.is_empty() {
+            self.run_sheet(vec![Command::RemoveShapes { slide, shapes }], cx);
+        }
+    }
+
+    /// すべてのインクを消去 (one step).
+    pub(crate) fn ink_erase_all(&mut self, cx: &mut Context<Self>) {
+        let (slide, shapes) = (self.current_slide, self.ink_ids());
+        if !shapes.is_empty() {
+            self.run_sheet(vec![Command::RemoveShapes { slide, shapes }], cx);
+        }
+    }
+
     /// インクを図形に変換: the selected stroke(s) become the shapes they look like.
     pub(crate) fn ink_to_shape(&mut self, cx: &mut Context<Self>) {
         let slide = self.current_slide;
@@ -869,21 +901,22 @@ impl SlideEditor {
             }).on_bounds(bounds(id))
         }).collect();
         let widths=WIDTHS.into_iter().enumerate().map(|(i,width)|{
-            let id=format!("ink-width-{i}");InkChoice::new(id.clone(),format("xlsx.ink.width-pt",&[("pt",&width)]),(p.width-width).abs()<0.01,move|e,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.width=width;}cx.notify();}).on_bounds(bounds(&id))
+            let id=format!("ink-width-{i}");InkChoice::new(id.clone(),format("xlsx.ink.width-pt",&[("pt",&width)]),(p.width-width).abs()<0.01,move|e,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.width=width;}cx.notify();}).points(width).on_bounds(bounds(&id))
         }).collect();
         let mut effects=vec![InkChoice::new("ink-effect-none",text("docx.ink.effect.none"),p.effect.is_none(),|e,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.effect=None;}cx.notify();})];
-        effects.extend(InkEffect::ALL.into_iter().map(|effect|InkChoice::new(effect.id(),text(effect.label_key()),p.effect==Some(effect),move|e,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.effect=Some(effect);if let Some(stop)=effect.stops().first(){p.color=stop.color.rgb;}}cx.notify();}).on_bounds(bounds(effect.id()))));
-        let selected=self.selected_ids().into_iter().any(|id|self.slide().shape(id).is_some_and(|s|stroke_points(s).is_some()));
+        effects.extend(InkEffect::ALL.into_iter().map(|effect|InkChoice::new(effect.id(),text(effect.label_key()),p.effect==Some(effect),move|e,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.effect=Some(effect);if let Some(stop)=effect.stops().first(){p.color=stop.color.rgb;}}cx.notify();}).on_bounds(bounds(effect.id())).texture(crate::shell::ink_panel::InkTexture::Gradient(effect.stops().iter().map(|s|(s.position,s.color.rgb.0)).collect()))));
         let hide=self.current_sheet().map(|(_,s)|s.hide_ink).unwrap_or(false);
-        let section=InkSection{title:None,rows:vec![
+        let options=InkSection{title:None,rows:vec![
             InkRow::Toggle(InkToggle::new("ink-hide",text("xlsx.hide-ink"),hide,|e,_,cx|e.toggle_hide_ink(cx)).on_bounds(bounds("ink-hide"))),
-            InkRow::Commands(vec![InkCommand::new("ink-to-shape",text("xlsx.ink.to-shape"),selected,|e,_,cx|e.ink_to_shape(cx)).on_bounds(bounds("ink-to-shape"))]),
         ]};
+        let actions=crate::shell::ink_panel::InkActions{selected:self.ink_selected_ids().len(),has_ink:!self.ink_ids().is_empty(),
+            to_shape:Rc::new(|e,_,cx|e.ink_to_shape(cx)),select_all:Rc::new(|e,_,cx|e.ink_select_all(cx)),
+            erase_selected:Rc::new(|e,_,cx|e.ink_erase_selected(cx)),erase_all:Rc::new(|e,_,cx|e.ink_erase_all(cx)),to_text:None,to_math:None,replay:None}.section();
         Some(crate::shell::ink_panel::panel(InkPanelSpec{
             color_id:"xlsx-ink-color-field",tools,widths,drawing:matches!(p.pen,PenKind::Pen|PenKind::Pencil|PenKind::Highlighter)&&!p.lasso,color:p.color,
             change_color:Rc::new(|e,color,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.color=color;p.effect=None;}cx.notify();}),effects,
             mouse:InkToggle::new("ink-mouse",text("ink.panel.mouse"),p.mouse,|e,_,cx|{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.mouse=!p.mouse;}cx.notify();}).on_bounds(bounds("ink-mouse")),
-            sections:vec![section],message:p.message.clone(),context_menu:None,
+            sections:vec![options,actions],message:p.message.clone(),context_menu:None,
         },cx))
     }
 

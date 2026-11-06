@@ -228,7 +228,7 @@ impl SlideEditor {
                         let disp = (!disp_str.trim().is_empty()).then_some(disp_str.as_str());
                         let tip = (!tip_str.trim().is_empty()).then_some(tip_str.as_str());
                         this.insert_cell_link_full(&text, disp, tip, cx);
-                        if this.current_link().is_some(){this.close_panel_dialog(w,cx);}
+                        if this.current_link().is_some(){this.close_dialog(w,cx);}
                     })))
             .action(crate::shell::chrome::dialog_cancel_definition(cx)).when(self.current_link().is_some(),|bar|bar.action(crate::shell::chrome::ActionDefinition::new("link-remove", "", crate::shell::chrome::ActionButtonKind::Destructive)
                     .label(crate::shell::i18n::text("_shell.remove-link"))

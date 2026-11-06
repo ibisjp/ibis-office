@@ -526,6 +526,41 @@ impl SlideEditor {
         }
     }
 
+    /// The ink strokes of the slide.
+    fn pptx_ink_ids(&self) -> Vec<ShapeId> {
+        self.slide().shapes.iter().filter(|s| self.slide().shape_names.get(&s.id).is_some_and(|n| is_ink_name(n)) && stroke_points(s).is_some()).map(|s| s.id).collect()
+    }
+
+    /// The selected shapes that are ink strokes.
+    fn pptx_ink_selected_ids(&self) -> Vec<ShapeId> {
+        self.selected_shapes().into_iter().filter(|s| stroke_points(s).is_some()).map(|s| s.id).collect()
+    }
+
+    /// すべてのインクを選択.
+    pub(crate) fn pptx_ink_select_all(&mut self, cx: &mut Context<Self>) {
+        let ids = self.pptx_ink_ids();
+        self.set_selection(ids);
+        cx.notify();
+    }
+
+    /// 選択インクを消去 (one step).
+    pub(crate) fn pptx_ink_erase_selected(&mut self, cx: &mut Context<Self>) {
+        let slide = self.current_slide;
+        let ids = self.pptx_ink_selected_ids();
+        if !ids.is_empty() {
+            self.run(ids.into_iter().map(|shape| Command::RemoveShape { slide, shape }).collect(), cx);
+        }
+    }
+
+    /// すべてのインクを消去 (one step).
+    pub(crate) fn pptx_ink_erase_all(&mut self, cx: &mut Context<Self>) {
+        let slide = self.current_slide;
+        let ids = self.pptx_ink_ids();
+        if !ids.is_empty() {
+            self.run(ids.into_iter().map(|shape| Command::RemoveShape { slide, shape }).collect(), cx);
+        }
+    }
+
     /// インクを図形に変換: the selected stroke becomes the shape it looks like.
     pub(crate) fn pptx_ink_to_shape(&mut self, cx: &mut Context<Self>) {
         let slide = self.current_slide;
@@ -914,9 +949,9 @@ impl SlideEditor {
         use crate::shell::ink_panel::{InkChoice,InkToggle,InkCommand,InkRow,InkSection,InkPanelSpec};
         let p=self.pptx()?.ink.as_ref()?;
         let tools=[("ink-pen","xlsx.ink.pen",PenKind::Pen),("ink-pencil","xlsx.ink.pencil",PenKind::Pencil),("ink-highlighter","xlsx.ink.highlighter",PenKind::Highlighter),("ink-eraser","xlsx.ink.eraser",PenKind::Eraser),("ink-select","xlsx.ink.select",PenKind::Select)].into_iter().map(|(id,label,kind)|InkChoice::new(id,text(label),p.pen==kind,move|e,_,cx|e.select_pptx_ink_pen(kind,cx))).collect();
-        let widths=PPTX_INK_WIDTHS.into_iter().enumerate().map(|(i,width)|InkChoice::new(format!("ink-width-{i}"),format("xlsx.ink.width-pt",&[("pt",&width)]),(p.width-width).abs()<0.01,move|e,_,cx|e.set_pptx_ink_width(width,cx))).collect();
-        let mut effects=vec![InkChoice::new("ink-effect-none",text("docx.ink.effect.none"),p.effect==InkEffect::None,|e,_,cx|e.set_pptx_ink_effect(InkEffect::None,cx))];
-        effects.extend(PPTX_INK_EFFECTS.iter().copied().map(|effect|InkChoice::new(format!("ink-effect-{}",effect.name()),text(effect.label_id()),p.effect==effect,move|e,_,cx|{let chosen=if e.ink_panel_mut().is_some_and(|p|p.effect==effect){InkEffect::None}else{effect};e.set_pptx_ink_effect(chosen,cx);})));
+        let widths=PPTX_INK_WIDTHS.into_iter().enumerate().map(|(i,width)|InkChoice::new(format!("ink-width-{i}"),format("xlsx.ink.width-pt",&[("pt",&width)]),(p.width-width).abs()<0.01,move|e,_,cx|e.set_pptx_ink_width(width,cx)).points(width)).collect();
+        let mut effects=vec![InkChoice::new("ink-effect-none",text("docx.ink.effect.none"),p.effect==InkEffect::None,|e,_,cx|e.set_pptx_ink_effect(InkEffect::None,cx)).texture(crate::shell::ink_panel::InkTexture::Solid(p.color.0))];
+        effects.extend(PPTX_INK_EFFECTS.iter().copied().map(|effect|InkChoice::new(format!("ink-effect-{}",effect.name()),text(effect.label_id()),p.effect==effect,move|e,_,cx|e.set_pptx_ink_effect(effect,cx)).texture(crate::shell::ink_panel::InkTexture::Bands(effect.palette().to_vec()))));
         let mut ruler_rows=vec![InkRow::Toggle(InkToggle::new("ink-ruler",text("pptx.ink.ruler"),p.ruler.is_some(),|e,_,cx|e.toggle_pptx_ink_ruler(cx)))];
         if let Some(ruler)=p.ruler{
             ruler_rows.extend([
@@ -937,14 +972,12 @@ impl SlideEditor {
                 ]),
             ]);
         }
-        let selected=self.selected_shapes().first().is_some_and(|s|stroke_points(s).is_some());
-        let has_ink=self.slide().shapes.iter().any(|s|stroke_points(s).is_some());
-        let actions=InkSection{title:None,rows:vec![InkRow::Commands(vec![
-            InkCommand::new("ink-to-shape",text("xlsx.ink.to-shape"),selected,|e,_,cx|e.pptx_ink_to_shape(cx)),
-            InkCommand::new("ink-to-text",text("pptx.ink.to-text"),selected,|e,_,cx|e.pptx_ink_to_text(cx)),
-            InkCommand::new("ink-to-math",text("pptx.ink.to-math"),selected,|e,_,cx|e.pptx_ink_to_math(cx)),
-            InkCommand::new("ink-replay",text("pptx.ink.replay"),has_ink,|e,_,cx|e.pptx_ink_replay(cx)),
-        ])]};
+        let selected=self.pptx_ink_selected_ids().len();
+        let has_ink=!self.pptx_ink_ids().is_empty();
+        let actions=crate::shell::ink_panel::InkActions{selected,has_ink,
+            to_shape:std::rc::Rc::new(|e,_,cx|e.pptx_ink_to_shape(cx)),select_all:std::rc::Rc::new(|e,_,cx|e.pptx_ink_select_all(cx)),
+            erase_selected:std::rc::Rc::new(|e,_,cx|e.pptx_ink_erase_selected(cx)),erase_all:std::rc::Rc::new(|e,_,cx|e.pptx_ink_erase_all(cx)),
+            to_text:Some(std::rc::Rc::new(|e,_,cx|e.pptx_ink_to_text(cx))),to_math:Some(std::rc::Rc::new(|e,_,cx|e.pptx_ink_to_math(cx))),replay:Some(std::rc::Rc::new(|e,_,cx|e.pptx_ink_replay(cx)))}.section();
         Some(crate::shell::ink_panel::panel(InkPanelSpec{
             color_id:"pptx-ink-color-field",tools,widths,drawing:matches!(p.pen,PenKind::Pen|PenKind::Pencil|PenKind::Highlighter),color:p.color,
             change_color:std::rc::Rc::new(|e,color,_,cx|e.set_pptx_ink_color(color,cx)),effects,

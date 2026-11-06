@@ -8,26 +8,30 @@ use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
 use ibis_doc_model::{Command, Insets, ShapeId, ShapeKind, SlideId, TextBody};
-use crate::shell::chrome::SidebarPanel;
+use crate::shell::chrome::{Shown, ShownNumber, SidebarPanel, Typed};
 use crate::shell::editor::SlideEditor;
 
 type Target = (SlideId, ShapeId, Option<(usize, usize)>, TextBody);
 pub(crate) struct InsetsPanel {
     pub(crate) fields: Vec<Entity<InputState>>,
     targets: Vec<Target>,
+    /// The margins as opened (EMU) and as the fields showed them (rounded to 2 digits): a field left as shown keeps its exact value.
+    opened: [ShownNumber; 4],
     pub(crate) error: Option<SharedString>,
 }
 
-fn inset(value: &str) -> Option<i64> {
-    let cm: f64 = value.trim().parse().ok()?;
-    let emu = (cm * 360_000.).round();
-    (cm.is_finite() && (0. ..=i32::MAX as f64).contains(&emu)).then_some(emu as i64)
+/// A margin in EMU, if it is within 0 to `i32::MAX`.
+fn inset(emu: f64) -> Option<i64> {
+    (0. ..=i32::MAX as f64).contains(&emu).then_some(emu as i64)
 }
+
+/// The margins (cm) are shown with two digits after the decimal point.
+fn margin_spec() -> crate::shell::chrome::SpinnerSpec { crate::shell::chrome::SpinnerSpec::new(0.1).min(0.0).decimals(2) }
 
 impl SlideEditor {
     pub(crate) fn open_text_insets_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_marked(cx);
-        let (targets, initial) = if let Some(edit) = self.text_editing() {
+        let targets = if let Some(edit) = self.text_editing() {
             if let Some((r, c)) = edit.cell {
                 let (ar, ac) = edit.cell_anchor.unwrap_or((r, c));
                 let (r0, r1) = (r.min(ar), r.max(ar));
@@ -42,10 +46,9 @@ impl SlideEditor {
                         }
                     }
                 }
-                let init = self.edited_body().map(|b| b.insets).or_else(|| cell_targets.first().map(|t| t.3.insets));
-                (cell_targets, init)
+                cell_targets
             } else {
-                (self.edited_body().map(|b| vec![(self.current_slide, edit.shape, None, b.clone())]).unwrap_or_default(), self.edited_body().map(|b| b.insets))
+                self.edited_body().map(|b| vec![(self.current_slide, edit.shape, None, b.clone())]).unwrap_or_default()
             }
         } else {
             let shapes = self.selected_shapes();
@@ -61,19 +64,18 @@ impl SlideEditor {
                     all_targets.push((self.current_slide, s.id, None, b.clone()));
                 }
             }
-            let init = all_targets.first().map(|t| t.3.insets);
-            (all_targets, init)
+            all_targets
         };
-        let Some(initial) = initial else { return };
+        if targets.is_empty() { return; }
         self.end_text_edit(window, cx);
-        let mut fields: Vec<_> = [initial.left, initial.top, initial.right, initial.bottom].into_iter().map(|value| {
-            cx.new(|cx| InputState::new(window, cx).default_value(format!("{:.6}", value as f64 / 360_000.)))
-        }).collect();
+        // Each margin shows the common value of the targets, or is empty when they differ (and is then not written unless a value is put in).
+        let opened = [(|i: &Insets| i.left) as fn(&Insets) -> i64, |i| i.top, |i| i.right, |i| i.bottom].map(|side| ShownNumber::new(Shown::of(&targets, |t| side(&t.3.insets)), 360_000., margin_spec()));
+        let mut fields: Vec<_> = opened.iter().map(|shown| shown.input(window, cx)).collect();
         fields.push(cx.new(|cx| InputState::new(window,cx).placeholder(crate::shell::i18n::text("pptx.common.automatic")).default_value("")));
         let first = fields[0].clone();
         if let Some(s) = self.pptx_mut() {
             s.crop_panel = None; s.timing_panel = None; s.section_panel=None;s.gradient_panel = None; s.shadow_panel = None; s.glow_panel = None; s.paragraph_panel = None; s.find = None; s.size_panel = None; s.frame_panel = None; s.comments = None; s.chart_panel = None; s.header_footer = None;
-            s.insets_panel = Some(InsetsPanel { fields, targets, error: None });
+            s.insets_panel = Some(InsetsPanel { fields, targets, opened, error: None });
         }
         self.sidebar_open = true;
         first.update(cx, |f, cx| f.focus(window, cx));
@@ -82,8 +84,9 @@ impl SlideEditor {
 
     pub(crate) fn apply_text_insets_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(panel) = self.pptx().and_then(|s| s.insets_panel.as_ref()) else { return };
-        let values: Option<Vec<_>> = panel.fields.iter().take(4).map(|f| inset(f.read(cx).value().as_ref())).collect();
-        let Some(v) = values else {
+        // A margin whose field showed "mixed" and was left empty is not written: each target keeps its own.
+        let values: Vec<Typed<i64>> = panel.fields.iter().take(4).zip(&panel.opened).map(|(f, shown)| shown.resolve(f.read(cx).value().as_ref()).and_then(inset)).collect();
+        let Some(v) = (!values.iter().any(Typed::is_invalid)).then_some(values) else {
             if let Some(panel) = self.pptx_mut().and_then(|s| s.insets_panel.as_mut()) { panel.error = Some(crate::shell::i18n::text("pptx.insets-panel.enter-finite-number-0-more").into()); }
             return cx.notify();
         };
@@ -103,7 +106,6 @@ impl SlideEditor {
             let scale=value.parse::<f64>().ok().filter(|v|v.is_finite() && *v>=1. && *v<=100.).map(|v|(v*1000.).round() as u32).filter(|v|*v>0);
             let Some(scale)=scale else {if let Some(p)=self.pptx_mut().and_then(|s|s.insets_panel.as_mut()) {p.error=Some(crate::shell::i18n::text("pptx.insets-panel.enter-text-scale-1-100").into());}return cx.notify();};Some(scale)
         };
-        let insets = Insets { left: v[0], top: v[1], right: v[2], bottom: v[3] };
         let commands = panel.targets.clone().into_iter().filter_map(|(slide, shape, cell, _)| {
             let target = self.presentation().slide(slide)?.shape(shape)?;
             let body = match (cell, &target.kind) {
@@ -111,6 +113,8 @@ impl SlideEditor {
                 (None, _) => target.text_body()?,
                 _ => return None,
             };
+            let own = body.insets;
+            let insets = Insets { left: v[0].clone().or(own.left)?, top: v[1].clone().or(own.top)?, right: v[2].clone().or(own.right)?, bottom: v[3].clone().or(own.bottom)? };
             if body.insets == insets && scale.is_none_or(|v|body.font_scale==v) { return None; }
             let mut body = body.clone(); body.insets = insets;if let Some(scale)=scale {body.font_scale=scale;}
             let command = Command::SetTextBody { slide, shape, body };
@@ -137,7 +141,7 @@ impl SlideEditor {
         let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
         for (i, (name, field)) in [crate::shell::i18n::text("pptx.insets-panel.left-cm"), crate::shell::i18n::text("pptx.insets-panel.top-cm"), crate::shell::i18n::text("pptx.insets-panel.right-cm"), crate::shell::i18n::text("pptx.insets-panel.bottom-cm"), crate::shell::i18n::text("pptx.insets-panel.text-zoom-percent-blank-keep")].into_iter().zip(fields).enumerate() {
             // The margins (cm) and the text zoom (%); applied with 適用, so ▲▼ only change the field.
-            let spec = if i < 4 { crate::shell::chrome::SpinnerSpec::new(0.1).min(0.0) } else { crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 100.0).integer_only() };
+            let spec = if i < 4 { margin_spec() } else { crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 100.0).decimals(2) };
             body = body.child(crate::shell::chrome::text_field_row(name, crate::shell::chrome::text_field(&field).unit(if i < 4 { "cm" } else { "%" }, px(24.)).spinner(format!("pptx-insets-field-{i}"), spec, cx, |_, _, _, _| {})));
         }
         if let Some(error) = error { body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error)); }

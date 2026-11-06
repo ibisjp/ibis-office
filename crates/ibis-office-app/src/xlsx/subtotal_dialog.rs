@@ -49,7 +49,7 @@ pub(crate) struct SubtotalPanel {
     pub(crate) message: String,
     pub(crate) ui: Rc<RefCell<BTreeMap<String, Bounds<Pixels>>>>,
     pub(crate) slide: SlideId,
-    column_scroll: ScrollHandle,
+    column_table: crate::shell::chrome::virtual_table::TableState,
 }
 
 impl SlideEditor {
@@ -121,7 +121,7 @@ impl SlideEditor {
             message: String::new(),
             ui: Default::default(),
             slide: self.current_slide,
-            column_scroll:ScrollHandle::new(),
+            column_table:Default::default(),
         };
 
         let state = self.wb_mut();
@@ -378,22 +378,27 @@ impl SlideEditor {
 
         // The header checkbox applies to all target columns; only data rows scroll.
         let all_checked=!p.columns.is_empty()&&p.columns.iter().all(|(col,_)|p.subtotal_columns.contains(col));
-        let header=crate::shell::chrome::table_row_with_actions(vec![
-            mark("xlsx.subtotal.select-all",crate::shell::chrome::checkbox_button("subtotal-select-all",text("_xlsx.add-subtotal-to"),all_checked,false,
-                cx.listener(move|this,_,_,cx|this.select_all_subtotal_columns(!all_checked,cx))).into_any_element())
-        ],div().into_any_element(),false,px(0.));
-        let mut rows=v_flex();
-        for &(col,ref label) in &p.columns {
-            let checked=p.subtotal_columns.contains(&col);
-            let check=crate::shell::chrome::checkbox_button(("subtotal-column",col as usize),text(label),checked,false,cx.listener(move|this,_,_,cx|{
-                if let Some(p)=this.wb_mut().panels.subtotal.as_mut(){
-                    if checked {p.subtotal_columns.retain(|&c|c!=col);}else{p.subtotal_columns.push(col);}
-                }
-                cx.notify();
-            }));
-            rows=rows.child(crate::shell::chrome::table_row_with_actions(vec![check.into_any_element()],div().into_any_element(),false,px(0.)));
-        }
-        body=body.child(mark("xlsx.subtotal.columns-box",crate::shell::chrome::table("subtotal-columns-table",header.into_any_element(),rows.into_any_element(),p.column_scroll.clone(),px(180.)).into_any_element()));
+        let header=vec![mark("xlsx.subtotal.select-all",crate::shell::chrome::checkbox_button("subtotal-select-all",text("_xlsx.add-subtotal-to"),all_checked,false,
+            cx.listener(move|this,_,_,cx|this.select_all_subtotal_columns(!all_checked,cx))).into_any_element())];
+        let target_rows:Vec<(u32,String,bool)>=p.columns.iter().map(|(col,label)|(*col,label.clone(),p.subtotal_columns.contains(col))).collect();
+        let row_count=target_rows.len();
+        let editor_weak=cx.entity().downgrade();
+        let build=move|range:std::ops::Range<usize>,_:&mut Window,_:&mut App|->Vec<crate::shell::chrome::virtual_table::TableRow>{
+            range.filter_map(|i|target_rows.get(i).map(|r|(i,r))).map(|(_,(col,label,checked))|{
+                let (col,checked,editor)=(*col,*checked,editor_weak.clone());
+                let check=crate::shell::chrome::checkbox_button(("subtotal-column",col as usize),text(label),checked,false,move|_,_,cx|{
+                    let _=editor.update(cx,|this,cx|{
+                        if let Some(p)=this.wb_mut().panels.subtotal.as_mut(){
+                            if checked {p.subtotal_columns.retain(|&c|c!=col);}else{p.subtotal_columns.push(col);}
+                        }
+                        cx.notify();
+                    });
+                });
+                crate::shell::chrome::virtual_table::TableRow::new(vec![check.into_any_element()])
+            }).collect()
+        };
+        let table=crate::shell::chrome::data_table::DataTable::virtualized("subtotal-columns-table",vec![crate::shell::chrome::virtual_table::TableColumn::flex("column")],header,p.column_table.clone(),row_count,build,cx);
+        body=body.child(mark("xlsx.subtotal.columns-box",div().w_full().h(px(180.)).child(table).into_any_element()));
 
         // 4. オプション (Checkboxes)
         body = body.child(

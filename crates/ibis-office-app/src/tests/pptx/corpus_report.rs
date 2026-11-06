@@ -752,6 +752,26 @@ pub(crate) fn corpus_report_pptx_pie_text_rect() {
     checks.done("pptx-C002-b1: the text rectangle of a pie");
 }
 
+/// 0.8.5 の退行（pptx 144 など）：カスタム図形の文字の枠（`<a:rect l="0" t="0" r="0" b="0"/>`、LibreOffice などが書く）が
+/// 面積を持たないとき、文字を幅 0 の枠で組んで 1 字ずつ縦に割っていた（xlsx の幅 0 の図形の文字を描かない変更が、
+/// 大きさのある図形の面積 0 の枠にも効いていた）。図形に大きさがあるときは、折り返さずその点から 1 行で始める。
+/// 同じ文の 2 つの図形（枠が 0 のものと `r="r" b="b"` の対照）はどちらも 1 行で、字の左の端が図形の左端の近く。
+pub(crate) fn corpus_report_pptx_zero_text_rect_of_a_custom_shape_is_one_line() {
+    let pages = render("custgeom-zero-text-rect.pptx", "custgeom-zero-text-rect");
+    let page = &pages[0];
+    let pt = |p: f64| (p * 12_700.0) as i64;
+    let mut checks = Checks::default();
+    for (name, top) in [("zero rect", 130.0), ("full rect (control)", 275.0)] {
+        let area = rect(pt(20.0), pt(top), pt(500.0), pt(100.0));
+        let n = lines(page, area, dark, page.pt(20.0 * 0.3));
+        checks.check(n == 1, format!("{name}: {n} lines of text, 1 expected"));
+        if let Some((l, r)) = extent(page, area, dark) {
+            checks.check((r - l) as f64 > page.pt(20.0 * 8.0), format!("{name}: the line is {} px wide, at least {:.0} (8 em)", r - l, page.pt(20.0 * 8.0)));
+        }
+    }
+    checks.done("0.8.5 regression: a zero text rectangle of a custom shape");
+}
+
 /// pptx-C004-b1（todo に項目なし）：名前に太さを含む書体（HGP創英角ｺﾞｼｯｸUB・HGPｺﾞｼｯｸE・HG創英角ｺﾞｼｯｸUB）が
 /// 入っていないとき、`b="1"` が無ければ代わりの書体を通常の太さで描く（`WEIGHT_SUFFIXES` に UB・E・EB が無い）。
 /// PowerPoint は書体の持つ太さで描く（太い）。32pt の同じ文の 3 行は、通常の太さのメイリオの行（4 行目）より
@@ -875,6 +895,25 @@ pub(crate) fn corpus_report_pptx_fullwidth_alnum_in_proportional_font() {
         checks.check(ratio <= 1.08, format!("{name}: {ratio:.2} times the half-width control's width, at most 1.08"));
     }
     checks.done("pptx-C007-b1: full-width digits and letters in a proportional font");
+}
+
+/// pptx-C007-b2（0.8.5 の評価 E7 の pptx 043 の 3 枚目）：入っていない書体「UD デジタル 教科書体 NK-R」（Windows・Office の書体。NK はかなと
+/// 全角空白・約物が比例幅）を、代わりの書体（ヒラギノ角ゴ）の全角の幅で測るので、24pt の「　①　桃太郎は、それぞれ何％善か悪かを」が
+/// 枠の幅（430.8pt）に収まらず「かを」が次の行へ回る（全角空白は 24pt、PowerPoint では 12pt）。PowerPoint の PDF では 3 つの段落が
+/// 1 行ずつで、1 行目は 468.6pt まで、2 行目の「　　　　記入例にならって、ホワイトボードにま」は 478.2pt までで終わる。
+pub(crate) fn corpus_report_pptx_ud_kyokasho_nk_widths_when_not_installed() {
+    let pages = render_slides("ud-kyokasho-nk-proportional-kana.pptx", "ud-kyokasho-nk", &[1]);
+    let page = &pages[0];
+    let pt = |p: f64| (p * 12_700.0) as i64;
+    let count = lines(page, rect(pt(40.0), pt(170.0), pt(520.0), pt(230.0)), dark, page.pt(8.0));
+    let right = |top: f64| extent(page, rect(pt(40.0), pt(top), pt(520.0), pt(36.0)), dark).map(|(_, r)| r as f64 / page.pt(1.0));
+    let mut checks = Checks::default();
+    checks.check(count == 3, format!("the three paragraphs are {count} lines, 3 in PowerPoint"));
+    for (name, top, want) in [("1st", 176.0, 468.6), ("2nd", 220.0, 478.2)] {
+        let got = right(top).unwrap_or(0.0);
+        checks.check((got - want).abs() <= 4.0, format!("the {name} line ends at {got:.1}pt, {want}pt in PowerPoint (within 4)"));
+    }
+    checks.done("pptx-C007-b2: an uninstalled UD デジタル 教科書体 NK-R"); // i18n-ok（フォント名）
 }
 
 /// pptx-C008-b1（todo に項目なし）：タブ文字を `defTabSz`（既定の刻み）・`tabLst` の刻みで進めず、約 40pt ずつしか進めない。
@@ -2140,6 +2179,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::corpus_report_pptx_reg_palt_bracket_gap", corpus_report_pptx_reg_palt_bracket_gap),
         ("pptx::corpus_report_pptx_spcpct_follows_line_height", corpus_report_pptx_spcpct_follows_line_height),
         ("pptx::corpus_report_pptx_pie_text_rect", corpus_report_pptx_pie_text_rect),
+        ("pptx::corpus_report_pptx_zero_text_rect_of_a_custom_shape_is_one_line", corpus_report_pptx_zero_text_rect_of_a_custom_shape_is_one_line),
         ("pptx::corpus_report_pptx_named_heavy_font_is_heavy", corpus_report_pptx_named_heavy_font_is_heavy),
         ("pptx::corpus_report_pptx_br_blank_line_takes_its_own_size", corpus_report_pptx_br_blank_line_takes_its_own_size),
         ("pptx::corpus_report_pptx_table_row_grows_for_wrapped_text", corpus_report_pptx_table_row_grows_for_wrapped_text),
@@ -2168,6 +2208,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::corpus_report_pptx_circled_digit_in_east_asian_font", corpus_report_pptx_circled_digit_in_east_asian_font),
         ("pptx::corpus_report_pptx_reg_latin_fallback_width", corpus_report_pptx_reg_latin_fallback_width),
         ("pptx::corpus_report_pptx_fullwidth_alnum_in_proportional_font", corpus_report_pptx_fullwidth_alnum_in_proportional_font),
+        ("pptx::corpus_report_pptx_ud_kyokasho_nk_widths_when_not_installed", corpus_report_pptx_ud_kyokasho_nk_widths_when_not_installed),
         ("pptx::corpus_report_pptx_symbol_arrow_follows_bold", corpus_report_pptx_symbol_arrow_follows_bold),
         ("pptx::corpus_report_pptx_bullet_char_drawn_in_text_font", corpus_report_pptx_bullet_char_drawn_in_text_font),
         ("pptx::corpus_report_pptx_default_text_style_mn_ea_keeps_symbol_size", corpus_report_pptx_default_text_style_mn_ea_keeps_symbol_size),
@@ -2185,6 +2226,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::corpus_report_pptx_text_shadow_blur_widens_the_shadow", corpus_report_pptx_text_shadow_blur_widens_the_shadow),
         ("pptx::corpus_report_pptx_text_inner_shadow_tints_the_glyph_edge", corpus_report_pptx_text_inner_shadow_tints_the_glyph_edge),
         ("pptx::corpus_report_pptx_picture_solid_fill_shows_behind_the_png", corpus_report_pptx_picture_solid_fill_shows_behind_the_png),
+        ("pptx::corpus_report_pptx_large_text_glow_is_a_thin_rim", corpus_report_pptx_large_text_glow_is_a_thin_rim),
         ("pptx::corpus_report_pptx_synthetic_bold_keeps_the_regular_advance", corpus_report_pptx_synthetic_bold_keeps_the_regular_advance),
     ]
 }
@@ -2192,9 +2234,6 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 /// Unfixed corpus_report bug scenarios (skipped in normal `cargo test`, run with `--ignored` or `--include-ignored`).
 pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
     vec![
-        // Unfixed: the text glow's reach depends on the text size as well as the radius (PowerPoint, Mac and Windows),
-        // and no formula is known yet. Measurements: tasks/doc/glow-measurements-20261030.md.
-        ("pptx::corpus_report_pptx_large_text_glow_is_a_thin_rim", corpus_report_pptx_large_text_glow_is_a_thin_rim),
     ]
 }
 

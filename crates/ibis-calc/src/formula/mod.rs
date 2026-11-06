@@ -1072,6 +1072,81 @@ pub fn remove_sheet(formula: &str, name: &str) -> String {
     out
 }
 
+/// The words of `formula` that may be defined names (or names of LAMBDA functions called as `Name(...)`),
+/// each with the sheet written before it (`Sheet1!Name`), with `_xlfn.` and `_xlpm.` prefixes removed.
+/// Cell references, functions and parameters are not told apart here: the caller keeps the words that
+/// are names it knows.
+pub fn name_candidates(formula: &str) -> Vec<(Option<String>, String)> {
+    let Ok(tokens) = tokenize(formula) else { return Vec::new() };
+    let mut out = Vec::new();
+    for (i, t) in tokens.iter().enumerate() {
+        let Token::Word(w) = &t.token else { continue };
+        let sheet = match i.checked_sub(1).map(|k| &tokens[k].token) {
+            Some(Token::Sheet { first, book: None, .. }) => Some(first.clone()),
+            _ => None,
+        };
+        out.push((sheet, strip_prefixes(w).to_string()));
+    }
+    out
+}
+
+/// Every use of the defined name `name` in `formula` (the word, with the sheet written before it, `Sheet1!Name`),
+/// passed to `f` as the written sheet. `f` returns `Some(sheet)` to write the use as `sheet!Name` (`Some(None)`:
+/// without a sheet) and `None` to leave it as it is. Used when a name changes its scope.
+pub fn rewrite_name_uses(formula: &str, name: &str, mut f: impl FnMut(Option<&str>) -> Option<Option<String>>) -> String {
+    let Ok(tokens) = tokenize(formula) else { return formula.to_string() };
+    let mut out = String::with_capacity(formula.len());
+    let mut at = 0;
+    for (i, t) in tokens.iter().enumerate() {
+        let Token::Word(w) = &t.token else { continue };
+        if w.to_lowercase() != name.to_lowercase() {
+            continue;
+        }
+        let (start, written) = match i.checked_sub(1).map(|k| &tokens[k]) {
+            Some(lexer::Spanned { token: Token::Sheet { first, last: None, book: None, .. }, start, .. }) => (*start, Some(first.as_str())),
+            _ => (t.start, None),
+        };
+        if start < at {
+            continue;
+        }
+        let Some(new) = f(written) else { continue };
+        out.push_str(&formula[at..start]);
+        if let Some(sheet) = new {
+            out.push_str(&quote_sheet(&sheet));
+            out.push('!');
+        }
+        out.push_str(&formula[t.start..t.end]);
+        at = t.end;
+    }
+    out.push_str(&formula[at..]);
+    out
+}
+
+#[cfg(test)]
+mod name_scope_tests {
+    use super::*;
+
+    #[test]
+    fn uses_are_rewritten_with_their_sheet() {
+        let to_sheet = |_: Option<&str>| Some(Some("Data 2".to_string()));
+        assert_eq!(rewrite_name_uses("Rate*2+Other", "rate", to_sheet), "'Data 2'!Rate*2+Other");
+        let to_book = |s: Option<&str>| s.map(|_| None);
+        assert_eq!(rewrite_name_uses("Sheet1!Rate+Rate+SUM(Sheet1!A1)", "Rate", to_book), "Rate+Rate+SUM(Sheet1!A1)");
+    }
+}
+
+#[cfg(test)]
+mod name_candidate_tests {
+    use super::*;
+
+    #[test]
+    fn finds_names_and_lambda_calls() {
+        let c = name_candidates("Dbl(Rate)+Sheet1!Loc*_xlfn.Other(1)");
+        let words: Vec<_> = c.iter().map(|(s, w)| (s.as_deref(), w.as_str())).collect();
+        assert_eq!(words, vec![(None, "Dbl"), (None, "Rate"), (Some("Sheet1"), "Loc"), (None, "Other")]);
+    }
+}
+
 #[cfg(test)]
 mod sheet_name_tests {
     use super::*;

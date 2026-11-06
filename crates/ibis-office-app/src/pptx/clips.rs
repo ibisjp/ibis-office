@@ -414,6 +414,16 @@ impl SlideEditor {
         let index = self.slide().shapes.len() - usize::from(replaced.is_some());
         commands.push(Command::InsertShape { slide, index, shape });
         commands.push(Command::SetAspectLocked { slide, shape: id, locked: true });
+        // The rows the animation pane lists for a clip, as PowerPoint 16 makes them (AddMediaObject2: no effect in the main
+        // sequence) and as the save writes them (`pptx_media_timing`): a click on the video 一時停止, a click on the audio 再生.
+        // Without them the pane lists no row until the file is saved and opened again.
+        let mut animations = self.slide().animations.clone();
+        animations.retain(|a| replaced.is_none_or(|old| a.shape != old));
+        let command = if audio { ibis_doc_model::MediaCommand::Play } else { ibis_doc_model::MediaCommand::Pause };
+        let mut row = super::animation_ui::effect(id, ibis_doc_model::AnimationClass::Media, ibis_doc_model::AnimationLook::Media(command));
+        row.trigger = ibis_doc_model::AnimationTrigger::OnShapeClick(id);
+        animations.push(row);
+        commands.push(Command::SetAnimations { slide, animations });
         self.run(commands, cx);
         self.set_selection(vec![id]);
         Some(id)

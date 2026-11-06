@@ -309,7 +309,7 @@ fn validation_keeps(sheet: &Sheet, rule: &crate::sheet::Validation, value: &Cell
                 CellValue::Error(e) => e.as_str().to_string(),
                 CellValue::Empty => String::new(),
             };
-            validation_list_items(sheet, rule).iter().any(|i| i.eq_ignore_ascii_case(&text))
+            { let items = validation_list_items(sheet, rule); let half = ibis_calc::functions::to_half_width(&text); items.iter().any(|i| i.eq_ignore_ascii_case(&text) || i.eq_ignore_ascii_case(&half)) }
         }
         "whole" => matches!(value, CellValue::Number(n) if n.fract() == 0.0 && compare(*n)),
         "decimal" | "date" | "time" => matches!(value, CellValue::Number(n) if compare(*n)),

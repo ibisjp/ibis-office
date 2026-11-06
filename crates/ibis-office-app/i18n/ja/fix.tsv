@@ -9,7 +9,6 @@ text-columns.format	列のデータ形式：{format}
 goto-special.done	{count} 個のセルを選択しました。
 edit.refused	この操作はできません（{error}）
 flash-fill.done	フラッシュ フィル: {count} 個のセルに入力しました。
-note.cell	セル {cell} のメモ
 xlsx.protect-sheet	シートの保護…
 xlsx.unprotect-sheet	シート保護の解除…
 xlsx.lock-cells	セルのロック
@@ -39,6 +38,7 @@ app.settings	設定…
 app.file.print	印刷…
 about.version	バージョン {version}
 about.license	AGPL-3.0-only または商用ライセンスで提供しています。
+about.update-available	新しいバージョンがあります。
 xlsx.print-options	印刷オプション
 xlsx.print.gridlines	枠線
 xlsx.print.headings	行列見出し
@@ -59,7 +59,7 @@ fix.chart-edit.bar-pie	補助棒
 fix.chart-edit.split-series	分割の基準
 fix.chart-edit.percent	％
 fix.chart-edit.split-position-value	分割位置 / 値
-fix.chart-edit.second-plot-size	補助プロットのサイズ (%)
+fix.chart-edit.second-plot-size	補助プロットのサイズ
 fix.chart-edit.enter-number-split-position-value	分割位置 / 値には数を入れてください。
 fix.chart-edit.enter-integer-between-5-200	補助プロットのサイズには 5 から 200 の整数を入れてください。
 pptx.insert-chart.stock-hlc	株価 (高値-安値-終値)
@@ -343,8 +343,6 @@ fix.validation.enter-source	元の値を入力してください。
 fix.validation.enter-formula	数式を入力してください。
 fix.validation.validation-rule-set	入力規則を設定しました。
 fix.validation.validation-rules-cleared	入力規則を削除しました。
-fix.notes.type-note	メモを入力
-fix.notes.delete-note	メモの削除
 fix.protection.cell-chart-you-re-trying	変更しようとしているセルやグラフは保護されているシート上にあります。変更するには、シートの保護を解除してください。パスワードの入力が必要な場合もあります。
 fix.protection.select-locked-cells	ロックされたセル範囲の選択
 fix.protection.select-unlocked-cells	ロックされていないセル範囲の選択
@@ -454,7 +452,7 @@ fix.picture-panel.rotate-left-90	左へ 90°
 fix.picture-panel.rotate-right-90	右へ 90°
 fix.picture-panel.flip-horizontal	左右反転
 fix.picture-panel.flip-vertical	上下反転
-fix.picture-panel.crop	切り抜き（％）
+fix.picture-panel.crop	切り抜き
 fix.picture-panel.apply-crop	切り抜きを適用
 fix.picture-panel.enter-crop-number-0-up	切り抜きは 0 以上 100 未満の数値（％）で入力してください。
 fix.picture-panel.top-plus-bottom-left-plus	上下、左右それぞれの合計は 100％ 未満にしてください。
@@ -493,3 +491,8 @@ fix.move.overwrite	目的のセルに既にデータがあります。置き換�
 fix.move.ok	OK
 fix.menu.search-placeholder	検索
 fix.menu.not-found	みつかりません
+help.check-update	更新を確認
+fix.update.latest	ibisOffice は最新です。
+fix.update.latest.detail	今のバージョンは {current} です。
+fix.update.check-failed	更新を確かめられませんでした。
+fix.update.check-failed.detail	インターネットに接続できているか確かめてから、もう一度試してください。

@@ -14,6 +14,33 @@ use crate::shell::editor::SlideEditor;
 use gpui_kit::Context;
 use crate::shell::palette::rgb;
 
+const ANIMATION_TABLE: &str = "anim-table";
+const ROW_HEIGHT: f32 = 42.;
+const ORDER_WIDTH: f32 = 40.;
+const FX_WIDTH: f32 = 30.;
+const TIMELINE_WIDTH: f32 = 84.;
+const CHILD_INDENT: f32 = 14.;
+
+/// An effect of PowerPoint's catalogue (`presetID` `id`, option `presetSubtype`) with its usual time.
+pub(crate) fn preset_effect(shape: ShapeId, class: C, id: u32, subtype: u32) -> Animation {
+    let mut a = effect(shape, class, L::Preset);
+    a.preset = (id, subtype);
+    a.behaviors = ibis_doc_model::animation_preset::build_filter_preset(class, id, subtype, a.duration).unwrap_or_default();
+    a
+}
+
+/// The menu items of the catalogue effects for `class`: each effect's first option; its others are the 効果のオプション.
+fn preset_items(class: C, mine: &[&Animation], selected: usize) -> Vec<MenuEntry> {
+    ibis_doc_model::animation_preset::FILTER_PRESETS
+        .iter()
+        .map(|def| {
+            let on = mine.len() == selected && mine.iter().all(|a| a.class == class && a.look == L::Preset && a.preset.0 == def.id);
+            let first = def.options[0].0;
+            MenuItem::tr(def.key).checked(on).on(move |e, _, cx| e.set_shape_preset(class, def.id, first, cx)).into()
+        })
+        .collect()
+}
+
 /// An effect PowerPoint names by its preset (`presetID`, `presetSubtype`),
 /// with its usual time (milliseconds): as the file is read back.
 pub(crate) fn effect(shape: ShapeId, class: C, look: L) -> Animation {
@@ -25,9 +52,12 @@ pub(crate) fn effect(shape: ShapeId, class: C, look: L) -> Animation {
     };
     let (preset, duration) = match look {
         L::Appear => ((1, 0), 1),
+        // 再生・一時停止・停止 are PowerPoint's presets 1, 2 and 3 of the class メディア.
+        L::Media(c) => ((match c { ibis_doc_model::MediaCommand::Play => 1, ibis_doc_model::MediaCommand::Pause => 2, ibis_doc_model::MediaCommand::Stop => 3 }, 0), 1),
         L::Fade => ((10, 0), 500),
         L::Fly(s) => ((2, side(s)), 500),
-        L::Zoom => ((23, 0), 500),
+        // ズーム as PowerPoint numbers it: 16 coming in, 32 going out.
+        L::Zoom => ((23, if class == C::Exit { 32 } else { 16 }), 500),
         L::Float(s) => ((30, if s == AnimationSide::Bottom { 2 } else { 1 }), 1000),
         L::Wipe(s) => ((22, side(s)), 500),
         L::Replay => ((28, 0), 2000),
@@ -47,7 +77,7 @@ pub(crate) fn effect(shape: ShapeId, class: C, look: L) -> Animation {
             };
             ((61, subtype), 2000)
         }
-        L::Other => ((0, 0), 500),
+        L::Other | L::Preset => ((0, 0), 500),
     };
     Animation {
         shape,
@@ -66,9 +96,14 @@ pub(crate) fn effect(shape: ShapeId, class: C, look: L) -> Animation {
         trigger: AnimationTrigger::None,
         paragraph: None, chars: None, text_unit: None, path: Vec::new(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     }
 }
+
+/// 継続時間の候補（秒）。PowerPoint の「継続時間」の候補と同じ区切り。
+const DURATION_CANDIDATES: &[f32] = &[0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0];
+/// 遅延の候補（秒）。
+const DELAY_CANDIDATES: &[f32] = &[0.0, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0];
 
 /// アニメーション効果のオプション詳細設定パネル (Effect Options Panel / Dialog)
 #[derive(Clone, Debug, PartialEq)]
@@ -87,6 +122,9 @@ pub(crate) struct AnimationOptionsPanel {
     pub(crate) decel: u32,
     pub(crate) after_effect: AnimationAfterEffect,
     pub(crate) trigger: AnimationTrigger,
+    /// The effect's preset and behaviours (changed with the effect by the dialog's effect dropdown).
+    pub(crate) preset: (u32, u32),
+    pub(crate) behaviors: Vec<ibis_doc_model::AnimBehavior>,
 }
 
 /// Detailed timeline information for an animation on the slide.
@@ -183,9 +221,9 @@ impl SlideEditor {
     /// the first of them was, else at the end).
     pub(crate) fn set_shape_effect(&mut self, class: C, look: L, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
-            let at = all.iter().position(|a| selected.contains(&a.shape)).unwrap_or(all.len());
+            let at = all.iter().position(|a| !a.is_media() && selected.contains(&a.shape)).unwrap_or(all.len());
             let kept_before = all[..at].len();
-            all.retain(|a| !selected.contains(&a.shape));
+            all.retain(|a| !(!a.is_media() && selected.contains(&a.shape)));
             let at = kept_before.min(all.len());
             for (i, shape) in selected.iter().enumerate() {
                 // Several shapes at once (a group's, too) come together, with the first one's click.
@@ -198,12 +236,60 @@ impl SlideEditor {
         });
     }
 
+    /// An effect of PowerPoint's catalogue (`ibis_doc_model::animation_preset`), with its option, for each selected shape, in the
+    /// place of theirs.
+    pub(crate) fn set_shape_preset(&mut self, class: C, id: u32, subtype: u32, cx: &mut Context<Self>) {
+        self.change_animations(cx, |all, selected| {
+            let at = all.iter().position(|a| !a.is_media() && selected.contains(&a.shape)).unwrap_or(all.len());
+            let kept_before = all[..at].len();
+            all.retain(|a| !(!a.is_media() && selected.contains(&a.shape)));
+            let at = kept_before.min(all.len());
+            for (i, shape) in selected.iter().enumerate() {
+                let mut each = preset_effect(*shape, class, id, subtype);
+                if i > 0 {
+                    each.start = AnimationStart::WithPrevious;
+                }
+                all.insert(at + i, each);
+            }
+        });
+    }
+
+    /// 効果のオプション of a catalogue effect: the option (`presetSubtype`) of the selected shapes' effects.
+    pub(crate) fn set_shape_preset_option(&mut self, subtype: u32, cx: &mut Context<Self>) {
+        self.change_animations(cx, |all, selected| {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape) && a.look == L::Preset) {
+                if let Some(behaviors) = ibis_doc_model::animation_preset::build_filter_preset(a.class, a.preset.0, subtype, a.duration) {
+                    a.preset.1 = subtype;
+                    a.behaviors = behaviors;
+                }
+            }
+        });
+    }
+
     /// 効果の追加: an effect more for each selected shape, after the slide's
     /// others (theirs kept).
     pub(crate) fn add_shape_effect(&mut self, class: C, look: L, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
             for (i, shape) in selected.iter().enumerate() {
                 let mut each = effect(*shape, class, look);
+                if i > 0 {
+                    each.start = AnimationStart::WithPrevious;
+                }
+                all.push(each);
+            }
+        });
+    }
+
+    /// メディア > 再生・一時停止・停止 (PowerPoint's アニメーションの追加 for a video or an audio): the command added to the main sequence, on a
+    /// click, for each selected clip. The save writes the call (`pptx_media_timing::call_piece`).
+    pub(crate) fn add_media_effect(&mut self, command: ibis_doc_model::MediaCommand, cx: &mut Context<Self>) {
+        let clips: Vec<ShapeId> = self.selected_ids().into_iter().filter(|id| self.slide().shape(*id).is_some_and(|s| Self::clip_of(s).is_some())).collect();
+        if clips.is_empty() {
+            return;
+        }
+        self.change_animations(cx, move |all, _| {
+            for (i, shape) in clips.iter().enumerate() {
+                let mut each = effect(*shape, C::Media, L::Media(command));
                 if i > 0 {
                     each.start = AnimationStart::WithPrevious;
                 }
@@ -425,7 +511,7 @@ impl SlideEditor {
 
     /// 効果のオプション詳細設定パネルを開く.
     pub(crate) fn open_animation_options_panel(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(a) = self.slide().animations.get(index).cloned() else { return };
+        let Some(a) = self.slide().animations.get(index).filter(|a| !a.is_media()).cloned() else { return };
         if let Some(s) = self.pptx_mut() {
             s.section_panel = None;
             s.gradient_panel = None;
@@ -460,6 +546,8 @@ impl SlideEditor {
                 decel: a.decel,
                 after_effect: a.after_effect,
                 trigger: a.trigger.clone(),
+                preset: a.preset,
+                behaviors: a.behaviors.clone(),
             });
         }
         self.sidebar_open = true;
@@ -469,7 +557,7 @@ impl SlideEditor {
     /// 選択中の図形のアニメーションで効果のオプション詳細設定パネルを開く.
     pub(crate) fn open_selected_animation_options_panel(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected_ids();
-        let index = self.slide().animations.iter().position(|a| selected.contains(&a.shape));
+        let index = self.slide().animations.iter().position(|a| !a.is_media() && selected.contains(&a.shape));
         if let Some(i) = index {
             self.open_animation_options_panel(i, cx);
         }
@@ -500,9 +588,66 @@ impl SlideEditor {
             a.decel = p.decel;
             a.after_effect = p.after_effect;
             a.trigger = p.trigger;
+            a.preset = p.preset;
+            a.behaviors = p.behaviors;
             self.run(vec![Command::SetAnimations { slide, animations: all }], cx);
         }
         self.close_animation_options_panel(cx);
+    }
+
+    /// The effects the dialog's effect dropdown offers for `class`: the menu's key, the look and (for the catalogue's) the preset.
+    fn panel_effect_choices(class: C, current: L) -> Vec<(&'static str, L, Option<u32>)> {
+        let mut v: Vec<(&'static str, L, Option<u32>)> = match class {
+            C::Entrance => vec![
+                ("pptx.anim.in.appear", L::Appear, None),
+                ("pptx.anim.in.fade", L::Fade, None),
+                ("pptx.anim.in.fly-bottom", L::Fly(AnimationSide::Bottom), None),
+                ("pptx.anim.in.float", L::Float(AnimationSide::Top), None),
+                ("pptx.anim.in.wipe", L::Wipe(AnimationSide::Bottom), None),
+                ("pptx.anim.in.zoom", L::Zoom, None),
+            ],
+            C::Exit => vec![
+                ("pptx.anim.out.disappear", L::Appear, None),
+                ("pptx.anim.out.fade", L::Fade, None),
+                ("pptx.anim.out.fly-bottom", L::Fly(AnimationSide::Bottom), None),
+                ("pptx.anim.out.float", L::Float(AnimationSide::Bottom), None),
+                ("pptx.anim.out.wipe", L::Wipe(AnimationSide::Bottom), None),
+                ("pptx.anim.out.zoom", L::Zoom, None),
+            ],
+            C::Emphasis => vec![("pptx.anim.em.spin", L::Spin(21_600_000), None), ("pptx.anim.em.grow", L::Scale(150_000, 150_000), None)],
+            C::Path => vec![
+                ("pptx.anim.path.down", L::Motion(0, 25_000), None),
+                ("pptx.anim.path.left", L::Motion(-25_000, 0), None),
+                ("pptx.anim.path.right", L::Motion(25_000, 0), None),
+                ("pptx.anim.path.up", L::Motion(0, -25_000), None),
+            ],
+            C::Media => Vec::new(),
+        };
+        if matches!(class, C::Entrance | C::Exit) {
+            v.extend(ibis_doc_model::animation_preset::FILTER_PRESETS.iter().map(|def| (def.key, L::Preset, Some(def.id))));
+            if current == L::Replay {
+                v.push((if class == C::Entrance { "pptx.anim.in.replay" } else { "pptx.anim.out.rewind" }, L::Replay, None));
+            }
+        }
+        v
+    }
+
+    /// The dialog's effect dropdown: the panel takes the effect chosen (its look, preset and usual time), the timing kept.
+    pub(crate) fn set_panel_effect(&mut self, look: L, preset_id: Option<u32>, cx: &mut Context<Self>) {
+        if let Some(p) = self.pptx_mut().and_then(|s| s.animation_options_panel.as_mut()) {
+            let template = match preset_id {
+                Some(id) => {
+                    let first = ibis_doc_model::animation_preset::preset_def(id).map_or(0, |d| d.options[0].0);
+                    preset_effect(p.shape, p.class, id, first)
+                }
+                None => effect(p.shape, p.class, look),
+            };
+            p.look = template.look;
+            p.preset = template.preset;
+            p.behaviors = template.behaviors;
+            p.duration_ms = template.duration;
+        }
+        cx.notify();
     }
 
     pub(crate) fn set_panel_trigger(&mut self, trigger: AnimationTrigger, cx: &mut Context<Self>) {
@@ -590,6 +735,23 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// The dialog's 継続時間 (ms), typed, stepped or picked from the candidates.
+    pub(crate) fn set_panel_duration_ms(&mut self, ms: u32, cx: &mut Context<Self>) {
+        if let Some(p) = self.pptx_mut().and_then(|s| s.animation_options_panel.as_mut()) {
+            p.duration_ms = ms.clamp(100, 60_000);
+        }
+        cx.notify();
+    }
+
+    /// The dialog's 遅延 (ms).
+    pub(crate) fn set_panel_delay_ms(&mut self, ms: u32, cx: &mut Context<Self>) {
+        if let Some(p) = self.pptx_mut().and_then(|s| s.animation_options_panel.as_mut()) {
+            p.delay_ms = ms.min(60_000);
+        }
+        cx.notify();
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn cycle_panel_after_effect(&mut self, cx: &mut Context<Self>) {
         if let Some(p) = self.pptx_mut().and_then(|s| s.animation_options_panel.as_mut()) {
             p.after_effect = match p.after_effect {
@@ -719,6 +881,40 @@ impl SlideEditor {
         self.open_popup_entries(entries, position, window, cx);
     }
 
+    /// The text box's row of the animation pane: its paragraphs' effects shown under it or folded.
+    /// A text box's row is pressed to be dragged: every open text box folds (the rows to move among are then the text boxes' and the
+    /// plain ones), and `animation_pane` opens them again when the drag is over. Only the ones that were open are opened again.
+    pub(crate) fn fold_animation_boxes_for_drag(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = self.pptx_mut() {
+            if s.animation_drag_folded.is_empty() {
+                s.animation_drag_folded = s.animation_expanded.drain().collect();
+            }
+        }
+        cx.notify();
+    }
+
+    /// Opens or folds one text box's row (`box_key`): each row of a text box is open or folded on its own, also when one shape has
+    /// two of them on the slide.
+    pub(crate) fn toggle_animation_expanded(&mut self, key: BoxKey, cx: &mut Context<Self>) {
+        if let Some(s) = self.pptx_mut() {
+            if !s.animation_expanded.remove(&key) {
+                s.animation_expanded.insert(key);
+            }
+        }
+        cx.notify();
+    }
+
+    /// The effects `first` to `last` of the slide's list taken away (one undo step).
+    pub(crate) fn remove_effects(&mut self, first: usize, last: usize, cx: &mut Context<Self>) {
+        let slide = self.current_slide;
+        let mut all = self.slide().animations.clone();
+        if first > last || last >= all.len() {
+            return;
+        }
+        all.drain(first..=last);
+        self.run(vec![Command::SetAnimations { slide, animations: all }], cx);
+    }
+
     /// アニメーション ウィンドウ: shown or hidden.
     pub(crate) fn toggle_animation_pane(&mut self, cx: &mut Context<Self>) {
         let shown = self.pptx().is_some_and(|s| s.animation_pane);
@@ -729,9 +925,13 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// The pane: the slide's effects in order, each with its shape, look,
-    /// timeline bar, timing controls, to move up or down, adjust, or remove.
+    /// The pane: the slide's effects in order, one row each (start, class icon, shape and look, timeline bar), in the
+    /// shared table. A row is dragged to reorder (`animation_row_dropped`), double-clicked or its 効果のオプション
+    /// button pressed to edit the effect in the small dialog (`animation_options_panel`), right-clicked for the menu.
     pub(crate) fn animation_pane(&mut self, cx: &mut Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
+        use crate::shell::chrome::data_table::DataTable;
+        use crate::shell::chrome::virtual_table::{TableColumn, TableRow};
+        use crate::shell::icons::Material;
         use gpui_kit::component::button::{Button, ButtonVariants as _};
         use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
         use gpui_kit::*;
@@ -741,306 +941,258 @@ impl SlideEditor {
         let t = crate::shell::i18n::text;
         let slide = self.slide().clone();
         let selected_ids = self.selected_ids();
-        let mut body = v_flex().gap_2().px(px(12.)).py(px(8.)).p_0();
         if slide.animations.is_empty() {
-            body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(t("pptx.animation-ui.there-no-animations-slide")));
+            let body = v_flex().gap_2().p_0().child(div().text_sm().text_color(rgb(0x5f6368)).child(t("pptx.animation-ui.there-no-animations-slide")));
             return Some(crate::shell::chrome::SidebarPanel { title: t("pptx.animation-ui.animation-pane"), body: body.into_any_element() });
+        }
+        let (table, dnd) = self.pptx().map(|s| (s.animation_table.clone(), s.animation_dnd.clone()))?;
+        // The text boxes that were folded for a text box's row to be dragged open again once the row is let go (or the drag is
+        // given up).
+        if dnd.carried().is_none() {
+            if let Some(s) = self.pptx_mut() {
+                let folded = std::mem::take(&mut s.animation_drag_folded);
+                s.animation_expanded.extend(folded);
+            }
         }
 
         let (timeline_items, max_time_ms) = compute_timeline(&slide.animations);
         let scale_ms = (((max_time_ms + 499) / 500) * 500).max(1000);
-        let scale_sec = scale_ms as f32 / 1000.0;
-        let timeline_width = 160.0f32;
-
-        let play_btn = crate::shell::chrome::action_button("anim-play-all")
-            .small()
-            .label(t("pptx.anim.play-all"))
-            .on_click(cx.listener(|e, _, window, cx| e.start_slideshow(window, cx)));
-
-        let mut scale_labels = h_flex().w(px(timeline_width)).justify_between().text_sm().text_color(rgb(0x757575));
-        let steps = if scale_sec <= 2.0 { 4 } else if scale_sec <= 5.0 { (scale_sec as usize).max(2) } else { 5 };
-        for step in 0..=steps {
-            let sec = (scale_sec * step as f32) / steps as f32;
-            scale_labels = scale_labels.child(div().child(format!("{:.1}s", sec)));
-        }
-
-        let header_bar = h_flex()
-            .items_center()
-            .justify_between()
-            .pb_1()
-            .border_b_1()
-            .border_color(rgb(0xe0e0e0))
-            .child(play_btn)
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("_pptx.timeline")))
-                    .child(scale_labels),
-            );
-        body = body.child(header_bar);
-
         let count = slide.animations.len();
-        for (i, a) in slide.animations.iter().enumerate() {
-            let item = timeline_items.get(i).copied().unwrap_or(TimelineItem {
-                click_group: 1,
-                start_time_ms: 0,
-                end_time_ms: a.duration,
-                delay_ms: a.delay,
-                duration_ms: a.duration,
-            });
 
-            let is_selected_shape = selected_ids.contains(&a.shape);
-            let shape = slide.shape(a.shape);
-            let name = shape
+        // What each row shows, worked out once (the table makes the rows of the visible range from it).
+        struct PaneRow {
+            name: String,
+            look: String,
+            class: C,
+            media: Option<ibis_doc_model::MediaCommand>,
+            start: AnimationStart,
+            triggered: bool,
+            click_no: usize,
+            left: f32,
+            width: f32,
+            delay_width: f32,
+            selected: bool,
+            /// A paragraph's effect: its text (the row's name when it is listed under its text box's row).
+            paragraph_name: Option<String>,
+        }
+        let mut click_no = 0usize;
+        let rows: Vec<PaneRow> = slide.animations.iter().enumerate().map(|(i, a)| {
+            let item = timeline_items.get(i).copied().unwrap_or(TimelineItem { click_group: 1, start_time_ms: 0, end_time_ms: a.duration, delay_ms: a.delay, duration_ms: a.duration });
+            // A clip's rows carry the clip's name (PowerPoint lists 再生 / 一時停止 under the video's or audio's name).
+            let clip_name = slide.shape(a.shape).filter(|_| a.is_media()).and_then(|s| match &s.kind {
+                ibis_doc_model::ShapeKind::Picture(p) if !p.name.trim().is_empty() => Some(p.name.clone()),
+                _ => None,
+            });
+            let name = clip_name.or_else(|| slide.shape(a.shape)
                 .and_then(|s| s.text_body())
                 .map(|b| b.text().chars().take(12).collect::<String>())
-                .filter(|t| !t.trim().is_empty())
+                .filter(|t| !t.trim().is_empty()))
                 .unwrap_or_else(|| crate::shell::i18n::format("pptx.selection-pane.shape-n", &[("n", &(slide.shape_index(a.shape).map_or(0, |x| x + 1)))]));
-
-            let start_label = if a.is_triggered() {
-                crate::shell::i18n::text("pptx.anim.trigger")
-            } else {
-                match a.start {
-                    AnimationStart::OnClick => crate::shell::i18n::text("pptx.anim.start.click"),
-                    AnimationStart::WithPrevious => crate::shell::i18n::text("_pptx.with-previous"),
-                    AnimationStart::AfterPrevious => crate::shell::i18n::text("_pptx.after-previous"),
-                }
-            };
-
-            let (class_color, class_bg, class_name) = match a.class {
-                C::Entrance => (rgb(0x2e7d32), rgb(0xe8f5e9), crate::shell::i18n::text("_pptx.entrance")),
-                C::Emphasis => (rgb(0xed6c02), rgb(0xfff3e0), crate::shell::i18n::text("_pptx.emphasis")),
-                C::Exit => (rgb(0xd32f2f), rgb(0xffebee), crate::shell::i18n::text("_pptx.exit")),
-                C::Path => (rgb(0x1976d2), rgb(0xe3f2fd), crate::shell::i18n::text("_pptx.motion-path")),
-            };
-
-            let left_offset = (item.start_time_ms as f32 / scale_ms as f32) * timeline_width;
-            let bar_width = ((item.duration_ms as f32 / scale_ms as f32) * timeline_width).max(24.0);
-
-            let shape_id = a.shape;
-            let mut card = v_flex()
-                .id(("anim-card", i))
-                .w_full().min_w_0().overflow_hidden()
-                .gap_1()
-                .p_2()
-                .rounded_md()
-                .border_1()
-                .border_color(if is_selected_shape { rgb(0x1976d2) } else { rgb(0xe0e0e0) })
-                .bg(if is_selected_shape { rgb(0xf0f7ff) } else { rgb(0xffffff) })
-                .on_mouse_down(MouseButton::Right, cx.listener(move |e, event: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    e.open_animation_pane_context_menu(i, event.position, window, cx);
-                }));
-
-            let trigger_badge = match &a.trigger {
-                AnimationTrigger::None => None,
-                AnimationTrigger::OnShapeClick(trig_shape) => {
-                    let trig_name = slide.shape(*trig_shape)
-                        .and_then(|s| s.text_body())
-                        .map(|b| b.text().chars().take(8).collect::<String>())
-                        .filter(|t| !t.trim().is_empty())
-                        .unwrap_or_else(|| crate::shell::i18n::format("_pptx.shape-n", &[("n", &(slide.shape_index(*trig_shape).map_or(0, |x| x + 1)))]));
-                    Some(div().px_1p5().py_0p5().rounded_sm().bg(rgb(0xfff8e1)).text_sm().text_color(rgb(0xf57f17)).child(format!("⚡️{}", trig_name)))
-                }
-                AnimationTrigger::OnMediaBookmark { bookmark, .. } => {
-                    Some(div().px_1p5().py_0p5().rounded_sm().bg(rgb(0xe0f7fa)).text_sm().text_color(rgb(0x00838f)).child(format!("🔖{}", bookmark)))
-                }
-            };
-
-            let mut row_top = h_flex()
-                .w_full().min_w_0().flex_wrap()
-                .items_center()
-                .gap_1p5()
-                .child(
-                    div()
-                        .w(px(20.))
-                        .h(px(20.))
-                        .rounded_full()
-                        .bg(rgb(0xf0f0f0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_sm()
-                        .text_color(rgb(0x424242))
-                        .child(format!("{}", i + 1)),
-                )
-                .child(
-                    crate::shell::chrome::action_button(("anim-select", i))
-
-                        .small().max_w_full()
-                        .label(name)
-                        .on_click(cx.listener(move |e, _, _, cx| {
-                            e.set_selection(vec![shape_id]);
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    div()
-                        .px_1p5()
-                        .py_0p5()
-                        .rounded_sm()
-                        .bg(class_bg)
-                        .max_w_full().min_w_0().overflow_hidden()
-                        .text_sm()
-                        .text_color(class_color)
-                        .child(format!("{}・{}", class_name, t(look_id(a.class, a.look)))), // i18n-ok（区切りの「・」だけで、訳す語がない（class と look の間））
-                );
-            if let Some(tb) = trigger_badge {
-                row_top = row_top.child(tb);
+            let triggered = a.is_triggered();
+            if a.start == AnimationStart::OnClick && !triggered {
+                click_no += 1;
             }
-            let row_top = row_top
-                .child(crate::shell::chrome::action_button(("anim-options-detail", i)).small().label("⚙️").on_click(cx.listener(move |e, _, _, cx| e.open_animation_options_panel(i, cx))))
-                .child(crate::shell::chrome::action_button(("anim-up", i)).small().label("↑").disabled(i == 0).on_click(cx.listener(move |e, _, _, cx| e.move_effect(i, true, cx))))
-                .child(crate::shell::chrome::action_button(("anim-down", i)).small().label("↓").disabled(i + 1 >= count).on_click(cx.listener(move |e, _, _, cx| e.move_effect(i, false, cx))))
-                .child(crate::shell::chrome::destructive_button(("anim-remove", i),cx).small().label(t("_shell.delete")).on_click(cx.listener(move |e, _, _, cx| e.remove_effect(i, cx))));
-
-            let repeat_label = match a.repeat_count {
-                AnimationRepeat::None => crate::shell::i18n::text("_pptx.once").to_string(),
-                AnimationRepeat::Count(n) => crate::shell::i18n::format("_pptx.n-times", &[("n", &n)]),
-                AnimationRepeat::UntilNextClick => crate::shell::i18n::text("_pptx.until-next-click").to_string(),
-                AnimationRepeat::UntilEndOfSlide => crate::shell::i18n::text("_pptx.until-end-of-slide").to_string(),
-            };
-            let autorev_label = if a.auto_reverse { crate::shell::i18n::text("_pptx.reverse") } else { crate::shell::i18n::text("_pptx.none") };
-            let rewind_label = if a.rewind { crate::shell::i18n::text("_pptx.rewind") } else { crate::shell::i18n::text("_pptx.none-2") };
-            let smooth_label = match (a.accel > 0, a.decel > 0) {
-                (true, true) => crate::shell::i18n::text("_pptx.both"),
-                (true, false) => crate::shell::i18n::text("_pptx.start"),
-                (false, true) => crate::shell::i18n::text("_pptx.end"),
-                (false, false) => crate::shell::i18n::text("_pptx.constant"),
-            };
-            let after_label = match a.after_effect {
-                AnimationAfterEffect::Hold => crate::shell::i18n::text("_pptx.hold"),
-                AnimationAfterEffect::Hide => crate::shell::i18n::text("_pptx.hide"),
-                AnimationAfterEffect::Dim => crate::shell::i18n::text("_pptx.dim"),
-                AnimationAfterEffect::HideOnNextClick => crate::shell::i18n::text("_pptx.hide-on-next-click"),
-            };
-
-            let row_controls = h_flex()
-                .w_full().min_w_0().flex_wrap()
-                .items_center()
-                .gap_2()
-                .child(
-                    crate::shell::chrome::action_button(("anim-start", i))
-                        .small()
-                        .label(start_label)
-                        .on_click(cx.listener(move |e, _, _, cx| e.cycle_effect_start_at(i, cx))),
-                )
-                .child(
-                    h_flex()
-                        .flex_none().min_w_0()
-                        .items_center()
-                        .gap_1()
-                        .text_sm()
-                        .text_color(rgb(0x616161))
-                        .child(div().child(crate::shell::i18n::text("_pptx.time")))
-                        .child(crate::shell::chrome::action_button(("anim-dur-minus", i)).small().label("-").on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_duration_at(i, -500, cx))))
-                        .child(div().w(px(30.)).text_center().child(format!("{:.1}s", a.duration as f32 / 1000.0)))
-                        .child(crate::shell::chrome::action_button(("anim-dur-plus", i)).small().label("+").on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_duration_at(i, 500, cx)))),
-                )
-                .child(
-                    h_flex()
-                        .flex_none().min_w_0()
-                        .items_center()
-                        .gap_1()
-                        .text_sm()
-                        .text_color(rgb(0x616161))
-                        .child(div().child(crate::shell::i18n::text("_pptx.delay")))
-                        .child(crate::shell::chrome::action_button(("anim-del-minus", i)).small().label("-").disabled(a.delay == 0).on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_delay_at(i, -500, cx))))
-                        .child(div().w(px(30.)).text_center().child(format!("{:.1}s", a.delay as f32 / 1000.0)))
-                        .child(crate::shell::chrome::action_button(("anim-del-plus", i)).small().label("+").on_click(cx.listener(move |e, _, _, cx| e.adjust_effect_delay_at(i, 500, cx)))),
-                )
-                .child(
-                    crate::shell::chrome::action_button(("anim-repeat", i))
-                        .small()
-
-                        .label(repeat_label)
-                        .on_click(cx.listener(move |e, _, _, cx| e.cycle_effect_repeat_at(i, cx))),
-                )
-                .child(
-                    crate::shell::chrome::action_button(("anim-autorev", i))
-                        .small()
-
-                        .label(autorev_label)
-                        .on_click(cx.listener(move |e, _, _, cx| e.toggle_effect_autoreverse_at(i, cx))),
-                )
-                .child(
-                    crate::shell::chrome::action_button(("anim-rewind", i))
-                        .small()
-
-                        .label(rewind_label)
-                        .on_click(cx.listener(move |e, _, _, cx| e.toggle_effect_rewind_at(i, cx))),
-                )
-                .child(
-                    crate::shell::chrome::action_button(("anim-smooth", i))
-                        .small()
-
-                        .label(smooth_label)
-                        .on_click(cx.listener(move |e, _, _, cx| e.cycle_effect_smooth_at(i, cx))),
-                )
-                .child(
-                    crate::shell::chrome::action_button(("anim-after", i))
-                        .small()
-
-                        .label(after_label)
-                        .on_click(cx.listener(move |e, _, _, cx| e.cycle_effect_after_at(i, cx))),
-                );
-
-            let mut timeline_track = div()
-                .relative()
-                .w(px(timeline_width))
-                .h(px(16.))
-                .rounded_sm()
-                .bg(rgb(0xf5f5f5))
-                .overflow_hidden();
-
-            if a.delay > 0 {
-                let delay_left = ((item.start_time_ms - item.delay_ms) as f32 / scale_ms as f32) * timeline_width;
-                let delay_width = (item.delay_ms as f32 / scale_ms as f32) * timeline_width;
-                timeline_track = timeline_track.child(
-                    div()
-                        .absolute()
-                        .left(px(delay_left))
-                        .w(px(delay_width))
-                        .h_full()
-                        .bg(rgb(0xeeeeee))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_sm()
-                        .text_color(rgb(0x9e9e9e))
-                        .child(format!("+{}", format!("{:.1}s", a.delay as f32 / 1000.0))),
-                );
+            let frac = |ms: u32| ms as f32 / scale_ms as f32;
+            PaneRow {
+                name,
+                look: look_label(a.class, a.look, a.preset),
+                class: a.class,
+                media: a.media_command(),
+                start: a.start,
+                triggered,
+                click_no: if a.start == AnimationStart::OnClick && !triggered { click_no } else { 0 },
+                left: frac(item.start_time_ms),
+                width: frac(item.end_time_ms - item.start_time_ms),
+                delay_width: frac(item.delay_ms.min(item.start_time_ms)),
+                selected: selected_ids.contains(&a.shape),
+                paragraph_name: a.paragraph.and_then(|(first, _)| slide.shape(a.shape).and_then(|s| s.text_body()).and_then(|b| b.paragraphs.get(first as usize).map(|p| p.text().chars().take(24).collect::<String>())))
+                    .filter(|t| !t.trim().is_empty()),
             }
-
-            let bar_element = div()
-                .absolute()
-                .left(px(left_offset))
-                .w(px(bar_width))
-                .h_full()
-                .rounded_sm()
-                .bg(class_color)
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(crate::shell::palette::doc(0xffffff))
-                .child(format!("{:.1}s", a.duration as f32 / 1000.0));
-            timeline_track = timeline_track.child(bar_element);
-
-            let row_timeline = h_flex()
-                .w_full().flex_wrap()
-                .items_center()
-                .justify_end()
-                .gap_2()
-                .pt_1()
-                .child(div().text_sm().text_color(rgb(0x757575)).child(format!("{:.1}s〜{:.1}s", item.start_time_ms as f32 / 1000.0, item.end_time_ms as f32 / 1000.0))) // i18n-ok（範囲の記号）
-                .child(timeline_track);
-
-            card = card.child(row_top).child(row_controls).child(row_timeline);
-            body = body.child(card);
+        }).collect();
+        // The rows shown: an effect for each paragraph of a text box (two or more in a row) is listed under one row of the
+        // text box's (the parent: expanded or folded), its own rows (the children) a little indented.
+        #[derive(Clone, Copy, PartialEq)]
+        enum Kind {
+            Plain,
+            Parent { last: usize, expanded: bool },
+            // `first`: the text box row's first effect (the paragraphs of one text box share the scope of their drag).
+            Child { first: usize },
         }
+        let expanded_boxes = self.pptx().map(|s| s.animation_expanded.clone()).unwrap_or_default();
+        let mut display: Vec<(usize, Kind)> = Vec::new();
+        let mut at = 0usize;
+        while at < count {
+            let a = &slide.animations[at];
+            let (_, end) = paragraph_run(&slide.animations, at);
+            if end > at {
+                let open = expanded_boxes.contains(&box_keys(&slide.animations)[at]);
+                display.push((at, Kind::Parent { last: end, expanded: open }));
+                if open {
+                    display.extend((at..=end).map(|i| (i, Kind::Child { first: at })));
+                }
+            } else {
+                display.push((at, Kind::Plain));
+            }
+            at = end + 1;
+        }
+        let display = std::rc::Rc::new(display);
+        let shown = display.len();
+        let rows = std::rc::Rc::new(rows);
+        let shapes: std::rc::Rc<Vec<ShapeId>> = std::rc::Rc::new(slide.animations.iter().map(|a| a.shape).collect());
+        let keys: std::rc::Rc<Vec<BoxKey>> = std::rc::Rc::new(box_keys(&slide.animations));
+        let editor = cx.entity().downgrade();
 
-        Some(crate::shell::chrome::SidebarPanel { title: t("pptx.animation-ui.animation-pane"), body: body.into_any_element() })
+        let heading = |id: &'static str| div().text_xs().font_weight(FontWeight::MEDIUM).text_color(rgb(crate::shell::chrome::TEXT_SECONDARY)).child(t(id)).into_any_element();
+        let columns = vec![TableColumn::fixed("order", ORDER_WIDTH), TableColumn::fixed("fx", FX_WIDTH), TableColumn::flex("name"), TableColumn::fixed("timeline", TIMELINE_WIDTH)];
+        let header = vec![heading("pptx.anim.pane.col.order"), div().into_any_element(), heading("pptx.anim.pane.col.effect"), heading("_pptx.timeline")];
+
+        let build = {
+            let (rows, shapes, keys, editor, display) = (rows.clone(), shapes.clone(), keys.clone(), editor.clone(), display.clone());
+            move |range: std::ops::Range<usize>, _: &mut Window, _: &mut App| -> Vec<TableRow> {
+                range.filter_map(|d| display.get(d).and_then(|&(i, kind)| rows.get(i).map(|r| (i, kind, r)))).map(|(i, kind, r)| {
+                    let (class_color, class_bg, class_icon) = match r.class {
+                        C::Entrance => (0x2e7d32, 0xe8f5e9, "login"),
+                        C::Emphasis => (0xed6c02, 0xfff3e0, "auto_awesome"),
+                        C::Exit => (0xd32f2f, 0xffebee, "logout"),
+                        C::Path => (0x1976d2, 0xe3f2fd, "conversion_path"),
+                        // PowerPoint's 再生 / 一時停止 / 停止 rows: the command's own glyph in blue.
+                        C::Media => (0x1976d2, 0xe3f2fd, match r.media {
+                            Some(ibis_doc_model::MediaCommand::Pause) => "pause",
+                            Some(ibis_doc_model::MediaCommand::Stop) => "stop",
+                            _ => "play_arrow",
+                        }),
+                    };
+                    let (start_icon, start_tip) = if r.triggered {
+                        ("link", t("pptx.anim.trigger"))
+                    } else {
+                        match r.start {
+                            AnimationStart::OnClick => ("mouse", t("pptx.anim.start.click")),
+                            AnimationStart::WithPrevious => ("play_circle", t("_pptx.with-previous")),
+                            AnimationStart::AfterPrevious => ("skip_next", t("_pptx.after-previous")),
+                        }
+                    };
+                    let order = h_flex().id(("anim-row-order", i)).w_full().gap_0p5().items_center().text_xs().text_color(rgb(0x3c4043))
+                        .child(crate::shell::chrome::icon(start_icon, 16., rgb(0x80868b).into()))
+                        .children((r.click_no > 0).then(|| div().child(format!("{}", r.click_no))))
+                        .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(start_tip.clone()).build(window, cx))
+                        .into_any_element();
+                    let fx = div().size(px(22.)).rounded(px(5.)).bg(rgb(class_bg)).flex().items_center().justify_center()
+                        .child(crate::shell::chrome::icon(class_icon, 16., rgb(class_color).into())).into_any_element();
+                    let title = match kind {
+                        Kind::Child { .. } => r.paragraph_name.clone().unwrap_or_else(|| r.name.clone()),
+                        _ => r.name.clone(),
+                    };
+                    let mut name = h_flex().w_full().min_w_0().pr_1().items_center().gap_0p5();
+                    match kind {
+                        Kind::Parent { expanded, .. } => {
+                            // The fold arrow of the text box's row: it shows or hides the effects of its paragraphs.
+                            let (fold, key) = (editor.clone(), keys[i]);
+                            name = name.child(
+                                div().id(("anim-row-fold", i)).size(px(18.)).flex_none().flex().items_center().justify_center().rounded_full().cursor_pointer()
+                                    .hover(|s| s.bg(crate::shell::palette::shade(0.27, 0.08)))
+                                    .child(crate::shell::chrome::icon(if expanded { "expand_more" } else { "chevron_right" }, 18., rgb(0x5f6368).into()))
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                    .on_click(move |_, _, cx| {
+                                        cx.stop_propagation();
+                                        let _ = fold.update(cx, |e, cx| e.toggle_animation_expanded(key, cx));
+                                    }),
+                            );
+                        }
+                        // A paragraph's row stands in a little (the fold arrow's place and a bit more).
+                        Kind::Child { .. } => name = name.pl(px(CHILD_INDENT)),
+                        Kind::Plain => {}
+                    }
+                    let name = name.child(
+                        v_flex().flex_1().min_w_0()
+                            .child(div().w_full().truncate().text_sm().child(SharedString::from(title)))
+                            .child(div().w_full().truncate().text_xs().text_color(rgb(crate::shell::chrome::TEXT_SECONDARY)).child(SharedString::from(r.look.clone()))),
+                    ).into_any_element();
+                    let mut track = div().relative().w(px(TIMELINE_WIDTH - 8.)).h(px(14.)).rounded_sm().bg(rgb(0xf1f3f4)).overflow_hidden();
+                    if r.delay_width > 0. {
+                        track = track.child(div().absolute().top_0().h_full().left(relative((r.left - r.delay_width).max(0.))).w(relative(r.delay_width)).bg(rgb(0xe0e3e7)));
+                    }
+                    // The text box's row spans from its first paragraph's effect to its last.
+                    let width = match kind {
+                        Kind::Parent { last, .. } => rows.get(last).map_or(r.width, |l| (l.left + l.width - r.left).max(r.width)),
+                        _ => r.width,
+                    };
+                    track = track.child(div().absolute().top_0().h_full().rounded_sm().bg(rgb(class_color)).left(relative(r.left)).w(relative(width.max(0.03))));
+                    let (select, edit, delete) = (editor.clone(), editor.clone(), editor.clone());
+                    let shape = shapes[i];
+                    let delete_last = if let Kind::Parent { last, .. } = kind { last } else { i };
+                    let mut table_row = TableRow::new(vec![order, fx, name, track.into_any_element()])
+                        .selected(r.selected)
+                        .on_click(move |ev, _, cx| {
+                            let clicks = ev.click_count();
+                            let _ = select.update(cx, |e, cx| {
+                                e.set_selection(vec![shape]);
+                                if clicks >= 2 {
+                                    e.open_animation_options_panel(i, cx);
+                                }
+                                cx.notify();
+                            });
+                        });
+                    // The text box's row is dragged with all its paragraphs' effects (`GROUP_DRAG`), and the rows next to it take drops
+                    // past it (a drop on it goes before or after all its paragraphs: `animation_row_dropped`).
+                    // A paragraph's row moves among the rows of its own text box; the other rows go past the paragraphs.
+                    table_row = match kind {
+                        Kind::Parent { .. } => {
+                            let fold = editor.clone();
+                            table_row.draggable(i as u64 | GROUP_DRAG, SharedString::from(r.name.clone())).drop_between(i as u64).on_press(move |_, cx| {
+                                let _ = fold.update(cx, |e, cx| e.fold_animation_boxes_for_drag(cx));
+                            })
+                        }
+                        Kind::Child { first } => table_row.draggable(i as u64, SharedString::from(r.name.clone())).drop_between(i as u64).drag_scope(first as u64 + 1),
+                        Kind::Plain => table_row.draggable(i as u64, SharedString::from(r.name.clone())).drop_between(i as u64),
+                    };
+                    table_row
+                        .action("anim-row-edit", "tune", t("pptx.anim.options-dialog"), move |_, _, cx| {
+                            let _ = edit.update(cx, |e, cx| e.open_animation_options_panel(i, cx));
+                        })
+                        .action_when_wide("anim-row-delete", "delete", t("_shell.delete"), move |_, _, cx| {
+                            let _ = delete.update(cx, |e, cx| e.remove_effects(i, delete_last, cx));
+                        })
+                })
+                .collect()
+            }
+        };
+        let table_element = DataTable::virtualized(ANIMATION_TABLE, columns, header, table, shown, build, cx)
+            .row_height(ROW_HEIGHT)
+            .row_actions(2)
+            .wide_actions(1)
+            .drag_handles()
+            .live_reorder()
+            .row_dnd(dnd.clone(), |e, ev, _, cx| e.animation_row_dropped(ev, cx));
+        // The table fills the pane's height: with many effects the scrollbar is the data rows', not the pane's.
+        let table_host = div().id("anim-table-host").w_full().flex_1().min_h_0()
+            .child(table_element)
+            .on_mouse_down(MouseButton::Right, cx.listener(move |e, ev: &MouseDownEvent, window, cx| {
+                if let Some(i) = (0..shown).find(|i| dnd.row_bounds(ANIMATION_TABLE, *i).is_some_and(|b| b.contains(&ev.position))).and_then(|d| display.get(d).map(|&(i, _)| i)) {
+                    cx.stop_propagation();
+                    e.open_animation_pane_context_menu(i, ev.position, window, cx);
+                }
+            }));
+
+        let play = crate::shell::chrome::primary_button("anim-play-all")
+            .small()
+            .icon(Material("play_arrow"))
+            .label(t("pptx.anim.play-all"))
+            .on_click(cx.listener(|e, _, window, cx| e.start_slideshow(window, cx)));
+        let ruler = div().text_xs().text_color(rgb(crate::shell::chrome::TEXT_SECONDARY))
+            .child(crate::shell::i18n::format("pptx.anim.pane.total", &[("s", &format!("{:.1}", scale_ms as f32 / 1000.0))]));
+
+        let body = crate::shell::chrome::panel_form().p_0().size_full()
+            .child(h_flex().w_full().items_center().justify_between().gap_2().child(play).child(ruler))
+            .child(table_host);
+        Some(crate::shell::chrome::SidebarPanel { title: t("pptx.animation-ui.animation-pane"), body: body.into_any_element() }.fill())
+    }
+
+    /// A row of the animation pane dropped on another: the effect takes that place in the playing order (one undo step).
+    pub(crate) fn animation_row_dropped(&mut self, ev: crate::shell::chrome::row_dnd::RowDropEvent, cx: &mut Context<Self>) {
+        let slide = self.current_slide;
+        if let Some(all) = reordered_effects(&self.slide().animations, ev.from, ev.target as usize, ev.place) {
+            self.run(vec![Command::SetAnimations { slide, animations: all }], cx);
+        }
     }
 
     /// 効果のオプション詳細設定パネル (Effect Options Panel / Dialog) の描画.
@@ -1054,8 +1206,10 @@ impl SlideEditor {
         use gpui_kit::component::button::{Button, ButtonVariants as _};
         use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
         use gpui_kit::*;
+        use crate::shell::chrome::{MenuEntry, MenuItem};
 
         let p = self.pptx()?.animation_options_panel.as_ref()?.clone();
+        let preset_of_panel = self.slide().animations.get(p.index).map_or((0, 0), |a| a.preset);
         let t = crate::shell::i18n::text;
 
         let title = t("pptx.anim.options-dialog");
@@ -1065,9 +1219,10 @@ impl SlideEditor {
             C::Emphasis => (crate::shell::i18n::text("_pptx.emphasis"), rgb(0xed6c02), rgb(0xfff3e0)),
             C::Exit => (crate::shell::i18n::text("_pptx.exit"), rgb(0xd32f2f), rgb(0xffebee)),
             C::Path => (crate::shell::i18n::text("_pptx.motion-path"), rgb(0x1976d2), rgb(0xe3f2fd)),
+            C::Media => (crate::shell::i18n::text("pptx.anim.media.class"), rgb(0x1976d2), rgb(0xe3f2fd)),
         };
 
-        let mut body = v_flex().gap_3().px(px(16.)).py(px(12.)).p_0();
+        let mut body = v_flex().gap_1().px(px(16.)).py(px(12.)).p_0();
 
         // 1. 対象アニメーション情報バナー
         let banner = h_flex()
@@ -1097,296 +1252,157 @@ impl SlideEditor {
                         .bg(class_bg)
                         .text_sm()
                         .text_color(class_color)
-                        .child(format!("{}・{}", class_name, t(look_id(p.class, p.look)))), // i18n-ok（区切りの「・」だけで、訳す語がない）
+                        .child(format!("{}・{}", class_name, look_label(p.class, p.look, preset_of_panel))), // i18n-ok（区切りの「・」だけで、訳す語がない）
                 ),
             );
         body = body.child(banner);
 
-        // 2. 「効果」セクション
-        let mut effect_sec = v_flex()
-            .gap_2()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(0xe0e0e0))
-            .bg(rgb(0xffffff));
-
-        effect_sec = effect_sec.child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(0x212121))
-                .child(t("pptx.anim.panel.effect")),
-        );
-
-        // 方向（Fly の場合）
-        if let L::Fly(current_side) = p.look {
-            let sides = [
-                (AnimationSide::Bottom, crate::shell::i18n::text("transition.dir.down")),
-                (AnimationSide::Left, crate::shell::i18n::text("transition.dir.left")),
-                (AnimationSide::Right, crate::shell::i18n::text("transition.dir.right")),
-                (AnimationSide::Top, crate::shell::i18n::text("transition.dir.up")),
-            ];
-            let mut dir_row = h_flex().items_center().gap_1().flex_wrap();
-            dir_row = dir_row.child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
-            for (s, label) in sides {
-                let is_cur = current_side == s;
-                dir_row = dir_row.child(
-                    crate::shell::chrome::action_button(("anim-fly-side", s as usize))
-                        .small()
-
-                        .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
-                        .on_click(cx.listener(move |e, _, _, cx| e.set_panel_fly_side(s, cx))),
-                );
-            }
-            effect_sec = effect_sec.child(dir_row);
+        // 効果の変更: the effect of the same class, from a dropdown at the top (the others' options follow it).
+        {
+            let choices = Self::panel_effect_choices(p.class, p.look);
+            let on = |look: L, id: Option<u32>| match id {
+                Some(id) => p.look == L::Preset && p.preset.0 == id,
+                None => p.look != L::Preset && std::mem::discriminant(&p.look) == std::mem::discriminant(&look),
+            };
+            let entries: Vec<MenuEntry> = choices.iter().map(|&(key, look, id)| MenuItem::tr(key).checked(on(look, id)).on(move |e, _, cx| e.set_panel_effect(look, id, cx)).into()).collect();
+            body = body.child(crate::shell::chrome::dropdown_row(t("pptx.anim.panel.effect-change"), crate::shell::chrome::Dropdown::from_entries("anim-opt-effect", look_label(p.class, p.look, p.preset), entries, true, 0, &cx.weak_entity()).fill_width()));
         }
 
-        // 方向（Float の場合）
-        if let L::Float(current_side) = p.look {
-            let sides = [
-                (AnimationSide::Top, crate::shell::i18n::text("pptx.anim.opt.float-up")),
-                (AnimationSide::Bottom, crate::shell::i18n::text("pptx.anim.opt.float-down")),
-            ];
-            let mut dir_row = h_flex().items_center().gap_1().flex_wrap();
-            dir_row = dir_row.child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
-            for (s, label) in sides {
-                let is_cur = current_side == s;
-                dir_row = dir_row.child(
-                    crate::shell::chrome::action_button(("anim-float-side", s as usize))
-                        .small()
+        // 2. 「効果」セクション: 方向＝セグメント、滑らかさ・自動反転＝チェックボックス、再生後の動作＝ドロップダウン
+        use crate::shell::chrome::segment_control::SegmentItem;
+        let section_title = |key: &str| div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(rgb(0x212121)).pt_1().child(t(key));
+        body = body.child(section_title("pptx.anim.panel.effect"));
 
-                        .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
-                        .on_click(cx.listener(move |e, _, _, cx| e.set_panel_float_side(s, cx))),
-                );
-            }
-            effect_sec = effect_sec.child(dir_row);
-        }
-
-        // 方向（Wipe の場合）
-        if let L::Wipe(current_side) = p.look {
-            let sides = [
-                (AnimationSide::Bottom, crate::shell::i18n::text("pptx.anim.opt.wipe-bottom")),
-                (AnimationSide::Left, crate::shell::i18n::text("pptx.anim.opt.wipe-left")),
-                (AnimationSide::Right, crate::shell::i18n::text("pptx.anim.opt.wipe-right")),
-                (AnimationSide::Top, crate::shell::i18n::text("pptx.anim.opt.wipe-top")),
-            ];
-            let mut dir_row = h_flex().items_center().gap_1().flex_wrap();
-            dir_row = dir_row.child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
-            for (s, label) in sides {
-                let is_cur = current_side == s;
-                dir_row = dir_row.child(
-                    crate::shell::chrome::action_button(("anim-wipe-side", s as usize))
-                        .small()
-
-                        .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
-                        .on_click(cx.listener(move |e, _, _, cx| e.set_panel_wipe_side(s, cx))),
-                );
-            }
-            effect_sec = effect_sec.child(dir_row);
-        }
-
-        // 方向（Motion の場合）
-        if let L::Motion(cur_x, cur_y) = p.look {
-            let dirs = [
-                (0, 25_000, crate::shell::i18n::text("docx.find.dir.down")),
-                (-25_000, 0, crate::shell::i18n::text("pptx.anim.opt.path-left")),
-                (25_000, 0, crate::shell::i18n::text("pptx.anim.opt.path-right")),
-                (0, -25_000, crate::shell::i18n::text("docx.find.dir.up")),
-            ];
-            let mut motion_row = h_flex().items_center().gap_1().flex_wrap();
-            motion_row = motion_row.child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.direction")));
-            for (idx, (x, y, label)) in dirs.into_iter().enumerate() {
-                let is_cur = cur_x == x && cur_y == y;
-                motion_row = motion_row.child(
-                    crate::shell::chrome::action_button(("anim-motion-dir", idx))
-                        .small()
-
-                        .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
-                        .on_click(cx.listener(move |e, _, _, cx| e.set_panel_motion_dir(x, y, cx))),
-                );
-            }
-            effect_sec = effect_sec.child(motion_row);
-        }
-
-        // 滑らかさ
-        let smooth_row = h_flex()
-            .items_center()
-            .gap_2()
-            .child(
-                crate::shell::chrome::action_button("anim-opt-smooth-start")
-                    .small()
-
-                    .label(if p.accel > 0 { crate::shell::i18n::text("_pptx.smooth-start") } else { crate::shell::i18n::text("pptx.anim.smooth-start") })
-                    .on_click(cx.listener(|e, _, _, cx| e.toggle_panel_smooth_start(cx))),
-            )
-            .child(
-                crate::shell::chrome::action_button("anim-opt-smooth-end")
-                    .small()
-
-                    .label(if p.decel > 0 { crate::shell::i18n::text("_pptx.smooth-end") } else { crate::shell::i18n::text("pptx.anim.smooth-end") })
-                    .on_click(cx.listener(|e, _, _, cx| e.toggle_panel_smooth_end(cx))),
-            );
-        effect_sec = effect_sec.child(smooth_row);
-
-        // 自動反転
-        let autorev_btn = crate::shell::chrome::action_button("anim-opt-autorev")
-            .small()
-
-            .label(if p.auto_reverse { crate::shell::i18n::text("_pptx.auto-reverse") } else { crate::shell::i18n::text("_pptx.auto-reverse-2") })
-            .on_click(cx.listener(|e, _, _, cx| e.toggle_panel_auto_reverse(cx)));
-        effect_sec = effect_sec.child(autorev_btn);
-
-        // アニメーション後の動作
-        let after_label = match p.after_effect {
-            AnimationAfterEffect::Hold => crate::shell::i18n::text("_pptx.don-t-hide"),
-            AnimationAfterEffect::Hide => crate::shell::i18n::text("pptx.anim.after.hide"),
-            AnimationAfterEffect::Dim => crate::shell::i18n::text("_pptx.dim-2"),
-            AnimationAfterEffect::HideOnNextClick => crate::shell::i18n::text("pptx.anim.after.hide-next"),
+        let direction_items: Vec<SegmentItem> = match p.look {
+            L::Fly(cur) => [
+                (AnimationSide::Bottom, "transition.dir.down"),
+                (AnimationSide::Left, "transition.dir.left"),
+                (AnimationSide::Right, "transition.dir.right"),
+                (AnimationSide::Top, "transition.dir.up"),
+            ].into_iter().map(|(s, key)| SegmentItem::label(("anim-fly-side", s as usize), t(key), cur == s).on_click(cx.listener(move |e, _, _, cx| e.set_panel_fly_side(s, cx)))).collect(),
+            L::Float(cur) => [
+                (AnimationSide::Top, "pptx.anim.opt.float-up"),
+                (AnimationSide::Bottom, "pptx.anim.opt.float-down"),
+            ].into_iter().map(|(s, key)| SegmentItem::label(("anim-float-side", s as usize), t(key), cur == s).on_click(cx.listener(move |e, _, _, cx| e.set_panel_float_side(s, cx)))).collect(),
+            L::Wipe(cur) => [
+                (AnimationSide::Bottom, "pptx.anim.opt.wipe-bottom"),
+                (AnimationSide::Left, "pptx.anim.opt.wipe-left"),
+                (AnimationSide::Right, "pptx.anim.opt.wipe-right"),
+                (AnimationSide::Top, "pptx.anim.opt.wipe-top"),
+            ].into_iter().map(|(s, key)| SegmentItem::label(("anim-wipe-side", s as usize), t(key), cur == s).on_click(cx.listener(move |e, _, _, cx| e.set_panel_wipe_side(s, cx)))).collect(),
+            L::Motion(cur_x, cur_y) => [
+                (0, 25_000, "docx.find.dir.down"),
+                (-25_000, 0, "pptx.anim.opt.path-left"),
+                (25_000, 0, "pptx.anim.opt.path-right"),
+                (0, -25_000, "docx.find.dir.up"),
+            ].into_iter().enumerate().map(|(idx, (x, y, key))| SegmentItem::label(("anim-motion-dir", idx), t(key), cur_x == x && cur_y == y).on_click(cx.listener(move |e, _, _, cx| e.set_panel_motion_dir(x, y, cx)))).collect(),
+            _ => Vec::new(),
         };
-        let after_row = h_flex()
-            .items_center()
-            .gap_1p5()
-            .child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.after-animation")))
-            .child(
-                crate::shell::chrome::action_button("anim-opt-after")
-                    .small()
-                    .label(after_label)
-                    .on_click(cx.listener(|e, _, _, cx| e.cycle_panel_after_effect(cx))),
-            );
-        effect_sec = effect_sec.child(after_row);
-        body = body.child(effect_sec);
+        if !direction_items.is_empty() {
+            body = body.child(crate::shell::chrome::segment_control_row(t("_pptx.direction"), direction_items));
+        }
+        body = body
+            .child(crate::shell::chrome::checkbox_button("anim-opt-smooth-start", t("pptx.anim.smooth-start"), p.accel > 0, false, cx.listener(|e, _, _, cx| e.toggle_panel_smooth_start(cx))))
+            .child(crate::shell::chrome::checkbox_button("anim-opt-smooth-end", t("pptx.anim.smooth-end"), p.decel > 0, false, cx.listener(|e, _, _, cx| e.toggle_panel_smooth_end(cx))))
+            .child(crate::shell::chrome::checkbox_button("anim-opt-autorev", t("pptx.anim.autoreverse"), p.auto_reverse, false, cx.listener(|e, _, _, cx| e.toggle_panel_auto_reverse(cx))));
+
+        // 再生後の動作（排他の 4 択）
+        let after_key = |a: AnimationAfterEffect| match a {
+            AnimationAfterEffect::Hold => "pptx.anim.after.hold",
+            AnimationAfterEffect::Hide => "pptx.anim.after.hide",
+            AnimationAfterEffect::Dim => "pptx.anim.after.dim",
+            AnimationAfterEffect::HideOnNextClick => "pptx.anim.after.hide-next",
+        };
+        let after_entries: Vec<MenuEntry> = [AnimationAfterEffect::Hold, AnimationAfterEffect::Dim, AnimationAfterEffect::Hide, AnimationAfterEffect::HideOnNextClick]
+            .into_iter()
+            .map(|a| MenuItem::tr(after_key(a)).checked(p.after_effect == a).on(move |e, _, cx| e.set_panel_after_effect(a, cx)).into())
+            .collect();
+        body = body.child(crate::shell::chrome::dropdown_row(t("_pptx.after-animation"), crate::shell::chrome::Dropdown::from_entries("anim-opt-after", t(after_key(p.after_effect)), after_entries, true, 0, &cx.weak_entity()).fill_width()));
 
         // 3. 「タイミング」セクション
-        let mut timing_sec = v_flex()
-            .gap_2()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(0xe0e0e0))
-            .bg(rgb(0xffffff));
+        body = body.child(section_title("pptx.anim.panel.timing"));
+        body = body.child(crate::shell::chrome::segment_control_row(
+            t("pptx.animation-ui.from"),
+            [
+                (AnimationStart::OnClick, "pptx.anim.start.click", "anim-opt-start-click"),
+                (AnimationStart::WithPrevious, "_pptx.with-previous-2", "anim-opt-start-with"),
+                (AnimationStart::AfterPrevious, "_pptx.after-previous-2", "anim-opt-start-after"),
+            ].into_iter().map(|(st, key, id)| SegmentItem::label(id, t(key), p.start == st).on_click(cx.listener(move |e, _, _, cx| e.set_panel_start(st, cx)))),
+        ));
 
-        timing_sec = timing_sec.child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(0x212121))
-                .child(t("pptx.anim.panel.timing")),
-        );
+        // 継続時間・遅延: ツールバーのフォント サイズの部品（背景なし）
+        let unit = t("pptx.anim.unit.seconds");
+        body = body.child(crate::shell::chrome::control_row(
+            t("_pptx.duration"),
+            crate::shell::chrome::number_stepper("anim-opt-duration", p.duration_ms as f32 / 1000.0, cx, |e, v, _, cx| e.set_panel_duration_ms((v * 1000.0).round() as u32, cx))
+                .range(0.1, 60.0).step(0.5).unit(unit.clone()).candidates(DURATION_CANDIDATES).plain(),
+        ));
+        body = body.child(crate::shell::chrome::control_row(
+            t("_pptx.delay"),
+            crate::shell::chrome::number_stepper("anim-opt-delay", p.delay_ms as f32 / 1000.0, cx, |e, v, _, cx| e.set_panel_delay_ms((v * 1000.0).round() as u32, cx))
+                .range(0.0, 60.0).step(0.5).unit(unit).candidates(DELAY_CANDIDATES).plain(),
+        ));
 
-        // 開始タイミング
-        let starts = [
-            (AnimationStart::OnClick, crate::shell::i18n::text("pptx.anim.start.click")),
-            (AnimationStart::WithPrevious, crate::shell::i18n::text("_pptx.with-previous-2")),
-            (AnimationStart::AfterPrevious, crate::shell::i18n::text("_pptx.after-previous-2")),
-        ];
-        let mut start_row = h_flex().items_center().gap_1().flex_wrap();
-        start_row = start_row.child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("pptx.animation-ui.from")));
-        for (st, label) in starts {
-            let is_cur = p.start == st;
-            start_row = start_row.child(
-                crate::shell::chrome::action_button(("anim-opt-start", st as usize))
-                    .small()
+        // 繰り返し（排他の選択肢）
+        let repeat_key = |r: AnimationRepeat| match r {
+            AnimationRepeat::None => "pptx.anim.repeat.none",
+            AnimationRepeat::Count(2) => "pptx.anim.repeat.2",
+            AnimationRepeat::Count(3) => "pptx.anim.repeat.3",
+            AnimationRepeat::Count(4) => "pptx.anim.repeat.4",
+            AnimationRepeat::Count(5) => "pptx.anim.repeat.5",
+            AnimationRepeat::Count(10) => "pptx.anim.repeat.10",
+            AnimationRepeat::Count(_) => "_pptx.multiple-times",
+            AnimationRepeat::UntilNextClick => "pptx.anim.repeat.until-click",
+            AnimationRepeat::UntilEndOfSlide => "pptx.anim.repeat.until-end",
+        };
+        let repeat_entries: Vec<MenuEntry> = [
+            AnimationRepeat::None, AnimationRepeat::Count(2), AnimationRepeat::Count(3), AnimationRepeat::Count(4), AnimationRepeat::Count(5),
+            AnimationRepeat::Count(10), AnimationRepeat::UntilNextClick, AnimationRepeat::UntilEndOfSlide,
+        ].into_iter().map(|r| MenuItem::tr(repeat_key(r)).checked(p.repeat_count == r).on(move |e, _, cx| e.set_panel_repeat(r, cx)).into()).collect();
+        body = body.child(crate::shell::chrome::dropdown_row(t("_pptx.repeat"), crate::shell::chrome::Dropdown::from_entries("anim-opt-repeat", t(repeat_key(p.repeat_count)), repeat_entries, true, 0, &cx.weak_entity()).fill_width()));
+        body = body.child(crate::shell::chrome::checkbox_button("anim-opt-rewind", t("pptx.anim.rewind"), p.rewind, false, cx.listener(|e, _, _, cx| e.toggle_panel_rewind(cx))));
 
-                    .label(if is_cur { format!("✓ {}", label) } else { label.to_string() })
-                    .on_click(cx.listener(move |e, _, _, cx| e.set_panel_start(st, cx))),
-            );
+        // トリガー: 通常進行（クリック・自動）か図形のクリック時。同じ画面の中で選ぶ（図形のクリック時のときだけ対象の図形が出る）。
+        let slide_shapes: Vec<(ShapeId, String)> = {
+            let slide = self.slide();
+            slide.shapes.iter().map(|sh| {
+                let label = sh.text_body()
+                    .map(|b| b.text().chars().take(12).collect::<String>())
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| crate::shell::i18n::format("_pptx.shape-n", &[("n", &(slide.shape_index(sh.id).map_or(0, |x| x + 1)))]).to_string());
+                (sh.id, label)
+            }).collect()
+        };
+        let trig_shape = match &p.trigger { AnimationTrigger::OnShapeClick(s) => Some(*s), _ => None };
+        let first_other = slide_shapes.iter().map(|(id, _)| *id).find(|id| *id != p.shape).or(Some(p.shape));
+        // 通常進行（クリック・自動）か図形のクリック時の 2 択はラジオボタン。ブックマークは設定済みのときだけ 3 つ目に出る。
+        let mut trigger_radios = crate::shell::chrome::radio_group()
+            .child(crate::shell::chrome::radio_button("anim-opt-trigger-normal", p.trigger.is_none(), false, t("_pptx.normal-click-or-auto"),
+                cx.listener(|e, _, _, cx| e.set_panel_trigger(AnimationTrigger::None, cx))))
+            .child(crate::shell::chrome::radio_button("anim-opt-trigger-shape-click", trig_shape.is_some(), first_other.is_none(), t("pptx.anim.trigger.shape-click"),
+                cx.listener(move |e, _, _, cx| { if let Some(s) = first_other { e.set_panel_trigger(AnimationTrigger::OnShapeClick(trig_shape.unwrap_or(s)), cx) } })));
+        if let AnimationTrigger::OnMediaBookmark { bookmark, .. } = &p.trigger {
+            trigger_radios = trigger_radios.child(crate::shell::chrome::radio_button("anim-opt-trigger-bookmark", true, false,
+                crate::shell::i18n::format("_pptx.on-bookmark-bookmark", &[("bookmark", bookmark)]), |_, _, _| {}));
         }
-        timing_sec = timing_sec.child(start_row);
-
-        // 継続時間
-        let dur_row = h_flex()
-            .items_center()
-            .gap_2()
-            .child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.duration")))
-            .child(crate::shell::chrome::action_button("anim-opt-dur-minus").small().label("-").on_click(cx.listener(|e, _, _, cx| e.adjust_panel_duration(-500, cx))))
-            .child(div().w(px(36.)).text_center().text_sm().child(crate::shell::i18n::format("_pptx.value-s", &[("value", &format!("{:.1}", p.duration_ms as f32 / 1000.0))])))
-            .child(crate::shell::chrome::action_button("anim-opt-dur-plus").small().label("+").on_click(cx.listener(|e, _, _, cx| e.adjust_panel_duration(500, cx))));
-        timing_sec = timing_sec.child(dur_row);
-
-        // 遅延時間
-        let del_row = h_flex()
-            .items_center()
-            .gap_2()
-            .child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.delay")))
-            .child(crate::shell::chrome::action_button("anim-opt-del-minus").small().label("-").disabled(p.delay_ms == 0).on_click(cx.listener(|e, _, _, cx| e.adjust_panel_delay(-500, cx))))
-            .child(div().w(px(36.)).text_center().text_sm().child(crate::shell::i18n::format("_pptx.value-s", &[("value", &format!("{:.1}", p.delay_ms as f32 / 1000.0))])))
-            .child(crate::shell::chrome::action_button("anim-opt-del-plus").small().label("+").on_click(cx.listener(|e, _, _, cx| e.adjust_panel_delay(500, cx))));
-        timing_sec = timing_sec.child(del_row);
-
-        // 繰り返し
-        let repeat_label = match p.repeat_count {
-            AnimationRepeat::None => crate::shell::i18n::text("_shell.none"),
-            AnimationRepeat::Count(2) => crate::shell::i18n::text("_pptx.2-times"),
-            AnimationRepeat::Count(3) => crate::shell::i18n::text("_pptx.3-times"),
-            AnimationRepeat::Count(5) => crate::shell::i18n::text("_pptx.5-times"),
-            AnimationRepeat::Count(10) => crate::shell::i18n::text("_pptx.10-times"),
-            AnimationRepeat::Count(_) => crate::shell::i18n::text("_pptx.multiple-times"),
-            AnimationRepeat::UntilNextClick => crate::shell::i18n::text("pptx.anim.repeat.until-click"),
-            AnimationRepeat::UntilEndOfSlide => crate::shell::i18n::text("pptx.anim.repeat.until-end"),
-        };
-        let rep_row = h_flex()
-            .items_center()
-            .gap_2()
-            .child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.repeat")))
-            .child(
-                crate::shell::chrome::action_button("anim-opt-repeat")
-                    .small()
-                    .label(repeat_label)
-                    .on_click(cx.listener(|e, _, _, cx| e.cycle_panel_repeat(cx))),
-            );
-        timing_sec = timing_sec.child(rep_row);
-
-        // 巻き戻し (Rewind when done playing)
-        let rewind_btn = crate::shell::chrome::action_button("anim-opt-rewind")
-            .small()
-
-            .label(if p.rewind { crate::shell::i18n::text("_pptx.rewind-when-done-playing") } else { crate::shell::i18n::text("_pptx.rewind-when-done-playing-2") })
-            .on_click(cx.listener(|e, _, _, cx| e.toggle_panel_rewind(cx)));
-        timing_sec = timing_sec.child(rewind_btn);
-
-        // トリガー (Trigger)
-        let trig_desc = match &p.trigger {
-            AnimationTrigger::None => crate::shell::i18n::text("_pptx.normal-click-or-auto").to_string(),
-            AnimationTrigger::OnShapeClick(s) => {
-                let s_name = self.slide().shape(*s)
-                    .and_then(|sh| sh.text_body())
-                    .map(|b| b.text().chars().take(10).collect::<String>())
-                    .filter(|t| !t.trim().is_empty())
-                    .unwrap_or_else(|| crate::shell::i18n::format("_pptx.shape-n", &[("n", &(self.slide().shape_index(*s).map_or(0, |x| x + 1)))]));
-                crate::shell::i18n::format("_pptx.on-click-name", &[("name", &s_name)])
-            }
-            AnimationTrigger::OnMediaBookmark { bookmark, .. } => crate::shell::i18n::format("_pptx.on-bookmark-bookmark", &[("bookmark", &bookmark)]),
-        };
-        let is_trig = !p.trigger.is_none();
-        let trig_row = h_flex()
-            .items_center()
-            .justify_between()
-            .gap_1()
-            .pt_1()
-            .border_t_1()
-            .border_color(rgb(0xf0f0f0))
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_1p5()
-                    .child(div().text_sm().text_color(rgb(0x616161)).child(crate::shell::i18n::text("_pptx.trigger-2")))
-                    .child(div().text_sm().text_color(rgb(0x212121)).child(trig_desc)),
-            )
-            .child(
-                crate::shell::chrome::destructive_button("anim-opt-trig-clear",cx)
-                    .small()
-                    .label(crate::shell::i18n::text("_pptx.clear"))
-                    .disabled(!is_trig)
-                    .on_click(cx.listener(|e, _, _, cx| e.set_panel_trigger(AnimationTrigger::None, cx))),
-            );
-        timing_sec = timing_sec.child(trig_row);
-        body = body.child(timing_sec);
+        body = body.child(crate::shell::chrome::control_row(t("_pptx.trigger-2"), trigger_radios).stacked());
+        if let Some(current) = trig_shape {
+            let current_label = slide_shapes.iter().find(|(id, _)| *id == current).map(|(_, l)| l.clone()).unwrap_or_default();
+            let shape_entries: Vec<MenuEntry> = slide_shapes.iter().map(|(id, label)| {
+                let id = *id;
+                MenuItem::new("pptx.anim.trigger.shape-item", label.clone()).checked(id == current).on(move |e, _, cx| e.set_panel_trigger(AnimationTrigger::OnShapeClick(id), cx)).into()
+            }).collect();
+            body = body.child(crate::shell::chrome::dropdown_row(t("pptx.anim.trigger.target"), crate::shell::chrome::Dropdown::from_entries("anim-opt-trigger-shape", current_label, shape_entries, true, 0, &cx.weak_entity()).fill_width()));
+        }
 
         // 4. フッターボタン
         let footer = crate::shell::chrome::action_bar()
             .action(crate::shell::chrome::ActionDefinition::new("pptx-anim-opt-apply", t("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, _, cx| e.apply_animation_options_panel(cx))))
-            .action(crate::shell::chrome::ActionDefinition::new("pptx-anim-opt-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, _, cx| e.close_animation_options_panel(cx))));
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-anim-opt-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, _, cx| e.close_animation_options_panel(cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("pptx-anim-opt-delete", t("_shell.delete"), crate::shell::chrome::ActionButtonKind::Destructive).on_click({
+                let index = p.index;
+                cx.listener(move |e, _, _, cx| { e.close_animation_options_panel(cx); e.remove_effect(index, cx) })
+            }));
 
         let panel_terminal_actions = footer;
         Some(crate::shell::chrome::SidebarPanel::with_footer(title, body.into_any_element(), panel_terminal_actions))
@@ -1395,7 +1411,7 @@ impl SlideEditor {
     /// 開始のタイミング of the selected shapes' effects.
     pub(crate) fn set_effect_start(&mut self, start: AnimationStart, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.start = start;
             }
         });
@@ -1404,7 +1420,7 @@ impl SlideEditor {
     /// 継続時間 of the selected shapes' effects (not an appear, which is at once).
     pub(crate) fn set_effect_duration(&mut self, ms: u32, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape) && a.look != L::Appear) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape) && a.look != L::Appear) {
                 a.duration = ms;
             }
         });
@@ -1413,7 +1429,7 @@ impl SlideEditor {
     /// 開始遅延 of the selected shapes' effects.
     pub(crate) fn set_effect_delay(&mut self, ms: u32, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.delay = ms;
             }
         });
@@ -1422,7 +1438,7 @@ impl SlideEditor {
     /// 繰り返し of the selected shapes' effects.
     pub(crate) fn set_effect_repeat(&mut self, repeat: AnimationRepeat, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.repeat_count = repeat;
             }
         });
@@ -1431,10 +1447,10 @@ impl SlideEditor {
     /// 自動反転 of the selected shapes' effects.
     pub(crate) fn toggle_effect_autoreverse(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected_ids();
-        let all_rev = self.slide().animations.iter().filter(|a| selected.contains(&a.shape)).all(|a| a.auto_reverse);
+        let all_rev = self.slide().animations.iter().filter(|a| !a.is_media() && selected.contains(&a.shape)).all(|a| a.auto_reverse);
         let new_rev = !all_rev;
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.auto_reverse = new_rev;
             }
         });
@@ -1443,10 +1459,10 @@ impl SlideEditor {
     /// 再生終了後に巻き戻す (rewind) of the selected shapes' effects.
     pub(crate) fn toggle_effect_rewind(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected_ids();
-        let all_rew = self.slide().animations.iter().filter(|a| selected.contains(&a.shape)).all(|a| a.rewind);
+        let all_rew = self.slide().animations.iter().filter(|a| !a.is_media() && selected.contains(&a.shape)).all(|a| a.rewind);
         let new_rew = !all_rew;
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.rewind = new_rew;
             }
         });
@@ -1456,7 +1472,7 @@ impl SlideEditor {
     #[allow(dead_code)]
     pub(crate) fn set_effect_rewind(&mut self, rewind: bool, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.rewind = rewind;
             }
         });
@@ -1465,7 +1481,7 @@ impl SlideEditor {
     /// 滑らかさ of the selected shapes' effects.
     pub(crate) fn set_effect_smooth(&mut self, accel: u32, decel: u32, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.accel = accel;
                 a.decel = decel;
             }
@@ -1475,10 +1491,10 @@ impl SlideEditor {
     /// 滑らかに開始 of the selected shapes' effects.
     pub(crate) fn toggle_effect_smooth_start(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected_ids();
-        let all_smooth = self.slide().animations.iter().filter(|a| selected.contains(&a.shape)).all(|a| a.accel > 0);
+        let all_smooth = self.slide().animations.iter().filter(|a| !a.is_media() && selected.contains(&a.shape)).all(|a| a.accel > 0);
         let new_accel = if all_smooth { 0 } else { 50_000 };
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.accel = new_accel;
             }
         });
@@ -1487,10 +1503,10 @@ impl SlideEditor {
     /// 滑らかに終了 of the selected shapes' effects.
     pub(crate) fn toggle_effect_smooth_end(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected_ids();
-        let all_smooth = self.slide().animations.iter().filter(|a| selected.contains(&a.shape)).all(|a| a.decel > 0);
+        let all_smooth = self.slide().animations.iter().filter(|a| !a.is_media() && selected.contains(&a.shape)).all(|a| a.decel > 0);
         let new_decel = if all_smooth { 0 } else { 50_000 };
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.decel = new_decel;
             }
         });
@@ -1499,7 +1515,7 @@ impl SlideEditor {
     /// 効果終了時の動作 of the selected shapes' effects.
     pub(crate) fn set_effect_after(&mut self, after: AnimationAfterEffect, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.after_effect = after;
             }
         });
@@ -1508,7 +1524,7 @@ impl SlideEditor {
     /// トリガー (OnShapeClick, OnMediaBookmark, None) of the selected shapes' effects.
     pub(crate) fn set_selected_effects_trigger(&mut self, trigger: AnimationTrigger, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 a.trigger = trigger.clone();
             }
         });
@@ -1521,7 +1537,7 @@ impl SlideEditor {
 
     /// アニメーションの削除: the selected shapes' effects.
     pub(crate) fn remove_shape_effects(&mut self, cx: &mut Context<Self>) {
-        self.change_animations(cx, |all, selected| all.retain(|a| !selected.contains(&a.shape)));
+        self.change_animations(cx, |all, selected| all.retain(|a| !(!a.is_media() && selected.contains(&a.shape))));
     }
 
     /// 効果のオプション of the selected shapes' effects.
@@ -1533,7 +1549,7 @@ impl SlideEditor {
                 AnimationSide::Bottom => 4,
                 AnimationSide::Left => 8,
             };
-            for a in all.iter_mut().filter(|a| selected.contains(&a.shape)) {
+            for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
                 match (a.look, new_look) {
                     (L::Fly(_), L::Fly(side)) => {
                         a.look = L::Fly(side);
@@ -1549,7 +1565,7 @@ impl SlideEditor {
                     }
                     (L::Zoom, L::Zoom) => {
                         a.look = L::Zoom;
-                        a.preset = (23, 0);
+                        a.preset = (23, if a.class == C::Exit { 32 } else { 16 });
                     }
                     (L::Spin(_), L::Spin(by)) => {
                         a.look = L::Spin(by);
@@ -1924,7 +1940,7 @@ impl SlideEditor {
     pub(crate) fn copy_shape_animations(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected_ids();
         let Some(&shape_id) = selected.first() else { return };
-        let animations: Vec<ibis_doc_model::Animation> = self.slide().animations.iter().filter(|a| a.shape == shape_id).cloned().collect();
+        let animations: Vec<ibis_doc_model::Animation> = self.slide().animations.iter().filter(|a| a.shape == shape_id && !a.is_media()).cloned().collect();
         if animations.is_empty() {
             return;
         }
@@ -1959,7 +1975,7 @@ impl SlideEditor {
     pub(crate) fn can_copy_animations(&self) -> bool {
         let selected = self.selected_ids();
         let Some(&shape_id) = selected.first() else { return false };
-        self.slide().animations.iter().any(|a| a.shape == shape_id)
+        self.slide().animations.iter().any(|a| a.shape == shape_id && !a.is_media())
     }
 
     /// Whether copied animation effects can be pasted onto the current selection.
@@ -1976,6 +1992,21 @@ impl SlideEditor {
             self.paste_shape_animations(cx);
         }
     }
+}
+
+/// The name shown for an effect: its look's, or, for the effects of PowerPoint's presets, the preset's (with its option).
+fn look_label(class: C, look: L, preset: (u32, u32)) -> String {
+    if look == L::Preset {
+        if let Some(def) = ibis_doc_model::animation_preset::preset_def(preset.0) {
+            let name = crate::shell::i18n::text(def.key);
+            return match def.options.iter().find(|(s, _, _)| *s == preset.1) {
+                Some((_, option, _)) => format!("{name}（{}）", crate::shell::i18n::text(option)), // i18n-ok（括弧だけ）
+                None => name.to_string(),
+            };
+        }
+        return crate::shell::i18n::text("pptx.anim.preset.other").to_string();
+    }
+    crate::shell::i18n::text(look_id(class, look)).to_string()
 }
 
 /// The menu id (and label) of an effect's look.
@@ -2018,6 +2049,9 @@ fn look_id(class: C, look: L) -> &'static str {
         (C::Path, L::Motion(x, y)) if x > 0 && y == 0 => "pptx.anim.path.right",
         (C::Path, L::Motion(x, y)) if x == 0 && y < 0 => "pptx.anim.path.up",
         (C::Path, _) => "pptx.anim.path",
+        (C::Media, L::Media(ibis_doc_model::MediaCommand::Play)) => "pptx.anim.media.play",
+        (C::Media, L::Media(ibis_doc_model::MediaCommand::Pause)) => "pptx.anim.media.pause",
+        (C::Media, L::Media(ibis_doc_model::MediaCommand::Stop)) => "pptx.anim.media.stop",
         _ => "pptx.anim.other",
     }
 }
@@ -2025,13 +2059,13 @@ fn look_id(class: C, look: L) -> &'static str {
 /// Whether the selected shapes have an animation supporting effect options (direction, rotation, scale, or details panel).
 pub(crate) fn has_animation_options(editor: &SlideEditor) -> bool {
     let selected = editor.selected_ids();
-    editor.slide().animations.iter().any(|a| selected.contains(&a.shape))
+    editor.slide().animations.iter().any(|a| !a.is_media() && selected.contains(&a.shape))
 }
 
 /// The options menu for the currently selected shape's animation (direction, rotation, scale, or details panel).
 pub(crate) fn animation_option_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let selected = editor.selected_ids();
-    let mine: Vec<&Animation> = editor.slide().animations.iter().filter(|a| selected.contains(&a.shape)).collect();
+    let mine: Vec<&Animation> = editor.slide().animations.iter().filter(|a| !a.is_media() && selected.contains(&a.shape)).collect();
     let first = mine.first();
     let mut items: Vec<MenuEntry> = match first.map(|a| a.look) {
         Some(L::Fly(current_side)) => {
@@ -2080,6 +2114,19 @@ pub(crate) fn animation_option_items(editor: &SlideEditor) -> Vec<MenuEntry> {
                 MenuItem::tr("pptx.anim.opt.path-up").checked(current_x == 0 && current_y < 0).on(|e, _, cx| e.set_shape_effect_option(L::Motion(0, -25_000), cx)).into(),
             ]
         }
+        Some(L::Preset) => {
+            let a = first.expect("an effect");
+            ibis_doc_model::animation_preset::preset_def(a.preset.0)
+                .map(|def| {
+                    def.options
+                        .iter()
+                        .map(|&(subtype, key, _)| {
+                            MenuItem::tr(key).checked(a.preset.1 == subtype).on(move |e, _, cx| e.set_shape_preset_option(subtype, cx)).into()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
         _ => Vec::new(),
     };
     let is_chart = editor.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Chart(_)));
@@ -2127,7 +2174,7 @@ pub(crate) fn animation_option_items(editor: &SlideEditor) -> Vec<MenuEntry> {
 /// The toolbar's アニメーション menu, for the selection.
 pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let selected = editor.selected_ids();
-    let mine: Vec<&Animation> = editor.slide().animations.iter().filter(|a| selected.contains(&a.shape)).collect();
+    let mine: Vec<&Animation> = editor.slide().animations.iter().filter(|a| !a.is_media() && selected.contains(&a.shape)).collect();
     let has = !mine.is_empty();
     let options = animation_option_items(editor);
     let start = mine.first().map(|a| a.start);
@@ -2160,6 +2207,8 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
         effect_item("pptx.anim.out.wipe", C::Exit, L::Wipe(AnimationSide::Bottom)),
         effect_item("pptx.anim.out.zoom", C::Exit, L::Zoom),
     ];
+    entrance.extend(preset_items(C::Entrance, &mine, selected.len()));
+    exit.extend(preset_items(C::Exit, &mine, selected.len()));
     let is_ink = editor.selected_shapes().iter().any(|s| crate::xlsx::ink::stroke_points(s).is_some());
     if is_ink {
         entrance.push(effect_item("pptx.anim.in.replay", C::Entrance, L::Replay));
@@ -2342,7 +2391,14 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
         add.insert(6, add_item("add.pptx.anim.in.replay", C::Entrance, L::Replay));
         add.push(add_item("add.pptx.anim.out.rewind", C::Exit, L::Replay));
     }
-    vec![
+    let media_menu: Option<MenuEntry> = (!selected.is_empty() && editor.selected_shapes().iter().all(|s| SlideEditor::clip_of(s).is_some())).then(|| {
+        let items = [("pptx.anim.media.play", ibis_doc_model::MediaCommand::Play), ("pptx.anim.media.pause", ibis_doc_model::MediaCommand::Pause), ("pptx.anim.media.stop", ibis_doc_model::MediaCommand::Stop)]
+            .into_iter()
+            .map(|(id, c)| MenuItem::tr(id).on(move |e, _, cx| e.add_media_effect(c, cx)).into())
+            .collect();
+        Submenu::tr("pptx.anim.media.class", "play_circle", items).into()
+    });
+    let mut menu = vec![
         MenuItem::tr("pptx.anim.preview").disabled(editor.slide().animations.is_empty()).on(|e, w, cx| e.start_slideshow(w, cx)).into(),
         MenuEntry::Separator,
         Submenu::tr("pptx.anim.entrance", "animation", entrance).into(),
@@ -2432,5 +2488,95 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
         MenuItem::tr("pptx.anim.paste").shortcut("⌥⇧⌘V").disabled(!editor.can_paste_animations()).on(|e, _, cx| e.paste_shape_animations(cx)).into(),
         MenuEntry::Separator,
         MenuItem::tr("pptx.anim.pane").checked(editor.pptx().is_some_and(|s| s.animation_pane)).on(|e, _, cx| e.toggle_animation_pane(cx)).into(),
-    ]
+    ];
+    // メディア (再生・一時停止・停止) after the paths: only for a video or an audio.
+    if let Some(media) = media_menu
+        && let Some(at) = menu.iter().position(|m| matches!(m, MenuEntry::Submenu(sub) if sub.id == "pptx.anim.path"))
+    {
+        menu.insert(at + 1, media);
+    }
+    menu
+}
+
+/// What names a text box's row in the pane: its shape, the first paragraph its effects take, and which of the rows of that shape
+/// that begin there it is (`box_keys`). Another row of the same shape (its
+/// other paragraphs, past an effect of another kind) is another key, and a key stays when the rows move.
+pub(crate) type BoxKey = (ShapeId, u32, u32);
+
+/// The flag of a text box's row in the id its drag carries (its first effect's number with this bit set): the row stands for all
+/// its paragraphs' effects, and they move with it.
+pub(crate) const GROUP_DRAG: u64 = 1 << 32;
+
+/// Whether effect `next` goes on the text box's row that effect `prev` is in: the same shape's paragraphs, neither triggered, the
+/// paragraphs going on (a paragraph that does not come after the last one of the one before starts another row: the effects of
+/// paragraphs 0 and 1 twice are two rows, not one of four).
+fn continues_text_box_row(prev: &Animation, next: &Animation) -> bool {
+    prev.shape == next.shape && prev.trigger.is_none() && next.trigger.is_none() && matches!((prev.paragraph, next.paragraph), (Some(p), Some(n)) if n.0 > p.1)
+}
+
+/// The effects of one text box's paragraphs that stand together in the list (two or more in a row, none with a trigger) around
+/// effect `at`: the first and last of them, or `(at, at)` for an effect that is not one of them.
+pub(crate) fn paragraph_run(animations: &[ibis_doc_model::Animation], at: usize) -> (usize, usize) {
+    if animations.get(at).is_none_or(|a| a.paragraph.is_none() || !a.trigger.is_none()) {
+        return (at, at);
+    }
+    let (mut first, mut last) = (at, at);
+    while first > 0 && continues_text_box_row(&animations[first - 1], &animations[first]) {
+        first -= 1;
+    }
+    while last + 1 < animations.len() && continues_text_box_row(&animations[last], &animations[last + 1]) {
+        last += 1;
+    }
+    (first, last)
+}
+
+/// The key of the text box's row each effect is in (the same for the effects of one row; for the effects of no row, a key nothing
+/// opens).
+pub(crate) fn box_keys(animations: &[Animation]) -> Vec<BoxKey> {
+    let mut keys = Vec::with_capacity(animations.len());
+    let mut seen: Vec<(ShapeId, u32)> = Vec::new();
+    let mut at = 0;
+    while at < animations.len() {
+        let (first, last) = paragraph_run(animations, at);
+        let start = (animations[first].shape, animations[first].paragraph.map_or(0, |p| p.0));
+        // Two rows of one shape that begin at the same paragraph are told apart by their order in the list.
+        let nth = if last > first { let n = seen.iter().filter(|k| **k == start).count() as u32; seen.push(start); n } else { 0 };
+        keys.extend((first..=last).map(|_| (start.0, start.1, nth)));
+        at = last + 1;
+    }
+    keys
+}
+
+/// The effects after a row of the pane (`from`: the id its drag carries) is dropped on the row of effect `target`, `None` when
+/// the drop changes nothing. The same effects in another order: none is lost or made.
+///
+/// The effects of one text box's paragraphs stay together: another row dropped on one of them goes past all of them, a text box's
+/// row takes all of them along, and a paragraph's effect stays among its own.
+pub(crate) fn reordered_effects(animations: &[Animation], from: u64, target: usize, place: crate::shell::chrome::row_dnd::DropPlace) -> Option<Vec<Animation>> {
+    use crate::shell::chrome::row_dnd::DropPlace;
+    let group = from & GROUP_DRAG != 0;
+    let from = (from & !GROUP_DRAG) as usize;
+    if from >= animations.len() || target >= animations.len() || place == DropPlace::Into {
+        return None;
+    }
+    let (from_first, from_last) = paragraph_run(animations, from);
+    let (first, last) = paragraph_run(animations, target);
+    // What moves (the effect, or all a text box's) and the place it goes to (before the effect `at` of the list as it is).
+    let (moved, at) = if group {
+        if (first, last) == (from_first, from_last) {
+            return None;
+        }
+        ((from_first, from_last), if place == DropPlace::After { last + 1 } else { first })
+    } else {
+        if from_last > from_first && (first, last) != (from_first, from_last) {
+            return None;
+        }
+        let target = if from_last == from_first && last > first { if place == DropPlace::After { last } else { first } } else { target };
+        ((from, from), if place == DropPlace::After { target + 1 } else { target })
+    };
+    let mut all = animations.to_vec();
+    let block: Vec<Animation> = all.drain(moved.0..=moved.1).collect();
+    let at = if at > moved.1 { at - block.len() } else { at.min(moved.0) };
+    all.splice(at..at, block);
+    (all != animations).then_some(all)
 }

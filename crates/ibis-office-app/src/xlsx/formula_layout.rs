@@ -57,11 +57,11 @@ pub(crate) fn visual_lines(text: &str, width: f32, w: &Window) -> Vec<(usize, St
     out
 }
 impl SlideEditor {
-    pub(crate) fn cell_editor_width(&self, x: f32) -> f32 {
+    pub(crate) fn cell_editor_width(&self, x: f32, pane_delta: Pixels) -> f32 {
         self.workspace_bounds
             .zip(self.slide_layout())
             .map_or(f32::MAX, |(bounds, layout)| {
-                (f32::from(bounds.right() - layout.origin.x) - x - 14.).max(1.)
+                (f32::from(bounds.right() - layout.origin.x - pane_delta) - x - 14.).max(1.)
             })
     }
     fn formula_bar_max_height(&self, w: &Window) -> f32 {
@@ -155,7 +155,7 @@ impl SlideEditor {
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.focus_handle.is_focused(w)
-            || self.panel_dialog_is_modal()
+            || self.dialog_is_modal()
             || self.interaction_layer().is_confirmation()
         {
             return false;
@@ -168,7 +168,7 @@ impl SlideEditor {
         m: Modifiers,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.panel_dialog_is_modal() || self.interaction_layer().is_confirmation() {
+        if self.dialog_is_modal() || self.interaction_layer().is_confirmation() {
             return false;
         }
         let Some(e) = self.cell_edit() else {
@@ -217,6 +217,12 @@ impl SlideEditor {
                     .is_some_and(|(a, l)| (*a..=*a + l.encode_utf16().count()).contains(&caret))
             })
             .unwrap_or_else(|| lines.iter().rposition(|(s, _)| *s <= caret).unwrap_or(0));
+        // In the cell: the displayed line the caret is on (where two lines meet, the one it was put on).
+        let row = if e.dragging_in_bar {
+            row
+        } else {
+            e.layout.borrow().as_ref().filter(|l| !l.lines.is_empty()).map_or(row, |l| e.displayed_line(l))
+        };
         let to = match key {
             "home" if whole => 0,
             "end" if whole => len,
@@ -224,6 +230,9 @@ impl SlideEditor {
             "end" => lines
                 .get(row)
                 .map_or(len, |l| l.0 + l.1.encode_utf16().count()),
+            // The first line's ↑ goes to the start of the text, the last line's ↓ to its end.
+            "up" if e.dragging_in_bar && row == 0 => 0,
+            "down" if e.dragging_in_bar && row + 1 >= lines.len() => len,
             "up" | "down" if e.dragging_in_bar => {
                 let target = if key == "up" {
                     row.saturating_sub(1)
@@ -300,6 +309,7 @@ impl SlideEditor {
         };
         self.wb_mut().bar_caret_row = hint;
         let e = self.cell_edit_mut().unwrap();
+        e.line_nav.set(super::cell_edit::LineNav { row: (!in_bar && matches!(key, "home" | "end") && !whole).then_some(row), goal: None });
         e.anchor = if m.shift {
             Some(e.anchor.unwrap_or(caret))
         } else {

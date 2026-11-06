@@ -18,6 +18,20 @@ pub enum AnimationClass {
     Exit,
     /// アニメーションの軌跡: the shape moves along a path.
     Path,
+    /// メディア (`presetClass="mediacall"`): the effect does not move its shape, it plays, pauses or stops the video or
+    /// audio the shape holds ([`AnimationLook::Media`]).
+    Media,
+}
+
+/// What a メディア effect does to its clip (the `p:cmd` of the effect).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaCommand {
+    /// 再生 (`playFrom(..)`, preset 1).
+    Play,
+    /// 一時停止 (`togglePause`, preset 2): pauses a playing clip and resumes a paused one.
+    Pause,
+    /// 停止 (`stop`, preset 3).
+    Stop,
 }
 
 /// When an effect starts (`nodeType`).
@@ -65,6 +79,11 @@ pub enum AnimationLook {
     Wipe(AnimationSide),
     /// インクの再生 (Replay): animates an ink shape.
     Replay,
+    /// Any other 開始・終了 effect (PowerPoint's presets by `presetID`): played as the effect's own behaviours
+    /// ([`Animation::behaviors`]) say.
+    Preset,
+    /// 再生・一時停止・停止 of a video or an audio ([`AnimationClass::Media`]).
+    Media(MediaCommand),
     /// Anything else: shown as the class says, without movement.
     Other,
 }
@@ -196,6 +215,8 @@ pub struct Animation {
     pub dgm_element: Option<DiagramAnimationElement>,
     /// The diagram build step (`p:bldDgm`).
     pub dgm_build: Option<DiagramBuildStep>,
+    /// The effect's behaviours (`p:set`, `p:anim`, `p:animEffect`…) for [`AnimationLook::Preset`]; empty for the others.
+    pub behaviors: Vec<crate::animation_preset::AnimBehavior>,
 }
 
 /// How a chart's elements are built in animation (`ST_ChartBuildStep` in ECMA-376 Part 1 19.5.15).
@@ -291,6 +312,19 @@ pub struct DiagramAnimationElement {
 }
 
 impl Animation {
+    /// Whether it plays, pauses or stops a clip (class メディア) instead of moving its shape.
+    pub fn is_media(&self) -> bool {
+        self.class == AnimationClass::Media
+    }
+
+    /// The clip command of a メディア effect.
+    pub fn media_command(&self) -> Option<MediaCommand> {
+        match self.look {
+            AnimationLook::Media(c) => Some(c),
+            _ => None,
+        }
+    }
+
     /// Whether the animation has smooth start acceleration (`accel > 0`).
     pub fn smooth_start(&self) -> bool {
         self.accel > 0

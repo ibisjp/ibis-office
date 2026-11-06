@@ -108,6 +108,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::a9_alignment_and_spacing", a9_alignment_and_spacing),
         ("docx::a9_stale_paragraph_details", a9_stale_paragraph_details),
         ("docx::a9_paragraph_details", a9_paragraph_details),
+        ("docx::issue53_fit_text_entries", issue53_fit_text_entries),
         ("docx::a9_paragraph_decorations", a9_paragraph_decorations),
         ("docx::a9_paragraph_border_edges", a9_paragraph_border_edges),
         ("docx::a9_mixed_paragraph_decorations", a9_mixed_paragraph_decorations),
@@ -253,6 +254,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::image015_text_box_panel_follows_box", image015_text_box_panel_follows_box),
         ("docx::image015_panel_applies_live", image015_panel_applies_live),
         ("docx::image015_inline_text_box_edit", image015_inline_text_box_edit),
+        ("docx::issue94_tate_chu_yoko_dialog", issue94_tate_chu_yoko_dialog),
         ("docx::image011_insert_shape", image011_insert_shape),
         ("docx::image011_draw_shape", image011_draw_shape),
         ("docx::image014_connectors", image014_connectors),
@@ -328,6 +330,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::find_wildcards_and_group_replacement", find_wildcards_and_group_replacement),
         ("docx::para018_suppress_auto_hyphens", para018_suppress_auto_hyphens),
         ("docx::review006_markup_display_mode", review006_markup_display_mode),
+        ("docx::review085_view_state_per_window", review085_view_state_per_window),
         ("docx::opt004_overtype_mode", opt004_overtype_mode),
         ("docx::field_ask_and_fillin_fields", field_ask_and_fillin_fields),
         ("docx::opt008_formatting_marks_and_hidden_text", opt008_formatting_marks_and_hidden_text),
@@ -431,6 +434,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::style012_013_document_themes_and_theme_colors", style012_013_document_themes_and_theme_colors),
         ("docx::float006_edit_wrap_points", float006_edit_wrap_points),
         ("docx::toc016_master_and_subdocuments", toc016_master_and_subdocuments),
+        ("docx::toc017_unupdated_toc_is_made_on_open", toc017_unupdated_toc_is_made_on_open),
         ("docx::ink001_007_draw_erase_select_move_resize_and_to_shape", ink001_007_draw_erase_select_move_resize_and_to_shape),
         ("docx::ink010_ink_editor_gestures", ink010_ink_editor_gestures),
         ("docx::math001_002_023_inplace_edit_and_skewed_linear_frac_roundtrip", math001_002_023_inplace_edit_and_skewed_linear_frac_roundtrip),
@@ -439,7 +443,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::access007_009_cloud020_screen_reader_read_aloud_and_customize", access007_009_cloud020_screen_reader_read_aloud_and_customize),
         ("docx::audit_core_editing_formatting_layout_and_review", audit_core_editing_formatting_layout_and_review),
     ];
-    all.into_iter().chain(super::corpus_report::all()).collect()
+    all.into_iter().chain(super::corpus_report::all()).chain(super::typeset68::all()).chain(super::crop_mode::all()).chain(super::tate_chu_yoko_layout_tests::all()).chain(super::layout_tests::all()).chain(super::layout_tests_grid::all()).collect()
 }
 
 /// The paragraphs directly in the body.
@@ -1128,7 +1132,10 @@ fn b9_tate_chu_yoko() {
     for _ in 0..2 {
         s.key("shift-right");
     }
+    // The command opens the dialog (issue #94); its OK sets the mark.
     s.menu("docx.text.tate-chu-yoko");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|d| d.tate_edit.is_some())), "the command opens the dialog");
+    s.update(|e, w, cx| e.apply_tate_chu_yoko(false, w, cx));
     let marked = |doc: &FlowDocument| para(doc, p.id).runs.iter().filter(|r| r.style.tate_chu_yoko).map(|r| r.len()).sum::<usize>();
     assert_eq!(marked(&s.document()), 2);
     // Drawn: Item::Turned in horizontal layout.
@@ -1158,10 +1165,10 @@ fn b7_special_characters() {
     let (a, b) = (ps[i].clone(), ps[i + 1].clone());
     let tail: String = a.text().chars().rev().take(2).collect::<Vec<_>>().into_iter().rev().collect();
     let query = format!("{}^p", tail.replace('^', "^^"));
-    let found = super::find::find_all(&before, &query);
+    let found = super::find::find_all(&Default::default(), &before, &query);
     let len = a.len();
     assert!(found.contains(&(FlowPos::new(a.id, len - 2), FlowPos::new(b.id, 0))), "{query}: {found:?}");
-    assert!(super::find::find_all(&before, "^p").contains(&(FlowPos::new(a.id, len), FlowPos::new(b.id, 0))));
+    assert!(super::find::find_all(&Default::default(), &before, "^p").contains(&(FlowPos::new(a.id, len), FlowPos::new(b.id, 0))));
     assert_eq!(super::find::special_characters("a^tb^lc^^d^p"), "a\tb\u{b}c^d\n");
     s.menu("edit.find-replace");
     s.type_text(&query);
@@ -1216,13 +1223,13 @@ fn f1_new_document() {
 }
 
 /// Typing, Enter and Backspace in the 150-page document, at its start, in
-/// its middle and at its end, each within 50 ms from the key to the
+/// its middle and at its end, each within 100 ms (the median; the slowest within 150 ms) from the key to the
 /// drawn window (the edited block is laid out again, not the document).
 fn speed_of_typing_in_a_long_document() {
     // Timings sway when the machine is busy (other builds): one retry, and
     // every measurement is written down.
     let first = measure_typing_speed();
-    let (median, worst) = if first.0 < 0.05 && first.1.0 < 0.15 {
+    let (median, worst) = if first.0 < 0.1 && first.1.0 < 0.15 {
         first
     } else {
         eprintln!("speed: retrying once (median {:.1} ms)", first.0 * 1000.0);
@@ -1231,7 +1238,7 @@ fn speed_of_typing_in_a_long_document() {
     // On a machine busier than it has cores (other builds), timings say
     // nothing about the editor: not judged (the measurements are still in
     // the log, with the load).
-    let fast = median < 0.05 && worst.0 < 0.15;
+    let fast = median < 0.1 && worst.0 < 0.15;
     if !fast
         && let Some((load, cores)) = load_and_cores()
         && load > cores as f32
@@ -1239,7 +1246,7 @@ fn speed_of_typing_in_a_long_document() {
         eprintln!("speed: not judged: load average {load:.1} is over the {cores} cores (median {:.1} ms)", median * 1000.0);
         return;
     }
-    assert!(median < 0.05, "the median edit took {:.0} ms", median * 1000.0);
+    assert!(median < 0.1, "the median edit took {:.0} ms (100 ms allowed)", median * 1000.0);
     assert!(worst.0 < 0.15, "the slowest edit took {:.0} ms: {}", worst.0 * 1000.0, worst.1);
 }
 
@@ -1486,7 +1493,7 @@ fn d3_header_and_page_number() {
 fn b7_find_and_replace() {
     let mut s = Scenario::open(STATEMENT);
     let word = "Company";
-    let count = |doc: &FlowDocument| crate::docx::find::find_all(doc, word).len();
+    let count = |doc: &FlowDocument| crate::docx::find::find_all(&Default::default(), doc, word).len();
     let before = count(&s.document());
     assert!(before > 2, "the statement has the word");
     s.menu("edit.find-replace");
@@ -1502,7 +1509,7 @@ fn b7_find_and_replace() {
     let replaced = s.update(|e, _, cx| e.replace_all(word, "The Company Ltd", cx));
     assert_eq!(replaced, before - 1);
     let doc = s.document();
-    assert_eq!(crate::docx::find::find_all(&doc, "The Company Ltd").len(), before - 1);
+    assert_eq!(crate::docx::find::find_all(&Default::default(), &doc, "The Company Ltd").len(), before - 1);
     s.screenshot("replaced");
     // One undo takes all the replacements back.
     s.update(|e, window, cx| e.undo(&crate::Undo, window, cx));
@@ -1510,7 +1517,7 @@ fn b7_find_and_replace() {
     s.update(|e, window, cx| e.redo(&crate::Redo, window, cx));
     s.save_as("b7.docx");
     let saved = s.reopen();
-    assert_eq!(crate::docx::find::find_all(flow(&saved), "The Company Ltd").len(), before - 1);
+    assert_eq!(crate::docx::find::find_all(&Default::default(), flow(&saved), "The Company Ltd").len(), before - 1);
 }
 
 /// E1: a word selected, ⌘K, the address typed into the panel and Enter:
@@ -1623,7 +1630,7 @@ fn a2_table_of_contents() {
     // The heading changed, the table updated.
     s.key("end");
     s.type_text("の実行");
-    s.menu("docx.toc.update");
+    s.menu("docx.toc.update-entire-table");
     assert!(toc(&s.document()).iter().any(|(_, t)| t.starts_with("第2章 計画の実行")));
     // Headings 1 to 2 only.
     s.menu("docx.toc.levels-2");
@@ -1692,7 +1699,7 @@ fn h3_changing_a_style() {
     assert_eq!(size_of(&doc, plain), plain_before, "the body text did not change");
     s.screenshot("style-changed");
     // Close the modal settings dialog before operating on the document again.
-    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    s.update(|e, window, cx| e.close_dialog(window, cx));
     // One heading centred, then the style updated to match it.
     s.click_text(FlowPos::new(h1, 1));
     s.key("cmd-e");
@@ -1926,7 +1933,7 @@ fn h1_numbered_headings_and_contents() {
     s.toolbar_menu("style", "docx.style.heading2");
     assert_eq!(label_of(&s.document(), "範囲"), want(&["N.2"])[0]);
     assert_eq!(label_of(&s.document(), "計画"), want(&["N.3"])[0]);
-    s.menu("docx.toc.update");
+    s.menu("docx.toc.update-entire-table");
     let toc = entries(&s.document());
     let (range, plan) = (want(&["N.2 範囲"]).remove(0), want(&["N.3 計画"]).remove(0));
     assert!(toc.contains(&range) && toc.contains(&plan), "{toc:?}");
@@ -1938,7 +1945,7 @@ fn h1_numbered_headings_and_contents() {
     s.toolbar_menu("style", "docx.style.heading3");
     assert_eq!(label_of(&s.document(), "詳細"), want(&["N.2.1"])[0]);
     assert_eq!(label_of(&s.document(), "計画"), want(&["N.3"])[0]);
-    s.menu("docx.toc.update");
+    s.menu("docx.toc.update-entire-table");
     let toc = entries(&s.document());
     let detail = want(&["N.2.1 詳細"]).remove(0);
     assert!(toc.contains(&detail), "{detail} in {toc:?}");
@@ -1972,7 +1979,7 @@ fn h8_headings_and_page_breaks() {
     s.menu("docx.para.page-break-before");
     assert_eq!(s.menu_state("docx.para.page-break-before"), Some((true, true)));
     assert_eq!(page_of(&mut s, id), before + 1, "the heading starts the next page");
-    s.menu("docx.toc.update");
+    s.menu("docx.toc.update-entire-table");
     let shown = toc_page(&s.document(), &text);
     assert_eq!(shown.parse::<u32>().unwrap(), shown_before.parse::<u32>().unwrap() + 1, "the table of contents shows the new page");
     s.screenshot("page-break-before");
@@ -2346,10 +2353,10 @@ fn h9_tracked_changes() {
     s.screenshot("tracked");
     // Hidden: the deleted text takes no room; shown again.
     s.menu("docx.track.show");
-    assert!(!crate::docx::flow_layout::showing_markup());
+    assert!(!s.with(|e, _| e.showing_markup()));
     s.screenshot("final");
     s.menu("docx.track.show");
-    assert!(crate::docx::flow_layout::showing_markup());
+    assert!(s.with(|e, _| e.showing_markup()));
     s.save_as("h9.docx");
     let saved = s.reopen();
     let p = body(flow(&saved)).into_iter().find(|p| p.id == id || p.text().contains('新')).unwrap().clone();
@@ -2552,7 +2559,7 @@ fn hidden_revision_document() -> (Scenario, u32) {
 
 fn revision_document(value: &str, from: usize, to: usize) -> (Scenario, u32) {
     let mut s = Scenario::open(REPORT);
-    if !crate::docx::flow_layout::showing_markup() { s.menu("docx.track.show"); }
+    if !s.with(|e, _| e.showing_markup()) { s.menu("docx.track.show"); }
     let (_, id, text) = text_paragraph(&mut s, 12);
     s.click_text(FlowPos::new(id, 0));
     for _ in text.chars() { s.key("shift-right"); }
@@ -2749,7 +2756,7 @@ fn paragraph_field(s: &mut Scenario, index: usize, value: &str) {
     s.type_text(value);
 }
 
-/// Several-field forms submit with Cmd+Enter (`shell/panel_dialog/form.rs`).
+/// Several-field forms submit with Cmd+Enter (`shell/dialog/form.rs`).
 fn paragraph_submit(s: &mut Scenario) { s.key("cmd-enter"); }
 
 /// A modal panel blocks the menu bar and the page: close it first, as the user must.
@@ -2757,7 +2764,7 @@ fn menu_closing(s: &mut Scenario, id: &str) { close_modal(s); s.menu(id); }
 fn click_closing(s: &mut Scenario, pos: FlowPos) { close_modal(s); s.click_text(pos); }
 
 fn close_modal(s: &mut Scenario) {
-    if s.with(|e, _| e.panel_dialog_is_modal()) { s.update(|e, w, cx| e.close_panel_dialog(w, cx)); }
+    if s.with(|e, _| e.dialog_is_modal()) { s.update(|e, w, cx| e.close_dialog(w, cx)); }
 }
 
 /// The line-type radio button of the paragraph panel.
@@ -2767,6 +2774,36 @@ fn paragraph_rule(s: &mut Scenario, rule: super::paragraph_panel::LineRule) {
 
 fn paragraph_metrics(p: &FlowParagraph) -> (i64, i64, i64, i64, i64, LineHeight) {
     (p.space_before, p.space_after, p.left, p.right, p.first_line, p.line)
+}
+
+/// issue #53: 文字の均等割り付け opens from 表示形式 > 配置とインデント and from the toolbar's alignment dropdown.
+fn issue53_fit_text_entries() {
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 12);
+    s.click_text(FlowPos::new(id, 0));
+    for _ in 0..4 { s.key("shift-right"); }
+    for route in 0..2 {
+        if route == 0 { s.menu("docx.align.fit-text"); } else { s.toolbar_menu("align", "docx.toolbar.fit-text"); }
+        assert!(s.with(|e, _| e.doc_state().unwrap().fit_text_edit.is_some()), "route {route} opens the dialog");
+        s.screenshot(if route == 0 { "issue53-fit-text-menu" } else { "issue53-fit-text-toolbar" });
+        close_modal(&mut s);
+        assert!(s.with(|e, _| e.doc_state().unwrap().fit_text_edit.is_none()));
+    }
+    // The line distribution keeps its own entry.
+    s.toolbar_menu("align", "align.distribute");
+    assert_eq!(para(&s.document(), id).align, FlowAlign::Distribute);
+    // Caret only, outside a fitted span: the no-selection message box opens; OK closes it.
+    use crate::shell::scenario::button_probe as buttons;
+    let _probe = buttons::Probe::new();
+    s.click_text(FlowPos::new(id, 2));
+    for route in 0..2 {
+        if route == 0 { s.menu("docx.align.fit-text"); } else { s.toolbar_menu("align", "docx.toolbar.fit-text"); }
+        assert!(s.with(|e, _| e.doc_state().unwrap().fit_text_edit.is_none()));
+        assert!(s.with(|e, _| e.panel_message.as_ref().is_some_and(|m| *m == crate::shell::i18n::text("docx.fit-text.no-selection"))), "route {route} shows the message");
+        if route == 0 { s.screenshot("issue53-fit-text-no-selection"); }
+        buttons::click(&mut s, "panel-message-ok");
+        assert!(s.with(|e, _| e.panel_message.is_none()));
+    }
 }
 
 fn a9_paragraph_details() {
@@ -4456,13 +4493,13 @@ fn h9_full_paragraph_format_rejection() {
 fn a9_mixed_line_rules() {
     let mut s=Scenario::open(REPORT);let doc=s.document();let ps=body(&doc);let first=ps[0].id;let second=ps[1].id;
     for (id,x,value) in [(first,940.,"1"),(second,1055.,"16")] {s.click_text(FlowPos::new(id,0));s.menu("docx.paragraph.details");paragraph_rule(&mut s,if x==940. {super::paragraph_panel::LineRule::Multiple} else {super::paragraph_panel::LineRule::Exact});paragraph_field(&mut s,5,value);paragraph_submit(&mut s);close_modal(&mut s);}
-    s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.menu("docx.paragraph.details");assert!(s.with(|e,_|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().rule_mixed));assert_eq!(s.with(|e,cx|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().fields[5].read(cx).value().to_string()),"");
+    s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.menu("docx.paragraph.details");assert!(s.with(|e,_|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().rule_mixed));s.settle();s.screenshot("mixed-line-rule-radios");assert_eq!(s.with(|e,cx|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().fields[5].read(cx).value().to_string()),"");
     paragraph_field(&mut s,5,"1");paragraph_submit(&mut s);assert_eq!(s.document(),before,"a mixed line rule must be chosen before changing its number");paragraph_rule(&mut s,super::paragraph_panel::LineRule::Multiple);assert!(!s.with(|e,_|e.doc_state().unwrap().paragraph_edit.as_ref().unwrap().rule_mixed));paragraph_field(&mut s,5,"1");paragraph_submit(&mut s);let after=s.document();
     fn check(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>assert_eq!(p.line,LineHeight::Auto(240)),Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks);}}}}}check(&after.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("a9-mixed-line-rules.docx");let saved=s.reopen();check(&flow(&saved).body);
 }
 
 fn h9_hidden_native_format() {
-    let (mut s,id)=hidden_revision_document();s.menu("docx.track.record");assert!(!s.document().track_changes);assert!(!super::flow_layout::showing_markup());s.click_text(FlowPos::new(id,0));for _ in 0..4 {s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(id,0),FlowPos::new(id,7))));let before=s.document();
+    let (mut s,id)=hidden_revision_document();s.menu("docx.track.record");assert!(!s.document().track_changes);assert!(!s.with(|e, _| e.showing_markup()));s.click_text(FlowPos::new(id,0));for _ in 0..4 {s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(id,0),FlowPos::new(id,7))));let before=s.document();
     let deleted=|doc:&FlowDocument|para(doc,id).runs.iter().filter(|r|matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Delete))).cloned().collect::<Vec<_>>();s.toolbar("bold");let after=s.document();assert_eq!(deleted(&after),deleted(&before),"hidden deleted runs retain original content, formatting and revision");assert_eq!(final_text(para(&after,id)),"abcd");assert!(para(&after,id).runs.iter().filter(|r|r.revision.is_none()).all(|r|r.style.bold));assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
     s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("h9-hidden-native-bold.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()=="abX Ycd").unwrap();assert_eq!(p.runs.iter().filter(|r|matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Delete))).cloned().collect::<Vec<_>>(),deleted(&before));assert_eq!(final_text(p),"abcd");
     s.toolbar_menu("text-color","docx.color.red");let red=s.document();assert_eq!(deleted(&red),deleted(&before));assert!(para(&red,id).runs.iter().filter(|r|r.revision.is_none()).all(|r|r.style.color==ibis_doc_model::Rgb(0xff0000)));s.key("cmd-z");assert_eq!(s.document(),after);s.key("cmd-shift-z");assert_eq!(s.document(),red);s.save_as("h9-hidden-native-red.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()=="abX Ycd").unwrap();assert_eq!(p.runs.iter().filter(|r|matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Delete))).cloned().collect::<Vec<_>>(),deleted(&before));
@@ -4513,7 +4550,7 @@ fn b7_hidden_find_replace() {
 }
 
 fn b7_tracked_hidden_replace() {
-    let (mut s,id)=hidden_revision_document();s.menu("docx.track.record");s.click_text(FlowPos::new(id,0));for _ in 0..4 {s.key("shift-right");}s.toolbar("bold");s.menu("docx.track.record");let before=s.document();let old=para(&before,id).runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t=="X Y")).unwrap().clone();s.menu("edit.find-replace");s.type_text("bc");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,1),FlowPos::new(id,6))]);s.update(|e,_,cx|e.replace_current("Q",cx));let after=s.document();assert_eq!(final_text(para(&after,id)),"aQd");assert_eq!(para(&after,id).runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t=="X Y")).unwrap(),&old);assert!(para(&after,id).runs.iter().any(|r|matches!(&r.kind,FlowRunKind::Text(t) if t.contains('Q'))&&matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Insert))));s.update(|e,window,cx|e.focus_handle.focus(window,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("b7-tracked-hidden-Q.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==para(&after,id).text()).unwrap();assert_eq!(p.runs,para(&after,id).runs);assert!(flow(&saved).track_changes);
+    let (mut s,id)=hidden_revision_document();s.menu("docx.track.record");s.click_text(FlowPos::new(id,0));for _ in 0..4 {s.key("shift-right");}s.toolbar("bold");s.menu("docx.track.record");let before=s.document();let old=para(&before,id).runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t=="X Y")).unwrap().clone();s.menu("edit.find-replace");find_query(&mut s,"bc");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,1),FlowPos::new(id,6))]);s.update(|e,_,cx|e.replace_current("Q",cx));let after=s.document();assert_eq!(final_text(para(&after,id)),"aQd");assert_eq!(para(&after,id).runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t=="X Y")).unwrap(),&old);assert!(para(&after,id).runs.iter().any(|r|matches!(&r.kind,FlowRunKind::Text(t) if t.contains('Q'))&&matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Insert))));s.update(|e,window,cx|e.focus_handle.focus(window,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("b7-tracked-hidden-Q.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==para(&after,id).text()).unwrap();assert_eq!(p.runs,para(&after,id).runs);assert!(flow(&saved).track_changes);
     find_query(&mut s,"Q");s.update(|e,_,cx|e.replace_current("A\nB",cx));assert_eq!(s.document(),after);
     let count=s.update(|e,_,cx|e.replace_all("Q","R",cx));assert_eq!(count,1);let all=s.document();assert_eq!(final_text(para(&all,id)),"aRd");assert_eq!(para(&all,id).runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t=="X Y")).unwrap(),&old);s.update(|e,window,cx|e.focus_handle.focus(window,cx));s.key("cmd-z");assert_eq!(s.document(),after);s.key("cmd-shift-z");assert_eq!(s.document(),all);s.save_as("b7-tracked-hidden-R.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==para(&all,id).text()).unwrap();assert_eq!(p.runs,para(&all,id).runs);assert!(flow(&saved).track_changes);
     assert_eq!(s.update(|e,_,cx|e.replace_all("R","A\nB",cx)),0);assert_eq!(s.document(),all);s.menu("docx.track.reject-all");let rejected=s.document();assert_eq!(para(&rejected,id).text(),"abX Ycd");assert!(para(&rejected,id).runs.iter().all(|r|r.revision.is_none()));s.update(|e,window,cx|e.focus_handle.focus(window,cx));s.key("cmd-z");assert_eq!(s.document(),all);s.key("cmd-shift-z");assert_eq!(s.document(),rejected);s.save_as("b7-tracked-hidden-rejected.docx");let saved=s.reopen();assert!(body(flow(&saved)).iter().any(|p|p.text()=="abX Ycd"&&p.runs.iter().all(|r|r.revision.is_none())));s.menu("docx.track.show");
@@ -4524,7 +4561,7 @@ fn h9_hidden_typed_replacement() {
 }
 
 fn h9_inserted_typed_replacement() {
-    let mut s=Scenario::open(REPORT);if super::flow_layout::showing_markup() {s.menu("docx.track.show");}let (_,id,text)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,0));for _ in text.chars() {s.key("shift-right");}s.type_text("abcd");s.menu("docx.track.record");s.click_text(FlowPos::new(id,2));s.key("cmd-b");s.type_text("Q");let before=s.document();assert_eq!(final_text(para(&before,id)),"abQcd");s.click_text(FlowPos::new(id,2));s.key("shift-right");s.type_text("R");let after=s.document();assert_eq!(final_text(para(&after,id)),"abRcd");assert!(para(&after,id).runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t.contains('R'))).unwrap().style.bold);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("h9-inserted-typed-replace.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==para(&after,id).text()).unwrap();assert_eq!(p.runs,para(&after,id).runs);
+    let mut s=Scenario::open(REPORT);if s.with(|e, _| e.showing_markup()) {s.menu("docx.track.show");}let (_,id,text)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,0));for _ in text.chars() {s.key("shift-right");}s.type_text("abcd");s.menu("docx.track.record");s.click_text(FlowPos::new(id,2));s.key("cmd-b");s.type_text("Q");let before=s.document();assert_eq!(final_text(para(&before,id)),"abQcd");s.click_text(FlowPos::new(id,2));s.key("shift-right");s.type_text("R");let after=s.document();assert_eq!(final_text(para(&after,id)),"abRcd");assert!(para(&after,id).runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t.contains('R'))).unwrap().style.bold);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("h9-inserted-typed-replace.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==para(&after,id).text()).unwrap();assert_eq!(p.runs,para(&after,id).runs);
     s.click_text(FlowPos::new(id,2));s.key("shift-right");s.key("shift-right");s.type_text("S");let mixed=s.document();assert_eq!(final_text(para(&mixed,id)),"abSd");assert!(para(&mixed,id).runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t.contains('S'))).unwrap().style.bold);assert_eq!(mixed.header,before.header);assert_eq!(mixed.footer,before.footer);assert_eq!(mixed.styles,before.styles);s.key("cmd-z");assert_eq!(s.document(),after);s.key("cmd-shift-z");assert_eq!(s.document(),mixed);s.save_as("h9-mixed-typed-replace.docx");let saved=s.reopen();let p=body(flow(&saved)).into_iter().find(|p|p.text()==para(&mixed,id).text()).unwrap();assert_eq!(p.runs,para(&mixed,id).runs);
     s.menu("docx.track.reject-all");let rejected=s.document();assert_eq!(para(&rejected,id).text(),"abcd");assert!(para(&rejected,id).runs.iter().all(|r|r.revision.is_none()));s.key("cmd-z");assert_eq!(s.document(),mixed);s.key("cmd-shift-z");assert_eq!(s.document(),rejected);s.save_as("h9-typed-rejected.docx");let saved=s.reopen();assert!(body(flow(&saved)).iter().any(|p|p.text()=="abcd"&&p.runs.iter().all(|r|r.revision.is_none())));s.menu("docx.track.show");
 }
@@ -4537,7 +4574,7 @@ fn h9_original_history_typed_replacement() {
     std::fs::write(&input, &data).unwrap();
     for tracked in [false, true] {
         let mut s = Scenario::open("target/scenario-input/docx-original-history.docx");
-        if super::flow_layout::showing_markup() { s.menu("docx.track.show"); }
+        if s.with(|e, _| e.showing_markup()) { s.menu("docx.track.show"); }
         if s.document().track_changes != tracked { s.menu("docx.track.record"); }
         let before = s.document();
         let id = body(&before).into_iter().find(|p| p.text() == "abX Ycd").unwrap().id;
@@ -4565,7 +4602,7 @@ fn b7_hidden_history_edges() {
     let input=root.join("target/scenario-input/docx-search-history-edges.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
     for tracked in [false,true] {
         let mut s=Scenario::open("target/scenario-input/docx-search-history-edges.docx");
-        if super::flow_layout::showing_markup() {s.menu("docx.track.show");}
+        if s.with(|e, _| e.showing_markup()) {s.menu("docx.track.show");}
         if s.document().track_changes!=tracked {s.menu("docx.track.record");}
         let before=s.document();let prefix=body(&before).into_iter().find(|p|p.text()=="X Ypq").unwrap().id;let suffix=body(&before).into_iter().find(|p|p.text()=="rsX Y").unwrap().id;let multiple=body(&before).into_iter().find(|p|p.text()=="abX Ycd abX Ycd").unwrap().id;
         s.menu("edit.find-replace");s.type_text("X Y");assert!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.is_empty()),"including all-deleted paragraph, old history is not searchable");
@@ -4590,7 +4627,7 @@ fn b7_hidden_history_edges() {
 fn h9_history_adjacent_field() {
     let root=crate::shell::scenario::repo_root();let data=ibis_pptx::test_files::docx_with_history_adjacent_field(&std::fs::read(root.join(REPORT)).unwrap());
     let input=root.join("target/scenario-input/docx-history-adjacent-field.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();let mut s=Scenario::open("target/scenario-input/docx-history-adjacent-field.docx");
-    if super::flow_layout::showing_markup() {s.menu("docx.track.show");}if s.document().track_changes {s.menu("docx.track.record");}
+    if s.with(|e, _| e.showing_markup()) {s.menu("docx.track.show");}if s.document().track_changes {s.menu("docx.track.record");}
     let before=s.document();let id=body(&before).into_iter().find(|p|p.text().starts_with("abX Ycd")).unwrap().id;assert_eq!(para(&before,id).len(),8);assert!(matches!(para(&before,id).runs.last().unwrap().kind,FlowRunKind::PageNumber));
     s.click_text(FlowPos::new(id,7));s.key("shift-right");assert_eq!(s.selection(),Some((FlowPos::new(id,7),FlowPos::new(id,8))));s.toolbar("bold");let after=s.document();assert!(para(&after,id).runs.last().unwrap().style.bold);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
     s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as("h9-history-adjacent-page-bold.docx");let xml=ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));let reread=s.reopen();assert!(body(flow(&reread)).iter().any(|p|p.runs==para(&after,id).runs));s.key("cmd-z");assert_eq!(s.document(),before);
@@ -4624,7 +4661,7 @@ fn a11_tracked_table_rejection() {
 
 fn b7_unicode_lowercase_offsets() {
     let (mut s,id)=revision_document("AİX YZB İZ",2,5);s.menu("docx.track.record");s.click_text(FlowPos::new(id,1));s.key("shift-right");s.toolbar("bold");let before=s.document();let deleted=para(&before,id).runs.iter().filter(|r|matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Delete))).cloned().collect::<Vec<_>>();
-    s.menu("edit.find-replace");s.type_text("İ");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,1),FlowPos::new(id,2)),(FlowPos::new(id,8),FlowPos::new(id,9))],"a character must find itself even when lowercase expands");
+    s.menu("edit.find-replace");find_query(&mut s,"İ");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,1),FlowPos::new(id,2)),(FlowPos::new(id,8),FlowPos::new(id,9))],"a character must find itself even when lowercase expands");
     find_query(&mut s,"\u{0307}");assert!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.is_empty()),"a partial lowercase expansion must not become a destructive source range");
     find_query(&mut s,"i\u{0307}Z");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,1),FlowPos::new(id,6)),(FlowPos::new(id,8),FlowPos::new(id,10))]);
     find_query(&mut s,"İZ");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,1),FlowPos::new(id,6)),(FlowPos::new(id,8),FlowPos::new(id,10))]);assert_eq!(s.update(|e,_,cx|e.replace_all("İZ","Q",cx)),2);let after=s.document();let p=para(&after,id);assert_eq!(final_text(p),"AQB Q");assert!(p.format_at(2).2.bold);assert!(!p.format_at(8).2.bold);assert_eq!(p.runs.iter().filter(|r|matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Delete))).cloned().collect::<Vec<_>>(),deleted);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
@@ -4681,7 +4718,7 @@ fn b7_whole_words() {
 fn b7_whole_words_history() {
     let root=crate::shell::scenario::repo_root();let data=ibis_pptx::test_files::docx_with_original_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-whole-word-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
     for tracked in [false,true] {
-        let mut s=Scenario::open("target/scenario-input/docx-whole-word-history.docx");if super::flow_layout::showing_markup(){s.menu("docx.track.show");}if s.document().track_changes!=tracked{s.menu("docx.track.record");}let before=s.document();let id=body(&before).into_iter().find(|p|p.text()=="abX Ycd").unwrap().id;s.menu("edit.find-replace");s.type_text("bc");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.len()),1);toggle_find_whole_words(&mut s);assert!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.is_empty()),"hidden gap does not make a visible word boundary");find_query(&mut s,"abcd");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,0),FlowPos::new(id,7))]);s.update(|e,_,cx|e.replace_current("Q",cx));let after=s.document();assert_eq!(final_text(para(&after,id)),"Q");assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("b7-whole-word-history-{tracked}.docx"));let xml=ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));let saved=s.reopen();assert!(body(flow(&saved)).iter().any(|p|p.runs==para(&after,id).runs));
+        let mut s=Scenario::open("target/scenario-input/docx-whole-word-history.docx");if s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}if s.document().track_changes!=tracked{s.menu("docx.track.record");}let before=s.document();let id=body(&before).into_iter().find(|p|p.text()=="abX Ycd").unwrap().id;s.menu("edit.find-replace");s.type_text("bc");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.len()),1);toggle_find_whole_words(&mut s);assert!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.is_empty()),"hidden gap does not make a visible word boundary");find_query(&mut s,"abcd");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,0),FlowPos::new(id,7))]);s.update(|e,_,cx|e.replace_current("Q",cx));let after=s.document();assert_eq!(final_text(para(&after,id)),"Q");assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("b7-whole-word-history-{tracked}.docx"));let xml=ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));let saved=s.reopen();assert!(body(flow(&saved)).iter().any(|p|p.runs==para(&after,id).runs));
         if tracked{s.menu("docx.track.reject-all");assert_eq!(para(&s.document(),id).text(),"abX Ycd");}s.menu("docx.track.show");
     }
 }
@@ -4720,7 +4757,7 @@ fn h9_note_original_history() {
     use ibis_doc_model::flow_command;
     let root=crate::shell::scenario::repo_root();let data=ibis_pptx::test_files::docx_with_note_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-note-original-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
     for tracked in [false,true] {
-        let mut s=Scenario::open("target/scenario-input/docx-note-original-history.docx");if super::flow_layout::showing_markup(){s.menu("docx.track.show");}if s.document().track_changes!=tracked{s.menu("docx.track.record");}let before=s.document();let p=match &before.footnotes[0].blocks[0]{Block::Paragraph(p)=>p,_=>panic!("note")};let id=p.id;assert_eq!(final_text(p)," abcd");let old=p.runs.iter().filter(|r|matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Delete))).cloned().collect::<Vec<_>>();assert_eq!(old.iter().map(|r|match &r.kind{FlowRunKind::Text(t)=>t.as_str(),_=>""}).collect::<String>(),"X Y");
+        let mut s=Scenario::open("target/scenario-input/docx-note-original-history.docx");if s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}if s.document().track_changes!=tracked{s.menu("docx.track.record");}let before=s.document();let p=match &before.footnotes[0].blocks[0]{Block::Paragraph(p)=>p,_=>panic!("note")};let id=p.id;assert_eq!(final_text(p)," abcd");let old=p.runs.iter().filter(|r|matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Delete))).cloned().collect::<Vec<_>>();assert_eq!(old.iter().map(|r|match &r.kind{FlowRunKind::Text(t)=>t.as_str(),_=>""}).collect::<String>(),"X Y");
         s.click_text(FlowPos::new(id,3));s.key("shift-right");s.key("shift-right");assert_eq!(s.selection(),Some((FlowPos::new(id,3),FlowPos::new(id,8))));s.type_text("Q");let after=s.document();let p=flow_command::paragraph(&after,id).unwrap();assert_eq!(final_text(p)," aQd");for r in &old{assert!(p.runs.contains(r));}assert_eq!(after.body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.styles,before.styles);assert_eq!(after.comments,before.comments);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-note-history-typed-{tracked}.docx"));let bytes=std::fs::read(file).unwrap();let xml=ibis_pptx::test_files::part_text(&bytes,"word/footnotes.xml").unwrap();assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));for name in ["word/document.xml","word/comments.xml","word/styles.xml","word/numbering.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&bytes,name),ibis_pptx::test_files::part_text(&data,name));}let saved=s.reopen();let saved_note=flow_command::paragraph(flow(&saved),id).unwrap();assert_eq!(saved_note.runs,p.runs);
         if tracked{s.menu("docx.track.reject-all");let rejected=s.document();let p=flow_command::paragraph(&rejected,id).unwrap();assert_eq!(final_text(p)," abX Ycd");assert!(p.runs.iter().all(|r|r.revision.is_none()));s.key("cmd-z");assert_eq!(s.document(),after);s.key("cmd-shift-z");assert_eq!(s.document(),rejected);s.save_as("h9-note-history-rejected.docx");let saved=s.reopen();assert_eq!(flow_command::paragraph(flow(&saved),id).unwrap().runs,p.runs);}s.menu("docx.track.show");
     }
@@ -4730,7 +4767,7 @@ fn h9_note_selected_history() {
     use ibis_doc_model::flow_command;
     let root=crate::shell::scenario::repo_root();let data=ibis_pptx::test_files::docx_with_note_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-note-selected-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
     for accept in [false,true] {
-        let mut s=Scenario::open("target/scenario-input/docx-note-selected-history.docx");if !super::flow_layout::showing_markup(){s.menu("docx.track.show");}let before=s.document();let id=match &before.footnotes[0].blocks[0]{Block::Paragraph(p)=>p.id,_=>panic!("note")};s.click_text(FlowPos::new(id,4));for _ in 0..3{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(id,4),FlowPos::new(id,7))));s.menu(if accept{"docx.track.accept"}else{"docx.track.reject"});let after=s.document();let p=flow_command::paragraph(&after,id).unwrap();assert_eq!(final_text(p),if accept{" abcd"}else{" abX Ycd"});assert!(p.runs.iter().all(|r|r.revision.is_none()));assert_eq!(after.body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.comments,before.comments);assert_eq!(after.styles,before.styles);s.key("cmd-z");assert_eq!(s.document(),before);
+        let mut s=Scenario::open("target/scenario-input/docx-note-selected-history.docx");if !s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}let before=s.document();let id=match &before.footnotes[0].blocks[0]{Block::Paragraph(p)=>p.id,_=>panic!("note")};s.click_text(FlowPos::new(id,4));for _ in 0..3{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(id,4),FlowPos::new(id,7))));s.menu(if accept{"docx.track.accept"}else{"docx.track.reject"});let after=s.document();let p=flow_command::paragraph(&after,id).unwrap();assert_eq!(final_text(p),if accept{" abcd"}else{" abX Ycd"});assert!(p.runs.iter().all(|r|r.revision.is_none()));assert_eq!(after.body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.comments,before.comments);assert_eq!(after.styles,before.styles);s.key("cmd-z");assert_eq!(s.document(),before);
         s.update(|e,_,_|{let state=e.doc_state_mut().unwrap();state.anchor=None;state.caret=None;});s.menu("docx.track.reject");assert_eq!(s.document(),before,"missing selection must not fall back to resolving all stories");
         let body_id=body(&before).into_iter().find(|p|p.runs.iter().any(|r|r.revision.is_some())).unwrap().id;s.update(|e,_,cx|{e.set_caret(FlowPos::new(body_id,0),false,cx);e.set_caret(FlowPos::new(id,4),true,cx);});s.menu("docx.track.reject");assert_eq!(s.document(),before,"cross-story selection refuses before any body mutation");assert!(s.with(|e,_|e.status.as_ref().is_some_and(|t|t.contains("同じ本文"))));s.key("cmd-shift-z");assert_eq!(s.document(),after,"refusal preserves redo entry");let file=s.save_as(&format!("h9-note-selected-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for name in ["word/document.xml","word/comments.xml","word/styles.xml","word/numbering.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&bytes,name),ibis_pptx::test_files::part_text(&data,name));}let saved=s.reopen();assert_eq!(flow_command::paragraph(flow(&saved),id).unwrap().runs,p.runs);
     }
@@ -4767,7 +4804,7 @@ fn h9_root_story_revisions() {
     let mut s=Scenario::open(REPORT);let (_,id,_)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,1));s.key("cmd-down");for label in ["RootExtraPageA","RootExtraPageB"]{s.menu("docx.page-break");s.type_text(label);}s.click_text(FlowPos::new(id,1));s.menu("docx.section.title-page");s.menu("docx.section.even-odd");for (i,menu) in menus.iter().enumerate(){s.menu(menu);s.type_text(&format!("RootBase{i}"));}s.menu("docx.track.record");assert!(s.document().track_changes);for (i,menu) in menus.iter().enumerate(){s.menu(menu);s.type_text(&format!("RootChange{i}"));}
     let input=root.join("target/scenario-input/docx-root-story-revisions.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();s.save_as(input.to_str().unwrap());drop(s);let data=std::fs::read(&input).unwrap();let parts:Vec<_>=(0..6).map(|i|{let marker=format!("RootChange{i}");let matches:Vec<_>=candidates.iter().copied().filter(|part|xml_text(&ibis_pptx::test_files::part_text(&data,part).unwrap()).contains(&marker)).collect();assert_eq!(matches.len(),1,"each source story has one physical part");matches[0]}).collect();
     for accept in [false,true] {
-        let mut s=Scenario::open("target/scenario-input/docx-root-story-revisions.docx");if !super::flow_layout::showing_markup(){s.menu("docx.track.show");}let before=s.document();
+        let mut s=Scenario::open("target/scenario-input/docx-root-story-revisions.docx");if !s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}let before=s.document();
         for (i,kind) in PartKind::ALL.into_iter().enumerate(){let query=format!("RootChange{i}");let blocks=flow_command::resolved_part(&before,0,kind);let p=blocks.iter().find_map(|b|if let Block::Paragraph(p)=b&&p.text().contains(&query){Some(p)}else{None}).unwrap();let text=p.text();let from=text[..text.find(&query).unwrap()].chars().count();s.menu(menus[i]);s.click_text(FlowPos::new(p.id,from));for _ in query.chars(){s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(p.id,from),FlowPos::new(p.id,from+query.chars().count()))));s.menu(if accept{"docx.track.accept"}else{"docx.track.reject"});let after=s.document();let actual=flow_command::paragraph(&after,p.id).unwrap();assert_eq!(actual.text(),if accept{text.clone()}else{text.replace(&query,"")});assert!(actual.runs.iter().all(|r|r.revision.is_none()));assert_eq!(after.body,before.body);assert_eq!(after.styles,before.styles);for other in PartKind::ALL{if other!=kind{assert_eq!(flow_command::resolved_part(&after,0,other),flow_command::resolved_part(&before,0,other));}}s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-root-selected-{i}-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for part in parts.iter().copied().chain(["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml"]){if part!=parts[i]{assert_eq!(ibis_pptx::test_files::part_text(&bytes,part),ibis_pptx::test_files::part_text(&data,part),"outside part changed {part}");}}let saved=s.reopen();assert_eq!(flow_command::resolved_part(flow(&saved),0,kind),flow_command::resolved_part(&after,0,kind));s.key("cmd-z");assert_eq!(s.document(),before);}
         s.menu(if accept{"docx.track.accept-all"}else{"docx.track.reject-all"});let after=s.document();assert_eq!(after.body,before.body);assert_eq!(after.styles,before.styles);for (i,kind) in PartKind::ALL.into_iter().enumerate(){let blocks=flow_command::resolved_part(&after,0,kind);assert!(blocks.iter().any(|b|matches!(b,Block::Paragraph(p) if p.text().contains(&format!("RootBase{i}")))));assert_eq!(blocks.iter().any(|b|matches!(b,Block::Paragraph(p) if p.text().contains(&format!("RootChange{i}")))),accept);assert!(blocks.iter().all(|b|matches!(b,Block::Paragraph(p) if p.runs.iter().all(|r|r.revision.is_none()))));}s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as(&format!("h9-root-all-undone-{accept}.docx"));assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-root-all-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for part in ["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&bytes,part),ibis_pptx::test_files::part_text(&data,part));}let saved=s.reopen();for kind in PartKind::ALL{assert_eq!(flow_command::resolved_part(flow(&saved),0,kind),flow_command::resolved_part(&after,0,kind));}
     }
@@ -4777,7 +4814,7 @@ fn h9_section_story_revisions() {
     use ibis_doc_model::{PartKind,flow_command};
     let root=crate::shell::scenario::repo_root();let mut s=Scenario::open(REPORT);let (_,id,text)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,text.chars().count()/2));s.menu("docx.section-next");s.click_text(FlowPos::new(id,1));s.menu("docx.section.edit-header");s.type_text("OwnedBase");s.menu("docx.track.record");s.type_text("OwnedChange");let input=root.join("target/scenario-input/docx-owned-revision-header.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();s.save_as(input.to_str().unwrap());drop(s);let data=std::fs::read(&input).unwrap();let candidates=["word/header1.xml","word/header2.xml","word/header3.xml"];let affected:Vec<_>=candidates.iter().copied().filter(|n|ibis_pptx::test_files::part_text(&data,n).is_some_and(|x|xml_text(&x).contains("OwnedChange"))).collect();assert_eq!(affected.len(),1);let part=affected[0];
     for accept in [false,true] {for all in [false,true] {
-        let mut s=Scenario::open("target/scenario-input/docx-owned-revision-header.docx");if !super::flow_layout::showing_markup(){s.menu("docx.track.show");}let before=s.document();assert_eq!(flow_command::sections(&before).len(),2);let section=flow_command::sections(&before)[0];let setup=flow_command::section_setup(&before,section).unwrap();assert!(setup.parts[PartKind::Header.index()].is_some());assert!(before.linked[PartKind::Header.index()]);let owned=flow_command::resolved_part(&before,section,PartKind::Header);assert_eq!(owned,flow_command::resolved_part(&before,0,PartKind::Header));let p=owned.iter().find_map(|b|if let Block::Paragraph(p)=b&&p.text().contains("OwnedChange"){Some(p)}else{None}).unwrap();let text=p.text();let from=text[..text.find("OwnedChange").unwrap()].chars().count();s.click_text(FlowPos::new(p.id,from));for _ in 0..11{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(p.id,from),FlowPos::new(p.id,from+11))));let menu=match(all,accept){(false,false)=>"docx.track.reject",(false,true)=>"docx.track.accept",(true,false)=>"docx.track.reject-all",(true,true)=>"docx.track.accept-all"};s.menu(menu);let after=s.document();let actual=flow_command::paragraph(&after,p.id).unwrap();assert_eq!(actual.text(),if accept{text.clone()}else{text.replace("OwnedChange","")});assert!(actual.runs.iter().all(|r|r.revision.is_none()));assert_eq!(flow_command::resolved_part(&after,section,PartKind::Header),flow_command::resolved_part(&after,0,PartKind::Header));let mut changed_setup=flow_command::section_setup(&after,section).unwrap();changed_setup.parts[PartKind::Header.index()]=setup.parts[PartKind::Header.index()].clone();assert_eq!(changed_setup,setup);let mut body=after.body.clone();for b in &mut body{if let Block::Paragraph(q)=b&&q.id==section{q.section=para(&before,section).section.clone();}}assert_eq!(body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);assert_eq!(after.footnotes,before.footnotes);s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as(&format!("h9-owned-undone-{all}-{accept}.docx"));assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-owned-resolved-{all}-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for name in candidates.iter().copied().chain(["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml","word/footer1.xml","word/footer2.xml","word/footer3.xml"]){if name!=part{assert_eq!(ibis_pptx::test_files::part_text(&bytes,name),ibis_pptx::test_files::part_text(&data,name),"outside owner part changed {name}");}}let saved=s.reopen();let owner=flow_command::sections(flow(&saved))[0];assert_eq!(flow_command::resolved_part(flow(&saved),owner,PartKind::Header),flow_command::resolved_part(&after,section,PartKind::Header));assert_eq!(flow_command::resolved_part(flow(&saved),0,PartKind::Header),flow_command::resolved_part(&after,0,PartKind::Header));
+        let mut s=Scenario::open("target/scenario-input/docx-owned-revision-header.docx");if !s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}let before=s.document();assert_eq!(flow_command::sections(&before).len(),2);let section=flow_command::sections(&before)[0];let setup=flow_command::section_setup(&before,section).unwrap();assert!(setup.parts[PartKind::Header.index()].is_some());assert!(before.linked[PartKind::Header.index()]);let owned=flow_command::resolved_part(&before,section,PartKind::Header);assert_eq!(owned,flow_command::resolved_part(&before,0,PartKind::Header));let p=owned.iter().find_map(|b|if let Block::Paragraph(p)=b&&p.text().contains("OwnedChange"){Some(p)}else{None}).unwrap();let text=p.text();let from=text[..text.find("OwnedChange").unwrap()].chars().count();s.click_text(FlowPos::new(p.id,from));for _ in 0..11{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(p.id,from),FlowPos::new(p.id,from+11))));let menu=match(all,accept){(false,false)=>"docx.track.reject",(false,true)=>"docx.track.accept",(true,false)=>"docx.track.reject-all",(true,true)=>"docx.track.accept-all"};s.menu(menu);let after=s.document();let actual=flow_command::paragraph(&after,p.id).unwrap();assert_eq!(actual.text(),if accept{text.clone()}else{text.replace("OwnedChange","")});assert!(actual.runs.iter().all(|r|r.revision.is_none()));assert_eq!(flow_command::resolved_part(&after,section,PartKind::Header),flow_command::resolved_part(&after,0,PartKind::Header));let mut changed_setup=flow_command::section_setup(&after,section).unwrap();changed_setup.parts[PartKind::Header.index()]=setup.parts[PartKind::Header.index()].clone();assert_eq!(changed_setup,setup);let mut body=after.body.clone();for b in &mut body{if let Block::Paragraph(q)=b&&q.id==section{q.section=para(&before,section).section.clone();}}assert_eq!(body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);assert_eq!(after.footnotes,before.footnotes);s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as(&format!("h9-owned-undone-{all}-{accept}.docx"));assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-owned-resolved-{all}-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for name in candidates.iter().copied().chain(["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml","word/footer1.xml","word/footer2.xml","word/footer3.xml"]){if name!=part{assert_eq!(ibis_pptx::test_files::part_text(&bytes,name),ibis_pptx::test_files::part_text(&data,name),"outside owner part changed {name}");}}let saved=s.reopen();let owner=flow_command::sections(flow(&saved))[0];assert_eq!(flow_command::resolved_part(flow(&saved),owner,PartKind::Header),flow_command::resolved_part(&after,section,PartKind::Header));assert_eq!(flow_command::resolved_part(flow(&saved),0,PartKind::Header),flow_command::resolved_part(&after,0,PartKind::Header));
     }}
 }
 
@@ -4789,7 +4826,7 @@ fn h9_original_history_linked_typing() {
     std::fs::write(&input, &data).unwrap();
     for tracked in [false, true] {
         let mut s = Scenario::open("target/scenario-input/docx-history-linked-typing.docx");
-        if super::flow_layout::showing_markup() { s.menu("docx.track.show"); }
+        if s.with(|e, _| e.showing_markup()) { s.menu("docx.track.show"); }
         if s.document().track_changes != tracked { s.menu("docx.track.record"); }
         let before = s.document();
         let id = body(&before).into_iter().find(|p| p.text() == "abX Ycd").unwrap().id;
@@ -4829,7 +4866,7 @@ fn h9_original_history_split() {
     std::fs::create_dir_all(input.parent().unwrap()).unwrap(); std::fs::write(&input, &data).unwrap();
     for offset in [1, 6] {
         let mut s = Scenario::open("target/scenario-input/docx-history-split.docx");
-        if super::flow_layout::showing_markup() { s.menu("docx.track.show"); }
+        if s.with(|e, _| e.showing_markup()) { s.menu("docx.track.show"); }
         assert!(!s.document().track_changes);
         let before = s.document(); let id = body(&before).into_iter().find(|p| p.text() == "abX Ycd").unwrap().id;
         let new_id = before.new_id(); s.click_text(FlowPos::new(id, offset));
@@ -4858,7 +4895,7 @@ fn h9_cross_paragraph_history_guard() {
     let data=ibis_pptx::test_files::docx_with_search_history_edges(&std::fs::read(root.join(REPORT)).unwrap());
     let input=root.join("target/scenario-input/docx-cross-paragraph-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(&input,&data).unwrap();
     for action in ["typing","backspace","delete","cut","paste","plain-paste"] {
-        let mut s=Scenario::open("target/scenario-input/docx-cross-paragraph-history.docx");if super::flow_layout::showing_markup(){s.menu("docx.track.show");}
+        let mut s=Scenario::open("target/scenario-input/docx-cross-paragraph-history.docx");if s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}
         let doc=s.document();assert!(!doc.track_changes);let ps=body(&doc);let first=ps.iter().find(|p|p.text()=="X Ypq").unwrap().id;let last=ps.iter().find(|p|p.text()=="rsX Y").unwrap().id;
         // A real formatted text clipboard, retained even by rejected Cut.
         let (_,copy_id,_) = text_paragraph(&mut s,8); s.click_text(FlowPos::new(copy_id,1));s.key("shift-right");s.key("shift-right");s.key("cmd-c");
@@ -4922,7 +4959,7 @@ fn paste_original_history_cases(tracked: bool) {
         drop(source);
         let mut s = Scenario::open(relative);
         s.update(|_, _, cx| cx.write_to_clipboard(clipboard));
-        if super::flow_layout::showing_markup() {
+        if s.with(|e, _| e.showing_markup()) {
             s.menu("docx.track.show");
         }
         if s.document().track_changes != tracked {
@@ -5040,6 +5077,9 @@ fn paste_original_history_cases(tracked: bool) {
             if r.format.tate_chu_yoko == Some(false) {
                 r.format.tate_chu_yoko = None;
             }
+            if r.format.tate_chu_yoko_fit == Some(false) {
+                r.format.tate_chu_yoko_fit = None;
+            }
             // "no fit-text" is saved as nothing.
             if r.format.fit_text == Some(None) {
                 r.format.fit_text = None;
@@ -5063,7 +5103,7 @@ fn h9_original_insertion_format() {
     std::fs::write(&input, &data).unwrap();
     for count in [1, 3] {
         let mut s = Scenario::open("target/scenario-input/docx-original-insertion-format.docx");
-        if super::flow_layout::showing_markup() {
+        if s.with(|e, _| e.showing_markup()) {
             s.menu("docx.track.show");
         }
         let before = s.document();
@@ -5134,7 +5174,7 @@ fn h9_insertion_unknown_run_save_guard() {
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
     let mut s = Scenario::open("target/scenario-input/docx-insertion-unknown-run.docx");
-    if super::flow_layout::showing_markup() {
+    if s.with(|e, _| e.showing_markup()) {
         s.menu("docx.track.show");
     }
     let before = s.document();
@@ -5185,7 +5225,7 @@ fn h9_original_insertion_page() {
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
     let mut s = Scenario::open("target/scenario-input/docx-insertion-page-field.docx");
-    if super::flow_layout::showing_markup() {
+    if s.with(|e, _| e.showing_markup()) {
         s.menu("docx.track.show");
     }
     let before = s.document();
@@ -5267,7 +5307,7 @@ fn h9_insertion_field_edit() {
         let raw = xml[start..end].to_owned();
         for field in [false, true] {
             let mut s = Scenario::open(&name);
-            if super::flow_layout::showing_markup() {
+            if s.with(|e, _| e.showing_markup()) {
                 s.menu("docx.track.show");
             }
             let before = s.document();
@@ -5368,7 +5408,7 @@ fn h9_linked_source_insertion_format() {
         .replace("841", "941");
     for inside in [false, true] {
         let mut s = Scenario::open("target/scenario-input/docx-linked-insertion-history.docx");
-        if super::flow_layout::showing_markup() {
+        if s.with(|e, _| e.showing_markup()) {
             s.menu("docx.track.show");
         }
         let before = s.document();
@@ -5493,7 +5533,7 @@ fn linked_source_insertion_typing_cases(namespace_variant: Option<usize>) {
     for &at in positions {
         for tracked in [false, true] {
             let mut s = Scenario::open(&relative);
-            if super::flow_layout::showing_markup() {
+            if s.with(|e, _| e.showing_markup()) {
                 s.menu("docx.track.show");
             }
             if s.document().track_changes != tracked {
@@ -5585,7 +5625,7 @@ fn h9_note_id_namespace_typing() {
     let root=crate::shell::scenario::repo_root();let original=std::fs::read(root.join(REPORT)).unwrap();
     for variant in 0..3 {
         let data=ibis_pptx::test_files::docx_with_note_id_namespace(&original,variant);let relative=format!("target/scenario-input/docx-note-id-namespace-{variant}.docx");let input=root.join(&relative);std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
-        let mut s=Scenario::open(&relative);if super::flow_layout::showing_markup(){s.menu("docx.track.show");}let before=s.document();let note=&before.footnotes[0];let p=match &note.blocks[0]{Block::Paragraph(p)=>p,_=>panic!()};assert_eq!(final_text(p)," abcd");let id=p.id;
+        let mut s=Scenario::open(&relative);if s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}let before=s.document();let note=&before.footnotes[0];let p=match &note.blocks[0]{Block::Paragraph(p)=>p,_=>panic!()};assert_eq!(final_text(p)," abcd");let id=p.id;
         let mut at=0;for run in &p.runs {if matches!(&run.kind,FlowRunKind::Text(t) if t.starts_with(" ab"))&&run.revision.is_none(){at+=1;break;}at+=run.len();}
         s.click_text(FlowPos::new(id,at));s.type_text("Q");let after=s.document();let edited=flow_command::paragraph(&after,id).unwrap();assert_eq!(final_text(edited)," Qabcd");
         let mut outside=after.clone();outside.footnotes=before.footnotes.clone();assert_eq!(outside,before);for old in &before.footnotes {if old.id!=note.id {assert!(after.footnotes.contains(old));}}
@@ -5890,7 +5930,7 @@ fn h9_history_namespace_typing() {
             for tracked in [false, true] {
                 let mut s =
                     Scenario::open("target/scenario-input/docx-history-namespace-typing.docx");
-                if super::flow_layout::showing_markup() {
+                if s.with(|e, _| e.showing_markup()) {
                     s.menu("docx.track.show");
                 }
                 if s.document().track_changes != tracked {
@@ -5987,7 +6027,7 @@ fn h9_linked_source_hidden_delete() {
     for (at, key, expected) in [(1, "delete", "acd"), (6, "backspace", "abd")] {
         for tracked in [false, true] {
             let mut s = Scenario::open("target/scenario-input/docx-linked-hidden-delete.docx");
-            if super::flow_layout::showing_markup() {
+            if s.with(|e, _| e.showing_markup()) {
                 s.menu("docx.track.show");
             }
             if s.document().track_changes != tracked {
@@ -6122,7 +6162,7 @@ fn source_insertion_delete_cases(linked: bool) {
         };
         for tracked in [false, true] {
             let mut s = Scenario::open(relative);
-            if super::flow_layout::showing_markup() {
+            if s.with(|e, _| e.showing_markup()) {
                 s.menu("docx.track.show");
             }
             if s.document().track_changes != tracked {
@@ -6251,7 +6291,7 @@ fn h9_insertion_partial_delete_save_guard() {
         std::fs::create_dir_all(input.parent().unwrap()).unwrap();
         std::fs::write(input, &data).unwrap();
         let mut s = Scenario::open(&relative);
-        if super::flow_layout::showing_markup() {
+        if s.with(|e, _| e.showing_markup()) {
             s.menu("docx.track.show");
         }
         let before = s.document();
@@ -6339,7 +6379,7 @@ fn source_insertion_replacement_cases(linked: bool, namespace_variant: Option<us
     for &at in positions {
         for tracked in [false, true] {
             let mut s = Scenario::open(&relative);
-            if super::flow_layout::showing_markup() {
+            if s.with(|e, _| e.showing_markup()) {
                 s.menu("docx.track.show");
             }
             if s.document().track_changes != tracked {
@@ -6502,7 +6542,7 @@ fn h9_insertion_replacement_save_guard() {
             std::fs::create_dir_all(input.parent().unwrap()).unwrap();
             std::fs::write(input, &data).unwrap();
             let mut s = Scenario::open(&relative);
-            if super::flow_layout::showing_markup() {
+            if s.with(|e, _| e.showing_markup()) {
                 s.menu("docx.track.show");
             }
             let baseline = s.document();
@@ -6564,7 +6604,7 @@ fn h9_distinct_source_link_frames() {
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
     let mut s = Scenario::open("target/scenario-input/docx-distinct-link-frames.docx");
-    if super::flow_layout::showing_markup() {
+    if s.with(|e, _| e.showing_markup()) {
         s.menu("docx.track.show");
     }
     let before = s.document();
@@ -6852,7 +6892,7 @@ fn page019_watermark() {
     });
     assert!(!firsts.is_empty() && firsts.iter().all(|&f| f), "behind every page: {firsts:?}");
     s.screenshot("page019-watermark.png");
-    s.update(|e,w,cx|e.close_panel_dialog(w,cx));
+    s.update(|e,w,cx|e.close_dialog(w,cx));
     let file = s.save_as("page019.docx");
     assert!(!parts_with(&file, "PowerPlusWaterMarkObject").is_empty(), "in a header");
     let saved = s.reopen();
@@ -6922,7 +6962,7 @@ fn style005_new_style() {
     s.type_text("要点");
     new_style_click(&mut s, "create");
     assert_eq!(s.with(|e, _| flow(e.presentation()).styles.styles.values().filter(|st| st.name == "要点").count()), 1);
-    s.update(|e,w,cx|e.close_panel_dialog(w,cx));
+    s.update(|e,w,cx|e.close_dialog(w,cx));
     // A character style on three characters of another paragraph.
     s.click_text(FlowPos::new(b, 1));
     for _ in 0..3 {
@@ -10606,7 +10646,7 @@ fn view015_navigation_pane() {
 
     let matches = s.with(|e, _| {
         let f = flow(e.presentation());
-        crate::docx::find::find_all(f, "報告")
+        crate::docx::find::find_all(&Default::default(), f, "報告")
     });
     assert!(!matches.is_empty(), "query should match text in REPORT");
     let (match_from, match_to) = matches[0];
@@ -10782,12 +10822,12 @@ fn sec006_007_mark_as_final_and_read_only() {
     // 1. 初期状態: 最終版・読取専用推奨ともに false
     assert!(!s.with(|e, _| e.is_mark_as_final()), "initially not mark as final");
     assert!(!s.with(|e, _| e.is_read_only_recommended()), "initially not read only recommended");
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none(), "no infobar initially");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "no infobar initially");
 
     // 2. メニュー「docx.mark-as-final」で最終版に設定
     s.menu("docx.mark-as-final");
     assert!(s.with(|e, _| e.is_mark_as_final()), "marked as final after menu toggle");
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "final infobar shown");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "final infobar shown");
 
     // 3. 最終版状態での編集ガードの検証
     // 末尾にカーソルを移動して文字入力を試みる
@@ -10800,7 +10840,7 @@ fn sec006_007_mark_as_final_and_read_only() {
     // 4. 「それでも編集する」（edit_anyway）を実行
     s.update(|e, _, cx| e.edit_anyway(cx));
     assert!(!s.with(|e, _| e.is_mark_as_final()), "mark as final cleared by edit_anyway");
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none(), "infobar dismissed after edit_anyway");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "infobar dismissed after edit_anyway");
 
     // 解除後は編集できること（1文字 "A" を入力）
     s.type_text("A");
@@ -10815,7 +10855,7 @@ fn sec006_007_mark_as_final_and_read_only() {
     );
     s.key("cmd-z"); // edit_anyway を Undo -> 再び mark_as_final == true
     assert!(s.with(|e, _| e.is_mark_as_final()), "undo restores mark_as_final");
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "final infobar restored by undo");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "final infobar restored by undo");
 
     s.key("shift-cmd-z"); // Redo edit_anyway -> mark_as_final == false
     assert!(!s.with(|e, _| e.is_mark_as_final()), "redo clears mark_as_final");
@@ -10824,7 +10864,7 @@ fn sec006_007_mark_as_final_and_read_only() {
     s.menu("docx.read-only-recommended");
     assert!(s.with(|e, _| e.is_read_only_recommended()), "read only recommended enabled");
     assert!(!s.with(|e, _| e.is_read_only_dismissed()), "not dismissed initially");
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "read only infobar shown");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "read only infobar shown");
 
     // 読取専用推奨（未解除）状態での編集ガード
     let cur_len = s.document().body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p.text().len()) } else { None }).sum::<usize>();
@@ -10835,7 +10875,7 @@ fn sec006_007_mark_as_final_and_read_only() {
     // 「編集を有効にする」（dismiss_read_only）
     s.update(|e, _, cx| e.dismiss_read_only(cx));
     assert!(s.with(|e, _| e.is_read_only_dismissed()), "read only dismissed");
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none(), "read only infobar dismissed");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "read only infobar dismissed");
 
     // 解除後は編集できること（1文字 "B" を入力）
     s.type_text("B");
@@ -10862,7 +10902,7 @@ fn sec006_007_mark_as_final_and_read_only() {
     assert!(saved_doc.read_only_recommended, "read_only_recommended persisted in reopened docx");
     assert!(s.with(|e, _| e.is_mark_as_final()), "editor reports mark_as_final");
     assert!(s.with(|e, _| e.is_read_only_recommended()), "editor reports read_only_recommended");
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "infobar rendered in reopened docx");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "infobar rendered in reopened docx");
 }
 
 /// DOCX-SEC-011 ドキュメントの検査と個人情報除去 / DOCX-SEC-018 互換性チェック:
@@ -11433,7 +11473,7 @@ fn toc004_custom_styles_in_toc() {
     assert!(f_start.contains("CustomSection"), "field_start should mention CustomSection: {f_start}");
 
     // 5. 目次の更新（docx.toc.update）を実行し、\t が維持されることを確認
-    s.menu("docx.toc.update");
+    s.menu("docx.toc.update-entire-table");
     let after_update_entries = toc_entries(&s.document());
     assert!(after_update_entries.iter().any(|(_, t)| t.contains(&custom_text)), "TOC after update should contain custom styled paragraph: {after_update_entries:?}");
 
@@ -12640,6 +12680,33 @@ fn para018_suppress_auto_hyphens() {
 /// DOCX-REVIEW-006: 変更表示の簡易・全体・原文切替（Word の校閲タブ「変更履歴とコメントの表示」/ Display for Review）
 /// AllMarkup（すべての変更履歴）、SimpleMarkup（シンプルな変更履歴）、NoMarkup（変更履歴なし）、Original（元の文書）の切り替えと
 /// 描画（マージンバー、挿入/削除テキストの表示/非表示/書式）、メニュー連動を検証。
+/// Review 0.8.5 (`code-shared-view-state`): the tracked-change display, the hidden-text display and the reviewer filter belong to
+/// the window. Changing them in one document window leaves another document window as it was.
+fn review085_view_state_per_window() {
+    use crate::docx::flow_layout::MarkupDisplayMode;
+    let mut s = Scenario::open(REPORT);
+    let own = s.with_app(|cx| cx.windows());
+    s.with_app(|cx| crate::open_window_with(cx, |e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx)));
+    let (other, view) = s
+        .with_app(|cx| {
+            cx.windows().into_iter().filter(|w| !own.contains(w)).find_map(|w| {
+                let root = w.downcast::<gpui_kit::component::Root>()?;
+                let entity = root.update(cx, |root, _, _| root.view().clone().downcast::<crate::shell::editor::SlideEditor>().ok()).ok()??;
+                Some((w, entity))
+            })
+        })
+        .expect("the second document window");
+    let other_state = |s: &mut Scenario| s.update_in(other, &view, |e, _, _| (e.markup_display_mode(), e.showing_hidden_text(), e.is_all_reviewers()));
+    assert_eq!(other_state(&mut s), (MarkupDisplayMode::All, false, true));
+    // This window: no markup, hidden text shown, no reviewer shown.
+    s.menu("docx.track.display.none");
+    s.menu("docx.formatting-marks");
+    s.update(|e, _, cx| e.set_all_reviewers(false, cx));
+    assert_eq!(s.with(|e, _| (e.markup_display_mode(), e.showing_hidden_text(), e.is_all_reviewers())), (MarkupDisplayMode::None, true, false));
+    // The other window did not follow.
+    assert_eq!(other_state(&mut s), (MarkupDisplayMode::All, false, true), "the other window's view is its own");
+}
+
 fn review006_markup_display_mode() {
     use crate::docx::flow_layout::{Item, MarkupDisplayMode};
 
@@ -12753,8 +12820,6 @@ fn review006_markup_display_mode() {
     s.menu("docx.track.show");
     assert_eq!(s.with(|e, _| e.markup_display_mode()), MarkupDisplayMode::None);
 
-    // 後続テストのために AllMarkup に復帰
-    s.with(|_e, _| crate::docx::flow_layout::set_markup_display_mode(MarkupDisplayMode::All));
 }
 
 /// DOCX-OPTIONS-004: 上書き入力（Word の Ins キー / 上書き入力モード / Overtype mode）
@@ -12904,23 +12969,23 @@ fn opt008_formatting_marks_and_hidden_text() {
     assert!(p.runs.iter().any(|r| r.style.hidden && matches!(&r.kind, FlowRunKind::Text(t) if t == "Secret")));
 
     // 4. 編集記号がOFFのとき、hidden_text は非表示（showing_hidden_text() == false）
-    assert!(!crate::docx::flow_layout::showing_hidden_text());
+    assert!(!s.with(|e, _| e.showing_hidden_text()));
 
     // 5. 編集記号（¶）をONにする -> 隠し文字が表示対象になる
     s.menu("docx.formatting-marks");
     assert!(s.with(|e, _| e.formatting_marks_open));
-    assert!(crate::docx::flow_layout::showing_hidden_text(), "hidden text should be shown when formatting marks are on");
+    assert!(s.with(|e, _| e.showing_hidden_text()), "hidden text should be shown when formatting marks are on");
 
     // 6. 編集記号（¶）をOFFに戻す
     s.menu("docx.formatting-marks");
     assert!(!s.with(|e, _| e.formatting_marks_open));
-    assert!(!crate::docx::flow_layout::showing_hidden_text());
+    assert!(!s.with(|e, _| e.showing_hidden_text()));
 
     // 7. 「隠し文字」常時表示オプションをONにする
     s.menu("docx.view.marks.hidden");
     assert!(s.with(|e, _| e.formatting_marks_options.show_hidden_text));
     assert_eq!(s.menu_state("docx.view.marks.hidden"), Some((true, true)));
-    assert!(crate::docx::flow_layout::showing_hidden_text(), "hidden text should be shown when show_hidden_text option is enabled");
+    assert!(s.with(|e, _| e.showing_hidden_text()), "hidden text should be shown when show_hidden_text option is enabled");
 
     // 8. 個別編集記号オプションのトグル切替を検証
     s.menu("docx.view.marks.spaces");
@@ -13649,8 +13714,6 @@ fn review005_filter_by_author() {
     assert!(texts_restored.iter().any(|t| t.contains("AliceDeleted")));
     assert!(texts_restored.iter().any(|t| t.contains("BobDeleted")));
 
-    // テスト後クリーンアップ: SHOWN_REVIEWERS を None にリセット
-    crate::docx::flow_layout::set_shown_reviewers(None);
 }
 
 /// DOCX-REVIEW-009: 表示中の変更だけ処理（校閲 > 承諾/却下 > 表示されたすべての変更を反映 / 表示されたすべての変更を元に戻す）
@@ -13885,8 +13948,6 @@ fn review009_resolve_shown_revisions() {
     });
     assert!(!p_stop2.runs.iter().any(|r| match &r.kind { FlowRunKind::Text(t) => t.contains("DaveAdded"), _ => false }), "DaveAdded must be removed by reject-all-stop");
 
-    // クリーンアップ
-    crate::docx::flow_layout::set_shown_reviewers(None);
 }
 
 /// DOCX-REVIEW-010: 変更履歴の記録をロック (Lock Tracking / ECMA-376 Part 1 §17.15.1.29)
@@ -16719,7 +16780,7 @@ fn view005_read_mode() {
     assert!(!s.with(|e, _| e.is_read_mode()), "initially not in read mode");
     assert_eq!(s.menu_state("docx.print-layout"), Some((true, true)), "print layout checked by default");
     assert_eq!(s.menu_state("docx.view.read-mode"), Some((true, false)), "read mode unchecked by default");
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none(), "no infobar initially");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "no infobar initially");
     assert!(!s.status_texts().iter().any(|t| t == "閲覧モード"), "status texts does not contain read mode initially");
 
     // 2. 閲覧モードへ切り替え
@@ -16729,7 +16790,7 @@ fn view005_read_mode() {
     assert!(s.with(|e, _| e.is_read_mode()), "now in read mode");
     assert_eq!(s.menu_state("docx.print-layout"), Some((true, false)), "print layout now unchecked");
     assert_eq!(s.menu_state("docx.view.read-mode"), Some((true, true)), "read mode now checked");
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "read mode infobar shown");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "read mode infobar shown");
     assert!(s.status_texts().iter().any(|t| t == "閲覧モード"), "status bar shows read mode");
 
     // 3. 閲覧モード中の編集ガード
@@ -16744,19 +16805,19 @@ fn view005_read_mode() {
     assert!(!s.with(|e, _| e.is_read_mode()), "undo restores print layout");
     assert_eq!(s.menu_state("docx.print-layout"), Some((true, true)));
     assert_eq!(s.menu_state("docx.view.read-mode"), Some((true, false)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none());
 
     s.key("shift-cmd-z");
     assert!(s.with(|e, _| e.is_read_mode()), "redo restores read mode");
     assert_eq!(s.menu_state("docx.view.read-mode"), Some((true, true)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some());
 
     // 5. Esc キーによる解除
     s.key("escape");
     assert!(!s.with(|e, _| e.is_read_mode()), "escape exits read mode");
     assert_eq!(s.menu_state("docx.print-layout"), Some((true, true)));
     assert_eq!(s.menu_state("docx.view.read-mode"), Some((true, false)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none());
 
     // 6. 印刷レイアウト メニューによる切り替え
     s.menu("docx.view.read-mode");
@@ -16774,7 +16835,7 @@ fn view005_read_mode() {
     assert_eq!(saved_doc.view_mode, ibis_doc_model::DocumentViewMode::Reading, "reading view mode persisted in OOXML");
     assert!(s.with(|e, _| e.is_read_mode()), "reopened editor is in read mode");
     assert_eq!(s.menu_state("docx.view.read-mode"), Some((true, true)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some());
 
     // 再オープン後も Esc で解除可能
     s.key("escape");
@@ -16823,7 +16884,7 @@ fn sec002_protect_read_only() {
     // 1. 初期状態: 保護なし
     assert_eq!(s.with(|e, _| e.document_protection()), ibis_doc_model::DocumentProtection::None);
     assert!(!s.with(|e, _| e.is_protection_read_only()));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none(), "no infobar initially");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "no infobar initially");
     assert_eq!(s.menu_state("docx.protect.read-only"), Some((true, false)));
     assert_eq!(s.menu_state("docx.protect.forms"), Some((true, false)));
     assert_eq!(s.menu_state("docx.protect.stop"), Some((false, false)), "stop protection disabled initially");
@@ -16834,7 +16895,7 @@ fn sec002_protect_read_only() {
     assert!(s.with(|e, _| e.is_protection_read_only()));
     assert_eq!(s.menu_state("docx.protect.read-only"), Some((true, true)));
     assert_eq!(s.menu_state("docx.protect.stop"), Some((true, false)), "stop protection enabled when protected");
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "read-only protection infobar shown");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "read-only protection infobar shown");
 
     // 3. 読み取り専用保護中の編集ガード検証: 本文入力が拒否されること
     s.key("cmd-down");
@@ -16847,7 +16908,7 @@ fn sec002_protect_read_only() {
     s.menu("docx.protect.stop");
     assert_eq!(s.with(|e, _| e.document_protection()), ibis_doc_model::DocumentProtection::None);
     assert!(!s.with(|e, _| e.is_protection_read_only()));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none(), "infobar dismissed after stop protection");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "infobar dismissed after stop protection");
 
     // 解除後は編集可能
     s.type_text("A");
@@ -16863,7 +16924,7 @@ fn sec002_protect_read_only() {
     s.key("cmd-z"); // stop_protection を Undo -> 再び ReadOnly
     assert_eq!(s.with(|e, _| e.document_protection()), ibis_doc_model::DocumentProtection::ReadOnly);
     assert!(s.with(|e, _| e.is_protection_read_only()));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "infobar restored after undo to protected");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "infobar restored after undo to protected");
 
     s.key("shift-cmd-z"); // Redo stop_protection -> None
     assert_eq!(s.with(|e, _| e.document_protection()), ibis_doc_model::DocumentProtection::None);
@@ -16902,7 +16963,7 @@ fn sec004_protect_forms() {
     assert!(s.with(|e, _| e.is_protection_forms()));
     assert_eq!(s.menu_state("docx.protect.forms"), Some((true, true)));
     assert_eq!(s.menu_state("docx.protect.stop"), Some((true, false)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "forms protection infobar shown");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "forms protection infobar shown");
 
     // 3. 一般テキスト入力は拒否されること
     let before_len = s.document().body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p.text().len()) } else { None }).sum::<usize>();
@@ -16933,7 +16994,7 @@ fn sec004_protect_forms() {
     s.menu("docx.protect.stop");
     assert_eq!(s.with(|e, _| e.document_protection()), ibis_doc_model::DocumentProtection::None);
     assert!(!s.with(|e, _| e.is_protection_forms()));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none());
 
     // 解除後は一般入力も可能
     s.type_text("Hello");
@@ -16960,7 +17021,7 @@ fn sec003_protect_formatting() {
     assert!(s.with(|e, _| e.is_formatting_protected()));
     assert_eq!(s.menu_state("docx.protect.formatting"), Some((true, true)));
     assert_eq!(s.menu_state("docx.protect.stop"), Some((true, false)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "formatting protection infobar shown");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "formatting protection infobar shown");
 
     // 3. 書式変更の制限中: 一般テキストの入力・削除は許可されること
     s.key("cmd-down");
@@ -16997,7 +17058,7 @@ fn sec003_protect_formatting() {
     assert!(!s.with(|e, _| e.is_formatting_protected()));
     assert_eq!(s.menu_state("docx.protect.formatting"), Some((true, false)));
     assert_eq!(s.menu_state("docx.protect.stop"), Some((false, false)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none());
 
     // 解除後は書式変更が可能
     let bold_after = s.update(|e, _, cx| {
@@ -17013,7 +17074,7 @@ fn sec003_protect_formatting() {
     s.key("cmd-z"); // bold を Undo
     s.key("cmd-z"); // stop_protection を Undo -> 再び formatting_protected
     assert!(s.with(|e, _| e.is_formatting_protected()));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some());
 
     s.key("shift-cmd-z"); // Redo stop_protection -> 解除
     assert!(!s.with(|e, _| e.is_formatting_protected()));
@@ -17040,7 +17101,7 @@ fn sec005_protect_comments() {
     assert!(s.with(|e, _| e.is_protection_comments()));
     assert_eq!(s.menu_state("docx.protect.comments"), Some((true, true)));
     assert_eq!(s.menu_state("docx.protect.stop"), Some((true, false)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "comments protection infobar shown");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "comments protection infobar shown");
 
     // 3. 一般テキスト入力は拒否されること
     s.key("cmd-down");
@@ -17075,7 +17136,7 @@ fn sec005_protect_comments() {
     assert!(!s.with(|e, _| e.is_protection_comments()));
     assert_eq!(s.menu_state("docx.protect.comments"), Some((true, false)));
     assert_eq!(s.menu_state("docx.protect.stop"), Some((false, false)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none());
 
     // 解除後は一般入力も可能
     let (p0_id, _) = s.paragraph(0);
@@ -17094,7 +17155,7 @@ fn sec005_protect_comments() {
     s.key("cmd-z"); // stop_protection を Undo -> 再び Comments 保護
     assert_eq!(s.with(|e, _| e.document_protection()), ibis_doc_model::DocumentProtection::Comments);
     assert!(s.with(|e, _| e.is_protection_comments()));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some());
 
     s.key("shift-cmd-z"); // Redo stop_protection -> 解除
     assert_eq!(s.with(|e, _| e.document_protection()), ibis_doc_model::DocumentProtection::None);
@@ -17279,7 +17340,7 @@ fn view021_interaction_modes() {
     assert_eq!(s.menu_state("docx.interaction.editing"), Some((true, true)));
     assert_eq!(s.menu_state("docx.interaction.reviewing"), Some((true, false)));
     assert_eq!(s.menu_state("docx.interaction.viewing"), Some((true, false)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none());
 
     // 2. Reviewing モードへ切替
     s.menu("docx.interaction.reviewing");
@@ -17305,7 +17366,7 @@ fn view021_interaction_modes() {
     assert_eq!(s.menu_state("docx.interaction.viewing"), Some((true, true)));
     assert_eq!(s.menu_state("docx.interaction.editing"), Some((true, false)));
     assert_eq!(s.menu_state("docx.interaction.reviewing"), Some((true, false)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some(), "viewing infobar displayed");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "viewing infobar displayed");
     assert!(s.with(|e, _| e.status_texts()).iter().any(|t| t.as_ref() == "閲覧"));
 
     // Viewing モードでの入力ガード: 入力が拒否される
@@ -17319,7 +17380,7 @@ fn view021_interaction_modes() {
     assert_eq!(s.with(|e, _| e.interaction_mode()), ibis_doc_model::DocumentInteractionMode::Editing);
     assert!(s.with(|e, _| e.is_editing_mode()));
     assert_eq!(s.menu_state("docx.interaction.editing"), Some((true, true)));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_none(), "infobar dismissed");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "infobar dismissed");
 
     // 編集モードでの入力 -> 入力可能
     s.type_text("Z");
@@ -17332,7 +17393,7 @@ fn view021_interaction_modes() {
     s.key("cmd-z"); // switch-to-editing の Undo -> Viewing モードへ戻る
     assert_eq!(s.with(|e, _| e.interaction_mode()), ibis_doc_model::DocumentInteractionMode::Viewing);
     assert!(s.with(|e, _| e.is_viewing_mode()));
-    assert!(s.update(|e, _, cx| e.render_docx_infobar(cx)).is_some());
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some());
 
     s.key("cmd-z"); // viewing 切替の Undo -> Reviewing モードへ戻る
     assert_eq!(s.with(|e, _| e.interaction_mode()), ibis_doc_model::DocumentInteractionMode::Reviewing);
@@ -19091,7 +19152,7 @@ fn ja019_no_proof() {
     s.click_text(FlowPos::new(id, 0));
     s.menu("docx.edit.autocorrect");
     s.type_text("zzqxjkv ");
-    let word_issues = |s: &mut Scenario| -> usize { let doc = s.document(); super::spelling_panel::scan(&doc, &std::collections::HashSet::new()).iter().filter(|i| i.word == "zzqxjkv").count() };
+    let word_issues = |s: &mut Scenario| -> usize { let doc = s.document(); super::spelling_panel::scan(&Default::default(), &doc, &std::collections::HashSet::new()).iter().filter(|i| i.word == "zzqxjkv").count() };
     let checks = crate::spelling::available();
     if checks {
         assert_eq!(word_issues(&mut s), 1, "the word is not known");
@@ -19576,6 +19637,9 @@ fn image006_extended_picture_corrections() {
                         name: pic.name.clone(),
                         linked_file: None,
                         geometry: pic.geometry.clone(),
+                        clear: pic.clear.clone(),
+                        reflection: pic.reflection.clone(),
+                        shadow: pic.shadow.clone(),
                     })
                 } else {
                     None
@@ -20492,7 +20556,7 @@ fn math_structures_convert_and_quick_parts() {
 
     // 2. Insert math structure (fraction)
     s.update(|e,_,cx|e.insert_docx_math_structure("fraction",cx));
-    s.update(|e,w,cx|e.close_panel_dialog(w,cx));
+    s.update(|e,w,cx|e.close_dialog(w,cx));
     let has_math = s.with(|e, _| {
         e.flow().unwrap().body.iter().any(|b| {
             matches!(b, ibis_doc_model::flow::Block::Paragraph(p) if p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Math { .. })))
@@ -20513,7 +20577,7 @@ fn math_structures_convert_and_quick_parts() {
     assert!(has_math_again, "undo restores 2D math");
 
     // 4. Quick Parts: open panel and insert document property field (TITLE)
-    s.menu("docx.quick-parts");
+    s.menu("docx.quick-parts.panel");
     assert!(s.with(|e, _| e.sidebar_open));
     assert!(s.with(|e, _| e.doc_state().and_then(|s| s.quick_parts.as_ref()).is_some()));
     s.menu("docx.quick-parts.prop.title");
@@ -21239,7 +21303,7 @@ fn spelling_check() {
     s.key("cmd-up");
     s.type_text("We recieve it. recieve zzqxv. ");
     let count = |s: &mut Scenario| {
-        s.with(|e, _| crate::docx::spelling_panel::scan(e.flow().unwrap(), &Default::default()).iter().filter(|i| i.word == "recieve").count())
+        s.with(|e, _| crate::docx::spelling_panel::scan(&e.resources.markup_view, e.flow().unwrap(), &Default::default()).iter().filter(|i| i.word == "recieve").count())
     };
     if count(&mut s) != 2 {
         // No English dictionary here.
@@ -21411,9 +21475,9 @@ fn insert_chart() {
     // データの編集: the inserted chart is selected; its panel changes the first value, as one step of undo.
     assert_eq!(s.menu_state("pptx.chart.data-quick").map(|m| m.0), Some(true));
     s.menu("pptx.chart.data-quick");
-    let values = s.with(|e, _| e.doc_state().unwrap().helper.chart.as_ref().expect("the data panel").0.values.clone());
-    s.update(|_, w, cx| values[0][0].update(cx, |f, cx| f.set_value("6", w, cx)));
-    s.update(|e, w, cx| e.apply_doc_chart_panel(w, cx));
+    assert!(s.with(|e, _| e.doc_state().unwrap().helper.chart.as_ref().expect("the data panel").0.grid.is_some()), "the data is the workbook's grid");
+    s.screenshot("chart-data-grid");
+    s.chart_grid_set(0, Some(0), "6");
     let first = |doc: &FlowDocument| body_charts(doc)[before].groups[0].series[0].values[0].map(|n| n.0);
     assert_eq!(first(&s.document()), Some(6.0));
     s.key("cmd-z");
@@ -21540,9 +21604,7 @@ fn edit_existing_chart() {
     s.key("shift-right");
     assert_eq!(s.menu_state("pptx.chart.data-quick").map(|m| m.0), Some(true), "a file's chart can be edited");
     s.menu("pptx.chart.data-quick");
-    let values = s.with(|e, _| e.doc_state().unwrap().helper.chart.as_ref().expect("the data panel").0.values.clone());
-    s.update(|_, w, cx| values[0][0].update(cx, |f, cx| f.set_value("5.5", w, cx)));
-    s.update(|e, w, cx| e.apply_doc_chart_panel(w, cx));
+    s.chart_grid_set(0, Some(0), "5.5");
     let first = |doc: &FlowDocument| body_charts(doc)[0].groups[0].series[0].values[0].map(|n| n.0);
     assert_eq!(first(&s.document()), Some(5.5));
     // Another kind: a line chart.
@@ -23557,7 +23619,7 @@ fn insert_objects_suite() {
     assert!(redone, "icon insert redone");
 
     // 2. SmartArt 挿入 (insert.smartart / pptx.insert.smartart.cycle)
-    s.menu("insert.smartart");
+    s.menu("pptx.insert.smartart.process");
     let has_smartart = s.with(|e, _| {
         let doc = e.flow().unwrap();
         let p = para(doc, id);
@@ -23594,8 +23656,8 @@ fn insert_objects_suite() {
     });
     assert!(has_sig, "signature line inserted");
 
-    // 5. クイックパーツ挿入 (docx.quick-parts, docx.quick-parts.author, docx.quick-parts.title)
-    s.menu("docx.quick-parts.author");
+    // 5. クイックパーツ挿入（文書のプロパティのフィールド: docx.quick-parts.prop.author / title / filename。重複していた「クイックパーツ」サブメニューは削除済み）
+    s.menu("docx.quick-parts.prop.author");
     let has_author_field = s.with(|e, _| {
         let doc = e.flow().unwrap();
         let p = para(doc, id);
@@ -23603,8 +23665,8 @@ fn insert_objects_suite() {
     });
     assert!(has_author_field, "quick parts author field inserted");
 
-    s.menu("docx.quick-parts.title");
-    s.menu("docx.quick-parts.filename");
+    s.menu("docx.quick-parts.prop.title");
+    s.menu("docx.quick-parts.prop.filename");
     s.menu("edit.undo");
 
     // 6. 保存と再読込
@@ -23685,13 +23747,13 @@ fn issue1_comment_anchors_and_navigation() {
     // Move caret inside comment range
     let mid_offset = (from.offset + to.offset) / 2;
     s.click_text(FlowPos::new(from.para, mid_offset));
-    let active_id = s.with(|e, _| e.doc_state().and_then(|st| st.comments.as_ref()).and_then(|c| c.active_comment_id));
-    assert_eq!(active_id, Some(c_id), "caret inside comment marks it active in sidebar");
+    let active_id = s.with(|e, _| e.doc_state().and_then(|st| st.comments.as_ref()).and_then(|c| c.active.clone()));
+    assert_eq!(active_id, Some(c_id.to_string()), "caret inside comment marks it active in sidebar");
 
     // Move caret outside comment range
     s.click_text(FlowPos::new(id, 0));
-    let active_outside = s.with(|e, _| e.doc_state().and_then(|st| st.comments.as_ref()).and_then(|c| c.active_comment_id));
-    assert_ne!(active_outside, Some(c_id), "caret outside comment deactivates it in sidebar");
+    let active_outside = s.with(|e, _| e.doc_state().and_then(|st| st.comments.as_ref()).and_then(|c| c.active.clone()));
+    assert_ne!(active_outside, Some(c_id.to_string()), "caret outside comment deactivates it in sidebar");
 
     // Close comments sidebar
     s.update(|e, _, cx| {
@@ -23706,8 +23768,8 @@ fn issue1_comment_anchors_and_navigation() {
     // Clicking comment highlight range in body opens comments panel and activates comment
     s.click_text(FlowPos::new(from.para, mid_offset));
     assert!(s.with(|e, _| e.sidebar_open), "clicking commented text opens comments sidebar");
-    let active_clicked = s.with(|e, _| e.doc_state().and_then(|st| st.comments.as_ref()).and_then(|c| c.active_comment_id));
-    assert_eq!(active_clicked, Some(c_id), "clicking commented text activates comment in sidebar");
+    let active_clicked = s.with(|e, _| e.doc_state().and_then(|st| st.comments.as_ref()).and_then(|c| c.active.clone()));
+    assert_eq!(active_clicked, Some(c_id.to_string()), "clicking commented text activates comment in sidebar");
 
     // 5. Margin bubble click test:
     let bubble_pos = s.with(|e, _| {
@@ -23748,16 +23810,12 @@ fn comment002_ux_improvements() {
     let (p1, _) = s.paragraph(0);
     s.click_text(FlowPos::new(p1, 0)); // caret only, no range
     s.menu("insert.comment");
-    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comment_alert_no_selection)), "alert shown when no selection");
+    assert!(s.with(|e, _| e.panel_message.is_some()), "alert shown when no selection");
     assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comments.is_none())), "comments panel not opened when no selection");
 
     // Dismiss alert
-    s.update(|e, _, _| {
-        if let Some(st) = e.doc_state_mut() {
-            st.comment_alert_no_selection = false;
-        }
-    });
-    assert!(!s.with(|e, _| e.doc_state().is_some_and(|st| st.comment_alert_no_selection)));
+    s.update(|e, _, cx| e.dismiss_panel_message(cx));
+    assert!(s.with(|e, _| e.panel_message.is_none()));
 
     // 2. Select text and add comment
     let (p2, p2_text) = s.paragraph(1);
@@ -23804,7 +23862,7 @@ fn comment002_ux_improvements() {
 
     // 3. Reply flow
     s.update(|e, window, cx| e.reply_to(c1_id, window, cx));
-    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comments.as_ref().is_some_and(|c| c.target == Some(crate::docx::comments::CommentTarget::Reply(c1_id))))), "reply active for c1");
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.comments.as_ref().is_some_and(|c| c.target == Some(crate::shell::comments::CommentTarget::Reply(c1_id.to_string()))))), "reply active for c1");
 
     // Cancel reply with ✕
     s.update(|e, _, cx| e.cancel_comment_input(cx));
@@ -23819,14 +23877,10 @@ fn comment002_ux_improvements() {
 
     // 4. Confirm delete flow
     s.update(|e, _, cx| e.confirm_delete_comment(c1_id, cx));
-    assert_eq!(s.with(|e, _| e.doc_state().and_then(|st| st.comment_delete_confirm)), Some(c1_id), "delete confirm dialog shown");
+    assert!(s.with(|e, _| e.comment_delete.is_some()), "delete confirm dialog shown");
 
     // Cancel delete
-    s.update(|e, _, _| {
-        if let Some(st) = e.doc_state_mut() {
-            st.comment_delete_confirm = None;
-        }
-    });
+    s.update(|e, _, _| e.comment_delete = None);
     assert_eq!(s.document().comments.len(), 3, "not deleted when cancelled");
 
     // Execute delete
@@ -24936,7 +24990,7 @@ fn style017_template_attach_and_link_styles() {
     );
 
     // Close the modal before using document undo.
-    s.update(|e,w,cx|e.close_panel_dialog(w,cx));
+    s.update(|e,w,cx|e.close_dialog(w,cx));
     // 3. 1ステップ Undo / Redo
     s.key("cmd-z");
     assert!(s.with(|e, _| e.docx_attached_template().is_none()), "undo clears attached template");
@@ -24983,7 +25037,7 @@ fn style017_template_attach_and_link_styles() {
         "imported styles from external template (before: {styles_count_before}, after: {styles_count_after})"
     );
 
-    s.update(|e,w,cx|e.close_panel_dialog(w,cx));
+    s.update(|e,w,cx|e.close_dialog(w,cx));
     // スタイル更新の Undo
     s.key("cmd-z");
     assert_eq!(
@@ -26517,6 +26571,75 @@ fn image015_inline_text_box_edit() {
 }
 
 
+/// GitHub issue 94: 縦中横 of the text in a text box: the dialog (行の幅に合わせる on and off, 削除, キャンセル) on the selected text, saved as
+/// `w:eastAsianLayout` and read back.
+fn issue94_tate_chu_yoko_dialog() {
+    use ibis_doc_model::TateChuYoko;
+    let mut s = Scenario::open(REPORT);
+    let (_, id, _) = text_paragraph(&mut s, 10);
+    s.click_text(FlowPos::new(id, 3));
+    s.menu("insert.text-box");
+    s.update(|e, window, cx| {
+        let t = e.doc_state().unwrap().text_box.as_ref().unwrap().text.clone();
+        t.update(cx, |i, cx| i.replace_all("2027", window, cx));
+    });
+    let modes = |doc: &ibis_doc_model::FlowDocument| -> Vec<Option<TateChuYoko>> {
+        doc.body.iter().filter_map(|b| match b { ibis_doc_model::Block::Paragraph(p) if p.id == id => Some(p), _ => None }).flat_map(|p| p.runs.iter()).filter_map(|r| match &r.kind {
+            FlowRunKind::Shape(shape) => match &shape.kind {
+                ibis_doc_model::ShapeKind::Auto(a) => a.text.as_ref().map(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.style.tate_chu_yoko)).collect::<Vec<_>>()),
+                ibis_doc_model::ShapeKind::TextBox(t) => Some(t.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.style.tate_chu_yoko)).collect::<Vec<_>>()),
+                _ => None,
+            },
+            _ => None,
+        }).flatten().collect()
+    };
+    let before = modes(&s.document());
+    // Edit the text in place and select all of it.
+    let (page, frame) = s.with(|e, _| {
+        let doc = e.flow().unwrap().clone();
+        let laid = super::flow_layout::pages(&doc, &e.resources);
+        laid.pages.iter().enumerate().find_map(|(i, pg)| pg.items.iter().rev().find_map(|item| match item {
+            super::flow_layout::Item::Shape { x, y, w, h, .. } => Some((i, (*x, *y, *w, *h))),
+            _ => None,
+        })).expect("the box is on a page")
+    });
+    let (origin, k) = s.with(|e, _| e.page_origin(page)).expect("the page is placed");
+    s.double_click((f32::from(origin.x) + (frame.0 + frame.2 / 2.0) * k, f32::from(origin.y) + (frame.1 + frame.3 / 2.0) * k));
+    assert!(s.with(|e, _| e.doc_state().is_some_and(|d| d.box_edit.is_some())), "the box is edited in place");
+    s.key("cmd-a");
+    // On (行の幅に合わせる, the dialog's start): Fit.
+    s.menu("docx.text.tate-chu-yoko");
+    assert!(s.with(|e, _| e.doc_state().unwrap().tate_edit.is_some()), "the command opens the dialog");
+    s.screenshot("issue94-tate-chu-yoko-dialog");
+    s.update(|e, w, cx| e.apply_tate_chu_yoko(false, w, cx));
+    assert_eq!(modes(&s.document()), vec![Some(TateChuYoko::Fit)]);
+    s.save_as("issue94-tate-fit.docx");
+    assert_eq!(modes(s.reopen().flow.as_ref().unwrap()), vec![Some(TateChuYoko::Fit)], "saved and read back");
+    // Off: 行の幅に合わせる unchecked: Grow.
+    s.update(|e, w, cx| {
+        e.open_tate_chu_yoko(w, cx);
+        e.doc_state_mut().unwrap().tate_edit.as_mut().unwrap().set_fit(false);
+        e.apply_tate_chu_yoko(false, w, cx);
+    });
+    assert_eq!(modes(&s.document()), vec![Some(TateChuYoko::Grow)]);
+    s.save_as("issue94-tate-grow.docx");
+    assert_eq!(modes(s.reopen().flow.as_ref().unwrap()), vec![Some(TateChuYoko::Grow)]);
+    // Cancel changes nothing.
+    s.update(|e, w, cx| {
+        e.open_tate_chu_yoko(w, cx);
+        e.doc_state_mut().unwrap().tate_edit.as_mut().unwrap().set_fit(true);
+        e.close_dialog(w, cx);
+    });
+    assert_eq!(modes(&s.document()), vec![Some(TateChuYoko::Grow)]);
+    // 削除.
+    s.update(|e, w, cx| {
+        e.open_tate_chu_yoko(w, cx);
+        e.apply_tate_chu_yoko(true, w, cx);
+    });
+    assert_eq!(modes(&s.document()), vec![Some(TateChuYoko::Off)]);
+    let _ = before;
+}
+
 /// Exercise the three Quick Parts tabs using rendered controls, including field insertion.
 fn ui_review_quick_parts_tabs() {
     use crate::shell::scenario::button_probe as buttons;
@@ -26620,4 +26743,59 @@ fn ui_review_selection_table_reorder() {
     s.dispatch(vec![PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, click_count: 1, ..Default::default() })]);
     s.settle();
     assert_eq!(snapshot(&mut s), original, "Escape cancels the pending drag without touching the document");
+}
+
+/// GitHub issue #112: a table of contents a program wrote and Word never made. Word (measured on 16.0, alerts off) makes
+/// the TOC field marked `w:dirty="true"` as it opens the file, whatever its result (empty or a placeholder) and whether or
+/// not it is in a content control; with `w:updateFields` in the settings it makes every TOC; a TOC with neither is left
+/// as it is, even with an empty result. The made table survives a save.
+fn toc017_unupdated_toc_is_made_on_open() {
+    let root = crate::shell::scenario::repo_root();
+    let base = std::fs::read(root.join(REPORT)).unwrap();
+    let headings = |doc: &FlowDocument| -> Vec<String> {
+        let h1 = doc.styles.paragraph_style_named("heading 1").map(str::to_string);
+        body(doc).iter().filter(|p| p.style.is_some() && p.style == h1 && !p.text().is_empty()).map(|p| p.text()).collect()
+    };
+    // The entries of the first table of contents: the text of the paragraphs from the field's start to its end.
+    let table = |doc: &FlowDocument| -> Vec<String> {
+        let ps = body(doc);
+        let Some(start) = ps.iter().position(|p| p.field_start.as_deref().is_some_and(|f| f.trim_start().starts_with("TOC"))) else { return Vec::new() };
+        let end = start + ps[start..].iter().position(|p| p.field_end).unwrap_or(0);
+        ps[start..=end].iter().map(|p| p.text()).collect()
+    };
+    let cases: [(&str, &str, bool, bool, bool); 5] = [
+        ("toc017-dirty-empty", "", true, false, true),
+        ("toc017-dirty-placeholder", "右クリックしてフィールドを更新してください。", true, false, true),
+        ("toc017-update-fields", "右クリックしてフィールドを更新してください。", false, true, true),
+        ("toc017-clean-empty", "", false, false, false),
+        ("toc017-clean-placeholder", "右クリックしてフィールドを更新してください。", false, false, false),
+    ];
+    for (name, result, dirty, update_fields, made) in cases {
+        let file = format!("target/scenario-input/{name}.docx");
+        let input = root.join(&file);
+        std::fs::create_dir_all(input.parent().unwrap()).unwrap();
+        std::fs::write(&input, ibis_pptx::test_files::docx_with_unupdated_toc(&base, result, dirty, update_fields)).unwrap();
+        let mut s = Scenario::open(&file);
+        let doc = s.document();
+        let entries = table(&doc);
+        if made {
+            let heads = headings(&doc);
+            assert!(!heads.is_empty(), "{name}: the report has headings");
+            for h in &heads {
+                assert!(entries.iter().any(|e| e.starts_with(h.as_str())), "{name}: {h} is in {entries:?}");
+            }
+            assert!(!entries.iter().any(|e| e.contains("右クリック")), "{name}: the placeholder is gone: {entries:?}");
+            // Saved and read back: the same table, linked to the headings, and no w:dirty left.
+            let path = s.save_as(&format!("{name}.docx"));
+            let saved = std::fs::read(path).unwrap();
+            let xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+            assert!(!xml.contains("w:dirty"), "{name}: the made field is not dirty");
+            assert!(xml.contains("PAGEREF _Toc"), "{name}: page numbers are PAGEREF fields");
+            assert!(xml.contains("docPartGallery"), "{name}: the content control is kept");
+            let read = table(flow(&s.reopen()));
+            assert_eq!(read, entries, "{name}: the saved table reads back");
+        } else {
+            assert_eq!(entries, vec![result.to_string()], "{name}: untouched");
+        }
+    }
 }

@@ -6,10 +6,16 @@
 
 #[path = "issue33_validation.rs"]
 mod issue33_validation;
+#[path = "validation_halfwidth.rs"]
+mod validation_halfwidth;
+#[path = "n5_validation_formula.rs"]
+mod n5_validation_formula;
 #[path = "dropdown_scroll.rs"]
 mod dropdown_scroll;
 #[path = "auto_width.rs"]
 mod auto_width;
+#[path = "note_box.rs"]
+mod note_box;
 
 use ibis_doc_model::{CellRange, CellValue, sheet_calc::sheet_of_slide, sheet_command::Axis};
 
@@ -68,11 +74,11 @@ fn parse(reference: &str) -> (u32, u32) {
 impl SheetSteps for Scenario {
     fn click_cell(&mut self, reference: &str) {
         // Confirm the one-condition editor before closing its parent command dialog.
-        if self.with(|e,_|e.panel_dialog_is_modal() && e.wb().sort_edit.as_ref().is_some_and(|p|p.editor.is_some())) {
+        if self.with(|e,_|e.dialog_is_modal() && e.wb().sort_edit.as_ref().is_some_and(|p|p.editor.is_some())) {
             let _probe=crate::shell::scenario::button_probe::Probe::new();self.update(|_,_,cx|cx.notify());crate::shell::scenario::button_probe::click(self,"sort-level-ok");
         }
         // Finish the command dialog before returning to worksheet selection/Undo.
-        let close=self.with(|e,_|if !e.panel_dialog_is_modal(){None}else if e.wb().conditional_edit.as_ref().is_some_and(|p|p.manager){Some("conditional-manager-close")}else if e.wb().panels.analysis.is_some() || e.wb().panels.text_columns.is_some(){Some("dialog-cancel")}else{None});
+        let close=self.with(|e,_|if !e.dialog_is_modal(){None}else if e.wb().conditional_edit.as_ref().is_some_and(|p|p.manager){Some("conditional-manager-close")}else if e.wb().panels.analysis.is_some() || e.wb().panels.text_columns.is_some(){Some("dialog-cancel")}else{None});
         if let Some(id)=close{let _probe=crate::shell::scenario::button_probe::Probe::new();self.update(|_,_,cx|cx.notify());crate::shell::scenario::button_probe::click(self,id);}
         let (column, row) = parse(reference);
         // Off screen (or under the headers): scrolled into view first, as a
@@ -217,12 +223,41 @@ impl SheetSteps for Scenario {
 #[path="chart_topology.rs"] mod chart_topology;
 #[path="chart_insert_defaults.rs"] mod chart_insert_defaults;
 #[path="line_chart_insertion.rs"] mod line_chart_insertion;
+#[path="recommend_time_axis.rs"] mod recommend_time_axis;
+#[path="header_menu_click.rs"] mod header_menu_click;
+#[path="open_wide_table.rs"] mod open_wide_table;
 #[path="sheet_tab_visibility.rs"] mod sheet_tab_visibility;
+#[path="tab_dnd_and_shift_select.rs"] mod tab_dnd_and_shift_select;
+#[path="issue100_paste_names.rs"] mod issue100_paste_names;
+#[path="issue102_names_scenario.rs"] mod issue102_names_list;
+#[path="issue102_names_table_scenario.rs"] mod issue102_names_table;
+#[path="sheet_transfer_scenario.rs"] mod sheet_transfer_scenario;
+#[path="panel_segments.rs"] mod panel_segments;
+#[path="table_style_previews.rs"] mod table_style_previews;
+#[path="pivot_fields_two_tables.rs"] mod pivot_fields_two_tables;
+#[path="pivot_expand_collapse.rs"] mod pivot_expand_collapse;
+#[path="pivot_protect.rs"] mod pivot_protect;
+#[path="names_scope_cf_manager.rs"] mod names_scope_cf_manager;
+#[path="cell_format_panel.rs"] mod cell_format_panel;
+#[path="cell_format_round2.rs"] mod cell_format_round2;
+#[path="panel_field_sync.rs"] mod panel_field_sync;
+#[path="issue96_hidden_group_box.rs"] mod issue96_hidden_group_box;
+#[path="dropdown_position_20261106.rs"] mod dropdown_position_20261106;
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     let mut all: Vec<(&'static str, fn())> = vec![
+        ("xlsx::issue96_hidden_group_box_takes_no_click",issue96_hidden_group_box::hidden_group_box_takes_no_click),
         ("xlsx::sheet_tab_selection_reveals_neighbour",sheet_tab_visibility::selected_tab_reveals_neighbour),
         ("xlsx::sheet_tab_double_click_requires_same_sheet",sheet_tab_visibility::double_click_requires_same_sheet),
+        ("xlsx::sheet_tab_drag_follows_pointer_and_commits",tab_dnd_and_shift_select::tab_drag_follows_pointer_and_commits),
+        ("xlsx::sheet_tab_drag_escape_restores",tab_dnd_and_shift_select::tab_drag_escape_restores),
+        ("xlsx::sheet_tab_drag_scrolling_strip_and_protection",tab_dnd_and_shift_select::tab_drag_scrolling_strip_and_protection),
+        ("xlsx::shift_arrows_follow_the_moving_end",tab_dnd_and_shift_select::shift_arrows_follow_the_moving_end),
+        ("xlsx::shift_arrows_follow_past_hidden_and_merged",tab_dnd_and_shift_select::shift_arrows_follow_past_hidden_and_merged),
         ("xlsx::line_chart_selected_numeric_columns",line_chart_insertion::selected_numeric_columns),
+        ("xlsx::recommend_time_axis_synthetic",recommend_time_axis::synthetic_layouts),
+        ("xlsx::recommend_time_axis_private_graph",recommend_time_axis::private_graph),
+        ("xlsx::header_menu_row_items_act",header_menu_click::row_menu_items_act),
+        ("xlsx::whole_row_table_opens",open_wide_table::whole_row_table_opens),
         ("xlsx::chart_live_title_styles_layout",chart_format::live_title_styles_and_layout),
         ("xlsx::chart_section_reveal_confirm_buttons",chart_format::section_reveal_and_confirm_buttons),
         ("xlsx::chart_references_modal_priority",chart_format::references_and_modal_priority),
@@ -311,6 +346,12 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::valid010_copy_and_paste_validation", valid010_copy_and_paste_validation),
         ("xlsx::valid012_paste_and_recalc_bypass", valid012_paste_and_recalc_bypass),
         ("xlsx::sec009_notes", sec009_notes),
+        ("xlsx::note_box_new_text_and_caret", note_box::new_note_text_and_caret),
+        ("xlsx::note_box_hover_shows_the_note", note_box::hover_shows_the_note),
+        ("xlsx::note_box_resize_and_move", note_box::resize_and_move),
+        ("xlsx::note_box_text_formats", note_box::text_formats),
+        ("xlsx::note_box_long_text_past_the_box", note_box::long_text_past_the_box),
+        ("xlsx::note_box_saved_and_read_back", note_box::saved_and_read_back),
         ("xlsx::sec002_protect_sheet", sec002_protect_sheet),
         ("xlsx::sec004_allow_edit_ranges", sec004_allow_edit_ranges),
         ("xlsx::sec005_protect_workbook", sec005_protect_workbook),
@@ -320,10 +361,75 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::xsc20_format_painter", xsc20_format_painter),
         ("xlsx::xsc51_names", xsc51_names),
         ("xlsx::issue33_validation_list", issue33_validation::run),
+        ("xlsx::validation_list_full_width", validation_halfwidth::list_accepts_full_width),
+        ("xlsx::n5_validation_formula", n5_validation_formula::run),
+        ("xlsx::issue100_paste_names_other_window", issue100_paste_names::other_window),
+        ("xlsx::issue100_paste_names_kinds_of_paste", issue100_paste_names::kinds_of_paste),
+        ("xlsx::issue100_paste_names_conflict", issue100_paste_names::conflict),
+        ("xlsx::issue100_paste_names_same_workbook", issue100_paste_names::same_workbook),
+        ("xlsx::issue100_paste_names_copy_sheet", issue100_paste_names::copy_sheet),
+        ("xlsx::panel_segments_sparkline_point_target", panel_segments::sparkline_point_target_segment),
+        ("xlsx::panel_segments_forecast", panel_segments::forecast_segments),
+        ("xlsx::panel_segments_move_chart_top_segment", panel_segments::move_chart_top_segment_switches_controls),
+        ("xlsx::panel_segments_table_design_tabs", panel_segments::table_design_tabs_and_button_group),
+        ("xlsx::table_style_previews", table_style_previews::previews_two_columns_click_and_frame),
+        ("xlsx::issue102_names_list_contents", issue102_names_list::list_contents),
+        ("xlsx::issue102_names_search_filter_sort", issue102_names_list::search_filter_sort),
+        ("xlsx::issue102_names_add_edit_delete", issue102_names_list::add_edit_delete),
+        ("xlsx::issue102_names_add_in_sheet_scope", issue102_names_list::add_in_sheet_scope),
+        ("xlsx::issue102_names_paste_list", issue102_names_list::paste_list),
+        ("xlsx::issue102_names_delete_errors", issue102_names_list::delete_errors),
+        ("xlsx::issue102_names_keys_and_clicks", issue102_names_list::keys_and_clicks),
+        ("xlsx::issue102_names_insert_into_formula", issue102_names_list::insert_into_formula),
+        ("xlsx::issue102_names_pane_width", issue102_names_list::pane_width),
+        ("xlsx::cell_format_number_code_live", cell_format_panel::number_code_follows_dropdown_and_applies_live),
+        ("xlsx::cell_format_rotation_custom_and_font_pick", cell_format_panel::rotation_custom_and_font_pick),
+        ("xlsx::cell_format_pattern_gradient_pictures", cell_format_panel::pattern_and_gradient_lists_are_pictures),
+        ("xlsx::cell_format2_labels_and_order", cell_format_round2::labels_and_order),
+        ("xlsx::cell_format2_number_format_icons", cell_format_round2::number_format_items_have_icons),
+        ("xlsx::cell_format2_pattern_none_first", cell_format_round2::pattern_none_first),
+        ("xlsx::cell_format2_spinner_select_all", cell_format_round2::spinner_fields_select_all_on_focus),
+        ("xlsx::cell_format2_live_update_apply", cell_format_round2::live_update_on_off_and_apply),
+        ("xlsx::cell_format2_gradient_slider", cell_format_round2::gradient_slider_stops_and_undo),
+        ("xlsx::cell_format2_gradient_slider_draft", cell_format_round2::gradient_slider_with_draft),
+        ("xlsx::panel_field_sync_undo_redo", panel_field_sync::fields_follow_undo_and_redo),
+        ("xlsx::panel_field_sync_selection_range_sheet", panel_field_sync::fields_follow_selection_range_and_sheet),
+        ("xlsx::panel_field_sync_external_reload", panel_field_sync::fields_follow_external_reload),
+        ("xlsx::panel_field_sync_typing_and_undo", panel_field_sync::typing_and_undo),
+        ("xlsx::panel_field_sync_undeclared_refused", panel_field_sync::undeclared_input_is_refused),
+        ("xlsx::names_scope_is_changed_in_the_edit_dialog", names_scope_cf_manager::names_scope_is_changed_in_the_edit_dialog),
+        ("xlsx::conditional_manager_table_dnd_stop_all_and_child_dialog", names_scope_cf_manager::conditional_manager_table_dnd_stop_all_and_child_dialog),
+        ("xlsx::sort_levels_grip_is_drawn", names_scope_cf_manager::sort_levels_grip_is_drawn),
+        ("xlsx::pivot_expand_rows_click_undo_save", pivot_expand_collapse::rows_click_undo_save),
+        ("xlsx::pivot_expand_state_kept_when_fields_change", pivot_expand_collapse::state_kept_when_fields_change),
+        ("xlsx::pivot_expand_columns_and_both_axes", pivot_expand_collapse::columns_and_both_axes),
+        ("xlsx::pivot_expand_rows_and_columns_together", pivot_expand_collapse::rows_and_columns_together),
+        ("xlsx::pivot_expand_three_levels", pivot_expand_collapse::three_levels),
+        ("xlsx::pivot_expand_layouts_and_values", pivot_expand_collapse::layouts_and_values),
+        ("xlsx::pivot_expand_private_book", pivot_expand_collapse::private_book),
+        ("xlsx::pivot_new_sheet_after_current", pivot_protect::new_sheet_after_current),
+        ("xlsx::pivot_pane_push_and_pop", pivot_protect::pane_push_and_pop),
+        ("xlsx::pivot_cells_allow_and_refuse", pivot_protect::cells_allow_and_refuse),
+        ("xlsx::pivot_fields_search_add_and_drag", pivot_fields_two_tables::search_add_and_drag),
+        ("xlsx::pivot_fields_value_dialog_changes_summary", pivot_fields_two_tables::value_dialog_changes_summary),
+        ("xlsx::issue102_names_table_header_stays_rows_scroll", issue102_names_table::header_stays_rows_scroll),
+        ("xlsx::issue102_names_table_only_visible_rows_are_made", issue102_names_table::only_visible_rows_are_made),
+        ("xlsx::issue102_names_table_clicks_reach_rows_and_buttons", issue102_names_table::clicks_reach_rows_and_buttons),
+        ("xlsx::issue102_names_table_columns_are_dragged", issue102_names_table::columns_are_dragged),
+        ("xlsx::issue102_names_table_thousands_are_quick", issue102_names_table::thousands_of_names_are_quick),
+        ("xlsx::issue100_cut_and_paste_to_another_window", sheet_transfer_scenario::cut_and_paste_to_another_window),
+        ("xlsx::issue100_cut_with_a_conflicting_name", sheet_transfer_scenario::cut_with_a_conflicting_name),
+        ("xlsx::issue100_copy_sheet_to_another_workbook", sheet_transfer_scenario::copy_sheet_to_another_workbook),
+        ("xlsx::issue100_move_sheet_to_another_workbook", sheet_transfer_scenario::move_sheet_to_another_workbook),
+        ("xlsx::issue100_sheet_transfer_asks_about_names", sheet_transfer_scenario::sheet_transfer_asks_about_names),
+        ("xlsx::issue100_sheet_transfer_in_one_workbook", sheet_transfer_scenario::sheet_transfer_in_one_workbook),
         ("xlsx::issue64_auto_width", auto_width::run),
         ("xlsx::dropdown_width_and_scrollbar_drag",dropdown_scroll::run),
         ("xlsx::xsc52_validation_list", xsc52_validation_list),
         ("xlsx::xsc59_shift_cells", xsc59_shift_cells),
+        ("xlsx::cells_dialog_radio", cells_dialog_radio),
+        ("xlsx::mark_as_final_infobar", mark_as_final_infobar),
+        ("xlsx::distributed_alignment_shots", distributed_alignment_shots),
         ("xlsx::xsc61_csv", xsc61_csv),
         ("xlsx::xsc48_autofill", xsc48_autofill),
         ("xlsx::cell014_double_click_fill_handle", cell014_double_click_fill_handle),
@@ -347,6 +453,9 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::default_xlsx_a4_cell_edit_screenshots", default_xlsx_a4_cell_edit_screenshots),
         ("xlsx::fix73_edit_text_stays_put", fix73_edit_text_stays_put),
         ("xlsx::fix73_edit_click_places_caret", fix73_edit_click_places_caret),
+        ("xlsx::edit_wrapped_cell_click_and_arrows", edit_wrapped_cell_click_and_arrows),
+        ("xlsx::edit_frozen_scrolled_wrapped_click", edit_frozen_scrolled_wrapped_click),
+        ("xlsx::edit_single_line_arrows_and_status", edit_single_line_arrows_and_status),
         ("xlsx::xsc29_find_replace", xsc29_find_replace),
         ("xlsx::xsc31_hyperlinks", xsc31_hyperlinks),
         ("xlsx::opt005_autolink", opt005_autolink),
@@ -396,6 +505,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::xsc23_sort", xsc23_sort),
         ("xlsx::xsc24_filter", xsc24_filter),
         ("xlsx::xsc24_filter_panel", xsc24_filter_panel),
+        ("xlsx::filter_dialogs_use_the_shared_dialog", filter_dialogs_use_the_shared_dialog),
         ("xlsx::xsc05_threaded_comments", xsc05_threaded_comments),
         ("xlsx::xsc26_make_table", xsc26_make_table),
         ("xlsx::xsc26_table_filter", xsc26_table_filter),
@@ -426,6 +536,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::table_design_ribbon_commands", table_design_ribbon_commands),
         ("xlsx::autosum_ribbon_commands", autosum_ribbon_commands),
         ("xlsx::sort_filter_view_ribbon_commands", sort_filter_view_ribbon_commands),
+        ("xlsx::page_break_preview_range_follows_entries", page_break_preview_range_follows_entries),
+        ("xlsx::new_sheet_page_range_and_pasted_screenshot", new_sheet_page_range_and_pasted_screenshot),
         ("xlsx::page_setup_and_insert_ribbon_commands", page_setup_and_insert_ribbon_commands),
         ("xlsx::pivot019_show_details", pivot019_show_details),
         ("xlsx::pivot013_buttons", pivot013_buttons),
@@ -546,6 +658,9 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::spelling_check", spelling_check),
         ("xlsx::spelling_range_shapes_undo", spelling_range_shapes_undo),
         ("xlsx::xsc25_conditional", xsc25_conditional),
+        ("xlsx::xsc25_conditional_edit_rows", xsc25_conditional_edit_rows),
+        ("xlsx::ctrl77_control_properties_rows", ctrl77_control_properties_rows),
+        ("xlsx::format021_cell_format_tabs", format021_cell_format_tabs),
         ("xlsx::xsc25_conditional_cell_is", xsc25_conditional_cell_is),
         ("xlsx::xsc25_conditional_opaque_edit", xsc25_conditional_opaque_edit),
         ("xlsx::xsc25_conditional_insert", xsc25_conditional_insert),
@@ -662,6 +777,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::sheet032_overwrite_question_and_text_paste", sheet032_overwrite_question_and_text_paste),
     ];
     all.extend(super::corpus_report::all());
+    all.extend(dropdown_position_20261106::all());
     all
 }
 
@@ -1911,9 +2027,11 @@ fn xsc31_hyperlinks() {
     s.click_cell("G4");
     s.key("cmd-k");
     assert!(s.with(|e, _| e.sheet_state().unwrap().link.is_some()), "the panel opens");
-    s.update(|e,w,cx|{e.insert_cell_link("https://example.com/sales",cx);e.close_panel_dialog(w,cx);});
+    s.update(|e,w,cx|{e.insert_cell_link("https://example.com/sales",cx);e.close_dialog(w,cx);});
     assert_eq!(s.value("G4"), CellValue::Text("https://example.com/sales".into()));
-    s.click_cell("H4");
+    // G4's long address is drawn over H4 (empty): a click there is on the link's text and follows it (only the drawn text
+    // counts, #link-click), so H4 is selected by the model, not by a click.
+    s.update(|e, _, _| e.set_cell(7, 3));
     s.update(|e, _, cx| e.insert_cell_link("#商品!A1", cx));
     s.screenshot("links");
     let style = |s: &mut Scenario, r: &str| {
@@ -2040,7 +2158,7 @@ fn view002b_header_footer_pane() {
     s.update(|_, _, cx| cx.notify());
     s.screenshot("header-footer-pane");
     // (a) A pane in the right pane, not a modal dialog: nothing blocks the sheet.
-    assert!(s.with(|e, _| e.sheet_state().is_some_and(|st| st.header_footer_edit.is_some()) && e.right_pane.shown && !e.panel_dialog_is_modal() && !e.panel_dialog.active), "the editor is a pane, not a dialog");
+    assert!(s.with(|e, _| e.sheet_state().is_some_and(|st| st.header_footer_edit.is_some()) && e.right_pane.shown && !e.dialog_is_modal() && !e.dialog.active), "the editor is a pane, not a dialog");
     // (d) No Apply, Cancel, Back, Clear or section radios; the pages are not offered while the options do not differ them.
     let ids = buttons::all();
     for gone in ["hf-apply", "hf-back", "hf-clear", "hf-sec", "sec-focus", "cancel", "hf-kind"] {
@@ -2150,7 +2268,7 @@ fn view002_page_layout() {
         });
         s.click(pos);
         assert!(s.with(|e, _| e.sheet_state().is_some_and(|st| st.header_footer_edit.is_some())), "a press on the header opens its editor");
-        assert!(s.with(|e, _| e.right_pane.shown && !e.panel_dialog_is_modal() && !e.panel_dialog.active), "the editor is a pane beside the paper, not a modal dialog over it");
+        assert!(s.with(|e, _| e.right_pane.shown && !e.dialog_is_modal() && !e.dialog.active), "the editor is a pane beside the paper, not a modal dialog over it");
         // The editor is on the paper itself: the section under the press (the middle) takes what is typed.
         s.screenshot("page-layout-header-edit");
         s.type_text("Report");
@@ -2394,14 +2512,20 @@ fn cell020_format_and_filter_keys() {
 /// a sample that is pressed to draw or take off a line.
 fn format021_cell_format_pane() {
     use super::custom_format::FormatTab;
+    use crate::shell::scenario::button_probe as buttons;
     use crate::shell::chrome::MenuEntry;
     use crate::shell::i18n::{self, Language};
     let t = |id: &str| i18n::text(id).to_string();
+    let _probe = buttons::Probe::new();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     s.click_cell("B4");
     s.key("cmd-1");
-    let open = |s: &mut Scenario| s.with(|e, _| e.sheet_state().unwrap().format_open);
-    assert_eq!(open(&mut s), [true; 6], "all the sections are open at first");
+    // The panel header has three tabs (書式・罫線・保護); 書式 is first. The window is tall, so that a whole tab is in view.
+    s.size(1200., 1500.);
+    let tab = |s: &mut Scenario| s.with(|e, _| e.sheet_state().unwrap().format_tab);
+    let tab_key = |i: usize| buttons::all().into_iter().find(|k| k.contains("cell-format-tabs") && k.ends_with(&format!(", {i})")))
+        .unwrap_or_else(|| panic!("tab {i} not rendered: {:?}", buttons::all()));
+    assert_eq!(tab(&mut s), 0, "the 書式 tab is first");
     s.screenshot("sections");
     fn bounds(s: &mut Scenario, id: &str) -> Bounds<gpui_kit::Pixels> {
         let id = id.to_string();
@@ -2431,30 +2555,38 @@ fn format021_cell_format_pane() {
         let which = which.to_string();
         let input = s.with(move |e, _| {
             let pane = e.sheet_state().unwrap().custom_format.as_ref().unwrap();
-            match which.as_str() { "font" => pane.font_color.clone(), "fill" => pane.fill_color.clone(), _ => pane.pattern_color.clone() }
+            match which.as_str() { "font" => pane.font_color.clone(), "fill" => pane.fill_color.clone(), "border" => pane.border_color.clone(), _ => pane.pattern_color.clone() }
         });
         s.update(move |_, window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
         s.key("cmd-a");
         if hex.is_empty() { s.key("backspace"); } else { s.type_text(hex); }
     }
     let style = |s: &mut Scenario| s.with(|e, _| e.current_style());
-    // Only the section `n` open (the others closed), so that its parts are in view to be pressed.
+    // The section `n` in view: the header tab that holds it.
     fn only(s: &mut Scenario, n: usize) {
         s.update(move |e, _, cx| {
-            let mut open = [false; 6];
-            open[n] = true;
-            e.wb_mut().format_open = open;
+            e.wb_mut().format_tab = FormatTab::ALL[n].header_tab();
             cx.notify();
         });
     }
-    // A triangle row closes its section and opens it again; the state is kept when the pane is opened again.
-    press(&mut s, "cell-format-section-Number");
-    assert!(!open(&mut s)[0] && open(&mut s)[1], "the number section is closed");
-    s.screenshot("number-closed");
+    // The tabs switch the body; the header does not move; the choice is kept when the pane is opened again.
+    let header_y = buttons::bounds(&tab_key(0)).expect("the tabs").origin.y;
+    assert!(s.with(|e, _| e.sheet_state().unwrap().custom_format.as_ref().unwrap().ui.borrow().contains_key("cell-format-number")), "the number section is in 書式");
+    for (i, shown, hidden) in [(1usize, "cell-format-line", "cell-format-number"), (2, "cell-format-locked", "cell-format-line"), (0, "cell-format-number", "cell-format-locked")] {
+        buttons::click(&mut s, &tab_key(i));
+        s.settle();
+        assert_eq!(tab(&mut s), i, "tab {i} pressed");
+        let has = |s: &mut Scenario, id: &str| { let id = id.to_string(); s.with(move |e, _| e.sheet_state().unwrap().custom_format.as_ref().unwrap().ui.borrow().contains_key(&id)) };
+        assert!(has(&mut s, shown), "{shown} is in tab {i}");
+        let _ = hidden;
+        assert_eq!(buttons::bounds(&tab_key(i)).unwrap().origin.y, header_y, "the header does not move when the tab changes");
+        s.screenshot(&format!("tab-{i}"));
+    }
+    buttons::click(&mut s, &tab_key(2));
     s.key("cmd-1");
-    assert!(!open(&mut s)[0], "kept when the pane is opened again");
-    press(&mut s, "cell-format-section-Number");
-    assert!(open(&mut s)[0]);
+    assert_eq!(tab(&mut s), 2, "kept when the pane is opened again");
+    buttons::click(&mut s, &tab_key(0));
+    assert_eq!(tab(&mut s), 0);
     // 表示形式: the category is a drop-down.
     press(&mut s, "cell-format-number");
     s.screenshot("number-dropdown");
@@ -2471,7 +2603,10 @@ fn format021_cell_format_pane() {
     assert_eq!(style(&mut s).rotation, 45);
     // Custom rotation angle input (-90..=90 degrees): 30° -> 30, -30° -> 120. There is no 適用 button now:
     // the angle applies as it is typed.
-    press(&mut s, "cell-format-rotation-input");
+    // The angle field is on when カスタム is chosen.
+    choose(&mut s, "cell-format-rotation", &t("xlsx.format-pane.rotation-numeric"));
+    let rotation_input = s.with(|e, _| e.sheet_state().unwrap().custom_format.as_ref().unwrap().rotation.clone());
+    s.update(move |_, window, cx| rotation_input.update(cx, |i, cx| i.focus(window, cx)));
     s.key("cmd-a");
     s.type_text("30");
     assert_eq!(style(&mut s).rotation, 30);
@@ -2503,9 +2638,11 @@ fn format021_cell_format_pane() {
     let typed = s.with(|e, cx| e.sheet_state().unwrap().custom_format.as_ref().unwrap().size.read(cx).value().to_string());
     assert_eq!(typed, point, "the field shows it");
     let bold = style(&mut s).bold;
-    press(&mut s, "cell-format-bold");
+    // B I U S are the buttons of a toolbar row.
+    let click_button = |s: &mut Scenario, id: &str| { let key = buttons::all().into_iter().find(|k| k.contains(id)).unwrap_or_else(|| panic!("no button {id}")); buttons::click(s, &key); };
+    click_button(&mut s, "cell-format-bold");
     assert_ne!(style(&mut s).bold, bold, "bold toggled");
-    press(&mut s, "cell-format-strike");
+    click_button(&mut s, "cell-format-strike");
     assert!(style(&mut s).strike);
     s.screenshot("color-field");
     type_color(&mut s, "font", "FF0000");
@@ -2523,7 +2660,7 @@ fn format021_cell_format_pane() {
     s.click_cell("H20");
     // 罫線: pressing a line of the sample draws it in the chosen style and colour, and again takes it off.
     choose(&mut s, "cell-format-line", &t("_shell.thick"));
-    choose(&mut s, "cell-format-border-color", &t("_shell.red"));
+    type_color(&mut s, "border", "FF0000");
     assert!(style(&mut s).top.is_none());
     press(&mut s, "cell-format-sample-top");
     let top = style(&mut s).top.expect("the top line is drawn");
@@ -2571,7 +2708,7 @@ fn format021_cell_format_pane() {
     assert_ne!(style(&mut s).unlocked, was, "the lock toggled");
     s.screenshot("protection");
     s.update(move |e, window, cx| e.open_cell_format(FormatTab::Number, window, cx));
-    assert!(open(&mut s)[0], "opening a section by its name shows it");
+    assert_eq!(tab(&mut s), 0, "opening a section by its name shows its tab");
     // English: the whole pane, with no Japanese left (a picture to look at).
     i18n::show(Language::English);
     s.update(|_, _, _| {});
@@ -2854,7 +2991,7 @@ fn xsc35_page_setup() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     s.menu("file.page-setup");
     s.screenshot("page-setup");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx)); // the modal dialog takes the clicks on the cells
+    s.update(|e, w, cx| e.close_dialog(w, cx)); // the modal dialog takes the clicks on the cells
     s.update(|e, _, cx| e.set_print(|p| p.landscape = true, None, cx));
     s.update(|e, _, cx| e.set_print(|p| p.margins = [228_600, 228_600, 685_800, 685_800], None, cx));
     s.update(|e, _, cx| e.set_print(|p| p.fit_to = Some((1, 1)), None, cx));
@@ -3583,7 +3720,7 @@ fn xsc_english_panels() {
     s.screenshot("english-filter-panel");
     s.update(|e, window, cx| e.filter_panel_condition([Some(10), None], true, window, cx));
     s.screenshot("english-filter-dialog");
-    s.update(|e, _, cx| e.close_filter_panel(cx));
+    s.update(|e, window, cx| e.close_dialog(window, cx));
     s.menu("xlsx.filter");
     s.click_cell("A4");
     s.key("cmd-t");
@@ -3597,7 +3734,7 @@ fn xsc_english_panels() {
     s.click_cell("A1");
     s.menu("file.page-setup");
     s.screenshot("english-page-setup");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx)); // a modal dialog blocks the menus until it is closed
+    s.update(|e, w, cx| e.close_dialog(w, cx)); // a modal dialog blocks the menus until it is closed
     s.menu("xlsx.sort-manage");
     s.screenshot("english-sort");
     i18n::show(Language::Japanese);
@@ -6276,16 +6413,16 @@ fn ui_english_panels_2() {
     s.menu("xlsx.data-analysis");
     s.update(|e, w, cx| e.analysis_choose(super::analysis_panel::Tool::Regression, super::analysis_panel::Dist::Uniform, w, cx));
     s.screenshot("analysis-en");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx)); // a modal dialog blocks the menus until it is closed
+    s.update(|e, w, cx| e.close_dialog(w, cx)); // a modal dialog blocks the menus until it is closed
     s.menu("xlsx.solver");
     s.screenshot("solver-en");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx)); // a modal dialog blocks the menus until it is closed
+    s.update(|e, w, cx| e.close_dialog(w, cx)); // a modal dialog blocks the menus until it is closed
     s.menu("xlsx.autocorrect");
     s.screenshot("autocorrect-en");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx)); // a modal dialog blocks the menus until it is closed
+    s.update(|e, w, cx| e.close_dialog(w, cx)); // a modal dialog blocks the menus until it is closed
     s.menu("xlsx.error-options");
     s.screenshot("error-options-en");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx)); // a modal dialog blocks the menus until it is closed
+    s.update(|e, w, cx| e.close_dialog(w, cx)); // a modal dialog blocks the menus until it is closed
     s.menu("xlsx.ink");
     s.screenshot("ink-en");
     i18n::show(Language::Japanese);
@@ -7820,8 +7957,8 @@ fn pivot018_refresh() {
 
 /// Closes the modal command panel (Undo and Redo are the sheet's, not the dialog's, so they come after it).
 fn close_modal_panel(s: &mut Scenario) {
-    if s.with(|e, _| e.panel_dialog_is_modal()) {
-        s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    if s.with(|e, _| e.dialog_is_modal()) {
+        s.update(|e, window, cx| e.close_dialog(window, cx));
     }
 }
 
@@ -7843,7 +7980,7 @@ fn pivot001_create() {
     assert_eq!(source.as_deref(), Some("ピボット!$J$1:$P$41"), "the data around the selected cell");
     s.update(|e, window, cx| e.create_pivot(window, cx));
     assert_eq!(s.with(|e, _| e.slide().name.clone()).as_deref(), Some("Sheet2"), "a new sheet");
-    assert_eq!(s.with(|e, _| e.presentation().slides[0].name.clone()).as_deref(), Some("Sheet2"), "before the data's sheet, as Excel puts it");
+    assert_eq!(s.with(|e, _| e.presentation().slides[1].name.clone()).as_deref(), Some("Sheet2"), "after the data's sheet (the current one)");
     assert_eq!(pivot_of(&mut s, 0).location.first_row, 2, "at A3");
     let target = s.with(|e, _| e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).and_then(|p| p.target)).expect("its fields shown");
     s.update(move |e, _, cx| e.toggle_pivot_field(target, 2, cx));
@@ -7871,7 +8008,7 @@ fn pivot001_create() {
     let cache = ibis_pptx::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition2.xml").expect("its cache");
     assert!(cache.contains(r#"refreshOnLoad="1""#) && cache.contains(r#"sheet="ピボット""#));
     let reopened = s.reopen();
-    let sh = sheet_of_slide(&reopened.slides[0]).unwrap();
+    let sh = sheet_of_slide(&reopened.slides[1]).unwrap();
     assert_eq!(sh.pivots.len(), 1);
     assert_eq!(sh.cell(9, 5).map(|c| c.value.clone()), Some(CellValue::Number(151819.0)), "built again on opening");
 }
@@ -7928,7 +8065,7 @@ fn pivot_fn_getpivotdata() {
     // 5. Save and reopen roundtrip
     let _saved = s.save_as("pivot_getpivotdata.xlsx");
     let reopened = s.reopen();
-    let sh = sheet_of_slide(&reopened.slides[0]).unwrap();
+    let sh = sheet_of_slide(&reopened.slides[1]).unwrap();
     assert_eq!(sh.cell(0, 3).map(|c| c.value.clone()), Some(CellValue::Number(151819.0)), "D1 preserved on reopen");
     assert_eq!(sh.cell(1, 3).map(|c| c.value.clone()), Some(kanto_val), "D2 preserved on reopen");
     assert_eq!(sh.cell(2, 3).map(|c| c.value.clone()), Some(CellValue::Error(ibis_calc::CellError::Ref)), "D3 preserved on reopen");
@@ -8031,7 +8168,7 @@ fn pivot003_value_field_settings() {
     assert_eq!(avg_val, CellValue::Number(151819.0 / 40.0), "F23 is average: {:?}", avg_val);
 
     // 3. Undo and Redo (the dialog is modal: close it first)
-    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    s.update(|e, window, cx| e.close_dialog(window, cx));
     s.key("cmd-z");
     assert_eq!(pivot_of(&mut s, 0).data_fields[0].function, "sum");
     s.key("cmd-shift-z");
@@ -8213,8 +8350,8 @@ fn pq001_import_text() {
     assert_eq!(s.value("B4"), CellValue::Text("00456".into()));
     // The import dialog is modal: close it before undoing on the sheet.
     s.update(|e, window, cx| {
-        if e.panel_dialog_is_modal() {
-            e.close_panel_dialog(window, cx);
+        if e.dialog_is_modal() {
+            e.close_dialog(window, cx);
         }
     });
     s.key("cmd-z");
@@ -10110,8 +10247,9 @@ fn table_design_ribbon_commands() {
 /// cell nothing; rows inserted above move the thread.
 fn xsc05_threaded_comments() {
     let mut s = Scenario::open("test/editing/xlsx-threads.xlsx");
-    let corner = s.with(|e, _| e.cell_corner(1, 1)).unwrap();
-    s.hover((f32::from(corner.x) - 10.0, f32::from(corner.y) - 8.0));
+    // The mark is the corner triangle at the cell's top right: the pointer on its square (not the rest of the cell).
+    let corner = s.with(|e, _| e.cell_corner(1, 0)).unwrap();
+    s.hover((f32::from(corner.x) - 3.0, f32::from(corner.y) + 3.0));
     assert_eq!(s.with(|e, _| e.wb().comment_hover), Some((1, 1)));
     s.screenshot("thread-card");
     let plain = s.with(|e, _| e.cell_corner(0, 12)).unwrap();
@@ -10120,6 +10258,82 @@ fn xsc05_threaded_comments() {
     s.click_cell("A1");
     s.menu("xlsx.insert-row-above");
     assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().threads.iter().map(|t| (t.row, t.column)).collect::<Vec<_>>()), vec![(2, 1), (4, 1)]);
+}
+
+/// ユーザー設定オートフィルター and トップテン are dialogs of the shared host (`shell/dialog.rs`): the ▼ panel is
+/// closed when one opens, it is modal, Esc and キャンセル close it without filtering and without bringing the panel back,
+/// Enter is OK, a wrong value shows the error and keeps it open, and OK filters.
+fn filter_dialogs_use_the_shared_dialog() {
+    use crate::xlsx::filter::{FILTER_CONDITION_DIALOG, FILTER_TOP_DIALOG, FilterDialog, Section};
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut csv = String::from("名前,金額\n");
+    for i in 0..20 {
+        csv.push_str(&format!("n{i},{}\n", 100 * (i + 1)));
+    }
+    std::fs::write(dir.join("filter-dialogs.csv"), csv).unwrap();
+    let mut s = Scenario::open("target/scenario-input/filter-dialogs.csv");
+    s.click_cell("A1");
+    s.menu("xlsx.filter");
+    let visible = |s: &mut Scenario| s.with(|e, _| { let sh = sheet_of_slide(e.slide()).unwrap(); (1..=20u32).filter(|r| sh.rows[*r as usize] > 0).count() });
+    let corner = s.with(|e, _| e.cell_corner(1, 0)).unwrap();
+    let open_panel = |s: &mut Scenario| s.click((f32::from(corner.x) - 6.0, f32::from(corner.y) - 6.0));
+    let dialog_key = |s: &mut Scenario| s.with(|e, _| e.dialog.key);
+    // トップテン: the ▼ panel gives way to the dialog; Esc closes it and nothing is filtered.
+    open_panel(&mut s);
+    s.update(|e, _, cx| e.filter_panel_section(Section::Conditions, cx));
+    s.update(|e, w, cx| e.filter_panel_top(w, cx));
+    s.settle();
+    assert!(s.with(|e, _| e.wb().filter_panel.is_none()), "the ▼ panel closes when the dialog opens");
+    assert_eq!(dialog_key(&mut s), Some(FILTER_TOP_DIALOG));
+    assert!(s.with(|e, _| e.dialog_is_modal()));
+    s.key("escape");
+    s.settle();
+    assert!(s.with(|e, _| e.wb().panels.filter_dialog.is_none() && e.wb().filter_panel.is_none() && !e.dialog_is_modal()));
+    assert_eq!(visible(&mut s), 20);
+    // 501 items: the error, the dialog stays; 3 and Enter: the top 3.
+    open_panel(&mut s);
+    s.update(|e, w, cx| e.filter_panel_top(w, cx));
+    s.settle();
+    let set_count = |s: &mut Scenario, text: &str| s.update(|e, w, cx| {
+        if let Some(FilterDialog::Top(d)) = e.wb().panels.filter_dialog.as_ref().map(|p| &p.dialog) {
+            d.count.clone().update(cx, |i, cx| i.set_value(text.to_string(), w, cx));
+        }
+    });
+    set_count(&mut s, "501");
+    s.key("enter");
+    s.settle();
+    assert!(s.with(|e, _| matches!(e.wb().panels.filter_dialog.as_ref().map(|p| &p.dialog), Some(FilterDialog::Top(d)) if d.error.is_some())));
+    assert_eq!(visible(&mut s), 20);
+    set_count(&mut s, "3");
+    s.key("enter");
+    s.settle();
+    assert!(s.with(|e, _| e.wb().panels.filter_dialog.is_none() && !e.dialog_is_modal()));
+    assert_eq!(visible(&mut s), 3);
+    open_panel(&mut s);
+    s.update(|e, _, cx| e.filter_panel_apply(None, cx));
+    assert_eq!(visible(&mut s), 20);
+    // ユーザー設定: 「より大きい」 1500, typed in the first field and Enter.
+    open_panel(&mut s);
+    s.update(|e, w, cx| e.filter_panel_condition([Some(2), None], true, w, cx));
+    s.settle();
+    assert_eq!(dialog_key(&mut s), Some(FILTER_CONDITION_DIALOG));
+    s.key("enter");
+    s.settle();
+    assert!(s.with(|e, _| matches!(e.wb().panels.filter_dialog.as_ref().map(|p| &p.dialog), Some(FilterDialog::Condition(d)) if d.error.is_some())), "no value: the error");
+    s.type_text("1500");
+    s.key("enter");
+    s.settle();
+    assert!(s.with(|e, _| e.wb().panels.filter_dialog.is_none() && !e.dialog_is_modal()));
+    assert_eq!(visible(&mut s), 5);
+    // キャンセル: closes and keeps the filter as it was.
+    open_panel(&mut s);
+    s.update(|e, w, cx| e.filter_panel_condition([Some(0), None], true, w, cx));
+    s.settle();
+    s.update(|e, w, cx| e.close_dialog(w, cx));
+    s.settle();
+    assert!(s.with(|e, _| e.wb().panels.filter_dialog.is_none() && e.wb().filter_panel.is_none()));
+    assert_eq!(visible(&mut s), 5);
 }
 
 /// XSC-24 with the ▼ panel as Excel's, on a sales log of 3,000 rows: the
@@ -10296,10 +10510,74 @@ fn xsc24_filter() {
 }
 
 /// Sidebar fields and buttons are driven with real window clicks/typing.
+/// The row of the manager's table that shows the rule `(index, rule)`: the rows are in priority order.
+fn cf_row(s: &mut Scenario, index: usize, rule: usize) -> usize {
+    s.with(|e, _| {
+        let sheet = sheet_of_slide(e.slide()).unwrap();
+        let mut order: Vec<(u32, usize, usize)> = sheet.conditional.iter().enumerate().flat_map(|(i, f)| f.rules.iter().enumerate().map(move |(j, r)| (r.priority, i, j))).collect();
+        order.sort();
+        order.iter().position(|&(_, i, j)| i == index && j == rule).expect("the rule")
+    })
+}
+/// Click one of the manager's row buttons (`conditional-edit`, `conditional-duplicate`, `conditional-delete`) or its stop check box.
+fn cf_row_click(s: &mut Scenario, what: &str, index: usize, rule: usize) {
+    use crate::shell::scenario::button_probe as buttons;
+    let row = cf_row(s, index, rule);
+    let _probe = buttons::Probe::new();
+    s.update(|_, _, cx| cx.notify());
+    let key = if what == "conditional-stop" { format!("{:?}", gpui_kit::ElementId::from(("conditional-stop", row))) } else { format!("{}-{what}-{row}", super::conditional_edit::manager::RULES_TABLE) };
+    buttons::click(s, &key);
+}
+/// Drag the manager's row `from` onto the upper (or, `below`, lower) half of row `to`, with real pointer events.
+fn cf_drag_rule(s: &mut Scenario, from: usize, to: usize, below: bool) {
+    s.size(1200.0, 1600.0);
+    s.settle();
+    let table = super::conditional_edit::manager::RULES_TABLE;
+    let dnd = s.with(|e, _| e.wb().conditional_edit.as_ref().unwrap().manager_table.dnd.clone());
+    let a = dnd.row_bounds(table, from).unwrap_or_else(|| panic!("row {from} not painted"));
+    let b = dnd.row_bounds(table, to).unwrap_or_else(|| panic!("row {to} not painted"));
+    let start = (f32::from(a.origin.x + px(80.)), f32::from(a.origin.y + a.size.height / 2.));
+    let y = if below { b.origin.y + b.size.height * 0.75 } else { b.origin.y + b.size.height * 0.25 };
+    let end = (start.0, f32::from(y));
+    s.drag_through(&[start, (start.0 + 2., start.1 + 6.), ((start.0 + end.0) / 2., (start.1 + end.1) / 2.), end, (end.0, end.1 + 0.5)]);
+    s.settle();
+}
 fn cf_click(s: &mut Scenario, id: &str) {
-    if s.with(|e,_|e.wb().conditional_edit.as_ref().is_some_and(|p|p.manager)) && !["clear","filter-sheet","filter-selection"].contains(&id) && !id.starts_with("edit-") && !id.starts_with("delete-") && !id.starts_with("duplicate-") && !id.starts_with("up-") && !id.starts_with("down-") && !id.starts_with("rule-stop-") {
-        let _probe=crate::shell::scenario::button_probe::Probe::new();s.update(|_,_,cx|cx.notify());crate::shell::scenario::button_probe::click(s,"conditional-add");
+    let manager = s.with(|e, _| e.wb().conditional_edit.as_ref().is_some_and(|p| p.manager));
+    if manager {
+        let num = |t: &str| t.split('-').map(|n| n.parse::<usize>().unwrap_or(0)).collect::<Vec<_>>();
+        if let Some(rest) = id.strip_prefix("edit-") {
+            cf_row_click(s, "conditional-edit", num(rest)[0], 0);
+            return;
+        } else if let Some(rest) = id.strip_prefix("duplicate-") {
+            let n = num(rest);
+            cf_row_click(s, "conditional-duplicate", n[0], n[1]);
+            return;
+        } else if let Some(rest) = id.strip_prefix("delete-") {
+            let n = num(rest);
+            cf_row_click(s, "conditional-delete", n[0], n[1]);
+            return;
+        } else if let Some(rest) = id.strip_prefix("rule-stop-") {
+            let n = num(rest);
+            // The mark in the manager is not a button: the flag is changed in the rule editor.
+            cf_row_click(s, "conditional-edit", n[0], n[1]);
+            cf_click_editor(s, "stop");
+            cf_click(s, "apply");
+            return;
+        } else if !["clear", "filter-sheet", "filter-selection"].contains(&id) {
+            let _probe=crate::shell::scenario::button_probe::Probe::new();s.update(|_,_,cx|cx.notify());crate::shell::scenario::button_probe::click(s,"conditional-add");
+        }
     }
+    cf_click_editor(s, id);
+    // The rule editor was opened from the manager: when it is done the manager is the open dialog again; these tests go on
+    // with the sheet, so close it.
+    if matches!(id, "apply" | "duplicate-apply") && s.with(|e, _| e.wb().conditional_edit.as_ref().is_some_and(|p| p.manager)) {
+        let _probe = crate::shell::scenario::button_probe::Probe::new();
+        s.update(|_, _, cx| cx.notify());
+        crate::shell::scenario::button_probe::click(s, "conditional-manager-close");
+    }
+}
+fn cf_click_editor(s: &mut Scenario, id: &str) {
     if let Some(choice)=["preset-red","preset-yellow","preset-green","preset-red-text"].iter().position(|v|*v==id){
         let _probe=crate::shell::scenario::button_probe::Probe::new();s.update(|_,_,cx|cx.notify());crate::shell::scenario::button_probe::click(s,"conditional-style-preview");
         let key=crate::shell::scenario::button_probe::all().into_iter().find(|id|id.contains("conditional-style-preview")&&id.ends_with(&format!(", {choice})"))).unwrap();crate::shell::scenario::button_probe::click(s,&key);return;
@@ -10347,6 +10625,131 @@ fn cf_drawn(s: &mut Scenario, row: u32, fill: u32) {
         assert_eq!(sheet.styles[c.style as usize].fill, Some(ibis_doc_model::Rgb(fill)));
     });
 }
+/// A key of the button probe that holds `id` (the common parts name their buttons by id).
+fn probe_key(id: &str) -> String {
+    use crate::shell::scenario::button_probe as buttons;
+    buttons::all().into_iter().find(|k| k.contains(id)).unwrap_or_else(|| panic!("{id} not rendered: {:?}", buttons::all()))
+}
+
+/// 条件付き書式ルールの編集: 塗りつぶし色・文字の色 are colour rows (no "(RGB)"), the label スタイル has B and I in the
+/// toolbar's background, and 条件を満たす場合は停止 is a check box.
+fn xsc25_conditional_edit_rows() {
+    use crate::shell::scenario::button_probe as buttons;
+    use crate::shell::i18n::{self, Language};
+    let _probe = buttons::Probe::new();
+    let mut s = new_sheet();
+    for v in ["5", "15", "25"] { s.enter(v, "enter"); }
+    s.click_cell("A1"); s.key("shift-down"); s.key("shift-down");
+    s.menu("xlsx.conditional");
+    cf_click(&mut s, "formula"); // the manager's 新規ルール, and a tall window
+    s.settle();
+    for (id, ja, en) in [("xlsx.cf.fill-color", "塗りつぶし色", "Fill color"), ("xlsx.cf.text-color", "文字の色", "Text color"), ("xlsx.cf.stop-if-true", "条件を満たす場合は停止", "Stop if true")] {
+        assert_eq!(i18n::text(id).as_ref(), ja);
+        i18n::show(Language::English);
+        assert_eq!(i18n::text(id).as_ref(), en);
+        i18n::show(Language::Japanese);
+    }
+    let stop = |s: &mut Scenario| s.with(|e, _| e.wb().conditional_edit.as_ref().unwrap().stop);
+    let bold = |s: &mut Scenario| s.with(|e, _| e.wb().conditional_edit.as_ref().unwrap().bold);
+    let italic = |s: &mut Scenario| s.with(|e, _| e.wb().conditional_edit.as_ref().unwrap().italic);
+    let ui = |s: &mut Scenario, id: &str| { let id = id.to_string(); s.with(move |e, _| *e.wb().conditional_edit.as_ref().unwrap().ui.borrow().get(&id).unwrap_or_else(|| panic!("no {id}")))};
+    // The order: the colours, then スタイル (B and I), then the check box.
+    let (fill, text_color, style, stop_box) = (ui(&mut s, "fill"), ui(&mut s, "text-color"), ui(&mut s, "style"), ui(&mut s, "stop"));
+    assert!(fill.origin.y < text_color.origin.y && text_color.origin.y < style.origin.y && style.origin.y < stop_box.origin.y, "fill, text colour, style, stop");
+    // One line: the colour field is beside its label (the label column is FIELD_WIDTH), and the row is not two lines high.
+    assert!(fill.origin.x > style.origin.x + px(100.), "the colour field is after the label ({fill:?} / {style:?})");
+    assert!(text_color.origin.y - fill.origin.y < px(40.), "one line per colour row ({fill:?} / {text_color:?})");
+    // B and I are the toolbar's buttons: pressing toggles.
+    assert!(!bold(&mut s) && !italic(&mut s));
+    buttons::click(&mut s, &probe_key("conditional-bold"));
+    assert!(bold(&mut s) && !italic(&mut s), "B pressed");
+    buttons::click(&mut s, &probe_key("conditional-italic"));
+    assert!(bold(&mut s) && italic(&mut s), "I pressed");
+    buttons::click(&mut s, &probe_key("conditional-bold"));
+    assert!(!bold(&mut s), "B again takes it off");
+    // The check box.
+    assert!(!stop(&mut s));
+    buttons::click(&mut s, &probe_key("conditional-stop"));
+    assert!(stop(&mut s), "checked");
+    s.screenshot("conditional-edit-rows");
+    buttons::click(&mut s, &probe_key("conditional-stop"));
+    assert!(!stop(&mut s), "unchecked");
+    i18n::show(Language::English);
+    s.update(|_, _, _| {});
+    s.screenshot("conditional-edit-rows-english");
+    i18n::show(Language::Japanese);
+}
+
+/// #77 コントロールの書式設定: フォント サイズ is a field with the unit pt inside, 文字の色 a colour row, and スタイル has
+/// B and I in the toolbar's background.
+fn ctrl77_control_properties_rows() {
+    use crate::shell::scenario::button_probe as buttons;
+    use crate::shell::i18n::{self, Language};
+    let _probe = buttons::Probe::new();
+    let mut s = new_sheet();
+    s.click_cell("D2");
+    s.menu("xlsx.insert-control.checkbox");
+    s.settle();
+    s.menu("xlsx.control-properties");
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.control_properties.as_ref()).is_some()), "the panel opens");
+    assert_eq!(i18n::text("xlsx.control-properties.font-size").as_ref(), "フォント サイズ", "no (pt) in the label");
+    assert_eq!(i18n::text("xlsx.control-properties.text-color").as_ref(), "文字の色", "no (#RRGGBB) in the label");
+    i18n::show(Language::English);
+    assert_eq!(i18n::text("xlsx.control-properties.font-size").as_ref(), "Font size");
+    assert_eq!(i18n::text("xlsx.control-properties.text-color").as_ref(), "Text color");
+    i18n::show(Language::Japanese);
+    let ui = |s: &mut Scenario, id: &str| { let id = id.to_string(); s.with(move |e, _| e.sheet_state().unwrap().panels.control_properties.as_ref().unwrap().ui.borrow()[&id]) };
+    let (size, color, style) = (ui(&mut s, "font_size"), ui(&mut s, "text_color"), ui(&mut s, "style"));
+    assert!(size.origin.y < color.origin.y && color.origin.y < style.origin.y, "size, colour, style");
+    assert!(size.size.height < px(40.) && style.size.height < px(40.), "one line each ({size:?} / {style:?})");
+    let bold = |s: &mut Scenario| s.with(|e, _| e.sheet_state().unwrap().panels.control_properties.as_ref().unwrap().bold);
+    assert!(!bold(&mut s));
+    buttons::click(&mut s, &probe_key("control-prop-bold"));
+    assert!(bold(&mut s), "B pressed");
+    buttons::click(&mut s, &probe_key("control-prop-italic"));
+    assert!(s.with(|e, _| e.sheet_state().unwrap().panels.control_properties.as_ref().unwrap().italic), "I pressed");
+    // The size field takes a typed value (the unit pt is inside it).
+    let input = s.with(|e, _| e.sheet_state().unwrap().panels.control_properties.as_ref().unwrap().font_size.clone());
+    s.update(move |_, window, cx| input.update(cx, |i, cx| i.focus(window, cx)));
+    s.key("cmd-a");
+    s.type_text("14");
+    let typed = s.with(|e, cx| e.sheet_state().unwrap().panels.control_properties.as_ref().unwrap().font_size.read(cx).value().to_string());
+    assert_eq!(typed, "14");
+    s.screenshot("control-properties-rows");
+    i18n::show(Language::English);
+    s.update(|_, _, _| {});
+    s.screenshot("control-properties-rows-english");
+    i18n::show(Language::Japanese);
+}
+
+/// セルの書式設定 with its tabs in the panel header: the header does not move when the body scrolls; a tab with a
+/// long body scrolls.
+fn format021_cell_format_tabs() {
+    use crate::shell::scenario::button_probe as buttons;
+    let _probe = buttons::Probe::new();
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.size(1200., 520.);
+    s.click_cell("B4");
+    s.key("cmd-1");
+    s.settle();
+    let tab_y = |i: usize| buttons::bounds(&buttons::all().into_iter().find(|k| k.contains("cell-format-tabs") && k.ends_with(&format!(", {i})"))).expect("tab")).unwrap();
+    let before = tab_y(0);
+    let number = s.with(|e, _| e.sheet_state().unwrap().custom_format.as_ref().unwrap().ui.borrow()["cell-format-number"]);
+    s.wheel((f32::from(number.origin.x + px(40.)), f32::from(number.origin.y + px(20.))), -300.);
+    s.settle();
+    let moved = s.with(|e, _| e.sheet_state().unwrap().custom_format.as_ref().unwrap().ui.borrow()["cell-format-number"]);
+    assert!(moved.origin.y < number.origin.y, "the body scrolls ({number:?} -> {moved:?})");
+    assert_eq!(tab_y(0).origin.y, before.origin.y, "the header stays when the body scrolls");
+    s.screenshot("tabs-scrolled");
+    // Switching to another tab: its sections only.
+    buttons::click(&mut s, &buttons::all().into_iter().find(|k| k.contains("cell-format-tabs") && k.ends_with(", 1)")).unwrap());
+    s.settle();
+    assert_eq!(s.with(|e, _| e.sheet_state().unwrap().format_tab), 1);
+    assert_eq!(tab_y(0).origin.y, before.origin.y, "the header stays");
+    s.screenshot("tabs-border");
+}
+
 /// XSC-25: create, edit threshold/colour/range, overlapping priorities and
 /// stopIfTrue, delete; each undo/redo and save/reload keeps the rules.
 fn xsc25_conditional() {
@@ -10426,7 +10829,7 @@ fn xsc25_conditional_manage() {
     s.menu("xlsx.conditional"); cf_field(&mut s, "formula", "A1>0");
     cf_field(&mut s, "fill", "C6EFCE"); cf_click(&mut s, "apply");
     let before = cf_model(&mut s); cf_drawn(&mut s, 0, 0xFFC7CE);
-    s.menu("xlsx.conditional"); cf_click(&mut s, "down-0-0");
+    s.menu("xlsx.conditional"); cf_drag_rule(&mut s, 0, 1, true);
     let moved = cf_model(&mut s);
     assert_eq!(moved[0].rules[0].priority, 2); assert_eq!(moved[1].rules[0].priority, 1);
     cf_drawn(&mut s, 0, 0xC6EFCE); cf_reads(&mut s, "xsc25-manage-move.xlsx", &moved);
@@ -10437,7 +10840,7 @@ fn xsc25_conditional_manage() {
     cf_reads(&mut s, "xsc25-manage-stop.xlsx", &stopped);
     s.click_cell("A1"); s.key("cmd-z"); assert_eq!(cf_model(&mut s), moved);
     s.key("cmd-shift-z"); assert_eq!(cf_model(&mut s), stopped);
-    s.menu("xlsx.conditional"); cf_click(&mut s, "up-0-0");
+    s.menu("xlsx.conditional"); cf_drag_rule(&mut s, 1, 0, false);
     let restored = cf_model(&mut s);
     assert_eq!(restored[0].rules[0].priority, 1); assert_eq!(restored[1].rules[0].priority, 2);
     cf_drawn(&mut s, 0, 0xFFC7CE); cf_reads(&mut s, "xsc25-manage-up.xlsx", &restored);
@@ -11032,10 +11435,10 @@ fn xsc55_filter_empty() {
     let mut s=new_sheet();for (address,input) in [("A1","10"),("A2","20"),("A3","30"),("C1","=FILTER(A1:A3,B1:B3,99)")]{s.click_cell(address);s.enter(input,"enter");}assert_eq!(s.value("C1"),CellValue::Number(99.0));s.key("cmd-z");assert_eq!(s.value("C1"),CellValue::Empty);s.key("cmd-shift-z");assert_eq!(s.value("C1"),CellValue::Number(99.0));s.save_as("xsc55-filter-empty-blank.xlsx");assert_eq!(sheet_of_slide(&s.reopen().slides[1]).unwrap().cell(0,2).unwrap().value,CellValue::Number(99.0));s.click_cell("B2");s.enter("TRUE","enter");assert_eq!(s.value("C1"),CellValue::Number(20.0));s.key("cmd-z");assert_eq!(s.value("C1"),CellValue::Number(99.0));s.key("cmd-shift-z");assert_eq!(s.value("C1"),CellValue::Number(20.0));s.save_as("xsc55-filter-empty-selected.xlsx");assert_eq!(sheet_of_slide(&s.reopen().slides[1]).unwrap().cell(0,2).unwrap().value,CellValue::Number(20.0));
 }
 
-// TAKE(…,0) is #VALUE!, FILTER with no match #CALC!, and ARRAYTOTEXT of either #VALUE!, as the calc crate's cases (recalc.rs) have them.
+// TAKE(…,0) and FILTER with no match are #CALC!, and ARRAYTOTEXT of either is the same error (Excel for Mac 16.114.3, target/issue98/raw5.tsv).
 fn xsc55_arraytotext_empty() {
-    let mut s=new_sheet();for (row,source) in ["TAKE({1;2},0)","FILTER({1;2},{FALSE;FALSE})"].into_iter().enumerate(){let mut formulas=vec![(source.to_string(),if row==0{ibis_doc_model::CellError::Value}else{ibis_doc_model::CellError::Calc})];for suffix in ["",",0",",1"]{formulas.push((format!("ARRAYTOTEXT({source}{suffix})"),ibis_doc_model::CellError::Value));}for (col,(f,e)) in formulas.into_iter().enumerate(){let address=ibis_doc_model::cell_name(col as u32,row as u32);s.click_cell(&address);s.enter(&format!("={f}"),"enter");assert_eq!(s.value(&address),CellValue::Error(e));s.key("cmd-z");assert_eq!(s.value(&address),CellValue::Empty);s.key("cmd-shift-z");assert_eq!(s.value(&address),CellValue::Error(e));}}
-    s.save_as("xsc55-arraytotext-empty.xlsx");let p=s.reopen();let sh=sheet_of_slide(&p.slides[1]).unwrap();for row in 0..2{for col in 0..4{let e=if col==0&&row==1{ibis_doc_model::CellError::Calc}else{ibis_doc_model::CellError::Value};assert_eq!(sh.cell(row,col).unwrap().value,CellValue::Error(e));}}
+    let mut s=new_sheet();for (row,source) in ["TAKE({1;2},0)","FILTER({1;2},{FALSE;FALSE})"].into_iter().enumerate(){let mut formulas=vec![(source.to_string(),ibis_doc_model::CellError::Calc)];for suffix in ["",",0",",1"]{formulas.push((format!("ARRAYTOTEXT({source}{suffix})"),ibis_doc_model::CellError::Calc));}for (col,(f,e)) in formulas.into_iter().enumerate(){let address=ibis_doc_model::cell_name(col as u32,row as u32);s.click_cell(&address);s.enter(&format!("={f}"),"enter");assert_eq!(s.value(&address),CellValue::Error(e));s.key("cmd-z");assert_eq!(s.value(&address),CellValue::Empty);s.key("cmd-shift-z");assert_eq!(s.value(&address),CellValue::Error(e));}}
+    s.save_as("xsc55-arraytotext-empty.xlsx");let p=s.reopen();let sh=sheet_of_slide(&p.slides[1]).unwrap();for row in 0..2{for col in 0..4{assert_eq!(sh.cell(row,col).unwrap().value,CellValue::Error(ibis_doc_model::CellError::Calc));}}
 }
 
 fn xsc55_choose_lines_options() {
@@ -11076,8 +11479,8 @@ fn sort_click_live(s: &mut Scenario,id:&str){
     if id=="apply"{if s.with(|e,_|e.sort_realtime()){return;}buttons::click(s,"sort-apply");return;}
     for _ in 0..12{
         // The pane's scrolling body (the sort pane is in the right pane; a level being edited is a dialog over it).
-        let(b,view)=s.with(|e,_|(*e.wb().sort_edit.as_ref().unwrap().ui.borrow().get(id).unwrap_or_else(||panic!("sort field {id}")),if e.panel_dialog_is_modal(){e.panel_dialog.bounds.unwrap()}else{e.sidebar_scroll.bounds()}));
-        let modal=s.with(|e,_|e.panel_dialog_is_modal());let(top,foot)=if modal{(px(44.),px(50.))}else{(px(2.),px(2.))};
+        let(b,view)=s.with(|e,_|(*e.wb().sort_edit.as_ref().unwrap().ui.borrow().get(id).unwrap_or_else(||panic!("sort field {id}")),if e.dialog_is_modal(){e.dialog.bounds.unwrap()}else{e.sidebar_scroll.bounds()}));
+        let modal=s.with(|e,_|e.dialog_is_modal());let(top,foot)=if modal{(px(44.),px(50.))}else{(px(2.),px(2.))};
         let at=point(view.right()-px(16.),view.origin.y+if modal{px(90.)}else{px(20.)});
         if b.origin.y<view.origin.y+top{s.wheel((f32::from(at.x),f32::from(at.y)),250.);continue;}
         if b.bottom()>view.bottom()-foot{s.wheel((f32::from(at.x),f32::from(at.y)),-250.);continue;}
@@ -11529,8 +11932,7 @@ fn xsc05_cell_comments() {
                 row: 1,
                 column: 1,
                 author: "Tester".into(),
-                text: "Target cell note".into(),
-            }),
+                text: "Target cell note".into(), ..Default::default() }),
         })]).unwrap();
     });
     let c = s.with(|e, _| {
@@ -11958,7 +12360,7 @@ fn goto_special_click(s: &mut Scenario, id: &str) {
 /// 選択 selects and closes the dialog (Excel's OK): the panel is gone and the modal is released.
 fn goto_special_apply(s: &mut Scenario) {
     goto_special_click(s, "apply");
-    assert!(s.with(|e, _| e.sheet_state().is_some_and(|st| st.panels.goto_special.is_none()) && !e.panel_dialog_is_modal()), "選択 closes the dialog");
+    assert!(s.with(|e, _| e.sheet_state().is_some_and(|st| st.panels.goto_special.is_none()) && !e.dialog_is_modal()), "選択 closes the dialog");
 }
 
 /// XLSX-CELL-018 編集 > 条件を選択してジャンプ: in a table with gaps, the
@@ -12451,14 +12853,18 @@ fn cell016_flash_fill() {
     let mut s = new_sheet();
     let rows = [["名前", "メール", "名"], ["Nancy Davolio", "nancy@example.com", "Nancy"], ["Andrew Fuller", "andrew@example.com", ""], ["Janet Leverling", "janet@example.com", ""]];
     for (r, values) in rows.iter().enumerate() {
-        for (c, v) in values.iter().enumerate() {
+        // From the right: the click on C2 would land on the text of the link in B2 drawn over it.
+        for (c, v) in values.iter().enumerate().rev() {
             if !v.is_empty() {
                 s.click_cell(&ibis_doc_model::cell_name(c as u32, r as u32));
                 s.enter(v, "enter");
             }
         }
     }
-    s.click_cell("C3");
+    // C3 by the keys: a click there lands on the text of the link in B3 drawn over it.
+    s.click_cell("A3");
+    s.key("right");
+    s.key("right");
     s.key("ctrl-e");
     assert_eq!(s.value("C3"), CellValue::Text("Andrew".into()));
     assert_eq!(s.value("C4"), CellValue::Text("Janet".into()));
@@ -12466,7 +12872,9 @@ fn cell016_flash_fill() {
     s.key("cmd-z");
     assert_eq!(s.value("C4"), CellValue::Empty);
     // Inline Flash Fill ghost preview while typing a prefix ("An" -> "Andrew" & "Janet"), accepted by Enter in one step:
-    s.click_cell("C3");
+    s.click_cell("A3");
+    s.key("right");
+    s.key("right");
     s.type_text("An");
     assert_eq!(
         s.with(|e, _| e.flash_fill_preview()),
@@ -12914,12 +13322,6 @@ fn valid012_paste_and_recalc_bypass() {
     assert!(!sheet.validations.is_empty(), "validations saved and reloaded");
 }
 
-fn note_click(s: &mut Scenario, id: &str) {
-    let id = id.to_string();
-    let b = s.with(|e, _| *e.wb().panels.note.as_ref().expect("the panel").ui.borrow().get(&id).unwrap_or_else(|| panic!("{id}")));
-    s.click((f32::from(b.origin.x + b.size.width / 2.0), f32::from(b.origin.y + b.size.height / 2.0)));
-}
-
 /// XLSX-SEC-009・CELL-013 メモ: 挿入 > 新しいメモ on B2 (typed, kept by the
 /// user's name), 編集 then shows it and changes it; a second one on C3;
 /// コメントとメモのクリア over B2:C3 takes both off (one step, undone);
@@ -12929,32 +13331,30 @@ fn sec009_notes() {
     s.click_cell("B2");
     assert!(s.menu_state("xlsx.note-new").is_some_and(|m| m.0));
     s.menu("xlsx.note-new");
-    note_click(&mut s, "text");
     s.type_text("Check this");
-    note_click(&mut s, "save");
+    s.key("escape");
     let note = |s: &mut Scenario, r: u32, c: u32| s.with(move |e, _| e.current_sheet().and_then(|(_, sh)| sh.comment_at(r, c).map(|n| (n.author.clone(), n.text.clone()))));
     let (author, body) = note(&mut s, 1, 1).expect("a note on B2");
-    assert_eq!(body, "Check this");
+    // A new note starts with the user's name and a line break; the text typed is on the second line.
+    assert_eq!(body, format!("{author}:\nCheck this"));
     assert!(!author.is_empty());
     // 編集: the note shown, changed.
     assert!(s.menu_state("xlsx.note-edit").is_some());
     s.menu("xlsx.note-edit");
-    assert_eq!(s.with(|e, cx| e.wb().panels.note.as_ref().unwrap().state.read(cx).value().to_string()), "Check this");
-    note_click(&mut s, "text");
+    assert_eq!(s.with(|e, _| e.cell_edit().map(|c| c.text.clone())), Some(body.clone()));
     s.key("cmd-a");
     s.type_text("Checked");
-    note_click(&mut s, "save");
+    s.key("escape");
     assert_eq!(note(&mut s, 1, 1).map(|n| n.1).as_deref(), Some("Checked"));
     s.click_cell("C3");
     s.menu("xlsx.note-new");
-    note_click(&mut s, "text");
     s.type_text("Second");
-    note_click(&mut s, "save");
+    s.key("escape");
     let saved = s.save_as("sec009.xlsx");
     let p = s.reopen();
     let sheet = sheet_of_slide(&p.slides[1]).unwrap();
     assert_eq!(sheet.comment_at(1, 1).map(|n| n.text.as_str()), Some("Checked"));
-    assert_eq!(sheet.comment_at(2, 2).map(|n| n.text.as_str()), Some("Second"));
+    assert!(sheet.comment_at(2, 2).is_some_and(|n| n.text.ends_with(":\nSecond")));
     // What Excel needs to show them: each note's VML shape (its row and
     // column), the sheet's legacyDrawing, its relationship, the content type.
     let part = |name: &str| String::from_utf8(std::process::Command::new("unzip").arg("-p").arg(&saved).arg(name).output().unwrap().stdout).unwrap_or_default();
@@ -12980,9 +13380,8 @@ fn sec009_notes() {
     let first = vml.split("<v:shape ").nth(1).map(|x| x.split('"').nth(1).unwrap_or("").to_string()).unwrap_or_default();
     s.update(|e, window, cx| e.go_to_reference("D4", window, cx));
     s.menu("xlsx.note-new");
-    note_click(&mut s, "text");
     s.type_text("Third");
-    note_click(&mut s, "save");
+    s.key("escape");
     let saved3 = s.save_as("sec009-three.xlsx");
     let vml3 = String::from_utf8(std::process::Command::new("unzip").arg("-p").arg(&saved3).arg(&vml_name).output().unwrap().stdout).unwrap();
     assert_eq!(vml3.matches("ObjectType=\"Note\"").count(), 3, "{vml3}");
@@ -13960,7 +14359,7 @@ fn analysis002_other_tools() {
 fn autocorrect_click(s: &mut Scenario, id: &str) {
     let id=id.to_string();
     for _ in 0..4 {
-        let (b,dialog)=s.with(|e,_|(*e.wb().panels.autocorrect.as_ref().unwrap().ui.borrow().get(&id).unwrap_or_else(||panic!("{id}")),e.panel_dialog.bounds.unwrap()));
+        let (b,dialog)=s.with(|e,_|(*e.wb().panels.autocorrect.as_ref().unwrap().ui.borrow().get(&id).unwrap_or_else(||panic!("{id}")),e.dialog.bounds.unwrap()));
         let bottom=dialog.origin.y+dialog.size.height-gpui_kit::px(60.);
         if b.origin.y+b.size.height<=bottom || id=="entry-ok" {s.click((f32::from(b.origin.x+b.size.width/2.),f32::from(b.origin.y+b.size.height/2.)));return;}
         s.wheel((f32::from(dialog.origin.x+dialog.size.width-gpui_kit::px(16.)),f32::from(dialog.origin.y+gpui_kit::px(100.))),-300.);
@@ -14717,7 +15116,7 @@ fn formula023_evaluate_and_watch() {
     });
 
     // The watch window is modeless (Excel keeps it up while cells are edited): the sheet is worked on with it open.
-    assert!(s.with(|e, _| !e.panel_dialog_is_modal()), "the watch window does not block the sheet");
+    assert!(s.with(|e, _| !e.dialog_is_modal()), "the watch window does not block the sheet");
     // A4 セルをウォッチに追加
     s.click_cell("A4");
     s.update(|e, _, _| e.add_watch_cell());
@@ -14828,15 +15227,15 @@ fn formula008_named_formulas() {
     });
     assert!((num(&s.value("B3")) - 3300.0).abs() < 1e-4);
 
-    // Edit TaxRate via UI panel to 0.08
+    // Edit TaxRate in the name manager's dialog to 0.08
     s.update(|e, window, cx| {
-        e.edit_name(0, "TaxRate", None, "0.08", window, cx);
-        let panel = e.sheet_state().unwrap().names.as_ref().unwrap();
-        let name_text = panel.new_name.read(cx).value();
-        let formula_text = panel.new_formula.read(cx).value();
-        assert_eq!(name_text, "TaxRate");
-        assert_eq!(formula_text, "=0.08");
-        assert!(e.set_named_formula(&name_text, &formula_text, cx));
+        e.open_names(window, cx);
+        e.names_open_dialog(Some(("taxrate".to_string(), None)), window, cx);
+        let d = e.sheet_state().unwrap().names.as_ref().unwrap().dialog.as_ref().unwrap();
+        assert_eq!(d.name.read(cx).value(), "TaxRate");
+        assert!(d.formula.read(cx).value().starts_with("=0.1"));
+        d.formula.update(cx, |i, cx| i.set_value("=0.08", window, cx));
+        e.names_confirm_dialog(window, cx);
     });
 
     // Cascade recalculation: B1 updates to 80.0, B3 updates to 3240.0
@@ -15314,7 +15713,7 @@ fn pivot011_calculated_field() {
     assert_eq!(s.value("C5"), CellValue::Number(160.0));
 
     // 3. Test Undo (the dialog is modal: close it first)
-    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    s.update(|e, window, cx| e.close_dialog(window, cx));
     s.key("cmd-z");
     let pivot_after_undo = s.with(|e, _| e.pivot_def(target)).unwrap();
     assert_eq!(pivot_after_undo.calculated_fields().len(), 0, "calculated field undone");
@@ -15404,7 +15803,7 @@ fn pivot012_calculated_item() {
     assert_eq!(k_val, h_val, "kitanihon amount equals hokkaido amount");
 
     // 3. Test Undo (the dialog is modal: close it first)
-    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    s.update(|e, window, cx| e.close_dialog(window, cx));
     s.key("cmd-z");
     let pivot_after_undo = s.with(|e, _| e.pivot_def(target)).unwrap();
     assert_eq!(pivot_after_undo.calculated_items_for_field(2).len(), 0, "calculated item undone");
@@ -15695,7 +16094,7 @@ fn pivot001_table_source() {
 
     // 5. 開き直し検証
     let reopened = s.reopen();
-    let sh = sheet_of_slide(&reopened.slides[0]).unwrap();
+    let sh = sheet_of_slide(&reopened.slides[1]).unwrap();
     assert_eq!(sh.pivots.len(), 1);
     assert_eq!(sh.pivots[0].source.name.as_deref(), Some("テーブル1"));
     assert_eq!(sh.cell(8, 1).map(|c| c.value.clone()), Some(CellValue::Number(151819.0)), "reopened B9 has total value");
@@ -15853,7 +16252,7 @@ fn pivot010_options_and_field_settings() {
     assert!(!p_after.fields[0].outline, "outline disabled for field 0");
 
     // 4. Undo / Redo 検証（モーダルのダイアログを先に閉じる）
-    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    s.update(|e, window, cx| e.close_dialog(window, cx));
     s.key("cmd-z");
     let p_undone = pivot_of(&mut s, 0);
     assert!(p_undone.fields[0].default_subtotal);
@@ -16451,7 +16850,7 @@ fn table011_icon_filter_and_sort() {
 fn custom_views_click(s: &mut Scenario, id: &str) {
     // The list has no footer close button: the modal dialog's title bar close (X) runs this.
     if id == "custom-view-close" {
-        s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+        s.update(|e, window, cx| e.close_dialog(window, cx));
         return;
     }
     let id = id.to_string();
@@ -16927,10 +17326,13 @@ fn fn_acot_acoth_type_functions() {
     s.enter("=TYPE({1, 2; 3, 4})", "enter");
     assert_eq!(s.shown("D5"), "64"); // array constant
 
-    // Out-of-intersection range reference evaluates to #VALUE! -> TYPE is 16
+    // A range of several cells is an array whatever row the formula is in (GitHub issue #69)
     s.click_cell("D10");
     s.enter("=TYPE(A1:A2)", "enter");
-    assert_eq!(s.shown("D10"), "16");
+    assert_eq!(s.shown("D10"), "64");
+    s.click_cell("F2"); // a row the range covers: still not intersected
+    s.enter("=TYPE(A1:A2)", "enter");
+    assert_eq!(s.shown("F2"), "64");
 
     // 4. Undo and Redo
     s.click_cell("E1");
@@ -16952,7 +17354,8 @@ fn fn_acot_acoth_type_functions() {
     assert_eq!(re_sh.cell(1, 2).map(|c| &c.value), Some(&ibis_doc_model::CellValue::Error(ibis_doc_model::CellError::Num)));
     assert_eq!(re_sh.cell(0, 3).map(|c| &c.value), Some(&ibis_doc_model::CellValue::Number(1.0)));
     assert_eq!(re_sh.cell(4, 3).map(|c| &c.value), Some(&ibis_doc_model::CellValue::Number(64.0)));
-    assert_eq!(re_sh.cell(9, 3).map(|c| &c.value), Some(&ibis_doc_model::CellValue::Number(16.0)));
+    // D10 is TYPE(A1:A2): an array (64), as asserted above, not an implicit intersection (GitHub issue #69).
+    assert_eq!(re_sh.cell(9, 3).map(|c| &c.value), Some(&ibis_doc_model::CellValue::Number(64.0)));
 }
 
 /// XLSX-FN-N / T: 型変換関数・セル範囲の先頭セル評価・配列定数スカラー評価・Undo/Redo・保存ラウンドトリップ
@@ -19436,7 +19839,7 @@ fn spelling_check() {
     }
     // A single cell selected: the whole sheet from it on.
     s.click_cell("J3");
-    s.menu("pptx.spelling.check");
+    s.menu("xlsx.spelling.check");
     let (first, count) = s.with(|e, _| {
         let p = e.sheet_state().unwrap().spelling.as_ref().expect("the panel is open");
         (p.issues[0].clone(), p.issues.len())
@@ -19477,16 +19880,16 @@ fn spelling_check() {
         st.cells.insert(slide, (9, 2));
         st.cell_ends.insert(slide, (9, 2));
     });
-    s.menu("pptx.spelling.check");
+    s.menu("xlsx.spelling.check");
     assert!(s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().range.is_none()), "one cell: the sheet");
     s.update(|e, w, cx| e.close_sheet_spelling(w, cx));
     // English: the menu and the panel have no Japanese.
     i18n::show(Language::English);
-    s.menu("pptx.spelling.check");
+    s.menu("xlsx.spelling.check");
     let title = s.update(|e, _, cx| e.sheet_spelling_panel(cx).map(|p| p.title.to_string()));
     assert_eq!(title.as_deref(), Some("Spelling"));
     s.screenshot("spelling-english");
-    let label = s.with(|e, _| e.menus().find_mut("pptx.spelling.check").map(|i| i.label.to_string()));
+    let label = s.with(|e, _| e.menus().find_mut("xlsx.spelling.check").map(|i| i.label.to_string()));
     assert_eq!(label.as_deref(), Some("Spelling…"));
     s.update(|e, w, cx| e.close_sheet_spelling(w, cx));
     i18n::show(Language::Japanese);
@@ -19504,12 +19907,12 @@ fn split_buttons_borders_underline_merge_sum() {
         assert!(b.menu.is_some() && b.left_action().is_some(), "{id} is a split button");
         b.icon
     };
-    // 罫線: the bottom border first, then the border last chosen, with its icon.
-    assert_eq!(split(&mut s, "borders"), Some("border_bottom"));
+    // 罫線: 格子 (all borders) first, then the border last chosen, with its icon.
+    assert_eq!(split(&mut s, "borders"), Some("border_all"));
     s.click_cell("B2");
     s.toolbar("borders");
     let st = style_at(&mut s, "B2");
-    assert!(st.bottom.is_some() && st.top.is_none() && st.left.is_none(), "the bottom border only");
+    assert!(st.bottom.is_some() && st.top.is_some() && st.left.is_some() && st.right.is_some(), "all four borders (格子)");
     s.click_cell("B4");
     s.toolbar_menu("borders", "xlsx.border-outside");
     assert_eq!(split(&mut s, "borders"), Some("border_outer"), "the icon of the border last chosen");
@@ -19606,14 +20009,14 @@ fn spelling_range_shapes_undo() {
         st.cells.insert(slide, (9, 1));
         st.cell_ends.insert(slide, (9, 2));
     });
-    s.menu("pptx.spelling.check");
+    s.menu("xlsx.spelling.check");
     let issues = s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().expect("the panel is open").issues.clone());
     let places: Vec<(u32, Option<u64>)> = issues.iter().map(|i| (i.row, i.shape.map(|x| x.0))).collect();
     assert_eq!(places, vec![(1, None), (2, None)], "only the range's cells");
     s.update(|e, w, cx| e.close_sheet_spelling(w, cx));
     // One cell: the sheet, then the shape's text.
     s.click_cell("J2");
-    s.menu("pptx.spelling.check");
+    s.menu("xlsx.spelling.check");
     let issues = s.with(|e, _| e.sheet_state().unwrap().spelling.as_ref().unwrap().issues.clone());
     let places: Vec<(u32, Option<u64>)> = issues.iter().map(|i| (i.row, i.shape.map(|x| x.0))).collect();
     assert_eq!(places, vec![(1, None), (2, None), (3, None), (0, Some(9001))], "the cells, then the shape");
@@ -20169,7 +20572,8 @@ fn cell_edit_fullwidth_lines_move() {
     s.key("left");
     s.screenshot("moved-up-left");
     let moved = caret(&mut s);
-    assert!(moved.0 < at_f2.0 && moved.1 < at_f2.1, "{at_f2:?} {moved:?}");
+    // (↑ goes a displayed line up, and a long line is shown as several: the logical line may stay.)
+    assert!(moved.1 < at_f2.1, "{at_f2:?} {moved:?}");
     s.key("down");
     s.key("right");
     s.screenshot("moved-down-right");
@@ -20816,7 +21220,7 @@ fn query001_editor() {
     s.update(|e, _, cx| e.open_queries_panel(cx));
     s.screenshot("queries");
     // The list is a modal dialog: close it to edit the source sheet.
-    s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+    s.update(|e, window, cx| e.close_dialog(window, cx));
     s.click_cell("B8");
     s.enter("5000000", "enter");
     s.update(|e, _, cx| e.refresh_query(0, cx));
@@ -21162,8 +21566,7 @@ fn xlsx_comments_page_setup_and_insert_function() {
                         row: 3,
                         column: 1,
                         author: "Tester".into(),
-                        text: "東町メモ".into(),
-                    }),
+                        text: "東町メモ".into(), ..Default::default() }),
                 }),
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment {
                     slide,
@@ -21173,8 +21576,7 @@ fn xlsx_comments_page_setup_and_insert_function() {
                         row: 5,
                         column: 3,
                         author: "Tester".into(),
-                        text: "北町メモ".into(),
-                    }),
+                        text: "北町メモ".into(), ..Default::default() }),
                 }),
             ])
             .unwrap();
@@ -21185,7 +21587,7 @@ fn xlsx_comments_page_setup_and_insert_function() {
     s.menu("xlsx.next-comment");
     s.settle();
     assert_eq!(s.selected(), "B4", "next comment wrapped to B4");
-    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.comment_hover).is_some()), "hover card shown");
+    assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.note_card.shown).is_some()), "the note shown");
 
     // Next comment goes to D6
     s.menu("xlsx.next-comment");
@@ -21902,16 +22304,16 @@ fn xlsx_pivot_source_drill_theme_and_charts() {
     s.menu("xlsx.pivot-fields");
     s.settle();
     assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).is_some()), "pivot fields panel opened via menu connect");
-    // The open pivot panel is modal: the menu waits until it is closed.
-    assert_eq!(s.menu_state("xlsx.pivot-value-settings").map(|(enabled, _)| enabled), Some(false));
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    // The fields are a right pane, not a modal dialog: the menu stays available.
+    assert_eq!(s.menu_state("xlsx.pivot-value-settings").map(|(enabled, _)| enabled), Some(true));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     s.settle();
     s.click_cell("A3");
 
     s.menu("xlsx.pivot-value-settings");
     s.settle();
     assert!(s.with(|e, _| e.sheet_state().and_then(|st| st.panels.pivot.as_ref()).and_then(|p| p.value).is_some()), "pivot value settings opened via menu connect");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     s.settle();
     s.click_cell("A3");
 
@@ -22215,7 +22617,7 @@ fn xlsx_pivot_source_drill_theme_and_charts() {
     assert_eq!(pivot_of(&mut s, 0).style.as_ref().map_or(false, |st| st.col_headers), col_headers_before, "undo restores col headers");
 
     // 11. 空白行 (xlsx.pivot-blank-rows)
-    s.menu("xlsx.pivot-blank-rows");
+    s.menu("xlsx.pivot-insert-blank-line");
     s.settle();
     assert!(pivot_of(&mut s, 0).fields.iter().filter(|f| f.axis == Some(ibis_doc_model::PivotAxis::Row)).any(|f| f.insert_blank_row), "blank rows inserted");
     s.key("cmd-z");
@@ -22223,13 +22625,13 @@ fn xlsx_pivot_source_drill_theme_and_charts() {
     assert!(!pivot_of(&mut s, 0).fields.iter().filter(|f| f.axis == Some(ibis_doc_model::PivotAxis::Row)).any(|f| f.insert_blank_row), "undo restores blank rows");
 
     // 12. ピボットテーブル スタイル (xlsx.pivot-styles)
-    s.menu("xlsx.pivot-styles");
+    s.menu("xlsx.pivot-style.light-16");
     s.settle();
     assert_eq!(pivot_of(&mut s, 0).style.as_ref().map(|st| st.name.as_str()), Some("PivotStyleLight16"), "style light 16 set");
 
     // 13. ピボットテーブルの選択 (xlsx.pivot-select)
     s.click_cell("A3");
-    s.menu("xlsx.pivot-select");
+    s.menu("xlsx.pivot-select-entire-table");
     s.settle();
     let sel = s.with(|e, _| e.selected_range()).expect("range selected");
     let loc = pivot_of(&mut s, 0).location;
@@ -22254,7 +22656,7 @@ fn xlsx_pivot_source_drill_theme_and_charts() {
 
     // 15. ピボットテーブルのクリア (xlsx.pivot-clear)
     s.click_cell("A3");
-    s.menu("xlsx.pivot-clear");
+    s.menu("xlsx.pivot-clear-all");
     s.settle();
     let p_cleared = pivot_of(&mut s, 0);
     assert!(p_cleared.row_fields.is_empty(), "row fields cleared");
@@ -22713,8 +23115,57 @@ fn autosum_ribbon_commands() {
     s.key("shift-down");
     s.key("shift-down");
     s.key("shift-down"); // F1:F4
-    s.menu("xlsx.autosum.sum");
+    s.menu("xlsx.autosum");
     assert_eq!(s.value("F4"), CellValue::Number(45.0));
+}
+
+/// GitHub #104: 改ページ プレビューのページ範囲（印刷範囲が無いときは使用範囲）は、範囲の外（灰色）のセルに入力すると広がり、消すと戻る。
+fn page_break_preview_range_follows_entries() {
+    let mut s = new_sheet();
+    s.menu("xlsx.page-break-preview");
+    assert!(s.with(|e, _| e.current_sheet().unwrap().1.page_break_preview), "page break preview active");
+    let page = |s: &mut Scenario| s.with(|e, _| e.presentation().size_of(e.slide()));
+    let before = page(&mut s);
+    s.click_cell("BZ600");
+    s.enter("1", "enter");
+    let (right, bottom) = s.with(|e, _| {
+        let sheet = e.current_sheet().unwrap().1;
+        (sheet.column_offsets()[78], sheet.row_offsets()[600])
+    });
+    let after = page(&mut s);
+    assert!(after.width >= right && after.height >= bottom, "the page range reaches BZ600: {after:?} vs {right}x{bottom}");
+    assert!(after.width > before.width && after.height > before.height, "wider than before: {after:?} vs {before:?}");
+    s.click_cell("BZ600");
+    s.menu("xlsx.clear-contents");
+    assert!(page(&mut s).width < after.width, "cleared: the range goes back");
+}
+
+/// GitHub #104: a new sheet's page range is what it uses (A1:C3 after C3 is entered), not its whole grid; a pasted
+/// picture makes it reach the picture. GitHub #103: a pasted screenshot keeps its size, as Excel pastes it (1282x801
+/// at 96 dpi: 961.4x600.7 pt on Excel for Windows), not shrunk.
+fn new_sheet_page_range_and_pasted_screenshot() {
+    let mut s = new_sheet();
+    // No Office on this clipboard: the OS-level formats are not read.
+    s.with_app(|_| crate::native_shape_clipboard::simulate(None));
+    s.menu("xlsx.insert-sheet");
+    s.menu("xlsx.page-break-preview");
+    let page = |s: &mut Scenario| s.with(|e, _| e.presentation().size_of(e.slide()));
+    let corner = |s: &mut Scenario, c: u32, r: u32| s.with(|e, _| { let b = e.current_sheet().unwrap().1.cell_bounds_emu(c, r); (b.right(), b.bottom()) });
+    let a1 = corner(&mut s, 0, 0);
+    assert_eq!((page(&mut s).width, page(&mut s).height), a1, "an empty new sheet: A1");
+    s.click_cell("C3");
+    s.enter("1", "enter");
+    let c3 = corner(&mut s, 2, 2);
+    assert_eq!((page(&mut s).width, page(&mut s).height), c3, "C3 entered: A1:C3");
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(1282, 801, image::Rgb([40, 90, 200]))).write_to(&mut png, image::ImageFormat::Png).unwrap();
+    s.update(|_, _, cx| cx.write_to_clipboard(gpui_kit::ClipboardItem::new_image(&gpui_kit::Image::from_bytes(gpui_kit::ImageFormat::Png, png.into_inner()))));
+    s.click_cell("A1");
+    s.key("cmd-v");
+    let frame = s.with(|e, _| e.slide().shapes.iter().find(|sh| matches!(sh.kind, ibis_doc_model::ShapeKind::Picture(_))).map(|sh| sh.frame)).expect("pasted");
+    assert_eq!((frame.width, frame.height), (1282 * 9525, 801 * 9525), "the screenshot's own size");
+    assert_eq!((page(&mut s).width, page(&mut s).height), (frame.right().max(c3.0), frame.bottom().max(c3.1)), "the range reaches the picture");
+    s.screenshot("new-sheet-pasted");
 }
 
 /// 並べ替え・フィルター（クリア・再適用）・表示モード（標準・改ページ）・名前管理・重複削除・クリアのリボンコマンド検証
@@ -22775,7 +23226,7 @@ fn page_setup_and_insert_ribbon_commands() {
     s.enter("20", "enter");
 
     // ページ設定・余白
-    s.menu("xlsx.page-setup");
+    s.menu("file.page-setup");
     assert!(s.with(|e, _| e.wb().page_setup), "page setup opened");
     s.update(|e, _, _| { e.wb_mut().page_setup = false; });
 
@@ -22827,7 +23278,7 @@ fn page_setup_and_insert_ribbon_commands() {
     // The inserted shape lies over A1, and a press there selects it: format a cell away from it.
     s.click_cell("N30");
     s.menu("xlsx.underline-double");
-    let dbg = s.with(|e, _| format!("modal={} sel={:?} cell={:?}", e.panel_dialog_is_modal(), e.selected_ids(), e.current_cell()));
+    let dbg = s.with(|e, _| format!("modal={} sel={:?} cell={:?}", e.dialog_is_modal(), e.selected_ids(), e.current_cell()));
     assert_eq!(s.with(|e, _| e.current_style().underline), ibis_doc_model::CellUnderline::Double, "{dbg}");
     s.menu("xlsx.underline-single");
     assert_eq!(s.with(|e, _| e.current_style().underline), ibis_doc_model::CellUnderline::Single);
@@ -23057,6 +23508,86 @@ fn table004_totals_row_dropdown() {
     // Redo で最大（300.0）に再変更
     s.key("shift-cmd-z");
     assert_eq!(s.value("B5"), CellValue::Number(300.0));
+}
+
+/// GitHub #75: 均等割り付け cells (one line, a sentence that wraps, indented, Latin) drawn for the look beside Excel's.
+fn distributed_alignment_shots() {
+    let mut s = new_sheet();
+    s.click_cell("A1");
+    s.update(|e, _, cx| e.set_selected_column_width(30.0, cx));
+    let texts = ["家族手当制度がある", "家族手当制度がある", "折り返して表示する長い文字列の例です。二行以上になります。", "Distributed text in a cell", "短い"];
+    for (row, text) in texts.iter().enumerate() {
+        s.click_cell(&format!("A{}", row + 1));
+        s.enter(text, "enter");
+    }
+    for row in 1..=5 {
+        s.click_cell(&format!("A{row}"));
+        s.toolbar_menu("halign", "xlsx.align-distributed");
+    }
+    s.click_cell("A2");
+    s.toolbar("indent-more");
+    s.toolbar("indent-more");
+    s.click_cell("A3");
+    s.toolbar("wrap");
+    s.click_cell("C8");
+    s.screenshot("distributed");
+}
+
+/// A workbook marked as final (`_MarkAsFinal` of docProps/custom.xml): the information bar, no editing, kept on saving,
+/// 「それでも編集する」 makes it editable (and the mark goes).
+fn mark_as_final_infobar() {
+    use ibis_doc_model::{CustomProperty, CustomPropertyValue};
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "no bar for a normal workbook");
+    let mark = |s: &mut Scenario| {
+        s.update(|e, _, _| {
+            let mut properties = e.presentation().workbook.as_deref().unwrap().properties.clone();
+            properties.custom.push(CustomProperty { name: "_MarkAsFinal".into(), value: CustomPropertyValue::Bool(true) });
+            e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetDocProperties(properties))]).unwrap();
+        });
+    };
+    mark(&mut s);
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "the bar is shown");
+    s.screenshot("marked-as-final");
+    s.click_cell("G1");
+    s.enter("5", "enter");
+    assert!(s.value("G1").is_empty(), "a workbook marked as final is not edited");
+    s.save_as("mark-as-final.xlsx");
+    let saved = s.reopen();
+    assert!(saved.workbook.as_deref().unwrap().properties.custom.iter().any(|p| p.name == "_MarkAsFinal" && p.value == CustomPropertyValue::Bool(true)), "the mark is kept on saving");
+    s.update(|e, _, cx| e.xlsx_edit_anyway(cx));
+    assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "the bar goes");
+    s.click_cell("G1");
+    s.enter("5", "enter");
+    assert_eq!(s.value("G1"), CellValue::Number(5.0));
+    s.save_as("edited-anyway.xlsx");
+    let saved = s.reopen();
+    assert!(!saved.workbook.as_deref().unwrap().properties.custom.iter().any(|p| p.name == "_MarkAsFinal"), "the mark is removed on saving");
+}
+
+/// The 挿入… / 削除… dialog: four radio buttons (one choice), 30% narrower
+/// than the default 520px dialog.
+fn cells_dialog_radio() {
+    let _probe = crate::shell::scenario::button_probe::Probe::new();
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.size(1200., 800.);
+    s.click_cell("B6");
+    for insert in [true, false] {
+        s.update(move |e, _, cx| e.open_cells_dialog(insert, cx));
+        s.update(|_, _, cx| cx.notify());
+        let width = s.with(|e, _| f32::from(e.dialog.bounds.unwrap().size.width));
+        assert_eq!(width, 520. * 0.7, "30% narrower than the default 520px");
+        let choice = |s: &mut Scenario| s.with(|e, _| e.wb().panels.cells_dialog.as_ref().unwrap().choice);
+        assert_eq!(choice(&mut s), 0);
+        crate::shell::scenario::button_probe::click(&mut s, "cells-option-2");
+        assert_eq!(choice(&mut s), 2);
+        crate::shell::scenario::button_probe::click(&mut s, "cells-option-1");
+        assert_eq!(choice(&mut s), 1, "radio: choosing another leaves only that one");
+        crate::shell::scenario::button_probe::click(&mut s, "cells-option-1");
+        assert_eq!(choice(&mut s), 1, "clicking the chosen one does not clear it");
+        s.screenshot(if insert { "insert-cells" } else { "delete-cells" });
+        s.key("escape");
+    }
 }
 
 fn sheet006_smart_insert_delete_shortcuts() {
@@ -23846,8 +24377,7 @@ fn sheet012_paste_special_dialog_and_options() {
                 row: 0,
                 column: 0,
                 author: "Tester".into(),
-                text: "重要メモ".into(),
-            }),
+                text: "重要メモ".into(), ..Default::default() }),
         })]);
         cx.notify();
     });
@@ -24661,7 +25191,7 @@ fn sheet018_comments_and_notes_context_menu_and_shortcuts() {
     // 2. 右クリックメニュー「新しいコメント（xlsx.cell-comment-new）」からスレッドコメントパネルを開き、コメントを投稿
     call(&mut s, "xlsx.cell-comment-new");
     assert!(s.with(|e, _| e.wb().panels.threaded_comment.is_some()), "threaded comment panel opened");
-    assert_eq!(s.with(|e, _| e.wb().panels.threaded_comment.as_ref().unwrap().cell), (2, 3));
+    assert_eq!(s.with(|e, _| e.wb().panels.threaded_comment.as_ref().unwrap().anchor.unwrap()), (2, 3));
     s.update(|e, window, cx| {
         e.send_threaded_comment("C4の初期コメント", window, cx);
     });
@@ -24704,17 +25234,13 @@ fn sheet018_comments_and_notes_context_menu_and_shortcuts() {
         "thread restored on undo"
     );
 
-    // 6. D4 (col: 3, row: 3) を選択し、ショートカット ⇧F2（shift-f2）でメモパネルを開いてメモを作成
+    // 6. D4 (col: 3, row: 3) を選択し、ショートカット ⇧F2（shift-f2）でメモの入力枠を開いてメモを作成
     s.click_cell("D4");
     s.key("shift-f2");
-    assert!(s.with(|e, _| e.wb().panels.note.is_some()), "note panel opened via Shift+F2");
-    assert_eq!(s.with(|e, _| e.wb().panels.note.as_ref().unwrap().cell), (3, 3));
-    s.update(|e, window, cx| {
-        let state = e.wb().panels.note.as_ref().unwrap().state.clone();
-        state.update(cx, |st, cx| st.set_value("D4の従来メモ", window, cx));
-        e.save_note(cx);
-        e.focus_handle.focus(window, cx);
-    });
+    assert!(s.with(|e, _| e.note_edit().is_some()), "the note's box opened via Shift+F2");
+    s.key("cmd-a");
+    s.type_text("D4の従来メモ");
+    s.key("escape");
     assert_eq!(
         s.with(|e, _| e.current_sheet().unwrap().1.comment_at(3, 3).map(|c| c.text.clone())),
         Some("D4の従来メモ".into())
@@ -26215,8 +26741,7 @@ fn options001_format_as_table_find_select_and_scale_to_fit() {
                         row: 1,
                         column: 0,
                         author: "Tester".into(),
-                        text: "Check price".into(),
-                    }),
+                        text: "Check price".into(), ..Default::default() }),
                 }),
                 Command::Sheet(SheetCommand::AddConditional {
                     slide: slide_id,
@@ -27817,7 +28342,7 @@ fn sort_realtime_update_on_off_memory_undo() {
     s.click_cell("A1");
     s.menu("xlsx.sort-manage");
     // The pane (not a dialog), real-time update on, and no 並べ替える button.
-    assert!(s.with(|e, _| !e.panel_dialog_is_modal() && e.sidebar_open && e.sort_realtime()));
+    assert!(s.with(|e, _| !e.dialog_is_modal() && e.sidebar_open && e.sort_realtime()));
     {
         let _probe = buttons::Probe::new();
         s.update(|_, _, cx| cx.notify());
@@ -27920,8 +28445,7 @@ fn cell017_018_021_find_workbook_links_tooltip_and_select_special() {
                         row: 2,
                         column: 7,
                         author: "Author".into(),
-                        text: "TargetNote memo".into(),
-                    }),
+                        text: "TargetNote memo".into(), ..Default::default() }),
                 }),
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
                     slide: slide2,
@@ -28972,4 +29496,152 @@ fn sheet032_overwrite_question_and_text_paste() {
     s.key("cmd-v");
     assert_eq!(s.value("D1"), CellValue::Text("2026-10-18".into()));
     assert!(matches!(s.value("E1"), CellValue::Number(_)));
+}
+
+/// A cell that wraps its text (no line break in it), edited with F2: a click on a displayed line puts the caret on that line, a drag and a
+/// double-click too; in Edit mode ↑ and ↓ move the caret a displayed line (↑ on the first line goes to the start of the text, ↓ on the last to the end,
+/// Shift extends the selection); in Enter mode (typing over the cell) ↑ finishes the entry and moves to the cell above.
+fn edit_wrapped_cell_click_and_arrows() {
+    let mut s = new_sheet();
+    s.click_cell("B3");
+    s.toolbar("wrap");
+    let text = "あいうえおかきくけこさしすせそたちつてとあいうえおかきくけこさしすせそたちつてと";
+    s.enter(text, "enter");
+    s.click_cell("B3");
+    s.key("f2");
+    s.settle();
+    let caret = |s: &mut Scenario| s.with(|e, _| e.cell_edit().map(|c| (c.caret, c.anchor)).unwrap());
+    // The displayed lines (byte spans of the text) and where each is on screen.
+    let lines = |s: &mut Scenario| {
+        s.with(|e, _| {
+            let c = e.cell_edit().unwrap();
+            let rect = c.rect.get().unwrap();
+            let layout = c.layout.borrow().clone().unwrap();
+            let scroll = c.scroll_y.get();
+            layout
+                .lines
+                .iter()
+                .map(|l| {
+                    let y = f32::from(rect.origin.y) + l.baseline + (l.descent - l.ascent) / 2.0 - scroll;
+                    (l.start, l.end, f32::from(rect.origin.x) + l.x_at(l.start), y)
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    let ls = lines(&mut s);
+    assert!(ls.len() >= 3, "the text wraps into several lines: {ls:?}");
+    let utf16 = |b: usize| text[..b].encode_utf16().count();
+    // A click a little inside the start of line 2 (index 1), then of the last line.
+    for i in [1usize, ls.len() - 1, 0] {
+        let (start, end, x, y) = ls[i];
+        s.click((x + 3.0, y));
+        let c = caret(&mut s).0;
+        assert!((utf16(start)..=utf16(end)).contains(&c), "click on line {i}: caret {c} not in {}..{}", utf16(start), utf16(end));
+    }
+    // A double-click selects a word on the line clicked (kana: the run of them, on line 2 at least inside it).
+    let (start, end, x, y) = ls[1];
+    s.double_click((x + 3.0, y));
+    let (c, a) = caret(&mut s);
+    let a = a.unwrap_or(c);
+    assert!((utf16(start)..=utf16(end)).contains(&c.min(a)) || c.min(a) <= utf16(start), "double-click on line 2: {a}..{c}");
+    // A drag from line 3 up to line 1 selects across the lines.
+    let (_, _, x2, y2) = ls[2];
+    let (_, _, x0, y0) = ls[0];
+    s.drag((x2 + 3.0, y2), (x0 + 3.0, y0));
+    let (c, a) = caret(&mut s);
+    assert!(a.is_some_and(|a| a >= utf16(ls[2].0) && c <= utf16(ls[0].1)), "drag from line 3 to line 1: {a:?} {c}");
+    // Arrows in Edit mode.
+    s.click((ls[1].2 + 3.0, ls[1].3));
+    let at1 = caret(&mut s).0;
+    s.key("up");
+    let up = caret(&mut s).0;
+    assert!(up < utf16(ls[1].0) && up >= utf16(ls[0].0), "up from line 2 goes to line 1: {at1} -> {up}");
+    assert!(s.with(|e, _| e.cell_edit().is_some()) && s.selected() == "B3", "still editing B3");
+    s.key("up");
+    assert_eq!(caret(&mut s).0, 0, "up on the first line: the start of the text");
+    s.key("down");
+    let down = caret(&mut s).0;
+    assert!(down >= utf16(ls[1].0) && down <= utf16(ls[1].1), "down from line 1 goes to line 2: {down}");
+    for _ in 0..ls.len() {
+        s.key("down");
+    }
+    assert_eq!(caret(&mut s).0, utf16(text.len()), "down on the last line: the end of the text");
+    assert_eq!(s.selected(), "B3");
+    // Shift+up extends the selection to the line above.
+    s.key("shift-up");
+    let (c, a) = caret(&mut s);
+    assert_eq!(a, Some(utf16(text.len())));
+    // (The end of the line above is where the last line starts: the same x as the end of the text.)
+    assert!(c <= utf16(ls[ls.len() - 1].0) && c < utf16(text.len()), "shift-up: {c}");
+    s.key("escape");
+    // Enter mode: typing over the cell, ↑ finishes the entry and moves up.
+    s.click_cell("B3");
+    s.type_text(text);
+    s.key("up");
+    assert!(s.with(|e, _| e.cell_edit().is_none()), "up in Enter mode finishes the entry");
+    assert_eq!(s.selected(), "B2");
+}
+
+/// A sheet with a frozen row, scrolled down, a wrapped cell edited with F2 (the report: F31 of a sheet with a frozen header row): the box is
+/// painted once for each pane, and a click on the second displayed line puts the caret there, not on the first line.
+fn edit_frozen_scrolled_wrapped_click() {
+    let mut s = new_sheet();
+    s.click_cell("B2");
+    s.menu("xlsx.freeze");
+    s.click_cell("B40");
+    s.toolbar("wrap");
+    let text = "あいうえおかきくけこさしすせそたちつてとあいうえおかきくけこさしすせそたちつてと";
+    s.enter(text, "enter");
+    s.click_cell("B40");
+    s.key("f2");
+    s.settle();
+    s.update(|_, _, cx| cx.notify());
+    s.settle();
+    let (rect, second, scrolled) = s.with(|e, _| {
+        let c = e.cell_edit().unwrap();
+        let layout = c.layout.borrow().clone().unwrap();
+        let l = &layout.lines[1];
+        (c.rect.get().unwrap(), (l.x_at(l.start), l.baseline + (l.descent - l.ascent) / 2.0), e.workspace_scroll.offset().y)
+    });
+    assert!(f32::from(scrolled) < -100.0, "the sheet is scrolled: {scrolled:?}");
+    s.click((f32::from(rect.origin.x) + second.0 + 3.0, f32::from(rect.origin.y) + second.1));
+    let at = s.with(|e, _| e.cell_edit().map(|c| c.caret).unwrap());
+    assert!((5..=10).contains(&at), "a click on the second line (characters 5..10) put the caret at {at}");
+}
+
+/// Excel: F2 / a double-click (Edit mode, the status bar says 編集) keeps ↑ ↓ in the cell even for one line of text (↑ goes to the start, ↓ to the
+/// end); typing over a cell (Enter mode, 入力) finishes the entry with ↑ or ↓ and moves to the cell above or below; F2 swaps the two.
+fn edit_single_line_arrows_and_status() {
+    let mut s = new_sheet();
+    s.click_cell("B3");
+    s.enter("hello", "enter");
+    s.click_cell("B3");
+    let mode = |s: &mut Scenario| s.with(|e, _| e.status_texts().last().map(|t| t.to_string()));
+    let caret = |s: &mut Scenario| s.with(|e, _| e.cell_edit().map(|c| c.caret));
+    s.key("f2");
+    s.settle();
+    assert_eq!(mode(&mut s), Some(s.with(|_, _| crate::shell::i18n::text("xlsx.status.mode-edit").to_string())));
+    s.key("left");
+    s.key("left");
+    s.key("up");
+    assert_eq!((caret(&mut s), s.selected()), (Some(0), "B3".to_string()), "↑ in one line: the start of the text");
+    s.key("down");
+    assert_eq!((caret(&mut s), s.selected()), (Some(5), "B3".to_string()), "↓ in one line: the end of the text");
+    s.key("f2");
+    assert_eq!(mode(&mut s), Some(s.with(|_, _| crate::shell::i18n::text("xlsx.status.mode-enter").to_string())));
+    s.key("escape");
+    // Double-click: Edit mode.
+    s.double_click_cell("B3");
+    s.settle();
+    s.key("up");
+    assert_eq!((caret(&mut s), s.selected()), (Some(0), "B3".to_string()), "after a double-click ↑ stays in the cell");
+    s.key("escape");
+    // Typing over the cell: Enter mode.
+    s.click_cell("B3");
+    s.type_text("abc");
+    assert_eq!(mode(&mut s), Some(s.with(|_, _| crate::shell::i18n::text("xlsx.status.mode-enter").to_string())));
+    s.key("down");
+    assert!(s.with(|e, _| e.cell_edit().is_none()));
+    assert_eq!(s.selected(), "B4");
+    assert_eq!(s.shown("B3"), "abc");
 }

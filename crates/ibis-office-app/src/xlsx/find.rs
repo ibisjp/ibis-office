@@ -8,7 +8,7 @@
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::component::button::{ButtonVariants as _};
 use crate::shell::chrome::Checkbox;
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -17,6 +17,9 @@ use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, SheetCommand};
 
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
+
+/// Key context of the find panel (the keys work with its fields focused).
+pub(crate) const FIND_PANEL_CONTEXT: &str = "SheetFindPanel";
 
 /// Options controlling search and replace matching.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -58,6 +61,7 @@ pub(crate) struct FindPanel {
     pub(crate) by_columns: bool,
     pub(crate) comments: bool,
     pub(crate) results: Vec<FindMatch>,
+    pub(crate) _subscription: Subscription,
 }
 
 /// Check if `text` matches `query` under the given `options`.
@@ -194,7 +198,7 @@ fn replacement_in_sheet(
         (None, v @ (CellValue::Number(_) | CellValue::Bool(_))) => {
             let text = replace_text_with_options(&c.text, query, with, options)?;
             let _ = v;
-            match ibis_calc::input::parse_input(&text, false) {
+            match ibis_calc::input::parse_imported(&text, false) {
                 ibis_calc::input::Typed::Value(v, _) => CellInput::Value(v),
                 ibis_calc::input::Typed::Formula(f) => CellInput::Formula(f),
             }
@@ -206,9 +210,25 @@ fn replacement_in_sheet(
 
 impl SlideEditor {
     pub(crate) fn open_sheet_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Already open: keep the options and the text, and put the keys in the field again.
+        if let Some(query) = self.sheet_state().and_then(|s| s.find.as_ref()).map(|f| f.query.clone()) {
+            query.update(cx, |q, cx| { q.focus(window, cx); q.select_all(window, cx); });
+            self.sidebar_open = true;
+            cx.notify();
+            return;
+        }
         let query = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_xlsx.find-what")));
         let replacement = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_xlsx.replace-with")));
-        query.update(cx, |q, cx| q.focus(window, cx));
+        // Enter is the Next button, Shift+Enter the Previous one.
+        let subscription = cx.subscribe_in(&query, window, |this, input, event: &InputEvent, window, cx| match event {
+            InputEvent::Change => this.last_find_query = input.read(cx).value().to_string(),
+            InputEvent::PressEnter { shift, .. } => {
+                this.sheet_find_step(!*shift, cx);
+                input.update(cx, |q, cx| q.focus(window, cx));
+            }
+            _ => {}
+        });
+        query.update(cx, |q, cx| { q.focus(window, cx); q.select_all(window, cx); });
         if let Some(s) = self.sheet_state_mut() {
             s.names = None;
             s.validation = None;
@@ -223,12 +243,43 @@ impl SlideEditor {
                 by_columns: false,
                 comments: false,
                 results: Vec::new(),
+                _subscription: subscription,
             });
             s.page_setup = false;
             s.custom_format = None;
         }
         self.sidebar_open = true;
         cx.notify();
+    }
+
+    /// The Next / Previous button: the next (previous) cell matching the panel's text under its options.
+    pub(crate) fn sheet_find_step(&mut self, forward: bool, cx: &mut Context<Self>) -> bool {
+        let Some(p) = self.sheet_state().and_then(|s| s.find.as_ref()) else { return false };
+        let query = p.query.read(cx).value().to_string();
+        let options = FindOptions {
+            formulas: p.formulas,
+            match_case: p.match_case,
+            entire_cell: p.entire_cell,
+            search_workbook: p.search_workbook,
+            by_columns: p.by_columns,
+            comments: p.comments,
+        };
+        if forward { self.find_next_cell_with_options(&query, options, cx) } else { self.find_prev_cell_with_options(&query, options, cx) }
+    }
+
+    /// ⌘G / ⇧⌘G (Mac): the next / previous match; with the panel closed it opens, with the text last typed there.
+    pub(crate) fn sheet_find_shortcut(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sheet_state().is_some_and(|s| s.find.is_none()) {
+            let query = self.last_find_query.clone();
+            self.open_sheet_find(window, cx);
+            if query.is_empty() {
+                return;
+            }
+            if let Some(input) = self.sheet_state().and_then(|s| s.find.as_ref()).map(|f| f.query.clone()) {
+                input.update(cx, |q, cx| q.set_value(query, window, cx));
+            }
+        }
+        self.sheet_find_step(forward, cx);
     }
 
     fn find_target_sheets(&self, search_workbook: bool) -> Vec<(ibis_doc_model::SlideId, String)> {
@@ -411,6 +462,7 @@ impl SlideEditor {
                         column,
                         comment: Some(ibis_doc_model::SheetComment {
                             text: new_text,
+                            runs: Vec::new(),
                             ..note.clone()
                         }),
                     }));
@@ -461,6 +513,7 @@ impl SlideEditor {
                             column: note.column,
                             comment: Some(ibis_doc_model::SheetComment {
                                 text: new_text,
+                                runs: Vec::new(),
                                 ..note
                             }),
                         }));
@@ -544,8 +597,8 @@ impl SlideEditor {
             .p_0().child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                 .child(crate::shell::chrome::radio_button("xlsx-find-mode-search", !replace_mode, false, crate::shell::i18n::text("_shell.find"), cx.listener(|this, _, _, cx| { if let Some(f) = this.sheet_state_mut().and_then(|s| s.find.as_mut()) { f.replace_mode = false; } cx.notify(); })))
                 .child(crate::shell::chrome::radio_button("xlsx-find-mode-replace", replace_mode, false, crate::shell::i18n::text("_shell.replace"), cx.listener(|this, _, _, cx| { if let Some(f) = this.sheet_state_mut().and_then(|s| s.find.as_mut()) { f.replace_mode = true; } cx.notify(); }))))
-            .child(crate::shell::chrome::text_field(&query).full_width())
-            .when(replace_mode, |d| d.child(crate::shell::chrome::text_field(&replacement).full_width()))
+            .child(crate::shell::chrome::text_field(&query).full_width().select_on_focus())
+            .when(replace_mode, |d| d.child(crate::shell::chrome::text_field(&replacement).full_width().select_on_focus()))
             .child(
                 v_flex()
                     .gap_1()
@@ -656,6 +709,12 @@ impl SlideEditor {
                 .child(list);
         }
 
+        // The keys of the sheet's find also work with the focus in the panel's fields.
+        let body = body
+            .key_context(FIND_PANEL_CONTEXT)
+            .on_action(cx.listener(|this, _: &super::sheet_ui::OpenSheetFind, window, cx| this.open_sheet_find(window, cx)))
+            .on_action(cx.listener(|this, _: &super::sheet_ui::SheetFindNext, window, cx| this.sheet_find_shortcut(true, window, cx)))
+            .on_action(cx.listener(|this, _: &super::sheet_ui::SheetFindPrevious, window, cx| this.sheet_find_shortcut(false, window, cx)));
         Some(SidebarPanel { title: "_shell.find-and-replace".into(), body: body.into_any_element() })
     }
 }

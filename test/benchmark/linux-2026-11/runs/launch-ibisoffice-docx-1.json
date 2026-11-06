@@ -1,0 +1,65 @@
+{
+ "end": 1.698,
+ "last_change": 1.698,
+ "end_video_frame": 12,
+ "first_change": 0.462,
+ "window_end": 1.698,
+ "doc_changes_count": 7,
+ "doc_changes": [
+  [
+   0.462,
+   0.16144
+  ],
+  [
+   0.473,
+   0.26115
+  ],
+  [
+   0.497,
+   0.06524
+  ],
+  [
+   0.522,
+   0.0095
+  ],
+  [
+   0.547,
+   0.00523
+  ],
+  [
+   0.592,
+   0.00612
+  ],
+  [
+   1.698,
+   0.16832
+  ]
+ ],
+ "recorded_until": 9.708,
+ "grabs": 931,
+ "capped": false,
+ "tag": "launch-ibisoffice-docx-1",
+ "scenario": "launch",
+ "app": "ibisoffice",
+ "kind": "docx",
+ "run": 1,
+ "file": "securities-registration-statement.docx",
+ "command": [
+  "ibisOffice-0.8.5-Linux.AppImage",
+  "/tmp/ibis-bench-r6fm52qg/securities-registration-statement.docx"
+ ],
+ "rects": [
+  [
+   0.0,
+   "-20 7 1320 840"
+  ]
+ ],
+ "covered": [],
+ "cap": 60,
+ "measured_at": "2026-11-04 18:04:29",
+ "load_before": [
+  1.81,
+  0.56,
+  0.28
+ ]
+}

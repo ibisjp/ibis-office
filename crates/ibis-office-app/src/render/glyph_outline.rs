@@ -8,8 +8,8 @@
 /// Polygons (the glyph's contours, flattened) of glyph `glyph` of the font
 /// in `data` (the `index`th of a collection) at `size` pixels, from its
 /// origin on the baseline, y down. `None` when the outline cannot be read
-/// (and where the font files cannot be read: the web build).
-#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"))]
+/// (the web build reads the bytes of the fonts it carries, `font_data` of gpui-pre-wgpu, with skrifa as the desktop does).
+#[cfg(any(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"), target_family = "wasm"))]
 pub(crate) fn glyph_polygons(data: &[u8], index: u32, glyph: u32, size: f32) -> Option<Vec<Vec<(f32, f32)>>> {
     use skrifa::MetadataProvider as _;
     use skrifa::instance::{LocationRef, Size};
@@ -23,21 +23,21 @@ pub(crate) fn glyph_polygons(data: &[u8], index: u32, glyph: u32, size: f32) -> 
     Some(pen.contours)
 }
 
-#[cfg(not(all(any(target_os = "macos", target_os = "linux", windows), feature = "export")))]
+#[cfg(not(any(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"), target_family = "wasm")))]
 pub(crate) fn glyph_polygons(_data: &[u8], _index: u32, _glyph: u32, _size: f32) -> Option<Vec<Vec<(f32, f32)>>> {
     None
 }
 
 /// Collects a glyph's contours as polygons, curves cut into short lines,
 /// y turned down.
-#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"))]
+#[cfg(any(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"), target_family = "wasm"))]
 #[derive(Default)]
 struct Flatten {
     contours: Vec<Vec<(f32, f32)>>,
     current: Vec<(f32, f32)>,
 }
 
-#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"))]
+#[cfg(any(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"), target_family = "wasm"))]
 impl Flatten {
     fn close_contour(&mut self) {
         if self.current.len() >= 3 {
@@ -53,10 +53,10 @@ impl Flatten {
 }
 
 /// Lines a curve is cut into.
-#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"))]
+#[cfg(any(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"), target_family = "wasm"))]
 const STEPS: usize = 8;
 
-#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"))]
+#[cfg(any(all(any(target_os = "macos", target_os = "linux", windows), feature = "export"), target_family = "wasm"))]
 impl skrifa::outline::OutlinePen for Flatten {
     fn move_to(&mut self, x: f32, y: f32) {
         self.close_contour();

@@ -196,7 +196,7 @@ impl SlideEditor {
         }
         body=body.children(chrome::panel_message(&p.message));
         let panel_terminal_actions=chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("dedupe-apply", "", crate::shell::chrome::ActionButtonKind::Primary).label(crate::shell::i18n::text("fix.dedupe-edit.remove-duplicates")).on_click(cx.listener(|e,_,_,cx|e.apply_dedupe_panel(cx)))))
-            .action(crate::shell::chrome::ActionDefinition::new("dedupe-close", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_shell.close")).on_click(cx.listener(|e,_,w,cx|e.close_panel_dialog(w,cx))));
+            .action(crate::shell::chrome::ActionDefinition::new("dedupe-close", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_shell.close")).on_click(cx.listener(|e,_,w,cx|e.close_dialog(w,cx))));
 
         Some(SidebarPanel::with_footer("fix.dedupe-edit.remove-duplicates", body.into_any_element(), panel_terminal_actions))
     }

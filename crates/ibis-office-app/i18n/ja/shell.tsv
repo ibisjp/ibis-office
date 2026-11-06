@@ -64,6 +64,7 @@ edit.select-all	すべて選択
 edit.delete	削除
 edit.duplicate	複製
 edit.find-replace	検索と置換…
+edit.replace-fonts	フォントの置換…
 view.slideshow	スライドショー
 view.zoom-in	拡大
 view.zoom-out	縮小
@@ -147,6 +148,7 @@ file.print-exit	プレビューで印刷できませんでした（終了コー�
 file.pick-failed	ファイルを選べませんでした: {error}
 file.opening	{name} を開いています…
 file.open-failed	{name} を開けませんでした: {error}
+file.read-crashed	このファイルの内容を読み込めませんでした（内部エラー）
 align.left	左揃え
 align.center	中央揃え
 align.right	右揃え
@@ -172,7 +174,6 @@ _shell.black	黒
 _shell.red	赤
 _shell.blue	青
 _shell.green	緑
-_shell.type-a-comment-and-press-enter	コメントを入力（⌘Enter で投稿）
 _shell.reply	返信
 _shell.resolved	（解決済み）
 _shell.resolve	解決
@@ -470,6 +471,7 @@ _shell.copy-paragraph-format	段落書式をコピー
 _shell.paste-paragraph-format	段落書式を貼り付け
 _shell.copy-text-format	文字書式をコピー
 _shell.paste-text-format	文字書式を貼り付け
+_shell.crop-mode	トリミング
 _shell.crop-settings	トリミングの設定…
 _shell.upload-from-computer	パソコンからアップロード
 _shell.line-2	線
@@ -793,6 +795,8 @@ shell.linux-desktop.no	登録しない
 _shell.comma-style	桁区切りスタイル
 _shell.font-recent	履歴
 _shell.font-system	システム フォント
+_shell.font-used	このファイルで使用
+_shell.font-all	すべて
 grammar.repeated-word	重複語
 grammar.repeated-punctuation	句読点の重複
 grammar.missing-space	空白の欠落
@@ -874,3 +878,41 @@ color.dialog.title	色選択
 color.dialog.invalid	色は6桁の16進数で指定してください
 
 shell.start-window	スタートウィンドウ
+shell.file-changed.message	他のアプリからファイルが更新されました。読み込み直しますか？
+shell.file-changed.yes	はい
+shell.file-changed.no	いいえ
+shell.file-changed.discard	今の変更を破棄して読み込み直す
+shell.file-changed.save-as	名前をつけて保存して開く
+shell.save-failed.title	保存できませんでした
+shell.comments.post	投稿
+shell.comments.post-tip-mac	投稿 (⌘Enter)
+shell.comments.post-tip-other	投稿 (Ctrl+Enter)
+shell.comments.save-tip-mac	保存 (⌘Enter)
+shell.comments.save-tip-other	保存 (Ctrl+Enter)
+shell.comments.cancel	キャンセル
+shell.comments.reply	返信
+shell.comments.edit	編集
+shell.comments.resolve	解決
+shell.comments.reopen	再開
+shell.comments.delete	削除
+shell.comments.resolved	解決済み
+shell.comments.reply-prompt	返信
+shell.comments.edit-prompt	コメントを編集
+shell.comments.empty	コメントはありません
+shell.comments.delete-title	コメントの削除
+shell.comments.delete-message	コメントを削除しますか？（返信もすべて削除されます）
+shell.comments.new-cell	セル {cell} へのコメント
+shell.comments.new-selection	選択した箇所へのコメント
+shell.comments.new-shape	選択した図形へのコメント
+shell.comments.new-slide	スライドへのコメント
+shell.comments.hint-select-text	文字を選択してから 挿入 > コメント
+shell.comments.hint-insert	挿入 > コメントで新しいコメント
+shell.comments.no-selection	選択範囲がありません。先に単語や文を選択してから追加してください。
+shell.comments.title	コメント
+shell.comments.placeholder	コメントを入力
+shell.comments.save-hint-mac	+Enterで保存
+shell.comments.save-hint-other	Ctrl+Enterで保存
+shell.menu-search.history	履歴
+shell.menu-search.commands	コマンド
+file.modify-locked-no-overwrite	書き込みパスワードが必要なため、このファイルには上書きできません。名前を付けて保存してください
+start.update	ibisOffice を更新する

@@ -323,8 +323,8 @@ impl SlideEditor {
             .child(check("pptx-hf-title", "pptx.header-footer.don-t-show-title-slide", p.not_on_title, "title"))
             ;
         let panel_actions = crate::shell::chrome::action_bar()
-                    .action(crate::shell::chrome::ActionDefinition::new("pptx-hf-apply", t("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_header_footer(false, w, cx))))
                     .action(crate::shell::chrome::ActionDefinition::new("pptx-hf-all", t("pptx.notes-marks-panel.apply-all"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_header_footer(true, w, cx))))
+                    .action(crate::shell::chrome::ActionDefinition::new("pptx-hf-apply", t("_shell.apply"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.apply_header_footer(false, w, cx))))
                     .action(crate::shell::chrome::ActionDefinition::new("pptx-hf-cancel", t("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_header_footer(w, cx))));
         Some(SidebarPanel::with_footer(t("_shell.header-footer"), body.into_any_element(), panel_actions))
     }

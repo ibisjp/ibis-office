@@ -23,6 +23,7 @@ mod lookup;
 pub(crate) mod math;
 pub(crate) mod stat;
 mod text;
+pub use text::to_half_width;
 pub(crate) mod xml;
 
 use std::rc::Rc;
@@ -187,6 +188,8 @@ pub(crate) fn collect_one(ctx: &mut Ctx, a: &Expr, mode: Collect, out: &mut Vec<
                 match v {
                     Value::Number(n) => out.push(*n),
                     Value::Error(e) => return Err(*e),
+                    // A function value is no number.
+                    Value::Lambda(_) => return Err(CellError::Value),
                     Value::Text(_) if mode == Collect::NumbersA => out.push(0.0),
                     Value::Bool(b) if mode == Collect::NumbersA => out.push(if *b { 1.0 } else { 0.0 }),
                     _ => {}
@@ -237,7 +240,7 @@ pub(crate) fn arg_array(ctx: &mut Ctx, e: &Expr) -> Res<Rc<Array>> {
     match ctx.eval_array(e) {
         Value::Array(a) => Ok(a),
         Value::Error(e) => Err(e),
-        Value::Lambda(_) => Err(CellError::Value),
+        // A function as a value (`HSTACK(SUM,MAX)`) is an element like any other.
         v => Ok(Rc::new(Array::new(1, 1, vec![v]))),
     }
 }

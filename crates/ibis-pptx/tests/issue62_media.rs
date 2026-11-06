@@ -59,9 +59,9 @@ fn a_new_video_gets_the_play_call_the_media_node_and_the_pause_by_click() {
     // PowerPoint's own pieces.
     assert!(xml.contains("<a:videoFile r:link="), "{xml}");
     assert!(xml.contains("<p14:media "), "{xml}");
-    assert!(xml.contains(&format!("presetClass=\"mediacall\" presetSubtype=\"0\" fill=\"hold\" nodeType=\"clickEffect\"")), "{xml}");
-    assert!(xml.contains(&format!("<p:cmd type=\"call\" cmd=\"playFrom(0.0)\"><p:cBhvr><p:cTn id=\"")), "{xml}");
-    assert!(xml.contains("dur=\"6000\" fill=\"hold\"/>"), "the length of the movie is the length of the call: {xml}");
+    // PowerPoint 16: nothing in the main sequence; a click on the video pauses and resumes it.
+    assert!(!xml.contains("playFrom"), "no play call in the main sequence: {xml}");
+    assert!(!xml.contains("nodeType=\"mainSeq\"><p:childTnLst><p:par>"), "the main sequence is empty: {xml}");
     assert!(xml.contains(&format!("<p:video><p:cMediaNode vol=\"100000\"><p:cTn id=")), "{xml}");
     assert!(xml.contains(&format!("<p:cond evt=\"onClick\" delay=\"0\"><p:tgtEl><p:spTgt spid=\"{spid}\"/>")), "{xml}");
     assert!(xml.contains("cmd=\"togglePause\""), "{xml}");
@@ -113,17 +113,17 @@ fn the_play_survives_a_change_of_the_animations_of_the_slide() {
     model.slides[0].animations.push(Animation {
         shape: target, class: AnimationClass::Entrance, start: AnimationStart::OnClick, look: AnimationLook::Fade, delay: 0, duration: 500, preset: (10, 0),
         repeat_count: AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: AnimationAfterEffect::Hold,
-        trigger: AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None,
+        trigger: AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     });
     let bytes = again.source.save(&model, ibis_pptx::SaveOptions::default()).unwrap();
     let xml = slide_xml(&bytes);
     assert!(xml.contains("presetClass=\"entr\""), "{xml}");
-    assert!(xml.contains("cmd=\"playFrom(0.0)\"") && xml.contains("<p:video>") && xml.contains("cmd=\"togglePause\""), "the play was lost: {xml}");
+    assert!(xml.contains("<p:video>") && xml.contains("cmd=\"togglePause\""), "the pause was lost: {xml}");
     assert_unique_ids(&xml);
     // And a second round does not add a second play.
     let third = ibis_pptx::open(bytes).unwrap();
     let saved = third.source.save(&third.presentation, ibis_pptx::SaveOptions::default()).unwrap();
-    assert_eq!(slide_xml(&saved).matches("playFrom(0.0)").count(), 1);
+    assert_eq!(slide_xml(&saved).matches("togglePause").count(), 1);
 }
 
 /// The file of the issue (PowerPoint's video and audio): read as clips, and an edit of the animations keeps their play.
@@ -145,4 +145,23 @@ fn the_issue_file_keeps_its_media_play_when_an_animation_is_edited() {
     let xml = String::from_utf8(pkg.read("ppt/slides/slide3.xml").unwrap()).unwrap();
     assert!(xml.contains("cmd=\"playFrom(0.0)\"") && xml.contains("<p:audio>"), "the play was lost");
     assert_unique_ids(&xml);
+}
+
+#[test]
+fn a_new_audio_is_played_by_a_click_on_it_and_reads_back_as_that_row() {
+    let opened = open_blank();
+    let mut model = opened.presentation.clone();
+    picture(&mut model, "Sound", true, ClipOptions::default());
+    let bytes = opened.source.save(&model, ibis_pptx::SaveOptions::default()).unwrap();
+    let xml = slide_xml(&bytes);
+    assert_eq!(xml.matches("cmd=\"playFrom(0.0)\"").count(), 1, "{xml}");
+    assert!(xml.contains("nodeType=\"interactiveSeq\"") && xml.contains("evt=\"onClick\""), "{xml}");
+    assert!(xml.contains("<p:audio><p:cMediaNode vol=\"100000\">"), "{xml}");
+    assert!(!xml.contains("nodeType=\"mainSeq\"><p:childTnLst><p:par>"), "the main sequence is empty: {xml}");
+    assert_unique_ids(&xml);
+    let reread = ibis_pptx::open(bytes).unwrap();
+    let rows: Vec<_> = reread.presentation.slides[0].animations.iter().map(|a| (a.look, a.trigger.clone())).collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, AnimationLook::Media(ibis_doc_model::MediaCommand::Play));
+    assert!(matches!(rows[0].1, AnimationTrigger::OnShapeClick(_)));
 }

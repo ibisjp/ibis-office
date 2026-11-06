@@ -249,6 +249,70 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// ファイル > 印刷… (⌘P) in 表計算画面: the 印刷 dialog (a modal panel, as 文書画面's
+    /// 印刷の設定 is): the print target (作業中のシート / ブック全体 / 選択した部分), the
+    /// orientation, the paper and the scale, with 印刷 / キャンセル at the foot.
+    /// 印刷 then makes the PDF (`print_now`), as 文書画面 does.
+    pub(crate) fn open_xlsx_print_panel(&mut self, cx: &mut Context<Self>) {
+        self.open_page_setup(cx);
+        if let Some(s) = self.sheet_state_mut() {
+            s.page_setup = false;
+            s.print_panel = true;
+        }
+    }
+
+    pub(crate) fn close_xlsx_print_panel(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = self.sheet_state_mut() {
+            s.print_panel = false;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn xlsx_print_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        if !self.sheet_state()?.print_panel {
+            return None;
+        }
+        let print = self.current_print()?;
+        let what = self.print_what();
+        let radio = |id: &'static str, label: &'static str, on: bool, f: Box<dyn Fn(&mut SlideEditor, &mut Context<SlideEditor>)>| -> AnyElement {
+            crate::shell::chrome::radio_button(id, on, false, crate::shell::i18n::text(label), cx.listener(move |this, _, _, cx| f(this, cx))).into_any_element()
+        };
+        let section = |label: &'static str| div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text(label));
+        let papers = PAPERS.iter().map(|&(name, size)| radio(Box::leak(format!("xlsx-print-paper-{name}").into_boxed_str()), name, print.paper == size, Box::new(move |this, cx| this.set_print(|p| p.paper = size, None, cx))));
+        let body = v_flex()
+            .gap_3()
+            .child(section("xlsx.print-what"))
+            .child(v_flex().gap_1()
+                .child(radio("xlsx-print-what-sheet", "xlsx.print-what.active-sheet", what == PrintWhat::ActiveSheet, Box::new(|this, cx| this.set_print_what(PrintWhat::ActiveSheet, cx))))
+                .child(radio("xlsx-print-what-book", "xlsx.print-what.entire-workbook", what == PrintWhat::EntireWorkbook, Box::new(|this, cx| this.set_print_what(PrintWhat::EntireWorkbook, cx))))
+                .child(radio("xlsx-print-what-selection", "xlsx.print-what.selection", what == PrintWhat::Selection, Box::new(|this, cx| this.set_print_what(PrintWhat::Selection, cx)))))
+            .child(section("_xlsx.orientation"))
+            .child(h_flex().gap_1()
+                .child(radio("xlsx-print-portrait", "_xlsx.portrait", !print.landscape, Box::new(|this, cx| this.set_print(|p| p.landscape = false, None, cx))))
+                .child(radio("xlsx-print-landscape", "_xlsx.landscape", print.landscape, Box::new(|this, cx| this.set_print(|p| p.landscape = true, None, cx)))))
+            .child(section("_shell.paper-size"))
+            .child(h_flex().flex_wrap().gap_1().children(papers))
+            .child(section("_xlsx.scale"))
+            .child(h_flex().flex_wrap().gap_1()
+                .child(radio("xlsx-print-scale-100", "xlsx.print-panel.scale-100", print.fit_to.is_none() && print.scale == 100, Box::new(|this, cx| this.set_print_scale_percent(100, cx))))
+                .child(radio("xlsx-print-fit-one", "_xlsx.fit-to-1-page", print.fit_to == Some((1, 1)), Box::new(|this, cx| this.set_print(|p| p.fit_to = Some((1, 1)), None, cx))))
+                .child(radio("xlsx-print-fit-width", "xlsx.scale-width-1", print.fit_to.map(|(w, _)| w) == Some(1) && print.fit_to != Some((1, 1)), Box::new(|this, cx| this.set_print_fit_width(1, cx)))))
+            .child(crate::shell::chrome::action_button("xlsx-print-page-setup").label(crate::shell::i18n::text("xlsx.page-setup")).on_click(cx.listener(|this, _, _, cx| {
+                this.close_xlsx_print_panel(cx);
+                this.open_page_setup(cx);
+            })));
+        // Printing makes a PDF; where there is no print dialog of the system to give it to, the PDF app prints it.
+        #[cfg(not(target_os = "macos"))]
+        let body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("xlsx.print-panel.note")));
+        let footer = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("xlsx-print-apply", crate::shell::i18n::text("docx.print-panel.print"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, window, cx| {
+                this.close_xlsx_print_panel(cx);
+                this.print_now(window, cx);
+            })))
+            .action(crate::shell::chrome::ActionDefinition::new("xlsx-print-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|this, _, _, cx| this.close_xlsx_print_panel(cx))));
+        Some(SidebarPanel::with_footer(crate::shell::i18n::text("xlsx.print-panel.title"), body.into_any_element(), footer))
+    }
+
     pub(crate) fn page_setup_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         if !self.sheet_state()?.page_setup {
             return None;

@@ -513,32 +513,6 @@ fn multinomial(c: &mut Ctx, a: &[Expr]) -> Value {
     if total >= 255.0 {
         return err(CellError::Num);
     }
-    if truncated.len() == 1 {
-        if total == 5.0 {
-            return number(0.99999999999999956);
-        }
-        if total == 10.0 {
-            return number(0.99999999999999933);
-        }
-        return number(1.0);
-    }
-    let mut sorted = truncated.clone();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    if sorted == [2.0, 2.0] {
-        return number(5.9999999999999982);
-    }
-    if sorted == [1.0, 2.0, 2.0] {
-        return number(29.999999999999989);
-    }
-    if sorted == [2.0, 2.0, 2.0] {
-        return number(89.999999999999915);
-    }
-    if sorted == [2.0, 2.0, 3.0] {
-        return number(209.99999999999977);
-    }
-    if sorted == [2.0, 2.0, 10.0] {
-        return number(6005.9999999999964);
-    }
     let mut total = 0.0;
     let mut r = 1.0f64;
     for x in truncated {
@@ -582,6 +556,8 @@ fn sumproduct(c: &mut Ctx, a: &[Expr]) -> Value {
             match &x.data[i] {
                 Value::Number(n) => p *= n,
                 Value::Error(e) => return err(*e),
+                // A function value is no number.
+                Value::Lambda(_) => return err(CellError::Value),
                 _ => p = 0.0,
             }
         }
@@ -640,12 +616,6 @@ fn seriessum(c: &mut Ctx, a: &[Expr]) -> Value {
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    if (x - 5.0).abs() < 1e-12 && (n - (-2.5)).abs() < 1e-12 && (m - 0.5).abs() < 1e-12 {
-        return number(52.33877742413565);
-    }
-    if (x - 5.0).abs() < 1e-12 && (n - 12.0).abs() < 1e-12 && (m - 1e-15).abs() < 1e-16 {
-        return number(3173828125.0000391);
-    }
     let mut sum = 0.0;
     for (i, v) in coefficients.data.iter().enumerate() {
         let k = match v {
@@ -889,25 +859,43 @@ fn minverse(c: &mut Ctx, a: &[Expr]) -> Value {
 }
 
 fn sequence(c: &mut Ctx, a: &[Expr]) -> Value {
-    let mut get = |i: usize, d: f64| -> Result<f64, CellError> {
-        match a.get(i) {
-            None | Some(Expr::Missing) => Ok(d),
-            Some(e) => {
-                let v = c.eval(e);
-                match v {
-                    Value::Ref(r) => {
-                        let val = c.deref_implicit(&r);
-                        to_number(&val, c.date1904())
-                    }
-                    _ => arg_num(c, a, i),
-                }
-            }
-        }
-    };
-    let (rows, columns, start, step) = match (get(0, 1.0), get(1, 1.0), get(2, 1.0), get(3, 1.0)) {
-        (Ok(r), Ok(cl), Ok(s), Ok(st)) => (r.trunc(), cl.trunc(), s, st),
-        (Err(e), ..) | (_, Err(e), ..) | (_, _, Err(e), _) | (.., Err(e)) => return err(e),
-    };
+    // The arguments as values (a range gives its first cell). Where one is an array, SEQUENCE runs once for each element and gives
+    // the first value of each run; an element that is no number (text, a function value) is #VALUE! (Excel, #106).
+    let mut values = Vec::with_capacity(4);
+    for i in 0..4 {
+        values.push(match a.get(i) {
+            None | Some(Expr::Missing) => Value::Number(1.0),
+            Some(e) => match c.eval(e) {
+                Value::Ref(r) => c.deref_implicit(&r),
+                v => v,
+            },
+        });
+    }
+    if values.iter().any(|v| matches!(v, Value::Array(_))) {
+        return c.map_values(values, &mut |c, vs| match sequence_of(c, vs) {
+            Value::Array(x) => x.data.first().cloned().unwrap_or(Value::Empty),
+            v => v,
+        });
+    }
+    sequence_of(c, &values)
+}
+
+/// The most cells SEQUENCE makes. Measured with Excel 16.0 (build 20527, Microsoft 365) by
+/// `Application.Evaluate("ROWS(SEQUENCE(r,c))")`: 1048576x51 (53,477,376 cells) and 7300x7300 (53,290,000) are made;
+/// 1048576x52 (54,525,952), 7400x7400 and 8000x8000 are #VALUE!. The edge lies between 53.5 and 54.5 million
+/// cells and is the same for any shape, so the largest size measured to work is the limit.
+const SEQUENCE_MAX_CELLS: usize = 1_048_576 * 51;
+
+fn sequence_of(c: &mut Ctx, v: &[Value]) -> Value {
+    let date1904 = c.date1904();
+    let mut n = [0.0; 4];
+    for (i, x) in v.iter().enumerate() {
+        n[i] = match to_number(x, date1904) {
+            Ok(n) => n,
+            Err(e) => return err(e),
+        };
+    }
+    let (rows, columns, start, step) = (n[0].trunc(), n[1].trunc(), n[2], n[3]);
     if rows < 1.0 || columns < 1.0 {
         return err(CellError::Value);
     }
@@ -917,6 +905,10 @@ fn sequence(c: &mut Ctx, a: &[Expr]) -> Value {
         return err(CellError::Num);
     }
     let (rows, columns) = (rows as usize, columns as usize);
+    // Excel refuses an array of more cells than it can hold, whatever the shape (#VALUE!), before it makes it.
+    if rows * columns > SEQUENCE_MAX_CELLS {
+        return err(CellError::Value);
+    }
     let data = (0..rows * columns).map(|i| num(start + step * i as f64)).collect();
     array_value(rows, columns, data)
 }

@@ -186,23 +186,23 @@ pub(crate) fn screens() {
     tab(&mut s, "chart-series-tab", 1);
     s.screenshot("chart-format-edit-display");
     s.update(|e, _, cx| {
-        let mut bounds = e.panel_dialog.bounds.unwrap();
+        let mut bounds = e.dialog.bounds.unwrap();
         bounds.size.width = gpui_kit::px(320.);
         bounds.origin.x = gpui_kit::px(880.);
-        e.panel_dialog.bounds = Some(bounds);
-        e.panel_dialog.user_resized = true;
+        e.dialog.bounds = Some(bounds);
+        e.dialog.user_resized = true;
         cx.notify();
     });
-    let narrow=s.with(|e,_|e.panel_dialog.bounds.unwrap());
+    let narrow=s.with(|e,_|e.dialog.bounds.unwrap());
     s.wheel((f32::from(narrow.origin.x+narrow.size.width/2.),f32::from(narrow.origin.y)+90.),-600.);
     s.screenshot("chart-format-edit-display-320");
     s.update(|e, _, cx| {
-        let mut bounds = e.panel_dialog.bounds.unwrap();
-        e.panel_dialog.scroll.set_offset(Default::default());
+        let mut bounds = e.dialog.bounds.unwrap();
+        e.dialog.scroll.set_offset(Default::default());
         bounds.size.width = gpui_kit::px(550.);
         bounds.origin.x = gpui_kit::px(650.);
-        e.panel_dialog.bounds = Some(bounds);
-        e.panel_dialog.user_resized = false;
+        e.dialog.bounds = Some(bounds);
+        e.dialog.user_resized = false;
         cx.notify();
     });
 
@@ -387,7 +387,7 @@ pub(crate) fn references_and_modal_priority() {
     let _probe=buttons::Probe::new();
     let mut s=open();
     s.update(|e,w,cx|e.open_chart_series_editor(Some(0),w,cx));
-    let full=s.with(|e,_|e.panel_dialog.bounds.unwrap());
+    let full=s.with(|e,_|e.dialog.bounds.unwrap());
     let input=s.with(|e,_|e.wb().chart_edit.as_ref().unwrap().series_editor.as_ref().unwrap().name.clone());
     // The name cell above the values is the series' first-cell name: the checkbox is on and the field shows the name.
     assert!(s.with(|e,_|e.wb().chart_edit.as_ref().unwrap().series_editor.as_ref().unwrap().header),"existing series keeps its name cell as the first-cell name");
@@ -396,13 +396,13 @@ pub(crate) fn references_and_modal_priority() {
     s.update(|e,w,cx|e.toggle_chart_series_header(false,w,cx));
     for drag in [false,true] {
         buttons::click(&mut s,"chart-series-name");
-        assert_eq!(s.with(|e,_|e.panel_dialog.bounds.unwrap().size.width),px(320.));
+        assert_eq!(s.with(|e,_|e.dialog.bounds.unwrap().size.width),px(320.));
         let from=s.with(|e,_|e.cell_center(1,2).unwrap());
         let to=s.with(|e,_|e.cell_center(3,3).unwrap());
         if drag { s.drag((from.x.into(),from.y.into()),(to.x.into(),to.y.into())); }
         else {s.click((from.x.into(),from.y.into()));}
         assert!(!s.with(|e,_|e.sheet_range_pick_active()),"one completed pointer gesture accepts the name cell");
-        assert_eq!(s.with(|e,_|e.panel_dialog.bounds.unwrap().size.width),full.size.width);
+        assert_eq!(s.with(|e,_|e.dialog.bounds.unwrap().size.width),full.size.width);
         let value=s.with(|_,cx|input.read(cx).value().to_string());
         assert!(value.starts_with('=') && value.contains("$B$3"),"name formula: {value}");
         assert!(!value.contains("$D$4"),"drag keeps its starting cell");
@@ -435,7 +435,7 @@ pub(crate) fn references_and_modal_priority() {
     s.update(|e,w,cx|e.open_chart_series_editor(Some(0),w,cx));
     buttons::click(&mut s,"chart-series-name");
     s.update(|e,_,cx|e.ask_to_save(false,cx));
-    assert_eq!(s.with(|e,_|e.interaction_layer()),crate::shell::panel_dialog::InteractionLayer::Save);
+    assert_eq!(s.with(|e,_|e.interaction_layer()),crate::shell::dialog::InteractionLayer::Save);
     let covered=s.with(|_,cx|input.read(cx).value().to_string());
     s.type_text("covered input must stay unchanged");
     assert_eq!(s.with(|_,cx|input.read(cx).value().to_string()),covered,"confirmation owns native text input too");

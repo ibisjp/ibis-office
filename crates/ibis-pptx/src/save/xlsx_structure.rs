@@ -39,6 +39,14 @@ fn model_sheet(p: &Presentation, index: usize) -> Option<&Sheet> {
 }
 
 /// A range written as Excel writes it (`A1`, `A1:B2`).
+/// Where the cell at `row`, `column` is after rows or columns are inserted or deleted (`None`: it was deleted).
+fn move_cell(row: u32, column: u32, axis: Axis, at: u32, count: i64) -> Option<(u32, u32)> {
+    match axis {
+        Axis::Rows => Some((move_index(row, at, count)?, column)),
+        Axis::Columns => Some((row, move_index(column, at, count)?)),
+    }
+}
+
 fn range_text(r: CellRange) -> String {
     if r.first_row == r.last_row && r.first_column == r.last_column {
         cell_name(r.first_column, r.first_row)
@@ -218,6 +226,61 @@ pub(crate) fn replay(package: &mut Package, map: &mut SourceMap, before: &Presen
             for &c in &posts {
                 if doc.attr(c, "parentId").is_some_and(|p| gone.iter().any(|g| g == p)) {
                     doc.detach(c);
+                }
+            }
+        }
+    }
+    // The sheet's notes (the old kind of comment): each `comment`'s cell in `comments*.xml` and each note's shape in the VML drawing
+    // (`x:Row`, `x:Column` and the anchor) move together; one in the deleted rows or columns goes.
+    if let Some(Some(part)) = map.sheet_parts.get(target) {
+        const REL_COMMENTS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+        const REL_VML: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing";
+        let rels = package.relationships(part)?;
+        let comment_parts: Vec<String> = rels.iter().filter(|r| r.kind == REL_COMMENTS && !r.external).filter_map(|r| r.target_part(part)).collect();
+        let vml_parts: Vec<String> = rels.iter().filter(|r| r.kind == REL_VML && !r.external).filter_map(|r| r.target_part(part)).collect();
+        for c in comment_parts {
+            let doc = package.xml_mut(&c)?;
+            let Some(root) = doc.root_element() else { continue };
+            let notes: Vec<NodeId> = doc.descendants(root).into_iter().filter(|&n| doc.local_name(n) == "comment").collect();
+            for note in notes {
+                let Some((col, row)) = doc.attr(note, "ref").and_then(crate::xlsx::cell_ref) else { continue };
+                match move_cell(row, col, axis, at, count) {
+                    Some((row, col)) => doc.set_attr(note, "ref", &cell_name(col, row)),
+                    None => doc.detach(note),
+                }
+            }
+        }
+        for v in vml_parts {
+            // The drawing is read as XML; one that is not is left as it is.
+            let Ok(doc) = package.xml_mut(&v) else { continue };
+            let Some(root) = doc.root_element() else { continue };
+            let shapes: Vec<NodeId> = doc.descendants(root).into_iter().filter(|&n| doc.local_name(n) == "shape").collect();
+            for shape in shapes {
+                let Some(data) = doc.descendants(shape).into_iter().find(|&n| doc.local_name(n) == "ClientData" && doc.attr(n, "ObjectType") == Some("Note")) else { continue };
+                let number = |doc: &XmlDocument, name: &str| doc.child(data, name).and_then(|e| doc.text(e).trim().parse::<u32>().ok());
+                let (Some(row), Some(col)) = (number(doc, "Row"), number(doc, "Column")) else { continue };
+                let Some((new_row, new_col)) = move_cell(row, col, axis, at, count) else {
+                    doc.detach(shape);
+                    continue;
+                };
+                if let Some(e) = doc.child(data, "Row") {
+                    doc.set_text(e, &new_row.to_string());
+                }
+                if let Some(e) = doc.child(data, "Column") {
+                    doc.set_text(e, &new_col.to_string());
+                }
+                // The box is drawn at `x:Anchor`: left column, offset, top row, offset, right column, offset, bottom row, offset.
+                if let Some(anchor) = doc.child(data, "Anchor") {
+                    let mut parts: Vec<String> = doc.text(anchor).split(',').map(|p| p.trim().to_string()).collect();
+                    if parts.len() == 8 {
+                        let indexes = if axis == Axis::Rows { [2, 6] } else { [0, 4] };
+                        for i in indexes {
+                            if let Ok(v) = parts[i].parse::<u32>() {
+                                parts[i] = move_index(v, at, count).unwrap_or(at).to_string();
+                            }
+                        }
+                        doc.set_text(anchor, &parts.join(", "));
+                    }
                 }
             }
         }

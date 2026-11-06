@@ -51,13 +51,30 @@ pub(crate) fn shade(light: f32, alpha: f32) -> Hsla {
     hsla(0.0, 0.0, if is_dark() { 1.0 } else { light }, alpha)
 }
 
+/// `top` (with its alpha) laid over the opaque `base`: the colour that shows, as the alpha compositing of a translucent cover.
+pub(crate) fn over(base: Hsla, top: Hsla) -> Hsla {
+    let (b, t) = (Rgba::from(base), Rgba::from(top));
+    let mix = |below: f32, above: f32| above * t.a + below * (1. - t.a);
+    Rgba { r: mix(b.r, t.r), g: mix(b.g, t.g), b: mix(b.b, t.b), a: b.a }.into()
+}
+
 /// `white()` of the chrome: the colour of its surfaces (the title row, the panels, the menus).
 pub(crate) fn white() -> Hsla {
     rgb(0xffffff).into()
 }
 
+/// The blue of a selection (a selected dropdown or list row, the selected text of a field) in the dark appearance.
+/// The lightness-turned counterpart of the light pale blue (`SELECTED_ROW_BG`, 0xe8f0fe) is 0x142137, 1.06:1 against the
+/// dark surface 0x1c1c1c, so a selected row could hardly be told from the others. This is the same hue (217 degrees) at
+/// HSL lightness 38% and saturation 53%: 2.3:1 against 0x1c1c1c, and the chrome's text (0xe3e3e3) reads on it at 5.7:1.
+pub(crate) const DARK_SELECTION_BG: u32 = 0x2f5597;
+
+/// Light colours whose dark counterpart is fixed by hand instead of by turning the lightness over.
+const DARK_FIXED: &[(u32, u32)] = &[(0xe8f0fe, DARK_SELECTION_BG)];
+
 /// The dark counterpart of the light colour `hex`: lightness turned over, kept off pure black and white, hue and saturation kept.
 fn darker(hex: u32) -> u32 {
+    if let Some((_, dark)) = DARK_FIXED.iter().find(|(light, _)| *light == hex) { return *dark; }
     let (r, g, b) = (((hex >> 16) & 255) as f32 / 255.0, ((hex >> 8) & 255) as f32 / 255.0, (hex & 255) as f32 / 255.0);
     let (max, min) = (r.max(g).max(b), r.min(g).min(b));
     let l = (max + min) / 2.0;
@@ -98,6 +115,8 @@ pub(crate) fn apply_theme(window: Option<&mut Window>, cx: &mut App) {
     let theme = Theme::global_mut(cx);
     theme.muted = rgb(crate::shell::chrome::APP_BG).into();
     theme.sidebar = rgb(crate::shell::chrome::APP_BG).into();
+    // The selected text of a TextField: the theme's own dark blue (0x1d4ed8 at 30%) is nearly the surface; the light one is kept.
+    if is_dark() { theme.selection = gpui::rgb(DARK_SELECTION_BG).into(); }
     crate::shell::chrome::apply_primary_button_colors(theme);
 }
 
@@ -136,7 +155,7 @@ pub(crate) fn release(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::darker;
+    use super::{darker, DARK_SELECTION_BG};
 
     #[test]
     fn dark_counterparts() {
@@ -147,5 +166,52 @@ mod tests {
         assert!((mid >> 16 & 255) as i32 - 0x80 < 8);
         let blue = darker(0x1a73e8);
         assert!((blue & 255) > (blue >> 16 & 255));
+    }
+
+    fn luminance(hex: u32) -> f32 {
+        let f = |v: u32| {
+            let c = (v & 255) as f32 / 255.0;
+            if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * f(hex >> 16) + 0.7152 * f(hex >> 8) + 0.0722 * f(hex)
+    }
+    fn contrast(a: u32, b: u32) -> f32 {
+        let (x, y) = (luminance(a), luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    /// The chrome's text (the font names of the font list are drawn in it) reads on the chrome's surfaces in the dark appearance (#114:
+    /// the font previews were baked in #1f1f1f, 1.2:1 on the dark list).
+    #[core::prelude::v1::test]
+    fn dark_text_reads_on_dark_surfaces() {
+        let text = crate::shell::chrome::TEXT;
+        for surface in [0xffffff, crate::shell::chrome::APP_BG] {
+            assert!(contrast(darker(text), darker(surface)) >= 7.0, "{surface:06x}");
+            assert!(contrast(text, surface) >= 7.0, "light {surface:06x}");
+        }
+        assert!(contrast(0x1f1f1f, darker(0xffffff)) < 3.0, "the old baked colour is what was unreadable");
+    }
+
+    /// The selection blue of the dark appearance reads: the text on it, and the blue against the dark surface (the pale blue
+    /// of the light appearance is untouched).
+    #[core::prelude::v1::test]
+    fn dark_selection_blue_reads() {
+        let surface = darker(0xffffff);
+        assert_eq!(darker(crate::shell::chrome::SELECTED_ROW_BG), DARK_SELECTION_BG);
+        assert!(contrast(darker(crate::shell::chrome::TEXT), DARK_SELECTION_BG) >= 4.5);
+        assert!(contrast(DARK_SELECTION_BG, surface) >= 2.0);
+    }
+
+    /// A half-transparent cover over a colour is the average of the two; an opaque cover hides it and a clear one leaves it.
+    #[core::prelude::v1::test]
+    fn over_is_the_alpha_compositing() {
+        use super::{over, Rgba};
+        let (base, grey) = (Rgba { r: 1., g: 0.5, b: 0., a: 1. }, Rgba { r: 0.5, g: 0.5, b: 0.5, a: 0.5 });
+        let half = Rgba::from(over(base.into(), grey.into()));
+        assert!((half.r - 0.75).abs() < 1e-4 && (half.g - 0.5).abs() < 1e-4 && (half.b - 0.25).abs() < 1e-4 && half.a == 1.);
+        let hidden = Rgba::from(over(base.into(), Rgba { a: 1., ..grey }.into()));
+        assert!((hidden.r - 0.5).abs() < 1e-4);
+        let same = Rgba::from(over(base.into(), Rgba { a: 0., ..grey }.into()));
+        assert!((same.r - 1.).abs() < 1e-4);
     }
 }

@@ -953,7 +953,7 @@ impl SlideEditor {
                 .label(crate::shell::i18n::text("fix.goto-special.select"))
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.apply_goto_special(cx) {
-                        this.close_panel_dialog(window, cx);
+                        this.close_dialog(window, cx);
                     }
                 })));
         Some(SidebarPanel::with_footer(

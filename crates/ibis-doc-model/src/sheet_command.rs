@@ -15,6 +15,7 @@
 //! Undo does not calculate: it puts back the very cells (values, texts and
 //! formats) that were there, as a [`SheetCommand::Restore`].
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::command::{Command, EditError};
@@ -258,6 +259,10 @@ pub enum SheetCommand {
     /// the workbook or one sheet (`sheet`: its index), change what it
     /// stands for, or (`None`) delete it; formulas are calculated again.
     SetName { name: String, sheet: Option<usize>, formula: Option<String> },
+    /// Change the scope of the name `name` from `from` (`None`: the workbook, `Some(i)`: the sheet with that index) to
+    /// `to`. The formulas that use the name are written so that they still stand for it (`Sheet1!Name` for a name of
+    /// another sheet's scope, `Name` for a name of the workbook). Refused when `to` has the name already.
+    MoveName { name: String, from: Option<usize>, to: Option<usize> },
     /// セルの挿入・削除: cells inserted at `range` (`insert`) pushing the
     /// cells below (`down`) or to the right along, or the range's cells
     /// deleted, those below or to the right moving in; formulas referring
@@ -421,6 +426,9 @@ pub enum SheetCommand {
     /// A copy of a worksheet right after it, named `name`, on a new slide
     /// (cells, formats, sizes, merged ranges; not its drawings).
     CopySheet { slide: SlideId, name: String, new_slide: SlideId, shape: ShapeId },
+    /// 移動またはコピー to another workbook: the worksheet `content` (made in the workbook it came from) at position
+    /// `index`, named `name`, on a new slide with the ids given. Its defined names come with separate `SetName`s.
+    InsertSheetFrom { index: usize, name: String, slide: SlideId, shape: ShapeId, content: Arc<Sheet> },
     /// Hide a worksheet (at least one stays shown), or show a hidden one
     /// again on a new slide with the ids given.
     HideSheet { slide: SlideId, sheet: usize, hidden: bool, shape: ShapeId },
@@ -447,11 +455,17 @@ pub enum SheetCommand {
     /// Put the workbook's sheets back as they were (the inverse of
     /// structural changes, which reach every sheet).
     RestoreAll { slides: Vec<Slide>, workbook: Option<Arc<Workbook>> },
+    /// The printed sizes of slides put back (the undo of the growth or shrinking of a sheet's used range: the
+    /// size the file held can be larger than the cells it uses, so the used range alone cannot give it back).
+    RestoreSlideSizes(Vec<(SlideId, Option<EmuSize>)>),
     /// Sizes of columns or rows from `first` put back (the undo of a size change: not a copy of the whole book), with their entries in the hidden ones (the size they come back at, if any).
-    RestoreSizes { slide: SlideId, axis: Axis, first: u32, sizes: Vec<Emu>, hidden: Vec<Option<Emu>>, custom: Vec<bool> },
-    /// A column width the sheet chose by itself (a number entered that is wider than the column; "fit to selection"):
+    RestoreSizes { slide: SlideId, axis: Axis, first: u32, sizes: Vec<Emu>, hidden: Vec<Option<Emu>>, custom: Vec<bool>, widened: Vec<bool> },
+    /// A column width the sheet chose by itself (a number entered that is wider than the column):
     /// the columns are not marked as fixed by the user, so they widen again and their width is not saved.
     SetColumnWidthAuto { slide: SlideId, first: u32, last: u32, size: Emu },
+    /// A column width fitted to its contents by the user ("fit to selection", a double-click on the header's edge): not a width
+    /// fixed by hand (the column widens again), but a change the user made, so it is saved.
+    SetColumnWidthFitted { slide: SlideId, first: u32, last: u32, size: Emu },
     /// The sheet as built elsewhere, in place of the slide's (a pivot table
     /// built again from its source, in its style: ピボットテーブルの更新).
     ReplaceSheet { slide: SlideId, sheet: Box<Sheet> },
@@ -527,18 +541,109 @@ pub(crate) fn apply(presentation: &mut Presentation, command: SheetCommand) -> R
             | SheetCommand::Split { .. }
             | SheetCommand::SetWindowHidden { .. }
             | SheetCommand::SetDocProperties(_)
+            | SheetCommand::RestoreSlideSizes(_)
     );
-    let result = apply_command(presentation, command);
-    // The slicers, controls and charts show what the cells and filters hold after the edit (or its undo).
-    if result.is_ok() && !view_only {
-        crate::slicer::refresh_slicers(presentation);
-        crate::form_control::refresh_controls(presentation);
-        crate::chart_refresh::refresh_charts(presentation);
+    if view_only {
+        let result = apply_command(presentation, command);
+        if result.is_ok() {
+            sync_sheet_book_context(presentation);
+        }
+        return result;
     }
+    with_printed_extent(presentation, |presentation| {
+        let result = apply_command(presentation, command);
+        // The slicers, controls and charts show what the cells and filters hold after the edit (or its undo).
+        if result.is_ok() {
+            crate::slicer::refresh_slicers(presentation);
+            crate::form_control::refresh_controls(presentation);
+            crate::chart_refresh::refresh_charts(presentation);
+            sync_sheet_book_context(presentation);
+        }
+        result
+    })
+}
+
+/// Apply an edit, then fit the worksheets' printed extent to what they use after it (`used_extents`): an edit of the
+/// cells, or a shape put on a sheet, moved or taken off it (command.rs).
+pub(crate) fn with_printed_extent(presentation: &mut Presentation, edit: impl FnOnce(&mut Presentation) -> Result<Command, EditError>) -> Result<Command, EditError> {
+    let extents_before = used_extents(presentation);
+    let sizes_before: Vec<(SlideId, Option<EmuSize>)> = presentation.slides.iter().map(|s| (s.id, s.size)).collect();
+    let result = edit(presentation);
     if result.is_ok() {
-        sync_sheet_book_context(presentation);
+        fit_printed_extent(presentation, &extents_before);
     }
-    result
+    // The printed size follows the used range, which does not give back the size the file held when it was
+    // larger than the cells use: the undo puts the sizes back too.
+    match result {
+        Ok(inverse) if presentation.slides.iter().any(|s| sizes_before.iter().any(|(id, size)| *id == s.id && *size != s.size)) => {
+            let sizes = sizes_before.into_iter().filter(|(id, _)| presentation.slides.iter().any(|s| s.id == *id)).collect();
+            Ok(Command::Group(vec![inverse, Command::Sheet(SheetCommand::RestoreSlideSizes(sizes))]))
+        }
+        other => other,
+    }
+}
+
+/// A worksheet's slide is as large as what the sheet uses (the page it prints, and the page range of the page break
+/// preview when there is no print area): the cells holding a value or a format (a dynamic array's spill included),
+/// and the shapes on it. Excel's used range follows what is entered, without recalculating or reopening, and
+/// shrinks again when the cells are cleared (measured on Excel for Mac: target/issue104). The size read from a
+/// file is the extent of its used cells and drawings plus what the reader adds (reader.rs), so the slide grows to
+/// the extent, and goes back to it when it was that large and the extent shrinks.
+fn used_extents(presentation: &Presentation) -> HashMap<SlideId, (i64, i64)> {
+    let mut out = HashMap::new();
+    for slide in &presentation.slides {
+        if !slide.shapes.iter().any(|s| matches!(s.kind, ShapeKind::Sheet(_))) {
+            continue;
+        }
+        let mut want = (0i64, 0i64);
+        for shape in &slide.shapes {
+            match &shape.kind {
+                ShapeKind::Sheet(sheet) => {
+                    let (right, bottom) = used_cells_corner(sheet);
+                    want.0 = want.0.max(shape.frame.x + right);
+                    want.1 = want.1.max(shape.frame.y + bottom);
+                }
+                _ => {
+                    if slide.shape_prints.get(&shape.id).copied().unwrap_or(true) {
+                        want.0 = want.0.max(shape.frame.right());
+                        want.1 = want.1.max(shape.frame.bottom());
+                    }
+                }
+            }
+        }
+        out.insert(slide.id, want);
+    }
+    out
+}
+
+/// The bottom right corner of a sheet's used cells, from its top left: the last used row's bottom and the last used
+/// column's right. An empty sheet uses A1 (Excel's used range is A1 then).
+pub(crate) fn used_cells_corner(sheet: &Sheet) -> (i64, i64) {
+    let last_row = sheet.cells.iter().map(|c| c.row).max().unwrap_or(0);
+    let last_column = sheet.cells.iter().map(|c| c.column).max().unwrap_or(0);
+    let corner = sheet.cell_bounds_emu(last_column, last_row);
+    (corner.right(), corner.bottom())
+}
+
+fn fit_printed_extent(presentation: &mut Presentation, before: &HashMap<SlideId, (i64, i64)>) {
+    let default_size = presentation.slide_size;
+    let after = used_extents(presentation);
+    for slide in presentation.slides.iter_mut() {
+        let Some(&(w, h)) = after.get(&slide.id) else { continue };
+        let size = slide.size.unwrap_or(default_size);
+        let axis = |size: i64, before: Option<i64>, after: i64| match before {
+            // Cleared again: back to the cells, when the slide was as large as they were (not larger for
+            // what the reader added: shapes and drawings are counted above, so these are rows and columns
+            // the file's own size holds).
+            Some(b) if after < b && size <= b => after,
+            _ => size.max(after),
+        };
+        let b = before.get(&slide.id);
+        let new = EmuSize::new(axis(size.width, b.map(|b| b.0), w).max(1), axis(size.height, b.map(|b| b.1), h).max(1));
+        if new != size {
+            slide.size = Some(new);
+        }
+    }
 }
 
 fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Result<Command, EditError> {
@@ -590,9 +695,19 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
         SheetCommand::Insert { slide, axis, at, count } => structure(presentation, slide, true, axis, at, count),
         SheetCommand::Delete { slide, axis, at, count } => structure(presentation, slide, false, axis, at, count),
         SheetCommand::RestoreAll { slides, workbook } => restore_all(presentation, slides, workbook),
-        SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden, custom } => restore_sizes(presentation, slide, axis, first, sizes, hidden, custom),
-        SheetCommand::SetColumnWidthAuto { slide, first, last, size } => set_size_marked(presentation, slide, Axis::Columns, first, last, size, false),
-        SheetCommand::SetSize { slide, axis, first, last, size } => set_size_marked(presentation, slide, axis, first, last, size, true),
+        SheetCommand::RestoreSlideSizes(sizes) => {
+            let inverse = SheetCommand::RestoreSlideSizes(presentation.slides.iter().map(|s| (s.id, s.size)).collect());
+            for (id, size) in sizes {
+                if let Some(slide) = presentation.slide_mut(id) {
+                    slide.size = size;
+                }
+            }
+            Ok(Command::Sheet(inverse))
+        }
+        SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden, custom, widened } => restore_sizes(presentation, slide, axis, first, sizes, hidden, custom, widened),
+        SheetCommand::SetColumnWidthAuto { slide, first, last, size } => set_size_marked(presentation, slide, Axis::Columns, first, last, size, WidthMark::SheetChose),
+        SheetCommand::SetColumnWidthFitted { slide, first, last, size } => set_size_marked(presentation, slide, Axis::Columns, first, last, size, WidthMark::Fitted),
+        SheetCommand::SetSize { slide, axis, first, last, size } => set_size_marked(presentation, slide, axis, first, last, size, WidthMark::Fixed),
         SheetCommand::Hide { slide, axis, first, last, hidden } => hide(presentation, slide, axis, first, last, hidden),
         SheetCommand::MoveCells { slide, from, row, column } => move_cells(presentation, slide, from, row, column),
         SheetCommand::HideSheet { slide, sheet, hidden, shape } => hide_sheet(presentation, slide, sheet, hidden, shape),
@@ -627,9 +742,21 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
             }
             let original = presentation.slide(slide).and_then(crate::sheet_calc::sheet_of_slide).ok_or(EditError::IndexOutOfRange)?;
             let content = Arc::new(Sheet { frozen: original.frozen, ..(**original).clone() });
-            structural(presentation, StructureEdit::AddSheet { sheet: sheet + 1, name, slide: new_slide, shape, content })
+            let copy_name = name.clone();
+            let inverse = structural(presentation, StructureEdit::AddSheet { sheet: sheet + 1, name, slide: new_slide, shape, content })?;
+            copy_sheet_names(presentation, sheet, sheet + 1, &copy_name)?;
+            Ok(inverse)
+        }
+        SheetCommand::InsertSheetFrom { index, name, slide, shape, content } => {
+            check_workbook_structure_not_locked(presentation)?;
+            let sheets = presentation.workbook.as_ref().ok_or(EditError::IndexOutOfRange)?.sheets.len();
+            if index > sheets || !crate::sheet_ops::valid_sheet_name(presentation, &name, None) || presentation.slide(slide).is_some() {
+                return Err(EditError::IndexOutOfRange);
+            }
+            structural(presentation, StructureEdit::AddSheet { sheet: index, name, slide, shape, content })
         }
         SheetCommand::SetName { name, sheet, formula } => set_name(presentation, name, sheet, formula),
+        SheetCommand::MoveName { name, from, to } => move_name(presentation, name, from, to),
         SheetCommand::SetCompatibilityVersion { version } => {
             let inverse = snapshot(presentation);
             let wb = Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?);
@@ -804,12 +931,13 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
             let inverse = snapshot(presentation);
             let sheet = sheet_mut(presentation, slide)?;
             // Replace only the addressed cells, including a partial overlap of an existing rule.
-            // Relative formula references are anchored at the first cell of the retained areas.
+            // Relative formula references count from the rule's base (the top-left of all its ranges, `Validation::base`),
+            // which moves when the ranges that held it are taken away: the formula is rewritten to keep its meaning.
             for v in sheet.validations.iter_mut() {
-                let original=v.ranges.first().copied();
+                let original=v.base();
                 for target in &ranges {v.ranges=v.ranges.iter().flat_map(|r|validation_range_difference(*r,*target)).collect();}
-                if let (Some(old),Some(new))=(original,v.ranges.first()) {
-                    let delta=(new.first_row as i64-old.first_row as i64,new.first_column as i64-old.first_column as i64);
+                if let (Some(old),Some(new))=(original,v.base()) {
+                    let delta=(new.0 as i64-old.0 as i64,new.1 as i64-old.1 as i64);
                     if delta!=(0,0) {for formula in [&mut v.formula1,&mut v.formula2] {if let Some(f)=formula { *f=ibis_calc::formula::shift(f,delta.0,delta.1); }}}
                 }
             }
@@ -2727,6 +2855,18 @@ fn sort_rows(presentation: &mut Presentation, slide: SlideId, range: CellRange, 
             }
             c
         }).collect();
+        // A hyperlink belongs to its cell (as the comment does), so a link on
+        // one row of the range moves with that row. A link over several rows
+        // is not a cell's and stays.
+        for h in sheet.hyperlinks.iter_mut() {
+            let r = h.range;
+            if r.first_row == r.last_row && r.first_column >= range.first_column && r.last_column <= range.last_column {
+                if let Some(&to) = row_map.get(&r.first_row) {
+                    h.range.first_row = to;
+                    h.range.last_row = to;
+                }
+            }
+        }
         let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
         let moved_cell_images = sheet.cell_images.clone();
         Ok::<_, EditError>((row_map, moved_cell_images, xs, ys))
@@ -3039,13 +3179,59 @@ fn set_auto_filter(presentation: &mut Presentation, slide: SlideId, filter: Opti
 /// A table's filter (`None`: no ▼ on its headings, every row shown).
 fn replace_sheet(presentation: &mut Presentation, slide: SlideId, sheet: Sheet) -> Result<Command, EditError> {
     let inverse = snapshot(presentation);
-    *sheet_mut(presentation, slide)? = sheet;
+    let old = std::mem::replace(sheet_mut(presentation, slide)?, sheet);
     fit_frame(presentation, slide);
-    // Formulas reading its cells (a pivot table's values) read the new ones.
-    let all = crate::sheet_calc::BookView::new(presentation).formula_cells();
-    invalidate_calc_index(presentation);
-    recalculate_cells(presentation, &all)?;
+    let index = workbook_index(presentation, slide).ok();
+    // Formulas reading its cells (a pivot table's values) read the new ones. When the sheet keeps its formulas (a pivot
+    // table built again changes cells' values, not formulas), only what reads the cells that changed is calculated again
+    // and the dependency index is kept, as when a cell is edited. A sheet whose formulas, tables or hidden rows changed
+    // is calculated whole.
+    let changed = {
+        let new = sheet_mut(presentation, slide)?;
+        index.filter(|_| keeps_calculation(&old, new)).map(|index| changed_cells(&old, new, index))
+    };
+    match changed {
+        Some(mut changed) => {
+            // GETPIVOTDATA reads the pivot tables themselves, not only the cells they filled.
+            changed.extend(crate::sheet_calc::BookView::new(presentation).formula_cells_calling("GETPIVOTDATA"));
+            recalculate_cells(presentation, &changed)?;
+        }
+        None => {
+            let all = crate::sheet_calc::BookView::new(presentation).formula_cells();
+            invalidate_calc_index(presentation);
+            recalculate_cells(presentation, &all)?;
+        }
+    }
     Ok(inverse)
+}
+
+/// Whether replacing `old` by `new` leaves what the calculation is built from as it was: the formulas (where they are and
+/// what they say), the tables they may name, and the hidden rows and columns that SUBTOTAL and AGGREGATE skip.
+fn keeps_calculation(old: &Sheet, new: &Sheet) -> bool {
+    old.tables == new.tables
+        && old.hidden_rows == new.hidden_rows
+        && old.hidden_columns == new.hidden_columns
+        && old.filtered_rows == new.filtered_rows
+        && old.spills == new.spills
+        && old.data_tables == new.data_tables
+        && {
+            let formulas = |s: &Sheet| s.cells.iter().filter(|c| c.formula.is_some()).map(|c| ((c.row, c.column), c.formula.clone())).collect::<Vec<_>>();
+            formulas(old) == formulas(new)
+        }
+}
+
+/// The cells (of sheet `index`) that are not the same in `old` and `new`: added, removed or with another value.
+fn changed_cells(old: &Sheet, new: &Sheet, index: usize) -> Vec<(usize, u32, u32)> {
+    let mut before: HashMap<(u32, u32), &SheetCell> = old.cells.iter().map(|c| ((c.row, c.column), c)).collect();
+    let mut out = Vec::new();
+    for c in new.cells.iter() {
+        match before.remove(&(c.row, c.column)) {
+            Some(o) if o.value == c.value && o.text == c.text => {}
+            _ => out.push((index, c.row, c.column)),
+        }
+    }
+    out.extend(before.into_keys().map(|(row, column)| (index, row, column)));
+    out
 }
 
 /// External workbook `book` linked: added after the others (one of that name is not added again).
@@ -5026,6 +5212,55 @@ pub fn make_sparklines(data_sheet: Option<String>, data: CellRange, location: Ce
     out
 }
 
+/// A sheet copied in its workbook (Excel, measured): the names of the sheet are made again for the copy
+/// (sheet scope, referring to the copy), and so are the workbook names that refer to the sheet, directly
+/// or through other names. The copy's formulas use its own names.
+fn copy_sheet_names(presentation: &mut Presentation, from: usize, to: usize, copy_name: &str) -> Result<(), EditError> {
+    let wb = presentation.workbook.as_ref().ok_or(EditError::IndexOutOfRange)?;
+    let Some(from_name) = wb.sheets.get(from).map(|s| s.name.clone()) else { return Ok(()) };
+    let is_internal = |n: &crate::sheet::DefinedName| n.name.starts_with("_xl");
+    let refers_to_sheet = |formula: &str| {
+        let mut found = false;
+        ibis_calc::formula::rewrite_references(formula, |r| {
+            if r.sheet.as_ref().is_some_and(|s| s.book.is_none() && s.first.eq_ignore_ascii_case(&from_name)) {
+                found = true;
+            }
+            Some(r.clone())
+        });
+        found
+    };
+    // Workbook names that refer to the sheet, then those that use such names, until no more.
+    let mut depend: Vec<String> = wb.names.iter().filter(|n| n.sheet.is_none() && !is_internal(n) && refers_to_sheet(&n.formula)).map(|n| n.name.to_lowercase()).collect();
+    loop {
+        let more: Vec<String> = wb
+            .names
+            .iter()
+            .filter(|n| n.sheet.is_none() && !is_internal(n) && !depend.contains(&n.name.to_lowercase()))
+            .filter(|n| ibis_calc::formula::name_candidates(&n.formula).iter().any(|(_, w)| depend.contains(&w.to_lowercase())))
+            .map(|n| n.name.to_lowercase())
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        depend.extend(more);
+    }
+    let made: Vec<crate::sheet::DefinedName> = wb
+        .names
+        .iter()
+        .filter(|n| !is_internal(n) && (n.sheet == Some(from) || (n.sheet.is_none() && depend.contains(&n.name.to_lowercase()))))
+        .map(|n| crate::sheet::DefinedName { name: n.name.clone(), sheet: Some(to), formula: ibis_calc::formula::rename_sheet(&n.formula, &from_name, copy_name), hidden: n.hidden })
+        .filter(|n| !wb.names.iter().any(|o| o.sheet == n.sheet && o.name.eq_ignore_ascii_case(&n.name)))
+        .collect();
+    if made.is_empty() {
+        return Ok(());
+    }
+    Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?).names.extend(made);
+    let all = crate::sheet_calc::BookView::new(presentation).formula_cells();
+    invalidate_calc_index(presentation);
+    recalculate_cells(presentation, &all)?;
+    Ok(())
+}
+
 fn set_name(presentation: &mut Presentation, name: String, sheet: Option<usize>, formula: Option<String>) -> Result<Command, EditError> {
     let inverse = snapshot(presentation);
     let wb = Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?);
@@ -5040,6 +5275,48 @@ fn set_name(presentation: &mut Presentation, name: String, sheet: Option<usize>,
         (None, None) => return Err(EditError::IndexOutOfRange),
     }
     // Every formula again (names reach anywhere).
+    let all = crate::sheet_calc::BookView::new(presentation).formula_cells();
+    invalidate_calc_index(presentation);
+    recalculate_cells(presentation, &all)?;
+    Ok(inverse)
+}
+
+/// `MoveName`: the name becomes one of `to`'s scope, and the formulas that used it are rewritten to still reach it.
+fn move_name(presentation: &mut Presentation, name: String, from: Option<usize>, to: Option<usize>) -> Result<Command, EditError> {
+    let inverse = snapshot(presentation);
+    let wb = presentation.workbook.as_ref().ok_or(EditError::IndexOutOfRange)?;
+    if from == to || to.is_some_and(|t| t >= wb.sheets.len()) {
+        return Err(EditError::IndexOutOfRange);
+    }
+    let at = wb.names.iter().position(|n| n.name.eq_ignore_ascii_case(&name) && n.sheet == from).ok_or(EditError::NotFound)?;
+    if wb.names.iter().any(|n| n.name.eq_ignore_ascii_case(&name) && n.sheet == to) {
+        return Err(EditError::DuplicateId);
+    }
+    let sheet_names: Vec<String> = wb.sheets.iter().map(|s| s.name.clone()).collect();
+    // The sheets whose own name of this name hides the workbook's one (a use there cannot be written without a sheet).
+    let local: Vec<usize> = wb.names.iter().enumerate().filter(|(i, n)| *i != at && n.name.eq_ignore_ascii_case(&name) && n.sheet.is_some()).filter_map(|(_, n)| n.sheet).collect();
+    let moved = name.clone();
+    Arc::make_mut(presentation.workbook.as_mut().ok_or(EditError::IndexOutOfRange)?).names[at].sheet = to;
+    crate::sheet_ops::rewrite_formulas(presentation, &|index, text| {
+        ibis_calc::formula::rewrite_name_uses(text, &moved, |written| {
+            // Does this use stand for the name being moved?
+            let reaches = match (written, from) {
+                (Some(w), Some(f)) => sheet_names.get(f).is_some_and(|n| n.to_lowercase() == w.to_lowercase()),
+                (Some(_), None) => false,
+                (None, Some(f)) => index == f,
+                (None, None) => !local.contains(&index),
+            };
+            if !reaches {
+                return None;
+            }
+            match to {
+                // Into the workbook: no sheet, unless a name of that sheet's own would take the use.
+                None => (!local.contains(&index)).then_some(None),
+                Some(t) if index == t => Some(None),
+                Some(t) => sheet_names.get(t).map(|n| Some(n.clone())),
+            }
+        })
+    });
     let all = crate::sheet_calc::BookView::new(presentation).formula_cells();
     invalidate_calc_index(presentation);
     recalculate_cells(presentation, &all)?;
@@ -5237,7 +5514,7 @@ fn sizes_now(sheet: &Sheet, axis: Axis, first: u32, count: usize) -> (Vec<Emu>, 
     (sizes[range.clone()].to_vec(), range.map(|i| hidden.get(&(i as u32)).copied()).collect())
 }
 
-fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, new_sizes: Vec<Emu>, new_hidden: Vec<Option<Emu>>, new_custom: Vec<bool>) -> Result<Command, EditError> {
+fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, new_sizes: Vec<Emu>, new_hidden: Vec<Option<Emu>>, new_custom: Vec<bool>, new_widened: Vec<bool>) -> Result<Command, EditError> {
     let sheet = sheet_mut(presentation, slide)?;
     let len = match axis {
         Axis::Rows => sheet.rows.len(),
@@ -5247,13 +5524,18 @@ fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, fi
         return Err(EditError::IndexOutOfRange);
     }
     let (sizes, hidden_of) = sizes_now(sheet, axis, first, new_sizes.len());
-    let custom_of = custom_now(sheet, axis, first, new_sizes.len());
-    if axis == Axis::Columns && new_custom.len() == new_sizes.len() {
-        for (i, on) in new_custom.into_iter().enumerate() {
-            if on {
-                sheet.custom_columns.insert(first + i as u32);
-            } else {
-                sheet.custom_columns.remove(&(first + i as u32));
+    let (custom_of, widened_of) = marks_now(sheet, axis, first, new_sizes.len());
+    if axis == Axis::Columns {
+        for (marks, set) in [(new_custom, &mut sheet.custom_columns), (new_widened, &mut sheet.widened_columns)] {
+            if marks.len() != new_sizes.len() {
+                continue;
+            }
+            for (i, on) in marks.into_iter().enumerate() {
+                if on {
+                    set.insert(first + i as u32);
+                } else {
+                    set.remove(&(first + i as u32));
+                }
             }
         }
     }
@@ -5274,19 +5556,33 @@ fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, fi
         }
     }
     fit_frame(presentation, slide);
-    Ok(Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden: hidden_of, custom: custom_of }))
+    Ok(Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden: hidden_of, custom: custom_of, widened: widened_of }))
 }
 
-/// Whether each of `count` columns from `first` is fixed by the user (false for rows).
-fn custom_now(sheet: &Sheet, axis: Axis, first: u32, count: usize) -> Vec<bool> {
+/// Whether each of `count` columns from `first` is fixed by the user, and whether its width is one the sheet chose (false for rows).
+fn marks_now(sheet: &Sheet, axis: Axis, first: u32, count: usize) -> (Vec<bool>, Vec<bool>) {
     match axis {
-        Axis::Rows => vec![false; count],
-        Axis::Columns => (first..first + count as u32).map(|c| sheet.custom_columns.contains(&c)).collect(),
+        Axis::Rows => (vec![false; count], vec![false; count]),
+        Axis::Columns => (
+            (first..first + count as u32).map(|c| sheet.custom_columns.contains(&c)).collect(),
+            (first..first + count as u32).map(|c| sheet.widened_columns.contains(&c)).collect(),
+        ),
     }
 }
 
-/// Sets the size of rows or columns; `fixed` says a column is then one whose width the user fixed.
-fn set_size_marked(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, last: u32, size: Emu, fixed: bool) -> Result<Command, EditError> {
+/// How a column's width came to be, for the marks it keeps (`Sheet::custom_columns`, `Sheet::widened_columns`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WidthMark {
+    /// Fixed by the user (by hand).
+    Fixed,
+    /// Fitted to the contents at the user's request: saved, but the column widens again.
+    Fitted,
+    /// Widened by the sheet itself: not saved.
+    SheetChose,
+}
+
+/// Sets the size of rows or columns; `mark` says what a column's width then is.
+fn set_size_marked(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32, last: u32, size: Emu, mark: WidthMark) -> Result<Command, EditError> {
     let (old, old_hidden) = {
         let sheet = sheet_mut(presentation, slide)?;
         let len = match axis {
@@ -5298,13 +5594,13 @@ fn set_size_marked(presentation: &mut Presentation, slide: SlideId, axis: Axis, 
         }
         sizes_now(sheet, axis, first, (last - first + 1) as usize)
     };
-    let old_custom = custom_now(sheet_mut(presentation, slide)?, axis, first, (last - first + 1) as usize);
+    let (old_custom, old_widened) = marks_now(sheet_mut(presentation, slide)?, axis, first, (last - first + 1) as usize);
     let visibility_changed = old.iter().any(|&was| (was == 0) != (size == 0));
     // Hiding or showing rows calculates again (SUBTOTAL and the like), which is undone from a picture of the whole book; a size alone from the sizes it replaces (a copy of the book is a copy of every cell).
     let inverse = if axis == Axis::Rows && visibility_changed {
         snapshot(presentation)
     } else {
-        Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes: old.clone(), hidden: old_hidden, custom: old_custom })
+        Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes: old.clone(), hidden: old_hidden, custom: old_custom, widened: old_widened })
     };
     let sheet = sheet_mut(presentation, slide)?;
     let sizes = match axis {
@@ -5316,10 +5612,15 @@ fn set_size_marked(presentation: &mut Presentation, slide: SlideId, axis: Axis, 
     }
     if axis == Axis::Columns {
         for c in first..=last {
-            if fixed {
+            if mark == WidthMark::Fixed {
                 sheet.custom_columns.insert(c);
             } else {
                 sheet.custom_columns.remove(&c);
+            }
+            if mark == WidthMark::SheetChose {
+                sheet.widened_columns.insert(c);
+            } else {
+                sheet.widened_columns.remove(&c);
             }
         }
     }
@@ -5722,6 +6023,86 @@ mod tests {
         d.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row, column, input }] })]).unwrap();
     }
 
+    /// GitHub #104: the slide of a worksheet (the pages it prints, the page range of the page break preview) grows with
+    /// what is entered past its used cells, a dynamic array's spill included, and shrinks when it is cleared again.
+    #[test]
+    fn printed_extent_grows_with_entries_past_the_used_cells() {
+        let (mut d, s) = workbook();
+        let size_of = |d: &Document| d.presentation().slide(s).unwrap().size;
+        let mut p = d.presentation().clone();
+        p.slide_mut(s).unwrap().size = Some(crate::geometry::EmuSize::new(1000, 2000));
+        for shape in &mut p.slide_mut(s).unwrap().shapes {
+            if let ShapeKind::Sheet(sheet) = &mut shape.kind {
+                let sheet = Arc::make_mut(sheet);
+                (sheet.default_column, sheet.default_row) = (100, 100);
+            }
+        }
+        d = Document::new(p);
+        // Inside the used cells: no change.
+        set(&mut d, s, 5, 3, CellInput::Value(CellValue::Number(1.0)));
+        assert_eq!(size_of(&d), Some(crate::geometry::EmuSize::new(1000, 2000)));
+        // Past them (the grid is 100 EMU a cell): the slide reaches the cell's far corner.
+        set(&mut d, s, 30, 15, CellInput::Value(CellValue::Number(1.0)));
+        assert_eq!(size_of(&d), Some(crate::geometry::EmuSize::new(1600, 3100)));
+        // Clearing it takes the used range back (Excel's does), the size with it.
+        set(&mut d, s, 30, 15, CellInput::Clear);
+        assert_eq!(size_of(&d), Some(crate::geometry::EmuSize::new(400, 600)));
+        // A spill past it.
+        set(&mut d, s, 5, 3, CellInput::Clear);
+        set(&mut d, s, 0, 0, CellInput::Formula("SEQUENCE(40,25)".into()));
+        assert!(cell(&d, s, 39, 24).is_some(), "the spill is in the cells");
+        assert_eq!(size_of(&d), Some(crate::geometry::EmuSize::new(2500, 4000)));
+        set(&mut d, s, 0, 0, CellInput::Value(CellValue::Number(1.0)));
+        assert!(size_of(&d).unwrap().width < 2500 && size_of(&d).unwrap().height < 4000, "the spill gone, the used range with it");
+    }
+
+    /// GitHub #104, measured on Excel for Mac (target/issue104/excel-spec.md): a comment on a cell past the used cells makes the
+    /// used range reach it (A1:BZ300) but not the page range (no page breaks past the cells); a text box does (its far edge is
+    /// counted, the used range is not).
+    #[test]
+    fn printed_extent_ignores_a_comment_past_the_used_cells() {
+        let (mut d, s) = workbook();
+        let size_of = |d: &Document| d.presentation().slide(s).unwrap().size;
+        let mut p = d.presentation().clone();
+        p.slide_mut(s).unwrap().size = Some(crate::geometry::EmuSize::new(1000, 2000));
+        for shape in &mut p.slide_mut(s).unwrap().shapes {
+            if let ShapeKind::Sheet(sheet) = &mut shape.kind {
+                let sheet = Arc::make_mut(sheet);
+                (sheet.default_column, sheet.default_row) = (100, 100);
+            }
+        }
+        d = Document::new(p);
+        set(&mut d, s, 0, 0, CellInput::Value(CellValue::Number(1.0)));
+        let before = size_of(&d);
+        let comment = crate::sheet::SheetComment { row: 299, column: 77, author: "a".into(), text: "note".into(), ..Default::default() };
+        d.execute(vec![Command::Sheet(SheetCommand::SetComment { slide: s, row: 299, column: 77, comment: Some(comment) })]).unwrap();
+        assert_eq!(size_of(&d), before, "a comment past the cells adds no page");
+    }
+
+    /// GitHub #104: a new sheet's page range is its used range (A1 when empty, as Excel's), not its whole grid
+    /// (which copies the first sheet's rows: 10000 rows after a SEQUENCE there). An entry and a shape make it
+    /// reach them; clearing the entry gives it back.
+    #[test]
+    fn a_new_sheet_prints_its_used_range() {
+        let (mut d, _) = workbook();
+        let (s2, sh2) = (d.ids().new_slide_id(), d.ids().new_shape_id());
+        d.execute(vec![Command::Sheet(SheetCommand::AddSheet { index: 1, name: "Sheet2".into(), slide: s2, shape: sh2 })]).unwrap();
+        let size_of = |d: &Document| d.presentation().slide(s2).unwrap().size.unwrap();
+        let cell = |d: &Document, c: u32, r: u32| {
+            let b = sheet_of(d.presentation(), s2).unwrap().cell_bounds_emu(c, r);
+            crate::geometry::EmuSize::new(b.right(), b.bottom())
+        };
+        assert_eq!(size_of(&d), cell(&d, 0, 0), "an empty new sheet uses A1");
+        set(&mut d, s2, 2, 2, CellInput::Value(CellValue::Number(1.0)));
+        assert_eq!(size_of(&d), cell(&d, 2, 2), "C3 entered: A1:C3");
+        let id = d.ids().new_shape_id();
+        let far = cell(&d, 6, 9);
+        d.execute(vec![Command::InsertShape { slide: s2, index: 1, shape: Shape::text_box(id, EmuRect::new(0, 0, far.width, far.height), "x") }]).unwrap();
+        assert_eq!(size_of(&d), far, "a shape reaching G10: the range reaches it");
+        set(&mut d, s2, 2, 2, CellInput::Clear);
+        assert_eq!(size_of(&d), far, "the shape still holds it");
+    }
+
     /// The picture IMAGE asks for is a result of the book's calculation: its address is read as any reference is
     /// (another sheet, a name, another workbook's cached cells, a table's row).
     #[test]
@@ -5962,13 +6343,15 @@ mod tests {
 
     #[test]
     fn arraytotext_empty_array_errors_are_value_without_changing_sources() {
-        for (source, src_err) in [("TAKE({1;2},0)", CellError::Value), ("FILTER({1;2},{FALSE;FALSE})", CellError::Calc)] {
+        // Excel for Mac 16.114 (2026-11-02, target/issue98c/dm.applescript): TAKE with nothing left and FILTER with nothing found are #CALC!,
+        // and ARRAYTOTEXT of either (with no, 0 or 1 format) is that same #CALC!.
+        for (source, src_err) in [("TAKE({1;2},0)", CellError::Calc), ("FILTER({1;2},{FALSE;FALSE})", CellError::Calc)] {
             for suffix in ["", ",0", ",1"] {
                 let (mut d, s) = workbook();
                 set(&mut d, s, 0, 0, CellInput::Formula(source.into()));
                 assert_eq!(cell(&d, s, 0, 0).unwrap().value, CellValue::Error(src_err));
                 set(&mut d, s, 0, 1, CellInput::Formula(format!("ARRAYTOTEXT({source}{suffix})")));
-                assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Error(CellError::Value));
+                assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Error(CellError::Calc));
                 assert!(d.undo());
                 assert!(d.redo());
             }
@@ -6851,6 +7234,35 @@ mod tests {
     }
 
     #[test]
+    fn sorting_moves_each_cells_hyperlink_with_its_row() {
+        let (d, s) = workbook();
+        let mut p = d.presentation().clone();
+        {
+            let sheet = sheet_mut(&mut p, s).unwrap();
+            *sheet = Sheet { rows: vec![100; 4], columns: vec![100; 2], ..filter_sheet(&[("3", 0), ("1", 0), ("2", 0)]) };
+            for (row, n) in [(1u32, 3), (2, 1), (3, 2)] {
+                sheet.hyperlinks.push(crate::Hyperlink { range: CellRange { first_row: row, last_row: row, first_column: 0, last_column: 0 }, target: Some(format!("https://example.com/{n}")), location: None, tooltip: None });
+            }
+        }
+        let mut d = Document::new(p);
+        let range = CellRange { first_row: 0, last_row: 3, first_column: 0, last_column: 0 };
+        let links = |d: &Document| {
+            let sheet = sheet_of(d.presentation(), s).unwrap();
+            (1..4u32)
+                .map(|r| {
+                    let h = sheet.hyperlinks.iter().find(|h| h.range.first_row == r).unwrap();
+                    format!("{}={}", cell(d, s, r, 0).unwrap().text, h.target.clone().unwrap().rsplit('/').next().unwrap())
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        d.execute(vec![Command::Sheet(SheetCommand::SortBy { slide: s, range, keys: vec![(0, SortBy::Value(true))], header: true, match_case: false })]).unwrap();
+        assert_eq!(links(&d), "1=1,2=2,3=3");
+        d.undo();
+        assert_eq!(links(&d), "3=3,1=1,2=2");
+    }
+
+    #[test]
     fn sorting_by_icon_puts_its_rows_first_or_last() {
         let (d, s) = workbook();
         let mut p = d.presentation().clone();
@@ -7200,6 +7612,28 @@ mod tests {
         assert_eq!(d.presentation().workbook.as_deref().unwrap().calc_mode, CalcMode::Auto);
         assert!(d.redo()); // redo SetCalcMode
         assert_eq!(d.presentation().workbook.as_deref().unwrap().calc_mode, CalcMode::AutoNoTable);
+    }
+
+    #[test]
+    fn a_name_moves_between_scopes() {
+        let (mut d, s) = workbook();
+        set(&mut d, s, 0, 0, CellInput::Value(CellValue::Number(100.0)));
+        d.execute(vec![Command::Sheet(SheetCommand::SetName { name: "TaxRate".into(), sheet: None, formula: Some("0.10".into()) })]).unwrap();
+        set(&mut d, s, 0, 1, CellInput::Formula("A1*TaxRate".into()));
+        // Into the first sheet: the use on that sheet still reaches it, as the same text.
+        d.execute(vec![Command::Sheet(SheetCommand::MoveName { name: "taxrate".into(), from: None, to: Some(0) })]).unwrap();
+        let names = d.presentation().workbook.as_deref().unwrap().names.clone();
+        assert_eq!(names.iter().find(|n| n.name == "TaxRate").unwrap().sheet, Some(0));
+        assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Number(10.0));
+        // Back to the workbook; a name of the workbook with that name is refused to be made twice.
+        d.execute(vec![Command::Sheet(SheetCommand::MoveName { name: "TaxRate".into(), from: Some(0), to: None })]).unwrap();
+        assert_eq!(d.presentation().workbook.as_deref().unwrap().names.iter().find(|n| n.name == "TaxRate").unwrap().sheet, None);
+        d.execute(vec![Command::Sheet(SheetCommand::SetName { name: "TaxRate".into(), sheet: Some(0), formula: Some("0.2".into()) })]).unwrap();
+        assert!(d.execute(vec![Command::Sheet(SheetCommand::MoveName { name: "TaxRate".into(), from: Some(0), to: None })]).is_err());
+        assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Number(20.0));
+        // One undo step.
+        assert!(d.undo());
+        assert_eq!(d.presentation().workbook.as_deref().unwrap().names.iter().filter(|n| n.name == "TaxRate").count(), 1);
     }
 
     #[test]
@@ -7753,6 +8187,31 @@ mod tests {
         assert_eq!(sheet.validations[0].ranges, vec![range]);
     }
 
+    /// N7: a rule over `C1:C5 A1:A5` counts its relative references from A1 (the top-left of both), as Excel does;
+    /// replacing C1:C5 leaves A1:A5 with the same base, so its formula is not rewritten.
+    #[test]
+    fn validation_formula_base_is_the_top_left_of_all_ranges() {
+        use crate::sheet::Validation;
+        let col = |c: u32| CellRange { first_row: 0, first_column: c, last_row: 4, last_column: c };
+        let (mut d, s) = workbook();
+        let rule = |ranges: Vec<CellRange>, f: &str| Validation { ranges, kind: "custom".into(), operator: String::new(), formula1: Some(f.into()), formula2: None, allow_blank: true, dropdown: false, prompt: None, error: None };
+        assert_eq!(rule(vec![col(2), col(0)], "ISNUMBER(A1)").base(), Some((0, 0)));
+        // The rule is set over C (first) then A.
+        d.execute(vec![Command::Sheet(SheetCommand::SetValidation { slide: s, ranges: vec![col(2), col(0)], rule: Some(rule(vec![col(2), col(0)], "ISNUMBER(C1)")) })]).unwrap();
+        // Another rule over C1:C5 only.
+        d.execute(vec![Command::Sheet(SheetCommand::SetValidation { slide: s, ranges: vec![col(2)], rule: Some(rule(vec![col(2)], "C1>0")) })]).unwrap();
+        let sheet = sheet_of(d.presentation(), s).unwrap();
+        let kept = sheet.validations.iter().find(|v| v.ranges == vec![col(0)]).expect("A1:A5 stays");
+        assert_eq!(kept.formula1.as_deref(), Some("ISNUMBER(C1)"), "the base A1 did not move");
+        // Now take A away and leave C: the base moves from A1 to C1 and the formula keeps its meaning.
+        let (mut d, s) = workbook();
+        d.execute(vec![Command::Sheet(SheetCommand::SetValidation { slide: s, ranges: vec![col(2), col(0)], rule: Some(rule(vec![col(2), col(0)], "ISNUMBER(C1)")) })]).unwrap();
+        d.execute(vec![Command::Sheet(SheetCommand::SetValidation { slide: s, ranges: vec![col(0)], rule: None })]).unwrap();
+        let sheet = sheet_of(d.presentation(), s).unwrap();
+        assert_eq!(sheet.validations[0].ranges, vec![col(2)]);
+        assert_eq!(sheet.validations[0].formula1.as_deref(), Some("ISNUMBER(E1)"));
+    }
+
     #[test]
     fn protected_ranges_command_and_undo() {
         use crate::sheet::ProtectedRange;
@@ -7861,6 +8320,42 @@ mod tests {
         assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Number(100.0));
     }
 
+    /// A sheet replaced with other values (a pivot table built again) calculates what reads the changed cells only, and
+    /// gets the same results as calculating everything; one whose formulas changed is calculated whole.
+    #[test]
+    fn replace_sheet_calculates_what_reads_the_changed_cells() {
+        let (mut d, s) = workbook();
+        set(&mut d, s, 0, 0, CellInput::Value(CellValue::Number(5.0)));
+        set(&mut d, s, 0, 1, CellInput::Formula("A1*2".into()));
+        set(&mut d, s, 0, 2, CellInput::Formula("SUM(A1:A3)".into()));
+        set(&mut d, s, 4, 0, CellInput::Value(CellValue::Number(1.0)));
+        assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Number(10.0));
+        // The values change (A1 gets another number, A2 a new one, A5 is cleared): the formulas stay.
+        let mut next = sheet_of(d.presentation(), s).unwrap().clone();
+        let style = next.cell(0, 0).unwrap().style;
+        let put = |sheet: &mut Sheet, row: u32, value: f64| {
+            sheet.put_cell(row, 0, Some(SheetCell { runs: None, phonetic: None, row, column: 0, value: CellValue::Number(value), text: value.to_string(), kind: CellKind::Number, formula: None, style }));
+        };
+        put(&mut next, 0, 7.0);
+        put(&mut next, 1, 3.0);
+        next.put_cell(4, 0, None);
+        d.execute(vec![Command::Sheet(SheetCommand::ReplaceSheet { slide: s, sheet: Box::new(next) })]).unwrap();
+        assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Number(14.0));
+        assert_eq!(cell(&d, s, 0, 2).unwrap().value, CellValue::Number(10.0));
+        // A formula changed by the replacement is calculated.
+        let mut next = sheet_of(d.presentation(), s).unwrap().clone();
+        let old = next.cell(0, 1).unwrap().clone();
+        next.put_cell(0, 1, Some(SheetCell { formula: Some("A1*3".into()), ..old }));
+        d.execute(vec![Command::Sheet(SheetCommand::ReplaceSheet { slide: s, sheet: Box::new(next) })]).unwrap();
+        assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Number(21.0));
+        // Undo restores the values and what they feed.
+        assert!(d.undo());
+        assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Number(14.0));
+        assert!(d.undo());
+        assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Number(10.0));
+        assert_eq!(cell(&d, s, 0, 2).unwrap().value, CellValue::Number(5.0));
+    }
+
     #[test]
     fn show_pivot_details_command_and_undo() {
         use crate::pivot::{PivotDataField, PivotField, PivotSource, PivotTable};
@@ -7941,6 +8436,7 @@ mod tests {
             multiple_field_filters: false,
             calculated_items: vec![],
             show_drill: true,
+            aliases: Default::default(),
         };
 
         let sheet_data = crate::pivot::source_data(sheet_of(d.presentation(), s).unwrap(), pivot.source.range.unwrap());

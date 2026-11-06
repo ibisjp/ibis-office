@@ -1,0 +1,45 @@
+{
+ "end": 1.391,
+ "last_change": 1.391,
+ "end_video_frame": 3,
+ "first_change": 0.043,
+ "window_end": 1.391,
+ "doc_changes_count": 2,
+ "doc_changes": [
+  [
+   0.043,
+   0.08333
+  ],
+  [
+   1.391,
+   0.16852
+  ]
+ ],
+ "recorded_until": 9.397,
+ "grabs": 911,
+ "capped": false,
+ "tag": "open-ibisoffice-docx-3",
+ "scenario": "open",
+ "app": "ibisoffice",
+ "kind": "docx",
+ "run": 3,
+ "file": "securities-registration-statement.docx",
+ "command": [
+  "click: 最近開いたファイル",
+  "securities-registration-statement.docx"
+ ],
+ "rects": [
+  [
+   0.0,
+   "-20 7 1320 840"
+  ]
+ ],
+ "covered": [],
+ "cap": 15,
+ "measured_at": "2026-11-03 21:10:02",
+ "load_before": [
+  0.55,
+  0.42,
+  0.3
+ ]
+}

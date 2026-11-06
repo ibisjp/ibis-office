@@ -1,0 +1,26 @@
+{
+ "tag": "pdf-ibisoffice-docx-1",
+ "scenario": "pdf",
+ "app": "ibisoffice",
+ "kind": "docx",
+ "run": 1,
+ "file": "securities-registration-statement.docx",
+ "seconds": 2.552,
+ "returncode": 0,
+ "pdf_bytes": 1265838,
+ "pages": 145,
+ "command": [
+  "ibisOffice-0.8.5-Linux.AppImage",
+  "--export",
+  "pdf",
+  "--out-dir",
+  "pdf",
+  "securities-registration-statement.docx"
+ ],
+ "measured_at": "2026-11-03 18:53:59",
+ "load_before": [
+  0.11,
+  0.23,
+  0.16
+ ]
+}

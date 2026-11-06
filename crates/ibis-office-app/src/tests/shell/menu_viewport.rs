@@ -84,7 +84,7 @@ pub(crate) fn run() {
             slot.set(Some((
                 panel,
                 "menu-viewport",
-                crate::shell::panel_dialog::PanelMode::Sidebar,
+                crate::shell::dialog::DialogMode::Sidebar,
             )))
         });
         s.update(|e, _, cx| {

@@ -84,7 +84,7 @@ fn main() {
                 ),
             };
             let kind: String = if std::env::var_os("DUMP_FULL").is_some() { kind } else { kind.chars().take(160).collect() };
-            println!("{layer} {:?} rot={} {kind}", s.frame, s.rotation);
+            println!("{layer} id={} hidden={} {:?} rot={} {kind}", s.id.0, slide.hidden_shapes.contains(&s.id), s.frame, s.rotation);
         }
     }
 }

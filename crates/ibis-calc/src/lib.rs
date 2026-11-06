@@ -10,7 +10,7 @@
 //! `test/coverage` of the test worktree). No UI or file format here: the
 //! document model builds on it.
 
-mod clock;
+pub mod clock;
 mod collation;
 pub mod eval;
 pub mod formula;

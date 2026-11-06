@@ -9,7 +9,7 @@ use crate::{
     shell::{
         chrome,
         editor::SlideEditor,
-        panel_dialog::{PanelMode, SubmitType},
+        dialog::{DialogMode, SubmitType},
     },
 };
 use gpui_kit::{
@@ -107,7 +107,7 @@ fn form(config: Form) -> Scenario {
         e.document_memory.set("ui.area", area);
         e.sidebar_open = true;
     });
-    chrome::FORCED_SIDEBAR.with(|s| s.set(Some((fixture, "ui-form", PanelMode::Modal))));
+    chrome::FORCED_SIDEBAR.with(|s| s.set(Some((fixture, "ui-form", DialogMode::Modal))));
     s.update(|_, _, cx| cx.notify());
     s
 }
@@ -148,7 +148,7 @@ fn forms() {
         },
     ] {
         let mut s = form(config);
-        assert!(!s.with(|e, _| e.panel_dialog.form_controls.is_empty()));
+        assert!(!s.with(|e, _| e.dialog.form_controls.is_empty()));
         s.key("enter");
         let enter = config.normal
             || config.submit == SubmitType::Enter
@@ -512,7 +512,7 @@ fn tabs() {
         e.sidebar_open = true;
     });
     chrome::FORCED_SIDEBAR
-        .with(|x| x.set(Some((tabs_fixture, "ui-tabs-dialog", PanelMode::Modal))));
+        .with(|x| x.set(Some((tabs_fixture, "ui-tabs-dialog", DialogMode::Modal))));
     s.update(|_, _, cx| cx.notify());
     let before = buttons::bounds("tab-indicator-ui-tabs").unwrap();
     let id = format!("{:?}", ElementId::from(("ui-tabs", 1usize)));
@@ -748,7 +748,7 @@ fn field_colors() {
         x.set(Some((
             field_colors_fixture,
             "ui-color-dialog",
-            PanelMode::Modal,
+            DialogMode::Modal,
         )))
     });
     s.update(|_, _, cx| cx.notify());

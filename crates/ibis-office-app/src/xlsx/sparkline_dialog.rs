@@ -1125,7 +1125,7 @@ impl SlideEditor {
         let color_choices=SPARKLINE_COLORS.iter().map(|(name,color)|{let color=*color;crate::shell::chrome::dropdown::ColorPaletteItem::single(text(name),color.0,std::rc::Rc::new(move |e,_,cx|e.set_sparkline_series_color(Some(color),cx)))}).collect();
         let color_index=SPARKLINE_COLORS.iter().position(|(_,c)|Some(*c)==current_series).unwrap_or(0);
         let color_dropdown=crate::shell::chrome::ColorPaletteDropdown::new("sparkline-line-color",color_choices,color_index,&cx.weak_entity());
-        let point_target_buttons: Vec<AnyElement> = [
+        let point_target_buttons: Vec<crate::shell::chrome::segment_control::SegmentItem> = [
             ("xlsx.sparkline.point-target.high", "_xlsx.high-point", SparklinePointKind::High),
             ("xlsx.sparkline.point-target.low", "xlsx.sparkline.low-point", SparklinePointKind::Low),
             ("xlsx.sparkline.point-target.negative", "_xlsx.negative-points", SparklinePointKind::Negative),
@@ -1135,17 +1135,17 @@ impl SlideEditor {
         ]
         .into_iter()
         .map(|(id, label, pt)| {
-            let is_sel = selected_point_kind == pt;
-            mark(
-                id,
-                crate::shell::chrome::radio_button(id,is_sel,false,text(label),cx.listener(move |this, _, _, cx| {
-                        if let Some(p) = this.wb_mut().panels.sparkline.as_mut() {
-                            p.selected_point_kind = pt;
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            )
+            let ui = p.ui.clone();
+            crate::shell::chrome::segment_control::SegmentItem::label(id, text(label), selected_point_kind == pt)
+                .on_bounds(move |b| {
+                    ui.borrow_mut().insert(id.to_string(), b);
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(p) = this.wb_mut().panels.sparkline.as_mut() {
+                        p.selected_point_kind = pt;
+                    }
+                    cx.notify();
+                }))
         })
         .collect();
 
@@ -1220,7 +1220,7 @@ impl SlideEditor {
                 v_flex()
                     .gap_1()
                     .child(div().text_sm().child(text("xlsx.sparkline-marker-colors")))
-                    .child(h_flex().gap_1().flex_wrap().children(point_target_buttons))
+                    .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).children(point_target_buttons))
                     .child(point_color_dropdown)
             )
             .child(

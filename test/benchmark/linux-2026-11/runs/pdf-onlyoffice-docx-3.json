@@ -1,0 +1,22 @@
+{
+ "tag": "pdf-onlyoffice-docx-3",
+ "scenario": "pdf",
+ "app": "onlyoffice",
+ "kind": "docx",
+ "run": 3,
+ "file": "securities-registration-statement.docx",
+ "seconds": 5.44,
+ "returncode": 0,
+ "pdf_bytes": 1000295,
+ "pages": 152,
+ "command": [
+  "x2t",
+  "task.xml"
+ ],
+ "measured_at": "2026-11-03 18:54:35",
+ "load_before": [
+  0.52,
+  0.32,
+  0.19
+ ]
+}

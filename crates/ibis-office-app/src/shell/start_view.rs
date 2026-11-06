@@ -165,8 +165,39 @@ impl SlideEditor {
                     .when_some(self.status.clone(), |d, status| d.child(div().mt_3().text_sm().text_color(muted).child(status))),
             )
             .child(v_flex().w(px(REQUEST_WIDTH)).min_w(px(REQUEST_MIN_WIDTH)).flex_shrink(1.).mr(px(COLUMN_PADDING)).mt(px(BOTTOM_MARGIN)).gap_4()
+                .children(Self::update_button())
                 .child(crate::shell::chrome::brand_logo("start-app-logo",REQUEST_WIDTH / crate::shell::chrome::LOGO_ASPECT,true))
                 .child(request_panel(muted).w_full().mt_0().mr_0()))
+    }
+
+    /// 「ibisOffice を更新する」 over the logo, right-aligned, when a newer version is known (never in the browser, which has no
+    /// updater): a pill, white with a blue border and label whatever the theme. A click asks the update question, as the About
+    /// window's button does.
+    #[cfg(not(target_family = "wasm"))]
+    fn update_button() -> Option<impl IntoElement> {
+        crate::shell::update::available_version()?;
+        Some(
+            div().w_full().flex().justify_end().child(
+                div()
+                    .id("start-update")
+                    .px_4()
+                    .py_1()
+                    .rounded(px(999.))
+                    .border_1()
+                    // White with a blue frame and label in the dark theme too (the request's colours, not theme tokens: `rgb` would invert them).
+                    .border_color(crate::shell::palette::doc(LINK_COLOR))
+                    .bg(crate::shell::palette::doc(0xffffff))
+                    .text_color(crate::shell::palette::doc(LINK_COLOR))
+                    .text_sm()
+                    .cursor_pointer()
+                    .child(crate::shell::i18n::text("start.update"))
+                    .on_click(|_, _, cx| crate::shell::update::offer_again(cx)),
+            ),
+        )
+    }
+    #[cfg(target_family = "wasm")]
+    fn update_button() -> Option<Div> {
+        None
     }
 
     /// One kind of 新規作成: a blank page with the format's badge on its
@@ -248,7 +279,7 @@ impl SlideEditor {
                     .when(exists, |d| {
                         d.cursor_pointer()
                             .hover(move |s| s.bg(hover))
-                            .on_click(cx.listener(move |this, _, window, cx| this.open_path(path.clone(), None, window, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| this.open_path_or_raise(path.clone(), window, cx)))
                     })
                     .child(div().flex_1().min_w_0().child(div().text_sm().truncate().child(name)).child(div().text_xs().text_color(muted).truncate().child(dir)))
                     .child(crate::shell::chrome::hover_row_actions(index,entries,&cx.weak_entity()))

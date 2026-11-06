@@ -329,9 +329,7 @@ impl SlideEditor {
                     })
         };
 
-        let mode_tabs=crate::shell::chrome::tab_control_with_mode([text("fix.chart-template.apply-template"),text("fix.chart-template.save-template")],usize::from(mode==ChartTemplateMode::Save),"chart-template-tabs",crate::shell::chrome::TabMode::Intrinsic,|e,index,cx|e.set_chart_template_mode(if index==0{ChartTemplateMode::Apply}else{ChartTemplateMode::Save},cx),cx);
-
-        let mut content = v_flex().gap_3().px(px(16.)).py(px(8.)).p_0().child(mode_tabs);
+        let mut content = v_flex().gap_3().px(px(16.)).py(px(8.)).p_0();
 
         match mode {
             ChartTemplateMode::Save => {
@@ -425,6 +423,9 @@ impl SlideEditor {
             );
         }
 
-        Some(SidebarPanel::with_footer(text("fix.chart-template.chart-template"), content.into_any_element(), panel_fixed_actions))
+        // The mode tabs are in the panel header area.
+        Some(SidebarPanel::with_footer(text("fix.chart-template.chart-template"), content.into_any_element(), panel_fixed_actions)
+            .header_tabs("chart-template-tabs", [text("fix.chart-template.apply-template"), text("fix.chart-template.save-template")], usize::from(mode == ChartTemplateMode::Save),
+                |e, index, cx| e.set_chart_template_mode(if index == 0 { ChartTemplateMode::Apply } else { ChartTemplateMode::Save }, cx), cx))
     }
 }

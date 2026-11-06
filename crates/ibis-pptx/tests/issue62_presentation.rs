@@ -21,12 +21,12 @@ fn powerpoint_zoom_23_reads_and_writes_as_zoom(){
     let bytes=opened.source.save(&model,ibis_pptx::SaveOptions::default()).unwrap();let pkg=Package::open(bytes.clone()).unwrap();let xml=String::from_utf8(pkg.read("ppt/slides/slide1.xml").unwrap()).unwrap();assert!(xml.contains("presetID=\"23\""));assert_eq!(ibis_pptx::read(&bytes).unwrap().slides[0].animations[0].look,AnimationLook::Zoom);
 }
 #[test]
-fn powerpoint_zoom_53_from_the_issue_file_reads_as_zoom_not_fade(){
+fn powerpoint_zoom_53_from_the_issue_file_reads_as_its_own_behaviours_not_fade(){
     // Timing written by PowerPoint for ズーム (ppt_w/ppt_h grow together with a fade).
     let mut p=package();let timing=r##"<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" nodeType="tmRoot"><p:childTnLst><p:seq><p:cTn id="2" nodeType="mainSeq"><p:childTnLst><p:par><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="4" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="5" presetID="53" presetClass="entr" presetSubtype="528" fill="hold" nodeType="clickEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:set><p:cBhvr><p:cTn id="6" dur="1" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="7"/></p:tgtEl><p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="visible"/></p:to></p:set><p:anim calcmode="lin" valueType="num"><p:cBhvr><p:cTn id="7" dur="500" fill="hold"/><p:tgtEl><p:spTgt spid="7"/></p:tgtEl><p:attrNameLst><p:attrName>ppt_w</p:attrName></p:attrNameLst></p:cBhvr><p:tavLst><p:tav tm="0"><p:val><p:fltVal val="0"/></p:val></p:tav><p:tav tm="100000"><p:val><p:strVal val="#ppt_w"/></p:val></p:tav></p:tavLst></p:anim><p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn id="8" dur="500"/><p:tgtEl><p:spTgt spid="7"/></p:tgtEl></p:cBhvr></p:animEffect></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>"##;
     p.set_bytes("ppt/slides/slide1.xml",slide(TEXT,timing).into_bytes());
     let model=ibis_pptx::read(&p.save(SaveOptions::default()).unwrap()).unwrap();
-    assert_eq!(model.slides[0].animations[0].look,AnimationLook::Zoom);assert_eq!(model.slides[0].animations[0].duration,500);
+    assert_eq!(model.slides[0].animations[0].look,AnimationLook::Preset);assert_eq!(model.slides[0].animations[0].duration,500);assert!(model.slides[0].animations[0].behaviors.len()>=3);
 }
 #[test]
 fn blank_layout_removes_empty_placeholders_but_keeps_entered_content(){

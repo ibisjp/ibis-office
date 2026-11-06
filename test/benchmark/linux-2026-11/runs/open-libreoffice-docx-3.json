@@ -1,0 +1,44 @@
+{
+ "end": 1.588,
+ "last_change": 1.588,
+ "end_video_frame": 3,
+ "first_change": 1.413,
+ "window_end": 1.588,
+ "doc_changes_count": 2,
+ "doc_changes": [
+  [
+   1.413,
+   0.57831
+  ],
+  [
+   1.588,
+   0.13983
+  ]
+ ],
+ "recorded_until": 9.597,
+ "grabs": 935,
+ "capped": false,
+ "tag": "open-libreoffice-docx-3",
+ "scenario": "open",
+ "app": "libreoffice",
+ "kind": "docx",
+ "run": 3,
+ "file": "securities-registration-statement.docx",
+ "command": [
+  "soffice26",
+  "/tmp/ibis-bench-kjvq1gw6/securities-registration-statement.docx"
+ ],
+ "rects": [
+  [
+   0.0,
+   "320 140 1280 800"
+  ]
+ ],
+ "cap": 30,
+ "measured_at": "2026-11-03 19:45:11",
+ "load_before": [
+  0.83,
+  0.74,
+  0.53
+ ]
+}

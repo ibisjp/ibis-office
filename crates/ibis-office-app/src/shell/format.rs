@@ -172,6 +172,13 @@ pub(crate) trait FormatEditor {
         None
     }
 
+    /// Whether the text at the caret runs top to bottom: the input method
+    /// then lays its candidates out vertically, beside the column. Asked
+    /// every frame, so it must be cheap.
+    fn text_vertical(_editor: &mut SlideEditor, _window: &mut Window, _cx: &mut Context<SlideEditor>) -> bool {
+        false
+    }
+
     fn character_index_for_point(_editor: &mut SlideEditor, _point: Point<Pixels>, _window: &mut Window, _cx: &mut Context<SlideEditor>) -> Option<usize> {
         None
     }

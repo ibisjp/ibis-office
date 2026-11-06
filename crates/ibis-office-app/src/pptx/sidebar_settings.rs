@@ -102,6 +102,11 @@ impl SlideEditor {
         }
     }
 }
+/// The layout and size dropdowns of the slide pane are this many times the usual dropdown width.
+const WIDE_DROPDOWN_SCALE:f32=1.5;
+fn wide_dropdown(id:&'static str,label:SharedString,entries:Vec<MenuEntry>,cx:&Context<SlideEditor>)->AnyElement {
+    chrome::Dropdown::from_entries(id,label,entries,true,0,&cx.weak_entity()).button_width(chrome::FIELD_WIDTH*WIDE_DROPDOWN_SCALE).into_any_element()
+}
 fn dropdown(id:&'static str,label:SharedString,entries:Vec<MenuEntry>,cx:&Context<SlideEditor>)->AnyElement {
     chrome::Dropdown::from_entries(id,label,entries,true,0,&cx.weak_entity()).into_any_element()
 }
@@ -121,9 +126,15 @@ pub(crate) fn sidebar(editor:&mut SlideEditor,window:&mut Window,cx:&mut Context
         let size=editor.presentation().slide_size;
         let size_label=if size==EmuSize::WIDESCREEN {text("pptx.chrome.widescreen-16-9")}else if size==EmuSize::new(9_144_000,6_858_000){text("pptx.chrome.standard-4-3")}else{text("_shell.custom")};
         body=body.child(chrome::color_field_row(text("_shell.background"),chrome::panel_color_field("pptx-sidebar-background",&fields[5],cx)))
-            .child(chrome::dropdown_row(text("_shell.layout"),dropdown("pptx-sidebar-layout",layout,super::chrome::apply_layout_items(editor),cx)))
+            .child(chrome::dropdown_row_scaled(text("_shell.layout"),wide_dropdown("pptx-sidebar-layout",layout,super::chrome::apply_layout_items(editor),cx),WIDE_DROPDOWN_SCALE))
             .child(chrome::dropdown_row(text("_shell.transitions"),dropdown("pptx-sidebar-transition",super::chrome::transition_name(editor.slide().transition.as_ref()).into(),super::chrome::transition_menu(editor),cx)))
-            .child(chrome::dropdown_row(text("_shell.size"),dropdown("pptx-sidebar-size",size_label,super::chrome::slide_size_menu_items(editor),cx)));
+            .child(chrome::dropdown_row_scaled(text("_shell.size"),wide_dropdown("pptx-sidebar-size",size_label,super::chrome::slide_size_menu_items(editor),cx),WIDE_DROPDOWN_SCALE));
+        // 効果のオプション of the slide's transition (its direction…), beside the transition.
+        if let Some(t)=editor.slide().transition.as_ref().filter(|t|!super::chrome::transition_directions(&t.effect).is_empty()) {
+            let options=super::chrome::transition_directions(&t.effect);
+            let current=options.iter().find(|(token,_)|Some(*token)==ibis_doc_model::transition_catalog::effective_token(&t.effect,t.direction.as_deref())).or(options.first()).map(|(_,key)|text(key)).unwrap_or_default();
+            body=body.child(chrome::dropdown_row(text("pptx.chrome.effect-options"),dropdown("pptx-sidebar-transition-options",current,super::chrome::transition_direction_items(editor),cx)));
+        }
     }
     let labels=[text("_shell.width"),text("_shell.height"),text("_shell.rotate"),SharedString::from("X"),SharedString::from("Y")];
     for (index,label) in labels.into_iter().enumerate().take(if selected {5}else{2}) {

@@ -12,6 +12,7 @@ use crate::shell::chrome::{MenuEntry, MenuItem, Submenu};
 /// Excel's patterns, as its dialog names them, by the DrawingML names the
 /// model keeps them by (saved as `patternType`'s names).
 pub(crate) const PATTERNS: [(&str, &str); 18] = [
+    ("_shell.none", ""),
     ("_xlsx.75-gray", "pct75"),
     ("_xlsx.50-gray", "pct50"),
     ("_xlsx.25-gray", "pct25"),
@@ -29,7 +30,6 @@ pub(crate) const PATTERNS: [(&str, &str); 18] = [
     ("_xlsx.light-upward-diagonal-stripe", "ltUpDiag"),
     ("_xlsx.small-grid", "smGrid"),
     ("_xlsx.narrow-diagonal-crosshatch", "diagCross"),
-    ("_shell.none", ""),
 ];
 
 /// Standard pattern colors (Excel's pattern palette).

@@ -13,6 +13,8 @@ pub(crate) struct ThemeColorsUi {
     pub editing: bool,
     pub scroll: ScrollHandle,
 }
+/// The label column of the custom colour editor is 1.6 times the usual width (2026-11-04 user).
+const COLOR_LABEL_SCALE:f32=1.6;
 impl SlideEditor {
     fn reopen_theme_colors(&mut self, w:&mut Window,cx:&mut Context<Self>) {
         if self.is_document() { self.open_docx_theme_panel(w,cx); }
@@ -23,7 +25,7 @@ impl SlideEditor {
         // Rebuild the draft on both entry and cancellation; discarded edits never leak.
         self.reopen_theme_colors(w,cx);
         self.theme_colors_ui.editing=editing;
-        self.panel_dialog=Default::default();
+        self.dialog=Default::default();
         cx.notify();
     }
     pub(crate) fn shared_theme_colors_panel(&mut self,cx:&mut Context<Self>)->Option<chrome::SidebarPanel> {
@@ -35,7 +37,7 @@ impl SlideEditor {
             let mut body=chrome::panel_form();
             for (index,(_,label,input)) in fields.iter().enumerate() {
                 let id=["theme-color-0","theme-color-1","theme-color-2","theme-color-3","theme-color-4","theme-color-5","theme-color-6","theme-color-7","theme-color-8","theme-color-9","theme-color-10","theme-color-11"][index];
-                body=body.child(chrome::color_field_row(text(label),chrome::panel_color_field(id,input,cx)));
+                body=body.child(chrome::control_row::color_row(text(label),chrome::panel_color_field(id,input,cx)).label_scale(COLOR_LABEL_SCALE));
             }
             let error=if document {self.doc_state()?.theme_panel.as_ref()?.error.clone()}
                 else if workbook {self.sheet_state()?.panels.theme.as_ref()?.error.clone()}

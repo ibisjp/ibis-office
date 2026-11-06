@@ -48,9 +48,10 @@ fn width_chars(size: Emu, digit: f64) -> f64 {
 pub(crate) fn write_sizes(doc: &mut XmlDocument, old: &Sheet, new: &Sheet, digit: f64) -> Result<(), Error> {
     let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
     let prefix = prefix_of(doc, root);
-    // Columns: runs of changed columns with the same new width. Only widths the user fixed are saved (`customWidth`); a width the
-    // sheet chose by itself (a number entered wider than the column) is not, so the file opens with the column as it was (as Excel's).
-    // A column given back to the sheet ("fit to selection") keeps its new width, without `customWidth`.
+    // Columns: runs of changed columns with the same new width. Every change the user made is saved (a width fixed by hand with
+    // `customWidth`, one fitted to the contents, a column hidden or shown again) except a width the sheet chose by itself (a number
+    // entered wider than the column), so the file opens with that column as it was (as Excel's); a fixed width given back to the sheet
+    // is a change, and saved.
     let in_range = |c: u32| (c as usize) < new.columns.len() && (c as usize) < old.columns.len();
     let mut runs: Vec<(u32, u32, Emu, bool)> = Vec::new();
     for c in 0..new.columns.len().max(old.columns.len()) as u32 {
@@ -60,7 +61,7 @@ pub(crate) fn write_sizes(doc: &mut XmlDocument, old: &Sheet, new: &Sheet, digit
         let w = new.columns[c as usize];
         let (fixed, was_fixed) = (new.custom_columns.contains(&c), old.custom_columns.contains(&c));
         let changed = old.columns[c as usize] != w || fixed != was_fixed;
-        if !changed || (w != 0 && !fixed && !was_fixed) {
+        if !changed || (w != 0 && new.widened_columns.contains(&c) && !was_fixed) {
             continue;
         }
         match runs.last_mut() {

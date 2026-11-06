@@ -80,7 +80,7 @@ fn phonetic_reopen() {
     s.click_cell("A2");
     s.key("cmd-1");
     s.menu("xlsx.phonetic-edit");
-    assert_eq!(s.with(|e, _| e.panel_dialog.key), Some("phonetic_panel"));
+    assert_eq!(s.with(|e, _| e.dialog.key), Some("phonetic_panel"));
     if !fixture.exists() {
         assert_eq!(
             s.with(|e, cx| e
@@ -102,7 +102,7 @@ fn phonetic_reopen() {
         e.apply_phonetic(cx);
     });
     s.menu("xlsx.phonetic-edit");
-    assert_eq!(s.with(|e, _| e.panel_dialog.key), Some("phonetic_panel"));
+    assert_eq!(s.with(|e, _| e.dialog.key), Some("phonetic_panel"));
     assert_eq!(
         s.with(|e, cx| e
             .wb()
@@ -116,7 +116,7 @@ fn phonetic_reopen() {
             .to_string()),
         "あいびす" // i18n-ok: Japanese document fixture content and expected values, not UI labels.
     );
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     if !s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_phonetic) {
         s.menu("xlsx.phonetic-toggle");
     }
@@ -226,7 +226,7 @@ fn chart_settings_switch() {
     s.click((f32::from(bounds.center().x), f32::from(bounds.center().y)));
     assert!(s.with(|e, _| e.wb().custom_format.is_none()));
     assert!(s.with(|e, _| e.wb().chart_edit.is_some()));
-    assert!(s.with(|e, _| e.sidebar_open && !e.panel_dialog.active));
+    assert!(s.with(|e, _| e.sidebar_open && !e.dialog.active));
 }
 
 fn time_shortcut() {
@@ -287,7 +287,7 @@ fn fit_text_dialog() {
         st.caret = Some(FlowPos::new(para, 7));
         e.open_fit_text(w, cx);
     });
-    assert_eq!(s.with(|e, _| e.panel_dialog.key), Some("fit_text_panel"));
+    assert_eq!(s.with(|e, _| e.dialog.key), Some("fit_text_panel"));
     crate::shell::i18n::show(crate::shell::i18n::Language::English);
     s.update(|_,_,cx|cx.notify());
     s.screenshot("fit-text-dialog-en");
@@ -330,7 +330,7 @@ fn fit_text_dialog() {
             .input
             .clone();
         field.update(cx, |i, cx| i.set_value("12", w, cx));
-        e.close_panel_dialog(w, cx);
+        e.close_dialog(w, cx);
     });
     assert_eq!(
         s.with(|e, _| e.fit_text_at_caret().map(|(_, _, w, _)| w)),
@@ -751,8 +751,10 @@ fn large_font_multiple_spacing() {
             .unwrap()
             .h
     });
+    // A multiple of lines on a line grid is the larger of what a single line takes (3 grids of 20pt for 36pt text) and the grid times
+    // the multiple (1.5 grids): Word's PDF of line-multiple-h-grid-probe.docx (18pt grid, 40pt MS Mincho: 54pt at 1.5, 2 and 3 lines).
     assert!(
-        (multiple - single * 1.5).abs() < 0.01,
+        (multiple - single.max(20.0 * 1.5)).abs() < 0.01,
         "36pt in a 20pt grid: single={single}, 1.5 lines={multiple}"
     );
     s.screenshot("large-font-multiple-spacing");

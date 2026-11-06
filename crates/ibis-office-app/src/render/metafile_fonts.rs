@@ -21,6 +21,11 @@ static SOURCE: OnceLock<Source> = OnceLock::new();
 
 /// Hand the text system to the metafile player. Call once the app has its text system (at start-up).
 pub(crate) fn install(cx: &App) {
+    // Once: listing the installed fonts takes tens of milliseconds, and every opened document (every page of the master
+    // view) calls this.
+    if SOURCE.get().is_some() {
+        return;
+    }
     let text_system = cx.text_system().clone();
     let installed = text_system.all_font_names().into_iter().collect();
     if SOURCE.set(Source { text_system, installed }).is_ok() {
@@ -29,7 +34,7 @@ pub(crate) fn install(cx: &App) {
 }
 
 /// The ascent and descent as fractions of the em size.
-fn metrics(face: &str, bold: bool, italic: bool) -> Option<(f64, f64)> {
+pub(crate) fn metrics(face: &str, bold: bool, italic: bool) -> Option<(f64, f64)> {
     let source = SOURCE.get()?;
     let found = if let Some((family, mut weight, face_italic)) =
         crate::render::shape_view::resolve_system_font(face, &source.installed)

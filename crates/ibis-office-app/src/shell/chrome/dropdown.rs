@@ -34,33 +34,53 @@ impl DropdownItem {
 #[derive(Clone,Copy)]
 pub(crate) enum ListWidth { Content, Button, Fixed(Pixels) }
 #[derive(Clone,Copy)]
-pub(crate) struct Options {pub checkmarks:bool,pub width:ListWidth,pub offset_x:Pixels,pub search:bool,pub hover_reveal:Option<&'static str>}
-impl Default for Options {fn default()->Self {Self{checkmarks:true,width:ListWidth::Content,offset_x:px(0.),search:true,hover_reveal:None}}}
+pub(crate) struct Options {pub checkmarks:bool,pub width:ListWidth,pub offset_x:Pixels,pub search:bool,pub hover_reveal:Option<&'static str>,pub row_height:f32}
+impl Default for Options {fn default()->Self {Self{checkmarks:true,width:ListWidth::Content,offset_x:px(0.),search:true,hover_reveal:None,row_height:dropdown_list::ROW_HEIGHT}}}
 
 #[derive(IntoElement)]
 pub(crate) struct Dropdown {
     id:&'static str, button:Button, entries:Vec<MenuEntry>,single_select:bool,index:usize,
     editor:Option<WeakEntity<SlideEditor>>,options:Options,button_width:Option<Pixels>,application_items:Vec<DropdownItem>,fill:bool,
+    /// The id the label button was made with (`new` and `from_entries`), so `mixed` can make the button again without a label.
+    label_button:Option<SharedString>,
 }
 impl Dropdown {
     pub fn new(id:&'static str,label:impl Into<SharedString>,items:Vec<DropdownItem>,editor:&WeakEntity<SlideEditor>)->Self {
-        Self::with_button(id,dropdown_button(id,label.into()).w(FIELD_WIDTH),items.into_iter().map(|i|i.menu().into()).collect(),true,0,editor).button_width(FIELD_WIDTH)
+        let mut dropdown=Self::with_button(id,dropdown_button(id,label.into()).w(FIELD_WIDTH),items.into_iter().map(|i|i.menu().into()).collect(),true,0,editor).button_width(FIELD_WIDTH);
+        dropdown.label_button=Some(id.into());dropdown
     }
     pub fn from_entries(id:&'static str,label:impl Into<SharedString>,entries:Vec<MenuEntry>,single_select:bool,index:usize,editor:&WeakEntity<SlideEditor>)->Self {
         let button_id=if index==0 {id.to_owned()}else{format!("{id}-{index}")};
-        Self::with_button(id,dropdown_button(SharedString::from(button_id),label.into()),entries,single_select,index,editor).button_width(FIELD_WIDTH)
+        let mut dropdown=Self::with_button(id,dropdown_button(SharedString::from(button_id.clone()),label.into()),entries,single_select,index,editor).button_width(FIELD_WIDTH);
+        dropdown.label_button=Some(button_id.into());dropdown
     }
     /// Adapts menu-model item arrays and compound controls to the same dropdown lifecycle.
     pub fn with_button(id:&'static str,button:Button,entries:Vec<MenuEntry>,single_select:bool,index:usize,editor:&WeakEntity<SlideEditor>)->Self {
-        Self{id,button,entries,single_select,index,editor:Some(editor.clone()),options:Options::default(),button_width:None,application_items:Vec::new(),fill:false}
+        Self{id,button,entries,single_select,index,editor:Some(editor.clone()),options:Options::default(),button_width:None,application_items:Vec::new(),fill:false,label_button:None}
     }
     pub fn application(id:&'static str,label:impl Into<SharedString>,items:Vec<DropdownItem>)->Self {
         Self{id,button:dropdown_button(id,label.into()).w(FIELD_WIDTH),entries:Vec::new(),single_select:true,index:0,
-            editor:None,options:Options::default(),button_width:Some(FIELD_WIDTH),application_items:items,fill:false}
+            editor:None,options:Options::default(),button_width:Some(FIELD_WIDTH),application_items:items,fill:false,label_button:None}
     }
+    /// The state of the objects the dropdown edits: `Shown::Mixed` selects nothing (empty label, no check mark, no empty row
+    /// added to the list); the common value is marked through the entries (`checked(shown.selects(&value))`).
+    pub fn shown<V>(self,shown:&super::Shown<V>)->Self {self.mixed(shown.is_mixed())}
     pub fn checkmarks(mut self,show:bool)->Self {self.options.checkmarks=show;self}
+    /// The objects the dropdown edits have different values (`Shown::Mixed`): nothing is selected (the button has an empty
+    /// label and the list shows no check mark). Choosing an item selects it as usual. Only for a dropdown made by `new` or
+    /// `from_entries` (a compound `with_button` control shows its own preview).
+    fn mixed(mut self,mixed:bool)->Self {
+        if !mixed {return self;}
+        let Some(id)=self.label_button.clone() else {return self};
+        self.button=dropdown_button(id,SharedString::from(""));
+        if let Some(width)=self.button_width {self.button=self.button.w(width);}
+        if self.fill {self.button=self.button.w_full();}
+        self.options.checkmarks=false;self
+    }
     pub fn reveal_on_hover(mut self,group:&'static str)->Self{self.options.hover_reveal=Some(group);self}
     pub fn searchable(mut self,search:bool)->Self {self.options.search=search;self}
+    /// The height of each list item (default [`dropdown_list::ROW_HEIGHT`]); the list and the keyboard's scrolling follow it.
+    pub fn row_height(mut self,height:f32)->Self {self.options.row_height=height;self}
     pub fn offset_x(mut self,offset:Pixels)->Self {self.options.offset_x=offset;self}
     pub fn list_width(mut self,width:ListWidth)->Self {self.options.width=width;self}
     pub fn button_width(mut self,width:Pixels)->Self {self.button=self.button.w(width);self.button_width=Some(width);self}
@@ -69,10 +89,10 @@ impl Dropdown {
     pub fn fill_width(mut self)->Self {self.button=self.button.w_full();self.fill=true;self}
 }
 impl RenderOnce for Dropdown {
-    fn render(self,_:&mut Window,_:&mut App)->impl IntoElement {
+    fn render(self,_:&mut Window,cx:&mut App)->impl IntoElement {
         gpui_kit::component::form_controls::other(self.button.is_disabled(),false);
         if let Some(editor)=self.editor {
-            div().when_some(self.button_width,|d,w|d.w(w).flex_none()).when(self.fill,|d|d.w_full()).child(super::render_dropdown(self.id,self.button,self.entries,self.single_select,self.index,&editor,self.options)).into_any_element()
+            div().when_some(self.button_width,|d,w|d.w(w).flex_none()).when(self.fill,|d|d.w_full()).child(super::render_dropdown(self.id,self.button,self.entries,self.single_select,self.index,&editor,self.options,cx)).into_any_element()
         } else {
             // Standalone windows have no document editor; their callbacks operate on the app.
             // Item construction, sizing and button/popup ownership still live in this component.
@@ -106,7 +126,7 @@ pub(crate) fn font_item(family:&str,label:SharedString,color:Hsla)->AnyElement {
 }
 pub(crate) fn color_palette_item(colors:&[u32])->AnyElement {
     let width=colors.len() as f32*16.+colors.len().saturating_sub(1) as f32*3.;
-    h_flex().gap(px(3.)).w(px(width)).max_w_full().overflow_hidden().children(colors.iter().map(|c|div().size(px(16.)).flex_none().rounded(px(3.)).bg(rgb(*c)))).into_any_element()
+    h_flex().gap(px(3.)).w(px(width)).max_w_full().overflow_hidden().children(colors.iter().map(|c|div().size(px(16.)).flex_none().rounded(px(3.)).bg(crate::shell::palette::doc(*c)))).into_any_element()
 }
 #[derive(IntoElement)]
 pub(crate) struct FontDropdown(Dropdown);
@@ -118,6 +138,8 @@ impl FontDropdown {
         Self(Dropdown::with_button(id,dropdown_button(id,crate::shell::i18n::font_label(current)).w(FONT_DROPDOWN_WIDTH),items,true,index,editor).button_width(FONT_DROPDOWN_WIDTH))
     }
     pub fn button(mut self,button:Button)->Self {self.0.button=button;self.0.button_width=None;self}
+    /// The button fills its parent (a row's control cell, see `font_dropdown_row`) instead of being [`FONT_DROPDOWN_WIDTH`] wide.
+    pub fn fill_width(mut self)->Self {self.0.button_width=None;self.0=self.0.fill_width();self}
 }
 impl RenderOnce for FontDropdown {fn render(self,_:&mut Window,_:&mut App)->impl IntoElement {self.0}}
 #[derive(Clone)]
@@ -153,5 +175,32 @@ impl RenderOnce for ColorPaletteDropdown {
             PaletteBody::List(list)=>list.into_any_element(),
             PaletteBody::Grid{id,button,entries,editor}=>div().id(id).child(button.dropdown_menu(move|m,w,cx|fill_menu(m,&entries,&editor,w,cx))).into_any_element(),
         }
+    }
+}
+
+/// The name of a preview item (a pattern, a gradient…), shown at the LEFT of the list item that is hovered, since the
+/// list itself is on the right of the pane and the item's own picture is all there is to read. It is a native tooltip
+/// (the usual look, the usual delay): the pointer decides where a native tooltip starts (1 px right of and below it), so
+/// the label is hung from that point to the row's left edge, and centred on the row's height.
+pub(crate) struct LeftTooltip {
+    inner: AnyView,
+    row: Bounds<Pixels>,
+    pointer: Point<Pixels>,
+}
+impl Render for LeftTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // The tooltip's origin, where a native tooltip is laid out: the pointer, 1 px right and below.
+        let origin = self.pointer + point(px(1.), px(1.));
+        div().relative().size_0().child(
+            div().absolute().right(origin.x - self.row.left()).top(self.row.top() - origin.y).h(self.row.size.height)
+                .flex().items_center().child(self.inner.clone()))
+    }
+}
+/// The builder of a native tooltip that shows `label` at the left of the row whose bounds `row` holds (written when the row is painted).
+pub(crate) fn left_tooltip(label: SharedString, row: Rc<std::cell::Cell<Bounds<Pixels>>>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    move |window, cx| {
+        let inner = gpui_kit::component::tooltip::Tooltip::new(label.clone()).build(window, cx);
+        let (row, pointer) = (row.get(), window.mouse_position());
+        cx.new(|_| LeftTooltip { inner, row, pointer }).into()
     }
 }

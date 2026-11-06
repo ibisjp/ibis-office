@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! データの編集: the selected chart's data opened in a workbook window of
-//! its own (the workbook editor, as PowerPoint opens Excel), the ranges its
+//! データの編集: the selected chart's data in the workbook's grid, embedded in
+//! the chart pane (the spreadsheet screen's editor, grid only), the ranges its
 //! series take their names, categories and values from framed on the
 //! sheet. What is changed there goes back to the chart as it is made:
 //! its series (as many as the table or the cells around the data hold),
 //! their caches and the workbook kept in the file (`Source::set_chart_data`).
-//! A chart with no workbook gets one made from its data.
+//! A chart with no workbook gets one made from its cached data (in memory, `Source::chart_data`), so that
+//! every chart's data is edited in the same grid, in a presentation and in a document.
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use gpui_kit::component::Root;
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, Command, ShapeId, ShapeKind, SlideId};
 use ibis_pptx::SeriesRefs;
@@ -25,18 +22,16 @@ const NAME_COLOR: u32 = 0xC0_50_4D;
 const CATEGORY_COLOR: u32 = 0x70_30_A0;
 const VALUE_COLOR: u32 = 0x44_72_C4;
 
-/// A chart's data window, open from its presentation's window.
+/// A chart's data grid, embedded in its presentation's chart pane (the spreadsheet screen's editor, grid only).
 pub(crate) struct DataWindow {
-    pub(crate) view: WeakEntity<SlideEditor>,
-    pub(crate) window: AnyWindowHandle,
+    pub(crate) view: Entity<SlideEditor>,
     pub(crate) slide: SlideId,
     pub(crate) shape: ShapeId,
     /// The ranges, as last given to the chart.
-    refs: Vec<SeriesRefs>,
+    pub(crate) refs: Vec<SeriesRefs>,
     /// The workbook's sheets as last given to the chart (to see a change).
     seen: Vec<usize>,
     _watch: Subscription,
-    _release: Subscription,
 }
 
 /// The sheets of a workbook model, by their place in memory (a changed
@@ -53,71 +48,75 @@ fn sheets_of(p: &ibis_doc_model::Presentation) -> Vec<usize> {
 }
 
 impl SlideEditor {
-    /// データの編集: the selected chart's data in a window of its own.
-    pub(crate) fn open_chart_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.end_text_edit(window, cx);
-        let Some((slide, shape, _)) = self.selected_chart() else { return };
-        if let Some(open) = self.pptx().and_then(|s| s.chart_data.as_ref())
-            && (open.slide, open.shape) == (slide, shape)
-            && open.view.upgrade().is_some()
-        {
-            open.window.update(cx, |_, w, _| w.activate_window()).ok();
-            return;
-        }
-        let Some(source) = self.source.clone() else { return };
-        let current = self.presentation().clone();
-        let failed = |e: &mut Self, err: String, cx: &mut Context<Self>| e.set_status(format!("{}: {err}", crate::shell::i18n::text("pptx.chart-data.cannot-open-chart-data")), cx);
-        let data = match source.chart_data(&current, slide, shape) {
-            Ok(d) => d,
-            Err(err) => return failed(self, err.to_string(), cx),
-        };
-        let opened = match ibis_pptx::open(data.workbook.clone()) {
-            Ok(o) => o,
-            Err(err) => return failed(self, err.to_string(), cx),
-        };
-        let seen = sheets_of(&opened.presentation);
-        let refs = data.series.clone();
-        let name: SharedString = match &self.file_name {
-            Some(file) => format!("{} - {file}", crate::shell::i18n::text("pptx.chart-data.chart-data")).into(),
-            None => crate::shell::i18n::text("pptx.chart-data.chart-data").into(),
-        };
-        let slot: Rc<RefCell<Option<Entity<SlideEditor>>>> = Default::default();
-        let set = slot.clone();
-        let ranges = refs.clone();
-        let options = WindowOptions { window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(760.), px(520.)), cx))), ..Default::default() };
-        let opened_window = cx.open_window(options, move |window, app| {
-            crate::shell::palette::watch(window, app);
-            let view = app.new(|cx| {
-                let mut editor = SlideEditor::new(ibis_doc_model::Presentation::new(), window, cx);
-                editor.load(opened.presentation, name, window, cx);
-                editor.source = Some(std::sync::Arc::new(opened.source));
-                editor.chart_ranges = Some(ranges);
-                editor
-            });
-            let focus = view.read(app).focus_handle.clone();
-            focus.focus(window, app);
-            *set.borrow_mut() = Some(view.clone());
-            app.new(|cx| Root::new(view, window, cx))
-        });
-        let (Ok(handle), Some(view)) = (opened_window, slot.borrow_mut().take()) else {
-            return failed(self, "window".into(), cx);
-        };
-        let watch = cx.observe(&view, |this, view, cx| this.sync_chart_data(&view, cx));
-        let release = cx.observe_release(&view, |this, _, cx| {
-            if let Some(s) = this.pptx_mut() {
-                s.chart_data = None;
+    /// The data grid of the chart being edited (in the presentation's state, or the document's).
+    pub(crate) fn chart_data_window(&self) -> Option<&DataWindow> {
+        if self.is_document() { self.doc_state().and_then(|s| s.helper.chart_data.as_ref()) } else { self.pptx().and_then(|s| s.chart_data.as_ref()) }
+    }
+
+    fn chart_data_window_mut(&mut self) -> Option<&mut DataWindow> {
+        if self.is_document() { self.doc_state_mut().and_then(|s| s.helper.chart_data.as_mut()) } else { self.pptx_mut().and_then(|s| s.chart_data.as_mut()) }
+    }
+
+    fn set_chart_data_window(&mut self, window: Option<DataWindow>) {
+        if self.is_document() {
+            if let Some(s) = self.doc_state_mut() {
+                s.helper.chart_data = window;
             }
-            cx.notify();
-        });
-        if let Some(s) = self.pptx_mut() {
-            s.chart_data = Some(DataWindow { view: view.downgrade(), window: handle.into(), slide, shape, refs, seen, _watch: watch, _release: release });
+        } else if let Some(s) = self.pptx_mut() {
+            s.chart_data = window;
         }
     }
 
-    /// The data window changed: if its workbook did, the chart made anew
+    /// データの編集: the selected chart's pane, with its data in the workbook's grid.
+    pub(crate) fn open_chart_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_chart_panel(window, cx);
+    }
+
+    /// The workbook editor holding the data of chart `shape` (grid only, to put in the pane), made once and kept
+    /// while the pane is open. None, with the reason in the status, when the chart's data cannot be opened.
+    pub(crate) fn chart_data_grid(&mut self, slide: SlideId, shape: ShapeId, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<SlideEditor>> {
+        if let Some(open) = self.chart_data_window()
+            && (open.slide, open.shape) == (slide, shape)
+        {
+            return Some(open.view.clone());
+        }
+        let source = self.source.clone()?;
+        let current = self.presentation().clone();
+        let data = match if self.is_document() { source.doc_chart_data(&current, shape) } else { source.chart_data(&current, slide, shape) } {
+            Ok(d) => d,
+            Err(err) => {
+                self.set_status(format!("{}: {err}", crate::shell::i18n::text("pptx.chart-data.cannot-open-chart-data")), cx);
+                return None;
+            }
+        };
+        let opened = match ibis_pptx::open(data.workbook.clone()) {
+            Ok(o) => o,
+            Err(err) => {
+                self.set_status(format!("{}: {err}", crate::shell::i18n::text("pptx.chart-data.cannot-open-chart-data")), cx);
+                return None;
+            }
+        };
+        let seen = sheets_of(&opened.presentation);
+        let refs = data.series.clone();
+        let name: SharedString = crate::shell::i18n::text("pptx.chart-data.chart-data").into();
+        let ranges = refs.clone();
+        let view = cx.new(|cx| {
+            let mut editor = SlideEditor::new(ibis_doc_model::Presentation::new(), window, cx);
+            editor.grid_only = true;
+            editor.load(opened.presentation, name, window, cx);
+            editor.source = Some(std::sync::Arc::new(opened.source));
+            editor.chart_ranges = Some(ranges);
+            editor
+        });
+        let watch = cx.observe(&view, |this, view, cx| this.sync_chart_data(&view, cx));
+        self.set_chart_data_window(Some(DataWindow { view: view.clone(), slide, shape, refs, seen, _watch: watch }));
+        Some(view)
+    }
+
+    /// The data grid changed: if its workbook did, the chart made anew
     /// from it.
     fn sync_chart_data(&mut self, view: &Entity<SlideEditor>, cx: &mut Context<Self>) {
-        let Some(open) = self.pptx().and_then(|s| s.chart_data.as_ref()) else { return };
+        let Some(open) = self.chart_data_window() else { return };
         let (slide, shape, old_refs, seen) = (open.slide, open.shape, open.refs.clone(), open.seen.clone());
         let (book, workbook_source) = {
             let v = view.read(cx);
@@ -127,7 +126,7 @@ impl SlideEditor {
         if now == seen {
             return;
         }
-        if let Some(open) = self.pptx_mut().and_then(|s| s.chart_data.as_mut()) {
+        if let Some(open) = self.chart_data_window_mut() {
             open.seen = now;
         }
         let Some(workbook_source) = workbook_source else { return };
@@ -143,7 +142,7 @@ impl SlideEditor {
                 cx.notify();
             });
         }
-        if let Some(open) = self.pptx_mut().and_then(|s| s.chart_data.as_mut()) {
+        if let Some(open) = self.chart_data_window_mut() {
             open.refs = refs.clone();
         }
         self.apply_chart_data(slide, shape, &book, ibis_pptx::ChartData { workbook: bytes, series: refs }, cx);
@@ -154,6 +153,9 @@ impl SlideEditor {
     /// the file reads it with its series rewritten.
     pub(crate) fn apply_chart_data(&mut self, slide: SlideId, shape: ShapeId, book: &ibis_doc_model::Presentation, data: ibis_pptx::ChartData, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else { return };
+        if self.is_document() {
+            return self.apply_doc_chart_data(shape, book, data, cx);
+        }
         let Some(ShapeKind::Chart(chart)) = self.presentation().slide(slide).and_then(|s| s.shape(shape)).map(|s| s.kind.clone()) else { return };
         // A chartEx chart is drawn from its part as written: read again from the file written with the data.
         if chart.ex.is_some() {

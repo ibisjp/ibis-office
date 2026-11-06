@@ -192,6 +192,11 @@ fn normalize(p: &Presentation) -> Presentation {
         layout.backdrop.iter_mut().for_each(fix_shape);
         fix_fill(&mut layout.background);
     }
+    // The rows of the animation pane for a clip (再生・一時停止・停止) are made by the save from the clip, as PowerPoint writes them
+    // (`pptx_media_timing`), and read back: not data of the model a clip put in a slide has.
+    for slide in &mut p.slides {
+        slide.animations.retain(|a| !a.is_media());
+    }
     // Pictures are compared by their data (above); a file keeps only the
     // media its slides use.
     p.media.clear();
@@ -1689,7 +1694,7 @@ fn animations_added_changed_and_removed() {
     let mut s = Scenario::open("animations", "editing/pptx-plan.pptx");
     let slide = s.p().slides[0].clone();
     let (title, subtitle) = (slide.shapes[0].id, slide.shapes[1].id);
-    let effect = |shape, class, start, look, duration, preset| Animation { shape, class, start, look, delay: 0, duration, preset, repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None };
+    let effect = |shape, class, start, look, duration, preset| Animation { shape, class, start, look, delay: 0, duration, preset, repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() };
     let mut a = vec![
         effect(title, C::Entrance, S::OnClick, L::Fade, 500, (10, 0)),
         effect(subtitle, C::Entrance, S::WithPrevious, L::Fly(AnimationSide::Bottom), 500, (2, 4)),
@@ -4191,8 +4196,8 @@ fn animations_delay_round_trip() {
     let slide = s.p().slides[0].clone();
     let (title, subtitle) = (slide.shapes[0].id, slide.shapes[1].id);
     let a = vec![
-        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fade, delay: 1000, duration: 500, preset: (10, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
-        Animation { shape: subtitle, class: C::Entrance, start: S::WithPrevious, look: L::Appear, delay: 500, duration: 1, preset: (1, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fade, delay: 1000, duration: 500, preset: (10, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
+        Animation { shape: subtitle, class: C::Entrance, start: S::WithPrevious, look: L::Appear, delay: 500, duration: 1, preset: (1, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
     ];
     let saved = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a.clone() }]);
 
@@ -4220,8 +4225,8 @@ fn animations_effect_options_round_trip() {
 
     // 1. スライドイン (上から Top = 1) および スピン (半回転 180° = 10_800_000) を設定
     let a1 = vec![
-        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fly(AnimationSide::Top), delay: 0, duration: 500, preset: (2, 1), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
-        Animation { shape: subtitle, class: C::Emphasis, start: S::WithPrevious, look: L::Spin(10_800_000), delay: 0, duration: 2000, preset: (8, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fly(AnimationSide::Top), delay: 0, duration: 500, preset: (2, 1), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
+        Animation { shape: subtitle, class: C::Emphasis, start: S::WithPrevious, look: L::Spin(10_800_000), delay: 0, duration: 2000, preset: (8, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
     ];
     let saved1 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a1.clone() }]);
 
@@ -4242,8 +4247,8 @@ fn animations_effect_options_round_trip() {
 
     // 2. 効果のオプションを変更: スライドインを「左から (Left = 8)」へ変更
     let a2 = vec![
-        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fly(AnimationSide::Left), delay: 0, duration: 500, preset: (2, 8), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
-        Animation { shape: subtitle, class: C::Emphasis, start: S::WithPrevious, look: L::Scale(200_000, 200_000), delay: 0, duration: 2000, preset: (6, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Fly(AnimationSide::Left), delay: 0, duration: 500, preset: (2, 8), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
+        Animation { shape: subtitle, class: C::Emphasis, start: S::WithPrevious, look: L::Scale(200_000, 200_000), delay: 0, duration: 2000, preset: (6, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None , paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
     ];
     let saved2 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a2.clone() }]);
 
@@ -4270,9 +4275,9 @@ fn animations_zoom_float_wipe_round_trip() {
 
     // 1. Entrance: Zoom, Float In (Top), Wipe (Bottom)
     let a1 = vec![
-        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Zoom, delay: 0, duration: 500, preset: (23, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
-        Animation { shape: subtitle, class: C::Entrance, start: S::WithPrevious, look: L::Float(AnimationSide::Top), delay: 0, duration: 1000, preset: (30, 1), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
-        Animation { shape: title, class: C::Entrance, start: S::AfterPrevious, look: L::Wipe(AnimationSide::Bottom), delay: 0, duration: 500, preset: (22, 4), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: title, class: C::Entrance, start: S::OnClick, look: L::Zoom, delay: 0, duration: 500, preset: (23, 16), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
+        Animation { shape: subtitle, class: C::Entrance, start: S::WithPrevious, look: L::Float(AnimationSide::Top), delay: 0, duration: 1000, preset: (30, 1), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
+        Animation { shape: title, class: C::Entrance, start: S::AfterPrevious, look: L::Wipe(AnimationSide::Bottom), delay: 0, duration: 500, preset: (22, 4), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
     ];
     let saved1 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a1 }]);
 
@@ -4280,7 +4285,7 @@ fn animations_zoom_float_wipe_round_trip() {
     let xml1 = package1.xml("ppt/slides/slide1.xml").unwrap();
     let root1 = xml1.root_element().unwrap();
     let zoom_node = xml1.descendants(root1).into_iter().find(|&n| xml1.is_element(n) && xml1.attr(n, "presetID") == Some("23")).expect("zoom effect");
-    assert_eq!(xml1.attr(zoom_node, "presetSubtype"), Some("0"));
+    assert_eq!(xml1.attr(zoom_node, "presetSubtype"), Some("16"));
     let float_node = xml1.descendants(root1).into_iter().find(|&n| xml1.is_element(n) && xml1.attr(n, "presetID") == Some("30")).expect("float effect");
     assert_eq!(xml1.attr(float_node, "presetSubtype"), Some("1"));
     let wipe_node = xml1.descendants(root1).into_iter().find(|&n| xml1.is_element(n) && xml1.attr(n, "presetID") == Some("22")).expect("wipe effect");
@@ -4296,9 +4301,9 @@ fn animations_zoom_float_wipe_round_trip() {
 
     // 2. Exit: Zoom, Float Out (Bottom = Down), Wipe (Top = Up)
     let a2 = vec![
-        Animation { shape: title, class: C::Exit, start: S::OnClick, look: L::Zoom, delay: 0, duration: 500, preset: (23, 0), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
-        Animation { shape: subtitle, class: C::Exit, start: S::WithPrevious, look: L::Float(AnimationSide::Bottom), delay: 0, duration: 1000, preset: (30, 2), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
-        Animation { shape: title, class: C::Exit, start: S::AfterPrevious, look: L::Wipe(AnimationSide::Top), delay: 0, duration: 500, preset: (22, 1), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None },
+        Animation { shape: title, class: C::Exit, start: S::OnClick, look: L::Zoom, delay: 0, duration: 500, preset: (23, 32), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
+        Animation { shape: subtitle, class: C::Exit, start: S::WithPrevious, look: L::Float(AnimationSide::Bottom), delay: 0, duration: 1000, preset: (30, 2), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
+        Animation { shape: title, class: C::Exit, start: S::AfterPrevious, look: L::Wipe(AnimationSide::Top), delay: 0, duration: 500, preset: (22, 1), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() },
     ];
     let saved2 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a2 }]);
 
@@ -4428,7 +4433,7 @@ fn animations_custom_path_round_trip() {
         paragraph: None, chars: None, text_unit: None,
         path: path.clone(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     }];
     let saved = s.run(vec![Command::SetAnimations { slide: slide.id, animations }]);
     let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
@@ -4593,7 +4598,7 @@ fn animations_motion_path_round_trip() {
         trigger: ibis_doc_model::AnimationTrigger::None,
         paragraph: None, chars: None, text_unit: None, path: Vec::new(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     }];
     let saved1 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a1.clone() }]);
 
@@ -4634,7 +4639,7 @@ fn animations_motion_path_round_trip() {
         trigger: ibis_doc_model::AnimationTrigger::None,
         paragraph: None, chars: None, text_unit: None, path: Vec::new(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     }];
     let saved2 = s.run(vec![Command::SetAnimations { slide: slide.id, animations: a2.clone() }]);
 
@@ -5728,7 +5733,7 @@ fn test_animation_repeat_and_autoreverse_round_trip() {
         trigger: ibis_doc_model::AnimationTrigger::None,
         paragraph: None, chars: None, text_unit: None, path: Vec::new(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     };
     let saved = s.run(vec![Command::SetAnimations { slide, animations: vec![anim.clone()] }]);
 
@@ -5812,7 +5817,7 @@ fn test_animation_smooth_start_and_end_round_trip() {
         trigger: ibis_doc_model::AnimationTrigger::None,
         paragraph: None, chars: None, text_unit: None, path: Vec::new(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     };
     let saved = s.run(vec![Command::SetAnimations { slide, animations: vec![anim.clone()] }]);
 
@@ -5898,7 +5903,7 @@ fn test_animation_after_effect_round_trip() {
         trigger: ibis_doc_model::AnimationTrigger::None,
         paragraph: None, chars: None, text_unit: None, path: Vec::new(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     };
     let saved = s.run(vec![Command::SetAnimations { slide, animations: vec![anim.clone()] }]);
 
@@ -5956,7 +5961,7 @@ fn test_animation_rewind_round_trip() {
         trigger: ibis_doc_model::AnimationTrigger::None,
         paragraph: None, chars: None, text_unit: None, path: Vec::new(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     };
     let saved = s.run(vec![Command::SetAnimations { slide, animations: vec![anim.clone()] }]);
 
@@ -6015,7 +6020,7 @@ fn test_animation_triggers_round_trip() {
         trigger: ibis_doc_model::AnimationTrigger::None,
         paragraph: None, chars: None, text_unit: None, path: Vec::new(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     };
     let anim_click_trigger = ibis_doc_model::Animation {
         shape: shape_target1,
@@ -6034,7 +6039,7 @@ fn test_animation_triggers_round_trip() {
         trigger: ibis_doc_model::AnimationTrigger::OnShapeClick(shape_trigger),
         paragraph: None, chars: None, text_unit: None, path: Vec::new(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     };
     let anim_bmk_trigger = ibis_doc_model::Animation {
         shape: shape_trigger,
@@ -6056,7 +6061,7 @@ fn test_animation_triggers_round_trip() {
         },
         paragraph: None, chars: None, text_unit: None, path: Vec::new(),
         chart_element: None, chart_build: None,
-        dgm_element: None, dgm_build: None,
+        dgm_element: None, dgm_build: None, behaviors: Vec::new(),
     };
 
     let anims = vec![anim_normal.clone(), anim_click_trigger.clone(), anim_bmk_trigger.clone()];

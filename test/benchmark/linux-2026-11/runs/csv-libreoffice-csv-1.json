@@ -1,0 +1,53 @@
+{
+ "end": 16.593,
+ "last_change": 16.593,
+ "end_video_frame": 68,
+ "first_change": 0.231,
+ "window_end": 16.593,
+ "doc_changes_count": 4,
+ "doc_changes": [
+  [
+   0.231,
+   0.15628
+  ],
+  [
+   16.429,
+   0.50468
+  ],
+  [
+   16.44,
+   0.07487
+  ],
+  [
+   16.593,
+   0.26851
+  ]
+ ],
+ "recorded_until": 24.595,
+ "grabs": 2309,
+ "capped": false,
+ "tag": "csv-libreoffice-csv-1",
+ "scenario": "csv",
+ "app": "libreoffice",
+ "kind": "csv",
+ "run": 1,
+ "file": "kpi-max-rows.csv",
+ "command": [
+  "soffice26",
+  "--infilter=CSV:44,34,76,1",
+  "/tmp/ibis-bench-_t1aya0p/kpi-max-rows.csv"
+ ],
+ "rects": [
+  [
+   0.0,
+   "320 140 1280 800"
+  ]
+ ],
+ "cap": 900,
+ "measured_at": "2026-11-03 19:53:00",
+ "load_before": [
+  1.05,
+  1.03,
+  0.76
+ ]
+}

@@ -131,7 +131,7 @@ impl SlideEditor {
             this.insert_symbol_with_window(c, window, cx);
             this.focus_handle.focus(window, cx);
         });
-        Some(SidebarPanel { title: crate::shell::i18n::text("fix.symbols.symbols-special-characters"), body: picker(group, select, pick, self.panel_dialog.bounds.map_or(px(520.), |b| b.size.width), cx) })
+        Some(SidebarPanel { title: crate::shell::i18n::text("fix.symbols.symbols-special-characters"), body: picker(group, select, pick, self.dialog.bounds.map_or(px(520.), |b| b.size.width), cx) })
     }
 }
 

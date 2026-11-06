@@ -1082,6 +1082,12 @@ pub fn export_docx_to_doc(presentation: &Presentation) -> Result<Vec<u8>, Error>
     export_doc(doc)
 }
 
+/// Whether `data` is an old Word document (`.doc`): a compound file with a `WordDocument` stream (or the RTF stream this
+/// program writes into the `.doc` it saves).
+pub fn is_doc(data: &[u8]) -> bool {
+    cfb::is_cfb(data) && (cfb::stream(data, "WordDocument").is_ok() || cfb::stream(data, "IbisDocRtf").is_ok())
+}
+
 /// Convert legacy `.doc` bytes into `.docx` package bytes.
 pub fn import_doc_to_docx_bytes(data: &[u8]) -> Result<Vec<u8>, Error> {
     // 1. If it's an OLE2 Compound File Binary:
@@ -1091,6 +1097,10 @@ pub fn import_doc_to_docx_bytes(data: &[u8]) -> Result<Vec<u8>, Error> {
             if !rtf_bytes.is_empty() {
                 return import_rtf_to_docx_bytes(&rtf_bytes);
             }
+        }
+        // A Word 97-2003 document with its formatting ([MS-DOC]); else its text alone, as below.
+        if let Some(docx) = crate::msdoc::to_docx(data) {
+            return Ok(docx);
         }
         // Otherwise parse MS-DOC `WordDocument` FIB + text stream:
         if let Ok(wd) = cfb::stream(data, "WordDocument") {
@@ -1104,6 +1114,13 @@ pub fn import_doc_to_docx_bytes(data: &[u8]) -> Result<Vec<u8>, Error> {
                 } else {
                     0
                 };
+                // A Word file keeps its text in the pieces of the piece table (the CLX of the table stream), in any order and
+                // part 8-bit, part UTF-16: read it from there when the file has one.
+                if w_ident == 0xA5EC {
+                    if let Some(raw_text) = doc_text_from_pieces(data, &wd) {
+                        return doc_raw_text_to_docx_bytes(&raw_text);
+                    }
+                }
                 if w_ident == 0xA5EC && fc_min < wd.len() {
                     let end = fc_mac.min(wd.len()).max(fc_min);
                     let slice = &wd[fc_min..end];
@@ -1143,30 +1160,119 @@ pub fn import_doc_to_docx_bytes(data: &[u8]) -> Result<Vec<u8>, Error> {
     import_txt_to_docx_bytes(data)
 }
 
+/// The main text of a Word 97-2003 file, from the piece table ([MS-DOC] 2.4.1 and 2.9.177): the FIB gives where the CLX is
+/// in the table stream (`fcClx` and `lcbClx`, the 34th pair of `FibRgFcLcb97`, at 0x1A2) and which table stream (`0Table`
+/// or `1Table`, the bit 0x0200 of the flags) holds it. Each piece is a run of characters at a file position: 8-bit Windows-1252
+/// when its `fc` has the bit 30 set (then the position is `fc / 2`), UTF-16 otherwise. Only the main document's
+/// `ccpText` characters are taken (footnotes, headers and the like follow it). `None` when the file has no such table.
+fn doc_text_from_pieces(data: &[u8], wd: &[u8]) -> Option<String> {
+    let u16_at = |b: &[u8], o: usize| b.get(o..o + 2).map(|x| u16::from_le_bytes([x[0], x[1]]));
+    let u32_at = |b: &[u8], o: usize| b.get(o..o + 4).map(|x| u32::from_le_bytes([x[0], x[1], x[2], x[3]]));
+    let flags = u16_at(wd, 10)?;
+    if flags & 0x0100 != 0 {
+        return None; // encrypted
+    }
+    let fc_clx = u32_at(wd, 0x1A2)? as usize;
+    let lcb_clx = u32_at(wd, 0x1A6)? as usize;
+    if lcb_clx == 0 {
+        return None;
+    }
+    let table = cfb::stream(data, if flags & 0x0200 != 0 { "1Table" } else { "0Table" }).ok()?;
+    let clx = table.get(fc_clx..fc_clx.checked_add(lcb_clx)?)?;
+    // Prc entries (0x01, a 16-bit size and the data) come first, then the Pcdt (0x02, a 32-bit size, the PlcPcd).
+    let mut at = 0;
+    while *clx.get(at)? == 0x01 {
+        at += 3 + u16_at(clx, at + 1)? as usize;
+    }
+    if *clx.get(at)? != 0x02 {
+        return None;
+    }
+    let plc_len = u32_at(clx, at + 1)? as usize;
+    let plc = clx.get(at + 5..at + 5 + plc_len)?;
+    // n + 1 character positions (4 bytes) and n piece descriptors (8 bytes).
+    let n = plc_len.checked_sub(4)? / 12;
+    let ccp_text = u32_at(wd, 76)? as usize;
+    let mut text: Vec<u16> = Vec::new();
+    for i in 0..n {
+        let cp_start = u32_at(plc, i * 4)? as usize;
+        let cp_end = (u32_at(plc, (i + 1) * 4)? as usize).min(ccp_text);
+        if cp_end <= cp_start {
+            continue;
+        }
+        let count = cp_end - cp_start;
+        let fc = u32_at(plc, (n + 1) * 4 + i * 8 + 2)?;
+        if fc & 0x4000_0000 != 0 {
+            let start = ((fc & 0x3FFF_FFFF) / 2) as usize;
+            let bytes = wd.get(start..start + count)?;
+            let (decoded, _, _) = encoding_rs::WINDOWS_1252.decode(bytes);
+            text.extend(decoded.encode_utf16());
+        } else {
+            let start = fc as usize;
+            let bytes = wd.get(start..start + count * 2)?;
+            text.extend(bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])));
+        }
+    }
+    (!text.is_empty()).then(|| strip_doc_fields(&String::from_utf16_lossy(&text)))
+}
+
+/// The text of a Word file without its field codes: a field is 0x13, its instruction, 0x14, its result and 0x15 (the
+/// instruction is dropped, the result kept; a field with no result goes whole). Fields may nest.
+fn strip_doc_fields(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    // For each open field, whether its instruction is still being read.
+    let mut open: Vec<bool> = Vec::new();
+    for c in text.chars() {
+        match c {
+            '\x13' => open.push(true),
+            '\x14' => {
+                if let Some(last) = open.last_mut() {
+                    *last = false;
+                }
+            }
+            '\x15' => {
+                open.pop();
+            }
+            _ if open.iter().any(|&in_instruction| in_instruction) => {}
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn doc_raw_text_to_docx_bytes(raw_text: &str) -> Result<Vec<u8>, Error> {
     let mut blocks = Vec::new();
     let mut table_rows: Vec<Vec<Vec<ConvPara>>> = Vec::new();
     let mut cur_row: Vec<Vec<ConvPara>> = Vec::new();
 
+    let plain_para = |text: String| ConvPara { runs: vec![ConvRun { text, ..Default::default() }], ..Default::default() };
     for seg in raw_text.split('\r') {
         if seg.contains('\x07') {
-            for cell_txt in seg.split('\x07') {
-                let clean: String = cell_txt
-                    .chars()
-                    .filter(|&c| c == '\t' || c == '\n' || !c.is_control())
-                    .collect();
-                if !clean.is_empty() {
-                    cur_row.push(vec![ConvPara {
-                        runs: vec![ConvRun {
-                            text: clean,
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    }]);
+            // Cells end with a cell mark (0x07), and a row with a mark of its own right after the last cell's: an empty piece
+            // after a cell is the end of the row. Text after the last mark is an ordinary paragraph.
+            let mut pieces: Vec<&str> = seg.split('\x07').collect();
+            let trailing = pieces.pop().unwrap_or("");
+            let mut after_cell = false;
+            for piece in pieces {
+                let clean: String = piece.chars().filter(|&c| c == '\t' || c == '\n' || !c.is_control()).collect();
+                if clean.is_empty() && after_cell {
+                    if !cur_row.is_empty() {
+                        table_rows.push(std::mem::take(&mut cur_row));
+                    }
+                    after_cell = false;
+                } else {
+                    cur_row.push(vec![plain_para(clean)]);
+                    after_cell = true;
                 }
             }
             if !cur_row.is_empty() {
                 table_rows.push(std::mem::take(&mut cur_row));
+            }
+            let clean: String = trailing.chars().filter(|&c| c == '\t' || !c.is_control()).collect();
+            if !clean.is_empty() {
+                if !table_rows.is_empty() {
+                    blocks.push(ConvBlock::Table(ConvTable { rows: std::mem::take(&mut table_rows) }));
+                }
+                blocks.push(ConvBlock::Para(plain_para(clean)));
             }
             continue;
         }
@@ -1487,7 +1593,7 @@ pub fn import_html_to_docx_bytes(data: &[u8]) -> Result<Vec<u8>, Error> {
                                 let after = style[c_idx + 6..].trim_start();
                                 if let Some(hex) = after.strip_prefix('#') {
                                     if hex.len() >= 6 {
-                                        if let Ok(rgb) = u32::from_str_radix(&hex[..6], 16) {
+                                        if let Some(Ok(rgb)) = hex.get(..6).map(|h| u32::from_str_radix(h, 16)) {
                                             found_color = Some(Rgb(rgb));
                                         }
                                     }
@@ -1806,7 +1912,7 @@ pub fn import_odt_to_docx_bytes(data: &[u8]) -> Result<Vec<u8>, Error> {
                         } else if aname.ends_with("text-line-through-style") && aval != "none" {
                             def.strike = true;
                         } else if aname.ends_with("color") && aval.starts_with('#') && aval.len() == 7 {
-                            if let Ok(rgb) = u32::from_str_radix(&aval[1..], 16) {
+                            if let Some(Ok(rgb)) = aval.get(1..).map(|h| u32::from_str_radix(h, 16)) {
                                 def.color = Some(Rgb(rgb));
                             }
                         } else if aname == "font-size" {

@@ -23,6 +23,8 @@ pub(crate) struct TableDesignPanel {
     /// The column whose 集計行 function is being chosen.
     pub(crate) total_column: Option<usize>,
     pub(crate) message: String,
+    /// 0 = デザイン, 1 = コマンド (the panel header tabs).
+    pub(crate) tab: usize,
 }
 
 /// The functions of a 集計行 cell: (`totalsRowFunction`, SUBTOTAL's
@@ -148,7 +150,7 @@ impl SlideEditor {
         s.conditional_edit = None;
         s.sort_edit = None;
         s.close_settings();
-        s.panels.table_design = Some(TableDesignPanel { index, name: input, _name_subscription:name_subscription, total_column: None, message: String::new() });
+        s.panels.table_design = Some(TableDesignPanel { index, name: input, _name_subscription:name_subscription, total_column: None, message: String::new(), tab: 0 });
         self.sidebar_open = true;
         cx.notify();
     }
@@ -352,7 +354,7 @@ impl SlideEditor {
             this.focus_handle.focus(window, cx);
         });
         menu.read(cx).focus_handle(cx).focus(window, cx);
-        self.wb_mut().list_popup = Some(super::validation::ListPopup { menu, position, _dismiss: dismiss });
+        self.wb_mut().list_popup = Some(super::validation::ListPopup { menu, position, anchor: Anchor::TopLeft, _dismiss: dismiss });
         cx.notify();
     }
 
@@ -438,6 +440,7 @@ impl SlideEditor {
         let t = sheet.tables.get(index)?.clone();
         let message = p.message.clone();
         let total_column = p.total_column;
+        let tab = p.tab;
         let st = t.style.clone().unwrap_or_default();
         let mut body = v_flex()
             .gap_1()
@@ -474,61 +477,52 @@ impl SlideEditor {
                 }
             }
         }
-        body = body
-            .child(div().pt(px(6.)).child(text("_xlsx.options")))
-            .child(
-                v_flex()
-                    .gap_1()
-                    .items_start()
-                    .child(
-                        crate::shell::chrome::action_button("table-design-resize")
-                            .small()
-                            .label(text("_xlsx.table-resize"))
-                            .on_click(cx.listener(|this, _, window, cx| this.resize_table_dialog(window, cx))),
-                    )
-                    .child(
-                        crate::shell::chrome::action_button("table-design-pivot")
-                            .small()
-                            .label(text("xlsx.pivot-insert"))
-                            .on_click(cx.listener(|this, _, window, cx| this.open_create_pivot(window, cx))),
-                    )
-                    .child(
-                        crate::shell::chrome::action_button("table-design-slicer")
-                            .small()
-                            .label(text("xlsx.slicer-insert"))
-                            .on_click(cx.listener(|this, _, window, cx| this.open_slicer_insert_panel(window, cx))),
-                    )
-                    .child(
-                        crate::shell::chrome::action_button("table-design-timeline")
-                            .small()
-                            .label(text("xlsx.timeline-insert"))
-                            .on_click(cx.listener(|this, _, window, cx| this.open_timeline_insert_panel(window, cx))),
-                    )
-                    .child(
-                        crate::shell::chrome::destructive_button("table-design-dedupe",cx)
-                            .small()
-                            .label(text("xlsx.remove-duplicates"))
-                            .on_click(cx.listener(|this, _, window, cx| this.open_dedupe_panel(window, cx))),
-                    )
-                    .child(
-                        crate::shell::chrome::action_button("table-design-to-range")
-                            .small()
-                            .label(text("xlsx.table-to-range"))
-                            .on_click(cx.listener(|this, _, _, cx| this.table_to_range(cx))),
-                    ),
-            );
+        use crate::shell::chrome::{button_group, ButtonGroupItem, ActionButtonKind};
+        let commands = v_flex().gap_1().child(div().pt(px(6.)).child(text("_xlsx.options"))).child(
+            button_group([
+                ButtonGroupItem::new("table-design-resize", text("_xlsx.table-resize")).on_click(cx.listener(|this, _, window, cx| this.resize_table_dialog(window, cx))),
+                ButtonGroupItem::new("table-design-pivot", text("xlsx.pivot-insert")).on_click(cx.listener(|this, _, window, cx| this.open_create_pivot(window, cx))),
+                ButtonGroupItem::new("table-design-slicer", text("xlsx.slicer-insert")).on_click(cx.listener(|this, _, window, cx| this.open_slicer_insert_panel(window, cx))),
+                ButtonGroupItem::new("table-design-timeline", text("xlsx.timeline-insert")).on_click(cx.listener(|this, _, window, cx| this.open_timeline_insert_panel(window, cx))),
+                ButtonGroupItem::new("table-design-dedupe", text("xlsx.remove-duplicates")).kind(ActionButtonKind::Destructive).on_click(cx.listener(|this, _, window, cx| this.open_dedupe_panel(window, cx))),
+                ButtonGroupItem::new("table-design-to-range", text("xlsx.table-to-range")).on_click(cx.listener(|this, _, _, cx| this.table_to_range(cx))),
+            ])
+            .stacked(),
+        );
         body = body.child(div().pt(px(6.)).child(text("_xlsx.table-styles")));
-        let mut styles = v_flex().gap_1();
+        let theme = self.presentation().workbook.as_ref().map(|w| w.theme_colors.clone()).unwrap_or_default();
+        let mut items = Vec::new();
         for (name, label) in style_names() {
             let on = st.name == name;
             let chosen = name.clone();
-            styles = styles.child(crate::shell::chrome::radio_button(SharedString::from(format!("table-style-{name}")), on, false, label, cx.listener(move |this, _, _, cx| {
-                let chosen = chosen.clone();
-                this.set_table_style(index, move |s| s.name = chosen, cx)
-            })));
+            let id = SharedString::from(format!("table-style-{name}"));
+            let info = TableStyleInfo { name: name.clone(), ..st.clone() };
+            let tip = label.clone();
+            let item = div().id(id.clone()).role(gpui_kit::Role::RadioButton).aria_label(label)
+                .aria_toggled(if on { gpui_kit::Toggled::True } else { gpui_kit::Toggled::False })
+                .cursor_pointer()
+                .child(super::table_style_preview::table_style_preview(&info, &theme, on))
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let chosen = chosen.clone();
+                    this.set_table_style(index, move |s| s.name = chosen, cx)
+                }));
+            // The scenario tests press it by its rendered bounds.
+            #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+            let item = crate::shell::scenario::button_probe::observe_control(item, id.into());
+            items.push(item);
         }
-        body = body.child(styles).child(div().text_sm().child(SharedString::from(message)));
-        Some(SidebarPanel{title:"_xlsx.table-design".into(),body:body.into_any_element()})
+        // Two columns, as many rows as needed.
+        let mut styles = v_flex().id("table-styles-grid").gap(px(8.));
+        let mut items = items.into_iter();
+        while let Some(first) = items.next() {
+            styles = styles.child(h_flex().gap(px(8.)).child(first).children(items.next()));
+        }
+        body = body.child(styles).child(div().text_sm().child(SharedString::from(message.clone())));
+        let content = if tab == 0 { body.into_any_element() } else { commands.child(div().text_sm().child(SharedString::from(message))).into_any_element() };
+        let labels = [text("xlsx.table-design.tab-design"), text("xlsx.table-design.tab-commands")];
+        Some(SidebarPanel{title:"_xlsx.table-design".into(),body:content}
+            .header_tabs("table-design-tabs", labels, tab, |e, i, cx| { if let Some(p) = e.wb_mut().panels.table_design.as_mut() { p.tab = i; } cx.notify(); }, cx))
     }
 
     /// テーブルの選択 (`mode`: 0=全体, 1=データ, 2=列全体, 3=列データ, 4=行)

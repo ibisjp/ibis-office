@@ -1,0 +1,22 @@
+{
+ "tag": "pdf-onlyoffice-pptx-1",
+ "scenario": "pdf",
+ "app": "onlyoffice",
+ "kind": "pptx",
+ "run": 1,
+ "file": "earnings-presentation.pptx",
+ "seconds": 2.077,
+ "returncode": 80,
+ "pdf_bytes": 0,
+ "pages": null,
+ "command": [
+  "x2t",
+  "task.xml"
+ ],
+ "measured_at": "2026-11-03 18:55:26",
+ "load_before": [
+  0.81,
+  0.44,
+  0.24
+ ]
+}

@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 355" width="100%" height="auto">
+  <defs>
+    <style>
+      .font-sans {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Hiragino Sans", "Noto Sans JP", sans-serif;
+      }
+      .title-text {
+        font-size: 24px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+      }
+      .subtitle-text {
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .indicator-text {
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .group-title-text {
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .group-meta-text {
+        font-size: 12px;
+        font-weight: 400;
+      }
+      .killer-badge-text {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+      }
+      .label-highlight {
+        font-size: 13px;
+        font-weight: 800;
+      }
+      .label-normal {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .time-highlight {
+        font-size: 13.5px;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+      }
+      .time-normal {
+        font-size: 13px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .ratio-text {
+        font-size: 11.5px;
+        font-weight: 500;
+      }
+      .footer-env-text {
+        font-size: 11.5px;
+        font-weight: 500;
+      }
+      .bar-warning-text { font-size: 11px; font-weight: 700; }
+      .brand-text {
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+      }
+    </style>
+    <linearGradient id="ibisGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0284C7" />
+      <stop offset="100%" stop-color="#2563EB" />
+    </linearGradient>
+    <linearGradient id="badgeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background Card (No Drop Shadow) -->
+  <rect x="0.5" y="0.5" width="959" height="354" rx="16" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1" />
+
+  <!-- Header -->
+  <g class="font-sans">
+    <!-- Title & Subtitle -->
+    <text x="30" y="54" fill="#0F172A" class="title-text">100万行 CSV 初回表示（First View）速度ベンチマーク（Linux）</text>
+    <text x="30" y="78" fill="#475569" class="subtitle-text">ファイルを開かせてから最初の画面が表示され、閲覧・スクロールが可能になるまで（3 回の中央値）</text>
+
+    <!-- Indicator Pill (Right) -->
+    <rect x="824" y="38" width="106" height="28" rx="10" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1" />
+    <circle cx="838" cy="52" r="3.5" fill="#0284C7" />
+    <text x="848" y="56" fill="#0284C7" class="indicator-text">短いほど高速</text>
+
+    <!-- Divider -->
+    <line x1="30" y1="98" x2="930" y2="98" stroke="#F1F5F9" stroke-width="1" />
+  </g>
+
+  <!-- Sections -->
+  
+  <g class="font-sans">
+    <rect x="30" y="114" width="900" height="144" rx="12" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1" />
+    <rect x="46" y="128" width="22" height="22" rx="5" fill="#0D9488" />
+    <text x="57" y="144" text-anchor="middle" fill="#FFFFFF" font-size="11" font-weight="800">C</text>
+    <text x="76" y="144" fill="#1E293B" class="group-title-text">巨大表計算（.csv） <tspan fill="#64748B" class="group-meta-text">— 1,048,576 行、20 列、122MB（First View）</tspan></text>
+    <rect x="769" y="127" width="145" height="24" rx="6" fill="url(#badgeGrad)" />
+    <text x="841" y="143" text-anchor="middle" fill="#FFFFFF" class="killer-badge-text">⚡ 24.0〜126.5 倍高速</text>
+    <text x="46" y="178" fill="#0284C7" class="label-highlight">★ <tspan fill="#0F172A">ibisOffice</tspan></text>
+    <rect x="186" y="164" width="14.4" height="18" rx="5" fill="url(#ibisGrad)" />
+    <text x="210.4" y="178" fill="#0284C7" class="time-highlight">0.72 秒</text>
+    <text x="46" y="206" fill="#475569" class="label-normal">LibreOffice</text>
+    <rect x="186" y="192" width="91.0" height="18" rx="5" fill="#CBD5E1" />
+    <text x="287.0" y="206" fill="#475569" class="time-normal">17.29 秒<tspan fill="#64748B" class="ratio-text"> （24.0倍）</tspan></text>
+    <text x="46" y="234" fill="#475569" class="label-normal">ONLYOFFICE</text>
+    <rect x="186" y="220" width="480.0" height="18" rx="5" fill="#CBD5E1" />
+    <text x="676.0" y="234" fill="#475569" class="time-normal">91.2 秒※<tspan fill="#64748B" class="ratio-text"> （126.5倍）</tspan></text>
+  </g>
+
+  <g class="font-sans">
+    <text x="30" y="284" fill="#64748B" class="footer-env-text">※ ONLYOFFICE は 100 万行も 30 万行も開けなかった（約 1 分で「メモリ不足」のエラー）ため、10 万行（9.12 秒）の 10 倍と推定</text>
+  </g>
+  <!-- Footer -->
+  <g class="font-sans">
+    <line x1="30" y1="300" x2="930" y2="300" stroke="#F1F5F9" stroke-width="1" />
+    <text x="30" y="330" fill="#64748B" class="footer-env-text">Intel Core i7-10700K（メモリ 16GB）、Ubuntu 20.04.6 LTS（GNOME・X11）  •  ibisOffice 0.8.5 vs LibreOffice 26.8.2 vs ONLYOFFICE 10.0.0</text>
+    
+    <circle cx="856" cy="326" r="3.5" fill="#0284C7" />
+    <text x="866" y="330" fill="#0284C7" class="brand-text">ibisOffice</text>
+  </g>
+</svg>

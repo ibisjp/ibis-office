@@ -69,6 +69,21 @@ pub(crate) struct CellEdit {
     pub(crate) scroll_y: Rc<Cell<f32>>,
     /// The caret the scroll last followed (UTF-16 units): when the caret moves, the box scrolls to show it.
     pub(crate) followed_caret: Rc<Cell<Option<usize>>>,
+    /// The height of the box (in half pixels) the sheet was last scrolled to keep above the bottom of the view for (#105).
+    pub(crate) fitted_height: Rc<Cell<Option<i64>>>,
+    /// Which displayed line the caret is on when it sits where two displayed lines meet, and the x ↑ and ↓ keep.
+    pub(crate) line_nav: Rc<Cell<LineNav>>,
+    /// Set when the text is a note's (typed into its own box, notes.rs) and not a cell's.
+    pub(crate) note: Option<super::notes::NoteEdit>,
+}
+
+/// Where the caret is among the displayed lines of the text being typed (`CellEdit::displayed_line`, `CellEdit::caret_after_line_move`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LineNav {
+    /// The displayed line the caret was put on (by a click, ↑, ↓, Home or End): a caret at the end of a wrapped line is also at the start of the next one.
+    pub(crate) row: Option<usize>,
+    /// The caret (UTF-16 units) ↑ or ↓ last put and the x it came from, kept by the next ↑ or ↓ while the caret has not moved otherwise.
+    pub(crate) goal: Option<(usize, f32)>,
 }
 
 /// Font changes for the next typed text (Excel's ⌘B with the caret alone),
@@ -193,6 +208,20 @@ pub(crate) fn text_lines(text: &str) -> Vec<(usize, &str)> {
         .collect()
 }
 
+/// The byte of `text` nearest in x to `x` (from the cell's left) among the boundaries between characters of displayed line `line`.
+pub(crate) fn nearest_in_line(layout: &super::sheet_view::EditLayout, line: usize, text: &str, x: f32) -> usize {
+    let line = &layout.lines[line];
+    let (start, end) = (line.start.min(text.len()), line.end.min(text.len()));
+    let mut best = (f32::MAX, start);
+    for i in text[start..end].char_indices().map(|(i, _)| start + i).chain(std::iter::once(end)) {
+        let d = (line.x_at(i) - x).abs();
+        if d < best.0 {
+            best = (d, i);
+        }
+    }
+    best.1
+}
+
 /// A line of the formula bar's text while typing, kept whole so moving the caret never splits text runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BarLine {
@@ -202,22 +231,38 @@ pub(crate) struct BarLine {
 }
 
 impl CellEdit {
+    /// The displayed line (an index into the layout's lines, wrapped lines included) the caret is on: the line it was put on when that
+    /// line holds it, else the first line that reaches the caret.
+    pub(crate) fn displayed_line(&self, layout: &super::sheet_view::EditLayout) -> usize {
+        let b = self.caret_byte();
+        let holds = |l: &super::sheet_view::EditLine| l.start <= b && b <= l.end;
+        self.line_nav.get().row.filter(|&i| layout.lines.get(i).is_some_and(holds)).unwrap_or_else(|| layout.line_of(b))
+    }
+
+    /// Where the caret goes one displayed line up (`dy` < 0) or down: the boundary between characters nearest to the x it is at (kept over
+    /// several moves), the start of the text from the first line, the end of the text from the last (`to_text_ends`; else the first or last line
+    /// at most, as PageUp and PageDown go). The line it is then on is returned too. None before the text has been laid out.
+    pub(crate) fn caret_after_line_move(&self, dy: i32, to_text_ends: bool) -> Option<(usize, usize)> {
+        let layout = self.layout.borrow().clone().filter(|l| !l.lines.is_empty())?;
+        let current = self.displayed_line(&layout);
+        let mut target = current as i64 + dy as i64;
+        if to_text_ends && target < 0 {
+            return Some((0, 0));
+        }
+        if to_text_ends && target as usize >= layout.lines.len() {
+            return Some((utf16_len(&self.text), layout.lines.len() - 1));
+        }
+        target = target.clamp(0, layout.lines.len() as i64 - 1);
+        let b = self.caret_byte();
+        let x = self.line_nav.get().goal.filter(|&(c, _)| c == self.caret).map_or_else(|| layout.lines[current].x_at(b), |(_, x)| x);
+        let to = utf16_len(&self.text[..nearest_in_line(&layout, target as usize, &self.text, x)]);
+        self.line_nav.set(LineNav { row: Some(target as usize), goal: Some((to, x)) });
+        Some((to, target as usize))
+    }
+
     /// The line the caret is on (an index into `text_lines`).
     pub(crate) fn caret_line(&self) -> usize {
         text_lines(&self.text).iter().rposition(|(start, _)| *start <= self.caret).unwrap_or(0)
-    }
-
-    /// Where the caret goes one line up (`dy` < 0) or down, to the same column or the end of a shorter line; none at the first or last line.
-    pub(crate) fn caret_after_line_move(&self, dy: i32) -> Option<usize> {
-        let lines = text_lines(&self.text);
-        let current = self.caret_line();
-        let target = current as i64 + dy as i64;
-        if target < 0 || target as usize >= lines.len() {
-            return None;
-        }
-        let column = self.caret - lines[current].0;
-        let (start, line) = lines[target as usize];
-        Some(start + column.min(utf16_len(line)))
     }
 
     /// One line of the text (starting at UTF-16 position `start`) as the bar shows it while typing: its full text, the selected byte range, and the caret byte offset.
@@ -340,9 +385,9 @@ pub(crate) fn word_range(text: &str, at: usize) -> (usize, usize) {
 
 impl SlideEditor {
     /// The caret position (UTF-16 units) the pointer is at in the text being
-    /// typed: the boundary between characters nearest to it. `None` before
-    /// the text has been painted.
-    pub(crate) fn cell_text_index_at(&self, position: Point<Pixels>, _cx: &App) -> Option<usize> {
+    /// typed, and the displayed line it is on: the boundary between characters
+    /// nearest to it. `None` before the text has been painted.
+    pub(crate) fn cell_text_index_at(&self, position: Point<Pixels>, _cx: &App) -> Option<(usize, usize)> {
         let edit = self.cell_edit()?;
         let rect = edit.rect.get()?;
         let layout = edit.layout.borrow().clone()?;
@@ -351,17 +396,9 @@ impl SlideEditor {
         let y = f32::from(position.y - rect.origin.y) + edit.scroll_y.get();
         // The line whose middle is nearest to the pointer, then the boundary between characters nearest in x.
         let middle = |l: &super::sheet_view::EditLine| l.baseline + (l.descent - l.ascent) / 2.0;
-        let line = layout.lines.iter().min_by(|a, b| (y - middle(a)).abs().total_cmp(&(y - middle(b)).abs()))?;
-        let text = &edit.text;
-        let (start, end) = (line.start.min(text.len()), line.end.min(text.len()));
-        let mut best = (f32::MAX, start);
-        for (i, _) in text[start..end].char_indices().map(|(i, c)| (start + i, c)).chain(std::iter::once((end, ' '))) {
-            let d = (line.x_at(i) - x).abs();
-            if d < best.0 {
-                best = (d, i);
-            }
-        }
-        Some(utf16_len(&text[..best.1]))
+        let (line, _) = layout.lines.iter().enumerate().min_by(|a, b| (y - middle(a.1)).abs().total_cmp(&(y - middle(b.1)).abs()))?;
+        let best = nearest_in_line(&layout, line, &edit.text, x);
+        Some((utf16_len(&edit.text[..best]), line))
     }
 
     /// The caret position (UTF-16 units) the pointer is at in the formula
@@ -396,7 +433,7 @@ impl SlideEditor {
     pub(crate) fn press_in_bar_text(&mut self, position: Point<Pixels>, click_count: usize, shift: bool, window: &Window, cx: &mut Context<Self>) -> bool {
         let Some(index) = self.bar_text_index_at(position, window) else { return false };
         self.wb_mut().bar_caret_row=None;
-        self.place_caret(index, click_count, shift, true, cx);
+        self.place_caret(index, None, click_count, shift, true, cx);
         true
     }
 
@@ -404,8 +441,8 @@ impl SlideEditor {
     /// the selection, a double-click selects the word) and dragging on
     /// selects; typing goes on in Edit mode. False if it could not tell where.
     pub(crate) fn press_in_cell_text(&mut self, position: Point<Pixels>, click_count: usize, shift: bool, cx: &mut Context<Self>) -> bool {
-        let Some(index) = self.cell_text_index_at(position, cx) else { return false };
-        self.place_caret(index, click_count, shift, false, cx);
+        let Some((index, line)) = self.cell_text_index_at(position, cx) else { return false };
+        self.place_caret(index, Some(line), click_count, shift, false, cx);
         true
     }
 
@@ -419,9 +456,10 @@ impl SlideEditor {
         cx.notify();
     }
 
-    fn place_caret(&mut self, index: usize, click_count: usize, shift: bool, in_bar: bool, cx: &mut Context<Self>) {
+    fn place_caret(&mut self, index: usize, line: Option<usize>, click_count: usize, shift: bool, in_bar: bool, cx: &mut Context<Self>) {
         let Some(edit) = self.sheet_state_mut().and_then(|s| s.cell_edit.as_mut()) else { return };
         edit.dragging_in_bar = in_bar;
+        edit.line_nav.set(LineNav { row: line, goal: None });
         edit.mode = EditMode::Edit;
         edit.pending = None;
         edit.marked = None;
@@ -447,12 +485,13 @@ impl SlideEditor {
     /// selection runs from where it was pressed to the pointer.
     pub(crate) fn drag_in_cell_text(&mut self, position: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
         let in_bar = self.cell_edit().is_some_and(|e| e.dragging_in_bar);
-        let Some(index) = (if in_bar { self.bar_text_index_at(position, window) } else { self.cell_text_index_at(position, cx) }) else { return };
+        let Some((index, line)) = (if in_bar { self.bar_text_index_at(position, window).map(|i| (i, None)) } else { self.cell_text_index_at(position, cx).map(|(i, l)| (i, Some(l))) }) else { return };
         if let Some(edit) = self.sheet_state_mut().and_then(|s| s.cell_edit.as_mut())
             && let Some(from) = edit.dragging
         {
             edit.anchor = Some(from);
             edit.caret = index;
+            edit.line_nav.set(LineNav { row: line, goal: None });
             cx.notify();
         }
     }
@@ -483,8 +522,13 @@ impl SlideEditor {
         if self.is_read_only() {
             return;
         }
+        // A value of a pivot table is not typed into; a label is (renamed).
+        if self.pivot_entry_refused(cx) {
+            return;
+        }
+        let in_pivot = self.current_cell().is_some_and(|(column, row)| self.pivot_part_at(self.current_slide, row, column).is_some());
         // A locked cell of a protected sheet is not typed into.
-        if self.protection_refuses(super::protection::Guarded::Cells, cx) {
+        if self.protection_refuses(if in_pivot { super::protection::Guarded::PivotLabel } else { super::protection::Guarded::Cells }, cx) {
             return;
         }
         let Some((column, row)) = self.current_cell() else { return };
@@ -535,27 +579,31 @@ impl SlideEditor {
             let (ey0, ey1) = ((shape.frame.y + t) as f32 * scale, (shape.frame.y + b) as f32 * scale);
             let default_style = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref());
             let ts = WindowTextSystem::new(cx.text_system().clone());
-            let layout = super::sheet_view::edit_layout(&ts, sheet, default_style, &self.resources, row, column, &text, runs.clone().map(std::sync::Arc::new), (l as f32 * scale, t as f32 * scale), (ex1 - ex0, ey1 - ey0), px_per_point, self.cell_editor_width(ex0));
-            let max_box_h = self.max_edit_box_height_px(row, ey0, ey1, px_per_point);
+            let layout = super::sheet_view::edit_layout(&ts, sheet, default_style, &self.resources, row, column, &text, runs.clone().map(std::sync::Arc::new), (l as f32 * scale, t as f32 * scale), (ex1 - ex0, ey1 - ey0), px_per_point, self.cell_editor_width(ex0, self.workspace_content().map_or(px(0.), |c| self.cell_pane_delta(c, row, column).x)));
+            let max_box_h = self.max_edit_box_height_px(row, column, ey0, ey1, px_per_point);
             let overflows = layout.height - max_box_h > 0.5;
             if text.contains('\n') && (overflows || layout.height > (ey1 - ey0) + 0.5) {
                 caret = 0;
             }
-            let bar_w = if overflows { 10.0 } else { 0.0 };
-            scroll_span = Some((range.first_column, layout.width + 1.0 + bar_w));
+            scroll_span = Some((range.first_column, layout.width + 1.0 + 10.0));
         }
         if let Some((first_col, width_px)) = scroll_span {
             self.scroll_span_horizontally_into_view(first_col, width_px);
         }
         if let Some(state) = self.sheet_state_mut() {
             state.validation_warning = None;
-            state.cell_edit = Some(CellEdit { slide, column, row, text, caret, marked: None, mode, anchor: None, runs, pointed: None, reference_drag:false, rect: Rc::new(Cell::new(None)), pixels_per_point: Rc::new(Cell::new(0.0)), layout: Default::default(), dragging: None, dragging_in_bar: false, pending: None, scroll_y: Default::default(), followed_caret: Default::default() });
+            state.cell_edit = Some(CellEdit { slide, column, row, text, caret, marked: None, mode, anchor: None, runs, pointed: None, reference_drag:false, rect: Rc::new(Cell::new(None)), pixels_per_point: Rc::new(Cell::new(0.0)), layout: Default::default(), dragging: None, dragging_in_bar: false, pending: None, scroll_y: Default::default(), followed_caret: Default::default(), fitted_height: Default::default(), line_nav: Default::default(), note: None });
         }
         cx.notify();
     }
 
     /// Give up typing (Esc).
     pub(crate) fn cancel_cell_edit(&mut self, cx: &mut Context<Self>) -> bool {
+        // Esc leaves a note's box with what was typed (as Excel does).
+        if self.note_edit().is_some() {
+            self.finish_note_edit(cx);
+            return true;
+        }
         if let Some(s) = self.sheet_state_mut() { s.validation_choices = None; }
         let had = self.sheet_state_mut().and_then(|s| s.cell_edit.take()).is_some();
         if had {
@@ -566,11 +614,19 @@ impl SlideEditor {
 
     /// Finish typing: put what was typed into the cell as one step.
     pub(crate) fn commit_cell_edit(&mut self, cx: &mut Context<Self>) {
+        if self.cell_edit().is_some_and(|e| e.note.is_some()) {
+            self.finish_note_edit(cx);
+            return;
+        }
         let candidates = self.filtered_validation_choices();
         let chosen = self.sheet_state().and_then(|s| s.validation_choices.as_ref()).and_then(|_| candidates.get(self.validation_choice_index(candidates.len()))).cloned();
         if let Some(s) = self.sheet_state_mut() { s.validation_choices = None; }
         let Some(mut edit) = self.sheet_state_mut().and_then(|s| s.cell_edit.take()) else { return };
         if let Some(chosen) = chosen { edit.text = chosen; }
+        // A pivot table's cell: a label is renamed, a value refuses.
+        if self.commit_pivot_entry(edit.slide, edit.row, edit.column, &edit.text, cx) {
+            return;
+        }
         if super::formula_reference::is_formula(&edit.text){edit.text=super::formula_reference::close_parentheses(&edit.text);}
         if let Some(s) = self.sheet_state_mut() {
             s.last_fill = None;
@@ -598,9 +654,15 @@ impl SlideEditor {
         };
         // データの入力規則: a value it refuses stays being typed, with the message.
         let mut warning = None;
+        // A formula entry is checked by its result, as a typed value is.
+        let formula_value = match &input {
+            CellInput::Formula(f) => self.formula_entry_value(edit.row, edit.column, f),
+            _ => None,
+        };
         let check_val = match &input {
             CellInput::Value(v) => Some(v),
             CellInput::Clear => Some(&CellValue::Empty),
+            CellInput::Formula(_) => formula_value.as_ref(),
             _ => None,
         };
         if let Some(value) = check_val {
@@ -820,53 +882,44 @@ impl SlideEditor {
         true
     }
 
-    /// ↑ or ↓ while typing in Edit mode into text of several lines: the caret goes a line up or down (nothing at the first or last line, as in Excel). False when the text is one line, or not in Edit mode: the arrow is for the cells then.
+    /// ↑ or ↓ while typing in Edit mode: the caret goes a displayed line up or down (a wrapped line counts as it is shown), keeping its x;
+    /// ↑ on the first line goes to the start of the text, ↓ on the last to its end. False when not in Edit mode (or the text is not laid
+    /// out yet): the arrow is for the cells then.
     pub(crate) fn cell_caret_line(&mut self, dy: i32, extend: bool, cx: &mut Context<Self>) -> bool {
         let Some(edit) = self.cell_edit_mut() else { return false };
-        if edit.mode != EditMode::Edit || dy == 0 || !edit.text.contains('\n') {
+        if edit.mode != EditMode::Edit || dy == 0 {
             return false;
         }
-        if let Some(to) = edit.caret_after_line_move(dy) {
-            if extend {
-                edit.anchor = Some(edit.anchor.unwrap_or(edit.caret));
-            } else {
-                edit.anchor = None;
-            }
-            edit.caret = to;
-            edit.pending = None;
-            cx.notify();
+        let Some((to, line)) = edit.caret_after_line_move(dy, true) else { return false };
+        if extend {
+            edit.anchor = Some(edit.anchor.unwrap_or(edit.caret));
+        } else {
+            edit.anchor = None;
         }
+        edit.caret = to;
+        // At the ends the caret is on the first or last line; elsewhere on the one it moved to.
+        edit.line_nav.set(LineNav { row: Some(line), goal: edit.line_nav.get().goal });
+        edit.pending = None;
+        cx.notify();
         true
     }
 
-    /// PageUp or PageDown while typing in Edit mode into text of several lines: the caret goes up or down by about the lines
+    /// PageUp or PageDown while typing in Edit mode into text of several displayed lines: the caret goes up or down by about the lines
     /// the box shows (to the first or last line at most); the box then scrolls to show it (issue #17). False when the text is
     /// one line, or not in Edit mode: the key is for the sheet then.
     pub(crate) fn cell_caret_page(&mut self, forward: bool, cx: &mut Context<Self>) -> bool {
         let Some(edit) = self.cell_edit_mut() else { return false };
-        if edit.mode != EditMode::Edit || !edit.text.contains('\n') {
+        if edit.mode != EditMode::Edit {
             return false;
         }
-        let lines = text_lines(&edit.text);
+        let Some(layout) = edit.layout.borrow().clone().filter(|l| l.lines.len() > 1) else { return false };
         // The lines a box of the highest size shows, one kept in view.
-        let step = edit
-            .layout
-            .borrow()
-            .as_ref()
-            .and_then(|layout| {
-                let first = layout.lines.first()?;
-                let second = layout.lines.get(1)?;
-                let pitch = (second.baseline - first.baseline).abs().max(1.0);
-                let visible = (409.5 * edit.pixels_per_point.get()).min(layout.height.max(pitch));
-                Some(((visible / pitch).floor() as i32 - 1).max(1))
-            })
-            .unwrap_or(15);
-        let current = edit.caret_line() as i32;
-        let target = (current + if forward { step } else { -step }).clamp(0, lines.len() as i32 - 1);
-        if target != current {
-            let column = edit.caret - lines[current as usize].0;
-            let (start, line) = lines[target as usize];
-            edit.caret = start + column.min(utf16_len(line));
+        let pitch = (layout.lines[1].baseline - layout.lines[0].baseline).abs().max(1.0);
+        let visible = (409.5 * edit.pixels_per_point.get()).min(layout.height.max(pitch));
+        let step = ((visible / pitch).floor() as i32 - 1).max(1);
+        if let Some((to, line)) = edit.caret_after_line_move(if forward { step } else { -step }, false) {
+            edit.caret = to;
+            edit.line_nav.set(LineNav { row: Some(line), goal: edit.line_nav.get().goal });
         }
         edit.anchor = None;
         edit.pending = None;
@@ -902,7 +955,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         let style = self.current_style();
         let Some(edit) = self.cell_edit_mut() else { return false };
-        if edit.slide != slide || super::formula_reference::is_formula(&edit.text) {
+        if edit.slide != slide || (edit.note.is_none() && super::formula_reference::is_formula(&edit.text)) {
             return false;
         }
         if !matches!(change, StyleChange::Bold(_) | StyleChange::Italic(_) | StyleChange::Underline(_) | StyleChange::UnderlineKind(_) | StyleChange::Strike(_) | StyleChange::Color(_) | StyleChange::ColorTheme(..) | StyleChange::FontSize(_) | StyleChange::Font(_)) {
@@ -945,7 +998,7 @@ impl SlideEditor {
     pub(crate) fn point_reference(&mut self, column: u32, row: u32, cx: &mut Context<Self>) -> bool {
         let slide = self.current_slide;
         let Some(edit) = self.cell_edit_mut() else { return false };
-        if edit.slide != slide || !super::formula_reference::is_formula(&edit.text) {
+        if edit.slide != slide || edit.note.is_some() || !super::formula_reference::is_formula(&edit.text) {
             return false;
         }
         let caret = byte_at(&edit.text, edit.caret);
@@ -1053,7 +1106,7 @@ impl SlideEditor {
             }
             self.begin_cell_edit(EditMode::Enter, false, cx);
         }
-        if !text.is_empty() { self.show_typed_validation_choices(); }
+        if !text.is_empty() && self.cell_edit().is_some_and(|e| e.note.is_none()) { self.show_typed_validation_choices(); }
         let Some(edit) = self.cell_edit_mut() else { return };
         edit.pointed = None;
         let range = range.or_else(|| edit.marked.clone()).or_else(|| edit.selection()).unwrap_or(edit.caret..edit.caret);
@@ -1431,6 +1484,9 @@ mod caret_items_tests {
             pending: None,
             scroll_y: Default::default(),
             followed_caret: Default::default(),
+            fitted_height: Default::default(),
+            line_nav: Default::default(),
+            note: None,
         };
         let baseline_items = edit.items();
         assert_eq!(baseline_items.len(), 1);

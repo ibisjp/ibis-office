@@ -422,16 +422,17 @@ impl SlideEditor {
         };
         let caption = |id: &str| div().text_sm().child(text(id));
         let toggle = |id: &'static str, on: bool, label: &'static str, set: Rc<dyn Fn(&mut ForecastPanel)>| {
-            mark(
-                id,
-                crate::shell::chrome::radio_button(id, on, false, text(label), cx.listener(move |this, _, _, cx| {
-                        if let Some(p) = this.wb_mut().panels.forecast.as_mut() {
-                            set(p);
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            )
+            let ui = p.ui.clone();
+            crate::shell::chrome::segment_control::SegmentItem::label(id, text(label), on)
+                .on_bounds(move |b| {
+                    ui.borrow_mut().insert(id.to_string(), b);
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(p) = this.wb_mut().panels.forecast.as_mut() {
+                        set(p);
+                    }
+                    cx.notify();
+                }))
         };
         let mut body = v_flex().gap_2().px(px(16.)).py(px(8.)).p_0();
         body = body
@@ -457,23 +458,19 @@ impl SlideEditor {
         body = body.child(caption("xlsx.forecast.field.confidence")).child(mark("confidence", crate::shell::chrome::text_field(&p.confidence).unit("%",px(20.)).spinner("forecast-confidence-spin", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 99.0), cx, |_, _, _, _| {}).into_any_element()));
 
         // 季節性
-        body = body.child(caption("xlsx.forecast.field.seasonality")).child(
-            h_flex()
-                .gap_1()
-                .child(toggle("seasonality-auto", !p.seasonality_manual, "xlsx.forecast.seasonality-auto", Rc::new(|p| p.seasonality_manual = false)))
-                .child(toggle("seasonality-manual", p.seasonality_manual, "xlsx.forecast.seasonality-manual", Rc::new(|p| p.seasonality_manual = true))),
-        );
+        body = body.child(crate::shell::chrome::segment_control_row(text("xlsx.forecast.field.seasonality"), [
+            toggle("seasonality-auto", !p.seasonality_manual, "xlsx.forecast.seasonality-auto", Rc::new(|p| p.seasonality_manual = false)),
+            toggle("seasonality-manual", p.seasonality_manual, "xlsx.forecast.seasonality-manual", Rc::new(|p| p.seasonality_manual = true)),
+        ]));
         if p.seasonality_manual {
             body = body.child(mark("seasonality", crate::shell::chrome::text_field(&p.seasonality).full_width().spinner("forecast-seasonality-spin", crate::shell::chrome::SpinnerSpec::new(1.0).min(0.0).integer_only(), cx, |_, _, _, _| {}).into_any_element()));
         }
 
         // 欠損ポイントの補完
-        body = body.child(caption("xlsx.forecast.field.data-completion")).child(
-            h_flex()
-                .gap_1()
-                .child(toggle("completion-interpolate", !p.data_completion_zero, "xlsx.forecast.completion-interpolate", Rc::new(|p| p.data_completion_zero = false)))
-                .child(toggle("completion-zero", p.data_completion_zero, "xlsx.forecast.completion-zero", Rc::new(|p| p.data_completion_zero = true))),
-        );
+        body = body.child(crate::shell::chrome::segment_control_row(text("xlsx.forecast.field.data-completion"), [
+            toggle("completion-interpolate", !p.data_completion_zero, "xlsx.forecast.completion-interpolate", Rc::new(|p| p.data_completion_zero = false)),
+            toggle("completion-zero", p.data_completion_zero, "xlsx.forecast.completion-zero", Rc::new(|p| p.data_completion_zero = true)),
+        ]));
 
         // 重複データの集計
         let agg_id = match p.aggregation {
@@ -488,12 +485,10 @@ impl SlideEditor {
         let choices=[(1,"xlsx.forecast.agg-average"),(2,"xlsx.forecast.agg-count"),(3,"xlsx.forecast.agg-counta"),(4,"xlsx.forecast.agg-max"),(5,"xlsx.forecast.agg-median"),(6,"xlsx.forecast.agg-min"),(7,"xlsx.forecast.agg-sum")].into_iter().map(|(agg,label)|crate::shell::chrome::MenuItem::new("forecast-aggregation-choice",text(label)).checked(agg==p.aggregation).on(move|this,_,cx|{if let Some(p)=this.wb_mut().panels.forecast.as_mut(){p.aggregation=agg;}cx.notify();}).into()).collect();
         body=body.child(crate::shell::chrome::dropdown_row(text("xlsx.forecast.field.aggregation"),mark("aggregation",div().w(crate::shell::chrome::FIELD_WIDTH).child(crate::shell::chrome::Dropdown::from_entries("forecast-agg",text(agg_id),choices,true,0,&cx.weak_entity()).into_any_element()).into_any_element())));
 
-        body = body.child(caption("xlsx.forecast.field.chart")).child(
-            h_flex()
-                .gap_1()
-                .child(toggle("chart-line", !p.columns, "xlsx.forecast.chart-line", Rc::new(|p| p.columns = false)))
-                .child(toggle("chart-column", p.columns, "xlsx.forecast.chart-column", Rc::new(|p| p.columns = true))),
-        );
+        body = body.child(crate::shell::chrome::segment_control_row(text("xlsx.forecast.field.chart"), [
+            toggle("chart-line", !p.columns, "xlsx.forecast.chart-line", Rc::new(|p| p.columns = false)),
+            toggle("chart-column", p.columns, "xlsx.forecast.chart-column", Rc::new(|p| p.columns = true)),
+        ]));
         let on = p.statistics;
         body = body.child(mark(
             "statistics",

@@ -40,7 +40,8 @@ use windows::{
 pub(crate) struct Frame {
     pub width: u32,
     pub height: u32,
-    pub rgba: Arc<Vec<u8>>,
+    /// Blue, green, red, alpha for each pixel: the order GPUI draws images in.
+    pub bgra: Arc<Vec<u8>>,
 }
 pub(crate) struct Player {
     player: MediaPlayer,
@@ -142,22 +143,18 @@ impl Output {
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
             self.context
                 .Map(&self.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
-            let mut rgba = vec![0; self.width as usize * self.height as usize * 4];
-            for y in 0..self.height as usize {
-                let src = std::slice::from_raw_parts(
-                    (mapped.pData as *const u8).add(y * mapped.RowPitch as usize),
-                    self.width as usize * 4,
-                );
-                for (x, pixel) in src.chunks_exact(4).enumerate() {
-                    let at = (y * self.width as usize + x) * 4;
-                    rgba[at..at + 4].copy_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
-                }
-            }
+            let len = (mapped.RowPitch as usize) * (self.height as usize).saturating_sub(1) + self.width as usize * 4;
+            let bgra = super::opaque_bgra_rows(
+                std::slice::from_raw_parts(mapped.pData as *const u8, len),
+                self.width as usize,
+                self.height as usize,
+                mapped.RowPitch as usize,
+            );
             self.context.Unmap(&self.staging, 0);
             Ok(Frame {
                 width: self.width,
                 height: self.height,
-                rgba: Arc::new(rgba),
+                bgra: Arc::new(bgra),
             })
         }
     }

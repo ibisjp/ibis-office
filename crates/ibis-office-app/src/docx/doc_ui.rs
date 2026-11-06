@@ -351,7 +351,7 @@ impl SlideEditor {
                                     )
                                 }),
                         )
-                        .when(self.panel_dialog_is_modal(), |d| d.child(crate::shell::panel_dialog::viewport_shield()))
+                        .when(self.dialog_is_modal(), |d| d.child(crate::shell::dialog::viewport_shield()))
                         .scrollbar(&self.doc_split_scroll, ScrollbarAxis::Both),
                 )
                 .child(
@@ -403,7 +403,7 @@ impl SlideEditor {
                                     )
                                 }),
                         )
-                        .when(self.panel_dialog_is_modal(), |d| d.child(crate::shell::panel_dialog::viewport_shield()))
+                        .when(self.dialog_is_modal(), |d| d.child(crate::shell::dialog::viewport_shield()))
                         .scrollbar(&self.workspace_scroll, ScrollbarAxis::Both),
                 )
         } else {
@@ -434,7 +434,7 @@ impl SlideEditor {
                             )
                         }),
                 )
-                .when(self.panel_dialog_is_modal(), |d| d.child(crate::shell::panel_dialog::viewport_shield()))
+                .when(self.dialog_is_modal(), |d| d.child(crate::shell::dialog::viewport_shield()))
                 .scrollbar(&self.workspace_scroll, ScrollbarAxis::Both)
         };
 
@@ -673,6 +673,9 @@ impl SlideEditor {
                     .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, window, cx| this.on_page_down(index, event, window, is_top, cx)))
                     .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| this.on_page_move(index, event, is_top, cx)))
                     .on_mouse_up(MouseButton::Left, cx.listener(|this, _: &MouseUpEvent, window, cx| {
+                        if this.crop_pointer_up(cx) {
+                            return;
+                        }
                         if let Some(state) = this.doc_state_mut() {
                             state.dragging = false;
                         }
@@ -825,6 +828,11 @@ impl SlideEditor {
 
     fn on_page_down_one(&mut self, index: usize, event: &MouseDownEvent, window: &mut Window, is_top: bool, cx: &mut Context<Self>) {
         cx.stop_propagation();
+        // A press outside the picture's crop frame keeps the crop (the handles and the picture take their own presses).
+        if self.is_crop_mode() {
+            self.finish_crop_mode(true, cx);
+            self.sync_picture_crop_fields(window, cx);
+        }
         self.doc_split_active = is_top;
         if self.doc_state().is_some_and(|s| s.box_edit.is_some()) {
             self.commit_box_edit(window, cx);
@@ -906,7 +914,7 @@ impl SlideEditor {
                         self.open_comments(window, cx);
                     }
                     if let Some(c) = self.doc_state_mut().and_then(|s| s.comments.as_mut()) {
-                        c.active_comment_id = Some(parent_id);
+                        c.active = Some(parent_id.to_string());
                     }
                 }
             }
@@ -919,6 +927,9 @@ impl SlideEditor {
 
     fn on_page_move(&mut self, index: usize, event: &MouseMoveEvent, is_top: bool, cx: &mut Context<Self>) {
         self.update_link_hover(event,cx);
+        if self.crop_pointer_move(event.position, event.pressed_button == Some(MouseButton::Left), cx) {
+            return;
+        }
         if self.doc_state().and_then(|s| s.docx_ink.as_ref()).is_some_and(|i| i.active_stroke.is_some() || i.lasso_rect.is_some()) {
             if event.pressed_button == Some(MouseButton::Left) {
                 if let Some((x, y)) = self.page_point_pane(index, event.position, is_top) {
@@ -1109,8 +1120,8 @@ impl SlideEditor {
             .on_action(cx.listener(|this, _: &ed::ConvertCaseKatakana, _, cx| this.convert_case(ibis_doc_model::CaseConversion::Katakana, cx)))
             .on_action(cx.listener(|this, _: &ed::ConvertCaseHiragana, _, cx| this.convert_case(ibis_doc_model::CaseConversion::Hiragana, cx)))
             .on_action(cx.listener(|this, _: &ed::OpenFind, window, cx| this.open_find(window, cx)))
-            .on_action(cx.listener(|this, _: &ed::FindNext, _, cx| this.find_next_in_direction(cx)))
-            .on_action(cx.listener(|this, _: &ed::FindPrevious, _, cx| this.find_next(false, cx)))
+            .on_action(cx.listener(|this, _: &ed::FindNext, window, cx| this.find_shortcut(true, window, cx)))
+            .on_action(cx.listener(|this, _: &ed::FindPrevious, window, cx| this.find_shortcut(false, window, cx)))
             .on_action(cx.listener(|this, _: &ed::OpenGoTo, window, cx| this.open_go_to_panel(window, cx)))
             .on_action(cx.listener(|this, _: &ed::OpenThesaurus, window, cx| this.open_thesaurus_panel(window, cx)))
             .on_action(cx.listener(|this, _: &ed::OpenLink, window, cx| this.open_link(window, cx)))

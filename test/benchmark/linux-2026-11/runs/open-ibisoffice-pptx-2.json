@@ -1,0 +1,49 @@
+{
+ "end": 0.797,
+ "last_change": 0.797,
+ "end_video_frame": 5,
+ "first_change": 0.062,
+ "window_end": 0.797,
+ "doc_changes_count": 3,
+ "doc_changes": [
+  [
+   0.062,
+   0.11506
+  ],
+  [
+   0.697,
+   0.14195
+  ],
+  [
+   0.797,
+   0.90453
+  ]
+ ],
+ "recorded_until": 8.803,
+ "grabs": 844,
+ "capped": false,
+ "tag": "open-ibisoffice-pptx-2",
+ "scenario": "open",
+ "app": "ibisoffice",
+ "kind": "pptx",
+ "run": 2,
+ "file": "earnings-presentation.pptx",
+ "command": [
+  "click: 最近開いたファイル",
+  "earnings-presentation.pptx"
+ ],
+ "rects": [
+  [
+   0.0,
+   "-20 7 1320 840"
+  ]
+ ],
+ "covered": [],
+ "cap": 15,
+ "measured_at": "2026-11-03 21:10:38",
+ "load_before": [
+  0.5,
+  0.43,
+  0.31
+ ]
+}

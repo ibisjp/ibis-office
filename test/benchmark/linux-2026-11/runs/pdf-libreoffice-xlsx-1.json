@@ -1,0 +1,27 @@
+{
+ "tag": "pdf-libreoffice-xlsx-1",
+ "scenario": "pdf",
+ "app": "libreoffice",
+ "kind": "xlsx",
+ "run": 1,
+ "file": "coffee-chain-sales-report.xlsx",
+ "seconds": 23.308,
+ "returncode": 0,
+ "pdf_bytes": 286640552,
+ "pages": 4088,
+ "command": [
+  "soffice26",
+  "--headless",
+  "--convert-to",
+  "pdf",
+  "--outdir",
+  "pdf",
+  "coffee-chain-sales-report.xlsx"
+ ],
+ "measured_at": "2026-11-03 18:57:01",
+ "load_before": [
+  0.93,
+  0.58,
+  0.31
+ ]
+}

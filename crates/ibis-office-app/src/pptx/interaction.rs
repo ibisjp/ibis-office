@@ -285,6 +285,21 @@ pub(crate) fn snap_to_shapes(
     slide_height: i64,
     slop_emu: i64,
 ) -> (i64, i64, Vec<AlignmentGuide>) {
+    snap_to_targets(rect, others, slide_width, slide_height, slop_emu, true, &[], &[])
+}
+
+/// `snap_to_shapes` with the guides' positions (`guide_xs` of the vertical, `guide_ys` of the horizontal
+/// ones) also to snap to, and the slide's middle only when `center`.
+pub(crate) fn snap_to_targets(
+    rect: EmuRect,
+    others: &[EmuRect],
+    slide_width: i64,
+    slide_height: i64,
+    slop_emu: i64,
+    center: bool,
+    guide_xs: &[i64],
+    guide_ys: &[i64],
+) -> (i64, i64, Vec<AlignmentGuide>) {
     let mut snap_dx = 0;
     let mut snap_dy = 0;
     let mut min_dist_x = slop_emu + 1;
@@ -294,8 +309,10 @@ pub(crate) fn snap_to_shapes(
     let my_xs = [rect.x, rect.x + rect.width / 2, rect.right()];
     let my_ys = [rect.y, rect.y + rect.height / 2, rect.bottom()];
 
-    let mut target_xs = vec![slide_width / 2];
-    let mut target_ys = vec![slide_height / 2];
+    let mut target_xs: Vec<i64> = if center { vec![slide_width / 2] } else { Vec::new() };
+    let mut target_ys: Vec<i64> = if center { vec![slide_height / 2] } else { Vec::new() };
+    target_xs.extend_from_slice(guide_xs);
+    target_ys.extend_from_slice(guide_ys);
     for other in others {
         target_xs.push(other.x);
         target_xs.push(other.x + other.width / 2);

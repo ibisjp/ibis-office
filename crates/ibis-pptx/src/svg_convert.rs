@@ -330,9 +330,10 @@ fn parse_color_rgb(s: &str) -> Option<Rgb> {
             let val = u32::from_str_radix(hex, 16).ok()?;
             return Some(Rgb(val));
         } else if hex.len() == 3 {
-            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
-            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
-            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+            // `get`: a multi-byte character in the value is not a colour (slicing inside it panics).
+            let r = u8::from_str_radix(hex.get(0..1)?, 16).ok()?;
+            let g = u8::from_str_radix(hex.get(1..2)?, 16).ok()?;
+            let b = u8::from_str_radix(hex.get(2..3)?, 16).ok()?;
             return Some(Rgb::from_rgb((r << 4) | r, (g << 4) | g, (b << 4) | b));
         }
     }
@@ -908,6 +909,14 @@ fn arc_to_beziers(
 
 #[cfg(test)]
 mod tests {
+
+    /// A colour with a multi-byte character is not a colour (it was sliced by byte position and panicked).
+    #[test]
+    fn colour_with_multibyte_character_is_none() {
+        assert!(parse_color_rgb("#\u{e9}1").is_none());
+        assert!(parse_color_rgb("#1\u{e9}").is_none());
+        assert_eq!(parse_color_rgb("#abc").map(|c| c.0), Some(0xaabbcc));
+    }
     use super::*;
     use ibis_doc_model::{EmuSize, Presentation};
 

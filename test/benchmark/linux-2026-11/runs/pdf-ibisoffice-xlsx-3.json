@@ -1,0 +1,26 @@
+{
+ "tag": "pdf-ibisoffice-xlsx-3",
+ "scenario": "pdf",
+ "app": "ibisoffice",
+ "kind": "xlsx",
+ "run": 3,
+ "file": "coffee-chain-sales-report.xlsx",
+ "seconds": 19.873,
+ "returncode": 0,
+ "pdf_bytes": 30747048,
+ "pages": 3546,
+ "command": [
+  "ibisOffice-0.8.5-Linux.AppImage",
+  "--export",
+  "pdf",
+  "--out-dir",
+  "pdf",
+  "coffee-chain-sales-report.xlsx"
+ ],
+ "measured_at": "2026-11-03 18:56:36",
+ "load_before": [
+  0.98,
+  0.56,
+  0.3
+ ]
+}

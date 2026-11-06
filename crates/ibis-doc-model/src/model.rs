@@ -28,6 +28,34 @@ pub struct LayoutId(pub u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MasterId(pub u64);
 
+/// A drawing guide (ガイド線: `p15:guide` of a `p15:sldGuideLst`). `pos` is in
+/// 1/8 point from the top (horizontal) or the left (vertical) edge of the
+/// slide, as the file has it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlideGuide {
+    pub id: u32,
+    /// Horizontal line (`orient="horz"`); the default is vertical.
+    pub horizontal: bool,
+    pub pos: i32,
+    pub color: Option<u32>,
+    /// Drawn by the user (`userDrawn`).
+    pub user_drawn: bool,
+}
+
+impl SlideGuide {
+    /// EMU per unit of `pos` (1/8 point; 12700 EMU per point).
+    pub const EMU_PER_UNIT: f64 = 12700.0 / 8.0;
+
+    pub fn emu(&self) -> i64 {
+        (self.pos as f64 * Self::EMU_PER_UNIT).round() as i64
+    }
+
+    /// The unit of `pos` nearest to `emu`.
+    pub fn pos_from_emu(emu: i64) -> i32 {
+        (emu as f64 / Self::EMU_PER_UNIT).round() as i32
+    }
+}
+
 /// A slide master (スライド マスター) the layouts follow: its name is the
 /// theme's (`a:theme/@name`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,18 +136,23 @@ impl Layout {
     /// index, then by type (a subtitle, picture, chart… falls back to a
     /// body), as PowerPoint matches them.
     fn matching<'a>(list: &'a [LayoutPlaceholder], ph: &PlaceholderRef, by_index: bool) -> Option<&'a LayoutPlaceholder> {
+        Self::matching_position(list, ph, by_index).map(|i| &list[i])
+    }
+
+    /// The position in `list` of what [`Layout::matching`] finds.
+    fn matching_position(list: &[LayoutPlaceholder], ph: &PlaceholderRef, by_index: bool) -> Option<usize> {
         if by_index
             && let Some(idx) = &ph.index
-            && let Some(found) = list.iter().find(|p| p.placeholder.index.as_ref() == Some(idx))
+            && let Some(found) = list.iter().position(|p| p.placeholder.index.as_ref() == Some(idx))
         {
             return Some(found);
         }
         let kind = ph.normalized();
-        if let Some(found) = list.iter().find(|p| p.placeholder.normalized() == kind) {
+        if let Some(found) = list.iter().position(|p| p.placeholder.normalized() == kind) {
             return Some(found);
         }
         match kind {
-            "subTitle" | "pic" | "chart" | "tbl" | "dgm" | "media" | "clipArt" => list.iter().find(|p| p.placeholder.normalized() == "body"),
+            "subTitle" | "pic" | "chart" | "tbl" | "dgm" | "media" | "clipArt" => list.iter().position(|p| p.placeholder.normalized() == "body"),
             _ => None,
         }
     }
@@ -1405,6 +1438,9 @@ pub struct Slide {
     /// 背景グラフィックを表示しない (`p:sld/@showMasterSp="0"`): the
     /// backdrop is kept, not drawn.
     pub hide_backdrop: bool,
+    /// The page's own guides (`p15:sldGuideLst` of its root): what a master or layout
+    /// shown as a page in the master view has.
+    pub guides: Vec<SlideGuide>,
     /// Shapes that are hyperlinks (図形のリンク, `cNvPr/a:hlinkClick`).
     pub shape_links: std::collections::HashMap<ShapeId, crate::text::SlideLink>,
     /// Tooltips / ScreenTips of shape hyperlinks (`cNvPr/a:hlinkClick/@tooltip`).
@@ -1431,6 +1467,9 @@ pub struct Slide {
     /// Transition duration for zoom shapes, in milliseconds (ズームの継続時間: `p16:zoom/@dur`).
     /// Default is 1000ms.
     pub shape_zoom_durations: std::collections::HashMap<ShapeId, u32>,
+    /// The shapes that are PowerPoint's ズーム objects (スライド/セクション/サマリー ズーム, `pslz:sldZm`, `psez:sectionZm`,
+    /// `psuz:summaryZm`), by the picture shape that is their thumbnail (what the file's `mc:Fallback` draws).
+    pub zoom_objects: std::collections::HashMap<ShapeId, ZoomObject>,
     /// Glue of connectors on the slide (`a:stCxn` / `a:endCxn`).
     pub shape_glues: std::collections::HashMap<ShapeId, Glue>,
 }
@@ -1498,7 +1537,7 @@ impl Transition {
 
 impl Slide {
     pub fn new(id: SlideId) -> Self {
-        Self { id, shapes: Vec::new(), groups: Vec::new(), background: Fill::Solid(Color::WHITE), backdrop: Vec::new(), size: None, name: None, layout: None, attached: Default::default(), placeholders: Default::default(), hidden: false, notes: String::new(), notes_shapes: Vec::new(), transition: None, animations: Vec::new(), comments: Vec::new(), shape_names: Default::default(), hidden_shapes: Default::default(), hide_backdrop: false, shape_links: Default::default(), shape_link_tooltips: Default::default(), aspect_locked: Default::default(), shape_alt_texts: Default::default(), decorative_shapes: Default::default(), shape_placements: Default::default(), shape_prints: Default::default(), shape_formulas: Default::default(), shape_return_to_zoom: Default::default(), shape_zoom_show_bg: Default::default(), shape_zoom_durations: Default::default(), shape_glues: Default::default() }
+        Self { id, shapes: Vec::new(), groups: Vec::new(), background: Fill::Solid(Color::WHITE), backdrop: Vec::new(), size: None, name: None, layout: None, attached: Default::default(), placeholders: Default::default(), hidden: false, notes: String::new(), notes_shapes: Vec::new(), transition: None, animations: Vec::new(), comments: Vec::new(), shape_names: Default::default(), hidden_shapes: Default::default(), hide_backdrop: false, guides: Vec::new(), shape_links: Default::default(), shape_link_tooltips: Default::default(), aspect_locked: Default::default(), shape_alt_texts: Default::default(), decorative_shapes: Default::default(), shape_placements: Default::default(), shape_prints: Default::default(), shape_formulas: Default::default(), shape_return_to_zoom: Default::default(), shape_zoom_show_bg: Default::default(), shape_zoom_durations: Default::default(), zoom_objects: Default::default(), shape_glues: Default::default() }
     }
 
     /// A new empty slide following `layout`, as PowerPoint's "New Slide"
@@ -1570,15 +1609,22 @@ pub struct Section {
     pub slides: Vec<SlideId>,
 }
 
-/// 書き込みパスワード (`p:modifyVerifier`): how the password was hashed and the hash.
+/// 書き込みパスワード (the password to modify: `p:modifyVerifier` of a presentation, `fileSharing` of a workbook,
+/// `w:writeProtection` of a document): how the password was hashed and the hash.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModifyVerifier {
-    /// The hash's number (`cryptAlgorithmSid`: 12 SHA-256, 13 SHA-384, 14 SHA-512; 4, SHA-1, is read but not checked).
+    /// The hash's number (`cryptAlgorithmSid`: 4 SHA-1, 12 SHA-256, 13 SHA-384, 14 SHA-512; another number is read but cannot be checked).
+    /// `LEGACY_SID` (0): the old 16-bit hash (`reservationPassword` of `fileSharing`), `hash` is its 4 hex digits and `salt` is empty.
     pub algorithm_sid: u32,
     pub spin_count: u32,
     /// Base64, as in the file (`saltData`, `hashData`).
     pub salt: String,
     pub hash: String,
+}
+
+impl ModifyVerifier {
+    /// `algorithm_sid` of the old 16-bit hash.
+    pub const LEGACY_SID: u32 = 0;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1622,6 +1668,8 @@ pub struct Presentation {
     /// the file (スライドのサイズを拡大縮小したとき): a writer scales the
     /// parts the same way.
     pub layout_scale: LayoutScale,
+    /// The guides of the normal view (`p15:sldGuideLst` of `presentation.xml`).
+    pub guides: Vec<SlideGuide>,
     /// スライド ショーの設定 (`p:showPr`).
     pub show_properties: ShowProperties,
     /// 目的別スライド ショーのリスト (`p:custShowLst`).
@@ -1639,6 +1687,71 @@ pub struct Presentation {
     /// フォトアルバムの設定 (`p:photoAlbum`)。
     pub photo_album: Option<PhotoAlbum>,
     next_id: u64,
+}
+
+impl Presentation {
+    /// Whether `other` has the same content as `self` in everything a presentation file holds (the layouts and masters, whose
+    /// renaming and copying the saving looks at itself, and a document's or a workbook's own models aside).
+    ///
+    /// Every field is named here: compared, or listed as one the saving does not write from here. A field added to the model does
+    /// not compile until it is put in one of the two, so an edit to it cannot be left out of the saving.
+    pub fn same_saved_content(&self, other: &Presentation) -> bool {
+        let Presentation {
+            // Compared: what the file holds.
+            slide_size,
+            slides,
+            sections,
+            fonts,
+            font_substitutions,
+            theme_fonts,
+            theme_colors,
+            theme_effects,
+            first_slide_number,
+            header_footer,
+            notes_marks,
+            layout_scale,
+            guides,
+            show_properties,
+            custom_shows,
+            mark_as_final,
+            read_only_recommended,
+            modify_verifier,
+            properties,
+            object_defaults,
+            photo_album,
+            // Looked at by the saving itself: layouts and masters (renamed, copied, deleted), a document's flow, a workbook.
+            layouts: _,
+            masters: _,
+            flow: _,
+            workbook: _,
+            // Not written: the media are the slides' (compared through them); the notes master's size and frames; a counter.
+            media: _,
+            notes_size: _,
+            notes_frames: _,
+            next_id: _,
+        } = self;
+        *slide_size == other.slide_size
+            && *slides == other.slides
+            && *sections == other.sections
+            && *fonts == other.fonts
+            && *font_substitutions == other.font_substitutions
+            && *theme_fonts == other.theme_fonts
+            && *theme_colors == other.theme_colors
+            && *theme_effects == other.theme_effects
+            && *first_slide_number == other.first_slide_number
+            && *header_footer == other.header_footer
+            && *notes_marks == other.notes_marks
+            && *layout_scale == other.layout_scale
+            && *guides == other.guides
+            && *show_properties == other.show_properties
+            && *custom_shows == other.custom_shows
+            && *mark_as_final == other.mark_as_final
+            && *read_only_recommended == other.read_only_recommended
+            && *modify_verifier == other.modify_verifier
+            && *properties == other.properties
+            && *object_defaults == other.object_defaults
+            && *photo_album == other.photo_album
+    }
 }
 
 /// 既定の図形・線の書式設定（`<a:objectDefaults>`）。
@@ -2018,7 +2131,7 @@ impl Presentation {
     /// A presentation with no slides yet, for a reader to fill. It must end up
     /// with at least one slide.
     pub fn empty(slide_size: EmuSize) -> Self {
-        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), fonts: Vec::new(), font_substitutions: std::collections::BTreeMap::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), theme_effects: None, first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), photo_album: None, next_id: 1 }
+        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), fonts: Vec::new(), font_substitutions: std::collections::BTreeMap::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), theme_effects: None, first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), guides: Vec::new(), show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), photo_album: None, next_id: 1 }
     }
 
     /// Look up a custom show by its numeric identifier.
@@ -2110,6 +2223,19 @@ impl Presentation {
     /// layout's, and its placeholders' places for the slide's placeholders
     /// that take them (one the new layout has no place for keeps its own).
     pub fn with_layout(&self, slide: SlideId, layout: LayoutId) -> Option<Slide> {
+        let mut last = self.slides.iter().flat_map(|s| s.shapes.iter()).map(|s| s.id.0).max().unwrap_or(0);
+        self.with_layout_ids(slide, layout, &mut || {
+            last += 1;
+            ShapeId(last)
+        })
+    }
+
+    /// [`Presentation::with_layout`], numbering the empty placeholders the new
+    /// layout has and the slide has none for (as PowerPoint gives a slide
+    /// what its layout defines, whatever the slide was before: a slide made
+    /// blank and then given a layout again gets its placeholders back) by
+    /// `new_id`.
+    pub fn with_layout_ids(&self, slide: SlideId, layout: LayoutId, new_id: &mut dyn FnMut() -> ShapeId) -> Option<Slide> {
         let old = self.slide(slide)?;
         let new_layout = self.layout(layout)?;
         let mut out = old.clone();
@@ -2144,6 +2270,29 @@ impl Presentation {
                     shape.flip_v = flip_v;
                 }
                 None => ph.own_frame = true,
+            }
+        }
+        // The layout's placeholders no placeholder of the slide follows get
+        // empty ones (date, footer, slide number and header are the user's to add).
+        if old.layout != Some(layout) {
+            let mut taken = vec![false; new_layout.placeholders.len()];
+            for ph in out.placeholders.values() {
+                if let Some(i) = Layout::matching_position(&new_layout.placeholders, &ph.placeholder, true) {
+                    taken[i] = true;
+                }
+            }
+            for (i, lp) in new_layout.placeholders.iter().enumerate() {
+                if taken[i] || matches!(lp.placeholder.kind.as_deref(), Some("dt" | "ftr" | "sldNum" | "hdr")) {
+                    continue;
+                }
+                let id = new_id();
+                let (frame, rotation, flip_h, flip_v) = new_layout.placement_for(&lp.placeholder).unwrap_or_default();
+                let mut shape = Shape::new(id, frame, ShapeKind::Auto(AutoShape { text: Some(TextBody::plain("", Default::default())), ..AutoShape::new(Geometry::Rect, Fill::None, None) }));
+                shape.rotation = rotation;
+                shape.flip_h = flip_h;
+                shape.flip_v = flip_v;
+                out.shapes.push(shape);
+                out.placeholders.insert(id, SlidePlaceholder { placeholder: lp.placeholder.clone(), own_frame: false });
             }
         }
         let index = self.slide_index(slide)?;
@@ -2306,4 +2455,31 @@ mod tests {
         assert_eq!(MediaFormat::from_path("ppt/media/image1.JPEG"), MediaFormat::Jpeg);
         assert_eq!(MediaFormat::from_path("ppt/media/image2.emf"), MediaFormat::Emf);
     }
+}
+
+/// What a ズーム object zooms to (MS-PPTX `CT_SlideZoomObject`, `CT_SectionZoomObject`, `CT_SummaryZoomObject`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ZoomTarget {
+    /// スライド ズーム: a slide (`sldId`), with the slide's creation id (`cId`, its `p14:creationId`) when the file names it.
+    Slide { slide: SlideId, creation_id: Option<u32> },
+    /// セクション ズーム: a section, by its GUID (`sectionId`, `p14:section/@id`).
+    Section { section_id: String },
+    /// サマリー ズーム: one card of the summary, a section by its GUID. `index` is its place among the summary's cards.
+    Summary { section_id: String, index: usize },
+}
+
+/// A ズーム object read from a file (`zmPr` of MS-PPTX `CT_ZoomObjectProperties`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ZoomObject {
+    pub target: ZoomTarget,
+    /// The object's GUID (`zmPr/@id`).
+    pub id: String,
+    /// Whether the show returns to the slide of the object after the target (`returnToParent`; true when absent).
+    pub return_to_parent: bool,
+    /// The transition's duration in milliseconds (`transitionDur`); `None` takes the target slide's transition.
+    pub transition_dur: Option<u32>,
+    /// Whether the zoom shows the target slide's background (`showBg`; true when absent).
+    pub show_bg: bool,
+    /// Whether the picture is the file's own cover image instead of the slide preview (`imageType="cover"`).
+    pub cover_image: bool,
 }

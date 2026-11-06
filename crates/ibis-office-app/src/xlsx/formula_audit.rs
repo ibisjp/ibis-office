@@ -50,7 +50,7 @@ pub(crate) struct WatchWindowPanel {
     pub(crate) selected_id: Option<u64>,
     pub(crate) next_id: u64,
     pub(crate) editor: Option<Entity<InputState>>,
-    scroll:ScrollHandle,
+    table:crate::shell::chrome::virtual_table::TableState,
     message:String,
 }
 
@@ -60,7 +60,7 @@ impl Default for WatchWindowPanel {
             selected_id: None,
             next_id: 1,
             editor:None,
-            scroll:ScrollHandle::new(),
+            table:Default::default(),
             message:String::new(),
         }
     }
@@ -551,7 +551,7 @@ impl SlideEditor {
         let reference=format!("{}!{}",ibis_calc::formula::quote_sheet(&entry.sheet_name),entry.cell_ref);
         field.update(cx,|i,cx|i.set_value(reference,w,cx));
         if let Some(p)=self.wb_mut().panels.watch_window.as_mut(){p.selected_id=Some(id);p.editor=Some(field);p.message.clear();}
-        self.panel_dialog.bounds=None;cx.notify();
+        self.dialog.bounds=None;cx.notify();
     }
     fn apply_watch_edit(&mut self,cx:&mut Context<Self>){
         let Some((id,value))=self.sheet_state().and_then(|s|s.panels.watch_window.as_ref()).and_then(|p|Some((p.selected_id?,p.editor.as_ref()?.read(cx).value().to_string())))else{return;};
@@ -559,7 +559,7 @@ impl SlideEditor {
         let Some((slide,r))=target else{if let Some(p)=self.wb_mut().panels.watch_window.as_mut(){p.message=text("xlsx.watch.invalid-cell").to_string();}return cx.notify();};
         if let Some(entry)=self.wb_mut().panels.watches.iter_mut().find(|e|e.id==id){entry.slide_id=slide;entry.col=r.first_column;entry.row=r.first_row;entry.cell_ref=ibis_doc_model::cell_name(entry.col,entry.row);}
         if let Some(p)=self.wb_mut().panels.watch_window.as_mut(){p.editor=None;p.message.clear();}
-        self.refresh_watches();self.panel_dialog.bounds=None;cx.notify();
+        self.refresh_watches();self.dialog.bounds=None;cx.notify();
     }
     /// Watched cells use the shared table, with editing in a separate dialog.
     pub(crate) fn watch_window_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel>{
@@ -568,24 +568,33 @@ impl SlideEditor {
             let body=crate::shell::chrome::panel_form().p_0().child(crate::shell::chrome::text_field_row(text("fix.phonetic.cell"),super::range_field::local_range_field(input,"watch-cell-reference",true,cx))).children(crate::shell::chrome::panel_message(&p.message));
             let footer=crate::shell::chrome::action_bar()
                 .action(crate::shell::chrome::ActionDefinition::new("watch-edit-ok",text("OK"),crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,_,cx|e.apply_watch_edit(cx))))
-                .action(crate::shell::chrome::ActionDefinition::new("watch-edit-cancel",text("_shell.cancel"),crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,_,cx|{if let Some(p)=e.wb_mut().panels.watch_window.as_mut(){p.editor=None;p.message.clear();}e.panel_dialog.bounds=None;cx.notify();})));
+                .action(crate::shell::chrome::ActionDefinition::new("watch-edit-cancel",text("_shell.cancel"),crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,_,cx|{if let Some(p)=e.wb_mut().panels.watch_window.as_mut(){p.editor=None;p.message.clear();}e.dialog.bounds=None;cx.notify();})));
             return Some(SidebarPanel::with_footer(text("_xlsx.add-watch"),body.into_any_element(),footer).modal_named("watch_editor"));
         }
-        let selected=p.selected_id;let scroll=p.scroll.clone();
-        let header=crate::shell::chrome::table_row(["_xlsx.sheet","_shell.name","fix.phonetic.cell","_xlsx.values","_xlsx.equation"].into_iter().map(|key|text(key).into_any_element()).collect(),div().into_any_element(),false);
-        let mut rows=v_flex();
-        for item in &self.sheet_state()?.panels.watches {
-            let id=item.id;
-            let actions=h_flex().gap_1()
-                .child(crate::shell::chrome::action_button(("watch-edit",id as usize)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("edit")).on_click(cx.listener(move|e,_,w,cx|e.edit_watch(id,w,cx))))
-                .child(crate::shell::chrome::action_button(("watch-delete",id as usize)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("delete")).on_click(cx.listener(move|e,_,_,cx|{e.delete_watch(id);cx.notify();})));
-            let cells=[item.sheet_name.clone(),item.name.clone().unwrap_or_default(),item.cell_ref.clone(),item.value_text.clone(),item.formula_text.clone().unwrap_or_default()].into_iter().map(|v|div().truncate().child(v).into_any_element()).collect();
-            rows=rows.child(crate::shell::chrome::table_row(cells,actions.into_any_element(),selected==Some(id)));
-        }
-        if self.sheet_state()?.panels.watches.is_empty(){rows=rows.child(div().p_3().text_color(rgb(0x999999)).child(text("_xlsx.no-watch-cells-yet-click-add-watch-to-add")));}
+        let selected=p.selected_id;let table_state=p.table.clone();
+        use crate::shell::chrome::virtual_table::{TableColumn,TableRow};
+        let header:Vec<AnyElement>=["_xlsx.sheet","_shell.name","fix.phonetic.cell","_xlsx.values","_xlsx.equation"].into_iter().map(|key|text(key).into_any_element()).chain(std::iter::once(div().into_any_element())).collect();
+        let watches=self.sheet_state()?.panels.watches.clone();
+        let row_count=watches.len();
+        let editor_weak=cx.entity().downgrade();
+        let build=move|range:std::ops::Range<usize>,_:&mut Window,_:&mut App|->Vec<TableRow>{
+            range.filter_map(|i|watches.get(i).map(|r|(i,r))).map(|(_,item)|{
+                let id=item.id;
+                let (edit_editor,delete_editor)=(editor_weak.clone(),editor_weak.clone());
+                let actions=h_flex().gap_1()
+                    .child(crate::shell::chrome::action_button(("watch-edit",id as usize)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("edit")).on_click(move|_,w,cx|{let _=edit_editor.update(cx,|e,cx|e.edit_watch(id,w,cx));}))
+                    .child(crate::shell::chrome::action_button(("watch-delete",id as usize)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("delete")).on_click(move|_,_,cx|{let _=delete_editor.update(cx,|e,cx|{e.delete_watch(id);cx.notify();});}));
+                let mut cells:Vec<AnyElement>=[item.sheet_name.clone(),item.name.clone().unwrap_or_default(),item.cell_ref.clone(),item.value_text.clone(),item.formula_text.clone().unwrap_or_default()].into_iter().map(|v|div().truncate().child(v).into_any_element()).collect();
+                cells.push(actions.into_any_element());
+                TableRow::new(cells).selected(selected==Some(id))
+            }).collect()
+        };
+        let columns=vec![TableColumn::resizable("sheet",50.,80.,200.),TableColumn::resizable("name",50.,80.,200.),TableColumn::resizable("cell",40.,60.,120.),TableColumn::resizable("value",50.,80.,240.),TableColumn::flex("formula"),TableColumn::fixed("actions",64.)];
+        let empty=div().p_3().text_color(rgb(0x999999)).child(text("_xlsx.no-watch-cells-yet-click-add-watch-to-add"));
+        let table=crate::shell::chrome::data_table::DataTable::virtualized("watch-cells",columns,header,table_state,row_count,build,cx).empty(empty.into_any_element());
         let body=crate::shell::chrome::panel_form().p_0()
             .child(h_flex().w_full().justify_end().child(crate::shell::chrome::action_button("watch-add").label(text("_xlsx.add-watch")).on_click(cx.listener(|e,_,_,cx|{e.add_watch_cell();cx.notify();}))))
-            .child(crate::shell::chrome::table("watch-cells",header.into_any_element(),rows.into_any_element(),scroll,px(320.)));
+            .child(div().w_full().h(px(320.)).child(table));
         let footer=crate::shell::chrome::action_bar().action(crate::shell::chrome::dialog_close_definition(cx));
         Some(SidebarPanel::with_footer(text("_xlsx.watch-window"),body.into_any_element(),footer).modeless_named("watch_window_panel"))
     }

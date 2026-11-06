@@ -463,7 +463,7 @@ impl SlideEditor {
                     .on_click(cx.listener(|this, _, _, cx| this.recheck_doc_compatibility(cx))),
             )
 
-            .action(crate::shell::chrome::ActionDefinition::new("compat-close", text("_shell.close"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,w,cx| e.close_panel_dialog(w,cx))));
+            .action(crate::shell::chrome::ActionDefinition::new("compat-close", text("_shell.close"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,w,cx| e.close_dialog(w,cx))));
 
         let body = v_flex()
             .p_4()

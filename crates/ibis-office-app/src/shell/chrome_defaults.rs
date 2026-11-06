@@ -99,10 +99,19 @@ pub(crate) fn menus(editor: &SlideEditor) -> Menus {
                     item("help.shortcuts", "keyboard").shortcut("⌘/").into(),
                     SEP,
                 ];
-                // The automatic update's log (no update in the browser).
+                // The update's check and log (no update in the browser).
+                #[cfg(not(target_family = "wasm"))]
+                entries.push(item("help.check-update", "download").on(|_, _, cx| crate::shell::update::check_now(cx)).into());
                 #[cfg(not(target_family = "wasm"))]
                 entries.push(item("help.update-log", "description").on(|_, _, cx| crate::shell::update::reveal_log(cx)).into());
-                entries.push(item("help.about", "info").on(|_, window, cx| crate::shell::about_window::open_over(Some(window.bounds()), window.display(cx).map(|d| d.id()), cx)).into());
+                // The browser has one window only: there the About screen is a dialog inside the window.
+                entries.push(item("help.about", "info").on(|this, window, cx| {
+                    if cfg!(target_family = "wasm") {
+                        this.show_about(cx);
+                    } else {
+                        crate::shell::about_window::open_over(Some(window.bounds()), window.display(cx).map(|d| d.id()), cx);
+                    }
+                }).into());
                 entries
             }
         };
@@ -124,12 +133,12 @@ fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 let icon = match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
                     Some("xlsx" | "xlsm" | "xls" | "ods" | "csv" | "tsv" | "tab" | "txt") => "table_chart",
-                    Some("docx" | "docm") => "description",
+                    Some("docx" | "docm" | "doc" | "dot") => "description",
                     _ => "slideshow",
                 };
                 let path = path.clone();
                 let exists = path.is_file();
-                MenuItem::new("file.recent.item", name).icon(icon).disabled(!exists).on(move |this, window, cx| this.open_path(path.clone(), None, window, cx)).into()
+                MenuItem::new("file.recent.item", name).icon(icon).disabled(!exists).on(move |this, window, cx| this.open_path_or_raise(path.clone(), window, cx)).into()
             })
             .collect()
     };
@@ -210,7 +219,7 @@ fn edit_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
         item("edit.delete", "delete").shortcut("⌫").disabled(editor.selection.is_none()).on(|this, window, cx| this.delete_selection(&crate::DeleteSelection, window, cx)).into(),
         item("edit.duplicate", "control_point_duplicate").shortcut("⌘D").into(),
         SEP,
-        item("edit.find-replace", "find_replace").shortcut("⇧⌘H").into(),
+        item("edit.find-replace", "find_replace").shortcut("⌘F").into(),
     ];
     if kind == Kind::Workbook {
         entries.extend([
@@ -293,6 +302,9 @@ pub(crate) fn view_menu(editor: &SlideEditor, kind: Kind) -> Vec<MenuEntry> {
             SEP,
             item("pptx.gridlines", "grid_on").shortcut("⇧F9").checked(editor.is_pptx_gridlines_enabled()).on(|this, _, cx| this.toggle_pptx_gridlines(cx)).into(),
             item("pptx.guides", "straighten").shortcut("⌥F9").checked(editor.is_pptx_guides_enabled()).on(|this, _, cx| this.toggle_pptx_guides(cx)).into(),
+            item("pptx.guides.add-vertical", "vertical_align_center").on(|this, _, cx| this.add_guide(false, cx)).into(),
+            item("pptx.guides.add-horizontal", "horizontal_rule").on(|this, _, cx| this.add_guide(true, cx)).into(),
+            item("pptx.guides.remove-all", "delete_sweep").disabled(editor.guide_list().is_empty()).on(|this, _, cx| this.remove_all_guides(cx)).into(),
             SEP,
             item("pptx.snap-to-grid", "").checked(editor.is_pptx_snap_to_grid_enabled()).on(|this, _, cx| this.toggle_pptx_snap_to_grid(cx)).into(),
             item("pptx.snap-to-shape", "").checked(editor.is_pptx_snap_to_shape_enabled()).on(|this, _, cx| this.toggle_pptx_snap_to_shape(cx)).into(),

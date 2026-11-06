@@ -45,7 +45,7 @@ mod prompt {
         window: &mut Window,
         cx: &mut App,
     ) -> RenderablePromptHandle {
-        let view = cx.new(|cx| Dialog {
+        let view = cx.new(|cx| PromptDialog {
             message: message.to_string().into(),
             detail: detail.map(|d| d.to_string().into()),
             actions: actions.to_vec(),
@@ -54,14 +54,14 @@ mod prompt {
         handle.with_view(view, window, cx)
     }
 
-    struct Dialog {
+    struct PromptDialog {
         message: SharedString,
         detail: Option<SharedString>,
         actions: Vec<PromptButton>,
         focus: FocusHandle,
     }
 
-    impl Dialog {
+    impl PromptDialog {
         /// The answer Enter gives (the first button that is not a cancel) and Escape gives (the cancel).
         fn default_answer(&self) -> Option<usize> {
             self.actions.iter().position(|a| !a.is_cancel())
@@ -72,15 +72,15 @@ mod prompt {
         }
     }
 
-    impl EventEmitter<PromptResponse> for Dialog {}
+    impl EventEmitter<PromptResponse> for PromptDialog {}
 
-    impl Focusable for Dialog {
+    impl Focusable for PromptDialog {
         fn focus_handle(&self, _: &App) -> FocusHandle {
             self.focus.clone()
         }
     }
 
-    impl Render for Dialog {
+    impl Render for PromptDialog {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let theme = cx.theme().clone();
             let default = self.default_answer();

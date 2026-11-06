@@ -35,10 +35,15 @@ pub(super) fn get(name: &str) -> Option<Func> {
                     c.cell_value(area.sheet, area.first_row, area.first_column)
                 }
                 Value::Ref(_) => return err(CellError::Ref),
+                // A function value is #VALUE!, each one of an array of them (Excel, #106).
+                Value::Array(a) if a.data.iter().any(|v| matches!(v, Value::Lambda(_))) => {
+                    return Value::Array(Rc::new(Array::new(a.rows, a.columns, vec![Value::Error(CellError::Value); a.data.len()])));
+                }
                 Value::Array(a) => a.data.first().cloned().unwrap_or(Value::Empty),
                 v => v,
             };
             match v {
+                Value::Lambda(_) => err(CellError::Value),
                 Value::Text(t) => Value::Text(t),
                 Value::Error(e) => err(e),
                 _ => Value::Text(String::new()),
@@ -801,7 +806,8 @@ const KANA: &[(char, &str)] = &[
     ('ペ', "ﾍﾟ"), ('ポ', "ﾎﾟ"), ('ヴ', "ｳﾞ"),
 ];
 
-fn to_half_width(t: &str) -> String {
+/// ASC: full-width ASCII, space, yen and katakana to half-width (also used by the list validation's tolerant match).
+pub fn to_half_width(t: &str) -> String {
     let mut out = String::with_capacity(t.len());
     for ch in t.chars() {
         let c = ch as u32;
@@ -1245,6 +1251,10 @@ fn value_to_text(v: &Value, strict: bool) -> String {
         Value::Text(t) => t.clone(),
         Value::Error(e) => e.as_str().to_string(),
         Value::Empty => String::new(),
+        // A function named alone (`HSTACK(SUM,MAX)`) shows its name.
+        Value::Lambda(l) if l.eta.is_some() => l.eta.clone().unwrap_or_default(),
+        // A LAMBDA made by the formula (Excel for Windows, #106).
+        Value::Lambda(_) => "\u{3bb}".into(),
         Value::Number(n) if (*n - 9.01106264977721e-5).abs() < 1e-15 => "9.01106264977721E-05".into(),
         v => to_text(v).unwrap_or_default(),
     }
@@ -1260,9 +1270,16 @@ fn arraytotext(c: &mut Ctx, a: &[Expr]) -> Value {
         },
         None => false,
     };
+    // One cell holding an error is that error (Excel: `ARRAYTOTEXT(TAKE(F1:F3,1),1)` is #N/A), not "{#N/A}".
+    if let Value::Ref(r) = c.eval(&a[0])
+        && let [area] = r.as_slice()
+        && area.is_cell()
+        && let Value::Error(e) = c.cell_value(area.sheet, area.first_row, area.first_column)
+    {
+        return err(e);
+    }
     let arr: Rc<Array> = match arg_array(c, &a[0]) {
         Ok(x) => x,
-        Err(CellError::Calc) => return err(CellError::Value),
         Err(e) => return err(e),
     };
     let mut out = String::new();

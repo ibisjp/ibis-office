@@ -55,7 +55,11 @@ impl SlideEditor {
             }
             (ControlKind::List, ControlHit::Item(i)) => next.value = i as i64 + 1,
             (ControlKind::Drop, _) => {
-                self.open_control_list(shape, &control, event.position, window, cx);
+                // The ▼ button is the square at the right end of the control: the list hangs from its lower left corner.
+                let button = (frame.height).min(16 * ibis_doc_model::EMU_PER_POINT);
+                let origin = |x: i64, y: i64| point(layout.origin.x + layout.to_px(x), layout.origin.y + layout.to_px(y));
+                let bounds = Bounds::from_corners(origin(frame.x + frame.width - button, frame.y), origin(frame.x + frame.width, frame.y + frame.height));
+                self.open_control_list(shape, &control, crate::shell::chrome::dropdown_list::below_button(bounds), window, cx);
                 return true;
             }
             _ => return true,
@@ -136,7 +140,7 @@ impl SlideEditor {
     }
 
     /// A drop-down's items, open by it.
-    fn open_control_list(&mut self, shape: ShapeId, control: &FormControl, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_control_list(&mut self, shape: ShapeId, control: &FormControl, (position, anchor): (Point<Pixels>, Anchor), window: &mut Window, cx: &mut Context<Self>) {
         let slide = self.current_slide;
         let entries: std::rc::Rc<Vec<MenuEntry>> = std::rc::Rc::new(
             control
@@ -175,7 +179,7 @@ impl SlideEditor {
             this.focus_handle.focus(window, cx);
         });
         menu.read(cx).focus_handle(cx).focus(window, cx);
-        self.wb_mut().list_popup = Some(super::validation::ListPopup { menu, position, _dismiss: dismiss });
+        self.wb_mut().list_popup = Some(super::validation::ListPopup { menu, position, anchor, _dismiss: dismiss });
         cx.notify();
     }
 }

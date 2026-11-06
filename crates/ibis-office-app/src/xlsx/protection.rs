@@ -24,6 +24,8 @@ use crate::shell::i18n::text;
 pub(crate) enum Guarded {
     /// Changing the cells' content (locked ones refused).
     Cells,
+    /// Typing into a label of a pivot table (renaming it): like `Cells` for a protected sheet, but not refused by the table.
+    PivotLabel,
     FormatCells,
     FormatColumns,
     FormatRows,
@@ -94,14 +96,29 @@ impl SlideEditor {
         self.protection_refuses_ranges(what, &ranges, cx)
     }
 
+    /// The sheet protection and the read-only mode only: for a change that reaches formulas anywhere in the
+    /// workbook (breaking a link to another workbook), whatever the selection holds, a pivot table included.
+    pub(crate) fn protection_refuses_ignoring_pivots(&mut self, what: Guarded, cx: &mut Context<Self>) -> bool {
+        let ranges = self.selected_ranges();
+        self.protection_refuses_checking(what, &ranges, false, cx)
+    }
+
     pub(crate) fn protection_refuses_ranges(&mut self, what: Guarded, ranges: &[CellRange], cx: &mut Context<Self>) -> bool {
+        self.protection_refuses_checking(what, ranges, true, cx)
+    }
+
+    fn protection_refuses_checking(&mut self, what: Guarded, ranges: &[CellRange], pivots: bool, cx: &mut Context<Self>) -> bool {
         if self.is_read_only() {
+            return true;
+        }
+        // The cells of a pivot table are changed by the field list only (measured on Excel).
+        if pivots && what == Guarded::Cells && self.pivot_refuses_ranges(ranges, cx) {
             return true;
         }
         let (Some(p), Some((_, sheet))) = (self.sheet_protection(), self.current_sheet()) else { return false };
         let a = p.allowed;
         let refused = match what {
-            Guarded::Cells => {
+            Guarded::Cells | Guarded::PivotLabel => {
                 let unlocked_ranges = &self.wb().unlocked_ranges;
                 ranges.iter().any(|r| {
                     (r.first_row..=r.last_row).any(|row| {
@@ -622,7 +639,7 @@ impl SlideEditor {
 
                 .label(text("_xlsx.protect-sheet"))
                 .on_click(cx.listener(|this, _, window, cx| this.open_protect_panel(window, cx)))));
-        bottom_row = bottom_row.action(crate::shell::chrome::ActionDefinition::new("allow-ranges-close", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.close")).on_click(cx.listener(|e,_,w,cx|e.close_panel_dialog(w,cx))));
+        bottom_row = bottom_row.action(crate::shell::chrome::ActionDefinition::new("allow-ranges-close", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.close")).on_click(cx.listener(|e,_,w,cx|e.close_dialog(w,cx))));
 
 
         Some(SidebarPanel::with_footer(text("_xlsx.allow-users-to-edit-ranges"), body.into_any_element(), bottom_row))

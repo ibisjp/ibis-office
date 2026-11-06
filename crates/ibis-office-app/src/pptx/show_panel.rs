@@ -204,7 +204,7 @@ impl SlideEditor {
             .child(crate::shell::chrome::radio_button("pptx-show-type-kiosk", is_kiosk, false, crate::shell::i18n::text("pptx.show-panel.browsed-kiosk-full-screen-2"), cx.listener(|e, _, _, cx| e.set_show_panel_type(ShowType::Kiosk { restart: None }, cx))))
             // スライドの表示
             .child(div().text_sm().font_weight(FontWeight::BOLD).child(crate::shell::i18n::text("pptx.show-panel.show-slides")))
-            .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
+            .child(crate::shell::chrome::radio_group()
             .child(crate::shell::chrome::radio_button("pptx-show-range-all", range_kind == ShowRangeKind::All, false, crate::shell::i18n::text("pptx.show-panel.all-2"), cx.listener(|e, _, _, cx| {
                 if let Some(p) = e.pptx_mut().and_then(|s| s.show_panel.as_mut()) {
                     p.all_slides = true;

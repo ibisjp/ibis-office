@@ -61,6 +61,67 @@ fn rewritable(doc: &XmlDocument, timing: NodeId) -> bool {
     !(unread || unknown_sequences)
 }
 
+/// One behaviour of an effect (`p:set`, `p:anim`, `p:animEffect`, `p:animScale`, `p:animRot`), time node id `n`, on `target`.
+fn behavior_xml(p: &str, b: &ibis_doc_model::AnimBehavior, target: &str, n: u32) -> String {
+    use ibis_doc_model::BehaviorKind;
+    let esc = |v: &str| v.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let value = |v: &str| {
+        if v.parse::<f64>().is_ok() { format!("<{p}fltVal val=\"{}\"/>", esc(v)) } else { format!("<{p}strVal val=\"{}\"/>", esc(v)) }
+    };
+    let dur = b.dur.max(1);
+    let time = |fill: &str| {
+        if b.begin > 0 {
+            format!("<{p}cTn id=\"{n}\" dur=\"{dur}\"{fill}><{p}stCondLst><{p}cond delay=\"{}\"/></{p}stCondLst></{p}cTn>", b.begin)
+        } else {
+            format!("<{p}cTn id=\"{n}\" dur=\"{dur}\"{fill}/>")
+        }
+    };
+    let attr = |name: &str| format!("<{p}attrNameLst><{p}attrName>{}</{p}attrName></{p}attrNameLst>", esc(name));
+    match &b.kind {
+        BehaviorKind::Set { attr: name, value: v } => {
+            let to = if name == "style.opacity" { value(v) } else { format!("<{p}strVal val=\"{}\"/>", esc(v)) };
+            format!("<{p}set><{p}cBhvr>{}{target}{}</{p}cBhvr><{p}to>{to}</{p}to></{p}set>", time(" fill=\"hold\""), attr(name))
+        }
+        BehaviorKind::Anim { attr: name, keys, formula, discrete } => {
+            let last = keys.len().saturating_sub(1);
+            let tavs: String = keys
+                .iter()
+                .enumerate()
+                .map(|(i, (tm, v))| {
+                    let fmla = match formula {
+                        Some(f) if i == last => format!(" fmla=\"{}\"", esc(f)),
+                        _ => String::new(),
+                    };
+                    format!("<{p}tav tm=\"{tm}\"{fmla}><{p}val>{}</{p}val></{p}tav>", value(v))
+                })
+                .collect();
+            let calc = if *discrete { "discrete" } else { "lin" };
+            format!("<{p}anim calcmode=\"{calc}\" valueType=\"num\"><{p}cBhvr additive=\"base\">{}{target}{}</{p}cBhvr><{p}tavLst>{tavs}</{p}tavLst></{p}anim>", time(" fill=\"hold\""), attr(name))
+        }
+        BehaviorKind::Effect { filter, enter } => {
+            let transition = if *enter { "in" } else { "out" };
+            format!("<{p}animEffect transition=\"{transition}\" filter=\"{}\"><{p}cBhvr>{}{target}</{p}cBhvr></{p}animEffect>", esc(filter), time(""))
+        }
+        BehaviorKind::Scale { from, to, by } => {
+            let xy = |tag: &str, v: &Option<(i32, i32)>| v.map(|(x, y)| format!("<{p}{tag} x=\"{x}\" y=\"{y}\"/>")).unwrap_or_default();
+            format!("<{p}animScale><{p}cBhvr>{}{target}</{p}cBhvr>{}{}{}</{p}animScale>", time(" fill=\"hold\""), xy("by", by), xy("from", from), xy("to", to))
+        }
+        BehaviorKind::Opaque(raw) => {
+            let mut text = raw.replace('\u{1}', &format!("<{p}tgtEl>{}</{p}tgtEl>", target.trim_start_matches(&format!("<{p}tgtEl>")).trim_end_matches(&format!("</{p}tgtEl>"))));
+            let mut id = n;
+            while let Some(at) = text.find('\u{2}') {
+                text.replace_range(at..at + '\u{2}'.len_utf8(), &id.to_string());
+                id += 1_000_000;
+            }
+            text
+        }
+        BehaviorKind::Rotate { from, to, by } => {
+            let at = |name: &str, v: &Option<i32>| v.map(|v| format!(" {name}=\"{v}\"")).unwrap_or_default();
+            format!("<{p}animRot{}{}{}><{p}cBhvr>{}{target}{}</{p}cBhvr></{p}animRot>", at("by", by), at("from", from), at("to", to), time(" fill=\"hold\""), attr("r"))
+        }
+    }
+}
+
 /// One effect's `p:par`: `id` its time node's id (it takes more for its
 /// behaviours: the next free one is returned), `spid` its shape.
 fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> Result<String, Error> {
@@ -74,6 +135,8 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
         AnimationClass::Exit => "exit",
         AnimationClass::Emphasis => "emph",
         AnimationClass::Path => "path",
+        // 再生・一時停止・停止 are kept as the file has them (`pptx_media_timing`), never written from the model.
+        AnimationClass::Media => return Err(unsupported("メディアの再生の書き出し")),
     };
     let dur = a.duration.max(1);
     let effect_id = *id;
@@ -125,6 +188,13 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
         AnimationSide::Bottom => 4,
         AnimationSide::Left => 8,
     };
+    // The side a wipe comes from, as its filter names it (`wipe(down)` is from the bottom, as PowerPoint writes it).
+    let wipe_dir = |side: AnimationSide| match side {
+        AnimationSide::Top => "up",
+        AnimationSide::Right => "right",
+        AnimationSide::Bottom => "down",
+        AnimationSide::Left => "left",
+    };
     let (preset, subtype, behaviours) = match (a.class, a.look) {
         (AnimationClass::Entrance, AnimationLook::Appear) => (1, 0, visibility(next(), 0, "visible")),
         (AnimationClass::Exit, AnimationLook::Appear) => (1, 0, visibility(next(), 0, "hidden")),
@@ -146,27 +216,14 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
             let (tx, ty) = off(side);
             (2, side_subtype(side), format!("{}{}{}", fly(x, "ppt_x", "#ppt_x", tx), fly(y, "ppt_y", "#ppt_y", ty), visibility(v, dur.saturating_sub(1), "hidden")))
         }
+        // ズーム as PowerPoint writes it (`presetID` 23: `ppt_w` and `ppt_h` from 0 to the shape's own, 16 in / 32 out).
         (AnimationClass::Entrance, AnimationLook::Zoom) => {
-            let (v, s) = (next(), next());
-            (
-                23,
-                0,
-                format!(
-                    "{}<{p}animScale><{p}cBhvr><{p}cTn id=\"{s}\" dur=\"{dur}\" fill=\"hold\"/>{target}</{p}cBhvr><{p}from x=\"0\" y=\"0\"/><{p}to x=\"100000\" y=\"100000\"/></{p}animScale>",
-                    visibility(v, 0, "visible")
-                ),
-            )
+            let (v, w, h) = (next(), next(), next());
+            (23, 16, format!("{}{}{}", visibility(v, 0, "visible"), fly(w, "ppt_w", "0", "#ppt_w").replace(" additive=\"base\"", "").replace("<p:tav tm=\"0\"><p:val><p:strVal val=\"0\"/>", "<p:tav tm=\"0\"><p:val><p:fltVal val=\"0\"/>"), fly(h, "ppt_h", "0", "#ppt_h").replace(" additive=\"base\"", "").replace("<p:tav tm=\"0\"><p:val><p:strVal val=\"0\"/>", "<p:tav tm=\"0\"><p:val><p:fltVal val=\"0\"/>")))
         }
         (AnimationClass::Exit, AnimationLook::Zoom) => {
-            let (s, v) = (next(), next());
-            (
-                23,
-                0,
-                format!(
-                    "<{p}animScale><{p}cBhvr><{p}cTn id=\"{s}\" dur=\"{dur}\" fill=\"hold\"/>{target}</{p}cBhvr><{p}from x=\"100000\" y=\"100000\"/><{p}to x=\"0\" y=\"0\"/></{p}animScale>{}",
-                    visibility(v, dur.saturating_sub(1), "hidden")
-                ),
-            )
+            let (w, h, v) = (next(), next(), next());
+            (23, 32, format!("{}{}{}", fly(w, "ppt_w", "#ppt_w", "0").replace(" additive=\"base\"", "").replace("<p:tav tm=\"100000\"><p:val><p:strVal val=\"0\"/>", "<p:tav tm=\"100000\"><p:val><p:fltVal val=\"0\"/>"), fly(h, "ppt_h", "#ppt_h", "0").replace(" additive=\"base\"", "").replace("<p:tav tm=\"100000\"><p:val><p:strVal val=\"0\"/>", "<p:tav tm=\"100000\"><p:val><p:fltVal val=\"0\"/>"), visibility(v, dur.saturating_sub(1), "hidden")))
         }
         (AnimationClass::Entrance, AnimationLook::Float(side)) => {
             let (v, f) = (next(), next());
@@ -195,11 +252,12 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
         (AnimationClass::Entrance, AnimationLook::Wipe(side)) => {
             let (v, f) = (next(), next());
             let sub = side_subtype(side);
+            let dir = wipe_dir(side);
             (
                 22,
                 sub,
                 format!(
-                    "{}<{p}animEffect transition=\"in\" filter=\"wipe\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>",
+                    "{}<{p}animEffect transition=\"in\" filter=\"wipe({dir})\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>",
                     visibility(v, 0, "visible")
                 ),
             )
@@ -207,11 +265,12 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
         (AnimationClass::Exit, AnimationLook::Wipe(side)) => {
             let (f, v) = (next(), next());
             let sub = side_subtype(side);
+            let dir = wipe_dir(side);
             (
                 22,
                 sub,
                 format!(
-                    "<{p}animEffect transition=\"out\" filter=\"wipe\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>{}",
+                    "<{p}animEffect transition=\"out\" filter=\"wipe({dir})\"><{p}cBhvr><{p}cTn id=\"{f}\" dur=\"{dur}\"/>{target}</{p}cBhvr></{p}animEffect>{}",
                     visibility(v, dur.saturating_sub(1), "hidden")
                 ),
             )
@@ -277,6 +336,11 @@ fn effect_xml(p: &str, a: &Animation, spid: &str, delay: u32, id: &mut u32) -> R
                 ),
             )
         }
+        (_, AnimationLook::Preset) if !a.behaviors.is_empty() => {
+            // 動作（`p:anim`・`p:animEffect`…）をそのまま書く。
+            let xml: String = a.behaviors.iter().map(|b| behavior_xml(p, b, &target, next())).collect();
+            (a.preset.0, a.preset.1, xml)
+        }
         _ => return Err(unsupported("このアニメーションの書き出し")),
     };
     let fill = match a.after_effect {
@@ -314,7 +378,7 @@ fn timing_xml(p: &str, animations: &[Animation], spid: &dyn Fn(ShapeId) -> Optio
     let mut id = 3u32;
     let mut clicks = String::new();
     // 1. Main sequence animations (trigger == None)
-    let main_animations: Vec<&Animation> = animations.iter().filter(|a| a.trigger.is_none()).collect();
+    let main_animations: Vec<&Animation> = animations.iter().filter(|a| a.trigger.is_none() && !a.is_media()).collect();
     // Click groups: each a list of timed groups, each (delay, effects).
     let mut groups: Vec<Vec<(u32, Vec<&Animation>)>> = Vec::new();
     for &a in &main_animations {
@@ -351,7 +415,7 @@ fn timing_xml(p: &str, animations: &[Animation], spid: &dyn Fn(ShapeId) -> Optio
     let mut interactive_seqs = String::new();
     let mut trigger_groups: Vec<(AnimationTrigger, Vec<&Animation>)> = Vec::new();
     for a in animations {
-        if a.trigger.is_none() {
+        if a.trigger.is_none() || a.is_media() {
             continue;
         }
         if let Some(pos) = trigger_groups.iter().position(|(t, _)| t == &a.trigger) {
@@ -446,33 +510,99 @@ fn timing_xml(p: &str, animations: &[Animation], spid: &dyn Fn(ShapeId) -> Optio
     ))
 }
 
+/// Where each click group of the main sequence that [`super::pptx_media_timing::take`] took is to go back (its
+/// effects are the model's 再生 rows): for the `n`th main-sequence 再生・一時停止・停止 row of a shape, how many click
+/// groups of the other effects come before it in the model's order.
+fn media_slots(animations: &[Animation], pieces: &[(String, bool)], native: &HashMap<ShapeId, String>) -> Vec<usize> {
+    let main: Vec<&Animation> = animations.iter().filter(|a| a.trigger.is_none()).collect();
+    let mut used = vec![false; main.len()];
+    let mut out = Vec::new();
+    for (spid, _) in pieces {
+        let at = (0..main.len()).find(|&i| !used[i] && main[i].is_media() && native.get(&main[i].shape) == Some(spid));
+        let Some(i) = at else {
+            out.push(usize::MAX);
+            continue;
+        };
+        used[i] = true;
+        let mut groups = 0usize;
+        let mut open = false;
+        for a in main[..i].iter().filter(|a| !a.is_media()) {
+            if a.start == AnimationStart::OnClick || !open {
+                groups += 1;
+                open = true;
+            }
+        }
+        out.push(groups);
+    }
+    out
+}
+
 /// Write `animations` as the slide's timing (its document `doc`), its
 /// shapes' drawing ids `native`; none takes the timing away.
 pub(crate) fn write_timing(doc: &mut XmlDocument, animations: &[Animation], native: &HashMap<ShapeId, String>) -> Result<(), Error> {
     let root = doc.root_element().ok_or_else(|| Error::new("スライドが空です"))?;
     let old = doc.child(root, "timing");
-    // The playing of videos and audios is not an animation of the model: kept as it is.
-    let media = old.map(|t| super::pptx_media_timing::take(doc, t)).unwrap_or_default();
+    // The calls that play a clip are rows of the model (the pane lists them) but the file's own time nodes: kept as they are.
+    let mut media = old.map(|t| super::pptx_media_timing::take(doc, t)).unwrap_or_default();
+    // One whose row was deleted (the call is one the model reads and no row of the shape and the command remains) goes with it;
+    // a row with no call yet (one added in the pane) gets a new one.
+    let x = Prefixes::at(doc, root);
+    let mut rows: Vec<(String, bool, ibis_doc_model::MediaCommand, u32, bool)> = animations
+        .iter()
+        .filter(|a| a.is_media() && (a.trigger.is_none() || matches!(a.trigger, AnimationTrigger::OnShapeClick(_))))
+        .filter_map(|a| Some((native.get(&a.shape)?.clone(), !a.trigger.is_none(), a.media_command()?, a.duration, false)))
+        .collect();
+    let (mut kept, mut targets) = (Vec::new(), Vec::new());
+    for piece in std::mem::take(&mut media) {
+        let main = doc.local_name(piece) == "par";
+        let key = super::pptx_media_timing::piece_key(doc, piece);
+        // The row this call is of (each row has one call).
+        let row = key.as_ref().and_then(|(spid, interactive, command)| rows.iter().position(|r| !r.4 && &r.0 == spid && r.1 == *interactive && r.2 == *command));
+        if let Some(r) = row {
+            rows[r].4 = true;
+        }
+        match key {
+            Some(_) if row.is_none() && (main || doc.local_name(piece) == "seq") => {}
+            Some((spid, ..)) if main => {
+                targets.push((spid, true));
+                kept.push(piece);
+            }
+            _ => {
+                if main {
+                    targets.push((String::new(), false));
+                }
+                kept.push(piece);
+            }
+        }
+    }
+    for (spid, interactive, command, duration, _) in rows.into_iter().filter(|r| !r.4) {
+        let piece = super::pptx_media_timing::call_piece(doc, &x, &spid, command, interactive, duration)?;
+        if !interactive {
+            targets.push((spid, true));
+        }
+        kept.push(piece);
+    }
+    let media = kept;
+    let slots = media_slots(animations, &targets, native);
     if let Some(t) = old
         && !rewritable(doc, t)
     {
         // Put back what was taken: nothing is changed.
-        super::pptx_media_timing::restore(doc, media)?;
+        super::pptx_media_timing::restore(doc, media, &slots)?;
         return Err(unsupported("トリガー・段落ごとの再生・音などのあるアニメーションの変更"));
     }
     if let Some(t) = old {
         doc.detach(t);
     }
-    if animations.is_empty() {
-        return super::pptx_media_timing::restore(doc, media);
+    if animations.iter().all(|a| a.is_media()) {
+        return super::pptx_media_timing::restore(doc, media, &slots);
     }
-    let x = Prefixes::at(doc, root);
     let xml = timing_xml(&x.p, animations, &|s| native.get(&s).cloned())?;
     let timing = x.import(doc, &xml)?;
     // After the transition (and an AlternateContent holding one), before the extension list.
     let at = doc.children(root).iter().position(|&c| doc.is_element(c) && doc.local_name(c) == "extLst").unwrap_or(doc.children(root).len());
     doc.insert(root, at, timing);
-    super::pptx_media_timing::restore(doc, media)
+    super::pptx_media_timing::restore(doc, media, &slots)
 }
 
 #[cfg(test)]
@@ -497,7 +627,7 @@ mod tests {
             trigger: AnimationTrigger::None,
             paragraph: None, chars: None, text_unit: None, path: Vec::new(),
             chart_element: None, chart_build: None,
-            dgm_element: None, dgm_build: None,
+            dgm_element: None, dgm_build: None, behaviors: Vec::new(),
         }
     }
 

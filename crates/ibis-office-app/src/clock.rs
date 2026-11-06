@@ -29,10 +29,11 @@ pub(crate) fn local_now() -> ibis_doc_model::date_field::LocalTime {
 }
 
 /// The clock for the calculator (`NOW`, `TODAY` and the year of `9/30` are
-/// the local time): seconds since 1970 (UTC) and the time zone's offset.
+/// the local time): milliseconds since 1970 (UTC) and the time zone's offset
+/// in seconds.
 pub(crate) fn calc_clock() -> (i64, i64) {
-    let seconds = (unix_millis() / 1000) as i64;
-    (seconds, local_offset(seconds))
+    let millis = unix_millis();
+    (millis as i64, local_offset((millis / 1000) as i64))
 }
 
 /// Seconds east of UTC of the computer's time zone at `seconds` after 1970.

@@ -6,6 +6,7 @@
 //! The duration goes in `p14:dur` (in a choice for PowerPoint 2010 and
 //! later, with `spd` alone as the fallback), as PowerPoint writes it.
 
+use ibis_doc_model::transition_catalog::{self as catalog, TransitionNs};
 use ibis_doc_model::Transition;
 use ibis_ooxml::{NodeId, Package, XmlDocument};
 
@@ -15,6 +16,7 @@ use crate::Error;
 
 const NS_MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const NS_P14: &str = "http://schemas.microsoft.com/office/powerpoint/2010/main";
+const NS_P15: &str = "http://schemas.microsoft.com/office/powerpoint/2012/main";
 const NS_P159: &str = "http://schemas.microsoft.com/office/powerpoint/2015/09/main";
 const REL_AUDIO: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/audio";
 const SOUND_PART: &str = "ppt/media/transition_sound.wav";
@@ -49,7 +51,7 @@ const SILENT_WAV: &[u8] = &[
 
 /// `p:transition` written with prefixes `p` (`p:`) and, for its duration
 /// and the newer effects, `p14` (`None`: the fallback, without them).
-fn transition_xml(t: &Transition, p: &str, p14: Option<&str>, p159: Option<&str>, sound_embed: Option<(&str, &str)>) -> String {
+fn transition_xml(t: &Transition, p: &str, p14: Option<&str>, extra: Option<(TransitionNs, &str)>, sound_embed: Option<(&str, &str)>) -> String {
     let spd = speed(t.duration);
     let mut attrs = format!(" spd=\"{spd}\"");
     if let Some(p14) = p14 {
@@ -62,17 +64,33 @@ fn transition_xml(t: &Transition, p: &str, p14: Option<&str>, p159: Option<&str>
         attrs.push_str(&format!(" advTm=\"{after}\""));
     }
     let base = Transition::BASE_EFFECTS.contains(&t.effect.as_str());
-    let effect = match (t.effect.as_str(), base, p14) {
-        ("", _, _) => String::new(),
-        // 変形: PowerPoint 2016's; without it, a fade.
-        ("morph", _, _) => match p159 {
-            Some(p159) => format!("<{p159}morph option=\"{}\"/>", escape(t.direction.as_deref().unwrap_or("byObject"))),
-            None => format!("<{p}fade/>"),
+    let effect = match (catalog::effect_of(&t.effect), t.effect.as_str()) {
+        (_, "") => String::new(),
+        // An effect of the gallery, with its option as the attributes it is read from (without the namespace it needs, a fade).
+        (Some(def), id) => {
+            let mut attrs: String = catalog::attributes(id, t.direction.as_deref().filter(|d| !d.is_empty())).iter().map(|(n, v)| format!(" {n}=\"{v}\"")).collect();
+            if id == "morph" && t.direction.is_none() {
+                attrs = " option=\"byObject\"".to_string();
+            }
+            let element = def.element;
+            match def.ns {
+                TransitionNs::P => format!("<{p}{element}{attrs}/>"),
+                TransitionNs::P14 => match p14 {
+                    Some(p14) => format!("<{p14}{element}{attrs}/>"),
+                    None => format!("<{p}fade/>"),
+                },
+                ns => match extra {
+                    Some((have, prefix)) if have == ns => format!("<{prefix}{element}{attrs}/>"),
+                    _ => format!("<{p}fade/>"),
+                },
+            }
+        }
+        (None, name) => match (base, p14) {
+            (true, _) => format!("<{p}{name}{}/>", direction(t)),
+            (false, Some(p14)) => format!("<{p14}{name}{}/>", direction(t)),
+            // Without PowerPoint 2010's names, a fade.
+            (false, None) => format!("<{p}fade/>"),
         },
-        (name, true, _) => format!("<{p}{name}{}/>", direction(t)),
-        (name, false, Some(p14)) => format!("<{p14}{name}{}/>", direction(t)),
-        // Without PowerPoint 2010's names, a fade.
-        (_, false, None) => format!("<{p}fade/>"),
     };
     let sound = match &t.sound {
         None => String::new(),
@@ -201,18 +219,25 @@ pub(crate) fn write_transition(package: &mut Package, part: &str, before: Option
     });
 
     let p = prefix(doc, root, super::pptx_new::NS_P, "p");
-    let plain = t.duration == 500 && (t.effect.is_empty() || Transition::BASE_EFFECTS.contains(&t.effect.as_str()));
-    let morph = t.effect == "morph";
+    // The namespaces the effect needs besides `p14` (the duration): 変形 (`p159`), PowerPoint 2013's effects (`p15`).
+    let extra_ns = catalog::effect_of(&t.effect).map(|d| d.ns).filter(|n| matches!(n, TransitionNs::P15 | TransitionNs::P159));
+    let needs_p14 = catalog::effect_of(&t.effect).is_some_and(|d| d.ns == TransitionNs::P14);
+    let plain = t.duration == 500 && !needs_p14 && extra_ns.is_none() && (t.effect.is_empty() || catalog::effect_of(&t.effect).map_or_else(|| Transition::BASE_EFFECTS.contains(&t.effect.as_str()), |d| d.ns == TransitionNs::P));
     let (mc, p14) = if plain { (String::new(), String::new()) } else { (prefix(doc, root, NS_MC, "mc"), prefix(doc, root, NS_P14, "p14")) };
-    let p159 = if morph { prefix(doc, root, NS_P159, "p159") } else { String::new() };
+    let (extra_prefix, extra_uri) = match extra_ns {
+        Some(TransitionNs::P15) => (prefix(doc, root, NS_P15, "p15"), NS_P15),
+        Some(_) => (prefix(doc, root, NS_P159, "p159"), NS_P159),
+        None => (String::new(), ""),
+    };
+    let extra = extra_ns.map(|ns| (ns, extra_prefix.as_str()));
     let embed_ref = sound_embed.as_ref().map(|(r, rid)| (r.as_str(), rid.as_str()));
     let xml = if plain {
         transition_xml(t, &p, None, None, embed_ref)
     } else {
         format!(
             "<{mc}AlternateContent><{mc}Choice Requires=\"{}\">{}</{mc}Choice><{mc}Fallback>{}</{mc}Fallback></{mc}AlternateContent>",
-            if morph { p159.trim_end_matches(':') } else { p14.trim_end_matches(':') },
-            transition_xml(t, &p, Some(&p14), morph.then_some(p159.as_str()), embed_ref),
+            if extra_ns.is_some() { extra_prefix.trim_end_matches(':') } else { p14.trim_end_matches(':') },
+            transition_xml(t, &p, Some(&p14), extra, embed_ref),
             transition_xml(t, &p, None, None, embed_ref)
         )
     };
@@ -221,8 +246,8 @@ pub(crate) fn write_transition(package: &mut Package, part: &str, before: Option
     let mut bound = vec![(p.as_str(), super::pptx_new::NS_P)];
     if !plain {
         bound.extend([(mc.as_str(), NS_MC), (p14.as_str(), NS_P14)]);
-        if morph {
-            bound.push((p159.as_str(), NS_P159));
+        if extra_ns.is_some() {
+            bound.push((extra_prefix.as_str(), extra_uri));
         }
     }
     if let Some((r, _)) = &sound_embed {

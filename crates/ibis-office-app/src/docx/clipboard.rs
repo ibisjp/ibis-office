@@ -69,9 +69,9 @@ impl SlideEditor {
         if start != end {
             if track {
                 commands.push(FlowCommand::TrackDelete { from:start, to:end, author:who.author.clone(), date:who.date.clone() });
-            } else if start.para == end.para && !super::flow_layout::showing_markup() {
+            } else if start.para == end.para && !self.resources.markup_view.showing_markup() {
                 let Some(p) = self.paragraph_of(start.para) else { return false; };
-                commands.extend(super::editing::visible_delete_commands(p,start.offset,end.offset));
+                commands.extend(super::editing::visible_delete_commands(&self.resources.markup_view, p,start.offset,end.offset));
             } else {
                 commands.push(FlowCommand::Delete { from: start, to: end });
             }
@@ -113,9 +113,9 @@ impl SlideEditor {
         if start != end {
             if track {
                 commands.push(FlowCommand::TrackDelete { from: start, to: end, author: who.author.clone(), date: who.date.clone() });
-            } else if start.para == end.para && !super::flow_layout::showing_markup() {
+            } else if start.para == end.para && !self.resources.markup_view.showing_markup() {
                 let Some(p) = self.paragraph_of(start.para) else { return false; };
-                commands.extend(super::editing::visible_delete_commands(p, start.offset, end.offset));
+                commands.extend(super::editing::visible_delete_commands(&self.resources.markup_view, p, start.offset, end.offset));
             } else {
                 commands.push(FlowCommand::Delete { from: start, to: end });
             }
@@ -280,7 +280,7 @@ pub(super) fn resolved_format(r: &FlowRun) -> RunFormat {
         bold: Some(s.bold), italic: Some(s.italic), underline: Some(s.underline), underline_style: Some(s.underline_style),
         underline_color: Some(s.underline_color), strike: Some(s.strike), double_strike: Some(s.double_strike), caps: Some(s.caps), small_caps: Some(s.small_caps),
         color: Some(s.color), theme_color: r.format.theme_color.clone(), highlight: Some(s.highlight), shd_pattern: None, effects: None, border: Some(s.border.clone()),
-        position: Some(s.position), spacing: Some(s.spacing), scale: Some(s.scale), fit_text: Some(s.fit_text), hidden: r.format.hidden, kern: Some(s.kern.unwrap_or(0)), emphasis: Some(s.emphasis), combine: s.combine.map(Some), tate_chu_yoko: Some(s.tate_chu_yoko),
+        position: Some(s.position), spacing: Some(s.spacing), scale: Some(s.scale), fit_text: Some(s.fit_text), hidden: r.format.hidden, kern: Some(s.kern.unwrap_or(0)), emphasis: Some(s.emphasis), combine: s.combine.map(Some), tate_chu_yoko: Some(s.tate_chu_yoko), tate_chu_yoko_fit: Some(s.tate_chu_yoko_fit),
         outline: Some(s.outline), shadow: Some(s.shadow), emboss: Some(s.emboss), imprint: Some(s.imprint), no_proof: r.format.no_proof,
         lang: r.format.lang.clone(), lang_east_asia: r.format.lang_east_asia.clone(), lang_bidi: r.format.lang_bidi.clone(),
         ligatures: Some(s.ligatures), num_form: Some(s.num_form), num_spacing: Some(s.num_spacing), contextual_alternates: Some(s.contextual_alternates), enclosure_sizes: s.enclosure_sizes }

@@ -91,6 +91,64 @@ pub(crate) fn build_font_menu_entries(
     on_select: impl Fn(&str, &mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + Clone + 'static,
 ) -> Vec<MenuEntry> {
     let mut menu: Vec<MenuEntry> = Vec::new();
+    push_font_menu_entries(&mut menu, item_id, leading_items, current_font, on_select);
+    menu
+}
+
+/// The font menu grouped by where a font comes from: the section "used in this file" (`used`, in the given order),
+/// then, when `include_all`, the section "all" (the recent fonts and every installed family, as in
+/// [`build_font_menu_entries`]). With `include_all` false only the used fonts are offered (the "replace from" list of
+/// the font replacement: Office lists only the fonts the file uses). Usable from any screen's font list.
+pub(crate) fn build_grouped_font_menu_entries(
+    item_id: &'static str,
+    used: &[String],
+    include_all: bool,
+    current_font: Option<&str>,
+    on_select: impl Fn(&str, &mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + Clone + 'static,
+) -> Vec<MenuEntry> {
+    let mut menu: Vec<MenuEntry> = Vec::new();
+    if !used.is_empty() {
+        menu.push(MenuItem::new("font.section.used", crate::shell::i18n::text("_shell.font-used")).disabled(true).into());
+        for name in used {
+            let checked = current_font == Some(name.as_str()) || english_name(name).is_some_and(|en| current_font == Some(en));
+            let (on_select, fn_name) = (on_select.clone(), name.clone());
+            menu.push(
+                MenuItem::new(item_id, crate::shell::i18n::font_label(name))
+                    .checked(checked)
+                    .on(move |editor, window, cx| {
+                        record_recent_font(&fn_name);
+                        on_select(&fn_name, editor, window, cx);
+                    })
+                    .into(),
+            );
+        }
+    }
+    if include_all {
+        if !menu.is_empty() {
+            menu.push(MenuEntry::Separator);
+        }
+        let mut all = Vec::new();
+        push_font_menu_entries(&mut all, item_id, Vec::new(), current_font, on_select);
+        // The system section's header is "all" when the list is grouped.
+        for entry in &mut all {
+            if let MenuEntry::Item(item) = entry {
+                if item.id == "font.section.system" {
+                    item.label = crate::shell::i18n::text("_shell.font-all").into();
+                }
+            }
+        }
+        menu.extend(all);
+    }
+    menu
+}
+
+fn push_font_menu_entries(
+    menu: &mut Vec<MenuEntry>,
+    item_id: &'static str,
+    leading_items: Vec<MenuEntry>,
+    current_font: Option<&str>,
+    on_select: impl Fn(&str, &mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + Clone + 'static,
+) {
 
     // 1. Leading items (if any, followed by a separator)
     if !leading_items.is_empty() {
@@ -150,8 +208,6 @@ pub(crate) fn build_font_menu_entries(
                 .into(),
         );
     }
-
-    menu
 }
 
 fn list() -> Option<&'static FontList> {

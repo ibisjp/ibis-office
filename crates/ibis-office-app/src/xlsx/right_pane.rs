@@ -29,6 +29,12 @@ impl SlideEditor {
     /// selected (the render's `sync_right_pane`).
     pub(crate) fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = !self.sidebar_open;
+        // A presentation's pane, asked for by this button, is the アニメーション ウィンドウ (another panel that is open comes first).
+        if self.sidebar_open && self.is_presentation() {
+            if let Some(s) = self.pptx_mut() {
+                s.animation_pane = true;
+            }
+        }
         if let Some(s) = self.sheet_state_mut() {
             s.right_key = None;
         }
@@ -138,6 +144,7 @@ impl super::State {
         self.find=None;
         self.link=None;
         self.page_setup=false;
+        self.print_panel=false;
         self.header_footer_edit=None;
         self.conditional_edit=None;
         self.sort_edit=None;

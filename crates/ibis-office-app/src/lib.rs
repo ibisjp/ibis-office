@@ -18,6 +18,7 @@ pub(crate) use clock::debug_timing;
 mod docx;
 mod linux_desktop;
 mod media_player;
+mod dib_picture;
 mod native_shape_clipboard;
 #[cfg(windows)]
 mod open_with;
@@ -31,10 +32,16 @@ mod xlsx;
 mod export;
 #[cfg(headless_export)]
 mod export_print;
-#[cfg(all(target_os = "macos", feature = "export"))]
+#[cfg(headless_export)]
 mod export_text;
 #[cfg(headless_export)]
 mod pdf_vector;
+#[cfg(headless_export)]
+mod svg_pdf;
+#[cfg(headless_export)]
+mod svg_emf;
+#[cfg(headless_export)]
+mod pdf_picture;
 #[cfg(headless_export)]
 mod ui_snapshot;
 
@@ -205,7 +212,7 @@ actions!(
 pub fn init(cx: &mut App) {
     shell::settings::migrate_on_startup();
     gpui_kit::init(cx);
-    shell::panel_dialog::init(cx);
+    shell::dialog::init(cx);
     // Questions drawn as ibisOffice's dialogs where the system has none (Linux).
     linux_desktop::install_prompts(cx);
     // The metafile pictures put their text by the metrics of the fonts.
@@ -286,6 +293,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-shift-home", sheet_ui::ExtendFirstCell, Some(editor::SHEET_CONTEXT)),
         KeyBinding::new("ctrl-end", sheet_ui::SelectLastCell, Some(editor::SHEET_CONTEXT)),
         KeyBinding::new("ctrl-shift-end", sheet_ui::ExtendLastCell, Some(editor::SHEET_CONTEXT)),
+        KeyBinding::new("shift-pagedown", sheet_ui::ExtendPageDown, Some(editor::SHEET_CONTEXT)),
+        KeyBinding::new("shift-pageup", sheet_ui::ExtendPageUp, Some(editor::SHEET_CONTEXT)),
         // Calculation: F9 recalculates all sheets, Shift+F9 the active sheet.
         KeyBinding::new("f9", sheet_ui::CalculateNow, Some(editor::SHEET_CONTEXT)),
         KeyBinding::new("shift-f9", sheet_ui::CalculateSheet, Some(editor::SHEET_CONTEXT)),
@@ -533,6 +542,11 @@ pub fn open_editor(document: Option<(ibis_doc_model::Presentation, SharedString)
     }
     // A start window is as wide as its view (shell/start_view.rs).
     let width = if document.is_none() { shell::start_view::START_WINDOW_WIDTH } else { 1280. };
+    // A start window looks for a newer version (its 「ibisOffice を更新する」 button), whatever the setting says.
+    #[cfg(not(target_family = "wasm"))]
+    if document.is_none() {
+        shell::update::check_for_start_window(cx);
+    }
     open_window_sized(width, cx, move |editor, window, cx| {
         if let Some((presentation, name)) = document {
             editor.load(presentation, name, window, cx);
@@ -777,6 +791,25 @@ pub(crate) fn read_file(path: &std::path::Path) -> Result<Loaded, String> {
 /// As `read_file`; `password` opens a protected file (パスワードを使用して暗号化).
 #[cfg(not(target_family = "wasm"))]
 pub(crate) fn read_file_with(path: &std::path::Path, password: Option<&str>) -> Result<Loaded, String> {
+    catch_read_panic(path, || read_file_unguarded(path, password))
+}
+
+/// Run `read` for the file at `path`. One file's reader going wrong must close that file only: every window shares this
+/// process, so a panic here would take the other open documents with it (review 0.8.5, C1). The panic is caught and becomes
+/// this file's open error. (No `panic = "abort"` is set anywhere in the workspace, so the unwind reaches this frame.)
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn catch_read_panic<T>(path: &std::path::Path, read: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).unwrap_or_else(|payload| {
+        let what = payload.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| payload.downcast_ref::<String>().cloned()).unwrap_or_default();
+        log::error!("{}: the reader panicked: {what}", path.display());
+        xlsx::repair::note_open_failed(path);
+        docx::repair::note_open_failed(path);
+        Err(shell::i18n::text("file.read-crashed").to_string())
+    })
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn read_file_unguarded(path: &std::path::Path, password: Option<&str>) -> Result<Loaded, String> {
     timing::mark_read_start();
     let read_t0 = crate::clock::Instant::now();
     let mut data = std::fs::read(path).map_err(|e| e.to_string())?;
@@ -840,9 +873,15 @@ fn url_path(url: &str) -> Option<std::path::PathBuf> {
 }
 
 /// Open `path` in the app: in the editor window if it shows no document
-/// (the start view), else in a new window.
+/// (the start view), else in a new window. A file a window already has open
+/// is not opened again: that window is raised.
 #[cfg(not(target_family = "wasm"))]
 fn open_path_in_app(path: std::path::PathBuf, cx: &mut App) {
+    // A file already open is not opened again (each window edits its own copy in memory, and saving one would
+    // overwrite the other): its window comes to the front.
+    if shell::open_guard::raise_if_open(&path, None, cx) {
+        return;
+    }
     for window in cx.windows() {
         let Some(root) = window.downcast::<Root>() else { continue };
         let editor = root.update(cx, |root, _, _| root.view().clone().downcast::<SlideEditor>().ok()).ok().flatten();
@@ -1021,6 +1060,8 @@ pub fn run_native() {
             }
             let pending: Vec<std::path::PathBuf> = std::mem::take(&mut opener.borrow_mut().1);
             init(cx);
+            // The files that are open are watched for changes by other apps (shell/file_watch.rs).
+            shell::file_watch::start(cx);
             // macOS keeps an app running after its last window closes; quit instead.
             cx.on_window_closed(|cx, _| quit_if_last_window_closed(cx)).detach();
             timing::mark("app");
@@ -1185,5 +1226,17 @@ mod web {
         let name = field("name")?.as_string().unwrap_or_default();
         let bytes = js_sys::Uint8Array::new(&field("bytes")?).to_vec();
         Ok(Some((name, bytes)))
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod read_guard_tests {
+    /// C1 (review 0.8.5): a reader that panics closes that file with an error; the process, and the next read, go on.
+    #[test]
+    fn a_panicking_reader_becomes_an_open_error() {
+        let path = std::path::Path::new("panics.xlsx");
+        let failed: Result<u8, String> = super::catch_read_panic(path, || panic!("a reader's mistake"));
+        assert_eq!(failed.unwrap_err(), crate::shell::i18n::text("file.read-crashed").to_string());
+        assert_eq!(super::catch_read_panic(path, || Ok::<u8, String>(7)), Ok(7));
     }
 }

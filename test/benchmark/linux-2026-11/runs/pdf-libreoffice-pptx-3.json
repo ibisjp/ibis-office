@@ -1,0 +1,27 @@
+{
+ "tag": "pdf-libreoffice-pptx-3",
+ "scenario": "pdf",
+ "app": "libreoffice",
+ "kind": "pptx",
+ "run": 3,
+ "file": "earnings-presentation.pptx",
+ "seconds": 10.781,
+ "returncode": 0,
+ "pdf_bytes": 4313510,
+ "pages": 31,
+ "command": [
+  "soffice26",
+  "--headless",
+  "--convert-to",
+  "pdf",
+  "--outdir",
+  "pdf",
+  "earnings-presentation.pptx"
+ ],
+ "measured_at": "2026-11-03 18:55:23",
+ "load_before": [
+  0.8,
+  0.43,
+  0.24
+ ]
+}

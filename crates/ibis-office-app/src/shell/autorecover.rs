@@ -452,7 +452,7 @@ impl SlideEditor {
             Ok(loaded) => {
                 let name: SharedString = crate::shell::i18n::format("shell.autorecover.recovered-name", &[("file_name", &entry.file_name)]).into();
                 self.load(loaded.presentation, name, window, cx);
-                self.source = Some(loaded.source);
+                self.set_loaded_source(loaded.source);
                 self.path = None;
                 self.is_recovered = true;
                 self.active_autorecover_file = Some(entry.path);

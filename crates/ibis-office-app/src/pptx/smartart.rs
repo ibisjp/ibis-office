@@ -191,6 +191,10 @@ impl SmartArtColorStyle {
     }
 }
 
+/// The colour dropdown shows 5 square swatches; its width is that of the 5 swatches and their gaps (plus the button's own).
+const SWATCH_SIDE: f32 = 18.;
+const SWATCH_GAP: f32 = 4.;
+const SWATCH_ROW_WIDTH: f32 = SWATCH_SIDE * 5. + SWATCH_GAP * 4.;
 const SMARTART_PALETTE: [Rgb; 6] = [
     Rgb(0x4472c4), // Accent 1: Blue
     Rgb(0xed7d31), // Accent 2: Orange
@@ -1200,10 +1204,10 @@ impl SlideEditor {
             let selected = styles.iter().position(|(value, _)| *value == style).unwrap_or(0);
             let choices = styles.into_iter().map(|(value, key)| crate::shell::chrome::preview_dropdown::PreviewChoice {
                 label: t(key),
-                content: std::rc::Rc::new(move || h_flex().w_full().gap_1().children((0..5).map(|i| {let (fill, stroke, _) = value.palette(i);div().flex_1().h(px(18.)).rounded(px(3.)).bg(rgb(fill.0)).border_1().border_color(rgb(stroke.unwrap_or(fill).0))})).into_any_element()),
+                content: std::rc::Rc::new(move || h_flex().gap(px(SWATCH_GAP)).children((0..5).map(|i| {let (fill, stroke, _) = value.palette(i);div().size(px(SWATCH_SIDE)).flex_none().rounded(px(3.)).bg(rgb(fill.0)).border_1().border_color(rgb(stroke.unwrap_or(fill).0))})).into_any_element()),
                 choose: std::rc::Rc::new(move |e, _, cx| e.set_smartart_color_style(value, cx)),
             }).collect();
-            body = body.child(crate::shell::chrome::dropdown_row(t("pptx.smartart.color"), crate::shell::chrome::preview_dropdown::preview_dropdown("pptx-smartart-color", choices, selected, cx)));
+            body = body.child(crate::shell::chrome::dropdown_row(t("pptx.smartart.color"), crate::shell::chrome::preview_dropdown::preview_dropdown_sized("pptx-smartart-color", choices, selected, crate::shell::chrome::preview_dropdown::PreviewSize::fitting(SWATCH_ROW_WIDTH), cx)));
         } else {
             body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(t("pptx.smartart.select-prompt")));
         }

@@ -39,6 +39,13 @@ pub(crate) fn checkmark(checked:bool,show:bool,color:Hsla)->Option<Icon> {
     (checked && show).then(||icon("check",16.,color))
 }
 
+/// The one rule for a list that opens from a drop-down button (#95): the list's upper left corner is put on the button's
+/// lower left corner (the two left edges line up and the list hangs below the button; the window keeps it in view through `snap_to_window`).
+/// Returns the point and the corner of the list to put there, for `anchored().anchor(corner).position(point)`.
+pub(crate) fn below_button(button: Bounds<Pixels>) -> (Point<Pixels>, Anchor) {
+    (button.bottom_left(), Anchor::TopLeft)
+}
+
 #[derive(IntoElement)]
 pub(crate) struct AnchoredDropdown {
     pub trigger: Bounds<Pixels>,

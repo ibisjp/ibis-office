@@ -59,6 +59,18 @@ pub fn docx_with_math(data: &[u8]) -> Vec<u8> {
     package.save(ibis_ooxml::SaveOptions::default()).unwrap()
 }
 
+/// A document (`data`) whose first picture has an outer shadow and a reflection (`a:effectLst` of its `pic:spPr`).
+pub fn docx_with_picture_effects(data: &[u8]) -> Vec<u8> {
+    let mut package = ibis_ooxml::Package::open(data.to_vec()).unwrap();
+    let main = "word/document.xml";
+    let xml = String::from_utf8(package.read(main).unwrap()).unwrap();
+    let effects = r#"<a:effectLst><a:outerShdw blurRad="50800" dist="38100" dir="2700000" algn="tl" rotWithShape="0"><a:srgbClr val="000000"><a:alpha val="40000"/></a:srgbClr></a:outerShdw><a:reflection blurRad="6350" stA="50000" endA="300" endPos="35000" dir="5400000" sy="-100000" algn="bl" rotWithShape="0"/></a:effectLst>"#;
+    let at = xml.find("</pic:spPr>").unwrap();
+    let xml = format!("{}{}{}", &xml[..at], effects, &xml[at..]);
+    package.set_bytes(main, xml.into_bytes());
+    package.save(ibis_ooxml::SaveOptions::default()).unwrap()
+}
+
 /// The text of part `name` of a package (`word/document.xml`).
 pub fn part_text(data: &[u8], name: &str) -> Option<String> {
     let package = ibis_ooxml::Package::open(data.to_vec()).ok()?;
@@ -767,5 +779,30 @@ pub fn docx_with_tracked_move(data: &[u8]) -> Vec<u8> {
     let at = xml.rfind("<w:sectPr").unwrap();
     xml.insert_str(at, &moved);
     package.set_bytes("word/document.xml", xml.into_bytes());
+    package.save(ibis_ooxml::SaveOptions::default()).unwrap()
+}
+
+/// `data` (a .docx) with a table of contents (`TOC \o "1-3" \h \z \u`, in a content control of the "Table of Contents"
+/// gallery) at the start of the body that was never generated, as a program that writes the field and leaves its result to
+/// Word writes it (GitHub issue #112): `result` is the text shown in it (empty for none), and `dirty` marks the field
+/// `w:dirty="true"`; `update_fields` adds `w:updateFields` to the settings.
+pub fn docx_with_unupdated_toc(data: &[u8], result: &str, dirty: bool, update_fields: bool) -> Vec<u8> {
+    let mut package = ibis_ooxml::Package::open(data.to_vec()).unwrap();
+    let mut xml = String::from_utf8(package.read("word/document.xml").unwrap()).unwrap();
+    let dirty = if dirty { r#" w:dirty="true""# } else { "" };
+    let shown = if result.is_empty() { String::new() } else { format!("<w:r><w:t>{result}</w:t></w:r>") };
+    let toc = format!(
+        r#"<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/><w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent><w:p><w:r><w:t>目次</w:t></w:r></w:p><w:p><w:r><w:fldChar w:fldCharType="begin"{dirty}/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{shown}<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:sdtContent></w:sdt>"#
+    );
+    let at = xml.find("<w:body>").unwrap() + "<w:body>".len();
+    xml.insert_str(at, &toc);
+    package.set_bytes("word/document.xml", xml.into_bytes());
+    if update_fields {
+        let settings = String::from_utf8(package.read("word/settings.xml").unwrap()).unwrap();
+        let start = settings.find("<w:settings").unwrap();
+        let end = start + settings[start..].find('>').unwrap();
+        let settings = format!("{}><w:updateFields w:val=\"true\"/>{}", &settings[..end], &settings[end + 1..]);
+        package.set_bytes("word/settings.xml", settings.into_bytes());
+    }
     package.save(ibis_ooxml::SaveOptions::default()).unwrap()
 }

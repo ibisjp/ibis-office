@@ -90,7 +90,7 @@ impl SlideEditor {
             this.focus_handle.focus(window, cx);
         });
         menu.read(cx).focus_handle(cx).focus(window, cx);
-        self.wb_mut().list_popup = Some(super::validation::ListPopup { menu, position, _dismiss: dismiss });
+        self.wb_mut().list_popup = Some(super::validation::ListPopup { menu, position, anchor: Anchor::TopLeft, _dismiss: dismiss });
         cx.notify();
     }
 }

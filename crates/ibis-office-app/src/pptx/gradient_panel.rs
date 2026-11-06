@@ -5,10 +5,11 @@
 use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::slider::{SliderEvent, SliderState};
 use gpui_kit::*;
 use crate::shell::palette::rgb;
 use gpui_kit::component::Disableable as _;
-use ibis_doc_model::{Color,Command,Fill,GradientPath,GradientStop,Shape,ShapeId,ShapeKind,SlideId};
+use ibis_doc_model::{Color,Command,Fill,GradientPath,GradientStop,Rgb,Shape,ShapeId,ShapeKind,SlideId};
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 
@@ -70,6 +71,9 @@ pub(crate) const PATTERN_CHOICES:&[(&str,&str,&str)]=&[
     ("pptx.pattern.zigZag","zigZag","pptx.gradient-panel.zig-zag"),
 ];
 
+/// The pattern type dropdown: its width in dropdown widths, and the width of a pattern's picture in its items.
+const PATTERN_DROPDOWN_SCALE:f32=1.5;
+const PATTERN_PICTURE_WIDTH:f32=48.;
 type Row=[Entity<InputState>;3];
 type Cells=(ShapeId,usize,usize,usize,usize);
 enum Target { Shapes {slide:SlideId,shapes:Vec<Shape>,cells:Option<Cells>}, Background {slide:SlideId,fill:Fill} }
@@ -80,18 +84,49 @@ pub(crate) struct GradientPanel {
     pub(crate) pattern:Option<String>,
     pub(crate) focus:[Entity<InputState>;4],
     slider: crate::shell::chrome::gradient_slider::GradientSliderState,
+    /// The opacity slider of each stop (the same index as `stops`); it writes the stop's opacity field.
+    pub(crate) alphas:Vec<Entity<SliderState>>,
+    _subscriptions:Vec<Subscription>,
     selected_stop: usize,
     target:Target,
     error:Option<SharedString>,
 }
+/// The opacity slider (0 to 100 %) of a row: a drag (or a typed number) writes the row's opacity field.
+pub(super) fn alpha_slider(field:&Entity<InputState>,window:&mut Window,cx:&mut Context<SlideEditor>,subscriptions:&mut Vec<Subscription>)->Entity<SliderState> {
+    // An empty field (a mixed opacity of several shapes) starts the slider at its minimum; `ValueSlider::mixed` draws it blank.
+    let text=field.read(cx).value();let percent=if text.trim().is_empty() {0.} else {text.trim().parse::<f32>().unwrap_or(100.).clamp(0.,100.)};
+    let slider=cx.new(|_|SliderState::new().min(0.).max(100.).step(1.).default_value(percent));
+    let field=field.clone();
+    subscriptions.push(cx.subscribe_in(&slider,window,move|_,_,event:&SliderEvent,w,cx|{
+        let SliderEvent::Change(value)=event else {return};
+        let text=format!("{:.8}",value.end());
+        if field.read(cx).value().as_str()!=text {field.update(cx,|f,cx|f.set_value(text,w,cx));}
+        cx.notify();
+    }));
+    slider
+}
+/// An id that lives as long as the app, for the parts that take `&'static str` ids (one per prefix and index).
+fn static_id(prefix:&str,index:usize)->&'static str {
+    thread_local!{static IDS:std::cell::RefCell<std::collections::HashMap<(String,usize),&'static str>>=Default::default();}
+    IDS.with(|ids|*ids.borrow_mut().entry((prefix.into(),index)).or_insert_with(||Box::leak(format!("{prefix}-{index}").into_boxed_str())))
+}
+/// A colour from a code field and an opacity field (the gradient panel's stops; they show one value each, no mixed state).
+fn color(rgb_field:&Entity<InputState>,opacity_field:&Entity<InputState>,cx:&App)->Option<Color> {
+    let text=rgb_field.read(cx).value();let hex=text.trim().trim_start_matches('#');
+    if hex.len()!=6 || !hex.bytes().all(|c|c.is_ascii_hexdigit()) {return None;}
+    let rgb=Rgb(u32::from_str_radix(hex,16).ok()?);let opacity:f64=opacity_field.read(cx).value().trim().parse().ok()?;
+    if !opacity.is_finite() || !(0. ..=100.).contains(&opacity) {return None;}
+    Some(Color {rgb,alpha:(opacity*255./100.).round() as u8})
+}
+
 fn row(stop:GradientStop,window:&mut Window,cx:&mut Context<SlideEditor>)->Row {
     [format!("{:.3}",stop.position as f64/1000.),format!("{:06X}",stop.color.rgb.0),format!("{:.8}",stop.color.alpha as f64*100./255.)].map(|v|cx.new(|cx|InputState::new(window,cx).default_value(v)))
 }
 fn value(panel:&GradientPanel,cx:&App)->Option<Fill> {
     if let Some(preset)=&panel.pattern {
         if panel.stops.len()!=2 || ibis_doc_model::pattern_tile(preset).is_none() {return None;}
-        let foreground=super::glow_panel::color(&panel.stops[0][1],&panel.stops[0][2],cx)?;
-        let background=super::glow_panel::color(&panel.stops[1][1],&panel.stops[1][2],cx)?;
+        let foreground=color(&panel.stops[0][1],&panel.stops[0][2],cx)?;
+        let background=color(&panel.stops[1][1],&panel.stops[1][2],cx)?;
         return Some(Fill::Pattern {preset:preset.clone(),foreground,background});
     }
     let angle:f64=if panel.path.is_some() {0.} else {panel.angle.read(cx).value().trim().parse().ok()?};let units=(angle*60_000.).round();
@@ -100,7 +135,7 @@ fn value(panel:&GradientPanel,cx:&App)->Option<Fill> {
     for fields in &panel.stops {
         let position:f64=fields[0].read(cx).value().trim().parse().ok()?;
         if !position.is_finite() || !(0. ..=100.).contains(&position) {return None;}
-        let color=super::glow_panel::color(&fields[1],&fields[2],cx)?;
+        let color=color(&fields[1],&fields[2],cx)?;
         stops.push(GradientStop {position:(position*1000.).round() as u32,color});
     }
     // Sorting moves each colour together with its position; ties stay in input order.
@@ -152,9 +187,11 @@ impl SlideEditor {
         if pattern_mode {stops=vec![GradientStop {position:0,color:stops[0].color},GradientStop {position:100_000,color:stops.last().unwrap().color}];}
         let angle=cx.new(|cx|InputState::new(window,cx).default_value(format!("{:.8}",angle as f64/60_000.)));
         let stops:Vec<Row>=stops.into_iter().map(|s|row(s,window,cx)).collect();
+        let mut subscriptions=Vec::new();
+        let alphas:Vec<_>=stops.iter().map(|fields|alpha_slider(&fields[2],window,cx,&mut subscriptions)).collect();
         let focus=focus.map(|v|cx.new(|cx|InputState::new(window,cx).default_value(format!("{:.3}",v as f64/1000.))));
         let path=path_mode.then_some(path_kind);let first=if pattern_mode {stops[0][1].clone()} else if path_mode {focus[0].clone()} else {angle.clone()};
-        if let Some(s)=self.pptx_mut() {s.glow_panel=None;s.shadow_panel=None;s.paragraph_panel=None;s.timing_panel=None;s.crop_panel=None;s.insets_panel=None;s.size_panel=None; s.frame_panel = None; s.comments = None; s.chart_panel = None; s.header_footer = None;s.find=None;s.gradient_panel=Some(GradientPanel {angle,stops,path,pattern,focus,target,error:None,slider:Default::default(),selected_stop:0});}
+        if let Some(s)=self.pptx_mut() {s.glow_panel=None;s.shadow_panel=None;s.paragraph_panel=None;s.timing_panel=None;s.crop_panel=None;s.insets_panel=None;s.size_panel=None; s.frame_panel = None; s.comments = None; s.chart_panel = None; s.header_footer = None;s.find=None;s.gradient_panel=Some(GradientPanel {angle,stops,path,pattern,focus,target,error:None,slider:Default::default(),selected_stop:0,alphas,_subscriptions:subscriptions});}
         self.sidebar_open=true;first.update(cx,|f,cx|f.focus(window,cx));cx.notify();
     }
     pub(crate) fn set_pattern_preset(&mut self,preset:&str,cx:&mut Context<Self>) {
@@ -167,13 +204,14 @@ impl SlideEditor {
     pub(crate) fn add_gradient_stop(&mut self,window:&mut Window,cx:&mut Context<Self>) {
         if self.pptx().and_then(|s|s.gradient_panel.as_ref()).is_none_or(|p|p.pattern.is_some()) {return;}
         let fields=row(GradientStop {position:50_000,color:Color::WHITE},window,cx);let focus=fields[0].clone();
-        if let Some(p)=self.pptx_mut().and_then(|s|s.gradient_panel.as_mut()) {p.stops.push(fields);}
+        let mut subscriptions=Vec::new();let alpha=alpha_slider(&fields[2],window,cx,&mut subscriptions);
+        if let Some(p)=self.pptx_mut().and_then(|s|s.gradient_panel.as_mut()) {p.stops.push(fields);p.alphas.push(alpha);p._subscriptions.extend(subscriptions);}
         focus.update(cx,|f,cx|f.focus(window,cx));cx.notify();
     }
     pub(crate) fn remove_gradient_stop(&mut self,index:usize,window:&mut Window,cx:&mut Context<Self>) {
         let Some(p)=self.pptx_mut().and_then(|s|s.gradient_panel.as_mut()) else {return};
         if p.pattern.is_some() || p.stops.len()<=2 || index>=p.stops.len() {return;}
-        p.stops.remove(index);p.selected_stop=p.selected_stop.min(p.stops.len().saturating_sub(1));let focus=p.angle.clone();focus.update(cx,|f,cx|f.focus(window,cx));cx.notify();
+        p.stops.remove(index);if index<p.alphas.len() {p.alphas.remove(index);}p.selected_stop=p.selected_stop.min(p.stops.len().saturating_sub(1));let focus=p.angle.clone();focus.update(cx,|f,cx|f.focus(window,cx));cx.notify();
     }
     pub(crate) fn apply_gradient_panel(&mut self,window:&mut Window,cx:&mut Context<Self>) {
         let Some(p)=self.pptx().and_then(|s|s.gradient_panel.as_ref()) else {return};let fill=value(p,cx);
@@ -197,13 +235,14 @@ impl SlideEditor {
         if let Some(s)=self.pptx_mut() {s.section_panel=None;s.gradient_panel=None;}self.focus_handle.focus(window,cx);cx.notify();
     }
     pub(crate) fn pptx_gradient_panel(&mut self,cx:&mut Context<Self>)->Option<SidebarPanel> {
-        let p=self.pptx()?.gradient_panel.as_ref()?;let angle=p.angle.clone();let stops=p.stops.clone();let error=p.error.clone();let path=p.path;let pattern=p.pattern.clone();let focus=p.focus.clone();let kind=if pattern.is_some() {crate::shell::i18n::text("pptx.chrome.pattern")} else if path.is_some() {crate::shell::i18n::text("pptx.gradient-panel.path-gradient")} else {crate::shell::i18n::text("pptx.gradient-panel.linear-gradient")};let title=match &p.target {Target::Background {..}=>crate::shell::i18n::format("_pptx.kind-background", &[("kind", &kind)]),Target::Shapes {shapes,..}=>crate::shell::i18n::format("_pptx.kind-count-shapes", &[("kind", &kind), ("count", &shapes.len())])};
+        let p=self.pptx()?.gradient_panel.as_ref()?;let angle=p.angle.clone();let stops=p.stops.clone();let p_alphas=p.alphas.clone();let error=p.error.clone();let path=p.path;let pattern=p.pattern.clone();let focus=p.focus.clone();let kind=if pattern.is_some() {crate::shell::i18n::text("pptx.chrome.pattern")} else if path.is_some() {crate::shell::i18n::text("pptx.gradient-panel.path-gradient")} else {crate::shell::i18n::text("pptx.gradient-panel.linear-gradient")};let title=match &p.target {Target::Background {..}=>crate::shell::i18n::format("_pptx.kind-background", &[("kind", &kind)]),Target::Shapes {shapes,..}=>crate::shell::i18n::format("_pptx.kind-count-shapes", &[("kind", &kind), ("count", &shapes.len())])};
         let mut body=v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
+        let stops_rgb:Vec<String>=stops.iter().map(|f|f[1].read(cx).value().to_string()).collect();
         if pattern.is_none() {
             let points = stops.iter().filter_map(|fields| {
                 let position = fields[0].read(cx).value().trim().parse::<f64>().ok()?;
                 if !position.is_finite() || !(0. ..=100.).contains(&position) {return None;}
-                let color = super::glow_panel::color(&fields[1], &fields[2], cx)?;
+                let color = color(&fields[1], &fields[2], cx)?;
                 Some(GradientStop {position: (position * 1000.).round() as u32, color})
             }).collect::<Vec<_>>();
             if points.len() == stops.len() {
@@ -215,44 +254,66 @@ impl SlideEditor {
                             for (field, value) in fields.iter().zip(values) {if field.read(cx).value().as_str() != value {field.update(cx, |f, cx| f.set_value(value, w, cx));}}
                             fields.clone()
                         } else {row(point, w, cx)}
+                    }).collect::<Vec<Row>>();
+                    let mut subscriptions = Vec::new();
+                    let alphas = fields.iter().enumerate().map(|(i, fields)| match e.pptx().and_then(|s| s.gradient_panel.as_ref()).and_then(|p| p.alphas.get(i)) {
+                        Some(slider) => slider.clone(),
+                        None => alpha_slider(&fields[2], w, cx, &mut subscriptions),
                     }).collect();
-                    if let Some(p) = e.pptx_mut().and_then(|s| s.gradient_panel.as_mut()) {p.stops = fields;p.selected_stop = selected;}
+                    if let Some(p) = e.pptx_mut().and_then(|s| s.gradient_panel.as_mut()) {p.stops = fields;p.alphas = alphas;p._subscriptions.extend(subscriptions);p.selected_stop = selected;}
                     cx.notify();
                 }));
             }
         }
-        if let Some(selected)=&pattern {
-            let label=PATTERN_CHOICES.iter().find(|c|c.1==selected).map(|c|crate::shell::i18n::text(c.2)).unwrap_or_else(||crate::shell::i18n::text("pptx.gradient-panel.not-supported"));
-            body=body.child(div().child(crate::shell::i18n::format("_pptx.type-label", &[("label", &label)])));
+        if pattern.is_some() {
+            // The type is chosen with the dropdown below the opacities.
         } else if let Some(selected)=path {
-            let mut choices=crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow);
-            for (id,label,path) in [("pptx-gradient-circle",crate::shell::i18n::text("pptx.common.circle"),GradientPath::Circle),("pptx-gradient-rect",crate::shell::i18n::text("pptx.chrome.square"),GradientPath::Rect),("pptx-gradient-shape",crate::shell::i18n::text("_shell.shape"),GradientPath::Shape)] {
-                choices=choices.child(crate::shell::chrome::radio_button(id, path==selected, false, label, cx.listener(move|e,_,_,cx|e.set_gradient_path(path,cx))));
+            // Circle, square, shape: one choice of three, a segment control.
+            let items=[("pptx-gradient-circle","pptx.common.circle",GradientPath::Circle),("pptx-gradient-rect","pptx.chrome.square",GradientPath::Rect),("pptx-gradient-shape","_shell.shape",GradientPath::Shape)].into_iter()
+                .map(|(id,label,path)|crate::shell::chrome::segment_control::SegmentItem::label(id,crate::shell::i18n::text(label),path==selected).on_click(cx.listener(move|e,_,_,cx|e.set_gradient_path(path,cx))));
+            body=body.child(crate::shell::chrome::segment_control_row(crate::shell::i18n::text("pptx.gradient-panel.path-shape"),items));
+            for (i,(label,field)) in [crate::shell::i18n::text("pptx.gradient-panel.focus-left-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-top-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-right-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-bottom-percent")].into_iter().zip(focus).enumerate() {
+                body=body.child(crate::shell::chrome::text_field_row(label,super::glow_panel::effect_field(&field,format!("pptx-gradient-focus-{i}"),Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,100.0)),None,cx).unit("%",px(24.))));
             }
-            body=body.child(choices);
-            for (i,(label,field)) in [crate::shell::i18n::text("pptx.gradient-panel.focus-left-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-top-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-right-percent"),crate::shell::i18n::text("pptx.gradient-panel.focus-bottom-percent")].into_iter().zip(focus).enumerate() {body=body.child(div().text_sm().child(label)).child(super::glow_panel::effect_field(&field,format!("pptx-gradient-focus-{i}"),Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,100.0)),cx));}
-        } else {body=body.child(div().text_sm().child(crate::shell::i18n::text("pptx.gradient-panel.angle-degrees"))).child(super::glow_panel::effect_field(&angle,"pptx-gradient-angle".into(),Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,359.0)),cx));}
+        } else {
+            body=body.child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("pptx.gradient-panel.angle-degrees"),super::glow_panel::effect_field(&angle,"pptx-gradient-angle".into(),Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,359.0)),None,cx).unit("°",px(24.))));
+        }
         let can_remove=stops.len()>2;
+        let alphas=p_alphas;
+        // A colour is chosen with the shared colour field (swatch dropdown + code), an opacity with the shared slider (value at its left).
+        let colour_row=|id:&'static str,input:&Entity<InputState>,cx:&Context<SlideEditor>|crate::shell::chrome::color_row(crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::chrome::panel_color_field(id,input,cx));
+        let opacity_row=|id:&'static str,slider:Option<&Entity<SliderState>>,cx:&Context<SlideEditor>|slider.map(|s|crate::shell::chrome::slider_row(crate::shell::i18n::text("pptx.gradient-panel.intensity-percent"),crate::shell::chrome::slider(id,s).value(cx).unit("%")));
         if pattern.is_some() {
             for (side,(label,fields)) in [crate::shell::i18n::text("pptx.gradient-panel.foreground"),crate::shell::i18n::text("_shell.background")].into_iter().zip(stops).enumerate() {
-                body=body.child(div().child(label));
-                for (j,(label,field)) in [crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::i18n::text("pptx.gradient-panel.intensity-percent")].into_iter().zip(fields.into_iter().skip(1)).enumerate() {body=body.child(div().text_sm().child(label)).child(super::glow_panel::effect_field(&field,format!("pptx-pattern-{side}-{j}"),(j==1).then_some(Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,100.0))).flatten(),cx));}
+                body=body.child(div().child(label))
+                    .child(colour_row(static_id("pptx-pattern-color",side),&fields[1],cx))
+                    .children(opacity_row(static_id("pptx-pattern-opacity",side),alphas.get(side),cx));
             }
         } else {
         for (i,fields) in stops.into_iter().enumerate() {
-            body=body.child(h_flex().justify_between().child(div().child(format!("stop {}",i+1))).child(crate::shell::chrome::destructive_button(ElementId::Name(format!("pptx-gradient-remove-{i}").into()),cx).small().label(crate::shell::i18n::text("_shell.delete")).disabled(!can_remove).on_click(cx.listener(move|e,_,w,cx|e.remove_gradient_stop(i,w,cx)))));
-            for (j,(label,field)) in [crate::shell::i18n::text("pptx.gradient-panel.position-percent"),crate::shell::i18n::text("pptx.gradient-panel.color-rgb-rrggbb"),crate::shell::i18n::text("pptx.gradient-panel.intensity-percent")].into_iter().zip(fields).enumerate() {body=body.child(div().text_sm().child(label)).child(super::glow_panel::effect_field(&field,format!("pptx-gradient-stop-{i}-{j}"),(j!=1).then_some(Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,100.0))).flatten(),cx));}
+            body=body.child(h_flex().justify_between().child(div().child(crate::shell::i18n::format("pptx.gradient-panel.stop-n",&[("n",&(i+1))]))).child(crate::shell::chrome::destructive_button(ElementId::Name(format!("pptx-gradient-remove-{i}").into()),cx).small().label(crate::shell::i18n::text("_shell.delete")).disabled(!can_remove).on_click(cx.listener(move|e,_,w,cx|e.remove_gradient_stop(i,w,cx)))))
+                .child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("pptx.gradient-panel.position-percent"),super::glow_panel::effect_field(&fields[0],format!("pptx-gradient-stop-{i}-0"),Some(crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0,100.0)),None,cx).unit("%",px(24.))))
+                .child(colour_row(static_id("pptx-gradient-stop-color",i),&fields[1],cx))
+                .children(opacity_row(static_id("pptx-gradient-stop-opacity",i),alphas.get(i),cx));
         }
         body=body.child(crate::shell::chrome::action_button("pptx-gradient-add").small().label(crate::shell::i18n::text("pptx.chrome.add-stop")).on_click(cx.listener(|e,_,w,cx|e.add_gradient_stop(w,cx))));
         }
         if let Some(error)=error {body=body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));}
         if let Some(selected)=&pattern {
-            body=body.child(div().child(crate::shell::i18n::text("pptx.gradient-panel.select-type")));
-            for choices in PATTERN_CHOICES.chunks(2) {
-                let mut group=crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow);
-                for &(id,preset,label) in choices {let label=crate::shell::i18n::text(label);group=group.child(crate::shell::chrome::radio_button(id, selected==preset, false, label, cx.listener(move|e,_,_,cx|e.set_pattern_preset(preset,cx))));}
-                body=body.child(group);
-            }
+            // The type: a dropdown of pictures (the shared pattern picture of the xlsx cell format), drawn in the colours chosen above.
+            let colour=|row:usize,fallback:u32|ibis_doc_model::Rgb(u32::from_str_radix(stops_rgb[row].trim().trim_start_matches('#'),16).unwrap_or(fallback));
+            let (fg,bg)=(colour(0,0),colour(1,0xFFFFFF));
+            let choices=PATTERN_CHOICES.iter().map(|&(_,preset,label)|{
+                let label=crate::shell::i18n::text(label);let name=label.clone();
+                crate::shell::chrome::preview_dropdown::PreviewChoice {
+                    label:label.clone(),
+                    content:std::rc::Rc::new(move||h_flex().w_full().items_center().gap(px(8.)).child(div().w(px(PATTERN_PICTURE_WIDTH)).flex_none().flex().child(crate::shell::chrome::preview_dropdown::pattern_preview(ibis_doc_model::pattern_tile(preset),fg,bg,name.clone()))).child(div().flex_1().min_w_0().truncate().text_size(px(13.)).child(name.clone())).into_any_element()),
+                    choose:std::rc::Rc::new(move|e:&mut SlideEditor,_,cx|e.set_pattern_preset(preset,cx)),
+                }
+            }).collect();
+            let index=PATTERN_CHOICES.iter().position(|c|c.1==selected).unwrap_or(0);
+            let size=crate::shell::chrome::preview_dropdown::PreviewSize::default().width(crate::shell::chrome::FIELD_WIDTH*PATTERN_DROPDOWN_SCALE);
+            body=body.child(crate::shell::chrome::dropdown_row_scaled(crate::shell::i18n::text("pptx.gradient-panel.select-type"),crate::shell::chrome::preview_dropdown::preview_dropdown_sized("pptx-pattern-type",choices,index,size,cx),PATTERN_DROPDOWN_SCALE));
         }
         let footer = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("pptx-gradient-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,w,cx|e.apply_gradient_panel(w,cx)))).action(crate::shell::chrome::ActionDefinition::new("pptx-gradient-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,w,cx|e.close_gradient_panel(w,cx))));
         Some(SidebarPanel::with_footer(title, body.into_any_element(), footer))

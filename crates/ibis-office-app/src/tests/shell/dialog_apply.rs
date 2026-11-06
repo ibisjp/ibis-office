@@ -108,7 +108,6 @@ const APPLY_IDS: &[&str] = &[
     "chart-template-apply-btn",
     "phonetic-apply",
     "xlsx.sparkline.apply",
-    "custom-format-apply",
     "cell-format-rotation-set",
     "pptx-section-apply",
     "theme-custom-apply",
@@ -306,8 +305,6 @@ fn prepare(s: &mut Scenario, fmt: &str, key: &str, id: &str) {
         if current.trim_start_matches('#').eq_ignore_ascii_case("A13B7C") {"D24C8D".to_string()} else {"A13B7C".to_string()}
     } else if key == "font_panel" {
         "Arial".to_string()
-    } else if id == "custom-format-apply" {
-        "0.0000".to_string()
     } else if id == "cell-format-rotation-set" {
         "23".to_string()
     } else if let Ok(n) = current.parse::<f64>() {
@@ -576,7 +573,6 @@ const EXPECTED_APPLY_CASES: &[&str] = &[
     "xlsx/chart_template_apply/chart-template-apply-btn",
     "xlsx/goal_seek_result/goal-apply",
     "xlsx/phonetic_panel/phonetic-apply",
-    "xlsx/pivot_panel_value_settings/pivot-_xlsx.values-0-apply-name",
     "xlsx/row_col_size_panel_col/row-col-size-apply",
     "xlsx/row_col_size_panel_row/row-col-size-apply",
     "xlsx/sheet_doc_properties_panel/apply_properties",

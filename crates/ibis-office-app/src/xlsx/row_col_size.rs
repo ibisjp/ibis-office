@@ -171,7 +171,7 @@ impl SlideEditor {
             .child(
                 v_flex().gap(px(4.))
                     .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(label))
-                    .child(crate::shell::chrome::text_field(&p.value).full_width().spinner("row-col-size-value", spec, cx, |this, _, _, cx| this.apply_row_col_size(cx))),
+                    .child(crate::shell::chrome::text_field(&p.value).full_width().when_unit(matches!(axis, Axis::Rows), "pt", px(20.)).spinner("row-col-size-value", spec, cx, |this, _, _, cx| this.apply_row_col_size(cx))),
             );
 
         if !message.is_empty() {

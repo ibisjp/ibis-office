@@ -103,6 +103,48 @@ pub struct PivotTable {
     pub calculated_items: Vec<PivotCalculatedItem>,
     /// ドリル ボタン（+/- ボタン）の表示 (`showDrill`).
     pub show_drill: bool,
+    /// The names the user gave fields and items on the sheet.
+    pub aliases: PivotAliases,
+}
+
+/// Names the user typed over a field's or an item's name on the sheet
+/// (`pivotField/@name`, `item/@n`); the source's names stay as they are.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PivotAliases {
+    /// (field, its name on the sheet).
+    pub fields: Vec<(u32, String)>,
+    /// (field, the item as the source shows it, its name on the sheet).
+    pub items: Vec<(u32, String, String)>,
+}
+
+impl PivotAliases {
+    pub fn field(&self, f: usize) -> Option<&str> {
+        self.fields.iter().find(|(x, _)| *x as usize == f).map(|(_, n)| n.as_str())
+    }
+
+    pub fn item(&self, f: usize, original: &str) -> Option<&str> {
+        self.items.iter().find(|(x, o, _)| *x as usize == f && o == original).map(|(_, _, n)| n.as_str())
+    }
+
+    /// Name field `f` as `name` (`original`: the source's name, which removes the alias).
+    pub fn set_field(&mut self, f: usize, name: &str, original: &str) {
+        self.fields.retain(|(x, _)| *x as usize != f);
+        if name != original {
+            self.fields.push((f as u32, name.to_string()));
+        }
+    }
+
+    pub fn set_item(&mut self, f: usize, original: &str, name: &str) {
+        self.items.retain(|(x, o, _)| !(*x as usize == f && o == original));
+        if name != original {
+            self.items.push((f as u32, original.to_string(), name.to_string()));
+        }
+    }
+}
+
+/// An item as the source shows it, the key of `PivotAliases::items`.
+pub fn item_key(v: &CellValue) -> String {
+    crate::sheet_command::display_text(v, &Default::default(), false)
 }
 
 /// A calculated item within a pivot field (集計アイテム / 計算アイテム, ECMA-376 Part 4 §3.10.1.8 `calculatedItem`).
@@ -338,6 +380,10 @@ pub struct PivotField {
     pub insert_blank_row: bool,
     /// Per-field repeat item labels (`x14:pivotField/@fillDownLabels`); `None` inherits `PivotTable::fill_down_labels`.
     pub fill_down_labels: Option<bool>,
+    /// A group field the file defines apart from its source field (年 (日付), 月 (日付): `fieldGroup/@base`): the
+    /// cache field whose values it groups. Its `shared` are the group items' names (`groupItems`), which its items
+    /// (`item/@x`) point at.
+    pub group_base: Option<u32>,
 }
 
 /// The order of a field's items.
@@ -358,6 +404,10 @@ pub struct PivotItem {
     pub hidden: bool,
     /// Its type (`t`): `None` for a data item, else `default`, `sum`, ….
     pub kind: Option<String>,
+    /// Folded (`sd="0"`, `ShowDetail` false): the fields under it are not
+    /// listed and its row (column) holds its group's values (the − button
+    /// is a + button).
+    pub collapsed: bool,
 }
 
 /// A report filter: its field, and the one item it keeps (`item`), or all.
@@ -464,6 +514,24 @@ pub enum PivotLineKind {
     Blank,
 }
 
+/// The label of a row's (column's) item on screen: its place, its field and
+/// item, and whether it has a +/− button (fields lie under it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PivotLabel {
+    pub row: u32,
+    pub column: u32,
+    /// An item of a column field (else of a row field).
+    pub on_columns: bool,
+    /// Its field's place among the row (column) fields.
+    pub depth: u32,
+    pub field: usize,
+    /// Its place among the field's items (`PivotField::items`).
+    pub item: u32,
+    pub has_fields_under: bool,
+    /// How many levels a row label is in from its column's left (compact form).
+    pub indent: u32,
+}
+
 /// A cell of a built table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PivotCell {
@@ -512,6 +580,76 @@ fn same_item(a: &CellValue, b: &CellValue) -> bool {
     }
 }
 
+/// What `same_item` compares, as a hash key: two values are one item exactly when their keys are equal (text by its
+/// lower case, a number by its bits). Looking an item up by its key is constant time; scanning the items with
+/// `same_item` (which lowers both texts each time) made building a table quadratic in the number of distinct items.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum ItemKey {
+    Empty,
+    Number(u64),
+    Text(String),
+    Bool(bool),
+    Error(CellError),
+}
+
+fn item_hash_key(v: &CellValue) -> ItemKey {
+    match v {
+        CellValue::Empty => ItemKey::Empty,
+        CellValue::Number(n) => ItemKey::Number(n.to_bits()),
+        CellValue::Text(t) => ItemKey::Text(t.to_lowercase()),
+        CellValue::Bool(b) => ItemKey::Bool(*b),
+        CellValue::Error(e) => ItemKey::Error(*e),
+    }
+}
+
+/// The lower case of a text as `same_item` compares it, borrowed when it is its own lower case (most are: no copy).
+fn lowered(t: &str) -> std::borrow::Cow<'_, str> {
+    if t.chars().all(|c| {
+        let mut lower = c.to_lowercase();
+        lower.next() == Some(c) && lower.next().is_none()
+    }) {
+        std::borrow::Cow::Borrowed(t)
+    } else {
+        std::borrow::Cow::Owned(t.to_lowercase())
+    }
+}
+
+/// The items seen so far (`insert` and `contains` as a scan with `same_item` over them, in constant time). Texts are
+/// looked up by their lower case without copying it.
+#[derive(Default)]
+struct ItemIndex {
+    texts: std::collections::HashSet<String>,
+    others: std::collections::HashSet<ItemKey>,
+}
+
+impl ItemIndex {
+    fn of<'a>(values: impl IntoIterator<Item = &'a CellValue>) -> Self {
+        let mut index = Self::default();
+        for v in values {
+            index.insert(v);
+        }
+        index
+    }
+
+    /// Adds `v` unless an equal item is there; whether it was added.
+    fn insert(&mut self, v: &CellValue) -> bool {
+        match v {
+            CellValue::Text(t) => {
+                let key = lowered(t);
+                !self.texts.contains(key.as_ref()) && self.texts.insert(key.into_owned())
+            }
+            _ => self.others.insert(item_hash_key(v)),
+        }
+    }
+
+    fn contains(&self, v: &CellValue) -> bool {
+        match v {
+            CellValue::Text(t) => self.texts.contains(lowered(t).as_ref()),
+            _ => self.others.contains(&item_hash_key(v)),
+        }
+    }
+}
+
 fn format_num(n: f64) -> String {
     if n.fract() == 0.0 {
         format!("{}", n as i64)
@@ -531,6 +669,17 @@ fn format_date_grouped(serial: f64, by: DateGroupBy) -> String {
 }
 
 impl PivotField {
+    /// Whether the item showing `value` is folded (`sd="0"`): by the item's
+    /// name, as Excel keeps it, so it stays when the field is moved or the
+    /// table is built again.
+    pub fn is_collapsed(&self, value: &CellValue) -> bool {
+        self.items.iter().any(|it| {
+            it.collapsed
+                && it.kind.is_none()
+                && it.x.and_then(|x| self.shared.get(x as usize)).is_some_and(|v| same_item(&self.map_value_to_group(v), value))
+        })
+    }
+
     /// Map a raw data value to its grouped bucket label (or itself if not grouped).
     pub fn map_value_to_group(&self, val: &CellValue) -> CellValue {
         let Some(grouping) = &self.grouping else {
@@ -573,8 +722,36 @@ impl PivotField {
                     _ => None,
                 };
                 let Some(serial) = serial else {
+                    // A group field of the file lists its "<start" item first even with no date in it: a record with no date goes there
+                    // (read off a file Excel saved: the item is listed though no date falls below the start; unmeasured otherwise).
+                    if self.group_base.is_some() && matches!(val, CellValue::Empty) {
+                        if let Some(first) = self.shared.iter().find(|s| matches!(s, CellValue::Text(t) if t.starts_with('<'))) {
+                            return first.clone();
+                        }
+                    }
                     return val.clone();
                 };
+                // A group field of the file: the name of the item the date falls in (年: 2026年, 月: 1月, 四半期: 第 1 四半期).
+                if self.group_base.is_some() && !self.shared.is_empty() {
+                    let edge = |first: char| self.shared.iter().find(|s| matches!(s, CellValue::Text(t) if t.starts_with(first)));
+                    if start.is_some_and(|s| serial < s) {
+                        return edge('<').cloned().unwrap_or_else(|| val.clone());
+                    }
+                    if end.is_some_and(|e| serial > e) {
+                        return edge('>').cloned().unwrap_or_else(|| val.clone());
+                    }
+                    let (year, month, day) = crate::chart::serial_to_date(serial);
+                    let wanted: Vec<String> = match by {
+                        DateGroupBy::Years => vec![format!("{year}年")],
+                        DateGroupBy::Quarters => {
+                            let q = (month.saturating_sub(1)) / 3 + 1;
+                            vec![format!("第 {q} 四半期"), format!("第{q}四半期")]
+                        }
+                        DateGroupBy::Months => vec![format!("{month}月")],
+                        DateGroupBy::Days => vec![format!("{month}月{day}日")],
+                    };
+                    return self.shared.iter().find(|s| matches!(s, CellValue::Text(t) if wanted.contains(t))).cloned().unwrap_or_else(|| CellValue::Text(wanted[0].clone()));
+                }
                 if let Some(s) = start {
                     if serial < *s {
                         return CellValue::Text(format!("<{}", format_date_grouped(*s, *by)));
@@ -696,6 +873,22 @@ struct Level {
     field: usize,
     /// The items shown, in order.
     items: Vec<CellValue>,
+    /// Each item's place by its key (the first of equal items).
+    index: HashMap<ItemKey, usize>,
+}
+
+impl Level {
+    fn new(field: usize, items: Vec<CellValue>) -> Self {
+        let mut index = HashMap::with_capacity(items.len());
+        for (i, v) in items.iter().enumerate() {
+            index.entry(item_hash_key(v)).or_insert(i);
+        }
+        Self { field, items, index }
+    }
+
+    fn position(&self, v: &CellValue) -> Option<usize> {
+        self.index.get(&item_hash_key(v)).copied()
+    }
 }
 
 /// A line of the body rows or columns: each with its path of items (indexes per level).
@@ -705,6 +898,8 @@ struct Line {
     path: Vec<usize>,
     /// Labels shown on the row: (level, item) — a tabular parent's on its first child's row.
     labels: Vec<(usize, usize)>,
+    /// A folded item (`sd="0"`): its line holds its group's values and the fields under it are not listed.
+    collapsed: bool,
 }
 
 type Agg<'a> = &'a dyn Fn(usize, &[&Vec<CellValue>]) -> CellValue;
@@ -724,12 +919,19 @@ fn tree(
     let level = &levels[depth];
     let field = &t.fields[level.field];
     let last = depth + 1 == levels.len();
+    // Each record's item, found once: the records of every item in one pass (not a pass over all records per item).
+    let mut buckets: Vec<Vec<&Vec<CellValue>>> = vec![Vec::new(); level.items.len()];
+    for r in recs {
+        if let Some(slot) = key(r, level).and_then(|k| buckets.get_mut(k)) {
+            slot.push(r);
+        }
+    }
     // 値フィルター・トップテン: the items kept by what their records add up to, in this group.
     let mut allowed: Vec<bool> = vec![true; level.items.len()];
     for filter in t.filters.iter().filter(|f| f.field as usize == level.field && !f.is_label()) {
         let values: Vec<Option<f64>> = (0..level.items.len())
             .map(|i| {
-                let mine: Vec<&Vec<CellValue>> = recs.iter().copied().filter(|r| key(r, level) == Some(i)).collect();
+                let mine = &buckets[i];
                 if mine.is_empty() {
                     return None;
                 }
@@ -748,21 +950,23 @@ fn tree(
             CellValue::Text(name) => ci.name.eq_ignore_ascii_case(name),
             _ => false,
         });
-        let mine: Vec<&Vec<CellValue>> = recs.iter().copied().filter(|r| key(r, level) == Some(i)).collect();
+        let mine = &buckets[i];
         if (mine.is_empty() && !is_calc) || !allowed[i] {
             continue;
         }
         path.push(i);
+        // A folded item (+ button): its line holds the values of its group, the fields under it are not listed.
+        let collapsed = !is_calc && !last && field.is_collapsed(&level.items[i]);
         if is_calc || last {
             let mut labels = std::mem::take(carry);
             labels.push((depth, i));
-            out.push(Line { kind: PivotLineKind::Item { depth: depth as u32, last: true, subtotal: false }, path: path.clone(), labels });
+            out.push(Line { kind: PivotLineKind::Item { depth: depth as u32, last: true, subtotal: false }, path: path.clone(), labels, collapsed: false });
         } else if field.outline {
-            // Its own row, with the group's values when subtotals are at the top.
+            // Its own row, with the group's values when subtotals are at the top (or when it is folded).
             let top = field.default_subtotal && field.subtotal_top;
             let mut labels = std::mem::take(carry);
             labels.push((depth, i));
-            out.push(Line { kind: PivotLineKind::Item { depth: depth as u32, last: false, subtotal: top }, path: path.clone(), labels });
+            out.push(Line { kind: PivotLineKind::Item { depth: depth as u32, last: false, subtotal: top || collapsed }, path: path.clone(), labels, collapsed });
             let header_at = out.len();
             tree(t, levels, depth + 1, path, &mine, key, agg, out, carry);
             // A group none of whose items is kept goes.
@@ -771,27 +975,35 @@ fn tree(
                 path.pop();
                 continue;
             }
-            if field.default_subtotal && !field.subtotal_top {
-                out.push(Line { kind: PivotLineKind::Subtotal { depth: depth as u32 }, path: path.clone(), labels: vec![(depth, i)] });
+            if collapsed {
+                out.truncate(header_at);
+            } else if field.default_subtotal && !field.subtotal_top {
+                out.push(Line { kind: PivotLineKind::Subtotal { depth: depth as u32 }, path: path.clone(), labels: vec![(depth, i)], collapsed: false });
             }
             if field.insert_blank_row {
-                out.push(Line { kind: PivotLineKind::Blank, path: path.clone(), labels: Vec::new() });
+                out.push(Line { kind: PivotLineKind::Blank, path: path.clone(), labels: Vec::new(), collapsed: false });
             }
         } else {
             // 表形式: on its first child's row; its subtotal below.
             let before = out.len();
             carry.push((depth, i));
+            let own_labels = carry.clone();
             tree(t, levels, depth + 1, path, &mine, key, agg, out, carry);
             if out.len() == before {
                 carry.pop();
                 path.pop();
                 continue;
             }
-            if field.default_subtotal {
-                out.push(Line { kind: PivotLineKind::Subtotal { depth: depth as u32 }, path: path.clone(), labels: vec![(depth, i)] });
+            if collapsed {
+                // One row with the labels it would have had on its first child's.
+                out.truncate(before);
+                carry.clear();
+                out.push(Line { kind: PivotLineKind::Item { depth: depth as u32, last: false, subtotal: true }, path: path.clone(), labels: own_labels, collapsed });
+            } else if field.default_subtotal {
+                out.push(Line { kind: PivotLineKind::Subtotal { depth: depth as u32 }, path: path.clone(), labels: vec![(depth, i)], collapsed: false });
             }
             if field.insert_blank_row {
-                out.push(Line { kind: PivotLineKind::Blank, path: path.clone(), labels: Vec::new() });
+                out.push(Line { kind: PivotLineKind::Blank, path: path.clone(), labels: Vec::new(), collapsed: false });
             }
         }
         path.pop();
@@ -833,6 +1045,11 @@ impl PivotTable {
         if field.formula.is_some() {
             return None;
         }
+        if let Some(base) = field.group_base
+            && base as usize != f
+        {
+            return self.data_column(base as usize, data);
+        }
         let name = &field.name;
         data.headings.iter().position(|h| h == name).or_else(|| (f < data.headings.len()).then_some(f))
     }
@@ -847,11 +1064,13 @@ impl PivotTable {
         }
         let mut items: Vec<CellValue> = Vec::new();
         let mut hidden: Vec<CellValue> = Vec::new();
+        // Every item seen so far (listed, hidden or new): one lookup by key in place of a scan with `same_item`.
+        let mut seen = ItemIndex::default();
         for it in &field.items {
             if !it.hidden {
                 let Some(v) = it.x.and_then(|x| field.shared.get(x as usize)) else { continue };
                 let mapped = field.map_value_to_group(v);
-                if !items.iter().any(|i| same_item(i, &mapped)) {
+                if seen.insert(&mapped) {
                     items.push(mapped);
                 }
             }
@@ -860,9 +1079,7 @@ impl PivotTable {
             if it.hidden {
                 let Some(v) = it.x.and_then(|x| field.shared.get(x as usize)) else { continue };
                 let mapped = field.map_value_to_group(v);
-                if !items.iter().any(|i| same_item(i, &mapped))
-                    && !hidden.iter().any(|i| same_item(i, &mapped))
-                {
+                if seen.insert(&mapped) {
                     hidden.push(mapped);
                 }
             }
@@ -872,7 +1089,7 @@ impl PivotTable {
         for r in records {
             let v = column.and_then(|c| r.get(c)).cloned().unwrap_or_default();
             let mapped = field.map_value_to_group(&v);
-            if !items.iter().chain(&hidden).chain(&fresh).any(|i| same_item(i, &mapped)) {
+            if seen.insert(&mapped) {
                 fresh.push(mapped);
             }
         }
@@ -886,26 +1103,23 @@ impl PivotTable {
         }
         items.extend(fresh);
         // Only the items the data has (`showAll` off, as Excel's default).
-        items.retain(|i| records.iter().any(|r| {
-            let v = column.and_then(|c| r.get(c)).cloned().unwrap_or_default();
-            same_item(&field.map_value_to_group(&v), i)
-        }));
+        let present = ItemIndex::of(&records.iter().map(|r| field.map_value_to_group(&column.and_then(|c| r.get(c)).cloned().unwrap_or_default())).collect::<Vec<_>>());
+        items.retain(|i| present.contains(i));
         if let Some(grouping) = &field.grouping {
             items.sort_by(|a, b| sort_grouped_items(a, b, grouping));
         }
         if let Some(df_idx) = field.sort_data_field {
             if self.data_fields.get(df_idx).is_some() && field.sort != PivotSort::Manual {
+                // The records of each item, found by key in one pass over the records.
+                let mut by_item: HashMap<ItemKey, Vec<&Vec<CellValue>>> = HashMap::new();
+                for r in records {
+                    let v = column.and_then(|c| r.get(c)).cloned().unwrap_or_default();
+                    by_item.entry(item_hash_key(&field.map_value_to_group(&v))).or_default().push(r);
+                }
                 let mut item_values: Vec<(CellValue, f64)> = items
                     .into_iter()
                     .map(|item| {
-                        let matching: Vec<&Vec<CellValue>> = records
-                            .iter()
-                            .copied()
-                            .filter(|r| {
-                                let v = column.and_then(|c| r.get(c)).cloned().unwrap_or_default();
-                                same_item(&field.map_value_to_group(&v), &item)
-                            })
-                            .collect();
+                        let matching: Vec<&Vec<CellValue>> = by_item.get(&item_hash_key(&item)).cloned().unwrap_or_default();
                         let agg = self.aggregate_of(df_idx, data, &matching);
                         let num = match agg {
                             CellValue::Number(n) => n,
@@ -957,9 +1171,10 @@ impl PivotTable {
             }
         }
         // Calculated items of this field
+        let mut shown = ItemIndex::of(&items);
         for ci in self.calculated_items.iter().filter(|ci| ci.field as usize == f) {
             let val = CellValue::Text(ci.name.clone());
-            if !items.iter().any(|i| same_item(i, &val)) {
+            if shown.insert(&val) {
                 items.push(val);
             }
         }
@@ -1061,6 +1276,34 @@ impl PivotTable {
         }
     }
 
+    /// Which of a level's items a record falls in. The body asks this for the same record and level many times (once per
+    /// row, column and cell it is tested against), so the answer is kept by the record's place in `data.records` and the
+    /// level: worked out once, not for every cell (which made building a table cost rows x columns x records).
+    fn item_keyer<'a>(&'a self, data: &'a PivotData) -> impl Fn(&Vec<CellValue>, &Level) -> Option<usize> + 'a {
+        let cache: std::cell::RefCell<HashMap<(usize, usize), Option<usize>>> = Default::default();
+        move |r: &Vec<CellValue>, level: &Level| -> Option<usize> {
+            let compute = || {
+                let c = self.data_column(level.field, data)?;
+                let v = r.get(c).cloned().unwrap_or_default();
+                let mapped = self.fields[level.field].map_value_to_group(&v);
+                level.position(&mapped)
+            };
+            // The record's place: only records of `data` are kept (anything else is worked out each time).
+            let size = std::mem::size_of::<Vec<CellValue>>();
+            let offset = (r as *const Vec<CellValue> as usize).wrapping_sub(data.records.as_ptr() as usize);
+            if offset % size != 0 || offset / size >= data.records.len() {
+                return compute();
+            }
+            let id = (offset / size, level as *const Level as usize);
+            if let Some(k) = cache.borrow().get(&id) {
+                return *k;
+            }
+            let k = compute();
+            cache.borrow_mut().insert(id, k);
+            k
+        }
+    }
+
     /// Build the table from `data` (the source's headings and records), at
     /// the place its definition says.
     pub fn build(&self, data: &PivotData) -> PivotBuilt {
@@ -1107,24 +1350,19 @@ impl PivotTable {
         let col_fields: Vec<usize> = self.col_fields.iter().filter(|&&f| f >= 0).map(|&f| f as usize).filter(|&f| f < self.fields.len()).collect();
         let data_count = self.data_fields.len().max(1);
         let several = self.data_fields.len() > 1;
-        let rows_levels: Vec<Level> = row_fields.iter().map(|&f| Level { field: f, items: self.ordered_items(f, &records, self.data_column(f, data), data) }).collect();
-        let col_levels: Vec<Level> = col_fields.iter().map(|&f| Level { field: f, items: self.ordered_items(f, &records, self.data_column(f, data), data) }).collect();
-        let key = |r: &Vec<CellValue>, level: &Level| -> Option<usize> {
-            let c = self.data_column(level.field, data)?;
-            let v = r.get(c).cloned().unwrap_or_default();
-            let mapped = self.fields[level.field].map_value_to_group(&v);
-            level.items.iter().position(|i| same_item(i, &mapped))
-        };
+        let rows_levels: Vec<Level> = row_fields.iter().map(|&f| Level::new(f, self.ordered_items(f, &records, self.data_column(f, data), data))).collect();
+        let col_levels: Vec<Level> = col_fields.iter().map(|&f| Level::new(f, self.ordered_items(f, &records, self.data_column(f, data), data))).collect();
+        let key = self.item_keyer(data);
 
         let (label_col, indent) = self.row_label_places();
         let label_columns = label_col.last().map_or(1, |c| c + 1);
         let mut row_lines: Vec<Line> = Vec::new();
         if rows_levels.is_empty() {
-            row_lines.push(Line { kind: PivotLineKind::Item { depth: 0, last: true, subtotal: false }, path: Vec::new(), labels: Vec::new() });
+            row_lines.push(Line { kind: PivotLineKind::Item { depth: 0, last: true, subtotal: false }, path: Vec::new(), labels: Vec::new(), collapsed: false });
         } else {
             tree(self, &rows_levels, 0, &mut Vec::new(), &records, &key, &|d, r| self.aggregate_of(d, data, r), &mut row_lines, &mut Vec::new());
             if self.row_grand_totals {
-                row_lines.push(Line { kind: PivotLineKind::Grand, path: Vec::new(), labels: Vec::new() });
+                row_lines.push(Line { kind: PivotLineKind::Grand, path: Vec::new(), labels: Vec::new(), collapsed: false });
             }
         }
         // The data columns: the column fields' leaves (with subtotals), each
@@ -1140,12 +1378,12 @@ impl PivotTable {
             let mut lines = Vec::new();
             tree(&t2, &col_levels, 0, &mut Vec::new(), &records, &key, &|d, r| self.aggregate_of(d, data, r), &mut lines, &mut Vec::new());
             // A group's own item line is not a column (its label goes over its leaves).
-            col_lines = lines.into_iter().filter(|l| !matches!(l.kind, PivotLineKind::Item { last: false, .. })).collect();
+            col_lines = lines.into_iter().filter(|l| l.collapsed || !matches!(l.kind, PivotLineKind::Item { last: false, .. })).collect();
             if self.col_grand_totals {
-                col_lines.push(Line { kind: PivotLineKind::Grand, path: Vec::new(), labels: Vec::new() });
+                col_lines.push(Line { kind: PivotLineKind::Grand, path: Vec::new(), labels: Vec::new(), collapsed: false });
             }
         } else {
-            col_lines.push(Line { kind: PivotLineKind::Item { depth: 0, last: true, subtotal: false }, path: Vec::new(), labels: Vec::new() });
+            col_lines.push(Line { kind: PivotLineKind::Item { depth: 0, last: true, subtotal: false }, path: Vec::new(), labels: Vec::new(), collapsed: false });
         }
 
         // The header: a row per column level (the values' names one more
@@ -1159,15 +1397,26 @@ impl PivotTable {
         let left = self.location.first_column;
         let mut cells: Vec<PivotCell> = Vec::new();
         let mut put = |row: u32, column: u32, value: CellValue, role: PivotRole| cells.push(PivotCell { row, column, value, role });
-        let item_value = |v: &CellValue| if matches!(v, CellValue::Empty) { CellValue::Text(BLANK_ITEM.into()) } else { v.clone() };
+        let item_value = |f: usize, v: &CellValue| {
+            if matches!(v, CellValue::Empty) {
+                CellValue::Text(BLANK_ITEM.into())
+            } else if let Some(alias) = self.aliases.item(f, &item_key(v)) {
+                CellValue::Text(alias.to_string())
+            } else {
+                v.clone()
+            }
+        };
+        let field_name = |f: usize| self.aliases.field(f).map_or_else(|| self.fields[f].name.clone(), str::to_string);
+        // A subtotal's label: the item's name (as the sheet shows it), then 集計.
+        let subtotal_label = |f: usize, item: &CellValue| format!("{} 集計", self.aliases.item(f, &item_key(item)).map_or_else(|| crate::sheet_command::display_text(item, &Default::default(), false), str::to_string));
 
         // Report filters, above with a row between.
         let page_range = (pages > 0).then(|| {
             let first = top.saturating_sub(pages + 1);
             for (i, p) in self.page_fields.iter().enumerate() {
-                let name = self.fields.get(p.field as usize).map(|f| f.name.clone()).unwrap_or_default();
+                let name = if (p.field as usize) < self.fields.len() { field_name(p.field as usize) } else { String::new() };
                 put(first + i as u32, left, CellValue::Text(name), PivotRole::PageLabel);
-                let value = page_value(p).map_or(CellValue::Text(ALL_ITEMS.into()), |v| item_value(&v));
+                let value = page_value(p).map_or(CellValue::Text(ALL_ITEMS.into()), |v| item_value(p.field as usize, &v));
                 put(first + i as u32, left + 1, value, PivotRole::PageValue);
             }
             CellRange { first_row: first, last_row: first + pages - 1, first_column: left, last_column: left + 1 }
@@ -1198,13 +1447,13 @@ impl PivotTable {
                 put(top, first_data_col, caption(&self.col_header_caption, COLUMN_LABELS), PivotRole::Caption);
             } else {
                 for (i, l) in col_levels.iter().enumerate() {
-                    put(top, first_data_col + i as u32, CellValue::Text(self.fields[l.field].name.clone()), PivotRole::Caption);
+                    put(top, first_data_col + i as u32, CellValue::Text(field_name(l.field)), PivotRole::Caption);
                 }
             }
         }
         if !compact_rows {
             for (i, &f) in row_fields.iter().enumerate() {
-                put(label_row, left + label_col[i], CellValue::Text(self.fields[f].name.clone()), PivotRole::Caption);
+                put(label_row, left + label_col[i], CellValue::Text(field_name(f)), PivotRole::Caption);
             }
         }
 
@@ -1223,7 +1472,7 @@ impl PivotTable {
             let Some(line) = line else { continue };
             match line.kind {
                 PivotLineKind::Grand if !col_levels.is_empty() => {
-                    let label = if several { CellValue::Text(format!("{} の合計", self.data_fields[*d].name)) } else { caption(&self.grand_total_caption, GRAND_TOTAL) };
+                    let label = if several { CellValue::Text(format!("全体の {}", self.data_fields[*d].name)) } else { caption(&self.grand_total_caption, GRAND_TOTAL) };
                     if *d == 0 || several {
                         put(top + 1, column, label, PivotRole::ColumnLabel);
                     }
@@ -1231,7 +1480,7 @@ impl PivotTable {
                 PivotLineKind::Subtotal { depth } => {
                     if *d == 0 {
                         let item = &col_levels[depth as usize].items[line.path[depth as usize]];
-                        put(top + 1 + depth, column, CellValue::Text(format!("{} 集計", crate::sheet_command::display_text(item, &Default::default(), false))), PivotRole::ColumnLabel);
+                        put(top + 1 + depth, column, CellValue::Text(subtotal_label(col_levels[depth as usize].field, item)), PivotRole::ColumnLabel);
                     }
                 }
                 _ => {
@@ -1241,7 +1490,7 @@ impl PivotTable {
                         let key_here = prefix.iter().fold(0usize, |a, &b| a.wrapping_mul(1009).wrapping_add(b + 1));
                         if *d == 0 && !seen[lv].contains(&key_here) {
                             seen[lv].push(key_here);
-                            put(top + 1 + lv as u32, column, item_value(&col_levels[lv].items[ix]), PivotRole::ColumnLabel);
+                            put(top + 1 + lv as u32, column, item_value(col_levels[lv].field, &col_levels[lv].items[ix]), PivotRole::ColumnLabel);
                         }
                     }
                 }
@@ -1258,7 +1507,7 @@ impl PivotTable {
         };
         // With a value filter, the totals add up the items kept only.
         let value_filtered = self.filters.iter().any(|f| !f.is_label());
-        let leaf_paths = |lines: &[Line]| -> Vec<Vec<usize>> { lines.iter().filter(|l| matches!(l.kind, PivotLineKind::Item { last: true, .. })).map(|l| l.path.clone()).collect() };
+        let leaf_paths = |lines: &[Line]| -> Vec<Vec<usize>> { lines.iter().filter(|l| l.collapsed || matches!(l.kind, PivotLineKind::Item { last: true, .. })).map(|l| l.path.clone()).collect() };
         let (row_leafs, col_leafs) = (leaf_paths(&row_lines), leaf_paths(&col_lines));
         let shown = |r: &&&Vec<CellValue>| -> bool {
             !value_filtered
@@ -1294,7 +1543,7 @@ impl PivotTable {
                 PivotLineKind::Grand => put(row, left, caption(&self.grand_total_caption, GRAND_TOTAL), PivotRole::TotalLabel),
                 PivotLineKind::Subtotal { depth } => {
                     let item = &rows_levels[depth as usize].items[line.path[depth as usize]];
-                    let text = format!("{} 集計", crate::sheet_command::display_text(item, &Default::default(), false));
+                    let text = subtotal_label(rows_levels[depth as usize].field, item);
                     put(row, left + label_col[depth as usize], CellValue::Text(text), PivotRole::TotalLabel);
                 }
                 PivotLineKind::Item { .. } => {
@@ -1308,7 +1557,7 @@ impl PivotTable {
                         }
                     }
                     for (lv, ix) in labels {
-                        put(row, left + label_col[lv], item_value(&rows_levels[lv].items[ix]), PivotRole::RowLabel { indent: indent[lv] });
+                        put(row, left + label_col[lv], item_value(rows_levels[lv].field, &rows_levels[lv].items[ix]), PivotRole::RowLabel { indent: indent[lv] });
                     }
                 }
                 PivotLineKind::Blank => {}
@@ -1377,15 +1626,25 @@ impl PivotTable {
             }
         }
         // The lines as the file writes them: what each repeats of the one before.
-        let as_items = |lines: &[Line], several: bool| -> Vec<PivotLine> {
+        // Each item is named by its place among the field's items (`item`), as the file's lines do.
+        let place_of_item = |levels: &[Level], lv: usize, ix: usize| -> u32 {
+            let field = &self.fields[levels[lv].field];
+            let value = &levels[lv].items[ix];
+            field
+                .items
+                .iter()
+                .position(|it| it.kind.is_none() && it.x.and_then(|x| field.shared.get(x as usize)).is_some_and(|v| same_item(&field.map_value_to_group(v), value)))
+                .unwrap_or(ix) as u32
+        };
+        let as_items = |lines: &[Line], levels: &[Level], several: bool| -> Vec<PivotLine> {
             let mut prev: Vec<usize> = Vec::new();
             let mut out = Vec::new();
             for l in lines {
                 let repeat = prev.iter().zip(&l.path).take_while(|(a, b)| a == b).count();
                 let (kind, repeat, items) = match l.kind {
                     PivotLineKind::Grand => (Some("grand".to_string()), 0, vec![0]),
-                    PivotLineKind::Subtotal { .. } => (Some("default".to_string()), 0, l.path.iter().map(|&i| i as u32).collect()),
-                    PivotLineKind::Item { .. } => (None, repeat as u32, l.path[repeat.min(l.path.len())..].iter().map(|&i| i as u32).collect()),
+                    PivotLineKind::Subtotal { .. } => (Some("default".to_string()), 0, l.path.iter().enumerate().map(|(lv, &i)| place_of_item(levels, lv, i)).collect()),
+                    PivotLineKind::Item { .. } => (None, repeat as u32, l.path.iter().enumerate().skip(repeat).map(|(lv, &i)| place_of_item(levels, lv, i)).collect()),
                     PivotLineKind::Blank => (Some("blank".to_string()), 0, vec![0]),
                 };
                 prev = l.path.clone();
@@ -1396,8 +1655,8 @@ impl PivotTable {
             }
             out
         };
-        let row_items = as_items(&row_lines, false);
-        let col_items = as_items(&col_lines, several);
+        let row_items = as_items(&row_lines, &rows_levels, false);
+        let col_items = as_items(&col_lines, &col_levels, several);
         let last_row = first_body + row_lines.len() as u32 - 1;
         let last_column = first_data_col + col_keys.len() as u32 - 1;
         PivotBuilt {
@@ -1460,25 +1719,20 @@ impl PivotTable {
         let col_fields: Vec<usize> = self.col_fields.iter().filter(|&&f| f >= 0).map(|&f| f as usize).filter(|&f| f < self.fields.len()).collect();
         let data_count = self.data_fields.len().max(1);
         let several = self.data_fields.len() > 1;
-        let rows_levels: Vec<Level> = row_fields.iter().map(|&f| Level { field: f, items: self.ordered_items(f, &records, self.data_column(f, data), data) }).collect();
-        let col_levels: Vec<Level> = col_fields.iter().map(|&f| Level { field: f, items: self.ordered_items(f, &records, self.data_column(f, data), data) }).collect();
-        let key = |r: &Vec<CellValue>, level: &Level| -> Option<usize> {
-            let c = self.data_column(level.field, data)?;
-            let v = r.get(c).cloned().unwrap_or_default();
-            let mapped = self.fields[level.field].map_value_to_group(&v);
-            level.items.iter().position(|i| same_item(i, &mapped))
-        };
+        let rows_levels: Vec<Level> = row_fields.iter().map(|&f| Level::new(f, self.ordered_items(f, &records, self.data_column(f, data), data))).collect();
+        let col_levels: Vec<Level> = col_fields.iter().map(|&f| Level::new(f, self.ordered_items(f, &records, self.data_column(f, data), data))).collect();
+        let key = self.item_keyer(data);
 
         let (label_col, _indent) = self.row_label_places();
         let label_columns = label_col.last().map_or(1, |c| c + 1);
 
         let mut row_lines: Vec<Line> = Vec::new();
         if rows_levels.is_empty() {
-            row_lines.push(Line { kind: PivotLineKind::Item { depth: 0, last: true, subtotal: false }, path: Vec::new(), labels: Vec::new() });
+            row_lines.push(Line { kind: PivotLineKind::Item { depth: 0, last: true, subtotal: false }, path: Vec::new(), labels: Vec::new(), collapsed: false });
         } else {
             tree(self, &rows_levels, 0, &mut Vec::new(), &records, &key, &|d, r| self.aggregate_of(d, data, r), &mut row_lines, &mut Vec::new());
             if self.row_grand_totals {
-                row_lines.push(Line { kind: PivotLineKind::Grand, path: Vec::new(), labels: Vec::new() });
+                row_lines.push(Line { kind: PivotLineKind::Grand, path: Vec::new(), labels: Vec::new(), collapsed: false });
             }
         }
 
@@ -1491,12 +1745,12 @@ impl PivotTable {
             }
             let mut lines = Vec::new();
             tree(&t2, &col_levels, 0, &mut Vec::new(), &records, &key, &|d, r| self.aggregate_of(d, data, r), &mut lines, &mut Vec::new());
-            col_lines = lines.into_iter().filter(|l| !matches!(l.kind, PivotLineKind::Item { last: false, .. })).collect();
+            col_lines = lines.into_iter().filter(|l| l.collapsed || !matches!(l.kind, PivotLineKind::Item { last: false, .. })).collect();
             if self.col_grand_totals {
-                col_lines.push(Line { kind: PivotLineKind::Grand, path: Vec::new(), labels: Vec::new() });
+                col_lines.push(Line { kind: PivotLineKind::Grand, path: Vec::new(), labels: Vec::new(), collapsed: false });
             }
         } else {
-            col_lines.push(Line { kind: PivotLineKind::Item { depth: 0, last: true, subtotal: false }, path: Vec::new(), labels: Vec::new() });
+            col_lines.push(Line { kind: PivotLineKind::Item { depth: 0, last: true, subtotal: false }, path: Vec::new(), labels: Vec::new(), collapsed: false });
         }
 
         let col_label_rows = col_levels.len() as u32 + u32::from(several);
@@ -1528,7 +1782,7 @@ impl PivotTable {
         let (cline, _d) = col_keys.get(ci)?;
 
         let value_filtered = self.filters.iter().any(|f| !f.is_label());
-        let leaf_paths = |lines: &[Line]| -> Vec<Vec<usize>> { lines.iter().filter(|l| matches!(l.kind, PivotLineKind::Item { last: true, .. })).map(|l| l.path.clone()).collect() };
+        let leaf_paths = |lines: &[Line]| -> Vec<Vec<usize>> { lines.iter().filter(|l| l.collapsed || matches!(l.kind, PivotLineKind::Item { last: true, .. })).map(|l| l.path.clone()).collect() };
         let (row_leafs, col_leafs) = (leaf_paths(&row_lines), leaf_paths(&col_lines));
         let shown = |r: &&&Vec<CellValue>| -> bool {
             !value_filtered
@@ -1894,6 +2148,13 @@ impl PivotTable {
     /// labels 12 and 25 points in),
     /// in place of the cell's own indent. Labels of 小計 and 総計 are not.
     pub fn label_pads(&self) -> Vec<(u32, u32, f32)> {
+        let mut out = self.row_label_pads();
+        // The column items with a +/− button keep its room too.
+        out.extend(self.labels().into_iter().filter(|l| l.on_columns && l.has_fields_under).map(|l| (l.row, l.column, 12.0)));
+        out
+    }
+
+    fn row_label_pads(&self) -> Vec<(u32, u32, f32)> {
         let (rows, _) = self.line_kinds();
         let (label_col, indent) = self.row_label_places();
         let fields = label_col.len();
@@ -1918,6 +2179,101 @@ impl PivotTable {
             }
         }
         out
+    }
+
+    /// The labels of the rows' and the columns' items on screen, from the
+    /// table's lines (`rowItems`, `colItems`): where each is, which field and
+    /// which of its items, and whether fields lie under it (it then has a +/−
+    /// button). Items of a table with its values among the row fields are not
+    /// listed.
+    pub fn labels(&self) -> Vec<PivotLabel> {
+        let mut out = Vec::new();
+        if self.is_empty() {
+            return out;
+        }
+        let first_col = self.location.first_column;
+        // Rows: a line gives the items from its `repeat` on, each in its field's column.
+        if !self.row_fields.contains(&-2) {
+            let (label_col, indent) = self.row_label_places();
+            let first_body = self.location.first_row + self.first_data_row;
+            for (i, line) in self.row_items.iter().enumerate() {
+                if line.kind.is_some() {
+                    continue;
+                }
+                for (k, &pos) in line.items.iter().enumerate() {
+                    let depth = line.repeat as usize + k;
+                    let Some(&f) = self.row_fields.get(depth) else { break };
+                    let (Some(&column), Some(&pad)) = (label_col.get(depth), indent.get(depth)) else { break };
+                    if self.fields.get(f as usize).is_none_or(|fl| fl.items.get(pos as usize).is_none_or(|it| it.kind.is_some())) {
+                        continue;
+                    }
+                    out.push(PivotLabel {
+                        row: first_body + i as u32,
+                        column: first_col + column,
+                        on_columns: false,
+                        depth: depth as u32,
+                        field: f as usize,
+                        item: pos,
+                        has_fields_under: self.row_fields[depth + 1..].iter().any(|&g| g >= 0),
+                        indent: pad,
+                    });
+                }
+            }
+        }
+        // Columns: the items sit in the header rows under the caption, over the first column of their group.
+        if !self.col_fields.contains(&-2) || self.col_fields.last() == Some(&-2) {
+            let first_header = self.location.first_row + self.first_header_row;
+            let first_data = first_col + self.first_data_col;
+            for (c, line) in self.col_items.iter().enumerate() {
+                if line.kind.is_some() || line.data != 0 {
+                    continue;
+                }
+                for (k, &pos) in line.items.iter().enumerate() {
+                    let depth = line.repeat as usize + k;
+                    let Some(&f) = self.col_fields.get(depth) else { break };
+                    if f < 0 || self.fields.get(f as usize).is_none_or(|fl| fl.items.get(pos as usize).is_none_or(|it| it.kind.is_some())) {
+                        continue;
+                    }
+                    out.push(PivotLabel {
+                        row: first_header + depth as u32,
+                        column: first_data + c as u32,
+                        on_columns: true,
+                        depth: depth as u32,
+                        field: f as usize,
+                        item: pos,
+                        has_fields_under: self.col_fields[depth + 1..].iter().any(|&g| g >= 0),
+                        indent: 0,
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// The +/− buttons on screen (`showDrill`): the labels with fields under them.
+    pub fn drill_buttons(&self) -> Vec<PivotLabel> {
+        if !self.show_drill {
+            return Vec::new();
+        }
+        self.labels().into_iter().filter(|l| l.has_fields_under).collect()
+    }
+
+    /// Fold (`collapsed`) or unfold one item (`PivotItem.ShowDetail`).
+    pub fn set_item_collapsed(&mut self, field: usize, item: u32, collapsed: bool) {
+        if let Some(it) = self.fields.get_mut(field).and_then(|f| f.items.get_mut(item as usize))
+            && it.kind.is_none()
+        {
+            it.collapsed = collapsed;
+        }
+    }
+
+    /// Fold or unfold every item of a field (`PivotField.ShowDetail`).
+    pub fn set_field_collapsed(&mut self, field: usize, collapsed: bool) {
+        if let Some(f) = self.fields.get_mut(field) {
+            for it in f.items.iter_mut().filter(|it| it.kind.is_none()) {
+                it.collapsed = collapsed;
+            }
+        }
     }
 
     /// The format a built cell takes, from the sheet's default `base`:
@@ -2028,13 +2384,14 @@ impl PivotTable {
             .enumerate()
             .map(|(i, h)| {
                 let mut shared: Vec<CellValue> = Vec::new();
+                let mut seen = ItemIndex::default();
                 for r in &data.records {
-                    let v = r.get(i).cloned().unwrap_or_default();
-                    if !shared.iter().any(|s| same_item(s, &v)) {
-                        shared.push(v);
+                    let v = r.get(i).unwrap_or(&CellValue::Empty);
+                    if seen.insert(v) {
+                        shared.push(v.clone());
                     }
                 }
-                PivotField { name: h.clone(), formula: None, axis: None, shared, items: Vec::new(), compact: true, outline: true, subtotal_top: true, default_subtotal: true, sort: PivotSort::Manual, sort_data_field: None, grouping: None, insert_blank_row: false, fill_down_labels: None }
+                PivotField { name: h.clone(), formula: None, axis: None, shared, items: Vec::new(), compact: true, outline: true, subtotal_top: true, default_subtotal: true, sort: PivotSort::Manual, sort_data_field: None, grouping: None, insert_blank_row: false, fill_down_labels: None, group_base: None }
             })
             .collect();
         PivotTable {
@@ -2078,6 +2435,7 @@ impl PivotTable {
             multiple_field_filters: false,
             calculated_items: Vec::new(),
             show_drill: true,
+            aliases: PivotAliases::default(),
         }
     }
 
@@ -2145,8 +2503,8 @@ impl PivotTable {
                 let shared = &self.fields[f].shared;
                 let mut order: Vec<usize> = (0..shared.len()).collect();
                 order.sort_by(|&a, &b| compare_values(&shared[a], &shared[b]));
-                let mut items: Vec<PivotItem> = order.into_iter().map(|x| PivotItem { x: Some(x as u32), hidden: false, kind: None }).collect();
-                items.push(PivotItem { x: None, hidden: false, kind: Some("default".into()) });
+                let mut items: Vec<PivotItem> = order.into_iter().map(|x| PivotItem { x: Some(x as u32), hidden: false, kind: None, collapsed: false }).collect();
+                items.push(PivotItem { x: None, hidden: false, kind: Some("default".into()), collapsed: false });
                 self.fields[f].items = items;
             }
         }
@@ -2333,10 +2691,11 @@ impl PivotTable {
     pub fn fill_shared(&mut self, data: &PivotData) {
         for f in 0..self.fields.len() {
             let Some(c) = self.data_column(f, data) else { continue };
+            let mut seen = ItemIndex::of(&self.fields[f].shared);
             for r in &data.records {
-                let v = r.get(c).cloned().unwrap_or_default();
-                if !self.fields[f].shared.iter().any(|s| same_item(s, &v)) {
-                    self.fields[f].shared.push(v);
+                let v = r.get(c).unwrap_or(&CellValue::Empty);
+                if seen.insert(v) {
+                    self.fields[f].shared.push(v.clone());
                 }
             }
         }
@@ -3008,6 +3367,49 @@ mod tests {
                 vec![t("九州"), t("みかん"), n(10.0)],
             ],
         }
+    }
+
+    /// Items found by key are the items `same_item` finds: texts without regard to case (also non-ASCII, a final sigma
+    /// included), numbers by value, the other kinds by themselves.
+    #[test]
+    fn item_index_agrees_with_same_item() {
+        let t = |s: &str| CellValue::Text(s.into());
+        let values = vec![
+            t("Apple"), t("apple"), t("APPLE"), t("みかん"), t("ΟΔΟΣ"), t("οδος"), t("οδοσ"), t(""), CellValue::Empty, CellValue::Number(1.0),
+            CellValue::Number(1.0), CellValue::Number(-0.0), CellValue::Number(0.0), CellValue::Bool(true), CellValue::Bool(true), CellValue::Bool(false),
+            CellValue::Error(crate::sheet::CellError::NA), CellValue::Error(crate::sheet::CellError::NA), CellValue::Error(crate::sheet::CellError::Div0),
+        ];
+        let mut scanned: Vec<CellValue> = Vec::new();
+        let mut keyed = super::ItemIndex::default();
+        for v in &values {
+            let new_by_scan = !scanned.iter().any(|s| super::same_item(s, v));
+            assert_eq!(keyed.insert(v), new_by_scan, "{v:?}");
+            assert_eq!(keyed.contains(v), true);
+            if new_by_scan {
+                scanned.push(v.clone());
+            }
+        }
+        let level = super::Level::new(0, scanned.clone());
+        for (i, v) in scanned.iter().enumerate() {
+            assert_eq!(level.position(v), Some(i));
+        }
+    }
+
+    /// A table with many distinct items builds in a time that does not grow with the square of their number.
+    #[test]
+    fn many_distinct_items_build_without_quadratic_scans() {
+        let n = 3000;
+        let data = PivotData {
+            headings: vec!["id".into(), "amount".into()],
+            records: (0..n).map(|i| vec![CellValue::Text(format!("ID-{i}")), CellValue::Number(i as f64)]).collect(),
+        };
+        let mut table = PivotTable::new("p", PivotSource::default(), &data, 0, 0);
+        table.row_fields = vec![0];
+        table.data_fields = vec![super::PivotDataField { field: 1, name: "sum".into(), function: "sum".into(), show_as: None, number_format: None }];
+        table.fill_shared(&data);
+        let built = table.build(&data);
+        // A label per item (and the caption and the total).
+        assert!(built.cells.iter().filter(|c| c.column == 0).count() >= n);
     }
 
     fn text(built: &super::PivotBuilt, row: u32, column: u32) -> Option<CellValue> {

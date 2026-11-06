@@ -122,13 +122,15 @@ cat > "$APP/Contents/Info.plist" <<EOF
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Old Office and OpenDocument file (PowerPoint 97-2003, Excel 97-2003, OpenDocument text, spreadsheet and presentation)</string>
+			<string>Old Office and OpenDocument file (Word 97-2003, PowerPoint 97-2003, Excel 97-2003, OpenDocument text, spreadsheet and presentation)</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
+				<string>com.microsoft.word.doc</string>
+				<string>com.microsoft.word.dot</string>
 				<string>com.microsoft.powerpoint.ppt</string>
 				<string>com.microsoft.powerpoint.pps</string>
 				<string>com.microsoft.powerpoint.pot</string>
@@ -143,6 +145,8 @@ cat > "$APP/Contents/Info.plist" <<EOF
 			</array>
 			<key>CFBundleTypeExtensions</key>
 			<array>
+				<string>doc</string>
+				<string>dot</string>
 				<string>ppt</string>
 				<string>pps</string>
 				<string>pot</string>

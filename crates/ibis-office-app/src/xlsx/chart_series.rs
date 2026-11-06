@@ -43,7 +43,7 @@ pub(crate) struct SeriesEditor {
 fn label(key: &str) -> Div {
     div().child(crate::shell::i18n::text(key))
 }
-fn row(key: &str, control: impl IntoElement) -> Div {
+fn row(key: &str, control: impl IntoElement) -> chrome::control_row::ControlRow {
     chrome::control_row(crate::shell::i18n::text(key), control)
 }
 
@@ -270,8 +270,10 @@ impl SlideEditor {
             })))
     }
 
-    pub(crate) fn chart_panel_tabs(&self, cx: &Context<Self>) -> Div {
-        chrome::tab_control(
+    /// `panel` with the chart format pane's tabs in the panel header area.
+    pub(crate) fn chart_panel_tabs(&self, panel: SidebarPanel, cx: &Context<Self>) -> SidebarPanel {
+        panel.header_tabs(
+            "chart-format-tab",
             [
                 "xlsx.chart-series",
                 "chart.ui.axes",
@@ -279,7 +281,6 @@ impl SlideEditor {
             ]
             .map(crate::shell::i18n::text),
             self.wb().chart_edit.as_ref().unwrap().tab,
-            "chart-format-tab",
             |e, i, cx| {
                 e.wb_mut().chart_edit.as_mut().unwrap().tab = i;
                 e.document_memory.set("xlsx.chart-format.tab",i);
@@ -761,8 +762,8 @@ impl SlideEditor {
             }).detach();
         }
         self.wb_mut().chart_edit.as_mut().unwrap().series_editor = Some(editor);
-        self.panel_dialog.bounds = None;
-        self.panel_dialog.key = None;
+        self.dialog.bounds = None;
+        self.dialog.key = None;
         cx.notify();
     }
     pub(crate) fn cancel_chart_series_editor(
@@ -778,9 +779,9 @@ impl SlideEditor {
         if let Some(p) = self.wb_mut().chart_edit.as_mut() {
             p.series_editor = None;
         }
-        self.panel_dialog.key = None;
-        self.panel_dialog.bounds = None;
-        self.panel_dialog.active = false;
+        self.dialog.key = None;
+        self.dialog.bounds = None;
+        self.dialog.active = false;
         self.focus_handle.focus(window, cx);
         cx.notify();
     }
@@ -1086,33 +1087,15 @@ impl SlideEditor {
         cx: &mut Context<Self>,
     ) -> Option<SidebarPanel> {
         let edit = self.wb().chart_edit.as_ref()?.series_editor.as_ref()?;
+        let tab = edit.tab;
         let s = &edit.chart.groups[0].series[0];
         let body_width =
-            (self.panel_dialog.bounds.map_or(px(520.), |b| b.size.width) - px(32.)).max(px(124.));
+            (self.dialog.bounds.map_or(px(520.), |b| b.size.width) - px(32.)).max(px(124.));
         let mut body = v_flex()
             .gap_3()
             .px_4()
             .py_2()
-            .p_0().when(!self.sheet_range_pick_active(), |b| {
-                b.child(chrome::tab_control(
-                    ["chart.ui.data", "chart.ui.display", "chart.ui.analysis"]
-                        .map(crate::shell::i18n::text),
-                    edit.tab,
-                    "chart-series-tab",
-                    |e, i, cx| {
-                        e.wb_mut()
-                            .chart_edit
-                            .as_mut()
-                            .unwrap()
-                            .series_editor
-                            .as_mut()
-                            .unwrap()
-                            .tab = i;
-                        cx.notify()
-                    },
-                    cx,
-                ))
-            });
+            .p_0();
         if self.sheet_range_pick_active() {
             if self.is_sheet_range_pick_target(&edit.name) {
                 body = body.child(chrome::text_field_row(crate::shell::i18n::text("chart.ui.name"), super::range_field::range_field(&edit.name, "chart-series-name", cx).full_width()));
@@ -1460,11 +1443,26 @@ impl SlideEditor {
             .when(picking,|d|d.no_submit())
             .label(crate::shell::i18n::text("_shell.close"))
             .on_click(cx.listener(|e,_,w,cx|e.cancel_chart_series_editor(w,cx))));
-        Some(SidebarPanel::with_footer(
+        let panel = SidebarPanel::with_footer(
             crate::shell::i18n::text("chart.ui.edit-series"),
             body.into_any_element(),
             actions,
-        ))
+        );
+        // The tabs are in the panel header area (not while a range is being picked).
+        Some(if picking {
+            panel
+        } else {
+            panel.header_tabs(
+                "chart-series-tab",
+                ["chart.ui.data", "chart.ui.display", "chart.ui.analysis"].map(crate::shell::i18n::text),
+                tab,
+                |e, i, cx| {
+                    e.wb_mut().chart_edit.as_mut().unwrap().series_editor.as_mut().unwrap().tab = i;
+                    cx.notify()
+                },
+                cx,
+            )
+        })
     }
 }
 

@@ -35,6 +35,15 @@ pub(crate) struct PhotoAlbumState {
     pub(crate) message: Option<SharedString>,
 }
 
+/// The album layout and frame dropdowns are 1.5 times the usual width, and the frame list's items 1.5 times the usual height (2026-11-04 user).
+const ALBUM_DROPDOWN_SCALE: f32 = 1.5;
+const ALBUM_FRAME_ROW_SCALE: f32 = 1.5;
+/// The label column fits 「アルバムのレイアウト」 (10 full-width characters) on one line.
+const ALBUM_LABEL_SCALE: f32 = 1.5;
+/// A frame's picture leaves 2 px above and below it in its button and list item (2026-11-04 user).
+const FRAME_PREVIEW_PADDING: f32 = 2.;
+const FRAME_PREVIEW_HEIGHT: f32 = 24.;
+
 impl SlideEditor {
     #[allow(dead_code)]
     pub(crate) fn photo_album(&self) -> Option<&PhotoAlbum> {
@@ -501,7 +510,6 @@ impl SlideEditor {
             })));
 
         // レイアウト選択
-        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).text_color(rgb(0x3c4043)).child(crate::shell::i18n::text("pptx.photo-album.album-layout")));
         let layouts = [
             (PhotoAlbumLayout::FitToSlide, "pptx.photo-album.layout.fit-to-slide"),
             (PhotoAlbumLayout::OnePic, "pptx.photo-album.layout.1pic"),
@@ -516,10 +524,11 @@ impl SlideEditor {
             if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) { s.layout = value; }
             cx.notify();
         }).into()).collect();
-        body = body.child(crate::shell::chrome::Dropdown::from_entries("pptx-album-layout",label,entries,true,0,&cx.weak_entity()).into_any_element());
+        let width = crate::shell::chrome::FIELD_WIDTH * ALBUM_DROPDOWN_SCALE;
+        body = body.child(crate::shell::chrome::control_row::dropdown_row(crate::shell::i18n::text("pptx.photo-album.album-layout"),
+            crate::shell::chrome::Dropdown::from_entries("pptx-album-layout",label,entries,true,0,&cx.weak_entity()).button_width(width)).label_scale(ALBUM_LABEL_SCALE));
 
         // 枠の形状選択
-        body = body.child(div().text_sm().font_weight(FontWeight::BOLD).text_color(rgb(0x3c4043)).child(crate::shell::i18n::text("pptx.photo-album.frame-shape")));
         let frames = [
             (PhotoAlbumFrame::FrameStyle1, "pptx.photo-album.frame.rect"),
             (PhotoAlbumFrame::FrameStyle2, "pptx.photo-album.frame.round-rect"),
@@ -533,7 +542,7 @@ impl SlideEditor {
         let choices = frames.into_iter().map(|(value, key)| crate::shell::chrome::preview_dropdown::PreviewChoice {
             label: crate::shell::i18n::text(key),
             content: std::rc::Rc::new(move || {
-                let mut frame = div().w(px(68.)).h(px(28.)).flex().items_center().justify_center().bg(rgb(0x8ab4d8));
+                let mut frame = div().w(px(68.)).h(px(FRAME_PREVIEW_HEIGHT)).flex().items_center().justify_center().bg(rgb(0x8ab4d8));
                 frame = match value {
                     PhotoAlbumFrame::FrameStyle1 => frame.border_1().border_color(rgb(0x5f6368)),
                     PhotoAlbumFrame::FrameStyle2 => frame.rounded(px(8.)).border_1().border_color(rgb(0x5f6368)),
@@ -543,14 +552,16 @@ impl SlideEditor {
                     PhotoAlbumFrame::FrameStyle6 => frame.shadow_md(),
                     PhotoAlbumFrame::FrameStyle7 => frame.rounded(px(6.)).border_4().border_color(rgb(0xc9dce9)),
                 };
-                div().relative().h(px(36.)).w_full().flex().items_center().justify_center().child(frame.child(crate::shell::chrome::icon("landscape", 20., rgb(0xffffff).into()))).into_any_element()
+                div().relative().py(px(FRAME_PREVIEW_PADDING)).w_full().flex().items_center().justify_center().child(frame.child(crate::shell::chrome::icon("landscape", 20., rgb(0xffffff).into()))).into_any_element()
             }),
             choose: std::rc::Rc::new(move |e, _, cx| {
                 if let Some(s) = e.pptx_mut().and_then(|p| p.photo_album.as_mut()) { s.frame = value; }
                 cx.notify();
             }),
         }).collect();
-        body = body.child(crate::shell::chrome::preview_dropdown::preview_dropdown("pptx-album-frame", choices, selected, cx));
+        let size = crate::shell::chrome::preview_dropdown::PreviewSize { row_height: crate::shell::chrome::BUTTON_HEIGHT * ALBUM_FRAME_ROW_SCALE, ..Default::default() }.width(width);
+        body = body.child(crate::shell::chrome::control_row::dropdown_row(crate::shell::i18n::text("pptx.photo-album.frame-shape"),
+            crate::shell::chrome::preview_dropdown::preview_dropdown_sized("pptx-album-frame", choices, selected, size, cx)).label_scale(ALBUM_LABEL_SCALE));
 
         // アクションボタン（作成・閉じる）
         let panel_actions = crate::shell::chrome::action_bar()

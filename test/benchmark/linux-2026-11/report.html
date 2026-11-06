@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linux 版ベンチマーク</title>
+<style>
+:root { --bg:#f8fafc; --card:#ffffff; --ink:#0f172a; --sub:#475569; --mute:#64748b; --line:#e2e8f0; --accent:#0284c7; --fail:#dc2626; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0b1220; --card:#111a2c; --ink:#e2e8f0; --sub:#cbd5e1; --mute:#94a3b8; --line:#23304a; --accent:#38bdf8; --fail:#f87171; } }
+:root[data-theme="dark"] { --bg:#0b1220; --card:#111a2c; --ink:#e2e8f0; --sub:#cbd5e1; --mute:#94a3b8; --line:#23304a; --accent:#38bdf8; --fail:#f87171; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family:"Noto Sans JP","Hiragino Sans",system-ui,sans-serif; line-height:1.7; }
+main { max-width:1000px; margin:0 auto; padding:32px 16px 64px; }
+h1 { font-size:28px; margin:0 0 4px; }
+h2 { font-size:21px; margin:48px 0 12px; padding-top:8px; border-top:1px solid var(--line); }
+h3 { font-size:17px; margin:28px 0 8px; }
+.lead { color:var(--sub); margin:0 0 24px; }
+.graph { background:#fff; border-radius:16px; margin:16px 0; overflow:hidden; }
+.graph img { display:block; width:100%; height:auto; }
+table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; font-size:14px; }
+th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:right; vertical-align:top; }
+th:first-child, td:first-child { text-align:left; }
+thead th { background:var(--bg); color:var(--sub); font-weight:600; }
+td.best strong { color:var(--accent); }
+td.fail { color:var(--fail); font-weight:600; }
+.ratio { color:var(--mute); font-size:13px; }
+.runs, .meta { color:var(--mute); font-size:12px; font-weight:400; }
+.scroll { overflow-x:auto; }
+ul { padding-left:1.3em; } li { margin:4px 0; }
+code { font-size:13px; background:var(--card); border:1px solid var(--line); border-radius:4px; padding:0 4px; }
+.shots { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; }
+figure { margin:0; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px; }
+figcaption { font-size:13px; color:var(--sub); margin-bottom:6px; }
+.pair { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.pair img { width:100%; height:auto; border:1px solid var(--line); display:block; }
+.pair span { font-size:11px; color:var(--mute); }
+</style>
+</head>
+<body>
+<main>
+<h1>ibisOffice Linux 版ベンチマーク</h1>
+<p class="lead">プレスリリース用。ibisOffice 0.8.5・LibreOffice 26.8.2・ONLYOFFICE 10.0.0 を同じ Linux の PC に入れて計測しました（Microsoft Office は Linux 版が無いため比較に入れていません）。小さいほど速く、かっこ内は ibisOffice の何倍かかったかです。値は 3 回の中央値。計測日：2026-11-03。</p>
+
+<h2>ファイルを開いて最初の画面が出るまで</h2>
+<p>ファイルを開かせてから、1 ページ目（pptx は 1 枚目のスライド、xlsx は 1 シート目の最初の画面）が完全に表示されるまでの時間です。</p>
+<div class="graph"><img src="benchmark-open-ja.svg" alt="ファイル表示速度ベンチマーク（Linux）"></div>
+<div class="scroll"><table><thead><tr><th>ファイル</th><th>ibisOffice</th><th>LibreOffice</th><th>ONLYOFFICE</th></tr></thead><tbody><tr><th scope="row">プレゼンテーション（.pptx）<div class="meta">31 スライド、35.9MB</div></th><td class="best"><strong>0.81 秒</strong><div class="runs">3 回：0.82 / 0.80 / 0.81</div></td><td><strong>5.02 秒</strong><span class="ratio">（6.2倍）</span><div class="runs">3 回：5.08 / 5.01 / 5.02</div></td><td class="fail">計測できなかった</td></tr><tr><th scope="row">文書（.docx）<div class="meta">英文 145〜154 ページ、0.12MB</div></th><td class="best"><strong>1.37 秒</strong><div class="runs">3 回：1.37 / 1.33 / 1.39</div></td><td><strong>1.57 秒</strong><span class="ratio">（1.1倍）</span><div class="runs">3 回：1.53 / 1.57 / 1.59</div></td><td><strong>4.11 秒</strong><span class="ratio">（3.0倍）</span><div class="runs">3 回：4.16 / 4.11 / 4.00</div></td></tr><tr><th scope="row">表計算（.xlsx）<div class="meta">22 シート、グラフ 29 個、数式 58.9 万個、13.7MB</div></th><td class="best"><strong>0.72 秒</strong><div class="runs">3 回：0.73 / 0.72 / 0.71</div></td><td><strong>9.31 秒</strong><span class="ratio">（12.9倍）</span><div class="runs">3 回：9.31 / 9.23 / 9.49</div></td><td><strong>13.38 秒</strong><span class="ratio">（18.5倍）</span><div class="runs">3 回：13.38 / 13.33 / 13.59</div></td></tr></tbody></table></div>
+<ul>
+<li>どのアプリも、起動して開始画面が出たあとでファイルを開かせた時点から計りました（アプリの起動の時間は入りません）。</li>
+<li><strong>ONLYOFFICE は pptx を正しく開けなかったため、計測できませんでした</strong>（3 回とも、スライドを描いた約 0.3 秒後に「文書の処理中にエラーが発生しました。」のダイアログ）。</li>
+<li>LibreOffice は pptx の 1 枚目のスライドの題名などの文字を表示しませんでした（最後の画面でも同じ。終わりのフレームを参照）。描かれた最後の画面を終わりとしています。</li>
+<li>ONLYOFFICE は読み込み中に「スプレッドシートの読み込み中」の箱を出し、その間ほとんど画面が変わらないため、箱が出ている間は録画を止めないようにしました。</li>
+</ul>
+
+<h2>100万行の CSV ファイルを開いて最初の画面が出るまで（First View）</h2>
+<p>ファイルを開かせてから、最初の画面が表示され、閲覧・スクロールが可能になるまでの時間です。</p>
+<div class="graph"><img src="benchmark-csv-ja.svg" alt="100万行 CSV 初回表示（First View）速度ベンチマーク（Linux）"></div>
+<div class="scroll"><table><thead><tr><th>ファイル</th><th>ibisOffice</th><th>LibreOffice</th><th>ONLYOFFICE</th></tr></thead><tbody><tr><th scope="row">巨大表計算（.csv）<div class="meta">1,048,576 行、20 列、122MB（First View）</div></th><td class="best"><strong>0.72 秒</strong><div class="runs">3 回：0.72 / 0.71 / 0.73</div></td><td><strong>17.29 秒</strong><span class="ratio">（24.0倍）</span><div class="runs">3 回：16.59 / 17.36 / 17.29</div></td><td><strong>91.2 秒※</strong><span class="ratio">（126.5倍）</span><div class="runs">推定：10 万行の 9.12 秒 × 10<br>10 万行の 3 回：9.01 / 9.14 / 9.12</div></td></tr></tbody></table></div>
+<ul>
+<li>ibisOffice は最初の画面を出したあとも裏で読み込みを続け、その間もスクロールできます（20 万行を読んだ時点で 120 行目までスクロールできることを確かめました）。全 1,048,576 行の読み込みが終わるまでは 5.72, 5.44, 5.43 秒でした（行番号の列が少し広がる描き直し）。LibreOffice と ONLYOFFICE は、読み込みが終わるまで表を表示しません。</li>
+<li><strong>ONLYOFFICE は 100 万行の CSV を開けませんでした</strong>（3 回とも）。CSV のオプションの OK のあと「スプレッドシートの読み込み中」が続き、66〜67 秒で「おっと！何らかの問題が発生しました。メモリ不足などの理由でファイルにアクセスできなくなりました。」の画面になりました（Mac の 9.4 でも 5 分で開けず）。</li>
+<li>Mac での計測では 30 万行の時間の 3.33 倍を推定値としましたが、Linux の ONLYOFFICE 10.0.0 は <strong>30 万行（300,001 行、34.9MB）の CSV も開けませんでした</strong>（3 回とも 58〜66 秒で同じエラー）。</li><li>そこで、10 万行（100,001 行、20 列、11.6MB）の CSV を同じ手順で計測し（3 回の中央値 9.12 秒）、その 10 倍（100 万 ÷ 10 万）の 91.2 秒を推定値としました（グラフの※）。</li>
+<li>LibreOffice はテキストのインポートのダイアログを出す代わりに、同じ設定（カンマ区切り・UTF-8）を <code>--infilter=CSV:44,34,76,1</code> で渡しました。ONLYOFFICE は「CSV オプションを選択」のダイアログが出たらすぐ Enter で OK を押し、ダイアログが出ていた時間（0.1 秒未満）を除きました。</li>
+</ul>
+
+<h2>PDF への変換</h2>
+<p>コマンドラインで PDF に変換し、コマンドを始めてから PDF を書き終えるまでの時間です。</p>
+<div class="graph"><img src="benchmark-pdf-ja.svg" alt="PDF 変換速度ベンチマーク（Linux）"></div>
+<div class="scroll"><table><thead><tr><th>ファイル</th><th>ibisOffice</th><th>LibreOffice</th><th>ONLYOFFICE</th></tr></thead><tbody><tr><th scope="row">プレゼンテーション（.pptx）<div class="meta">31 スライド、35.9MB</div></th><td class="best"><strong>2.84 秒</strong><div class="runs">3 回：2.87 / 2.82 / 2.84</div></td><td><strong>10.87 秒</strong><span class="ratio">（3.8倍）</span><div class="runs">3 回：11.00 / 10.87 / 10.78</div></td><td class="fail">変換できなかった</td></tr><tr><th scope="row">文書（.docx）<div class="meta">英文 145〜154 ページ、0.12MB</div></th><td class="best"><strong>2.24 秒</strong><div class="runs">3 回：2.55 / 2.23 / 2.24</div></td><td><strong>2.50 秒</strong><span class="ratio">（1.1倍）</span><div class="runs">3 回：2.51 / 2.50 / 2.43</div></td><td><strong>5.42 秒</strong><span class="ratio">（2.4倍）</span><div class="runs">3 回：5.42 / 5.40 / 5.44</div></td></tr><tr><th scope="row">表計算（.xlsx）<div class="meta">22 シート、グラフ 29 個、数式 58.9 万個、13.7MB</div></th><td class="best"><strong>19.95 秒</strong><div class="runs">3 回：19.95 / 19.97 / 19.87</div></td><td><strong>23.06 秒</strong><span class="ratio">（1.2倍）</span><div class="runs">3 回：23.31 / 23.06 / 22.70</div></td><td><strong>27.95 秒</strong><span class="ratio">（1.4倍）</span><div class="runs">3 回：27.95 / 28.42 / 27.88</div></td></tr></tbody></table></div>
+<ul>
+<li>変換に使ったもの：ibisOffice は <code>ibisOffice-0.8.5-Linux.AppImage --export pdf</code>、LibreOffice は <code>soffice --headless --convert-to pdf</code>、ONLYOFFICE はアプリに入っている変換プログラム <code>x2t</code>（Mac の計測と同じ）。</li>
+<li>ONLYOFFICE 10.0.0 の x2t は、pptx を変換できませんでした（終了コード 80、<code>&lt;error code=&quot;calculate&quot; /&gt;</code>、JavaScript の TypeError）。3 回とも同じです。</li>
+<li>書き出した PDF のページ数（アプリによって改ページ・印刷範囲の扱いが違うため、ページ数が違います。ONLYOFFICE の xlsx は 15 ページだけ）：</li>
+</ul>
+<div class="scroll"><table><thead><tr><th>ファイル</th><th>ibisOffice</th><th>LibreOffice</th><th>ONLYOFFICE</th></tr></thead><tbody><tr><th scope="row">プレゼンテーション（.pptx）</th><td>31</td><td>31</td><td>—</td></tr><tr><th scope="row">文書（.docx）</th><td>145</td><td>154</td><td>152</td></tr><tr><th scope="row">表計算（.xlsx）</th><td>3546</td><td>4088</td><td>15</td></tr></tbody></table></div>
+
+<h2>計測の条件</h2>
+<ul>
+<li>計測環境：Intel Core i7-10700K（メモリ 16GB）、Ubuntu 20.04.6 LTS（GNOME・X11）、GPU は NVIDIA GeForce RTX 2080 Ti（ドライバー 575.57.08）、ストレージは NVMe SSD。画面は xrdp のリモートデスクトップ（1920×1080）で、X サーバー（xorgxrdp）は GPU を使わずメモリ上に画面を持ちます。</li>
+<li>描画に GPU を使っているのは ibisOffice だけでした（Vulkan で NVIDIA の GPU を使用。<code>nvidia-smi</code> で確認）。LibreOffice と ONLYOFFICE は GPU を使わず CPU で描いていました。ibisOffice は GPU で描いた画像を、毎回 GPU からメモリへ読み戻して X サーバーへ渡すため、GPU の上で動く X サーバー（PC に画面をつないだ普通のデスクトップ）より、その分だけ不利です。</li>
+<li>製品の版：ibisOffice 0.8.5（GitHub の公開版の AppImage、SHA-256 を照合）、LibreOffice 26.8.2.2（The Document Foundation の公式の deb を展開）、ONLYOFFICE Desktop Editors 10.0.0（GitHub の公式リリースの tar.xz）。どれも 2026 年 11 月 3 日時点の最新版で、管理者の権限なしに利用者のフォルダーに入れました。</li>
+<li>各 3 回計測し、中央値をとりました。どの計測も、そのアプリのプロセスがすべて終了した状態から始め、テスト用のファイルは毎回新しい写しを開きました。</li>
+<li>使ったファイルは <code>test/benchmark/</code> の公開用のもの（架空のデータと、メタ情報を取り除いた公開の資料）で、Mac での計測（README）と同じです。</li>
+</ul>
+<h3>画面の計測のしかた</h3>
+<ul>
+<li>アプリの窓を 1 秒に最大 100 回取り込み（<code>scripts/benchmark-linux/xbench.c</code>、X11 の XShm）、Mac での計測（<code>scripts/benchmark-analyze.py</code>）と同じく、窓を 192×120 の灰色の格子に縮めて前の画面と比べ、格子の 0.2% より多くが 24 階調より大きく変わったときを「変化」としました（点滅するカーソルは数えません）。文書の部分だけを見て（ツールバー・ステータス バーは除く。pptx はスライドの中央）、最後の変化（＝最後の画面の最初のフレーム）を終わりとし、終わりのフレームは目で確かめました（下の「終わりのフレーム」）。</li>
+<li>どのアプリも、ファイルなしで起動して開始画面が出るのを待ってから、ファイルを開かせました。LibreOffice と ONLYOFFICE は、コマンドラインで起動中のアプリにファイルを渡しました（Mac の計測と同じ）。ibisOffice は Linux ではコマンドラインで渡したファイルを新しいプロセスで開く（起動の時間が入る）ため、開始画面の「最近開いたファイル」の一番上にそのファイルを置いて起動し、その項目をクリックした時点から計りました（クリックは X11 の XTest で送る）。</li>
+<li>窓の大きさは揃えました：ibisOffice は既定の 1280×800、LibreOffice は 1280×800 に設定、ONLYOFFICE は影を除いて約 1280×800 に設定。</li>
+<li>CSV の First View：最初の画面から読み込み完了までに描き直しがある ibisOffice のために、「文書の部分が最後の画面とほぼ同じ（格子の 8 割以上が同じ）になった最初のフレーム」を終わりとしました。LibreOffice と ONLYOFFICE は読み込みが終わるまで表を出さないので、最後の変化と同じです。</li>
+</ul>
+<h3>この PC に固有の事情</h3>
+<ul>
+<li>LibreOffice 26.8 の公式のバイナリは glibc 2.34 以上が要り、Ubuntu 20.04 の glibc 2.31 では起動しません。そこで、Ubuntu 22.04 の公式のパッケージの glibc 2.35 と libstdc++（GCC 12）を利用者のフォルダーに展開し、そのローダーで <code>soffice.bin</code> を直接起動しました（システムには手を入れていません）。新しい glibc で動かすことによる速さの差は小さいと考えますが、通常の入れ方ではない点に注意してください。</li>
+<li>LibreOffice は、毎回プロセスを終了させると次の起動で「ドキュメントの回復」を出すため、自動回復と自動保存を切りました。初回起動のダイアログ（Welcome、今日のヒント、寄付の案内）も切りました。</li>
+<li>この PC はほかの利用者もログインしている共用の PC です（計測中の負荷の平均は各結果の JSON の <code>load_before</code> に記録）。</li>
+</ul>
+
+<h2>終わりのフレーム</h2>
+<p>中央値の回の、終わりと判定したフレームと、その直前のフレーム（窓の部分、半分の大きさ）。</p>
+<div class="shots"><figure><figcaption>ibisOffice・プレゼンテーション（.pptx）：0.81 秒（open-ibisoffice-pptx-3）</figcaption><div class="pair"><div><img src="runs/frames/open-ibisoffice-pptx-3/before-end.png" alt="直前" loading="lazy"><span>直前</span></div><div><img src="runs/frames/open-ibisoffice-pptx-3/end.png" alt="終わり" loading="lazy"><span>終わり</span></div></div></figure><figure><figcaption>LibreOffice・プレゼンテーション（.pptx）：5.02 秒（open-libreoffice-pptx-3）</figcaption><div class="pair"><div><img src="runs/frames/open-libreoffice-pptx-3/before-end.png" alt="直前" loading="lazy"><span>直前</span></div><div><img src="runs/frames/open-libreoffice-pptx-3/end.png" alt="終わり" loading="lazy"><span>終わり</span></div></div></figure><figure><figcaption>ibisOffice・文書（.docx）：1.37 秒（open-ibisoffice-docx-1）</figcaption><div class="pair"><div><img src="runs/frames/open-ibisoffice-docx-1/before-end.png" alt="直前" loading="lazy"><span>直前</span></div><div><img src="runs/frames/open-ibisoffice-docx-1/end.png" alt="終わり" loading="lazy"><span>終わり</span></div></div></figure><figure><figcaption>LibreOffice・文書（.docx）：1.57 秒（open-libreoffice-docx-2）</figcaption><div class="pair"><div><img src="runs/frames/open-libreoffice-docx-2/before-end.png" alt="直前" loading="lazy"><span>直前</span></div><div><img src="runs/frames/open-libreoffice-docx-2/end.png" alt="終わり" loading="lazy"><span>終わり</span></div></div></figure><figure><figcaption>ONLYOFFICE・文書（.docx）：4.11 秒（open-onlyoffice-docx-2）</figcaption><div class="pair"><div><img src="runs/frames/open-onlyoffice-docx-2/before-end.png" alt="直前" loading="lazy"><span>直前</span></div><div><img src="runs/frames/open-onlyoffice-docx-2/end.png" alt="終わり" loading="lazy"><span>終わり</span></div></div></figure><figure><figcaption>ibisOffice・表計算（.xlsx）：0.72 秒（open-ibisoffice-xlsx-2）</figcaption><div class="pair"><div><img src="runs/frames/open-ibisoffice-xlsx-2/before-end.png" alt="直前" loading="lazy"><span>直前</span></div><div><img src="runs/frames/open-ibisoffice-xlsx-2/end.png" alt="終わり" loading="lazy"><span>終わり</span></div></div></figure><figure><figcaption>LibreOffice・表計算（.xlsx）：9.31 秒（open-libreoffice-xlsx-1）</figcaption><div class="pair"><div><img src="runs/frames/open-libreoffice-xlsx-1/before-end.png" alt="直前" loading="lazy"><span>直前</span></div><div><img src="runs/frames/open-libreoffice-xlsx-1/end.png" alt="終わり" loading="lazy"><span>終わり</span></div></div></figure><figure><figcaption>ONLYOFFICE・表計算（.xlsx）：13.38 秒（open-onlyoffice-xlsx-1）</figcaption><div class="pair"><div><img src="runs/frames/open-onlyoffice-xlsx-1/before-end.png" alt="直前" loading="lazy"><span>直前</span></div><div><img src="runs/frames/open-onlyoffice-xlsx-1/end.png" alt="終わり" loading="lazy"><span>終わり</span></div></div></figure><figure><figcaption>ibisOffice・巨大表計算（.csv）：0.72 秒（csv-ibisoffice-csv-1）</figcaption><div class="pair"><div><img src="runs/frames/csv-ibisoffice-csv-1/before-end.png" alt="直前" loading="lazy"><span>直前</span></div><div><img src="runs/frames/csv-ibisoffice-csv-1/end.png" alt="終わり" loading="lazy"><span>終わり</span></div></div></figure><figure><figcaption>LibreOffice・巨大表計算（.csv）：17.29 秒（csv-libreoffice-csv-3）</figcaption><div class="pair"><div><img src="runs/frames/csv-libreoffice-csv-3/before-end.png" alt="直前" loading="lazy"><span>直前</span></div><div><img src="runs/frames/csv-libreoffice-csv-3/end.png" alt="終わり" loading="lazy"><span>終わり</span></div></div></figure></div>
+
+<h2>記録</h2>
+<ul>
+<li>結果：<code>test/benchmark/linux-2026-11/runs/*.json</code>（1 回ずつ）、<code>results.json</code>（まとめ）、グラフ：<code>benchmark-{open,csv,pdf}-ja.svg</code>。</li>
+<li>計測のスクリプト：<code>scripts/benchmark-linux/</code>（<code>bench.py</code>・<code>xbench.c</code>・<code>report.py</code>）。手順は <code>test/benchmark/linux-2026-11/README.md</code>。</li>
+</ul>
+</main>
+</body>
+</html>

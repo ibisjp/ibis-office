@@ -54,6 +54,7 @@ const PASTE_OP_OPTIONS: &[(PasteOp, &str)] = &[
 impl SlideEditor {
     /// Open the 形式を選択して貼り付け… dialog panel (keyboard shortcut ⌘⌥V).
     pub(crate) fn open_paste_special_dialog(&mut self, cx: &mut Context<Self>) {
+        self.adopt_shared_clip(&cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default(), cx);
         if self.sheet_state().and_then(|s| s.clip.as_ref()).is_none() {
             self.status = Some(crate::shell::i18n::text("_xlsx.to-use-paste-special-copy-cells-first").into());
             return cx.notify();

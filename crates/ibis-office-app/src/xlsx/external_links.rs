@@ -366,7 +366,7 @@ impl SlideEditor {
 
     /// リンクの解除.
     pub(crate) fn break_external_link(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.protection_refuses(crate::xlsx::protection::Guarded::Cells, cx) {
+        if self.protection_refuses_ignoring_pivots(crate::xlsx::protection::Guarded::Cells, cx) {
             return;
         }
         let Some(name) = self.presentation().workbook.as_ref().and_then(|w| w.external_books.get(index)).map(|b| b.name.clone()) else { return };

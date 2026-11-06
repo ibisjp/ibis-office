@@ -94,6 +94,29 @@ pub(crate) struct ZoomReturnState {
     pub(crate) return_slide_id: ibis_doc_model::SlideId,
     /// The slide whose completion triggers the return.
     pub(crate) trigger_slide_id: ibis_doc_model::SlideId,
+    /// The card on the slide that holds it, and the duration its zoom plays over (to shrink back into it).
+    pub(crate) card: Option<(ibis_doc_model::EmuRect, u32)>,
+}
+
+/// A ズーム in progress (スライド/セクション/サマリー ズーム): the card grows into the slide it goes to, or the slide it went to
+/// shrinks back into the card (`returnToParent`), over the object's `transitionDur`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ZoomAnim {
+    /// Growing (into the slide being shown, over `other`) or shrinking (the slide `other`, back into the card over the slide being shown).
+    pub(crate) grows: bool,
+    /// The slide behind a growing card, or the one shrinking.
+    pub(crate) other: ibis_doc_model::SlideId,
+    /// The card, in the coordinates of the slide that holds it.
+    pub(crate) frame: ibis_doc_model::EmuRect,
+    pub(crate) duration_ms: u32,
+    /// The `changes` count of the show when it began (a new move on starts another).
+    pub(crate) changes: usize,
+}
+
+/// The duration a ズーム card plays over, in milliseconds: its `transitionDur` (PowerPoint writes 1000 unless it was changed),
+/// else the duration set on the shape; a card with neither takes PowerPoint's default of a second.
+fn zoom_duration(slide: &ibis_doc_model::Slide, shape: ibis_doc_model::ShapeId) -> u32 {
+    slide.zoom_objects.get(&shape).and_then(|z| z.transition_dur).or_else(|| slide.shape_zoom_durations.get(&shape).copied()).unwrap_or(1000)
 }
 
 /// A slide show in progress.
@@ -109,6 +132,8 @@ pub(crate) struct Slideshow {
     came_from: Option<ibis_doc_model::SlideId>,
     /// 変形: when the slide that came in began to (by `changes`), for its progress.
     morph_clock: std::cell::RefCell<Option<(usize, crate::clock::Instant)>>,
+    /// When the animations last played (by `played`) began, for their progress: they are drawn for the time since, each frame.
+    anim_clock: std::cell::RefCell<Option<(usize, crate::clock::Instant)>>,
     changes: usize,
     /// Counts each slide shown, so that a timer set for one (`advTm`) does
     /// nothing once another is shown.
@@ -160,6 +185,8 @@ pub(crate) struct Slideshow {
     pub(crate) ink_dialog_open: bool,
     /// Active return-to-zoom target during the show (PPTX-TRANS-016).
     pub(crate) zoom_return: Option<ZoomReturnState>,
+    /// The ズーム being played, if one is.
+    pub(crate) zoom_anim: Option<ZoomAnim>,
     /// Active / triggered animation indices played on the current slide.
     pub(crate) triggered_played: Vec<usize>,
 }
@@ -434,6 +461,7 @@ impl SlideEditor {
             blank: None,
             came_from: None,
             morph_clock: std::cell::RefCell::new(None),
+            anim_clock: std::cell::RefCell::new(None),
             changes: 0,
             shown: 0,
             presenter: false,
@@ -461,6 +489,7 @@ impl SlideEditor {
             reading_view,
             ink_dialog_open: false,
             zoom_return: None,
+            zoom_anim: None,
             triggered_played: Vec::new(),
         });
         self.enter_slide_animations(true, cx);
@@ -989,6 +1018,9 @@ impl SlideEditor {
             if forward && show.step < groups.len() {
                 show.step += 1;
                 show.played += 1;
+                // The group reached may play, pause or stop a video or an audio (再生 in the animation pane).
+                let reached = show.step - 1;
+                self.run_media_effects(reached, cx);
                 return cx.notify();
             }
             if !forward && show.step > groups.iter().take_while(|g| g.auto).count() {
@@ -1006,6 +1038,7 @@ impl SlideEditor {
             if let Some(ret) = show.zoom_return.as_ref() {
                 if self.current_slide == ret.trigger_slide_id {
                     let return_to = ret.return_slide_id;
+                    let ret = ret.clone();
                     show.zoom_return = None;
                     if let Some(rehearsal) = show.rehearsal.as_mut() {
                         rehearsal.slide_started = crate::clock::Instant::now();
@@ -1014,6 +1047,8 @@ impl SlideEditor {
                     }
                     show.came_from = Some(self.current_slide);
                     show.changes += 1;
+                    // The slide shrinks back into the card it grew from.
+                    show.zoom_anim = ret.card.filter(|(_, d)| *d > 0).map(|(frame, duration_ms)| ZoomAnim { grows: false, other: self.current_slide, frame, duration_ms, changes: show.changes });
                     self.current_slide = return_to;
                     self.enter_slide_animations(true, cx);
                     self.resources.preload.prioritize(self.slide());
@@ -1091,22 +1126,62 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// スライド上の自動再生クリップを開始
+    /// スライド上の自動再生クリップを開始: each clip that starts with the slide plays from the start
+    /// (a clip whose player was only opened, paused, by the editor — hovering a video opens it — is played too,
+    /// and one already playing is left to play).
     pub(crate) fn play_automatic_clips(&mut self, cx: &mut Context<Self>) {
-        let auto_clips: Vec<ibis_doc_model::ShapeId> = self.slide().shapes.iter().filter_map(|sh| {
-            if let ibis_doc_model::ShapeKind::Picture(p) = &sh.kind {
-                if p.clip.as_ref().is_some_and(|c| c.options.start == ibis_doc_model::MediaStart::Automatically) {
-                    let is_playing = self.pptx().is_some_and(|st| st.clips.iter().any(|c| c.shape == sh.id));
-                    if !is_playing {
-                        return Some(sh.id);
-                    }
+        let slide = self.current_slide;
+        let auto_clips: Vec<ibis_doc_model::ShapeId> = self
+            .slide()
+            .shapes
+            .iter()
+            .filter(|sh| matches!(&sh.kind, ibis_doc_model::ShapeKind::Picture(p) if p.clip.as_ref().is_some_and(|c| c.options.start == ibis_doc_model::MediaStart::Automatically)))
+            .map(|sh| sh.id)
+            .collect();
+        for id in auto_clips {
+            if !self.prepare_clip(id, false, cx) {
+                continue;
+            }
+            if let Some(playing) = self.pptx().and_then(|s| s.clips.iter().find(|c| c.slide == slide && c.shape == id))
+                && !playing.player.is_playing()
+            {
+                playing.player.play();
+            }
+        }
+        cx.notify();
+    }
+
+    /// The 再生・一時停止・停止 effects of the animation group `group` (the click that reached it): each plays, pauses or stops
+    /// the video or the audio of its shape, with the slide show's own players.
+    pub(crate) fn run_media_effects(&mut self, group: usize, cx: &mut Context<Self>) {
+        use ibis_doc_model::MediaCommand;
+        let animations = self.slide().animations.clone();
+        let Some(reached) = animation_groups(&animations).into_iter().nth(group) else { return };
+        let slide = self.current_slide;
+        for (index, _, _) in reached.effects {
+            let Some(command) = animations[index].media_command() else { continue };
+            let shape = animations[index].shape;
+            if !self.prepare_clip(shape, false, cx) {
+                continue;
+            }
+            let trim = self.slide().shape(shape).and_then(Self::clip_of).map_or(0, |c| c.options.trim_start_ms);
+            let Some(playing) = self.pptx().and_then(|s| s.clips.iter().find(|c| c.slide == slide && c.shape == shape)) else { continue };
+            match command {
+                // `playFrom(0)`: from the start of the clip (its trim).
+                MediaCommand::Play => {
+                    playing.player.seek_to_ms(trim);
+                    playing.player.play();
+                }
+                MediaCommand::Pause => {
+                    if playing.player.is_playing() { playing.player.pause() } else { playing.player.play() }
+                }
+                MediaCommand::Stop => {
+                    playing.player.pause();
+                    playing.player.seek_to_ms(trim);
                 }
             }
-            None
-        }).collect();
-        for id in auto_clips {
-            self.toggle_clip(id, cx);
         }
+        cx.notify();
     }
 
     /// The slide shown comes in: its animations from the start (`fresh`:
@@ -1469,6 +1544,7 @@ impl SlideEditor {
                 Some(ZoomReturnState {
                     return_slide_id: origin_slide,
                     trigger_slide_id,
+                    card: self.slide().shape(shape_id).map(|sh| (sh.frame, zoom_duration(self.slide(), shape_id))),
                 })
             } else {
                 None
@@ -1477,9 +1553,12 @@ impl SlideEditor {
             None
         };
 
+        // A ズーム card grows into the slide it goes to (over its `transitionDur`; 0 cuts).
+        let zoom_card = from_shape.filter(|id| matches!(link, L::Slide(_)) && (self.slide().zoom_objects.contains_key(id) || self.slide().shape_return_to_zoom.contains(id))).and_then(|id| self.slide().shape(id).map(|sh| (sh.frame, zoom_duration(self.slide(), id))));
         let Some(show) = self.slideshow.as_mut() else { return };
         show.came_from = Some(origin_slide);
         show.changes += 1;
+        show.zoom_anim = zoom_card.filter(|(_, d)| *d > 0).map(|(frame, duration_ms)| ZoomAnim { grows: true, other: origin_slide, frame, duration_ms, changes: show.changes });
         if zoom_return_state.is_some() {
             show.zoom_return = zoom_return_state;
         }
@@ -1613,7 +1692,17 @@ impl SlideEditor {
         let ox = (w - zw) / 2.0 + pan.0;
         let oy = (h - zh) / 2.0 + pan.1;
         let zoomed_scale = scale * zoom;
-        let page = |slide: &ibis_doc_model::Slide| {
+        // The time since the animations last played began (the slide before is shown with all of its played), and whether one is
+        // still running (another frame is wanted).
+        let animating = std::cell::Cell::new(false);
+        let elapsed = {
+            let mut clock = show.anim_clock.borrow_mut();
+            if clock.as_ref().is_none_or(|(played, _)| *played != show.played) {
+                *clock = Some((show.played, crate::clock::Instant::now()));
+            }
+            clock.as_ref().map_or(0.0, |(_, at)| at.elapsed().as_secs_f32() * 1000.0)
+        };
+        let page_at = |slide: &ibis_doc_model::Slide, zoomed_scale: f32| {
             // The slide coming in plays its animations; the one before is
             // shown as it was left (all played).
             let step = if slide.id == current_id { show.step } else { usize::MAX };
@@ -1625,7 +1714,7 @@ impl SlideEditor {
                 .overflow_hidden()
                 .bg(white())
                 .child(slide_backdrop(slide, zoomed_scale, &self.resources))
-                .children(animated_shapes(slide, size, zoomed_scale, step, show.played, &show.triggered_played, |shape| {
+                .children(animated_shapes_timed(slide, size, zoomed_scale, step, show.played, &show.triggered_played, Some((if slide.id == current_id { elapsed } else { f32::MAX }, &animating)), |shape| {
 
                     if let ShapeKind::Picture(pic) = &shape.kind {
                         if let Some(ref clip) = pic.clip {
@@ -1645,9 +1734,44 @@ impl SlideEditor {
                     shape_element(shape, shape.frame, zoomed_scale, &self.resources, None)
                 }))
         };
+        let page = |slide: &ibis_doc_model::Slide| page_at(slide, zoomed_scale);
         let before = show.came_from.and_then(|id| self.presentation().slide(id));
         let transition = slide.transition.as_ref().filter(|t| !t.effect.is_empty() && t.effect != "cut" && t.duration > 0);
+        // A ズーム being played: the card's rectangle grows into the slide (or the slide shrinks into it), the slide that is
+        // not the card's drawn at its place, over the other one. Its time is counted from when the move on was made.
+        let zoom_playing = show.zoom_anim.as_ref().filter(|z| z.changes == show.changes).and_then(|z| {
+            let other = self.presentation().slide(z.other)?;
+            let elapsed = {
+                let mut clock = show.morph_clock.borrow_mut();
+                if clock.as_ref().is_none_or(|(changes, _)| *changes != show.changes) {
+                    *clock = Some((show.changes, crate::clock::Instant::now()));
+                }
+                clock.as_ref().map_or(0.0, |(_, at)| at.elapsed().as_secs_f32() * 1000.0)
+            };
+            let progress = (elapsed / z.duration_ms.max(1) as f32).min(1.0);
+            (progress < 1.0).then_some((z, other, progress))
+        });
         let shown: AnyElement = match (before, transition) {
+            _ if zoom_playing.is_some() => {
+                let (z, other, progress) = zoom_playing.expect("checked");
+                window.request_animation_frame();
+                let q = ease_in_out(if z.grows { progress } else { 1.0 - progress });
+                // The card in pixels of the show, and the rectangle between the card and the whole slide at `q`.
+                let k = zw / size.width.max(1) as f32;
+                let card = (z.frame.x as f32 * k, z.frame.y as f32 * k, z.frame.width as f32 * k, z.frame.height as f32 * k);
+                let (rx, ry, rw, rh) = (card.0 * (1.0 - q), card.1 * (1.0 - q), card.2 + (zw - card.2) * q, card.3 + (zh - card.3) * q);
+                // The slide in the rectangle is the one the card goes to (growing: the slide shown; shrinking: the one left).
+                let (inside, behind) = if z.grows { (slide, other) } else { (other, slide) };
+                let inner = zoomed_scale * (rw / zw.max(1.0));
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .child(page(behind))
+                    .child(div().absolute().left(px(rx)).top(px(ry)).w(px(rw)).h(px(rh)).overflow_hidden().child(page_at(inside, inner)))
+                    .into_any_element()
+            }
             // 変形: the shapes both slides have move from the one to the other.
             (Some(old), Some(t)) if t.effect == "morph" => {
                 let elapsed = {
@@ -1665,28 +1789,83 @@ impl SlideEditor {
                     page(slide).into_any_element()
                 }
             }
-            (Some(_), Some(t)) => {
-                let animation = Animation::new(std::time::Duration::from_millis(t.duration as u64)).with_easing(ease_in_out);
-                // Push, cover, wipe and pull slide in from their side;
-                // the others fade in.
-                let from = match (t.effect.as_str(), t.direction.as_deref()) {
-                    ("push" | "cover" | "wipe" | "pull", Some("l")) => Some((-zw, 0.0)),
-                    ("push" | "cover" | "wipe" | "pull", Some("r")) => Some((zw, 0.0)),
-                    ("push" | "cover" | "wipe" | "pull", Some("u")) => Some((0.0, -zh)),
-                    ("push" | "cover" | "wipe" | "pull", Some("d")) => Some((0.0, zh)),
-                    ("push", _) => Some((0.0, zh)),
-                    ("cover" | "wipe" | "pull", _) => Some((zw, 0.0)),
-                    _ => None,
+            (Some(old), Some(t)) => {
+                use ibis_doc_model::transition_plan::{TransitionPlan, plan};
+                // Drawn again for each moment of the time since the slide came in (as 変形 is).
+                let elapsed = {
+                    let mut clock = show.morph_clock.borrow_mut();
+                    if clock.as_ref().is_none_or(|(changes, _)| *changes != show.changes) {
+                        *clock = Some((show.changes, crate::clock::Instant::now()));
+                    }
+                    clock.as_ref().map_or(0.0, |(_, at)| at.elapsed().as_secs_f32() * 1000.0)
                 };
-                page(slide)
-                    .with_animation(("slide-in", show.changes), animation, move |el, t| match from {
-                        Some((dx, dy)) => el.left(px(dx * (1.0 - t))).top(px(dy * (1.0 - t))),
-                        None => el.opacity(t),
-                    })
-                    .into_any_element()
+                let progress = (elapsed / t.duration.max(1) as f32).min(1.0);
+                if progress >= 1.0 {
+                    page(slide).into_any_element()
+                } else {
+                    window.request_animation_frame();
+                    let q = ibis_doc_model::transition_plan::progress(&t.effect, f64::from(progress)).map_or_else(|| ease_in_out(progress), |p| p as f32);
+                    match plan(&t.effect, t.direction.as_deref(), f64::from(q), f64::from(zw / zh.max(1.0))) {
+                        TransitionPlan::Fade { through_black: false } => page(slide).opacity(q).into_any_element(),
+                        TransitionPlan::Fade { through_black: true } => {
+                            // The old slide goes black, then the new one comes out of it.
+                            let (shown_slide, dark) = if q < 0.5 { (old, q * 2.0) } else { (slide, 2.0 - q * 2.0) };
+                            div().absolute().top_0().left_0().size_full().bg(black()).child(page(shown_slide).opacity(1.0 - dark)).into_any_element()
+                        }
+                        TransitionPlan::Slide { from, old_to, new_on_top } => {
+                            let moved = |s: &ibis_doc_model::Slide, (fx, fy): (f64, f64), k: f32| page(s).left(px(fx as f32 * zw * k)).top(px(fy as f32 * zh * k));
+                            let (new_page, old_page) = (moved(slide, from, 1.0 - q), moved(old, old_to, q));
+                            let mut stack = div().absolute().top_0().left_0().size_full();
+                            stack = if new_on_top { stack.child(old_page).child(new_page) } else { stack.child(new_page).child(old_page) };
+                            stack.into_any_element()
+                        }
+                        TransitionPlan::SoftWindows(rects) => {
+                            // The new slide shows through the strips at each one's opacity (a soft edge), over the old one.
+                            let mut stack = div().absolute().top_0().left_0().size_full().child(page(old));
+                            for (r, alpha) in rects {
+                                let (rx, ry) = (r[0] as f32 * zw, r[1] as f32 * zh);
+                                let (rw, rh) = ((r[2] - r[0]) as f32 * zw, (r[3] - r[1]) as f32 * zh);
+                                stack = stack.child(
+                                    div()
+                                        .absolute()
+                                        .left(px(rx))
+                                        .top(px(ry))
+                                        .w(px(rw))
+                                        .h(px(rh))
+                                        .overflow_hidden()
+                                        .opacity(alpha as f32)
+                                        .child(div().absolute().left(px(-rx)).top(px(-ry)).w(px(zw)).h(px(zh)).child(page(slide))),
+                                );
+                            }
+                            stack.into_any_element()
+                        }
+                        TransitionPlan::Windows(rects) => {
+                            // The new slide shows through the windows, over the old one.
+                            let mut stack = div().absolute().top_0().left_0().size_full().child(page(old));
+                            for r in rects {
+                                let (rx, ry) = (r[0] as f32 * zw, r[1] as f32 * zh);
+                                let (rw, rh) = ((r[2] - r[0]) as f32 * zw, (r[3] - r[1]) as f32 * zh);
+                                stack = stack.child(
+                                    div()
+                                        .absolute()
+                                        .left(px(rx))
+                                        .top(px(ry))
+                                        .w(px(rw))
+                                        .h(px(rh))
+                                        .overflow_hidden()
+                                        .child(div().absolute().left(px(-rx)).top(px(-ry)).w(px(zw)).h(px(zh)).child(page(slide))),
+                                );
+                            }
+                            stack.into_any_element()
+                        }
+                    }
+                }
             }
             _ => page(slide).into_any_element(),
         };
+        if animating.get() {
+            window.request_animation_frame();
+        }
         let inks = show.slide_inks.get(&current_id).cloned().unwrap_or_default();
         let active = show.active_stroke.clone();
         let laser = show.laser_pos;
@@ -2581,6 +2760,25 @@ pub(crate) fn animated_shapes<'a>(
     triggered_played: &'a [usize],
     element: impl Fn(&ibis_doc_model::Shape) -> AnyElement + 'a,
 ) -> impl Iterator<Item = AnyElement> + 'a {
+    animated_shapes_timed(slide, size, scale, step, played, triggered_played, None, element)
+}
+
+/// What a frame of the slide show knows of time: the milliseconds since the group of effects began, and a flag the drawing
+/// sets while an effect that is drawn for each moment (rather than by a running animation) has not ended.
+pub(crate) type PlayClock<'a> = Option<(f32, &'a std::cell::Cell<bool>)>;
+
+/// [`animated_shapes`] drawn `clock` milliseconds into the playing group (`None`: at its start).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn animated_shapes_timed<'a>(
+    slide: &'a ibis_doc_model::Slide,
+    size: ibis_doc_model::EmuSize,
+    scale: f32,
+    step: usize,
+    played: usize,
+    triggered_played: &'a [usize],
+    clock: PlayClock<'a>,
+    element: impl Fn(&ibis_doc_model::Shape) -> AnyElement + 'a,
+) -> impl Iterator<Item = AnyElement> + 'a {
     let groups = animation_groups(&slide.animations);
     let step = step.min(groups.len());
     slide.shown_shapes().flat_map(move |shape| {
@@ -2614,7 +2812,7 @@ pub(crate) fn animated_shapes<'a>(
                 } else {
                     Target::Whole
                 };
-                return vec![animated_view(slide, shape, target, (size, scale, step, played, triggered_played), &groups, &element)];
+                return vec![animated_view(slide, shape, target, (size, scale, step, played, triggered_played, clock), &groups, &element)];
             }
         }
         let paragraphs = animated_paragraphs(slide, shape.id);
@@ -2625,30 +2823,30 @@ pub(crate) fn animated_shapes<'a>(
                 let bg_shape = chart_element_view(shape, -1, -1);
                 let mut views = Vec::new();
                 if has_bg_anim {
-                    views.push(animated_view(slide, &bg_shape, Target::ChartElement { series_idx: -1, category_idx: -1 }, (size, scale, step, played, triggered_played), &groups, &element));
+                    views.push(animated_view(slide, &bg_shape, Target::ChartElement { series_idx: -1, category_idx: -1 }, (size, scale, step, played, triggered_played, clock), &groups, &element));
                 } else {
-                    views.push(animated_view(slide, &bg_shape, Target::Whole, (size, scale, step, played, triggered_played), &groups, &element));
+                    views.push(animated_view(slide, &bg_shape, Target::Whole, (size, scale, step, played, triggered_played, clock), &groups, &element));
                 }
                 for &(s_idx, c_idx) in &chart_parts {
                     if s_idx == -1 && c_idx == -1 {
                         continue;
                     }
                     let part_shape = chart_element_view(shape, s_idx, c_idx);
-                    views.push(animated_view(slide, &part_shape, Target::ChartElement { series_idx: s_idx, category_idx: c_idx }, (size, scale, step, played, triggered_played), &groups, &element));
+                    views.push(animated_view(slide, &part_shape, Target::ChartElement { series_idx: s_idx, category_idx: c_idx }, (size, scale, step, played, triggered_played, clock), &groups, &element));
                 }
                 return views;
             }
             let parts = animated_parts(slide, shape);
             if parts.is_empty() {
-                return vec![animated_view(slide, shape, Target::Whole, (size, scale, step, played, triggered_played), &groups, &element)];
+                return vec![animated_view(slide, shape, Target::Whole, (size, scale, step, played, triggered_played, clock), &groups, &element)];
             }
             // The text taken in parts (characters, words, letters): the shape with those characters transparent, and each part over
             // it, alone, with its own effects.
             let base = chars_view(shape, &|c| parts.iter().any(|(_, (first, last))| (*first..=*last).contains(&c)), false);
-            let mut views = vec![animated_view(slide, &base, Target::Whole, (size, scale, step, played, triggered_played), &groups, &element)];
+            let mut views = vec![animated_view(slide, &base, Target::Whole, (size, scale, step, played, triggered_played, clock), &groups, &element)];
             for (target, (first, last)) in parts {
                 let only = chars_view(shape, &|c| !(first..=last).contains(&c), true);
-                views.push(animated_view(slide, &only, target, (size, scale, step, played, triggered_played), &groups, &element));
+                views.push(animated_view(slide, &only, target, (size, scale, step, played, triggered_played, clock), &groups, &element));
             }
             return views;
         }
@@ -2656,10 +2854,10 @@ pub(crate) fn animated_shapes<'a>(
         // with those paragraphs transparent, and each of them over it, alone,
         // with its own effects.
         let base = paragraph_view(shape, &|i| paragraphs.contains(&i), false);
-        let mut views = vec![animated_view(slide, &base, Target::Whole, (size, scale, step, played, triggered_played), &groups, &element)];
+        let mut views = vec![animated_view(slide, &base, Target::Whole, (size, scale, step, played, triggered_played, clock), &groups, &element)];
         for &i in &paragraphs {
             let only = paragraph_view(shape, &|j| j != i, true);
-            views.push(animated_view(slide, &only, Target::Paragraph(i), (size, scale, step, played, triggered_played), &groups, &element));
+            views.push(animated_view(slide, &only, Target::Paragraph(i), (size, scale, step, played, triggered_played, clock), &groups, &element));
         }
         views
     })
@@ -2765,6 +2963,10 @@ enum Target {
 impl Target {
     /// Whether animation `index` (`a`) moves this of shape `shape`.
     fn moves(&self, index: usize, a: &ibis_doc_model::Animation, shape: ibis_doc_model::ShapeId) -> bool {
+        // 再生・一時停止・停止 act on the clip, they do not move the shape.
+        if a.is_media() {
+            return false;
+        }
         match self {
             Target::Whole => {
                 a.shape == shape
@@ -2973,7 +3175,7 @@ fn animated_view(
     slide: &ibis_doc_model::Slide,
     shape: &ibis_doc_model::Shape,
     target: Target,
-    (size, scale, step, played, triggered_played): (ibis_doc_model::EmuSize, f32, usize, usize, &[usize]),
+    (size, scale, step, played, triggered_played, clock): (ibis_doc_model::EmuSize, f32, usize, usize, &[usize], PlayClock<'_>),
     groups: &[AnimationGroup],
     element: &dyn Fn(&ibis_doc_model::Shape) -> AnyElement,
 ) -> AnyElement {
@@ -3042,7 +3244,7 @@ fn animated_view(
         let place = move |el: Div, m: ShapeMotion| el.opacity(m.opacity).left(px(m.dx)).top(px(m.dy));
         // Turned or resized by an emphasis effect (スピン・拡大／収縮): the shape is drawn again, turned or resized, for each
         // moment instead of moved as it is drawn.
-        let transforms = base.transforms() || mine.iter().any(|&i| matches!(slide.animations[i].look, ibis_doc_model::AnimationLook::Spin(_) | ibis_doc_model::AnimationLook::Scale(..) | ibis_doc_model::AnimationLook::Zoom));
+        let transforms = base.transforms() || mine.iter().any(|&i| matches!(slide.animations[i].look, ibis_doc_model::AnimationLook::Spin(_) | ibis_doc_model::AnimationLook::Scale(..) | ibis_doc_model::AnimationLook::Zoom | ibis_doc_model::AnimationLook::Preset | ibis_doc_model::AnimationLook::Wipe(_)));
         let holder_of = |m: ShapeMotion| div().absolute().top_0().left_0().size_full().child(if transforms { element(&transformed(shape, m)) } else { element(shape) });
         let holder = holder_of(base);
         if playing.is_empty() {
@@ -3051,31 +3253,88 @@ fn animated_view(
         let total = playing.iter().map(|(_, _, e)| *e).max().unwrap_or(0).max(1);
         let state = move |ms: f32| {
             let mut m = base;
+            let mut reveal = None;
             for (a, begin, end) in &playing {
                 let p = if ms <= *begin as f32 { 0.0 } else if *end <= *begin { 1.0 } else { ((ms - *begin as f32) / (*end - *begin) as f32).min(1.0) };
                 let eased_p = apply_timing_easing(p, a.accel, a.decel);
                 // An effect not begun yet leaves an entering shape hidden.
-                m = if ms < *begin as f32 { m } else { motion_at(a, m, eased_p, frame, (w, h)) };
+                if ms >= *begin as f32 {
+                    m = motion_at(a, m, eased_p, frame, (w, h));
+                    if let Some(rects) = preset_reveal(a, eased_p, frame) {
+                        reveal = Some(rects);
+                    }
+                }
             }
-            m
+            (m, reveal)
         };
         if transforms {
-            const FRAMES: usize = 24;
-            let key = played * 100_000 + (shape.id.0 as usize + target.key()) % 100_000;
-            let mut stack = div().absolute().top_0().left_0().size_full();
-            for k in 0..=FRAMES {
-                let m = state(total as f32 * k as f32 / FRAMES as f32);
-                let opacity = m.opacity;
-                let frame = place(holder_of(m), ShapeMotion { opacity: 1.0, ..m });
-                stack = stack.child(frame.with_animation(("shape-transform", key * 32 + k), Animation::new(std::time::Duration::from_millis(total as u64)), move |el, t| el.opacity(if ((t * FRAMES as f32).round() as usize).min(FRAMES) == k { opacity } else { 0.0 })));
+            // Drawn again for each moment of the time since the effect began (not for 24 steps of it): resized, turned and
+            // uncovered smoothly, as the running time says.
+            let ms = clock.map_or(0.0, |(elapsed, _)| elapsed);
+            if let Some((elapsed, animating)) = clock {
+                if elapsed < total as f32 {
+                    animating.set(true);
+                }
             }
-            return stack.into_any_element();
+            let (m, reveal) = state(ms);
+            let shown = transformed(shape, m);
+            let mut holder = div().absolute().top_0().left_0().size_full();
+            match reveal {
+                None => holder = holder.child(element(&shown)),
+                Some(rects) => {
+                    // The frame as it is now (resized about its centre); each rectangle is a window on the shape.
+                    let (cx, cy) = (frame.0 + frame.2 / 2.0, frame.1 + frame.3 / 2.0);
+                    let (fw, fh) = (frame.2 * m.grow.0, frame.3 * m.grow.1);
+                    let (x0, y0) = (cx - fw / 2.0, cy - fh / 2.0);
+                    for r in rects {
+                        let (rx, ry) = (x0 + r[0] as f32 * fw, y0 + r[1] as f32 * fh);
+                        let (rw, rh) = ((r[2] - r[0]) as f32 * fw, (r[3] - r[1]) as f32 * fh);
+                        holder = holder.child(
+                            div()
+                                .absolute()
+                                .left(px(rx))
+                                .top(px(ry))
+                                .w(px(rw))
+                                .h(px(rh))
+                                .overflow_hidden()
+                                .child(div().absolute().left(px(-rx)).top(px(-ry)).w(px(w)).h(px(h)).child(element(&shown))),
+                        );
+                    }
+                }
+            }
+            return place(holder, ShapeMotion { opacity: m.opacity, ..m }).into_any_element();
         }
-        let start = state(0.0);
+        let start = state(0.0).0;
         place(holder, start)
-            .with_animation(("shape-animation", played * 100_000 + (shape.id.0 as usize + target.key()) % 100_000), Animation::new(std::time::Duration::from_millis(total as u64)), move |el, t| place(el, state(t * total as f32)))
+            .with_animation(("shape-animation", played * 100_000 + (shape.id.0 as usize + target.key()) % 100_000), Animation::new(std::time::Duration::from_millis(total as u64)), move |el, t| place(el, state(t * total as f32).0))
             .into_any_element()
     }
+}
+
+/// The rectangles (fractions of the frame) a filter effect `a` shows at `p` of its time; `None` when the shape is drawn whole
+/// (no filter, or one without rectangles, which fades).
+fn preset_reveal(a: &ibis_doc_model::Animation, p: f32, frame: (f32, f32, f32, f32)) -> Option<Vec<[f64; 4]>> {
+    use ibis_doc_model::{AnimationClass, AnimationLook, AnimationSide};
+    if p >= 1.0 {
+        return None;
+    }
+    // ワイプ: the filter `wipe(side)` (`wipe(down)` comes from the bottom).
+    if let AnimationLook::Wipe(side) = a.look {
+        let dir = match side {
+            AnimationSide::Top => "up",
+            AnimationSide::Right => "right",
+            AnimationSide::Bottom => "down",
+            AnimationSide::Left => "left",
+        };
+        return ibis_doc_model::animation_preset::reveal_rects(&format!("wipe({dir})"), a.class == AnimationClass::Entrance, f64::from(p), f64::from(frame.2 / frame.3.max(f32::MIN_POSITIVE)));
+    }
+    if a.look != AnimationLook::Preset {
+        return None;
+    }
+    let b = ibis_doc_model::animation_preset::PptBox { x: 0.0, y: 0.0, w: 1.0, h: 1.0 };
+    let state = ibis_doc_model::animation_preset::sample(&a.behaviors, f64::from(p) * f64::from(a.duration), b);
+    let r = state.reveal?;
+    ibis_doc_model::animation_preset::reveal_rects(&r.filter, r.enter, r.progress, f64::from(frame.2 / frame.3.max(f32::MIN_POSITIVE)))
 }
 
 /// Where `p` (0 to 1) of the way along a path from (0, 0) through `points`
@@ -3113,7 +3372,8 @@ pub(crate) fn motion_at(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32
     };
     let mut res = match (a.class, a.look) {
         (AnimationClass::Entrance, AnimationLook::Fade) => ShapeMotion { opacity: p, ..from },
-        (AnimationClass::Entrance, AnimationLook::Zoom) => ShapeMotion { opacity: p, grow: (from.grow.0 * p, from.grow.1 * p), ..from },
+        // ズーム (presetID 23): the size grows from nothing with no fade (the one with a fade is 53, played by its behaviours).
+        (AnimationClass::Entrance, AnimationLook::Zoom) => ShapeMotion { opacity: 1.0, grow: (from.grow.0 * p, from.grow.1 * p), ..from },
         (AnimationClass::Entrance, AnimationLook::Float(side)) => {
             let dy = match side {
                 Side::Top => -30.0 * (1.0 - p),
@@ -3121,17 +3381,18 @@ pub(crate) fn motion_at(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32
             };
             ShapeMotion { opacity: p, dy: from.dy + dy, ..from }
         }
-        (AnimationClass::Entrance, AnimationLook::Wipe(_)) => ShapeMotion { opacity: p, ..from },
+        (AnimationClass::Entrance, AnimationLook::Wipe(_)) => ShapeMotion { opacity: 1.0, ..from },
         (AnimationClass::Entrance, AnimationLook::Replay) => ShapeMotion { opacity: p, ..from },
         (AnimationClass::Entrance, AnimationLook::Fly(side)) => {
             let (x, y) = off(side);
             ShapeMotion { opacity: 1.0, dx: from.dx + x * (1.0 - p), dy: from.dy + y * (1.0 - p), ..from }
         }
+        (AnimationClass::Entrance | AnimationClass::Exit | AnimationClass::Emphasis, AnimationLook::Preset) => preset_motion(a, from, p, frame, slide),
         (AnimationClass::Entrance, _) => ShapeMotion { opacity: 1.0, ..from },
         (AnimationClass::Exit, AnimationLook::Fade) => ShapeMotion { opacity: 1.0 - p, ..from },
         (AnimationClass::Exit, AnimationLook::Zoom) => {
             let scale = (1.0 - p).max(0.0);
-            ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { scale }, grow: (from.grow.0 * scale, from.grow.1 * scale), ..from }
+            ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { from.opacity }, grow: (from.grow.0 * scale, from.grow.1 * scale), ..from }
         }
         (AnimationClass::Exit, AnimationLook::Float(side)) => {
             let dy = match side {
@@ -3140,7 +3401,7 @@ pub(crate) fn motion_at(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32
             };
             ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { 1.0 - p }, dy: from.dy + dy, ..from }
         }
-        (AnimationClass::Exit, AnimationLook::Wipe(_)) => ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { 1.0 - p }, ..from },
+        (AnimationClass::Exit, AnimationLook::Wipe(_)) => ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { from.opacity }, ..from },
         (AnimationClass::Exit, AnimationLook::Replay) => ShapeMotion { opacity: if p >= 1.0 { 0.0 } else { 1.0 - p }, ..from },
         (AnimationClass::Exit, AnimationLook::Fly(side)) => {
             let (x, y) = off(side);
@@ -3167,6 +3428,61 @@ pub(crate) fn motion_at(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32
         }
     }
     res
+}
+
+/// An entrance or exit effect played as the behaviours of the file say (`AnimationLook::Preset`): where the shape is, how
+/// large, turned and opaque, `p` (0 to 1) of the way, from `from`.
+fn preset_motion(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32, frame: (f32, f32, f32, f32), slide: (f32, f32)) -> ShapeMotion {
+    use ibis_doc_model::animation_preset::{PptBox, reveal_opacity, reveal_rects, sample};
+    let entering = a.class == ibis_doc_model::AnimationClass::Entrance;
+    // The shape's own box, as fractions of the slide (what `#ppt_x`… are).
+    let b = PptBox {
+        x: f64::from(frame.0 + frame.2 / 2.0) / f64::from(slide.0.max(1.0)),
+        y: f64::from(frame.1 + frame.3 / 2.0) / f64::from(slide.1.max(1.0)),
+        w: f64::from(frame.2) / f64::from(slide.0.max(1.0)),
+        h: f64::from(frame.3) / f64::from(slide.1.max(1.0)),
+    };
+    let s = sample(&a.behaviors, f64::from(p) * f64::from(a.duration), b);
+    let mut m = from;
+    let emphasis = a.class == ibis_doc_model::AnimationClass::Emphasis;
+    m.opacity = match (entering, s.visible) {
+        _ if emphasis => from.opacity,
+        (true, Some(false)) => 0.0,
+        (true, _) => 1.0,
+        (false, Some(false)) => 0.0,
+        (false, _) => from.opacity,
+    };
+    if let Some(o) = s.opacity {
+        m.opacity *= o as f32;
+    }
+    if let Some(x) = s.x {
+        m.dx = from.dx + ((x - b.x) * f64::from(slide.0)) as f32;
+    }
+    if let Some(y) = s.y {
+        m.dy = from.dy + ((y - b.y) * f64::from(slide.1)) as f32;
+    }
+    if let Some(w) = s.w.filter(|_| b.w > 0.0) {
+        m.grow.0 = from.grow.0 * (w / b.w) as f32;
+    }
+    if let Some(h) = s.h.filter(|_| b.h > 0.0) {
+        m.grow.1 = from.grow.1 * (h / b.h) as f32;
+    }
+    if let Some((sx, sy)) = s.scale {
+        m.grow = (m.grow.0 * sx as f32, m.grow.1 * sy as f32);
+    }
+    if let Some(r) = s.rotation {
+        m.turn = from.turn + r as f32;
+    }
+    if let Some(r) = &s.reveal {
+        // A filter drawn without rectangles (a wheel, a wedge, a dissolve…) fades.
+        if reveal_rects(&r.filter, r.enter, r.progress, 1.0).is_none() {
+            m.opacity *= reveal_opacity(r.enter, r.progress) as f32;
+        }
+    }
+    if !entering && !emphasis && p >= 1.0 {
+        m.opacity = 0.0;
+    }
+    m
 }
 
 /// Apply SMIL/PowerPoint animation acceleration and deceleration easing to progress `p` (0.0 to 1.0).

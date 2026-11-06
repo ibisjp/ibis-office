@@ -28,6 +28,7 @@ pub(crate) mod control_panel;
 pub(crate) mod draw_table;
 pub(crate) mod ruby_panel;
 pub(crate) mod fit_text_panel;
+pub(crate) mod tate_chu_yoko_panel;
 pub(crate) mod text_box_panel;
 pub(crate) mod text_box_effects;
 pub(crate) mod symbol_panel;
@@ -57,12 +58,21 @@ pub(crate) mod scenarios;
 #[cfg(all(target_os = "macos", feature = "scenarios"))]
 #[path = "../tests/docx/corpus_report.rs"]
 pub(crate) mod corpus_report;
-#[cfg(test)]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "../tests/docx/typeset68.rs"]
+pub(crate) mod typeset68;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "../tests/docx/crop_mode.rs"]
+pub(crate) mod crop_mode;
+#[cfg(any(all(test, windows), all(any(target_os = "macos", target_os = "linux"), feature = "scenarios")))]
 #[path = "../tests/docx/layout_tests.rs"]
-mod layout_tests;
-#[cfg(test)]
+pub(crate) mod layout_tests;
+#[cfg(any(all(test, windows), all(any(target_os = "macos", target_os = "linux"), feature = "scenarios")))]
 #[path = "../tests/docx/layout_tests_grid.rs"]
-mod layout_tests_grid;
+pub(crate) mod layout_tests_grid;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "../tests/docx/tate_chu_yoko_layout_tests.rs"]
+pub(crate) mod tate_chu_yoko_layout_tests;
 #[cfg(test)]
 #[path = "../tests/docx/probe.rs"]
 mod probe;
@@ -177,6 +187,7 @@ pub(crate) struct State {
     /// ルビ's panel, once opened.
     pub(crate) ruby: Option<ruby_panel::RubyState>,
     pub(crate) fit_text_edit: Option<fit_text_panel::FitTextState>,
+    pub(crate) tate_edit: Option<tate_chu_yoko_panel::TateChuYokoState>,
     /// コンテンツ コントロールのプロパティ's panel, while it is the one shown.
     pub(crate) control: Option<control_panel::ControlState>,
     /// テキスト ボックスの文字's panel, while it is the one shown.
@@ -235,10 +246,6 @@ pub(crate) struct State {
     pub(crate) read_only_dismissed: bool,
     /// 上書き入力モード (Word's Overtype mode).
     pub(crate) overtype: bool,
-    /// コメント追加時にテキスト選択がない場合の情報ダイアログ表示フラグ。
-    pub(crate) comment_alert_no_selection: bool,
-    /// コメント削除時の確認ダイアログ（削除対象の comment ID）。
-    pub(crate) comment_delete_confirm: Option<u32>,
     /// 新しいリスト スタイルの定義 (DOCX-LIST-011)
     pub(crate) list_style: Option<list_style_panel::ListStyleState>,
     /// 文書テーマ・テーマ色・テーマフォントのカスタマイズ (DOCX-STYLE-012, DOCX-STYLE-013)
@@ -324,7 +331,7 @@ impl FormatEditor for Document {
         if is_immersive {
             pages = pages.child(editor.render_immersive_reader_toolbar(cx));
         }
-        if let Some(bar) = editor.render_docx_infobar(cx) {
+        if let Some(bar) = editor.render_infobar(cx) {
             pages = pages.child(bar);
         }
         if let Some(bar) = editor.render_recovery_banner(cx) {
@@ -518,7 +525,7 @@ impl FormatEditor for Document {
                 }
                 NavigationTab::Results => {
                     let flow = editor.flow();
-                    let matches = flow.map(|f| find::find_all(f, &nav_query)).unwrap_or_default();
+                    let matches = flow.map(|f| find::find_all(&editor.resources.markup_view, f, &nav_query)).unwrap_or_default();
                     let count_text = if nav_query.is_empty() {
                         crate::shell::i18n::text("docx.navigation.search-prompt").to_string()
                     } else {
@@ -657,7 +664,7 @@ impl FormatEditor for Document {
         } else {
             None
         };
-        div().flex().flex_row().flex_1().min_h_0().relative().children(outline).child(pages).children(exit_focus_btn).children(editor.render_docx_comment_dialogs(cx)).into_any_element()
+        div().flex().flex_row().flex_1().min_h_0().relative().children(outline).child(pages).children(exit_focus_btn).into_any_element()
     }
 
     /// Typing and the input method go to the document while it has a caret.
@@ -703,6 +710,10 @@ impl FormatEditor for Document {
         editor.doc_bounds_for_range(range, element, window, cx)
     }
 
+    fn text_vertical(editor: &mut SlideEditor, _window: &mut Window, _cx: &mut Context<SlideEditor>) -> bool {
+        editor.doc_text_vertical()
+    }
+
     fn character_index_for_point(editor: &mut SlideEditor, point: Point<Pixels>, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<usize> {
         editor.doc_character_index_for_point(point, window, cx)
     }
@@ -714,7 +725,7 @@ impl FormatEditor for Document {
 
     /// The sidebar: 検索と置換's panel when it is open.
     fn sidebar(editor: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>) -> Option<crate::shell::chrome::SidebarPanel> {
-        editor.font_panel(cx).map(|panel| panel.modal_named("font_panel")).or_else(|| editor.color_panel(cx).map(|panel| panel.modal_named("color_panel"))).or_else(|| editor.table_size_panel(cx).map(|panel| panel.modal_named("table_size_panel"))).or_else(|| editor.table_formula_panel(cx).map(|panel| panel.modal_named("table_formula_panel"))).or_else(|| editor.picture_panel(cx)).or_else(|| editor.docx_compress_panel(cx).map(|panel| panel.modal_named("docx_compress_panel"))).or_else(|| editor.paragraph_panel(cx).map(|panel| panel.modal_named("paragraph_panel"))).or_else(|| editor.tab_panel(cx)).or_else(|| editor.comments_panel(cx)).or_else(|| editor.style_panel(cx).map(|panel| panel.modal_named("style_panel"))).or_else(|| editor.link_panel(cx).map(|panel| panel.modal_named("link_panel"))).or_else(|| editor.find_panel(cx)).or_else(|| editor.ruby_panel(cx).map(|panel| panel.modal_named("ruby_panel")).or_else(||editor.fit_text_panel(cx).map(|p|p.modal_named("fit_text_panel")))).or_else(|| editor.text_box_panel(cx)).or_else(|| editor.merge_panel(cx)).or_else(|| editor.doc_page_setup_panel(cx).map(|panel| panel.modal_named("doc_page_setup_panel"))).or_else(|| editor.notes_panel(cx).map(|panel| panel.modal_named("notes_panel"))).or_else(|| editor.bookmark_panel(cx).map(|panel| panel.modal_named("bookmark_panel"))).or_else(|| editor.watermark_panel(cx).map(|panel| panel.modal_named("watermark_panel"))).or_else(|| editor.new_style_panel(cx).map(|panel| panel.modal_named("new_style_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.word_count_panel(cx)).or_else(|| editor.field_panel(cx).map(|panel| panel.modal_named("field_panel"))).or_else(|| editor.caption_panel(cx).map(|panel| panel.modal_named("caption_panel"))).or_else(|| editor.doc_properties_panel(cx).map(|panel| panel.modal_named("doc_properties_panel"))).or_else(|| editor.cross_reference_panel(cx).map(|panel| panel.modal_named("cross_reference_panel"))).or_else(|| editor.selection_pane_panel(cx)).or_else(|| editor.accessibility_panel(cx)).or_else(|| editor.update_toc_panel(cx).map(|panel| panel.modal_named("update_toc_panel"))).or_else(|| editor.user_info_panel(cx).map(|panel| panel.modal_named("user_info_panel"))).or_else(|| editor.kinsoku_panel(cx).map(|panel| panel.modal_named("kinsoku_panel"))).or_else(|| editor.go_to_panel(cx).map(|panel| panel.modeless_named("go_to_panel"))).or_else(|| editor.doc_spelling_panel(cx)).or_else(|| editor.doc_chart_panel(cx)).or_else(|| editor.control_panel(cx).map(|panel| panel.modal_named("control_panel"))).or_else(|| editor.doc_autocorrect_panel(cx).map(|panel| panel.modal_named("doc_autocorrect_panel"))).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.docx_math_panel(cx).map(|panel| panel.modal_named("docx_math_panel"))).or_else(|| editor.quick_parts_panel(cx)).or_else(|| editor.doc_inspect_panel(cx).map(|panel| panel.modal_named("doc_inspect_panel"))).or_else(|| editor.doc_compatibility_panel(cx).map(|panel| panel.modal_named("doc_compatibility_panel"))).or_else(|| editor.doc_print_panel(cx).map(|panel| panel.modal_named("doc_print_panel"))).or_else(|| editor.doc_source_manager_panel(cx).map(|panel| panel.modal_named("doc_source_manager_panel"))).or_else(|| editor.doc_thesaurus_panel(cx)).or_else(|| editor.doc_repair_panel(cx).map(|panel| panel.modal_named("doc_repair_panel"))).or_else(|| editor.doc_template_panel(cx).map(|panel| panel.modal_named("doc_template_panel"))).or_else(|| editor.list_style_panel(cx).map(|panel| panel.modal_named("list_style_panel"))).or_else(|| editor.docx_theme_panel(cx).map(|panel| panel.modal_named("docx_theme_panel"))).or_else(|| editor.master_doc_panel(cx)).or_else(|| editor.docx_ink_panel(cx)).or_else(|| editor.docx_screen_reader_panel(cx)).or_else(|| editor.docx_read_aloud_panel(cx)).or_else(|| editor.docx_customize_toolbar_panel(cx))
+        editor.font_panel(cx).map(|panel| panel.modal_named("font_panel")).or_else(|| editor.color_panel(cx).map(|panel| panel.modal_named("color_panel"))).or_else(|| editor.table_size_panel(cx).map(|panel| panel.modal_named("table_size_panel"))).or_else(|| editor.table_formula_panel(cx).map(|panel| panel.modal_named("table_formula_panel"))).or_else(|| editor.picture_panel(cx)).or_else(|| editor.docx_compress_panel(cx).map(|panel| panel.modal_named("docx_compress_panel"))).or_else(|| editor.paragraph_panel(cx).map(|panel| panel.modal_named("paragraph_panel"))).or_else(|| editor.tab_panel(cx)).or_else(|| editor.comments_panel(cx)).or_else(|| editor.style_panel(cx).map(|panel| panel.modal_named("style_panel"))).or_else(|| editor.link_panel(cx).map(|panel| panel.modal_named("link_panel"))).or_else(|| editor.find_panel(cx)).or_else(|| editor.tate_chu_yoko_panel(cx).map(|panel| panel.modal_named("tate_chu_yoko_panel"))).or_else(|| editor.ruby_panel(cx).map(|panel| panel.modal_named("ruby_panel")).or_else(||editor.fit_text_panel(cx).map(|p|p.modal_named("fit_text_panel")))).or_else(|| editor.text_box_panel(cx)).or_else(|| editor.merge_panel(cx)).or_else(|| editor.doc_page_setup_panel(cx).map(|panel| panel.modal_named("doc_page_setup_panel"))).or_else(|| editor.notes_panel(cx).map(|panel| panel.modal_named("notes_panel"))).or_else(|| editor.bookmark_panel(cx).map(|panel| panel.modal_named("bookmark_panel"))).or_else(|| editor.watermark_panel(cx).map(|panel| panel.modal_named("watermark_panel"))).or_else(|| editor.new_style_panel(cx).map(|panel| panel.modal_named("new_style_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.word_count_panel(cx)).or_else(|| editor.field_panel(cx).map(|panel| panel.modal_named("field_panel"))).or_else(|| editor.caption_panel(cx).map(|panel| panel.modal_named("caption_panel"))).or_else(|| editor.doc_properties_panel(cx).map(|panel| panel.modal_named("doc_properties_panel"))).or_else(|| editor.cross_reference_panel(cx).map(|panel| panel.modal_named("cross_reference_panel"))).or_else(|| editor.selection_pane_panel(cx)).or_else(|| editor.accessibility_panel(cx)).or_else(|| editor.update_toc_panel(cx).map(|panel| panel.modal_named("update_toc_panel"))).or_else(|| editor.user_info_panel(cx).map(|panel| panel.modal_named("user_info_panel"))).or_else(|| editor.kinsoku_panel(cx).map(|panel| panel.modal_named("kinsoku_panel"))).or_else(|| editor.go_to_panel(cx).map(|panel| panel.modeless_named("go_to_panel"))).or_else(|| editor.doc_spelling_panel(cx)).or_else(|| editor.doc_chart_panel(cx)).or_else(|| editor.control_panel(cx).map(|panel| panel.modal_named("control_panel"))).or_else(|| editor.doc_autocorrect_panel(cx).map(|panel| panel.modal_named("doc_autocorrect_panel"))).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.docx_math_panel(cx).map(|panel| panel.modal_named("docx_math_panel"))).or_else(|| editor.quick_parts_panel(cx)).or_else(|| editor.doc_inspect_panel(cx).map(|panel| panel.modal_named("doc_inspect_panel"))).or_else(|| editor.doc_compatibility_panel(cx).map(|panel| panel.modal_named("doc_compatibility_panel"))).or_else(|| editor.doc_print_panel(cx).map(|panel| panel.modal_named("doc_print_panel"))).or_else(|| editor.doc_source_manager_panel(cx).map(|panel| panel.modal_named("doc_source_manager_panel"))).or_else(|| editor.doc_thesaurus_panel(cx)).or_else(|| editor.doc_repair_panel(cx).map(|panel| panel.modal_named("doc_repair_panel"))).or_else(|| editor.doc_template_panel(cx).map(|panel| panel.modal_named("doc_template_panel"))).or_else(|| editor.list_style_panel(cx).map(|panel| panel.modal_named("list_style_panel"))).or_else(|| editor.docx_theme_panel(cx).map(|panel| panel.modal_named("docx_theme_panel"))).or_else(|| editor.master_doc_panel(cx)).or_else(|| editor.docx_ink_panel(cx)).or_else(|| editor.docx_screen_reader_panel(cx)).or_else(|| editor.docx_read_aloud_panel(cx)).or_else(|| editor.docx_customize_toolbar_panel(cx))
     }
 
     /// The title bar's コメントを追加: a comment on the selection.
@@ -874,160 +885,11 @@ impl SlideEditor {
             }
         });
         if !has_selection {
-            if let Some(state) = self.doc_state_mut() {
-                state.comment_alert_no_selection = true;
-            }
-            cx.notify();
+            // The common message (the same box as every other format's).
+            self.show_panel_message(crate::shell::i18n::text("shell.comments.no-selection"), cx);
             return;
         }
         self.open_comments(window, cx);
-    }
-
-    /// コメント関連のダイアログ（選択範囲なし、削除確認）の描画
-    pub(crate) fn render_docx_comment_dialogs(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let state = self.doc_state()?;
-
-        if state.comment_alert_no_selection {
-            return Some(
-                div()
-                    .id("docx-comment-alert-modal")
-                    .absolute()
-                    .inset_0()
-                    .bg(hsla(0.0, 0.0, 0.0, 0.35))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .id("docx-comment-alert-box")
-                            .w(px(360.))
-                            .p(px(20.))
-                            .rounded_lg()
-                            .bg(rgb(0xffffff))
-                            .shadow_lg()
-                            .flex()
-                            .flex_col()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .text_size(px(14.))
-                                    .text_color(rgb(0x222222))
-                                    .child(crate::shell::i18n::text("docx.comments.alert-no-selection.message"))
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .justify_end()
-                                    .child(
-                                        div()
-                                            .id("docx-comment-alert-ok")
-                                            .px(px(16.))
-                                            .py(px(6.))
-                                            .rounded_md()
-                                            .bg(rgb(0x1a73e8))
-                                            .text_color(crate::shell::palette::doc(0xffffff))
-                                            .text_size(px(13.))
-                                            .cursor_pointer()
-                                            .child(crate::shell::i18n::text("docx.comments.alert-no-selection.ok"))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                if let Some(s) = this.doc_state_mut() {
-                                                    s.comment_alert_no_selection = false;
-                                                }
-                                                cx.notify();
-                                            }))
-                                    )
-                            )
-                    )
-                    .into_any_element(),
-            );
-        }
-
-        if let Some(comment_id) = state.comment_delete_confirm {
-            return Some(
-                div()
-                    .id("docx-comment-delete-modal")
-                    .absolute()
-                    .inset_0()
-                    .bg(hsla(0.0, 0.0, 0.0, 0.35))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .id("docx-comment-delete-box")
-                            .w(px(380.))
-                            .p(px(20.))
-                            .rounded_lg()
-                            .bg(rgb(0xffffff))
-                            .shadow_lg()
-                            .flex()
-                            .flex_col()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_size(px(15.))
-                                    .text_color(rgb(0x222222))
-                                    .child(crate::shell::i18n::text("docx.comments.delete-confirm.title"))
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .text_color(rgb(0x444444))
-                                    .child(crate::shell::i18n::text("docx.comments.delete-confirm.message"))
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .justify_end()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .id("docx-comment-delete-cancel")
-                                            .px(px(14.))
-                                            .py(px(6.))
-                                            .rounded_md()
-                                            .bg(rgb(0xf0f0f0))
-                                            .text_color(rgb(0x333333))
-                                            .text_size(px(13.))
-                                            .cursor_pointer()
-                                            .hover(|h| h.bg(rgb(0xe0e0e0)))
-                                            .child(crate::shell::i18n::text("docx.comments.delete-confirm.cancel"))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                if let Some(s) = this.doc_state_mut() {
-                                                    s.comment_delete_confirm = None;
-                                                }
-                                                cx.notify();
-                                            }))
-                                    )
-                                    .child(
-                                        div()
-                                            .id("docx-comment-delete-ok")
-                                            .px(px(14.))
-                                            .py(px(6.))
-                                            .rounded_md()
-                                            .bg(rgb(0xd93025))
-                                            .text_color(crate::shell::palette::doc(0xffffff))
-                                            .text_size(px(13.))
-                                            .cursor_pointer()
-                                            .hover(|h| h.bg(rgb(0xb3261e)))
-                                            .child(crate::shell::i18n::text("docx.comments.delete-confirm.delete"))
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                if let Some(s) = this.doc_state_mut() {
-                                                    s.comment_delete_confirm = None;
-                                                }
-                                                this.delete_comment(comment_id, cx);
-                                            }))
-                                    )
-                            )
-                    )
-                    .into_any_element(),
-            );
-        }
-
-        None
     }
 }
 

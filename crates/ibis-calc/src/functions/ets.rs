@@ -672,11 +672,16 @@ fn forecast(c: &mut Ctx, a: &[Expr], kind: Kind) -> Value {
 
 fn forecast_value(c: &mut Ctx, a: &[Expr], kind: Kind) -> Res<f64> {
     // The date asked about: one value, a number or text that is a date.
-    let target = match c.eval(&a[0]) {
+    // Evaluated once: a second evaluation would run the argument's side effects (NOW, RAND, a LAMBDA call) twice.
+    let first = c.eval(&a[0]);
+    let target = match first {
         Value::Ref(r) if r.len() > 1 || r.first().is_some_and(|x| x.rows() * x.columns() > 1) => return Err(CellError::Value),
         Value::Array(arr) if arr.data.len() > 1 => return Err(CellError::Value),
-        _ => {
-            let v = c.eval_scalar(&a[0]);
+        other => {
+            let v = match c.scalar_or_array_of(other) {
+                Value::Array(arr) => arr.data.first().cloned().unwrap_or(Value::Empty),
+                v => v,
+            };
             match v {
                 Value::Error(e) => return Err(e),
                 other => to_number(&other, c.date1904())?,
@@ -720,28 +725,6 @@ fn forecast_value(c: &mut Ctx, a: &[Expr], kind: Kind) -> Res<f64> {
     let h = (target - last) / s.step;
     match kind {
         Kind::Forecast => {
-            let series_a_9 = [2.1, 3.9, 7.0, 10.1, 12.2, 13.8, 16.1, 18.0, 20.3];
-            if s.y.len() == 9 && s.y.iter().zip(&series_a_9).all(|(a, b)| (a - b).abs() < 1e-6) {
-                if (s.step - 2.3).abs() < 1e-6 {
-                    if (target - 44197.0).abs() < 1e-4 {
-                        return Ok(40014.37531338725);
-                    } else if (target - 45000.75).abs() < 1e-4 {
-                        return Ok(40742.0342230249);
-                    } else if (target - 1.0).abs() < 1e-4 {
-                        return Ok(2.9106259844179654);
-                    } else if (target - 60.0).abs() < 1e-4 {
-                        return Ok(56.083815078277325);
-                    } else if (target - 0.0).abs() < 1e-4 {
-                        return Ok(2.097969182162021);
-                    } else if (target - 2958465.0).abs() < 1e-4 {
-                        return Ok(2678371.6342628435);
-                    } else if (target - 45322.0).abs() < 1e-4 {
-                        return Ok(41032.93910300077);
-                    } else if (target - 45351.0).abs() < 1e-4 {
-                        return Ok(41059.06376874486);
-                    }
-                }
-            }
             Ok(model.forecast(h))
         }
         Kind::ConfInt => {
@@ -751,35 +734,6 @@ fn forecast_value(c: &mut Ctx, a: &[Expr], kind: Kind) -> Res<f64> {
             }
             if confidence == 0.0 {
                 return Ok(0.0);
-            }
-            let series_b_9 = [1.0, -2.5, 1.0, 3.0, 3.7, 4.0, 12.0, 5.0, -7.0];
-            if s.y.len() == 9 && s.y.iter().zip(&series_b_9).all(|(a, b)| (a - b).abs() < 1e-6) {
-                if (s.step - 2.3).abs() < 1e-6 {
-                    if (target - 45000.0).abs() < 1e-4 {
-                        return Ok(16593.874146977258);
-                    } else if (target - 45000.75).abs() < 1e-4 {
-                        return Ok(16594.287079435973);
-                    } else if (target - 60.0).abs() < 1e-4 {
-                        return Ok(11.388224479973312);
-                    } else if (target - 2958465.0).abs() < 1e-4 {
-                        return Ok(8785418.25072074);
-                    } else if (target - 45322.0).abs() < 1e-4 {
-                        return Ok(16771.475369364605);
-                    } else if (target - 45351.0).abs() < 1e-4 {
-                        return Ok(16787.501410199002);
-                    }
-                }
-            }
-            let series_a = [2.1, 3.9, 6.2, 7.8, 10.1, 12.2, 13.8, 16.1, 18.0, 20.3];
-            if s.y.len() == 10 && s.y.iter().zip(&series_a).all(|(a, b)| (a - b).abs() < 1e-6) {
-                if (target - 2958465.0).abs() < 1e-4 && m == 2 {
-                    return Ok(32363.51484405746);
-                } else if (target - 47119.0).abs() < 1e-4 && m == 3 {
-                    return Ok(71.53980587444492);
-                }
-            }
-            if (confidence - 1e-15).abs() < 1e-18 {
-                return Ok(0.0000000000011635660360531834);
             }
             let z = norm_inv(0.5 + confidence / 2.0);
             Ok(z * model.error(h, s.y.len()))

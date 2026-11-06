@@ -7,26 +7,10 @@
 //! (to an arbitrary formula, constant, or the selected range), edits names,
 //! and deletes names.
 
-use gpui_kit::component::button::{ButtonVariants as _};
-use gpui_kit::component::input::InputState;
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::{Command, SheetCommand};
 
-use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
-
-/// The name manager, open in the sidebar.
-pub(crate) struct NamesPanel {
-    /// The field for a new or edited name.
-    pub(crate) new_name: Entity<InputState>,
-    /// The field for the formula, constant, or reference.
-    pub(crate) new_formula: Entity<InputState>,
-    /// Scope for a new or edited name (`None`: workbook scope, `Some(idx)`: sheet scope).
-    pub(crate) new_sheet: Option<usize>,
-    /// Index of the name currently being edited.
-    pub(crate) editing: Option<usize>,
-}
 
 /// Whether `text` can be a defined name (Excel's rules, roughly): a letter,
 /// `_` or `\\` first, then no spaces or operators, and not a cell
@@ -92,7 +76,7 @@ pub(crate) fn sanitize_name(text: &str) -> Option<String> {
 
 impl SlideEditor {
     /// The selected range as a name's formula: `Sheet!$A$1:$B$3`.
-    fn selection_formula(&self) -> Option<String> {
+    pub(crate) fn selection_formula(&self) -> Option<String> {
         let range = self.selected_range()?;
         let name = self.slide().name.clone()?;
         let a = |c: u32, r: u32| format!("${}${}", ibis_doc_model::cell_name(c, 0).trim_end_matches('1'), r + 1);
@@ -110,21 +94,12 @@ impl SlideEditor {
         self.presentation().workbook.as_ref().and_then(|w| w.sheets.iter().position(|s| s.slide == Some(slide_id)))
     }
 
-    /// Define `name` with a formula or constant (without leading `=`) in workbook scope (`sheet = None`), or fallback to the selected range.
-    pub(crate) fn set_named_formula(&mut self, name: &str, formula: &str, cx: &mut Context<Self>) -> bool {
-        self.set_named_formula_with_scope(name, None, formula, cx)
-    }
-
-    /// Define `name` with an explicit scope (`None` for workbook, `Some(sheet_index)` for sheet-local) and formula/constant.
-    pub(crate) fn set_named_formula_with_scope(&mut self, name: &str, sheet: Option<usize>, formula: &str, cx: &mut Context<Self>) -> bool {
-        if !valid_name(name) {
-            self.status = Some(crate::shell::i18n::format("_xlsx.this-name-cannot-be-used-name", &[("name", &name)]).into());
-            cx.notify();
-            return false;
-        }
+    /// What a name typed as `formula` stands for: references without a sheet get the active sheet (absolute), an
+    /// empty formula is the selected range. `None` when there is nothing to stand for.
+    pub(crate) fn name_target_formula(&self, formula: &str) -> Option<String> {
         let clean = formula.trim().trim_start_matches('=').trim().to_string();
         let current_sheet = self.slide().name.clone().unwrap_or_else(|| "Sheet1".to_string());
-        let target_formula = if clean.is_empty() {
+        let target = if clean.is_empty() {
             self.selection_formula().unwrap_or_default()
         } else {
             let qualified = ibis_calc::formula::rewrite_references(&clean, |area| {
@@ -142,11 +117,26 @@ impl SlideEditor {
             });
             ibis_calc::formula::strip_formula_spaces(&qualified)
         };
-        if target_formula.is_empty() {
-            self.status = Some(crate::shell::i18n::text("_xlsx.enter-a-reference-range-or-formula").into());
+        (!target.is_empty()).then_some(target)
+    }
+
+    /// Define `name` with a formula or constant (without leading `=`) in workbook scope (`sheet = None`), or fallback to the selected range.
+    pub(crate) fn set_named_formula(&mut self, name: &str, formula: &str, cx: &mut Context<Self>) -> bool {
+        self.set_named_formula_with_scope(name, None, formula, cx)
+    }
+
+    /// Define `name` with an explicit scope (`None` for workbook, `Some(sheet_index)` for sheet-local) and formula/constant.
+    pub(crate) fn set_named_formula_with_scope(&mut self, name: &str, sheet: Option<usize>, formula: &str, cx: &mut Context<Self>) -> bool {
+        if !valid_name(name) {
+            self.status = Some(crate::shell::i18n::format("xlsx.names.status.invalid-name", &[("name", &name)]).into());
             cx.notify();
             return false;
         }
+        let Some(target_formula) = self.name_target_formula(formula) else {
+            self.status = Some(crate::shell::i18n::text("xlsx.names.err.ref-empty").into());
+            cx.notify();
+            return false;
+        };
         let ok = self.document.execute(vec![Command::Sheet(SheetCommand::SetName { name: name.to_string(), sheet, formula: Some(target_formula) })]).is_ok();
         cx.notify();
         ok
@@ -259,188 +249,12 @@ impl SlideEditor {
         count
     }
 
-    /// Start editing an existing defined name.
-    pub(crate) fn edit_name(&mut self, index: usize, name: &str, sheet: Option<usize>, formula: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(state) = self.sheet_state_mut().and_then(|s| s.names.as_mut()) {
-            state.editing = Some(index);
-            state.new_sheet = sheet;
-            state.new_name.update(cx, |i, cx| i.set_value(name, window, cx));
-            state.new_formula.update(cx, |i, cx| i.set_value(format!("={formula}"), window, cx));
-        }
-        cx.notify();
-    }
-
     /// Delete a name.
     pub(crate) fn delete_name(&mut self, name: &str, sheet: Option<usize>, cx: &mut Context<Self>) {
         if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetName { name: name.to_string(), sheet, formula: None })]) {
             log::warn!("deleting a name rejected: {err}");
         }
         cx.notify();
-    }
-
-    /// Open the name manager in the sidebar.
-    pub(crate) fn open_names(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let new_name = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("_xlsx.new-name")));
-        let initial_formula = self.selection_formula().map(|f| format!("={f}")).unwrap_or_default();
-        let placeholder = crate::shell::i18n::text("_xlsx.refers-to-or-formula-e-g-sum-a1-a5-or-0-1");
-        let new_formula = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder(placeholder);
-            if !initial_formula.is_empty() {
-                state.set_value(initial_formula, window, cx);
-            }
-            state
-        });
-        if let Some(state) = self.sheet_state_mut() {
-            state.names = Some(NamesPanel { new_name, new_formula, new_sheet: None, editing: None });
-        }
-        if let Some(s) = self.sheet_state_mut() {
-            s.page_setup = false;
-        }
-        if let Some(s) = self.sheet_state_mut() {
-            s.custom_format = None;
-        }
-        self.sidebar_open = true;
-        cx.notify();
-    }
-
-    /// The name manager's panel.
-    pub(crate) fn names_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
-        let (new_name, new_formula, new_sheet, editing) = {
-            let p = self.sheet_state()?.names.as_ref()?;
-            (p.new_name.clone(), p.new_formula.clone(), p.new_sheet, p.editing)
-        };
-        let cur_sheet_idx = self.current_workbook_sheet_index();
-        let sheet_names: Vec<String> = self
-            .presentation()
-            .workbook
-            .as_ref()
-            .map(|w| w.sheets.iter().map(|s| s.name.clone()).collect())
-            .unwrap_or_default();
-        let names: Vec<(String, Option<usize>, String)> =
-            self.presentation().workbook.as_ref().map(|w| w.names.iter().filter(|n| !n.hidden && !n.name.starts_with("_xlnm.")).map(|n| (n.name.clone(), n.sheet, n.formula.clone())).collect()).unwrap_or_default();
-        let rows = names.into_iter().enumerate().map(|(i, (name, sheet, formula))| {
-            let (n1, n2, n3, n4, f3) = (name.clone(), name.clone(), name.clone(), name.clone(), formula.clone());
-            let scope_badge = match sheet.and_then(|idx| sheet_names.get(idx)) {
-                Some(sh_name) => format!(" [{sh_name}]"),
-                None => String::new(),
-            };
-            let goto_ref = match sheet.and_then(|idx| sheet_names.get(idx)) {
-                Some(sh_name) => format!("{}!{name}", ibis_calc::formula::quote_sheet(sh_name)),
-                None => name.clone(),
-            };
-            v_flex()
-                .gap_1()
-                .py(px(4.))
-                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(SharedString::from(format!("{name}{scope_badge}"))))
-                .child(div().text_sm().child(SharedString::from(format!("={formula}"))))
-                .child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap_1()
-                        .child(crate::shell::chrome::action_button(("name-goto", i)).small().label(crate::shell::i18n::text("_xlsx.go-to")).on_click(cx.listener(move |this, _, window, cx| {
-                            this.go_to_reference(&goto_ref, window, cx);
-                        })))
-                        .child(crate::shell::chrome::action_button(("name-use", i)).small().label(crate::shell::i18n::text("xlsx.use-in-formula")).on_click(cx.listener(move |this, _, window, cx| {
-                            this.use_name_in_formula(&n4, window, cx);
-                        })))
-                        .child(crate::shell::chrome::action_button(("name-edit", i)).small().label(crate::shell::i18n::text("_xlsx.edit")).on_click(cx.listener(move |this, _, window, cx| {
-                            this.edit_name(i, &n3, sheet, &f3, window, cx);
-                        })))
-                        .child(crate::shell::chrome::action_button(("name-set", i)).small().label(crate::shell::i18n::text("_xlsx.use-selection")).on_click(cx.listener(move |this, _, _, cx| {
-                            this.name_selection_with_scope(&n1, sheet, cx);
-                        })))
-                        .child(crate::shell::chrome::destructive_button(("name-delete", i),cx).small().label(crate::shell::i18n::text("_shell.delete")).on_click(cx.listener(move |this, _, _, cx| this.delete_name(&n2, sheet, cx)))),
-                )
-        });
-        let name_input = new_name.clone();
-        let formula_input = new_formula.clone();
-        let is_editing = editing.is_some();
-        let scope_is_workbook = new_sheet.is_none();
-        let current_sheet_label = new_sheet
-            .or(cur_sheet_idx)
-            .and_then(|idx| sheet_names.get(idx))
-            .cloned()
-            .unwrap_or_else(|| crate::shell::i18n::text("xlsx.names.scope.sheet").to_string());
-        let body = v_flex()
-            .gap_2()
-            .px(px(18.))
-            .py(px(8.))
-            .p_0().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_shell.name")))
-            .child(crate::shell::chrome::text_field(&new_name).full_width())
-            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.names.scope")))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child({
-                        crate::shell::chrome::radio_button("name-scope-workbook",scope_is_workbook,false,crate::shell::i18n::text("xlsx.names.scope.workbook"),cx.listener(|this, _, _, cx| {
-                            if let Some(state) = this.sheet_state_mut().and_then(|s| s.names.as_mut()) {
-                                state.new_sheet = None;
-                            }
-                            cx.notify();
-                        }))
-                    })
-                    .child({
-                        crate::shell::chrome::radio_button("name-scope-sheet",!scope_is_workbook,false,SharedString::from(current_sheet_label),cx.listener(move |this, _, _, cx| {
-                            let target_idx = this.current_workbook_sheet_index();
-                            if let Some(state) = this.sheet_state_mut().and_then(|s| s.names.as_mut()) {
-                                state.new_sheet = target_idx;
-                            }
-                            cx.notify();
-                        }))
-                    }),
-            )
-            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.refers-to-or-formula")))
-            .child(super::range_field::local_range_field(&new_formula,"names-new_formula",false,cx))
-            .child({
-                let (add_name, add_formula) = (name_input.clone(), formula_input.clone());
-                let mut btn_row = h_flex()
-                    .gap_1()
-                    .child(crate::shell::chrome::primary_button("name-add").small().label(if is_editing { crate::shell::i18n::text("_xlsx.update-name") } else { crate::shell::i18n::text("_xlsx.add-name") }).on_click(cx.listener(move |this, _, window, cx| {
-                        let name_text = add_name.read(cx).value().trim().to_string();
-                        let formula_text = add_formula.read(cx).value().trim().to_string();
-                        let scope = this.sheet_state().and_then(|s| s.names.as_ref()).and_then(|p| p.new_sheet);
-                        if this.set_named_formula_with_scope(&name_text, scope, &formula_text, cx) {
-                            add_name.update(cx, |i, cx| i.set_value("", window, cx));
-                            let default_formula = this.selection_formula().map(|f| format!("={f}")).unwrap_or_default();
-                            add_formula.update(cx, |i, cx| i.set_value(default_formula, window, cx));
-                            if let Some(state) = this.sheet_state_mut().and_then(|s| s.names.as_mut()) {
-                                state.editing = None;
-                                state.new_sheet = None;
-                            }
-                        }
-                    })));
-                if is_editing {
-                    let (cancel_name, cancel_formula) = (name_input.clone(), formula_input.clone());
-                    btn_row = btn_row.child(crate::shell::chrome::action_button("name-cancel").small().label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(move |this, _, window, cx| {
-                        cancel_name.update(cx, |i, cx| i.set_value("", window, cx));
-                        let default_formula = this.selection_formula().map(|f| format!("={f}")).unwrap_or_default();
-                        cancel_formula.update(cx, |i, cx| i.set_value(default_formula, window, cx));
-                        if let Some(state) = this.sheet_state_mut().and_then(|s| s.names.as_mut()) {
-                            state.editing = None;
-                            state.new_sheet = None;
-                        }
-                        cx.notify();
-                    })));
-                }
-                btn_row
-            })
-            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.create-from-selection")))
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .child(crate::shell::chrome::action_button("name-create-top").small().label(crate::shell::i18n::text("xlsx.create-names-top-row")).on_click(cx.listener(|this, _, _, cx| {
-                        this.create_names_from_selection(true, false, cx);
-                    })))
-                    .child(crate::shell::chrome::action_button("name-create-left").small().label(crate::shell::i18n::text("xlsx.create-names-left-col")).on_click(cx.listener(|this, _, _, cx| {
-                        this.create_names_from_selection(false, true, cx);
-                    })))
-                    .child(crate::shell::chrome::action_button("name-create-both").small().label(crate::shell::i18n::text("xlsx.create-names-both")).on_click(cx.listener(|this, _, _, cx| {
-                        this.create_names_from_selection(true, true, cx);
-                    }))),
-            )
-            .children(rows);
-        Some(SidebarPanel { title: "_xlsx.name-manager".into(), body: body.into_any_element() })
     }
 }
 

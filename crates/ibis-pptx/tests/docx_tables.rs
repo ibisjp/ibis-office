@@ -57,10 +57,9 @@ fn a_full_grid_is_kept() {
     assert_eq!(last_table(&with_table(&xml)).columns, vec![1500 * TWIP, 2500 * TWIP]);
 }
 
-/// 自動調整 tables are laid out from their content when the grid does not
-/// say the widths (cells without a width, a table in percent, widths that
-/// disagree with the grid); a fixed one, or one whose widths agree with
-/// its grid (as Word writes them), keeps its grid.
+/// 自動調整 tables are laid out from their content (Word lays them out again whenever it opens them): the model keeps their preferred widths, and says whether the grid
+/// says the widths (`grid_trusted`: the cells' widths agree with it, as Word writes them, so it is kept while each column holds its content's least width; not when the cells
+/// have no width, the table is in percent or the widths disagree with the grid); a fixed one has none.
 #[test]
 fn autofit_when_the_grid_does_not_say_the_widths() {
     use ibis_doc_model::PreferredWidth;
@@ -68,12 +67,12 @@ fn autofit_when_the_grid_does_not_say_the_widths() {
     let row = |w: &str| format!("<w:tr>{}{}</w:tr>", cell(w, 1), cell(w, 1));
     let auto = r#"<w:tcW w:w="0" w:type="auto"/>"#;
     let t = last_table(&with_table(&format!(r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>{grid}{}</w:tbl>"#, row(auto))));
-    assert_eq!(t.autofit.map(|f| (f.width, f.cells)), Some((PreferredWidth::Auto, vec![vec![PreferredWidth::Auto; 2]])));
+    assert_eq!(t.autofit.map(|f| (f.width, f.cells, f.grid_trusted)), Some((PreferredWidth::Auto, vec![vec![PreferredWidth::Auto; 2]], false)));
     let t = last_table(&with_table(&format!(r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLayout w:type="fixed"/></w:tblPr>{grid}{}</w:tbl>"#, row(auto))));
     assert!(t.autofit.is_none(), "fixed");
     let dxa = r#"<w:tcW w:w="2000" w:type="dxa"/>"#;
     let t = last_table(&with_table(&format!(r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>{grid}{}</w:tbl>"#, row(dxa))));
-    assert!(t.autofit.is_none(), "the widths agree with the grid");
+    assert_eq!(t.autofit.map(|f| f.grid_trusted), Some(true), "the widths agree with the grid");
     let t = last_table(&with_table(&format!(r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/></w:tblPr>{grid}{}</w:tbl>"#, row(dxa))));
     assert_eq!(t.autofit.map(|f| f.width), Some(PreferredWidth::Percent(5000)));
 }

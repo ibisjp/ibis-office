@@ -16,6 +16,8 @@ use crate::render::shape_view::{place, polygon, shape_element, shape_element_wit
 
 /// Side of a resize handle, in pixels.
 const HANDLE_SIZE: f32 = 6.0;
+/// The alpha of the white under the scrollbars' thumbs in the page break preview (the user's choice, 2026-11-04).
+const PAGE_BREAK_SCROLL_TRACK_ALPHA: f32 = 0.5;
 
 impl SlideEditor {
     pub(crate) fn render_workspace(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -29,9 +31,12 @@ impl SlideEditor {
         if (self.is_workbook() || self.is_document()) && self.sync_scrolling {
             self.sync_scroll_to_peer(cx);
         }
-        let theme = cx.theme();
         let layout = self.slide_layout();
         let content = self.workspace_content();
+        // The cell being typed into, laid out before the sheet is (the pop-ups of the cursor read its layout): one element,
+        // over the frozen panes, not a part of the sheet they draw again.
+        let cell_editor = content.filter(|_| !self.page_layout_shown()).and_then(|content| self.render_cell_editor(content, cx));
+        let theme = cx.theme();
         // The outer element is the workspace (focus, pointer, its bounds for
         // the layout); the inner one scrolls a slide larger than it.
         div()
@@ -79,6 +84,7 @@ impl SlideEditor {
             // Frozen panes: the sheet again, over the scrolled one, held
             // still on their axis.
             .when_some(layout.zip(content).filter(|_| !self.page_layout_shown()), |d, (layout, content)| d.children(self.render_frozen_panes(layout, content, cx)))
+            .children(cell_editor)
             // Under the scrollbars, which stay usable at the headers' ends.
             .when_some(content.filter(|_| !self.page_layout_shown()).and_then(|content| self.render_sheet_headers(content, cx)), |d, headers| {
                 d.child(headers)
@@ -99,12 +105,24 @@ impl SlideEditor {
                     window.on_next_frame(move |window, _| window.refresh());
                 }
             }))
-            .when(self.panel_dialog_is_modal(), |d| d.child(crate::shell::panel_dialog::viewport_shield()))
+            .when(self.dialog_is_modal(), |d| d.child(crate::shell::dialog::viewport_shield()))
             .map(|d| {
                 if self.split_panes().is_some() && !self.page_layout_shown()
                     && let Some(content) = content
                 {
                     d.children(self.render_split_scrollbars(content, cx))
+                } else if self.current_sheet().is_some_and(|(_, s)| s.page_break_preview) && !self.page_layout_shown() {
+                    // The page break preview greys the cells outside the pages, the grey of the scrollbar's thumb: the
+                    // track gets a half-transparent white under the thumb, so the thumb shows on it.
+                    d.child(
+                        div().absolute().inset_0().child(
+                            gpui_kit::component::scroll::Scrollbar::new(&self.workspace_scroll)
+                                .id("workspace-scrollbar-page-break")
+                                .axis(ScrollbarAxis::Both)
+                                .viewport_from_layout()
+                                .styles(|s| s.track(|t| t.bg(hsla(0.0, 0.0, 1.0, PAGE_BREAK_SCROLL_TRACK_ALPHA)))),
+                        ),
+                    )
                 } else {
                     d.scrollbar(&self.workspace_scroll, ScrollbarAxis::Both)
                 }
@@ -584,14 +602,17 @@ impl SlideEditor {
             ]
         });
 
+        // A group box only draws a frame round the controls in it: a press goes through it to what is under it
+        // (the option buttons above it have their own, a cell below gets the rest), unless the controls are being designed.
+        let click_through = matches!(&shape.kind, ShapeKind::Control(c) if c.kind == ibis_doc_model::ControlKind::GroupBox) && !self.is_design_mode_active();
         place(div().id(("shape", id.0)), frame, scale)
-            .when(self.tool == Tool::Select && editing.is_none(), |d| d.cursor_move())
+            .when(self.tool == Tool::Select && editing.is_none() && !click_through, |d| d.cursor_move())
             .when(empty_text_box, |d| d.border_1().border_dashed().border_color(cx.theme().border))
-            .on_mouse_down(
+            .when(!click_through, |d| d.on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event, window, cx| this.on_shape_down(id, event, window, cx)),
-            )
-            .when(self.is_workbook(), |d| d.on_mouse_down(MouseButton::Right, cx.listener(move |this, event, window, cx| this.on_sheet_shape_right_down(id, event, window, cx))))
+            ))
+            .when(self.is_workbook() && !click_through, |d| d.on_mouse_down(MouseButton::Right, cx.listener(move |this, event, window, cx| this.on_sheet_shape_right_down(id, event, window, cx))))
             .child(shape_element_with_positions(&drawn, local, scale, &self.resources, None, positions.as_ref()))
             .children(field)
             .children(border_strips.into_iter().flatten())
@@ -692,6 +713,9 @@ impl SlideEditor {
 
     /// Selection frame and the eight resize handles.
     fn render_selection(&self, scale: f32, cx: &mut Context<Self>) -> Option<Div> {
+        if let Some(crop) = self.render_crop_mode(scale, cx) {
+            return Some(crop);
+        }
         let shape = self.selected_shape()?;
         if self.is_workbook() && self.current_sheet().map(|(_, s)| s.hide_ink).unwrap_or(false) {
             if crate::xlsx::ink::stroke_points(shape).is_some() {

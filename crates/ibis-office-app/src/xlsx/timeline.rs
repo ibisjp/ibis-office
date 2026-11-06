@@ -172,7 +172,7 @@ impl SlideEditor {
                 if f.items.iter().filter(|it| it.kind.is_none()).count() != f.shared.len() && !f.shared.is_empty() {
                     let subtotals: Vec<PivotItem> = f.items.iter().filter(|it| it.kind.is_some()).cloned().collect();
                     f.items = (0..f.shared.len() as u32)
-                        .map(|x| PivotItem { x: Some(x), hidden: false, kind: None })
+                        .map(|x| PivotItem { x: Some(x), hidden: false, kind: None, collapsed: false })
                         .chain(subtotals)
                         .collect();
                 }

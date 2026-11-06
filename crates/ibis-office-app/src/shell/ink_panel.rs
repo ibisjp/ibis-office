@@ -4,6 +4,7 @@
 //! All document formats describe ink commands; this module owns the complete panel layout.
 use std::rc::Rc;
 use gpui_kit::*;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::component::{Sizable as _,Disableable as _,h_flex,v_flex};
 use gpui_kit::component::input::{InputState,InputEvent};
 use super::{chrome,editor::SlideEditor,i18n::text};
@@ -12,15 +13,60 @@ use ibis_doc_model::Rgb;
 
 type Handler=chrome::Handler;
 pub(crate) type ColorHandler=Rc<dyn Fn(&mut SlideEditor,Rgb,&mut Window,&mut Context<SlideEditor>)>;
+/// What a pen of an effect draws with: the square at the left of the effect's name in the list is painted from it.
+#[derive(Clone)]
+pub(crate) enum InkTexture {
+    /// The pen's own colour (no effect).
+    Solid(u32),
+    /// Colours that run along the stroke (position 0..=100000, 0xRRGGBB), as the spreadsheet and document effects draw it.
+    Gradient(Vec<(u32,u32)>),
+    /// Colours that follow each other along the stroke, one per segment, as the presentation effects draw it.
+    Bands(Vec<u32>),
+}
+impl InkTexture {
+    /// The colour at `x` of `width` (the strip the thumbnail paints).
+    fn color_at(&self,x:f32,width:f32)->u32 {
+        match self {
+            Self::Solid(rgb)=>*rgb,
+            Self::Gradient(stops)=>{
+                let stops:Vec<ibis_doc_model::GradientStop>=stops.iter().map(|&(position,rgb)|ibis_doc_model::GradientStop{position,color:ibis_doc_model::Color::opaque(Rgb(rgb))}).collect();
+                chrome::gradient_slider::interpolated(&stops,((x/width.max(1.)).clamp(0.,1.)*100_000.).round() as u32).rgb.0
+            }
+            Self::Bands(colors)=>colors.get(((x/width.max(1.)).clamp(0.,0.9999)*colors.len() as f32) as usize).copied().unwrap_or(0),
+        }
+    }
+}
+/// The texture's square (the thumbnail): painted in 1 px strips, as a gradient quad is not drawn inside a list.
+fn thumbnail(texture:InkTexture)->AnyElement {
+    div().relative().flex_none().size(px(THUMB)).rounded(px(2.)).border_1().border_color(gpui_kit::rgb(chrome::BORDER)).overflow_hidden()
+        .child(canvas(|_,_,_|(),move|bounds,_,window,_|{
+            let (w,h)=(f32::from(bounds.size.width),f32::from(bounds.size.height));
+            let mut x=0.;
+            while x<w{
+                let strip=(w-x).min(1.);
+                window.paint_quad(fill(Bounds::new(bounds.origin+point(px(x),px(0.)),size(px(strip),px(h))),gpui_kit::rgb(texture.color_at(x+strip/2.,w))));
+                x+=1.;
+            }
+        }).absolute().inset_0()).into_any_element()
+}
+/// The side of the texture's square in the list of effects.
+const THUMB:f32=20.;
 pub(crate) struct InkChoice {
     pub id:ElementId,pub label:SharedString,pub selected:bool,pub change:Handler,
     pub bounds:Option<Rc<dyn Fn(Bounds<Pixels>)>>,
+    pub texture:Option<InkTexture>,
+    /// The width in pt, for a choice of the pen's width.
+    pub points:f32,
 }
 impl InkChoice {
     pub(crate) fn new(id:impl Into<ElementId>,label:impl Into<SharedString>,selected:bool,change:impl Fn(&mut SlideEditor,&mut Window,&mut Context<SlideEditor>)+'static)->Self{
-        Self{id:id.into(),label:label.into(),selected,change:Rc::new(change),bounds:None}
+        Self{id:id.into(),label:label.into(),selected,change:Rc::new(change),bounds:None,texture:None,points:0.}
     }
     pub(crate) fn on_bounds(mut self,callback:impl Fn(Bounds<Pixels>)+'static)->Self{self.bounds=Some(Rc::new(callback));self}
+    /// What the effect draws with (the square before its name in the list of effects).
+    /// The pen's width in pt that the choice sets (the line its item draws).
+    pub(crate) fn points(mut self,points:f32)->Self{self.points=points;self}
+    pub(crate) fn texture(mut self,texture:InkTexture)->Self{self.texture=Some(texture);self}
 }
 pub(crate) struct InkToggle {pub id:&'static str,pub label:SharedString,pub checked:bool,pub change:Handler,pub bounds:Option<Rc<dyn Fn(Bounds<Pixels>)>>}
 impl InkToggle {
@@ -33,8 +79,31 @@ impl InkCommand {
     pub(crate) fn destructive(mut self)->Self{self.destructive=true;self}
     pub(crate) fn on_bounds(mut self,callback:impl Fn(Bounds<Pixels>) + 'static)->Self{self.bounds=Some(Rc::new(callback));self}
 }
-pub(crate) enum InkRow {Toggle(InkToggle),Commands(Vec<InkCommand>),Label(SharedString)}
+/// `Commands` are small buttons side by side (the ruler's turns); `Group` is a `button_group` of equal-width buttons, one per line.
+pub(crate) enum InkRow {Toggle(InkToggle),Commands(Vec<InkCommand>),Group(Vec<InkCommand>),Label(SharedString)}
 pub(crate) struct InkSection {pub title:Option<SharedString>,pub rows:Vec<InkRow>}
+/// What the actions of every format's ink pane are (the same rows in the same order for the document, spreadsheet and presentation
+/// screens): convert to a shape, [text, math, replay: presentation only], select all, erase the selection, erase all. The screen gives the
+/// handlers; `None` hides the row it cannot do.
+pub(crate) struct InkActions {
+    pub selected:usize,pub has_ink:bool,
+    pub to_shape:Handler,pub select_all:Handler,pub erase_selected:Handler,pub erase_all:Handler,
+    pub to_text:Option<Handler>,pub to_math:Option<Handler>,pub replay:Option<Handler>,
+}
+impl InkActions {
+    pub(crate) fn section(self)->InkSection {
+        let command=|id:&'static str,label:SharedString,enabled:bool,run:Handler|InkCommand{id,label,enabled,destructive:false,run,bounds:None};
+        let has=self.selected>0;
+        let mut commands=vec![command("ink-to-shape",text("xlsx.ink.to-shape"),has,self.to_shape)];
+        if let Some(run)=self.to_text{commands.push(command("ink-to-text",text("pptx.ink.to-text"),has,run));}
+        if let Some(run)=self.to_math{commands.push(command("ink-to-math",text("pptx.ink.to-math"),has,run));}
+        if let Some(run)=self.replay{commands.push(command("ink-replay",text("pptx.ink.replay"),self.has_ink,run));}
+        commands.push(command("ink-select-all",text("docx.ink.select-all"),self.has_ink,self.select_all));
+        commands.push(InkCommand{destructive:true,..command("ink-erase-selected",text("docx.ink.erase-selected"),has,self.erase_selected)});
+        commands.push(InkCommand{destructive:true,..command("ink-erase-all",text("docx.ink.erase-all"),self.has_ink,self.erase_all)});
+        InkSection{title:Some(format!("{} ({})",text("docx.ink.actions"),self.selected).into()),rows:vec![InkRow::Group(commands)]}
+    }
+}
 pub(crate) struct InkPanelSpec {
     pub color_id:&'static str,pub tools:Vec<InkChoice>,pub widths:Vec<InkChoice>,
     pub drawing:bool,pub color:Rgb,pub change_color:ColorHandler,pub effects:Vec<InkChoice>,
@@ -52,18 +121,35 @@ fn segment(item:InkChoice,enabled:bool,cx:&Context<SlideEditor>)->SegmentItem{
     let mut result=SegmentItem::label(item.id,item.label,item.selected).disabled(!enabled).on_click(cx.listener(move|e,_,w,cx|(item.change)(e,w,cx)));
     if let Some(bounds)=item.bounds{result=result.on_bounds(move|b|bounds(b));}result
 }
+/// The width of the pen: a dropdown whose items draw the line (see `line_width_dropdown`). The pen not drawing (the eraser, select) dims it and takes its clicks.
+fn width_row(widths:Vec<InkChoice>,drawing:bool,cx:&Context<SlideEditor>)->impl IntoElement{
+    let selected=widths.iter().position(|c|c.selected).unwrap_or(0);
+    let items=widths.into_iter().map(|item|(item.points,item.label,item.change)).collect();
+    let dropdown=chrome::preview_dropdown::line_width_dropdown("ink-width",items,selected,chrome::preview_dropdown::PreviewSize::default().width(px(138.)),cx);
+    let control=div().relative().child(dropdown).when(!drawing,|d|d.opacity(0.5).child(div().absolute().inset_0().occlude()));
+    chrome::dropdown_row(text("ink.panel.width"),control)
+}
 pub(crate) fn panel(spec:InkPanelSpec,cx:&Context<SlideEditor>)->chrome::SidebarPanel{
     let mut body=chrome::panel_form().p_0()
         .child(chrome::SegmentControlRow::new(Mode::Intrinsic).label(text("ink.panel.tools")).children(spec.tools.into_iter().map(|item|segment(item,true,cx))))
-        .child(chrome::SegmentControlRow::new(Mode::Intrinsic).label(text("ink.panel.width")).children(spec.widths.into_iter().map(|item|segment(item,spec.drawing,cx))))
+        .child(width_row(spec.widths,spec.drawing,cx))
         .child(chrome::color_field_row(text("ink.panel.color"),InkColorField{id:spec.color_id,color:spec.color,enabled:spec.drawing,change:spec.change_color,editor:cx.weak_entity()}));
     if !spec.effects.is_empty(){
-        let mut effects=chrome::radio_group().layout(chrome::RadioGroupLayout::Flow);
-        for item in spec.effects{
-            let choice=chrome::radio_button(item.id,item.selected,!spec.drawing,item.label,cx.listener(move|e,_,w,cx|(item.change)(e,w,cx)));
-            effects=effects.child(observed(choice,item.bounds));
-        }
-        body=body.child(chrome::control_row(text("ink.panel.effects"),effects));
+        // The effects are a drop-down list: a square of the texture at the left of each item, its name at the right (the same on the
+        // closed button). The pen not drawing (the eraser, select) dims it and takes its clicks.
+        let selected=spec.effects.iter().position(|c|c.selected).unwrap_or(0);
+        let choices:Vec<chrome::preview_dropdown::PreviewChoice>=spec.effects.into_iter().map(|item|{
+            let (texture,label)=(item.texture.unwrap_or(InkTexture::Solid(spec.color.0)),item.label.clone());
+            let change=item.change.clone();
+            chrome::preview_dropdown::PreviewChoice{
+                label:item.label,
+                content:Rc::new(move||h_flex().w_full().min_w_0().items_center().gap(px(8.)).child(thumbnail(texture.clone())).child(div().min_w_0().truncate().text_size(px(14.)).child(label.clone())).into_any_element()),
+                choose:change,
+            }
+        }).collect();
+        let dropdown=chrome::preview_dropdown::preview_dropdown_sized("ink-effect",choices,selected,chrome::preview_dropdown::PreviewSize::default().width(px(138.)),cx);
+        let control=div().relative().child(dropdown).when(!spec.drawing,|d|d.opacity(0.5).child(div().absolute().inset_0().occlude()));
+        body=body.child(chrome::dropdown_row(text("ink.panel.effects"),control));
     }
     body=body.child(toggle(spec.mouse,cx));
     for section in spec.sections{
@@ -72,6 +158,11 @@ pub(crate) fn panel(spec:InkPanelSpec,cx:&Context<SlideEditor>)->chrome::Sidebar
         for row in section.rows{contents=match row{
             InkRow::Toggle(item)=>contents.child(toggle(item,cx)),
             InkRow::Label(label)=>contents.child(div().text_sm().child(label)),
+            InkRow::Group(commands)=>contents.child(chrome::button_group(commands.into_iter().map(|command|{
+                let run=command.run;
+                chrome::ButtonGroupItem::new(command.id,command.label).kind(if command.destructive{chrome::ActionButtonKind::Destructive}else{chrome::ActionButtonKind::Normal}).disabled(!command.enabled)
+                    .on_click(cx.listener(move|e,_,w,cx|run(e,w,cx)))
+            })).stacked()),
             InkRow::Commands(commands)=>{
                 let mut buttons=h_flex().w_full().flex_wrap().gap_2();
                 for command in commands{

@@ -334,7 +334,7 @@ impl SlideEditor {
                 edit.document = document;
                 edit.error = None;
             }
-            if !self.panel_dialog_is_modal() { self.focus_handle.focus(window, cx); }
+            if !self.dialog_is_modal() { self.focus_handle.focus(window, cx); }
         }
         cx.notify();
     }
@@ -352,11 +352,15 @@ impl SlideEditor {
         let line_spec = if rule == LineRule::Multiple { SpinnerSpec::new(0.5).range(0.06, 132.0) } else { SpinnerSpec::new(1.0).range(0.0, 1584.0) };
         let specs = [SpinnerSpec::new(6.0).range(0.0, 1584.0), SpinnerSpec::new(6.0).range(0.0, 1584.0), indent_spec, indent_spec, indent_spec, line_spec];
         let field_cx = &*cx;
+        // The unit is the field's own: pt for the indents and for "at least" / "exactly", a multiple (×) for the "multiple" line spacing.
+        let unit = |i: usize| -> Option<SharedString> { match i { 5 if mixed => None, 5 if rule == LineRule::Multiple => Some(crate::shell::i18n::text("docx.paragraph-panel.line-spacing-multiple-unit")), 2..=4 if indent_unit == IndentUnit::Chars => None, _ => Some("pt".into()) } };
         let row = |label: &'static str, i: usize| h_flex().gap_2()
             .child(div().w(px(92.)).text_sm().child(crate::shell::i18n::text(label)))
             .child(crate::shell::chrome::text_field(&fields[i])
+                .when_unit(unit(i).is_some(), unit(i).unwrap_or_default(), px(20.))
                 .spinner(format!("para-field-{i}"), specs[i], field_cx, |_, _, _, _| {}));
-        let choice = |id: &'static str, label: &'static str, value: LineRule| crate::shell::chrome::radio_button(id, !mixed && rule == value, false, crate::shell::i18n::text(label),
+        let line_rule: crate::shell::chrome::Shown<LineRule> = if mixed { crate::shell::chrome::Shown::Mixed } else { crate::shell::chrome::Shown::One(rule) };
+        let choice = |id: &'static str, label: &'static str, value: LineRule| crate::shell::chrome::radio_button_shown(id, &line_rule, &value, false, crate::shell::i18n::text(label),
             cx.listener(move |this, _, window, cx| this.choose_paragraph_line_rule(value, window, cx)));
         let indent_choice = |id: &'static str, label: &'static str, value: IndentUnit| crate::shell::chrome::radio_button(id, indent_unit == value, false, crate::shell::i18n::text(label),
             cx.listener(move |this, _, window, cx| this.choose_paragraph_indent_unit(value, window, cx)));

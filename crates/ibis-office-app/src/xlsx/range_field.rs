@@ -241,7 +241,7 @@ impl SlideEditor {
             selection: self.selection,
             zoom: self.zoom,
             scroll: self.workspace_scroll.offset(),
-            dialog: self.panel_dialog.bounds,
+            dialog: self.dialog.bounds,
             dragging: false,
             resizing: None,
             handles: Default::default(),
@@ -252,11 +252,11 @@ impl SlideEditor {
         if let Some(range) = range {
             self.set_selected_ranges(&[range]);
         }
-        if self.panel_dialog.active {
-            if let Some(mut bounds) = self.panel_dialog.bounds {
+        if self.dialog.active {
+            if let Some(mut bounds) = self.dialog.bounds {
                 bounds.size.width = px(320.).min(window.viewport_size().width);
                 bounds.origin.x = window.viewport_size().width - bounds.size.width;
-                self.panel_dialog.bounds = Some(bounds);
+                self.dialog.bounds = Some(bounds);
             }
         }
         self.focus_handle.focus(window, cx);
@@ -316,7 +316,7 @@ impl SlideEditor {
         self.selection = pick.selection;
         self.set_selected_ranges(&pick.ranges);
         self.wb_mut().cell_drag = false;
-        if pick.dialog.is_some() {self.panel_dialog.bounds=pick.dialog;}
+        if pick.dialog.is_some() {self.dialog.bounds=pick.dialog;}
         window.release_pointer();
         // A live chart-wide change belongs to document Undo; leave focus on the sheet.
         // Series fields remain draft, so their dialog resumes at the edited input.
@@ -374,7 +374,7 @@ impl SlideEditor {
             return false;
         }
         if self
-            .panel_dialog
+            .dialog
             .bounds
             .is_some_and(|bounds| bounds.contains(&event.position))
         {

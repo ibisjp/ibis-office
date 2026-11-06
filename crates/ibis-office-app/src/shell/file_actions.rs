@@ -87,7 +87,7 @@ impl SlideEditor {
                 Ok(loaded) => {
                     let name: SharedString = new_file_name(ibis_pptx::Kind::of(&loaded.presentation));
                     this.load(loaded.presentation, name, window, cx);
-                    this.source = Some(loaded.source);
+                    this.set_loaded_source(loaded.source);
                     this.path = None;
                     this.document.set_file(None);
                     this.document.reset_history();
@@ -117,7 +117,7 @@ pub(crate) fn new_file_name(kind: ibis_pptx::Kind) -> SharedString {
 impl SlideEditor {
     /// The open file as it would be saved now.
     #[cfg(not(target_family = "wasm"))]
-    fn current_bytes(&self) -> Result<Vec<u8>, String> {
+    pub(crate) fn current_bytes(&self) -> Result<Vec<u8>, String> {
         let source = self.source.clone().ok_or(crate::shell::i18n::text("_shell.this-file-cannot-be-saved-yet").to_string())?;
         source.save(self.presentation(), ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())
     }
@@ -768,6 +768,10 @@ impl SlideEditor {
         if self.presentation().flow.is_some() {
             self.commit_edit(window, cx);
             return self.open_doc_print_panel(window, cx);
+        }
+        if self.is_workbook() {
+            self.commit_edit(window, cx);
+            return self.open_xlsx_print_panel(cx);
         }
         self.print_now(window, cx);
     }

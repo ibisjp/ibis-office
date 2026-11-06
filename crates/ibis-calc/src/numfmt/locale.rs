@@ -17,6 +17,16 @@ pub(crate) struct Names {
     pub am_pm: Option<(&'static str, &'static str)>,
 }
 
+/// Japanese (`[$-411]`): the month and the day names a Japanese locale gives `mmm`, `mmmm`, `ddd`, `dddd`, as Excel
+/// shows them (measured on Excel 16.0 build 20527: `mmmm` 10月, `mmm` 10, `ddd` 水, `dddd` 水曜日).
+const JA: Names = Names {
+    months: ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"],
+    months_short: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
+    days: ["日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"],
+    days_short: ["日", "月", "火", "水", "木", "金", "土"],
+    am_pm: Some(("午前", "午後")),
+};
+
 const DE: Names = Names {
     months: ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"],
     months_short: ["Jan", "Feb", "Mrz", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
@@ -143,7 +153,14 @@ pub(crate) fn lcid_of(tag: &str) -> Option<u16> {
     if !t.is_empty() && t.len() <= 4 && t.chars().all(|c| c.is_ascii_hexdigit()) {
         return u16::from_str_radix(&t, 16).ok();
     }
+    // `[$-1010411]`: the calendar and number type in the high word; the locale is the low word.
+    if (5..=8).contains(&t.len()) && t.chars().all(|c| c.is_ascii_hexdigit()) {
+        return u32::from_str_radix(&t, 16).ok().map(|v| (v & 0xFFFF) as u16);
+    }
     Some(match t.as_str() {
+        "en" | "en-us" => 0x0409,
+        "en-gb" => 0x0809,
+        "ja" | "ja-jp" => 0x0411,
         "de" | "de-de" | "de-at" | "de-ch" => 0x0407,
         "fr" | "fr-fr" | "fr-ca" | "fr-be" | "fr-ch" => 0x040C,
         "es" | "es-es" | "es-mx" => 0x0C0A,
@@ -165,9 +182,11 @@ pub(crate) fn lcid_of(tag: &str) -> Option<u16> {
 }
 
 /// The names of the language of `lcid`, `None` for English and the languages this does not name (English names).
+/// The Japanese ones are used by `[$-411]`; a format without a locale shows English `ddd`/`dddd` and Japanese `aaa`/`aaaa`.
 pub(crate) fn names(lcid: u16) -> Option<&'static Names> {
     // The low 10 bits are the language; the region is above.
     match lcid & 0x3FF {
+        0x11 => Some(&JA),
         0x07 => Some(&DE),
         0x0C => Some(&FR),
         0x0A => Some(&ES),

@@ -70,7 +70,7 @@ pub(crate) fn observe_control(control:Stateful<Div>,id:ElementId)->Stateful<Div>
 pub(crate) fn click(s: &mut Scenario, id: &str) {
     for _ in 0..8 {
         let b = bounds(id).unwrap_or_else(|| panic!("button {id} not rendered: {:?}", all()));
-        let dialog = s.with(|e, _| e.panel_dialog.bounds);
+        let dialog = s.with(|e, _| e.dialog.bounds);
         // A button outside the dialog (a confirmation box over it) is not scrolled with the dialog.
         let dialog = dialog.filter(|d| b.origin.x < d.origin.x + d.size.width && b.origin.x + b.size.width > d.origin.x);
         if let Some(d) = dialog {

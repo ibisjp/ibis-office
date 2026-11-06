@@ -6,7 +6,6 @@
 //! row or column goes in (out).
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
-use crate::xlsx::toggle::toggle_row;
 use gpui_kit::component::button::{ButtonVariants as _};
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -141,11 +140,11 @@ impl SlideEditor {
                 })
         };
         let options = if d.insert { INSERT_OPTIONS } else { DELETE_OPTIONS };
-        let mut body = v_flex().gap_1().px(px(18.)).py(px(8.)).p_0();
+        let mut group = crate::shell::chrome::radio_group();
         for (i, key) in options.iter().enumerate() {
-            body = body.child(mark(
+            group = group.child(mark(
                 format!("option-{i}"),
-                toggle_row(SharedString::from(format!("cells-option-{i}")), d.choice == i, crate::shell::i18n::text(key), cx.listener(move |this, _, _, cx| {
+                crate::shell::chrome::radio_button(SharedString::from(format!("cells-option-{i}")), d.choice == i, false, crate::shell::i18n::text(key), cx.listener(move |this, _, _, cx| {
                     if let Some(d) = this.sheet_state_mut().and_then(|s| s.panels.cells_dialog.as_mut()) {
                         d.choice = i;
                     }
@@ -154,6 +153,7 @@ impl SlideEditor {
                 .into_any_element(),
             ));
         }
+        let body = group;
         let title = if d.insert { "cells.insert-title" } else { "cells.delete-title" };
         let panel_terminal_actions = crate::shell::chrome::action_bar()
                 .action(mark_action("ok".into(), crate::shell::chrome::ActionDefinition::new("cells-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label(crate::shell::i18n::text("query.ok")).on_click(cx.listener(|this, _, _, cx| this.apply_cells_dialog(cx)))))

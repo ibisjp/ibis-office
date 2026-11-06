@@ -732,7 +732,7 @@ pptx.anim.smooth.both	両方（開始・終了）
 pptx.anim.smooth-start	滑らかに開始
 pptx.anim.smooth-end	滑らかに終了
 pptx.anim.after	再生後の動作
-pptx.anim.after.hold	消去しない（保持）
+pptx.anim.after.hold	そのまま表示
 pptx.anim.after.hide	再生後に非表示
 pptx.anim.after.dim	淡色表示
 pptx.anim.after.hide-next	次のクリック時に非表示
@@ -800,8 +800,6 @@ chart.type.doughnut	ドーナツ
 chart.type.scatter	散布図
 chart.type.scatter-smooth	散布図 (平滑線)
 chart.type.bubble	バブル
-pptx.video	ビデオ…
-pptx.audio	オーディオ…
 bullet.type.disc	• 黒丸
 bullet.type.circle	○ 白丸
 bullet.type.square	■ 黒四角
@@ -890,7 +888,7 @@ transition.dir.spokes-2	2 本のスポーク
 transition.dir.spokes-3	3 本のスポーク
 transition.dir.spokes-4	4 本のスポーク
 transition.dir.spokes-8	8 本のスポーク
-pptx.show-settings-actions	スライド ショーの設定
+pptx.show-settings-actions	スライド ショーの設定の入力
 pptx.show-settings.apply	適用
 pptx.show-settings.cancel	キャンセル
 pptx.show-panel.set-up-slide-show	スライド ショーの設定
@@ -1011,8 +1009,8 @@ pptx.accessibility-panel.no-accessibility-issues-found	アクセシビリティ�
 pptx.accessibility-panel.all-images-have-alternative-text	すべての画像に代替テキストがあり、表の見出しやスライドタイトルが適切に設定されています。
 pptx.slide.add-hidden-title	非表示スライド タイトルを追加
 pptx.accessibility-panel.add-hidden-title	非表示タイトル追加
-pptx.links.screentip	ヒント（ScreenTip）
-pptx.links.screentip-text	ヒントのテキスト
+pptx.links.screentip	ツールチップ
+pptx.links.screentip-text	ツールチップのテキスト
 pptx.reading-order	読み上げ順序
 pptx.reading-order-pane.reading-order	読み上げ順序
 pptx.reading-order-pane.order-which-objects-will-read	スクリーンリーダーで読み上げられる順序です。上から下へ順番に読み上げられます。
@@ -1277,7 +1275,7 @@ pptx.recover.delete-failed	回復ファイルの削除に失敗しました
 
 pptx.layout.rename	レイアウト名の変更…
 pptx.layout.duplicate	レイアウトを複製
-pptx.layout.masters	スライド マスター
+pptx.layout.masters	マスターの管理
 pptx.layout.master.rename	マスター名の変更…
 pptx.layout.master.duplicate	マスターを複製
 pptx.layout.master.remove	マスターを削除
@@ -1298,7 +1296,6 @@ pptx.video-link	ビデオ（ファイルにリンク）…
 pptx.audio-link	オーディオ（ファイルにリンク）…
 pptx.spelling.check	スペルチェック…
 pptx.autocorrect-options	オートコレクトのオプション…
-pptx.math	数式…
 pptx.math.title	数式
 pptx.math.hint	数式を線形式（UnicodeMath）または LaTeX 形式で入力します（例：a/b、\frac{a}{b}、x^2、\sqrt{x+1}、\sum_{i=1}^n x）
 pptx.math.insert	挿入
@@ -1327,7 +1324,7 @@ pptx.anim.build.paragraph	段落別
 pptx.handout-master	配布資料マスター
 pptx.modify-password	書き込みパスワード…
 pptx.infobar.modify.title	書き込みパスワード
-pptx.infobar.modify.message	このプレゼンテーションは、書き込みパスワードで保護されています。編集するには、パスワードが必要です。
+pptx.infobar.modify.message	このファイルは、書き込みパスワードで保護されています。編集するには、パスワードが必要です。
 pptx.infobar.modify.unlock	パスワードを入力して編集…
 pptx.insert-chart.waterfall	ウォーターフォール
 pptx.insert-chart.histogram	ヒストグラム
@@ -1412,6 +1409,8 @@ pptx.crop-panel.top-percent	上
 pptx.crop-panel.right-percent	右
 pptx.crop-panel.bottom-percent	下
 pptx.crop-panel.crop-picture	画像のトリミング
+pptx.crop-panel.unit	単位
+pptx.crop-panel.size	サイズ：{width} × {height}
 pptx.editing.click-drag-place-text-box	クリックまたはドラッグしてテキスト ボックスを置きます（Esc でやめる）
 pptx.editing.drag-place-shape-shift-square	ドラッグして図形を置きます（Shift で正方形・正円、Esc でやめる）
 pptx.misc.drag-draw-line-shift-45	ドラッグして線を引きます（Shift で 45° ごと、Esc でやめる）
@@ -1430,9 +1429,9 @@ pptx.frame-panel.size-position	サイズと位置
 pptx.glow-panel.target-shape-has-changed-reopen	対象の図形が変更されています。設定を開き直してください
 pptx.glow-panel.enter-radius-0-169093-20055118	半径は0〜169093.20055118 pt、色は6桁のRGB、濃さは0〜100%で入力してください
 pptx.glow-panel.glow-cannot-saved-selected-shape	選択した図形には、この光彩を保存できません
-pptx.glow-panel.radius-pt	半径 (pt)
-pptx.gradient-panel.color-rgb-rrggbb	色 (RGB: RRGGBB)
-pptx.gradient-panel.intensity-percent	濃さ (%)
+pptx.glow-panel.radius-pt	半径
+pptx.gradient-panel.color-rgb-rrggbb	色
+pptx.gradient-panel.intensity-percent	不透明度
 pptx.gradient-panel.horizontal-lines	横線
 pptx.gradient-panel.vertical-lines	縦線
 pptx.gradient-panel.light-horizontal-lines	細い横線
@@ -1475,21 +1474,21 @@ pptx.gradient-panel.shingle	屋根板
 pptx.gradient-panel.trellis	編み格子
 pptx.gradient-panel.zig-zag	ジグザグ
 pptx.gradient-panel.target-has-changed-reopen-settings	対象が変更されています。設定を開き直してください
-pptx.gradient-panel.enter-6-digit-rgb-color	色は6桁のRGB、濃さは0〜100%で入力してください
-pptx.gradient-panel.enter-position-intensity-0-100	位置と濃さは0〜100%、色は6桁のRGB、focusは-2147483.648〜2147483.647%で入力してください
-pptx.gradient-panel.enter-angle-0-more-less	角度は0以上360度未満、位置と濃さは0〜100%、色は6桁のRGBで入力してください
+pptx.gradient-panel.enter-6-digit-rgb-color	色は6桁のRGB、不透明度は0〜100%で入力してください
+pptx.gradient-panel.enter-position-intensity-0-100	位置と不透明度は0〜100%、色は6桁のRGB、focusは-2147483.648〜2147483.647%で入力してください
+pptx.gradient-panel.enter-angle-0-more-less	角度は0以上360度未満、位置と不透明度は0〜100%、色は6桁のRGBで入力してください
 pptx.gradient-panel.fill-cannot-saved-selected-target	選択した対象には、この塗りを保存できません
 pptx.gradient-panel.path-gradient	パスグラデーション
 pptx.gradient-panel.linear-gradient	線形グラデーション
 pptx.gradient-panel.not-supported	未対応
-pptx.gradient-panel.focus-left-percent	focus 左 (%)
-pptx.gradient-panel.focus-top-percent	focus 上 (%)
-pptx.gradient-panel.focus-right-percent	focus 右 (%)
-pptx.gradient-panel.focus-bottom-percent	focus 下 (%)
-pptx.gradient-panel.angle-degrees	角度 (度)
+pptx.gradient-panel.focus-left-percent	focus 左
+pptx.gradient-panel.focus-top-percent	focus 上
+pptx.gradient-panel.focus-right-percent	focus 右
+pptx.gradient-panel.focus-bottom-percent	focus 下
+pptx.gradient-panel.angle-degrees	角度
 pptx.gradient-panel.foreground	前景
-pptx.gradient-panel.position-percent	位置 (%)
-pptx.gradient-panel.select-type	種類を選択
+pptx.gradient-panel.position-percent	位置
+pptx.gradient-panel.select-type	種類
 pptx.insets-panel.enter-finite-number-0-more	余白には0以上の有限な数値を入力してください
 pptx.paragraph-panel.target-text-has-changed-confirm	対象の本文が変更されています。入力を確定し、パネルを開き直してください
 pptx.insets-panel.enter-text-scale-1-100	文字倍率には1〜100%を入力するか、空欄で現在値を保持してください
@@ -1519,8 +1518,8 @@ pptx.section-panel.default-section	既定のセクション
 pptx.section-panel.cannot-apply-because-original	原本を保持して保存できないため適用できません
 pptx.shadow-panel.enter-blur-distance-0-169093	ぼかしと距離は0〜169093.20055118 pt、角度は0以上360度未満、色は6桁のRGB、濃さは0〜100%で入力してください
 pptx.shadow-panel.outer-shadow-cannot-saved-selected	選択した図形には、この外側影を保存できません
-pptx.shadow-panel.blur-pt	ぼかし (pt)
-pptx.shadow-panel.distance-pt	距離 (pt)
+pptx.shadow-panel.blur-pt	ぼかし
+pptx.shadow-panel.distance-pt	距離
 pptx.size-panel.width-cm	幅 cm
 pptx.size-panel.height-cm	高さ cm
 pptx.size-panel.enter-width-height-between-2	幅と高さは2.54〜142.24 cmの数値にしてください
@@ -1571,10 +1570,6 @@ pptx.chart-data.chart-data	グラフのデータ
 pptx.chrome.edit-data	データの編集
 pptx.chrome.edit-chart-data	グラフのデータの編集
 pptx.chrome.data-labels	データラベル
-pptx.comments.comment-selected-shape	選択した図形へのコメント
-pptx.comments.comment-slide	スライドへのコメント
-pptx.comments.new-comment-insert-comment	挿入 > コメントで新しいコメント
-pptx.comments.there-no-comments-slide	このスライドにコメントはありません
 pptx.misc.click-add-title	クリックしてタイトルを入力
 pptx.misc.click-add-subtitle	クリックしてサブタイトルを入力
 pptx.misc.click-add-text	クリックしてテキストを入力
@@ -1585,7 +1580,6 @@ pptx.chrome.pattern-preset	パターン（{preset}）
 pptx.chrome.slide-index	スライド {index}
 pptx.grid-view.slide-n	スライド {n}
 pptx.timing-panel.transition-timing-slide-index	スライド{index}の切り替えタイミング
-pptx.notes.note	メモ
 pptx.chrome.change-shape	図形の変更
 pptx.header-footer.slide-number	スライド番号
 pptx.header-footer.don-t-show-title-slide	タイトル スライドに表示しない
@@ -1666,6 +1660,7 @@ pptx.layout-panel.copy-name	{name} のコピー
 pptx.print-panel.slides-print	印刷するスライド
 pptx.print-panel.current-slide	現在のスライド
 pptx.print-panel.custom-range	スライド指定
+pptx.print-panel.slides-placeholder	例：1,3,5-8
 pptx.print-panel.full-page-slides	フル ページ サイズのスライド
 pptx.print-panel.handouts-n-slides-per-page	配布資料（1 ページ {n} スライド）
 pptx.print-panel.color	カラー
@@ -1706,7 +1701,7 @@ pptx.master-view.close-master-view	マスター表示を閉じる
 pptx.master-view.master-could-not-saved-error	マスターを書き戻せません：{error}
 pptx.master-view.slide-master-view-closed-undo	スライド マスター表示を閉じました（取り消しの履歴は消えました）
 pptx.misc.close-slide-master-view-before	スライド マスター表示を閉じてから保存してください
-pptx.master-view.size-pt	サイズ（pt）
+pptx.master-view.size-pt	サイズ
 pptx.master-view.color-rrggbb	色（RRGGBB）
 pptx.master-view.text-styles	文字の書式
 pptx.master-view.body	本文
@@ -1813,7 +1808,7 @@ _pptx.smooth-start	✓ 滑らかに開始
 _pptx.smooth-end	✓ 滑らかに終了
 _pptx.auto-reverse	✓ 自動反転
 _pptx.auto-reverse-2	自動反転
-_pptx.don-t-hide	消去しない
+_pptx.don-t-hide	そのまま表示
 _pptx.dim-2	淡色表示
 _pptx.after-animation	再生後の動作
 _pptx.with-previous-2	直前と同時
@@ -1860,7 +1855,6 @@ _pptx.first-line-indent-pt	最初の行のインデント
 _pptx.custom-show	目的別スライド ショー
 _pptx.add-captions	字幕を追加
 _pptx.n-of-total	{n} / {total} 件
-_pptx.type-label	種類: {label}
 _pptx.speaker-notes	スピーカー ノート
 _pptx.paragraph-line-spacing-spacing-indentation	段落の設定（行間・間隔・インデント）
 _pptx.this-file-is-not-a-picture	このファイルは画像ではありません
@@ -2103,15 +2097,15 @@ pptx.3d-model.anim.turntable	ターンテーブル (Turntable)
 pptx.3d-model.anim.swing	スイング (Swing)
 pptx.3d-model.anim.jump-turn	ジャンプしてターン (Jump & Turn)
 pptx.3d-model.anim.leave	退場 (Leave)
-pptx.3d-model.web-note	デスクトップ版ではローカル3Dモデルの挿入・全操作に対応。Web版では既存モデルの表示・3軸回転・ビュー切替・サイズ変更に対応します。
 pptx.record-preview	録画のプレビュー…
 pptx.record-preview.title	録画プレビュー
 pptx.record-preview.play	再生
 pptx.record-preview.pause	一時停止
 pptx.record-preview.prev-slide	前へ
 pptx.record-preview.next-slide	次へ
-pptx.record-preview.clear-timing	現在のスライド時間をクリア
-pptx.record-preview.set-5s	現在のスライド時間を5秒に設定
+pptx.record-preview.seconds	スライド時間
+pptx.record-preview.on-click	クリック
+pptx.record-preview.automatic	自動
 pptx.record-preview.start-show	現在のスライドからショー開始
 pptx.screen-reader	スクリーンリーダー ナビゲーション…
 pptx.screen-reader.title	スクリーンリーダー操作
@@ -2138,7 +2132,7 @@ pptx.customize-ribbon.group.drawing	図形と描画
 pptx.customize-ribbon.group.arrange	配置と表示
 pptx.customize-ribbon.reset-groups	グループ表示をリセット
 pptx.customize-ribbon.qat	クイック アクセス ツール バー (QAT)
-pptx.customize-ribbon.qat-reset	QATを既定にリセット
+pptx.customize-ribbon.qat-reset	既定にリセット
 pptx.trust-center	セキュリティ センター…
 pptx.trust-center.title	セキュリティ センターと信頼設定
 pptx.trust-center.links-warning	外部リンクを含むプレゼンテーションを開くときに警告を表示する
@@ -2146,8 +2140,6 @@ pptx.trust-center.media-warning	外部メディア・リンクされたクリッ
 pptx.trust-center.protected-view	信頼できない場所のファイルを保護ビュー（読み取り専用）で開く
 pptx.trust-center.macro-note	マクロ付きファイル (.pptm / .ppsm / .potm) はVBAコードを実行せず安全に保持・往復保存します。
 pptx.common.close	閉じる
-pptx.comments.post-tip-mac	投稿 (⌘Enter)
-pptx.comments.post-tip-other	投稿 (Ctrl+Enter)
 pptx.compare.kind.text-box	テキスト ボックス
 pptx.compare.kind.picture	画像
 pptx.compare.kind.chart	グラフ
@@ -2198,10 +2190,120 @@ pptx.chart.legend.trendline.power	累乗 ({series})
 pptx.chart.legend.trendline.moving-avg	{period} 区間移動平均 ({series})
 pptx.tools.word-count	スライド {slides}、単語 {words}、文字（空白を除く） {chars}
 
-chart.data.add-row	行を追加
-chart.data.add-series	系列を追加
 pptx.common.automatic	自動
 pptx.common.seconds-unit	秒
 pptx.paragraph-panel.keep-existing	現在の設定を保持
 pptx.smartart.add-item-short	追加
 pptx.3d-model.zoom	ズーム
+pptx.guides.add-vertical	縦のガイドを追加
+pptx.guides.add-horizontal	横のガイドを追加
+pptx.guides.remove-all	すべてのガイドを削除
+pptx.master-view.rename	名前の変更
+pptx.master-view.duplicate-layout	レイアウトの複製
+pptx.master-view.delete-layout	レイアウトの削除
+pptx.master-view.apply-to-slide	スライドに適用して閉じる
+pptx.master-view.layout-in-use	スライドが使っているレイアウトは削除できません
+pptx.anim.preset.blinds	ブラインド
+pptx.anim.preset.blinds.horizontal	水平
+pptx.anim.preset.blinds.vertical	垂直
+pptx.anim.preset.box	ボックス
+pptx.anim.preset.box.in	内
+pptx.anim.preset.box.out	外
+pptx.anim.preset.checkerboard	チェッカーボード
+pptx.anim.preset.checkerboard.across	横
+pptx.anim.preset.checkerboard.down	縦
+pptx.anim.preset.circle	円
+pptx.anim.preset.circle.in	内
+pptx.anim.preset.circle.out	外
+pptx.anim.preset.diamond	ひし形
+pptx.anim.preset.diamond.in	内
+pptx.anim.preset.diamond.out	外
+pptx.anim.preset.peek	のぞき込み
+pptx.anim.preset.peek.bottom	下から
+pptx.anim.preset.peek.left	左から
+pptx.anim.preset.peek.right	右から
+pptx.anim.preset.peek.top	上から
+pptx.anim.preset.plus	プラス
+pptx.anim.preset.plus.in	内
+pptx.anim.preset.plus.out	外
+pptx.anim.preset.randombar	ランダムストライプ
+pptx.anim.preset.randombar.horizontal	水平
+pptx.anim.preset.randombar.vertical	垂直
+pptx.anim.preset.split	スプリット
+pptx.anim.preset.split.out-vertical	垂直方向（外）
+pptx.anim.preset.split.in-vertical	垂直方向（内）
+pptx.anim.preset.split.out-horizontal	水平方向（外）
+pptx.anim.preset.split.in-horizontal	水平方向（内）
+pptx.anim.preset.strips	ストリップ
+pptx.anim.preset.strips.down-left	左下へ
+pptx.anim.preset.strips.up-left	左上へ
+pptx.anim.preset.strips.down-right	右下へ
+pptx.anim.preset.strips.up-right	右上へ
+pptx.anim.preset.other	その他の効果
+transition.checker	チェッカーボード
+transition.blinds	ブラインド
+transition.comb	コーム
+transition.strips	ストリップ
+transition.wedge	くさび形
+transition.diamond	ひし形
+transition.plus	プラス
+transition.random	ランダム
+transition.newsflash	ニュース速報
+transition.switch	スイッチ
+transition.flip	反転
+transition.honeycomb	ハニカム
+transition.cube	キューブ
+transition.box	ボックス
+transition.rotate	回転
+transition.orbit	オービット
+transition.doors	ドア
+transition.window	ウィンドウ
+transition.ferris	観覧車
+transition.gallery	ギャラリー
+transition.conveyor	コンベヤー
+transition.pan	パン
+transition.warp	ワープ
+transition.flythrough	フライスルー
+transition.flash	フラッシュ
+transition.shred	細断
+transition.reveal	リビール
+transition.wheelReverse	クロック
+transition.curtains	カーテン
+transition.wind	風
+transition.prestige	プレステージ
+transition.fracture	フラクチャー
+transition.crush	くしゃくしゃ
+transition.peelOff	はがれる
+transition.pageCurlDouble	ページめくり（両面）
+transition.pageCurlSingle	ページめくり（片面）
+transition.airplane	紙飛行機
+transition.origami	折り紙
+transition.fallOver	倒れる
+transition.drape	ドレープ
+transition.dir.left-down	左下から
+transition.dir.left-up	左上から
+transition.dir.right-down	右下から
+transition.dir.right-up	右上から
+transition.dir.center	中央から
+transition.dir.smoothly	スムーズ
+transition.dir.through-black	黒いスクリーンを通過
+transition.dir.strips-in	ストリップ（内側へ）
+transition.dir.strips-out	ストリップ（外側へ）
+transition.dir.rects-in	四角形（内側へ）
+transition.dir.rects-out	四角形（外側へ）
+pptx.anim.trigger.shape-click	図形のクリック時
+pptx.anim.trigger.target	対象の図形
+pptx.anim.unit.seconds	秒
+pptx.gradient-panel.path-shape	形状
+pptx.gradient-panel.stop-n	ストップ {n}
+pptx.anim.pane.col.order	順
+pptx.anim.pane.col.effect	対象と効果
+pptx.anim.pane.total	全体 {s} 秒
+pptx.zoom.summary-section	サマリー セクション
+pptx.zoom.summary-needs-sections	サマリー ズームには、セクションが必要です。セクションを追加してください。
+pptx.notes-format.close-format-editing	書式編集を閉じる
+pptx.anim.media.play	再生
+pptx.anim.media.pause	一時停止
+pptx.anim.media.stop	停止
+pptx.anim.media.class	メディア
+pptx.anim.panel.effect-change	効果の変更

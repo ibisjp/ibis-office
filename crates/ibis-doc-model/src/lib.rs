@@ -8,6 +8,9 @@
 
 pub mod analysis;
 pub mod animation;
+pub mod animation_preset;
+pub mod transition_catalog;
+pub mod transition_plan;
 pub mod slide_comment;
 pub mod chart;
 pub mod chart_refresh;
@@ -44,6 +47,7 @@ pub mod slicer;
 pub mod solver;
 pub mod table;
 pub mod text;
+pub mod typeset;
 
 pub use chart::{ExFormat, ExLabels, View3D, 
     Axis, AxisCrosses, AxisKind, AxisSourceKind, BoxStats, Chart, ChartDataTable, ChartEx, TreeNode, ChartGroup, ChartText, ChartTitle, ChartType, DataLabels, DispBlanksAs, FractionRect, Grouping,
@@ -61,10 +65,10 @@ pub use drawing::{
 };
 pub use flow::{
     SubdocumentInfo,
-    ControlInfo, ControlLock, TextEffects, TextShadow, ArtBorder, Block, BorderStyle, CellAnchor, CellDirection, Combine, CustomProperty, CustomPropertyValue, DocProperties, DocumentInteractionMode, DocumentProtection, DocumentViewMode, DropCap, DropCapLocation, EmphasisMark, RubyAlign, TableAlign, TableAnchor, TableCondition, TableFloat, TableLook, TableRegion, TableStyleRef, FlowAlign, FlowBorder, FlowCell, FlowDocument, FlowParagraph, FlowRow, FlowRun, FlowRunKind, FlowRunStyle, PictureLook,
+    ControlInfo, FontTableEntry, ControlLock, TextEffects, TextShadow, ArtBorder, Block, BorderStyle, CellAnchor, CellDirection, Combine, CustomProperty, CustomPropertyValue, DocProperties, DocumentInteractionMode, DocumentProtection, DocumentViewMode, DropCap, DropCapLocation, EmphasisMark, RubyAlign, TableAlign, TableAnchor, TableCondition, TableFloat, TableLook, TableRegion, TableStyleRef, FlowAlign, FlowBorder, FlowCell, FlowDocument, FlowParagraph, FlowRow, FlowRun, FlowRunKind, FlowRunStyle, PictureLook,
     FormFieldData, FormFieldKind,
     AbstractList, AutoFit, DocGridType, FlowStyle, FlowStyles, FlowTable, Link, PreferredWidth, LineHeight, ListInstance, ListLevel, ListRef, ListSuffix, LineNumbers, LineNumberRestart, MultiplePages, Numbering, PageColumns, PageSetup, PageVAlign, NoteSettings, NoteFormat, NoteRestart, NotePosition, ParaFormat, ParagraphSpacingPreset, StyleSetPreset, Watermark,
-    Comment, Note, PartKind, Revision, RevisionKind, RowHeight, RunFormat, SectionBreak, SectionSetup, ShadingPattern, StyleKind, TabAlign, TabChange, TabStop, UnderlineStyle, VerticalMerge, VerticalPosition, FlowThemeColor, NoteSeparator, format_list_number, format_page_number, list_labels,
+    Comment, Note, PartKind, Revision, RevisionKind, RowHeight, RunFormat, SectionBreak, SectionSetup, ShadingPattern, StyleKind, TabAlign, TabChange, TabLeader, TabStop, UnderlineStyle, VerticalMerge, VerticalPosition, FlowThemeColor, NoteSeparator, format_list_number, format_page_number, list_labels,
     Ligatures, NumberForm, NumberSpacing,
     ThemeFontLang,
     DEFAULT_PICTURE_CONTROL_PLACEHOLDER_PNG, DEFAULT_PICTURE_CONTROL_WIDTH_EMU, DEFAULT_PICTURE_CONTROL_HEIGHT_EMU,
@@ -78,9 +82,10 @@ pub use merge::{
 };
 pub use geometry::{EMU_PER_INCH, EMU_PER_POINT, Emu, EmuPoint, EmuRect, EmuSize, ResizeHandle};
 pub use slide_comment::{Author, CommentReply, SlideComment};
-pub use animation::{Animation, AnimationAfterEffect, AnimationClass, AnimationLook, AnimationRepeat, AnimationSide, AnimationStart, AnimationTrigger, ChartAnimationElement, ChartBuildStep, DiagramAnimationElement, DiagramBuildStep, TextUnit, UnitGap};
-pub use model::{
-    Glue,
+pub use animation_preset::{AnimBehavior, BehaviorKind};
+pub use animation::{Animation, AnimationAfterEffect, AnimationClass, AnimationLook, AnimationRepeat, AnimationSide, AnimationStart, AnimationTrigger, ChartAnimationElement, ChartBuildStep, DiagramAnimationElement, DiagramBuildStep, MediaCommand, TextUnit, UnitGap};
+pub use model::{ZoomObject, ZoomTarget, 
+    Glue, SlideGuide,
     AltText, ArtisticEffect, AutoShape, BlipEffects, Clip, PictureTile, ClipOptions, Crop, CustomShow, EmbeddedFont, FloatingAnchor, Layout, LayoutId, LayoutPlaceholder, LayoutScale, Master, MasterId, NotesDate, NotesMarks, MediaBookmark, MediaCaptionTrack, MediaStart, MediaVolume, PlaceholderRef, SlidePlaceholder, Media, MediaFormat, MediaId, Picture, PictureWrapType, Placeholder, Presentation, Shape,
     WrapPoint, WrapPolygon,
     Section, ShapeGroup, GroupMember, ShapeId, ShapeKind, ShowProperties, ShowSlideRange, ShowType, Slide, SlideId, Tilt, CameraPreset, Transition, TransitionSound,
@@ -90,15 +95,15 @@ pub use model::{
 pub use form_control::{ControlHit, ControlKind, FormControl};
 pub use shape_geometry::{FormulaGeometry, GeometryDef, GeometryPath, Guide, Outline, PathFill, PathOp, Subpath};
 pub use sheet::{
-    cell_name, CellImage, ExternalBook, ExternalSheet, CalculationCompatibilityVersion, CalcMode, Border, BorderLine, CellUnderline, CellAlign, CellError, CellGradient, CellKind, CellRange, CellStyle, CellValue, CellVerticalAlign, CustomCellStyle, DefinedName, Sheet,
-    SheetCell, CellRun, DataTable, ConsolidateFunction, DataConsolidate, SubtotalParams, ScenarioInputCell, SheetScenario, SheetScenarios, SheetComment, ThemeColor, Unsaved, SheetHeaderFooter, SheetPrint, SheetProtection, ProtectedRange, WorkbookProtection, PasswordHash, ProtectionAllowed, SheetState, Workbook, WorkbookSheet, SheetFloat, ConditionalFormat, CfRule, CfKind, CfValue, CfStyle, CfIcon, DataBarAxisPosition, DataBarDirection, Validation, Hyperlink, AutoFilter, ColumnFilter, DateGroup, SheetTable, TableStyleInfo, TableTotal, ThreadPost, ThreadedComment, Sparkline, SparklineAxis, SparklineEmpty, SparklineGroup, SparklineKind,
+    cell_name, CellImage, ExternalBook, ExternalSheet, CalculationCompatibilityVersion, CalcMode, Border, BorderLine, CellUnderline, CellAlign, CellError, CellGradient, sorted_stops, CellKind, CellRange, CellStyle, CellValue, CellVerticalAlign, CustomCellStyle, DefinedName, Sheet,
+    SheetCell, CellRun, DataTable, ConsolidateFunction, DataConsolidate, SubtotalParams, ScenarioInputCell, SheetScenario, SheetScenarios, SheetComment, NoteRect, ThemeColor, Unsaved, SheetHeaderFooter, SheetPrint, SheetProtection, ProtectedRange, WorkbookProtection, PasswordHash, ProtectionAllowed, SheetState, Workbook, WorkbookSheet, SheetFloat, ConditionalFormat, CfRule, CfKind, CfValue, CfStyle, CfIcon, DataBarAxisPosition, DataBarDirection, Validation, Hyperlink, AutoFilter, ColumnFilter, DateGroup, SheetTable, TableStyleInfo, TableTotal, ThreadPost, ThreadedComment, Sparkline, SparklineAxis, SparklineEmpty, SparklineGroup, SparklineKind,
     CustomWorkbookView, CustomSheetView,
     PhoneticType, PhoneticAlignment, PhoneticProperties,
 };
-pub use pivot::{DateGroupBy, PivotAxis, PivotDataField, PivotDetails, PivotField, PivotFieldGrouping, PivotFilter, PivotItem, PivotLine, PivotPageField, PivotSort, PivotSource, PivotStyleInfo, PivotTable, chart_from_pivot, update_chart_from_pivot};
+pub use pivot::{DateGroupBy, PivotAliases, item_key as pivot_item_key, PivotAxis, PivotDataField, PivotDetails, PivotField, PivotFieldGrouping, PivotFilter, PivotItem, PivotLine, PivotPageField, PivotSort, PivotSource, PivotStyleInfo, PivotTable, chart_from_pivot, update_chart_from_pivot};
 pub use sheet_calc::{BookView, ensure_calc_index, warmup_calc_index_ahead};
 pub use table::{CellBorders, Table, TableCell, TableRow, TableStyleOptions};
-pub use text::{KernMin, NumberScheme, AutoNumber, 
+pub use text::{tate_chu_yoko_fit_scale, KernMin, TateChuYoko, TATE_CHU_YOKO_FIT_WIDTH_EM, NumberScheme, AutoNumber, 
     Bullet, SymbolBullet, FONT_SIZE_STEPS, FontAlign, FontSet, CharacterFormat, ListKind, ParagraphFormat, ThemeFonts, is_east_asian, Insets, LineSpacing, Paragraph, Run, RunStyle, TextAlign, TextAutofit, TextBody,
     SlideLink, TextField, TextStyle, VerticalAnchor, step_font_size, autofit_font_size_pt, Strike, Caps, Underline, VerticalKind,
     TextTabAlign, TextTabStop,

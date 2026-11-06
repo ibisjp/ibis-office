@@ -26,17 +26,6 @@ impl RenderOnce for FontSizeControl {
         } else {
             disabled_color()
         };
-        let step =
-            |id: &'static str, name: &'static str, tip: &'static str, handler: &Option<Handler>| {
-                tool_button(
-                    &ToolButton {
-                        handler: handler.clone(),
-                        ..ToolButton::new(id, name, tip)
-                    },
-                    index,
-                    editor,
-                )
-            };
         let current_text = value.clone().unwrap_or_default();
         let init_val = current_text.to_string();
         let owner = editor.upgrade().expect("font size owner");
@@ -46,88 +35,13 @@ impl RenderOnce for FontSizeControl {
         {
             input.update(cx, |i, cx| i.set_value(current_text.clone(), window, cx));
         }
-        let focus_input = input.clone();
-        let focus_owner=editor.clone();
-        let tab_editor = editor.clone();
-        let tab_action_editor = editor.clone();
-        let back_tab_editor = editor.clone();
-        let size_control = div()
-            .relative()
-            .id(SharedString::from(format!("font-size-box-{index}")))
-            .bg(rgb(0xffffff))
-            .w(px(48.))
-            .h(px(26.))
-            .border_1()
-            .border_color(rgb(if input.read(cx).focus_handle(cx).is_focused(window){PRIMARY_BUTTON_BG}else{BORDER}))
-            .rounded(px(4.))
-            .capture_action(move |_: &gpui_kit::component::input::IndentInline, w, cx| {
-                let _ = tab_action_editor.update(cx, |e, cx| e.commit_toolbar_font_size(w, cx));
-                cx.stop_propagation();
-            })
-            .capture_action(
-                move |_: &gpui_kit::component::input::OutdentInline, w, cx| {
-                    let _ = back_tab_editor.update(cx, |e, cx| e.commit_toolbar_font_size(w, cx));
-                    cx.stop_propagation();
-                },
-            )
-            .capture_key_down(move |event: &KeyDownEvent, w, cx| {
-                if event.keystroke.key == "tab" {
-                    let _ = tab_editor.update(cx, |e, cx| e.commit_toolbar_font_size(w, cx));
-                    w.prevent_default();
-                    cx.stop_propagation();
-                }
-            })
-            .on_mouse_down(MouseButton::Left,|_,_,cx|cx.stop_propagation())
-            .on_click(|_,_,cx|cx.stop_propagation())
-            .capture_any_mouse_down(move |_, w, cx| {
-                let select_all = !focus_input.read(cx).focus_handle(cx).is_focused(w);
-                let field = focus_input.clone();
-                let owner=focus_owner.clone();
-                w.defer(cx, move |w, cx| {
-                    field.update(cx, |i, cx| {
-                        i.focus(w, cx);
-                        if select_all { i.select_all(w, cx); }
-                    });
-                    let _=owner.update(cx,|_,cx|cx.notify());
-                });
-            })
-            .child(
-                canvas(
-                    |_, _, _| (),
-                    |bounds, _, _, _| {
-                        #[cfg(all(
-                            feature = "scenarios",
-                            any(target_os = "macos", target_os = "linux")
-                        ))]
-                        crate::shell::scenario::button_probe::record_bounds(
-                            "font-size-edit",
-                            bounds,
-                        );
-                    },
-                )
-                .absolute()
-                .inset_0(),
-            )
-            .child(
-                gpui_kit::component::input::Input::new(&input)
-                    .small()
-                    .appearance(false)
-                    .px_1()
-                    .cleanable(false)
-                    .disabled(!enabled),
-            )
-            .into_any_element();
         let editor_click = editor.clone();
         let init_val_btn = init_val.clone();
-        let caret = action_button(SharedString::from(format!("font-size-trigger-{index}")))
-            .ghost()
-            .xsmall()
-            .w(px(TOOLBAR_CARET_WIDTH))
-            .h(px(28.))
-            .px_0()
-            .disabled(!enabled)
-            .child(icon("arrow_drop_down", 16., color))
-            .on_click(move |_, w, cx| {
+        let popup: Option<StepperPopup> = enabled.then(|| {
+            let editor_open = editor.clone();
+            let editor_content = editor.clone();
+            let is_open = owner.read(cx).font_size_menu_open;
+            let toggle: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new(move |w, cx| {
                 let _ = editor_click.update(cx, |e, cx| {
                     e.font_size_menu_open = !e.font_size_menu_open;
                     e.toolbar_search_open = None;
@@ -140,34 +54,17 @@ impl RenderOnce for FontSizeControl {
                             if search {i.focus(w, cx);}
                         });
                     }
-                    set_current_toolbar_open(e.font_size_menu_open, None);
                     cx.notify();
                 });
             });
-        let popover_anchor: Option<AnyElement> = enabled.then(|| {
-            let editor_open = editor.clone();
-            let editor_content = editor.clone();
-            let is_open = CURRENT_TOOLBAR_OPEN.with(|c| c.get().0);
-            Popover::new(SharedString::from(format!("font-size-popover-{index}")))
-                .anchor(Anchor::TopLeft)
-                .open(is_open)
-                .trigger(
-                    Button::new(SharedString::from(format!("font-size-anchor-{index}")))
-                        .ghost()
-                        .xsmall()
-                        .p_0()
-                        .w(px(0.))
-                        .min_w(px(0.))
-                        .h(px(28.)),
-                )
-                .on_open_change(move |open, window, cx| {
+            let open_changed: Rc<dyn Fn(bool, &mut Window, &mut App)> = Rc::new(move |open: bool, window: &mut Window, cx: &mut App| {
                     let init_val = init_val.clone();
                     editor_open
                         .update(cx, |this, cx| {
-                            this.font_size_menu_open = *open;
+                            this.font_size_menu_open = open;
                             this.font_size_filtering = false;
                             this.font_size_selected = None;
-                            if *open {
+                            if open {
                                 this.toolbar_search_open = None;
                                 this.font_size_scroll.set_offset(Point::default());
                                 let clean = init_val.trim_end_matches('+').to_string();
@@ -176,15 +73,11 @@ impl RenderOnce for FontSizeControl {
                                     if search {input.focus(window, cx);}
                                 });
                             }
-                            set_current_toolbar_open(
-                                this.font_size_menu_open,
-                                this.toolbar_search_open,
-                            );
                             cx.notify();
                         })
                         .ok();
-                })
-                .content(move |_, window, cx| {
+            });
+            let content: Rc<dyn Fn(&mut Window, &mut App) -> AnyElement> = Rc::new(move |window: &mut Window, cx: &mut App| {
                     let Some(ed) = editor_content.upgrade() else {
                         return div().into_any_element();
                     };
@@ -245,10 +138,6 @@ impl RenderOnce for FontSizeControl {
                                                         this.font_size_menu_open = false;
                                                         this.font_size_filtering = false;
                                                         this.font_size_selected = None;
-                                                        set_current_toolbar_open(
-                                                            false,
-                                                            this.toolbar_search_open,
-                                                        );
                                                         this.focus_handle.focus(window, cx);
                                                         cx.notify();
                                                     })
@@ -372,10 +261,6 @@ impl RenderOnce for FontSizeControl {
                                                                 this.font_size_menu_open = false;
                                                                 this.font_size_filtering = false;
                                                                 this.font_size_selected = None;
-                                                                set_current_toolbar_open(
-                                                                    false,
-                                                                    this.toolbar_search_open,
-                                                                );
                                                                 this.set_toolbar_font_size(
                                                                     pt, window, cx,
                                                                 );
@@ -395,28 +280,17 @@ impl RenderOnce for FontSizeControl {
                                 )),
                         )
                         .into_any_element()
-                })
-                .into_any_element()
+            });
+            StepperPopup { open: is_open, toggle, open_changed, content }
         });
-        h_flex()
-            .h(px(28.))
-            .flex_none()
-            .items_center()
-            .children(popover_anchor)
-            .child(step(
-                "font-smaller",
-                "remove",
-                "_shell.decrease-font-size",
-                smaller,
-            ))
-            .child(size_control)
-            .child(caret)
-            .child(step(
-                "font-larger",
-                "add",
-                "_shell.increase-font-size",
-                larger,
-            ))
-            .into_any_element()
+        let (minus, plus) = (smaller.clone(), larger.clone());
+        let mut stepper = bound_number_stepper("font-size", &input, editor).disabled(!enabled)
+            .value_width(px(48.))
+            .tooltips(crate::shell::i18n::text("_shell.decrease-font-size"), crate::shell::i18n::text("_shell.increase-font-size"))
+            .on_step(minus, plus)
+            .on_commit(Rc::new(move |e, w, cx| e.commit_toolbar_font_size(w, cx)));
+        if let Some(popup) = popup { stepper = stepper.popup(popup); }
+        let _ = index;
+        stepper.into_any_element()
     }
 }

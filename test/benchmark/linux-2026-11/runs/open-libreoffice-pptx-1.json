@@ -1,0 +1,56 @@
+{
+ "end": 5.077,
+ "last_change": 5.077,
+ "end_video_frame": 15,
+ "first_change": 1.918,
+ "window_end": 5.765,
+ "doc_changes_count": 5,
+ "doc_changes": [
+  [
+   1.918,
+   0.12964
+  ],
+  [
+   4.139,
+   0.12964
+  ],
+  [
+   4.739,
+   0.73661
+  ],
+  [
+   4.761,
+   0.00273
+  ],
+  [
+   5.077,
+   0.59786
+  ]
+ ],
+ "recorded_until": 13.078,
+ "grabs": 1240,
+ "capped": false,
+ "tag": "open-libreoffice-pptx-1",
+ "scenario": "open",
+ "app": "libreoffice",
+ "kind": "pptx",
+ "run": 1,
+ "file": "earnings-presentation.pptx",
+ "command": [
+  "soffice26",
+  "/tmp/ibis-bench-zzahty_a/earnings-presentation.pptx"
+ ],
+ "rects": [
+  [
+   0.0,
+   "320 140 1280 800"
+  ]
+ ],
+ "cap": 40,
+ "measured_at": "2026-11-03 19:47:09",
+ "load_before": [
+  0.98,
+  0.88,
+  0.61
+ ]
+}

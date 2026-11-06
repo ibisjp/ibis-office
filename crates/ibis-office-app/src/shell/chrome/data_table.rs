@@ -14,6 +14,35 @@ pub(crate) fn table_surface() -> Div {
         .overflow_hidden()
 }
 pub(crate) const TABLE_ROW_HEIGHT: f32 = 36.;
+/// How long a row takes to move aside for a dragged row (every table that reorders by dragging: `reorderable`, `live_reorder`).
+pub(crate) const REORDER_MOVE_MS: u64 = 160;
+/// The easing of that move (ease-out, cubic).
+pub(crate) fn reorder_ease(t: f32) -> f32 {
+    1. - (1. - t).powi(3)
+}
+/// The shadow of a row lifted by the pointer (every table that reorders by dragging: `reorderable`, `live_reorder`): one above and
+/// one below the row, so it stands out from the rows it floats over.
+pub(crate) fn lifted_row_shadow() -> Vec<BoxShadow> {
+    [-3., 3.]
+        .into_iter()
+        .map(|dy| BoxShadow { color: gpui_kit::black().opacity(0.18), offset: point(px(0.), px(dy)), blur_radius: px(6.), spread_radius: px(0.), inset: false })
+        .collect()
+}
+/// Where a row carried by the pointer stands among the rows it may take the places of (`lo..=hi`): it passes a neighbour when
+/// the centre of the carried row (`center`) passes the neighbour's centre. `at` is where it stood, `top_of(k)` the top of the
+/// place of row `k`, `height` the one height of the rows. Every table that reorders by dragging: `RowReorder` (`reorderable`)
+/// and the live reorder of `RowDnd` (`live_reorder`).
+pub(crate) fn reorder_step(mut at: usize, lo: usize, hi: usize, center: f32, height: f32, top_of: impl Fn(usize) -> f32) -> usize {
+    while at < hi && center >= top_of(at + 1) + height / 2. {
+        at += 1;
+    }
+    while at > lo && center <= top_of(at - 1) + height / 2. {
+        at -= 1;
+    }
+    at
+}
+/// The heading row's background in every table (a light grey); `DataTable::header_bg` overrides it.
+pub(crate) const TABLE_HEADER_BG: u32 = 0xf3f4f6;
 #[derive(Default)]
 pub(crate) struct RowReorder {
     pub order: Vec<usize>,
@@ -69,15 +98,11 @@ impl RowReorder {
             return;
         };
         let center = self.pointer - self.grab + height / 2. - f32::from(self.bounds.origin.y);
-        let mut at = self.order.iter().position(|i| *i == id).unwrap();
-        let original = at;
-        while at + 1 < self.order.len() && center >= (at + 1) as f32 * height + height / 2. {
-            self.order.swap(at, at + 1);
-            at += 1;
-        }
-        while at > 0 && center <= (at - 1) as f32 * height + height / 2. {
-            self.order.swap(at, at - 1);
-            at -= 1;
+        let original = self.order.iter().position(|i| *i == id).unwrap();
+        let at = reorder_step(original, 0, self.order.len() - 1, center, height, |k| k as f32 * height);
+        if at != original {
+            let moved = self.order.remove(original);
+            self.order.insert(at, moved);
         }
         if at != original {
             self.generation += 1;
@@ -125,6 +150,8 @@ pub(crate) struct DataTable {
     height: f32,
     reorder: Option<(Rc<RefCell<RowReorder>>, Commit)>,
     editor: WeakEntity<SlideEditor>,
+    virt: Option<super::virtual_table::Virtual>,
+    header_bg: u32,
 }
 impl DataTable {
     pub(crate) fn new(
@@ -140,8 +167,87 @@ impl DataTable {
             height: TABLE_ROW_HEIGHT,
             reorder: None,
             editor: cx.weak_entity(),
+            virt: None,
+            header_bg: TABLE_HEADER_BG,
         }
     }
+    /// The scrolling table of a pane with one table (see `virtual_table.rs`): the heading row stays, only the value
+    /// rows scroll and have a scrollbar, and `build` is asked for the visible rows alone. `header` has one element
+    /// per column; `build` returns one `TableRow` per row of the range, each with one element per column.
+    pub(crate) fn virtualized(
+        id: &'static str,
+        columns: Vec<super::virtual_table::TableColumn>,
+        header: Vec<AnyElement>,
+        state: super::virtual_table::TableState,
+        count: usize,
+        build: impl Fn(std::ops::Range<usize>, &mut Window, &mut App) -> Vec<super::virtual_table::TableRow> + 'static,
+        cx: &Context<SlideEditor>,
+    ) -> Self {
+        let mut table = Self::new(id, None, Vec::new(), cx);
+        table.virt = Some(super::virtual_table::Virtual { columns, header, state, count, build: Rc::new(build), empty: None, dnd: None, row_actions: 0, wide_actions: 0, drag_handle: false, live_reorder: false });
+        table
+    }
+    /// The heading row's background, when it must differ from the app-wide `TABLE_HEADER_BG`.
+    pub(crate) fn header_bg(mut self, color: u32) -> Self {
+        self.header_bg = color;
+        self
+    }
+    /// What the scrolling table shows in place of the rows when there are none.
+    pub(crate) fn empty(mut self, element: AnyElement) -> Self {
+        if let Some(v) = self.virt.as_mut() {
+            v.empty = Some(element);
+        }
+        self
+    }
+    /// Rows are dragged between this table and the others that share `dnd`, and `on_drop` is told what fell on a row
+    /// of this table (the ids the rows were given with `TableRow::draggable`, `drop_between`, `drop_into`).
+    pub(crate) fn row_dnd(
+        mut self,
+        dnd: super::row_dnd::RowDnd,
+        on_drop: impl Fn(&mut SlideEditor, super::row_dnd::RowDropEvent, &mut Window, &mut Context<SlideEditor>) + 'static,
+    ) -> Self {
+        if let Some(v) = self.virt.as_mut() {
+            v.dnd = Some((dnd, Rc::new(on_drop)));
+        }
+        self
+    }
+
+    /// The rows of this table dragged by `row_dnd` reorder live, as `reorderable` tables do: the rows between the dragged
+    /// row's place and the place it would take slide aside (with the table's one move animation) and the dragged row goes
+    /// to that place, instead of an insertion line. For a table whose rows only change places among themselves (every
+    /// row `drop_between`, no group rows).
+    pub(crate) fn live_reorder(mut self) -> Self {
+        if let Some(v) = self.virt.as_mut() {
+            v.live_reorder = true;
+        }
+        self
+    }
+
+    /// The most buttons (`TableRow::action`) a row has at its end; the room is kept in every row and the heading row.
+    pub(crate) fn row_actions(mut self, most: usize) -> Self {
+        if let Some(v) = self.virt.as_mut() {
+            v.row_actions = most;
+        }
+        self
+    }
+
+    /// How many of the `row_actions` (the last ones) are `TableRow::action_when_wide`: they show only when the table is wide.
+    pub(crate) fn wide_actions(mut self, count: usize) -> Self {
+        if let Some(v) = self.virt.as_mut() {
+            v.wide_actions = count;
+        }
+        self
+    }
+
+    /// A draggable row (`TableRow::draggable`) ends in the three-line grip that says it can be dragged (after the row's
+    /// buttons). The room is kept in every row and the heading row, so the columns line up.
+    pub(crate) fn drag_handles(mut self) -> Self {
+        if let Some(v) = self.virt.as_mut() {
+            v.drag_handle = true;
+        }
+        self
+    }
+
     pub(crate) fn row_height(mut self, height: f32) -> Self {
         self.height = height;
         self
@@ -158,6 +264,15 @@ impl DataTable {
 }
 impl RenderOnce for DataTable {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if let Some(v) = self.virt {
+            if let Some((dnd, _)) = v.dnd.as_ref() {
+                let (dnd, editor) = (dnd.clone(), self.editor.clone());
+                cx.defer(move |cx| {
+                    let _ = editor.update(cx, |e, _| e.active_row_dnd = Some(dnd));
+                });
+            }
+            return super::virtual_table::render(self.id, self.height, v, self.editor, self.header_bg);
+        }
         let mut surface = table_surface().id(self.id);
         if let Some(header) = self.header {
             surface = surface.child(
@@ -165,7 +280,7 @@ impl RenderOnce for DataTable {
                     .h(px(self.height))
                     .min_h(px(self.height))
                     .flex_none()
-                    .bg(rgb(0xf3f4f6))
+                    .bg(rgb(self.header_bg))
                     .overflow_hidden()
                     .child(header),
             );
@@ -245,8 +360,8 @@ impl RenderOnce for DataTable {
                             st.borrow_mut().start(id, ev.position);
                             w.capture_pointer(capture);
                             let _ = e.update(cx, |editor, cx| {
-                                if editor.panel_dialog_is_modal() {
-                                    if let Some(f) = editor.panel_dialog.focus.as_ref() {
+                                if editor.dialog_is_modal() {
+                                    if let Some(f) = editor.dialog.focus.as_ref() {
                                         f.focus(w, cx);
                                     }
                                 } else {
@@ -343,28 +458,13 @@ impl RenderOnce for DataTable {
                 );
             if lifted {
                 row.top(px(drag_top))
-                    .shadow(vec![
-                        BoxShadow {
-                            color: gpui_kit::black().opacity(0.18),
-                            offset: point(px(0.), px(-3.)),
-                            blur_radius: px(6.),
-                            spread_radius: px(0.),
-                            inset: false,
-                        },
-                        BoxShadow {
-                            color: gpui_kit::black().opacity(0.18),
-                            offset: point(px(0.), px(3.)),
-                            blur_radius: px(6.),
-                            spread_radius: px(0.),
-                            inset: false,
-                        },
-                    ])
+                    .shadow(lifted_row_shadow())
                     .into_any_element()
             } else {
                 row.with_animation(
                     SharedString::from(format!("{}-move-{generation}-{id}", self.id)),
-                    Animation::new(std::time::Duration::from_millis(160))
-                        .with_easing(|t| 1. - (1. - t).powi(3)),
+                    Animation::new(std::time::Duration::from_millis(REORDER_MOVE_MS))
+                        .with_easing(reorder_ease),
                     move |row, t| row.top(px(start + (target - start) * t)),
                 )
                 .into_any_element()

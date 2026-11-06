@@ -112,7 +112,13 @@ impl SlideEditor {
             return;
         }
         let Some((at, id, chart)) = self.selected_doc_chart() else { return };
-        let panel = ChartPanel::new(&chart, (SlideId(0), id), window, cx);
+        let mut panel = ChartPanel::new(&chart, (SlideId(0), id), window, cx);
+        if let Some(s) = self.doc_state_mut() {
+            s.helper.chart_data = None;
+        }
+        // The data is the workbook's: its grid (the spreadsheet screen's editor, grid only) is shown in the panel.
+        panel.grid = self.chart_data_grid(SlideId(0), id, window, cx);
+        let data_window = self.doc_state_mut().and_then(|s| s.helper.chart_data.take());
         if let Some(s) = self.doc_state_mut() {
             s.find = None;
             s.link = None;
@@ -128,6 +134,7 @@ impl SlideEditor {
             s.merge = None;
             s.helper = super::help_panels::HelpPanels::default();
             s.helper.chart = Some((panel, at));
+            s.helper.chart_data = data_window;
         }
         self.sidebar_open = true;
         cx.notify();
@@ -136,6 +143,7 @@ impl SlideEditor {
     pub(crate) fn close_doc_chart_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(s) = self.doc_state_mut() {
             s.helper.chart = None;
+            s.helper.chart_data = None;
         }
         self.focus_handle.focus(window, cx);
         cx.notify();
@@ -159,6 +167,44 @@ impl SlideEditor {
                 }
                 cx.notify();
             }
+        }
+    }
+
+    /// The chart with shape id `id` of the document: where it is and the chart.
+    fn doc_chart_by_id(&self, id: ShapeId) -> Option<(FlowPos, Chart)> {
+        fn find(blocks: &[ibis_doc_model::Block], id: ShapeId) -> Option<(FlowPos, Chart)> {
+            for block in blocks {
+                match block {
+                    ibis_doc_model::Block::Paragraph(p) => {
+                        let mut at = 0;
+                        for run in &p.runs {
+                            if let FlowRunKind::Shape(shape) = &run.kind && shape.id == id && let ShapeKind::Chart(chart) = &shape.kind {
+                                return Some((FlowPos::new(p.id, at), (**chart).clone()));
+                            }
+                            at += run.len();
+                        }
+                    }
+                    ibis_doc_model::Block::Table(t) => {
+                        if let Some(found) = t.rows.iter().flat_map(|r| &r.cells).find_map(|c| find(&c.blocks, id)) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            None
+        }
+        find(&self.flow()?.body, id)
+    }
+
+    /// The data grid of chart `shape` changed (`book` its workbook's model, `data` the workbook as saved and the
+    /// ranges): the chart made anew from it, in one step of undo, and the workbook kept for saving.
+    pub(crate) fn apply_doc_chart_data(&mut self, shape: ShapeId, book: &ibis_doc_model::Presentation, data: ibis_pptx::ChartData, cx: &mut Context<Self>) {
+        let Some(source) = self.source.clone() else { return };
+        let Some((at, chart)) = self.doc_chart_by_id(shape) else { return };
+        let target = ibis_pptx::chart_from_data(&chart, book, &data.series);
+        source.set_chart_data(shape, target.clone(), data);
+        if target != chart {
+            self.run_flow(vec![FlowCommand::SetChart { at, chart: Box::new(target) }], cx);
         }
     }
 

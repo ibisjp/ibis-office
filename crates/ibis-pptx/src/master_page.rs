@@ -307,6 +307,12 @@ pub fn apply(data: &[u8], edited: &[u8], part: &str) -> Result<Vec<u8>, Error> {
             }
         }
     }
+    // ガイド線 as edited on the page: the part's own (a master's, or a layout's, in its kind of extension).
+    if let (Some(slide_root), Some(root)) = (slide_doc.root_element(), doc.root_element()) {
+        let guides = crate::save::pptx_guides::read(&slide_doc, slide_root);
+        let uri = if doc.local_name(root) == "sldMaster" { crate::save::pptx_guides::URI_MASTER } else { crate::save::pptx_guides::URI_PAGE };
+        crate::save::pptx_guides::write(&mut doc, root, &guides, uri)?;
+    }
     package.set_xml(part, doc);
     // The theme (配色・フォント) as edited on the page: the master's theme part (a layout's through its master).
     if let Some(theme) = theme_part_of(&package, part)? {
@@ -360,6 +366,144 @@ pub fn apply(data: &[u8], edited: &[u8], part: &str) -> Result<Vec<u8>, Error> {
             }
         }
     }
+    Ok(package.save(SaveOptions::default())?)
+}
+
+// ----- レイアウトの名前の変更・複製・削除 (the master view's list) --------------------------------
+
+/// The master that has layout part `layout` in its list.
+fn master_of(package: &Package, layout: &str) -> Result<String, Error> {
+    package.relationships(layout)?.into_iter().find(|r| r.kind == REL_SLIDE_MASTER && !r.external).and_then(|r| r.target_part(layout)).ok_or_else(|| err("マスターの無いレイアウトです"))
+}
+
+/// Layout `part` named `name` (`p:cSld/@name`); a master's name is its theme's.
+pub fn rename_page(data: &[u8], part: &str, name: &str) -> Result<Vec<u8>, Error> {
+    let mut package = Package::open(data.to_vec())?;
+    let target = {
+        let doc = package.xml(part)?;
+        let root = doc.root_element().ok_or_else(|| err("ページが空です"))?;
+        match doc.local_name(root) {
+            "sldLayout" => part.to_string(),
+            "sldMaster" => theme_part_of(&package, part)?.ok_or_else(|| err("マスターにテーマがありません"))?,
+            _ => return Err(err("マスターでもレイアウトでもありません")),
+        }
+    };
+    let doc = package.xml_mut(&target)?;
+    let root = doc.root_element().ok_or_else(|| err("ページが空です"))?;
+    if doc.local_name(root) == "sldLayout" {
+        let csld = doc.child(root, "cSld").ok_or_else(|| err("レイアウトに cSld がありません"))?;
+        doc.set_attr(csld, "name", name);
+    } else {
+        doc.set_attr(root, "name", name);
+    }
+    Ok(package.save(SaveOptions::default())?)
+}
+
+/// The largest id of the masters and layouts of the file (their ids share one range).
+fn largest_layout_or_master_id(package: &Package) -> Result<u64, Error> {
+    let main = main_part(package)?;
+    let mut top: u64 = 2_147_483_647;
+    let doc = package.xml(&main)?;
+    let root = doc.root_element().ok_or_else(|| err("プレゼンテーションが空です"))?;
+    if let Some(list) = doc.child(root, "sldMasterIdLst") {
+        for e in doc.elements(list) {
+            top = top.max(doc.attr(e, "id").and_then(|v| v.parse().ok()).unwrap_or(0));
+        }
+    }
+    for rel in package.relationships(&main)?.into_iter().filter(|r| r.kind == REL_SLIDE_MASTER && !r.external) {
+        let Some(master) = rel.target_part(&main).filter(|p| package.contains(p)) else { continue };
+        let doc = package.xml(&master)?;
+        let Some(root) = doc.root_element() else { continue };
+        if let Some(list) = doc.child(root, "sldLayoutIdLst") {
+            for e in doc.elements(list) {
+                top = top.max(doc.attr(e, "id").and_then(|v| v.parse().ok()).unwrap_or(0));
+            }
+        }
+    }
+    Ok(top)
+}
+
+/// Layout `part` copied, right after it in its master's list, named `name`: the file, and the
+/// part of the copy.
+pub fn duplicate_layout(data: &[u8], part: &str, name: &str) -> Result<(Vec<u8>, String), Error> {
+    let mut package = Package::open(data.to_vec())?;
+    let master = master_of(&package, part)?;
+    let copy = next_part_name(&package, part);
+    // The part, its relationships (the master, the pictures: the same directory, so the same targets), its type.
+    package.set_bytes(&copy, package.read(part)?);
+    if let Some(ct) = package.content_type(part)? {
+        package.set_override(&copy, &ct)?;
+    }
+    let rels = rels_part(part);
+    if package.contains(&rels) {
+        package.set_bytes(&rels_part(&copy), package.read(&rels)?);
+    }
+    {
+        let doc = package.xml_mut(&copy)?;
+        let root = doc.root_element().ok_or_else(|| err("レイアウトが空です"))?;
+        if let Some(csld) = doc.child(root, "cSld") {
+            doc.set_attr(csld, "name", name);
+        }
+        // A copy is not the layout the file names by its type.
+        doc.remove_attr(root, "type");
+        doc.remove_attr(root, "matchingName");
+    }
+    // The master's list: a relationship, and an entry after the layout's own.
+    let new_rel = package.add_relationship(&master, REL_SLIDE_LAYOUT, &relative(&master, &copy), false)?;
+    let id = largest_layout_or_master_id(&package)? + 1;
+    let source_rel = package.relationships(&master)?.into_iter().find(|r| r.kind == REL_SLIDE_LAYOUT && r.target_part(&master).as_deref() == Some(part)).map(|r| r.id);
+    let doc = package.xml_mut(&master)?;
+    let root = doc.root_element().ok_or_else(|| err("マスターが空です"))?;
+    let list = doc.child(root, "sldLayoutIdLst").ok_or_else(|| err("レイアウトの一覧がありません"))?;
+    let entry = source_rel.and_then(|rid| doc.elements(list).find(|&e| rel_id(doc, e).as_deref() == Some(rid.as_str()))).or_else(|| doc.elements(list).last()).ok_or_else(|| err("レイアウトの一覧が空です"))?;
+    // (The name of its `r:id` is found where it is in the tree: a copy has no ancestors to name the prefix.)
+    let attr = doc.attributes(entry).iter().find(|a| a.name.rsplit_once(':').is_some_and(|(p, l)| l == "id" && doc.resolve_prefix(entry, Some(p)) == Some(NS_R))).map(|a| a.name.clone()).ok_or_else(|| err("r:id がありません"))?;
+    let new = doc.deep_clone(entry);
+    doc.set_attr(new, "id", &id.to_string());
+    doc.set_attr(new, &attr, &new_rel);
+    doc.insert_after(entry, new);
+    Ok((package.save(SaveOptions::default())?, copy))
+}
+
+/// Whether a slide of the file follows layout `part`.
+pub fn layout_in_use(data: &[u8], part: &str) -> Result<bool, Error> {
+    let package = Package::open(data.to_vec())?;
+    let main = main_part(&package)?;
+    for rel in package.relationships(&main)?.into_iter().filter(|r| r.kind == REL_SLIDE && !r.external) {
+        let Some(slide) = rel.target_part(&main) else { continue };
+        if package.relationships(&slide)?.into_iter().any(|r| r.kind == REL_SLIDE_LAYOUT && r.target_part(&slide).as_deref() == Some(part)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Layout `part` taken out of its master, its part and relationships with it. A layout a slide follows
+/// (or the master's last) is not.
+pub fn delete_layout(data: &[u8], part: &str) -> Result<Vec<u8>, Error> {
+    if layout_in_use(data, part)? {
+        return Err(err("スライドが使っているレイアウトは削除できません"));
+    }
+    let mut package = Package::open(data.to_vec())?;
+    let master = master_of(&package, part)?;
+    if layouts_of(&package, &master)?.len() < 2 {
+        return Err(err("マスターの最後のレイアウトは削除できません"));
+    }
+    let rel = package.relationships(&master)?.into_iter().find(|r| r.kind == REL_SLIDE_LAYOUT && r.target_part(&master).as_deref() == Some(part)).ok_or_else(|| err("マスターの関係がありません"))?;
+    {
+        let doc = package.xml_mut(&master)?;
+        let root = doc.root_element().ok_or_else(|| err("マスターが空です"))?;
+        if let Some(list) = doc.child(root, "sldLayoutIdLst") {
+            let entry = doc.elements(list).find(|&e| rel_id(doc, e).as_deref() == Some(rel.id.as_str()));
+            if let Some(entry) = entry {
+                doc.detach(entry);
+            }
+        }
+    }
+    package.remove_relationship(&master, &rel.id)?;
+    package.remove_override(part)?;
+    package.remove(part);
+    package.remove(&rels_part(part));
     Ok(package.save(SaveOptions::default())?)
 }
 

@@ -146,7 +146,7 @@ impl SlideEditor {
                 if let InputEvent::PressEnter { .. } = event {
                     let text = input.read(cx).value().to_string();
                     this.set_ruby(&text, cx);
-                    this.close_panel_dialog(window,cx);
+                    this.close_dialog(window,cx);
                 }
             });
             if let Some(state) = self.doc_state_mut() {
@@ -188,7 +188,7 @@ impl SlideEditor {
                     .action(crate::shell::chrome::ActionDefinition::new("ruby-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, window, cx| {
                         let text = this.doc_state().and_then(|s| s.ruby.as_ref()).map(|r| r.text.read(cx).value().to_string()).unwrap_or_default();
                         this.set_ruby(&text, cx);
-                        this.close_panel_dialog(window,cx);
+                        this.close_dialog(window,cx);
                     })))
             .action(crate::shell::chrome::dialog_cancel_definition(cx))
                     .action(crate::shell::chrome::ActionDefinition::new("ruby-remove", crate::shell::i18n::text("docx.ruby-panel.remove-ruby"), crate::shell::chrome::ActionButtonKind::Destructive).on_click(cx.listener(|this, _, _, cx| this.set_ruby("", cx))));

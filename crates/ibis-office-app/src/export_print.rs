@@ -8,6 +8,9 @@
 
 use image::{Rgba, RgbaImage};
 
+pub(crate) use crate::export_text::TextLayer;
+use crate::export_text::{Align, NoteFlow, draw_text};
+
 /// How the slides are printed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PrintColor {
@@ -65,7 +68,7 @@ impl NoteText {
 
 const MARGIN: f32 = 36.0;
 /// Pixels per point of a handout page's picture.
-const PX_PER_PT: f32 = 2.0;
+pub(crate) const PX_PER_PT: f32 = 2.0;
 
 /// `image` in the colour `mode`.
 pub fn recolor(image: &mut RgbaImage, mode: PrintColor) {
@@ -114,7 +117,7 @@ pub fn handout_grid(per_page: u8, landscape: bool) -> (usize, usize) {
 /// The slides as handout pages: `per_page` to a page, in rows (a column for
 /// 2 and 3), each as large as its place takes at its own proportions, with a
 /// frame if `framed`. Each page with its size in points.
-pub fn handouts(slides: &[RgbaImage], per_page: u8, framed: bool, landscape: bool, marks: &HandoutMarks) -> Vec<(RgbaImage, (f32, f32))> {
+pub fn handouts(slides: &[RgbaImage], per_page: u8, framed: bool, landscape: bool, marks: &HandoutMarks, layer: &mut dyn TextLayer) -> Vec<(RgbaImage, (f32, f32))> {
     let (columns, rows) = handout_grid(per_page, landscape);
     let per_page = columns * rows;
     let (page_w, page_h) = if landscape { (HANDOUT_PAGE.1, HANDOUT_PAGE.0) } else { HANDOUT_PAGE };
@@ -141,7 +144,7 @@ pub fn handouts(slides: &[RgbaImage], per_page: u8, framed: bool, landscape: boo
                 let y = (MARGIN + row as f32 * cell_h) * PX_PER_PT + (cell_h * PX_PER_PT - h as f32) / 2.0;
                 image::imageops::overlay(&mut page, &picture, x.round() as i64, y.round() as i64);
             }
-            draw_marks(&mut page, marks, page_number + 1, (page_w, page_h));
+            draw_marks(layer, &mut page, marks, page_number + 1, (page_w, page_h));
             (page, (page_w, page_h))
         })
         .collect()
@@ -151,7 +154,7 @@ pub fn handouts(slides: &[RgbaImage], per_page: u8, framed: bool, landscape: boo
 /// frame, as PowerPoint draws it), its notes below, and the header, date,
 /// footer and page number the notes carry. Notes that do not fit go on further pages
 /// (the text only, from the top). Each page with its size in points.
-pub fn notes_pages(slides: &[RgbaImage], notes: &[NoteText], marks: &HandoutMarks) -> Vec<(RgbaImage, (f32, f32))> {
+pub fn notes_pages(slides: &[RgbaImage], notes: &[NoteText], marks: &HandoutMarks, layer: &mut dyn TextLayer) -> Vec<(RgbaImage, (f32, f32))> {
     let (page_w, page_h) = HANDOUT_PAGE;
     // The slide as wide as the page's text allows, from the top; the notes under it.
     let side = 72.0;
@@ -167,13 +170,13 @@ pub fn notes_pages(slides: &[RgbaImage], notes: &[NoteText], marks: &HandoutMark
         frame(&mut picture);
         image::imageops::overlay(&mut page, &picture, (side * PX_PER_PT) as i64, (top * PX_PER_PT) as i64);
         let text_top = top * PX_PER_PT + h as f32 + 28.0 * PX_PER_PT;
-        let mut flow = start_notes(notes.get(i));
-        draw_notes(&mut flow, &mut page, (side * PX_PER_PT, text_top, avail_w * PX_PER_PT, (page_h - 56.0) * PX_PER_PT - text_top));
+        let mut flow = start_notes(notes.get(i), avail_w * PX_PER_PT);
+        draw_notes(layer, &mut flow, &mut page, (side * PX_PER_PT, text_top, avail_w * PX_PER_PT, (page_h - 56.0) * PX_PER_PT - text_top));
         pages.push(page);
         // What did not fit: pages of text, from the top.
         while notes_left(&flow) {
             let mut more = blank();
-            draw_notes(&mut flow, &mut more, (side * PX_PER_PT, top * PX_PER_PT, avail_w * PX_PER_PT, (page_h - 56.0 - top) * PX_PER_PT));
+            draw_notes(layer, &mut flow, &mut more, (side * PX_PER_PT, top * PX_PER_PT, avail_w * PX_PER_PT, (page_h - 56.0 - top) * PX_PER_PT));
             pages.push(more);
         }
     }
@@ -181,7 +184,7 @@ pub fn notes_pages(slides: &[RgbaImage], notes: &[NoteText], marks: &HandoutMark
         .into_iter()
         .enumerate()
         .map(|(n, mut page)| {
-            draw_marks(&mut page, marks, n + 1, (page_w, page_h));
+            draw_marks(layer, &mut page, marks, n + 1, (page_w, page_h));
             (page, (page_w, page_h))
         })
         .collect()
@@ -189,15 +192,15 @@ pub fn notes_pages(slides: &[RgbaImage], notes: &[NoteText], marks: &HandoutMark
 
 /// アウトライン: the slides' titles (with their numbers) and body paragraphs as text, the levels indented, over pages of an A4
 /// portrait sheet; with the header, date, footer and page number the notes carry. Each page with its size in points.
-pub fn outline_pages(text: &NoteText, marks: &HandoutMarks) -> Vec<(RgbaImage, (f32, f32))> {
+pub fn outline_pages(text: &NoteText, marks: &HandoutMarks, layer: &mut dyn TextLayer) -> Vec<(RgbaImage, (f32, f32))> {
     let (page_w, page_h) = HANDOUT_PAGE;
     let (side, top) = (72.0, 60.0);
     let blank = || RgbaImage::from_pixel((page_w * PX_PER_PT) as u32, (page_h * PX_PER_PT) as u32, Rgba([255, 255, 255, 255]));
-    let mut flow = start_notes(Some(text));
+    let mut flow = start_notes(Some(text), (page_w - 2.0 * side) * PX_PER_PT);
     let mut pages = Vec::new();
     loop {
         let mut page = blank();
-        draw_notes(&mut flow, &mut page, (side * PX_PER_PT, top * PX_PER_PT, (page_w - 2.0 * side) * PX_PER_PT, (page_h - 56.0 - top) * PX_PER_PT));
+        draw_notes(layer, &mut flow, &mut page, (side * PX_PER_PT, top * PX_PER_PT, (page_w - 2.0 * side) * PX_PER_PT, (page_h - 56.0 - top) * PX_PER_PT));
         pages.push(page);
         if !notes_left(&flow) {
             break;
@@ -207,50 +210,32 @@ pub fn outline_pages(text: &NoteText, marks: &HandoutMarks) -> Vec<(RgbaImage, (
         .into_iter()
         .enumerate()
         .map(|(n, mut page)| {
-            draw_marks(&mut page, marks, n + 1, (page_w, page_h));
+            draw_marks(layer, &mut page, marks, n + 1, (page_w, page_h));
             (page, (page_w, page_h))
         })
         .collect()
 }
 
-#[cfg(all(target_os = "macos", feature = "export"))]
-type NotesFlow = Option<crate::export_text::NoteFlow>;
-#[cfg(not(all(target_os = "macos", feature = "export")))]
-type NotesFlow = ();
+type NotesFlow = Option<NoteFlow>;
 
-#[cfg(all(target_os = "macos", feature = "export"))]
-fn start_notes(text: Option<&NoteText>) -> NotesFlow {
-    text.and_then(|t| crate::export_text::NoteFlow::new(t, PX_PER_PT))
+/// The notes' text laid out for boxes `width` pixels wide.
+fn start_notes(text: Option<&NoteText>, width: f32) -> NotesFlow {
+    text.and_then(|t| NoteFlow::new(t, width.round() as u32))
 }
 
-#[cfg(not(all(target_os = "macos", feature = "export")))]
-fn start_notes(_: Option<&NoteText>) -> NotesFlow {}
-
-#[cfg(all(target_os = "macos", feature = "export"))]
-fn draw_notes(flow: &mut NotesFlow, page: &mut RgbaImage, rect: (f32, f32, f32, f32)) {
+fn draw_notes(layer: &mut dyn TextLayer, flow: &mut NotesFlow, page: &mut RgbaImage, rect: (f32, f32, f32, f32)) {
     if let Some(flow) = flow {
-        flow.draw_next(page, rect);
+        flow.draw_next(layer, page, rect);
     }
 }
 
-#[cfg(not(all(target_os = "macos", feature = "export")))]
-fn draw_notes(_: &mut NotesFlow, _: &mut RgbaImage, _: (f32, f32, f32, f32)) {}
-
-#[cfg(all(target_os = "macos", feature = "export"))]
 fn notes_left(flow: &NotesFlow) -> bool {
     flow.as_ref().is_some_and(|f| f.has_more())
 }
 
-#[cfg(not(all(target_os = "macos", feature = "export")))]
-fn notes_left(_: &NotesFlow) -> bool {
-    false
-}
-
 /// The header, date, footer and page number of a handout page: where the
 /// handout master puts them, or in the margins' corners.
-#[cfg(all(target_os = "macos", feature = "export"))]
-fn draw_marks(page: &mut RgbaImage, marks: &HandoutMarks, number: usize, (page_w, page_h): (f32, f32)) {
-    use crate::export_text::{draw_text, Align};
+fn draw_marks(layer: &mut dyn TextLayer, page: &mut RgbaImage, marks: &HandoutMarks, number: usize, (page_w, page_h): (f32, f32)) {
     use ibis_pptx::handout_master::Mark;
     if let Some(layout) = &marks.layout {
         // The master's boxes, scaled from the notes page to this one; the text inside as its box says.
@@ -274,7 +259,7 @@ fn draw_marks(page: &mut RgbaImage, marks: &HandoutMarks, number: usize, (page_w
                 _ => (Align::Left, x + inset_x),
             };
             let top = if place.bottom { y + h - inset_y - size * 1.2 } else { y + inset_y };
-            draw_text(page, text, at, top, size, align);
+            draw_text(layer, page, PX_PER_PT, text, at, top, size, align);
         }
         return;
     }
@@ -282,21 +267,22 @@ fn draw_marks(page: &mut RgbaImage, marks: &HandoutMarks, number: usize, (page_w
     let (left, right) = (MARGIN * PX_PER_PT, (page_w - MARGIN) * PX_PER_PT);
     let (top, bottom) = (14.0 * PX_PER_PT, (page_h - 14.0 - 12.0) * PX_PER_PT);
     if let Some(text) = &marks.header {
-        draw_text(page, text, left, top, size, Align::Left);
+        draw_text(layer, page, PX_PER_PT, text, left, top, size, Align::Left);
     }
     if let Some(text) = &marks.date {
-        draw_text(page, text, right, top, size, Align::Right);
+        draw_text(layer, page, PX_PER_PT, text, right, top, size, Align::Right);
     }
     if let Some(text) = &marks.footer {
-        draw_text(page, text, left, bottom, size, Align::Left);
+        draw_text(layer, page, PX_PER_PT, text, left, bottom, size, Align::Left);
     }
     if marks.number {
-        draw_text(page, &number.to_string(), right, bottom, size, Align::Right);
+        draw_text(layer, page, PX_PER_PT, &number.to_string(), right, bottom, size, Align::Right);
     }
 }
 
-#[cfg(not(all(target_os = "macos", feature = "export")))]
-fn draw_marks(_: &mut RgbaImage, _: &HandoutMarks, _: usize, _: (f32, f32)) {}
+#[cfg(any(all(test, windows), all(any(target_os = "macos", target_os = "linux"), feature = "scenarios")))]
+#[path = "tests/pptx/export_print_tests.rs"]
+pub(crate) mod export_print_tests;
 
 #[cfg(test)]
 mod tests {
@@ -320,108 +306,5 @@ mod tests {
         let mut same = solid(2, 2, [10, 20, 30]);
         recolor(&mut same, PrintColor::Color);
         assert_eq!(same.get_pixel(0, 0), &Rgba([10, 20, 30, 255]));
-    }
-
-    /// アウトライン: the titles and bodies as dark text from the top of an A4 page, on more pages when they do not fit.
-    #[cfg(all(target_os = "macos", feature = "export"))]
-    #[test]
-    fn the_outline_is_text_on_pages_of_its_own() {
-        let mut paragraphs = Vec::new();
-        for i in 1..=120 {
-            paragraphs.push(NotePara { level: 0, bullet: None, runs: vec![NoteRun { text: format!("{i}  Title {i}"), bold: true, size_pt: Some(14.0), ..Default::default() }] });
-            paragraphs.push(NotePara { level: 1, bullet: Some("•".into()), runs: vec![NoteRun { text: format!("Point of slide {i}"), size_pt: Some(12.0), ..Default::default() }] });
-        }
-        let pages = outline_pages(&NoteText { paragraphs }, &HandoutMarks::default());
-        assert!(pages.len() >= 3, "{}", pages.len());
-        for (page, size) in &pages {
-            assert_eq!(*size, HANDOUT_PAGE);
-            assert!(page.pixels().filter(|q| q[0] < 100 && q[1] < 100 && q[2] < 100).count() > 300, "text on every page");
-        }
-    }
-
-    /// ノート ページ: the slide on top, framed, with the notes' text below it.
-    #[cfg(all(target_os = "macos", feature = "export"))]
-    #[test]
-    fn notes_pages_have_the_slide_above_and_its_notes_below() {
-        let slides = vec![solid(160, 90, [200, 0, 0]), solid(160, 90, [0, 0, 200]), solid(160, 90, [0, 200, 0])];
-        let long: String = (1..=90).map(|i| format!("Line {i} of very long notes")).collect::<Vec<_>>().join("\n");
-        let notes = vec![NoteText::plain("Speaker notes for the first slide.\n二行目のメモ"), NoteText::default(), NoteText::plain(&long)];
-        let pages = notes_pages(&slides, &notes, &HandoutMarks::default());
-        // The third slide's notes take more pages, with nothing lost: text on each, and no slide on the later ones.
-        assert!(pages.len() >= 5, "{}", pages.len());
-        let green = |i: usize| pages[i].0.pixels().filter(|p| p[1] == 200 && p[0] == 0).count();
-        assert!(green(2) > 10_000 && green(3) == 0);
-        assert!(pages[3..].iter().all(|(p, _)| p.pixels().filter(|q| q[0] < 100 && q[1] < 100 && q[2] < 100).count() > 300));
-        let (page, size) = &pages[0];
-        assert_eq!(*size, HANDOUT_PAGE);
-        let (w, h) = (page.width(), page.height());
-        // The slide's colour in the upper half only; dark text in the lower half.
-        let red = |y0: u32, y1: u32| (y0..y1).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, y)| page.get_pixel(x, y)[0] == 200 && page.get_pixel(x, y)[2] == 0).count();
-        // The slide ends 627 px down (60 pt and 253.7 pt, 2 px a point).
-        assert!(red(0, 640) > 10_000 && red(640, h) == 0, "the slide above");
-        let dark = |y0: u32, y1: u32| (y0..y1).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, y)| page.get_pixel(x, y).0[..3].iter().all(|c| *c < 100)).count();
-        assert!(dark(640, h) > 300, "the notes below");
-        // A slide without notes has nothing below it (but the page's blank).
-        assert_eq!(pages[1].0.pixels().filter(|p| p[0] < 100 && p[1] < 100 && p[2] > 150).count() > 10_000, true);
-        let below = (640..h).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, y)| pages[1].0.get_pixel(x, y)[0] < 100).count();
-        assert_eq!(below, 0);
-    }
-
-    #[test]
-    fn handout_pages() {
-        let slides: Vec<RgbaImage> = (0..7).map(|_| solid(160, 90, [200, 0, 0])).collect();
-        // 7 slides, 3 to a page: 3 pages (3, 3, 1).
-        let pages = handouts(&slides, 3, true, false, &HandoutMarks::default());
-        assert_eq!(pages.len(), 3);
-        let (page, size) = &pages[0];
-        assert_eq!(*size, HANDOUT_PAGE);
-        assert_eq!((page.width(), page.height()), (1190, 1684));
-        // The page is white at its corner, and has the slides' colour (or the frame) inside.
-        assert_eq!(page.get_pixel(0, 0), &Rgba([255, 255, 255, 255]));
-        assert!(page.pixels().any(|p| p[0] == 200 && p[1] == 0));
-        assert!(page.pixels().any(|p| p[0] == 0 && p[1] == 0 && p[2] == 0));
-        // Four to a page: 2 pages, and the second holds three slides (of 4).
-        let four = handouts(&slides, 4, false, false, &HandoutMarks::default());
-        assert_eq!(four.len(), 2);
-        let second = &four[1].0;
-        let red = second.pixels().filter(|p| p[0] == 200 && p[1] == 0).count();
-        let first_red = four[0].0.pixels().filter(|p| p[0] == 200 && p[1] == 0).count();
-        assert!(red * 4 > first_red * 2 && red * 4 < first_red * 4, "three slides, not four: {red} of {first_red}");
-        assert_eq!(handout_grid(6, false), (2, 3));
-        assert_eq!(handout_grid(9, false), (3, 3));
-        // On its side.
-        assert_eq!(handout_grid(6, true), (3, 2));
-        let wide = handouts(&slides, 6, false, true, &HandoutMarks::default());
-        assert_eq!((wide[0].0.width(), wide[0].0.height()), (1684, 1190));
-        assert_eq!(wide[0].1, (842.0, 595.0));
-        assert_eq!(wide.len(), 2);
-    }
-
-    /// The handout master's places: the header where the master puts it, big, the footer gone.
-    #[cfg(all(target_os = "macos", feature = "export"))]
-    #[test]
-    fn marks_go_where_the_handout_master_puts_them() {
-        use ibis_pptx::handout_master::{HandoutLayout, Mark, Place};
-        let slides = vec![solid(160, 90, [255, 255, 255])];
-        let layout = HandoutLayout {
-            page: (6_858_000, 9_144_000),
-            // The header in the middle of the page, 24 pt, centred; the date bottom right.
-            places: vec![
-                Place { mark: Mark::Header, frame: (1_714_500, 4_000_000, 3_429_000, 600_000), size_pt: 24.0, align: "ctr".into(), bottom: false },
-                Place { mark: Mark::Date, frame: (3_884_613, 8_685_213, 2_971_800, 458_787), size_pt: 12.0, align: "r".into(), bottom: true },
-            ],
-        };
-        let marks = HandoutMarks { header: Some("Header".into()), date: Some("2026/10/11".into()), footer: Some("Footer".into()), number: true, layout: Some(layout) };
-        let pages = handouts(&slides, 6, false, false, &marks);
-        let page = &pages[0].0;
-        let dark = |x0: u32, y0: u32, x1: u32, y1: u32| (y0..y1).flat_map(|y| (x0..x1).map(move |x| (x, y))).filter(|&(x, y)| page.get_pixel(x, y)[0] < 128).count();
-        let (w, h) = (page.width(), page.height());
-        // The header: in the middle band (4.0M to 4.6M of 9.144M EMU), across the middle of the page.
-        let band = (h as f32 * 4_000_000.0 / 9_144_000.0) as u32..(h as f32 * 4_700_000.0 / 9_144_000.0) as u32;
-        assert!(dark(w / 3, band.start, w * 2 / 3, band.end) > 100, "the header in its place");
-        // Not in the corners it used to be in, and no footer (the master has none): the bottom left is clean.
-        assert_eq!(dark(0, h * 9 / 10, w / 2, h), 0, "no footer");
-        // The date: bottom right.
-        assert!(dark(w / 2, h * 9 / 10, w, h) > 50, "the date at the bottom right");
     }
 }

@@ -20,7 +20,7 @@ impl Drop for Cleanup {fn drop(&mut self){chrome::FORCED_SIDEBAR.with(|s|s.set(N
 pub(crate) fn run(){
     CHECKS.with(|s|s.set(true));VALUE.with(|s|s.set(1));let _probe=buttons::Probe::new();
     let mut s=Scenario::open("test/editing/docx-report.docx");s.size(1200.,800.);
-    chrome::FORCED_SIDEBAR.with(|c|c.set(Some((panel,"dropdown-attributes",crate::shell::panel_dialog::PanelMode::Sidebar))));let _cleanup=Cleanup;
+    chrome::FORCED_SIDEBAR.with(|c|c.set(Some((panel,"dropdown-attributes",crate::shell::dialog::DialogMode::Sidebar))));let _cleanup=Cleanup;
     s.update(|e,_,cx|{e.sidebar_open=true;cx.notify();});
     buttons::click(&mut s,"attribute-dropdown");
     let row=buttons::all().into_iter().find(|id|id.contains("searchable-item-attribute-dropdown")&&id.ends_with(", 1)")).unwrap();

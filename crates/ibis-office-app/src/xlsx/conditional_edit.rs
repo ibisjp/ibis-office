@@ -14,7 +14,7 @@ use ibis_doc_model::{CellRange, CfKind, CfRule, CfStyle, Command, ConditionalFor
 use crate::shell::chrome::{SidebarPanel, MenuEntry, MenuItem, fill_menu};
 use crate::shell::editor::SlideEditor;
 
-mod manager;
+pub(crate) mod manager;
 
 const OPERATORS: [(&str, &str); 8] = [
     ("lessThan", "_xlsx.less-than"), ("lessThanOrEqual", "_xlsx.less-than-or-equal-to"), ("equal", "_xlsx.equal-to"), ("notEqual", "_xlsx.not-equal-to"),
@@ -24,7 +24,11 @@ const OPERATORS: [(&str, &str); 8] = [
 pub(crate) struct ConditionalPanel {
     pub(crate) range: Entity<InputState>,
     pub(crate) manager:bool,
-    scroll:ScrollHandle,
+    /// The manager's table (scroll, column widths) and its row drag and drop.
+    pub(crate) manager_table: manager::ManagerTable,
+    /// The manager this rule editor was opened from; it stays open behind the editor (a parent dialog) and comes back when
+    /// the editor closes.
+    pub(crate) parent: Option<Box<ConditionalPanel>>,
     pub(crate) ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Bounds<Pixels>>>>,
     pub(crate) formula: Entity<InputState>,
     pub(crate) formula2: Entity<InputState>,
@@ -39,7 +43,7 @@ pub(crate) struct ConditionalPanel {
     ranges: Vec<CellRange>,
     // A copy guards against undo, deletion or sheet changes while the panel is open.
     editing: Option<(usize, ConditionalFormat)>,
-    stop: bool,
+    pub(crate) stop: bool,
     error: String,
 }
 
@@ -87,7 +91,7 @@ impl SlideEditor {
         text_color.update(cx, |i, cx| i.set_value(text_hex, window, cx));
         let stop = old.as_ref().is_some_and(|(_, f)| f.rules[0].stop);
         let panel = ConditionalPanel {
-            manager:false,scroll:ScrollHandle::new(),
+            manager:false,manager_table:Default::default(),parent:None,
             range: range_input,
             ui: Default::default(),
             formula,
@@ -105,6 +109,15 @@ impl SlideEditor {
             stop,
             error: String::new(),
         };
+        // Opened from the manager: the manager stays (its dialog is kept behind the editor's).
+        let mut panel = panel;
+        panel.parent = self.wb_mut().conditional_edit.take().filter(|p| p.manager).map(Box::new);
+        if panel.parent.is_some() {
+            let manager_dialog = std::mem::take(&mut self.dialog);
+            self.dialog.parent = Some(Box::new(manager_dialog));
+        } else {
+            self.dialog.parent = None;
+        }
         let state = self.wb_mut();
         state.custom_format = None;
         state.page_setup = false;
@@ -222,53 +235,22 @@ impl SlideEditor {
         if let Err(err) = self.document.execute(vec![Command::Sheet(command)]) {
             self.wb_mut().conditional_edit.as_mut().unwrap().error = err.to_string();
         } else {
-            // Require reopening before applying again, so one click is one edit.
-            self.wb_mut().conditional_edit = None;
+            // Require reopening before applying again, so one click is one edit. The manager the editor was opened from comes back.
+            self.finish_conditional_editor();
         }
         cx.notify();
     }
 
-    fn duplicate_conditional_rule(&mut self, index: usize, rule: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(p) = self.wb().conditional_edit.as_ref() else { return };
-        if p.slide != self.current_slide { return; }
-        let command = SheetCommand::DuplicateConditionalRule { slide: p.slide, index, rule };
-        match self.document.execute(vec![Command::Sheet(command)]) {
-            Ok(()) => self.open_conditional(None, window, cx),
-            Err(err) => {
-                if let Some(p) = self.wb_mut().conditional_edit.as_mut() {
-                    p.error = err.to_string();
-                }
-                cx.notify();
-            }
-        }
-    }
-
-    fn delete_conditional_rule(&mut self, index: usize, rule: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(p) = self.wb().conditional_edit.as_ref() else { return };
-        if p.slide != self.current_slide { return; }
-        let command = SheetCommand::DeleteConditionalRule { slide: p.slide, index, rule };
-        match self.document.execute(vec![Command::Sheet(command)]) {
-            Ok(()) => self.open_conditional(None, window, cx),
-            Err(err) => {
-                if let Some(p) = self.wb_mut().conditional_edit.as_mut() {
-                    p.error = err.to_string();
-                }
-                cx.notify();
-            }
-        }
-    }
-
-    fn manage_conditional(&mut self, index: usize, rule: usize, up: Option<bool>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(p) = self.wb().conditional_edit.as_ref() else { return };
-        if p.slide != self.current_slide { return; }
-        let Some(old) = self.current_sheet().and_then(|(_, s)| s.conditional.get(index)).and_then(|f| f.rules.get(rule)) else { return };
-        let command = match up {
-            Some(up) => SheetCommand::MoveConditionalRule { slide: p.slide, index, rule, up },
-            None => SheetCommand::SetConditionalStop { slide: p.slide, index, rule, stop: !old.stop },
-        };
-        match self.document.execute(vec![Command::Sheet(command)]) {
-            Ok(()) => self.open_conditional(None, window, cx),
-            Err(err) => { self.wb_mut().conditional_edit.as_mut().unwrap().error = err.to_string(); cx.notify(); },
+    /// The rule editor is done (applied or cancelled): the manager it was opened from, if any, is the open panel again
+    /// with its own dialog; otherwise nothing is open.
+    pub(crate) fn finish_conditional_editor(&mut self) {
+        let parent = self.wb_mut().conditional_edit.as_mut().and_then(|p| p.parent.take());
+        let had_parent = parent.is_some();
+        self.wb_mut().conditional_edit = parent.map(|b| *b);
+        if had_parent && let Some(manager_dialog) = self.dialog.parent.take() {
+            self.dialog = *manager_dialog;
+            self.dialog.overlay = None;
+            self.dialog.drag = None;
         }
     }
 
@@ -380,22 +362,15 @@ impl SlideEditor {
                     crate::shell::chrome::preview_dropdown::PreviewChoice{label:crate::shell::i18n::text(label),content:std::rc::Rc::new(move||div().px_2().w_full().bg(crate::shell::palette::rgb(bg)).text_color(crate::shell::palette::rgb(fg)).child("123,456").into_any_element()),choose:std::rc::Rc::new(move|e,w,cx|e.apply_conditional_preset(fill,color,w,cx))}
                 }).collect();crate::shell::chrome::preview_dropdown::preview_dropdown("conditional-style-preview",choices,selected,cx)
             })
-            .child(crate::shell::i18n::text("_xlsx.fill-color-rgb"))
-            .child(mark("fill", crate::shell::chrome::panel_color_field("conditional-fill",&p.fill,cx)))
-            .child(crate::shell::i18n::text("xlsx.cf.text-color-rgb"))
-            .child(mark("text-color", crate::shell::chrome::panel_color_field("panel-color-xlsx-conditional-edit-1",&p.text_color,cx).into_any_element()))
-            .child(
-                h_flex().gap_1()
-                    .child(mark("bold", crate::shell::chrome::action_button("conditional-bold").small().ghost().icon(crate::shell::icons::Material("format_bold")).tooltip(crate::shell::i18n::text("_shell.bold")).when(is_bold,|b|b.bg(crate::shell::palette::rgb(crate::shell::chrome::SELECTED_ROW_BG))).on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(p) = this.wb_mut().conditional_edit.as_mut() { p.bold = !p.bold; }
-                        cx.notify();
-                    })).into_any_element()))
-                    .child(mark("italic", crate::shell::chrome::action_button("conditional-italic").small().ghost().icon(crate::shell::icons::Material("format_italic")).tooltip(crate::shell::i18n::text("_shell.italic-i")).when(is_italic,|b|b.bg(crate::shell::palette::rgb(crate::shell::chrome::SELECTED_ROW_BG))).on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(p) = this.wb_mut().conditional_edit.as_mut() { p.italic = !p.italic; }
-                        cx.notify();
-                    })).into_any_element()))
-            )
-            .child(mark("stop", crate::shell::chrome::action_button("conditional-stop").small().label(if p.stop { crate::shell::i18n::text("_xlsx.stop-if-true-on") } else { crate::shell::i18n::text("_xlsx.stop-if-true-off") }).on_click(cx.listener(|this, _, _, cx| {
+            .child(crate::shell::chrome::color_row(crate::shell::i18n::text("xlsx.cf.fill-color"), mark("fill", crate::shell::chrome::panel_color_field("conditional-fill",&p.fill,cx))))
+            .child(crate::shell::chrome::color_row(crate::shell::i18n::text("xlsx.cf.text-color"), mark("text-color", crate::shell::chrome::panel_color_field("panel-color-xlsx-conditional-edit-1",&p.text_color,cx))))
+            .child(mark("style", crate::shell::chrome::toolbar_row(crate::shell::i18n::text("_shell.style"), [
+                crate::shell::chrome::ToolbarItem::icon("conditional-bold", "format_bold").on(is_bold).tooltip(crate::shell::i18n::text("_shell.bold"))
+                    .on_click(cx.listener(|this, _, _, cx| { if let Some(p) = this.wb_mut().conditional_edit.as_mut() { p.bold = !p.bold; } cx.notify(); })),
+                crate::shell::chrome::ToolbarItem::icon("conditional-italic", "format_italic").on(is_italic).tooltip(crate::shell::i18n::text("_shell.italic-i"))
+                    .on_click(cx.listener(|this, _, _, cx| { if let Some(p) = this.wb_mut().conditional_edit.as_mut() { p.italic = !p.italic; } cx.notify(); })),
+            ]).into_any_element()))
+            .child(mark("stop", crate::shell::chrome::checkbox_button("conditional-stop", crate::shell::i18n::text("xlsx.cf.stop-if-true"), p.stop, false, cx.listener(|this, _, _, cx| {
                 if let Some(p) = this.wb_mut().conditional_edit.as_mut() { p.stop = !p.stop; }
                 cx.notify();
             })).into_any_element()))

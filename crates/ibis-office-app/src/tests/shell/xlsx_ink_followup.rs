@@ -12,6 +12,7 @@ pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
     ("shell::solver_constraint_editor_commit_cancel_close",solver_constraint),
     ("shell::watch_editor_commit_cancel_close",watch_editor),
     ("shell::table_name_live_change_and_undo",table_name),
+    ("shell::subtotal_solver_watch_common_tables",common_tables),
     ("shell::csv_path_enter_preserves_first_record",csv_path),
     ("shell::shared_ink_docx_pointer_controls",ink_docx),
     ("shell::shared_ink_xlsx_pointer_controls",ink_xlsx),
@@ -25,7 +26,7 @@ fn tuple_button(s:&mut Scenario,name:&str,index:usize){
     buttons::click(s,&id);
 }
 fn close_x(s:&mut Scenario){
-    let bounds=s.with(|e,_|e.panel_dialog.bounds.expect("dialog frame"));
+    let bounds=s.with(|e,_|e.dialog.bounds.expect("dialog frame"));
     s.click((f32::from(bounds.right()-px(26.)),f32::from(bounds.origin.y+px(22.))));
 }
 fn solver_values(s:&mut Scenario,lhs:&str,rhs:&str){
@@ -37,7 +38,7 @@ fn solver_constraint(){
     s.update(|e,w,cx|e.open_solver_panel(w,cx));
     let initial=s.with(|e,_|e.wb().panels.solver.as_ref().unwrap().constraints.clone());
     buttons::click(&mut s,"solver-add");
-    assert_eq!(s.with(|e,_|e.panel_dialog.key),Some("solver_constraint_editor"));
+    assert_eq!(s.with(|e,_|e.dialog.key),Some("solver_constraint_editor"));
     solver_values(&mut s,"A1","10");buttons::click(&mut s,"solver-constraint-cancel");
     assert_eq!(s.with(|e,_|e.wb().panels.solver.as_ref().unwrap().constraints.clone()),initial);
     buttons::click(&mut s,"solver-add");solver_values(&mut s,"A1","10");buttons::click(&mut s,"solver-constraint-ok");
@@ -113,9 +114,39 @@ fn ink(format:usize){
     let mut s=Scenario::open(path);s.size(1200.,1000.);s.update(|e,w,cx|match format{0=>e.open_docx_ink_panel(cx),1=>e.open_ink_panel(w,cx),_=>e.open_pptx_ink_panel(w,cx)});
     let tool=if format==0{"docx-ink-highlighter"}else{"ink-highlighter"};buttons::click(&mut s,tool);
     assert_eq!(s.with(|e,_|match format{0=>e.doc_state().unwrap().docx_ink.as_ref().unwrap().pen,1=>e.wb().panels.ink.as_ref().unwrap().pen,_=>e.pptx().unwrap().ink.as_ref().unwrap().pen}),PenKind::Highlighter);
-    let(width_id,index,expected)=match format{0=>("docx-ink-width",0,crate::xlsx::ink::WIDTHS[0]),1=>("ink-width",0,crate::xlsx::ink::WIDTHS[0]),_=>("ink-width",0,crate::pptx::ink::PPTX_INK_WIDTHS[0])};if format==0{tuple_button(&mut s,width_id,index);}else{buttons::click(&mut s,"ink-width-0");}
+    // The width is a dropdown (its items draw the line): choose the first item the way its handler does.
+    let expected=match format{0=>crate::xlsx::ink::WIDTHS[0],1=>crate::xlsx::ink::WIDTHS[0],_=>crate::pptx::ink::PPTX_INK_WIDTHS[0]};
+    s.update(|e,_,cx|match format{0=>e.set_docx_ink_width(expected,cx),1=>{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.width=expected;}cx.notify();},_=>e.set_pptx_ink_width(expected,cx)});
     let actual=s.with(|e,_|match format{0=>e.doc_state().unwrap().docx_ink.as_ref().unwrap().width,1=>e.wb().panels.ink.as_ref().unwrap().width,_=>e.pptx().unwrap().ink.as_ref().unwrap().width});assert_eq!(actual,expected);
     buttons::click(&mut s,if format==0{"docx-ink-pen"}else{"ink-pen"});
     assert_eq!(s.with(|e,_|match format{0=>e.doc_state().unwrap().docx_ink.as_ref().unwrap().pen,1=>e.wb().panels.ink.as_ref().unwrap().pen,_=>e.pptx().unwrap().ink.as_ref().unwrap().pen}),PenKind::Pen);
-    assert!(!s.with(|e,_|e.panel_dialog.active),"ink remains a pane for every format");
+    assert!(!s.with(|e,_|e.dialog.active),"ink remains a pane for every format");
+}
+
+/// Subtotal columns, solver constraints and watch cells are rows of the shared virtualized table.
+fn common_tables(){
+    let _probe=buttons::Probe::new();let mut s=Scenario::open("test/editing/xlsx-sales.xlsx");s.size(1200.,900.);
+    // Subtotal: header stays, only visible rows are made, the checkbox in a row toggles the column.
+    s.update(|e,w,cx|e.open_subtotal_panel(w,cx));
+    let total=s.with(|e,_|e.wb().panels.subtotal.as_ref().unwrap().columns.len());
+    s.screenshot("subtotal");
+    let before=s.with(|e,_|e.wb().panels.subtotal.as_ref().unwrap().subtotal_columns.clone());
+    let first=s.with(|e,_|e.wb().panels.subtotal.as_ref().unwrap().columns[0].0);
+    tuple_button(&mut s,"subtotal-column",first as usize);
+    let after=s.with(|e,_|e.wb().panels.subtotal.as_ref().unwrap().subtotal_columns.clone());
+    assert_ne!(before.contains(&first),after.contains(&first),"row checkbox toggles ({total} columns)");
+    buttons::click(&mut s,"subtotal-select-all");
+    assert_eq!(s.with(|e,_|e.wb().panels.subtotal.as_ref().unwrap().subtotal_columns.len()),total);
+    s.update(|e,_,cx|{e.wb_mut().panels.subtotal=None;e.dialog.key=None;cx.notify();});
+    // Solver with constraints.
+    s.update(|e,w,cx|{e.open_solver_panel(w,cx);let p=e.wb_mut().panels.solver.as_mut().unwrap();p.constraints=vec![("B2".into(),ibis_doc_model::solver::Rel::Le,"100".into()),("B3".into(),ibis_doc_model::solver::Rel::Ge,"0".into()),("B4".into(),ibis_doc_model::solver::Rel::Int,"".into())];});
+    s.screenshot("solver");
+    tuple_button(&mut s,"solver-constraint-delete",1);
+    assert_eq!(s.with(|e,_|e.wb().panels.solver.as_ref().unwrap().constraints.len()),2);
+    s.update(|e,_,cx|{e.wb_mut().panels.solver=None;e.dialog.key=None;cx.notify();});
+    // Watch window with rows.
+    s.click_cell("A2");s.update(|e,w,cx|e.open_watch_window(w,cx));
+    for _ in 0..3{buttons::click(&mut s,"watch-add");}
+    s.screenshot("watch");
+    let n=s.with(|e,_|e.wb().panels.watches.len());assert!(n>=1);
 }

@@ -45,6 +45,12 @@ pub(crate) fn selected_numeric_columns() {
     let selected_before=s.with(|e,_|e.selected_range());
     let before=s.with(|e,_|e.slide().shapes.iter().filter(|s|matches!(s.kind,ShapeKind::Chart(_))).count());
     open_chart_menu(&mut s);
+    // The chart submenu is a grid of pictures (two to a row): the line chart is below the first rows, so the wheel scrolls it into view.
+    for _ in 0..16 {
+        if buttons::bounds("menu-item-pptx.insert-chart.line").is_some_and(|b|b.bottom()<px(700.)){break;}
+        let popup=buttons::bounds("submenu-popup").expect("the chart submenu is cut and scrolls");
+        s.wheel((f32::from(popup.center().x),f32::from(popup.center().y)),-30.);
+    }
     let bounds=buttons::bounds("menu-item-pptx.insert-chart.line").unwrap_or_else(||panic!("line-chart row absent from actual child popup: {:?}",buttons::all()));
     if std::env::var_os("IBIS_LINE_CHART_SHOT").is_some(){s.screenshot("line-chart-menu-before-click");}
     eprintln!("line chart actual pointer click bounds: {bounds:?}");

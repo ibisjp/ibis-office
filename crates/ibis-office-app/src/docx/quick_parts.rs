@@ -631,15 +631,16 @@ impl SlideEditor {
             div().text_sm().font_weight(FontWeight::BOLD).text_color(text_secondary()).child(text(tr_key))
         };
 
-        let mut body = v_flex().gap_3().p_0().child(
-            crate::shell::chrome::tab_control_with_mode(
-                [text("docx.quick-parts.tab.parts"), text("docx.quick-parts.tab.properties"), text("docx.quick-parts.tab.fields")],
-                active_tab, "quick-parts-tabs", crate::shell::chrome::TabMode::Intrinsic,
-                |e, tab, cx| {
-                    if let Some(p) = e.doc_state_mut().and_then(|s| s.quick_parts.as_mut()) { p.tab = tab; }
-                    cx.notify();
-                }, cx,
-            ),
+        let mut body = v_flex().gap_3().p_0();
+        // The tabs are in the panel header area.
+        let with_tabs = |panel: SidebarPanel, cx: &Context<Self>| panel.header_tabs(
+            "quick-parts-tabs",
+            [text("docx.quick-parts.tab.parts"), text("docx.quick-parts.tab.properties"), text("docx.quick-parts.tab.fields")],
+            active_tab,
+            |e, tab, cx| {
+                if let Some(p) = e.doc_state_mut().and_then(|s| s.quick_parts.as_mut()) { p.tab = tab; }
+                cx.notify();
+            }, cx,
         );
 
         // 状態メッセージ表示
@@ -929,7 +930,7 @@ impl SlideEditor {
                 .child(crate::shell::chrome::text_field(&custom_input).full_width());
         }
         if active_tab != 2 {
-            return Some(SidebarPanel { title: text("docx.quick-parts"), body: body.into_any_element() });
+            return Some(with_tabs(SidebarPanel { title: text("docx.quick-parts"), body: body.into_any_element() }, cx));
         }
         let panel_actions = crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("btn-insert-custom-field", text("docx.quick-parts.insert"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -941,7 +942,7 @@ impl SlideEditor {
                             this.insert_quick_part_field(&code, cx);
                         }
                     })),);
-        Some(SidebarPanel::with_footer(text("docx.quick-parts"), body.into_any_element(), panel_actions))
+        Some(with_tabs(SidebarPanel::with_footer(text("docx.quick-parts"), body.into_any_element(), panel_actions), cx))
     }
 }
 

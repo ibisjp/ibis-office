@@ -1,0 +1,76 @@
+{
+ "end": 3.138,
+ "last_change": 3.138,
+ "end_video_frame": 19,
+ "first_change": 0.1,
+ "window_end": 3.204,
+ "doc_changes_count": 10,
+ "doc_changes": [
+  [
+   0.1,
+   0.01208
+  ],
+  [
+   1.677,
+   0.14103
+  ],
+  [
+   2.122,
+   0.21713
+  ],
+  [
+   2.785,
+   0.92527
+  ],
+  [
+   3.017,
+   0.08111
+  ],
+  [
+   3.05,
+   0.06926
+  ],
+  [
+   3.061,
+   0.04876
+  ],
+  [
+   3.083,
+   0.01071
+  ],
+  [
+   3.127,
+   0.00319
+  ],
+  [
+   3.138,
+   0.0098
+  ]
+ ],
+ "recorded_until": 11.138,
+ "grabs": 1085,
+ "capped": false,
+ "tag": "open-onlyoffice-pptx-2",
+ "scenario": "open",
+ "app": "onlyoffice",
+ "kind": "pptx",
+ "run": 2,
+ "file": "earnings-presentation.pptx",
+ "command": [
+  "onlyoffice10",
+  "/tmp/ibis-bench-78xe6c93/earnings-presentation.pptx"
+ ],
+ "rects": [
+  [
+   0.0,
+   "293 115 1334 850"
+  ]
+ ],
+ "cap": 40,
+ "measured_at": "2026-11-03 19:48:32",
+ "load_before": [
+  0.78,
+  0.83,
+  0.61
+ ]
+}

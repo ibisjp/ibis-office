@@ -91,7 +91,9 @@ fn same_validation_settings(a: &Validation, b: &Validation) -> bool {
 /// A list's drop-down (or another small menu by the cells), open.
 pub(crate) struct ListPopup {
     pub(crate) menu: Entity<PopupMenu>,
+    /// Where the list is put: `position` is its `anchor` corner (the click point for a context list, a button's corner for `dropdown_list::below_button`).
     pub(crate) position: Point<Pixels>,
+    pub(crate) anchor: Anchor,
     pub(crate) _dismiss: Subscription,
 }
 
@@ -278,13 +280,13 @@ pub(crate) fn keeps_at(sheet: &Sheet, rule: &Validation, value: &CellValue, row:
     if value.is_empty() && rule.allow_blank {
         return true;
     }
-    let (Some(formula), Some(first)) = (rule.formula1.as_deref(), rule.ranges.first()) else { return true };
+    let (Some(formula), Some(base)) = (rule.formula1.as_deref(), rule.base()) else { return true };
     let mut with = sheet.clone();
     let mut cell = with.cell(row, column).cloned().unwrap_or(ibis_doc_model::SheetCell { runs: None, phonetic: None, row, column, value: CellValue::Empty, text: String::new(), kind: ibis_doc_model::CellKind::Empty, formula: None, style: 0 });
     cell.value = value.clone();
     cell.formula = None;
     with.put_cell(row, column, Some(cell));
-    let shifted = ibis_calc::formula::shift(formula, row as i64 - first.first_row as i64, column as i64 - first.first_column as i64);
+    let shifted = ibis_calc::formula::shift(formula, row as i64 - base.0 as i64, column as i64 - base.1 as i64);
     let book = super::conditional::OneSheet(&with);
     match ibis_calc::recalc::evaluate(&book, (with.book_context.sheet_index, row, column), &shifted).0 {
         CellValue::Bool(b) => b,
@@ -455,7 +457,7 @@ impl SlideEditor {
                     CellValue::Error(e) => e.as_str().to_string(),
                     CellValue::Empty => String::new(),
                 };
-                self.validation_list_items_in_book(rule).iter().any(|i| i.eq_ignore_ascii_case(&text))
+                { let items = self.validation_list_items_in_book(rule); let half = ibis_calc::functions::to_half_width(&text); items.iter().any(|i| i.eq_ignore_ascii_case(&text) || i.eq_ignore_ascii_case(&half)) }
             }
             "whole" => matches!(value, CellValue::Number(n) if n.fract() == 0.0 && compare(*n)),
             "decimal" | "date" | "time" => matches!(value, CellValue::Number(n) if compare(*n)),
@@ -469,6 +471,20 @@ impl SlideEditor {
             }
             _ => keeps_at(sheet, rule, value, row, column),
         }
+    }
+
+    /// The value a formula entered into (`row`, `column`) would give, worked out
+    /// as things stand, when the cell has a validation rule: Excel checks the
+    /// result of a formula entry against the rule as it does a typed value.
+    /// `None` when there is no rule or the engine cannot work the formula out.
+    pub(crate) fn formula_entry_value(&self, row: u32, column: u32, formula: &str) -> Option<CellValue> {
+        let (_, sheet) = self.current_sheet()?;
+        rule_at(sheet, row, column)?;
+        let workbook = self.presentation().workbook.as_ref()?;
+        let sheet_index = workbook.sheets.iter().position(|s| s.slide == Some(self.current_slide))?;
+        let view = ibis_doc_model::sheet_calc::BookView::new(self.presentation());
+        let (value, unsupported) = ibis_calc::recalc::evaluate(&view, (sheet_index, row, column), formula);
+        (!unsupported).then_some(value)
     }
 
     /// Whether `value` may go into (`row`, `column`): `Err` with the
@@ -560,7 +576,7 @@ impl SlideEditor {
             this.focus_handle.focus(window, cx);
         });
         menu.read(cx).focus_handle(cx).focus(window, cx);
-        self.wb_mut().list_popup = Some(ListPopup { menu, position, _dismiss: dismiss });
+        self.wb_mut().list_popup = Some(ListPopup { menu, position, anchor: Anchor::TopLeft, _dismiss: dismiss });
         cx.notify();
     }
 
@@ -1002,8 +1018,8 @@ impl SlideEditor {
         };
         let compared = !matches!(p.kind, "none" | "list" | "custom");
         // The dialog's three tabs.
-        let tabs=crate::shell::chrome::tab_control_with_mode(["fix.pivot.settings","fix.validation.input-message","fix.validation.error-alert"].map(text),p.tab,"validation-tabs",crate::shell::chrome::TabMode::Intrinsic,|e,i,cx|{if let Some(p)=e.sheet_state_mut().and_then(|s|s.validation.as_mut()){p.tab=i;}cx.notify();},cx);
-        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0().child(tabs);
+        let tab_index = p.tab;
+        let mut body = v_flex().gap_2().px(px(18.)).py(px(8.)).p_0();
         if p.tab == 0 {
         body = body
             .child(div().text_sm().child(text("fix.validation.allow")))
@@ -1072,7 +1088,9 @@ impl SlideEditor {
             .action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("validation-set", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|e,_,_,cx|e.apply_validation_panel(cx)))))
             .action(crate::shell::chrome::dialog_cancel_definition(cx))
             .action(mark_action("clear", crate::shell::chrome::ActionDefinition::new("validation-clear", "", crate::shell::chrome::ActionButtonKind::Destructive).label(text("fix.validation.clear-all")).on_click(cx.listener(|e,_,_,cx|e.clear_validation(cx)))));
-        Some(SidebarPanel::with_footer(text("_shell.data-validation"),body.into_any_element(),footer))
+        // The dialog's three tabs are in the panel header area.
+        Some(SidebarPanel::with_footer(text("_shell.data-validation"),body.into_any_element(),footer)
+            .header_tabs("validation-tabs",["fix.pivot.settings","fix.validation.input-message","fix.validation.error-alert"].map(text),tab_index,|e,i,cx|{if let Some(p)=e.sheet_state_mut().and_then(|s|s.validation.as_mut()){p.tab=i;}cx.notify();},cx))
     }
 }
 

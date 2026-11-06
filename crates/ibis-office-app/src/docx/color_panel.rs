@@ -52,7 +52,7 @@ impl SlideEditor {
         self.note_recent_color(Rgb(color.unwrap()));
         let applied=self.flow().cloned().map(|doc|(normalized,doc));
         if let Some(edit)=self.doc_state_mut().and_then(|s|s.color_edit.as_mut()) {edit.applied=applied;edit.error=None;}
-        if !self.panel_dialog_is_modal() { self.focus_handle.focus(window,cx); }
+        if !self.dialog_is_modal() { self.focus_handle.focus(window,cx); }
         cx.notify();
     }
     pub(crate) fn edit_color_picker(&mut self, action: crate::shell::color_editor::ColorAction, window: &mut Window, cx: &mut Context<Self>) {

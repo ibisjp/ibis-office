@@ -17,7 +17,7 @@ fn print_shaped_width_is_stable_in_sheet_points_at_different_print_scales() {
                     let font = gpui_kit::font(name);
                     let unit = ibis_pptx::EXCEL_METRICS.pixel_pt() as f32;
                     let widths: Vec<_> = [0.5, 1.0, 1.3].into_iter().map(|scale| {
-                        (super::printed_shaped_width(&text_system, text, &font, size, scale) / unit).round() as i64
+                        (super::printed_shaped_width(&text_system, text, &font, size, scale, false) / unit).round() as i64
                     }).collect();
                     assert_eq!(widths[0], widths[1], "{name} {size}pt, 50% and 100%: {text}");
                     assert_eq!(widths[1], widths[2], "{name} {size}pt, 100% and 130%: {text}");

@@ -10,6 +10,14 @@ use std::cell::Cell;
 #[derive(Clone, Default)]
 pub(crate) struct GradientSliderState {
     drag: Rc<Cell<Option<usize>>>,
+    /// How many drags have ended (the mouse released): a screen that records one Undo step for a drag compares it with the
+    /// number it saw at its last change.
+    released: Rc<Cell<u64>>,
+}
+
+impl GradientSliderState {
+    /// The number of drags that have ended so far.
+    pub(crate) fn drags_ended(&self) -> u64 { self.released.get() }
 }
 
 pub(crate) fn interpolated(stops: &[GradientStop], position: u32) -> Color {
@@ -123,6 +131,7 @@ pub(crate) fn gradient_slider<T: 'static>(
             let down = state.drag.clone();
             let drag = state.drag.clone();
             let up = state.drag.clone();
+            let released = state.released.clone();
             let source = stops.clone();
             let editor = owner.clone();
             let change = changed.clone();
@@ -183,6 +192,7 @@ pub(crate) fn gradient_slider<T: 'static>(
                     && e.button == MouseButton::Left
                     && up.take().is_some()
                 {
+                    released.set(released.get() + 1);
                     w.release_pointer();
                     cx.stop_propagation();
                 }

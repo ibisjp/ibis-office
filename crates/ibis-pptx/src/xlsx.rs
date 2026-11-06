@@ -105,7 +105,8 @@ impl<'t> SheetColors<'t> {
 }
 
 fn argb(value: &str) -> Option<Rgb> {
-    let hex = if value.len() == 8 { &value[2..] } else { value };
+    // `get`, not `[2..]`: a value with a multi-byte character is not a colour, and slicing inside it panics.
+    let hex = if value.len() == 8 { value.get(2..)? } else { value };
     u32::from_str_radix(hex, 16).ok().map(Rgb)
 }
 
@@ -1611,6 +1612,21 @@ impl ExcelMetrics {
         }
     }
 
+    /// The width Excel for Windows breaks the text of a printed column `chars` characters wide in, in points: ECMA-376's formula (Part 1
+    /// 18.3.1.13) in the printer's pixels (1/600 inch) with the Normal font's widest digit measured on it, truncated to the pixel. Its column
+    /// is drawn narrower, at its screen pixels times the printed digit over the screen one (`print_column_factor`: the borders of its PDFs
+    /// of `cw-*.xlsx`, Calibri, ＭＳ Ｐゴシック and 游ゴシック 11, Arial 10, columns of 3 to 50 characters, and the numbers right aligned in them),
+    /// but the text of `colw-sweep.xlsx` (Calibri 11, columns of 85 to 95 characters by halves) breaks where this width less 21 pixels is
+    /// filled, at all 21 widths (GitHub issue #68). `None` on a Mac or where the font cannot be measured.
+    pub fn printed_text_column_pt(self, font: Option<&str>, font_pt: f64, chars: f64) -> Option<f64> {
+        if self != ExcelMetrics::Windows {
+            return None;
+        }
+        let digit = f64::from(crate::font_digit::max_digit_px(font.unwrap_or(DEFAULT_FONT), font_pt, 600.0)?);
+        let units = ((256.0 * chars + (128.0 / digit).floor()) / 256.0 * digit).floor();
+        Some(units * 72.0 / 600.0)
+    }
+
     /// The maximum digit width of the default font (`font_pt` points), in points.
     pub fn digit_pt(self, font: Option<&str>, font_pt: f64) -> f64 {
         match self {
@@ -2281,9 +2297,13 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         ),
         fitted_rows: Default::default(),
         printed_rows: ibis_doc_model::Unsaved(printed_rows),
+        printed: Default::default(),
+        column_chars: ibis_doc_model::Unsaved(col_chars.iter().filter(|(_, w)| **w > 0.0).map(|(c, w)| (*c, *w)).collect()),
+        printed_text_extra: Default::default(),
         hidden_rows,
         custom_rows,
         custom_columns,
+        widened_columns: Default::default(),
         hidden_columns,
         spills,
         conditional: read_conditional(root, styles, colors),
@@ -2394,6 +2414,17 @@ pub(crate) fn apply_tables(sheet: &mut Sheet, table_xmls: &[&str], dxfs: &[ibis_
         let Ok(doc) = roxmltree::Document::parse(xml) else { continue };
         let root = doc.root_element();
         let Some(range) = attr(root, "ref").and_then(parse_range) else { continue };
+        // A table's `ref` of whole rows ("5:679", as LibreOffice writes for a table over entire rows) has no last
+        // column; the table is as wide as its columns are many (never walk to the open end: #82 hung there).
+        let declared_columns = child(root, "tableColumns").map_or(0, |tc| children(tc, "tableColumn").count() as u32);
+        let close = |r: CellRange| {
+            if r.last_column < OPEN_END {
+                return r;
+            }
+            let wide = declared_columns.clamp(1, 16_384);
+            CellRange { last_column: r.first_column.saturating_add(wide - 1).min(16_383), ..r }
+        };
+        let range = close(range);
 
         let header_row_count = attr(root, "headerRowCount")
             .and_then(|v| v.parse::<u32>().ok())
@@ -2422,7 +2453,7 @@ pub(crate) fn apply_tables(sheet: &mut Sheet, table_xmls: &[&str], dxfs: &[ibis_
                 if totals.iter().all(|t| *t == Default::default()) { Vec::new() } else { totals }
             },
             filter: child(root, "autoFilter").map(|f| {
-                let r = attr(f, "ref").and_then(parse_range).unwrap_or(CellRange { last_row: range.last_row.saturating_sub(totals_row_count), ..range });
+                let r = attr(f, "ref").and_then(parse_range).map(close).unwrap_or(CellRange { last_row: range.last_row.saturating_sub(totals_row_count), ..range });
                 ibis_doc_model::AutoFilter {
                     range: r,
                     columns: children(f, "filterColumn").filter_map(|fc| Some((r.first_column + attr_i64(fc, "colId")?.max(0) as u32, column_filter(fc, dxfs)?))).collect(),
@@ -2457,6 +2488,12 @@ pub(crate) fn apply_tables(sheet: &mut Sheet, table_xmls: &[&str], dxfs: &[ibis_
             })
             .collect();
 
+        // Nothing to add to a cell when the table names no style at all (and its cells are not walked: a table
+        // of whole rows is as wide as the sheet).
+        let styled = table_border.is_some() || header_dxf.is_some() || header_border.is_some() || totals_dxf.is_some() || totals_border.is_some() || columns.iter().any(|c| c.0.is_some() || c.1.is_some() || c.2.is_some());
+        if !styled {
+            continue;
+        }
         let mut cell_indices: HashMap<(u32, u32), usize> = HashMap::new();
         for (i, cell) in sheet.cells.iter().enumerate() {
             cell_indices.insert((cell.row, cell.column), i);
@@ -2605,7 +2642,7 @@ pub(crate) fn apply_tables(sheet: &mut Sheet, table_xmls: &[&str], dxfs: &[ibis_
 }
 
 /// Read cell comments from a worksheet's comments part (`xl/comments{N}.xml`).
-pub(crate) fn read_comments(root: Node) -> Vec<ibis_doc_model::SheetComment> {
+pub(crate) fn read_comments(root: Node, colors: &SheetColors) -> Vec<ibis_doc_model::SheetComment> {
     let authors: Vec<String> = child(root, "authors")
         .into_iter()
         .flat_map(|a| children(a, "author"))
@@ -2620,11 +2657,15 @@ pub(crate) fn read_comments(root: Node) -> Vec<ibis_doc_model::SheetComment> {
             let author_id = attr_i64(comment, "authorId").unwrap_or(0).max(0) as usize;
             let author = authors.get(author_id).cloned().unwrap_or_default();
             let text = child(comment, "text").map(inline_text).unwrap_or_default();
+            // The parts in their own fonts (size, colour, bold, italic, underline) are kept.
+            let runs = child(comment, "text").and_then(|t| read_runs(t, colors)).map(|r| r.to_vec()).filter(|r| r.iter().any(|x| *x != ibis_doc_model::CellRun { text: x.text.clone(), ..Default::default() })).unwrap_or_default();
             comments.push(ibis_doc_model::SheetComment {
                 row,
                 column: col,
                 author,
                 text,
+                runs,
+                rect: None,
             });
         }
     }
@@ -2947,7 +2988,7 @@ fn csv_chunk(first_row: usize, records: &[Vec<String>], base: &CellStyle, defaul
                 continue;
             }
             let column = column as u32;
-            let (value, formula, code) = match ibis_calc::input::parse_input(field, false) {
+            let (value, formula, code) = match ibis_calc::input::parse_imported(field, false) {
                 ibis_calc::input::Typed::Formula(f) => (CellValue::Empty, Some(ibis_calc::formula::from_file(&ibis_calc::formula::to_file(&f))).filter(|t| !t.is_empty()), None),
                 ibis_calc::input::Typed::Value(v, code) => {
                     // As the workbook file holds it, and as reading that gives it back.
@@ -3159,6 +3200,14 @@ mod csv_fast_path_tests {
 #[cfg(test)]
 mod tests {
 
+    /// C1: a colour value with a multi-byte character is not a colour, and must not panic (it was sliced by byte position).
+    #[test]
+    fn argb_with_multibyte_character_is_none() {
+        assert_eq!(argb("FF\u{e9}0000"), None);
+        assert_eq!(argb("F\u{e9}0000F").map(|c| c.0), None);
+        assert_eq!(argb("FF336699").map(|c| c.0), Some(0x336699));
+    }
+
     /// A conditional format's solid fill is its bgColor: Excel writes
     /// fgColor indexed="64" (the system foreground, black) beside it, and
     /// fills nothing for a solid fill with an fgColor only (XCF-00177 to 00190).
@@ -3346,6 +3395,25 @@ mod tests {
         assert_eq!(data_st.bottom, Some(thin_border));
         assert_eq!(data_st.left, Some(thin_border));
         assert_eq!(data_st.right, Some(thin_border));
+    }
+
+    /// GitHub issue #82: a table whose `ref` is whole rows ("5:679", as LibreOffice writes it) has no last
+    /// column. The walk over its cells ran to the open end (4 billion columns) and the file never finished opening.
+    #[test]
+    fn table_of_whole_rows_is_as_wide_as_its_columns() {
+        let mut sheet = Sheet { styles: vec![CellStyle::default()], ..Default::default() };
+        let columns: String = (1..=300).map(|i| format!(r#"<tableColumn id="{i}" name="c{i}"/>"#)).collect();
+        let plain = format!(r#"<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ref="5:679" displayName="t"><autoFilter ref="5:679"/><tableColumns count="300">{columns}</tableColumns></table>"#);
+        let thin = Border { line: BorderLine::Thin, color: Rgb::BLACK };
+        let dxfs = vec![ibis_doc_model::CfStyle { borders: [Some(thin), Some(thin), Some(thin), Some(thin)], ..Default::default() }];
+        let bordered = r#"<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ref="2:3" displayName="u" tableBorderDxfId="0"><tableColumns count="2"><tableColumn id="1" name="a"/><tableColumn id="2" name="b"/></tableColumns></table>"#;
+        apply_tables(&mut sheet, &[plain.as_str(), bordered], &dxfs);
+        let (first, second) = (&sheet.tables[0], &sheet.tables[1]);
+        assert_eq!((first.range.first_row, first.range.last_row, first.range.first_column, first.range.last_column), (4, 678, 0, 299));
+        assert_eq!(first.filter.as_ref().map(|f| f.range.last_column), Some(299));
+        assert_eq!((second.range.first_row, second.range.last_row, second.range.last_column), (1, 2, 1));
+        // The bordered one reaches its own four cells only.
+        assert_eq!(sheet.cells.len(), 4);
     }
 
     #[test]
@@ -3617,3 +3685,55 @@ pub(crate) fn read_workbook_window_hidden(root: Node) -> bool {
         .any(|v| attr(v, "visibility") == Some("hidden"))
 }
 
+
+
+/// The boxes of the notes in a sheet's legacy drawing (`vmlDrawing`): for each shape of `x:ClientData ObjectType="Note"`,
+/// the box's place from its `x:Anchor` (the box between two cells, the offsets in pixels), else from its `style`
+/// (points from the sheet's corner), relative to the top right corner of the note's cell. The offsets of the sheet's
+/// columns and rows (`Sheet::column_offsets`, `row_offsets`) place the cells.
+pub(crate) fn read_note_rects(vml: Node, xs: &[i64], ys: &[i64], default_column: i64, default_row: i64) -> Vec<((u32, u32), ibis_doc_model::NoteRect)> {
+    const PIXEL: f64 = 9525.0;
+    const POINT: f64 = 12700.0;
+    let local = |n: Node, name: &str| n.is_element() && n.tag_name().name() == name;
+    let at = |offsets: &[i64], i: i64, default: i64| -> i64 {
+        let i = i.max(0) as usize;
+        match offsets.get(i) {
+            Some(v) => *v,
+            // Past the sheet's own sizes: cells of the default size.
+            None => offsets.last().copied().unwrap_or(0) + (i + 1 - offsets.len().max(1)) as i64 * default,
+        }
+    };
+    let mut out = Vec::new();
+    for shape in vml.descendants().filter(|n| local(*n, "shape")) {
+        let Some(client) = shape.children().find(|n| local(*n, "ClientData")) else { continue };
+        if client.attributes().find(|a| a.name() == "ObjectType").map(|a| a.value()) != Some("Note") {
+            continue;
+        }
+        let number = |tag: &str| client.children().find(|n| local(*n, tag)).and_then(|n| n.text()).and_then(|t| t.trim().parse::<i64>().ok());
+        let (Some(row), Some(column)) = (number("Row"), number("Column")) else { continue };
+        let (cell_right, cell_top) = (at(xs, column + 1, default_column), at(ys, row, default_row));
+        let from_anchor = client.children().find(|n| local(*n, "Anchor")).and_then(|n| n.text()).and_then(|t| {
+            let v: Vec<f64> = t.split(',').filter_map(|p| p.trim().parse::<f64>().ok()).collect();
+            (v.len() == 8).then(|| {
+                let (l, t, r, b) = (at(xs, v[0] as i64, default_column) as f64 + v[1] * PIXEL, at(ys, v[2] as i64, default_row) as f64 + v[3] * PIXEL, at(xs, v[4] as i64, default_column) as f64 + v[5] * PIXEL, at(ys, v[6] as i64, default_row) as f64 + v[7] * PIXEL);
+                (l, t, r - l, b - t)
+            })
+        });
+        let from_style = || {
+            let style = shape.attribute("style")?;
+            let points = |key: &str| {
+                style.split(';').find_map(|kv| {
+                    let (k, v) = kv.split_once(':')?;
+                    k.trim().eq_ignore_ascii_case(key).then(|| v.trim().strip_suffix("pt")?.trim().parse::<f64>().ok()).flatten()
+                })
+            };
+            Some((points("margin-left")? * POINT, points("margin-top")? * POINT, points("width")? * POINT, points("height")? * POINT))
+        };
+        let Some((l, t, w, h)) = from_anchor.or_else(from_style) else { continue };
+        if w <= 0.0 || h <= 0.0 {
+            continue;
+        }
+        out.push(((column as u32, row as u32), ibis_doc_model::NoteRect { dx: l.round() as i64 - cell_right, dy: t.round() as i64 - cell_top, width: w.round() as i64, height: h.round() as i64 }));
+    }
+    out
+}

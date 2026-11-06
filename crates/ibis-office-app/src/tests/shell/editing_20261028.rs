@@ -229,7 +229,7 @@ fn custom_colors() {
     buttons::click(&mut s, &id);
     buttons::click(&mut s, "menu-item-color.palette.more");
     assert_eq!(
-        s.with(|e, _| e.panel_dialog.key),
+        s.with(|e, _| e.dialog.key),
         Some("color_picker_dialog")
     );
     let hex = s.with(|_, cx| buttons::inputs(cx).last().unwrap().clone());
@@ -414,7 +414,7 @@ fn segment_motion() {
         x.set(Some((
             segment_fixture,
             "test-segment",
-            crate::shell::panel_dialog::PanelMode::Modal,
+            crate::shell::dialog::DialogMode::Modal,
         )))
     });
     s.update(|_, _, cx| cx.notify());
@@ -489,7 +489,7 @@ fn font_popup() {
     let mut s = workbook();
     let key = buttons::all()
         .into_iter()
-        .find(|k| k.starts_with("font-size-trigger-"))
+        .find(|k| k.starts_with("font-size-caret"))
         .unwrap();
     buttons::click(&mut s, &key);
     assert!(s.with(|e, _| e.font_size_menu_open));

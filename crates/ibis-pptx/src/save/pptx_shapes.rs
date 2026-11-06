@@ -1492,7 +1492,45 @@ fn write_xfrm(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &S
             }
         }
     }
+    mirror_zoom_frame(doc, node, b);
     Ok(())
+}
+
+/// A ズーム object is a frame in `mc:Choice` (what PowerPoint draws) and a picture in `mc:Fallback` (what the reader reads and older
+/// versions draw): a picture moved or resized in the fallback moves the frame of the choice too, with the object's own size
+/// (`zmPr/spPr/xfrm`) in it. A summary's cards are one frame; its pictures are not moved by themselves.
+fn mirror_zoom_frame(doc: &mut XmlDocument, node: NodeId, frame: ibis_doc_model::EmuRect) {
+    if doc.local_name(node) != "pic" {
+        return;
+    }
+    let Some(fallback) = doc.parent(node).filter(|&p| doc.local_name(p) == "Fallback") else { return };
+    let Some(alternate) = doc.parent(fallback).filter(|&p| doc.local_name(p) == "AlternateContent") else { return };
+    let Some(choice) = doc.child(alternate, "Choice") else { return };
+    let Some(frame_node) = doc.child(choice, "graphicFrame") else { return };
+    let zoom = doc.descendants(frame_node).into_iter().any(|n| matches!(doc.local_name(n), "sldZmObj" | "sectionZmObj"));
+    if !zoom {
+        return;
+    }
+    let mut set = |doc: &mut XmlDocument, xfrm: NodeId, off: Option<(i64, i64)>, ext: (i64, i64)| {
+        if let (Some(o), Some(at)) = (off, doc.child(xfrm, "off")) {
+            doc.set_attr(at, "x", &o.0.to_string());
+            doc.set_attr(at, "y", &o.1.to_string());
+        }
+        if let Some(at) = doc.child(xfrm, "ext") {
+            doc.set_attr(at, "cx", &ext.0.to_string());
+            doc.set_attr(at, "cy", &ext.1.to_string());
+        }
+    };
+    if let Some(xfrm) = doc.child(frame_node, "xfrm") {
+        set(doc, xfrm, Some((frame.x, frame.y)), (frame.width, frame.height));
+    }
+    // The object's own picture and outline, drawn in the frame from its corner.
+    let sp_prs: Vec<NodeId> = doc.descendants(frame_node).into_iter().filter(|&n| doc.local_name(n) == "spPr").collect();
+    for sp_pr in sp_prs {
+        if let Some(xfrm) = doc.child(sp_pr, "xfrm") {
+            set(doc, xfrm, None, (frame.width, frame.height));
+        }
+    }
 }
 
 const FILLS: [&str; 6] = ["noFill", "solidFill", "gradFill", "blipFill", "pattFill", "grpFill"];

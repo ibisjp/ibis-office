@@ -12,7 +12,7 @@ pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
 ]}
 fn shot(s:&mut Scenario,name:&str){
     let path=s.screenshot(name);
-    let bounds=s.with(|e,_|e.panel_dialog.bounds.unwrap());
+    let bounds=s.with(|e,_|e.dialog.bounds.unwrap());
     let image=image::open(&path).unwrap().to_rgba8();let scale=image.width() as f32/1200.;
     let crop=image::imageops::crop_imm(&image,(f32::from(bounds.origin.x)*scale).round() as u32,(f32::from(bounds.origin.y)*scale).round() as u32,(f32::from(bounds.size.width)*scale).round() as u32,(f32::from(bounds.size.height)*scale).round() as u32).to_image();
     let root=crate::shell::scenario::repo_root().join("target/ui-layout-refinements");std::fs::create_dir_all(&root).unwrap();
@@ -28,9 +28,9 @@ fn dictionary(){
     let header=s.with(|e,_|e.doc_state().unwrap().autocorrect.as_ref().unwrap().ui.borrow()["dictionary-header"]);
     shot(&mut s,"autocorrect-dictionary");
     s.wheel((f32::from(header.center().x),f32::from(header.bottom()+px(50.))),-10000.);
-    let (after,offset,outer,last)=s.with(|e,_|{let p=e.doc_state().unwrap().autocorrect.as_ref().unwrap();(p.ui.borrow()["dictionary-header"],p.table_scroll.offset().y,e.panel_dialog.scroll.offset().y,p.ui.borrow()["entry-99"])});
+    let (after,offset,outer,last)=s.with(|e,_|{let p=e.doc_state().unwrap().autocorrect.as_ref().unwrap();(p.ui.borrow()["dictionary-header"],p.table_scroll.offset().y,e.dialog.scroll.offset().y,p.ui.borrow()["entry-99"])});
     assert_eq!(header,after,"table header stays fixed");assert!(offset<px(0.));assert_eq!(outer,px(0.),"dialog content does not scroll");
-    let dialog=s.with(|e,_|e.panel_dialog.bounds.unwrap());assert!(last.bottom()<dialog.bottom()-px(40.),"last row is above action bar");
+    let dialog=s.with(|e,_|e.dialog.bounds.unwrap());assert!(last.bottom()<dialog.bottom()-px(40.),"last row is above action bar");
     shot(&mut s,"autocorrect-dictionary-bottom");
     s.update(|e,_,cx|{let p=e.doc_state_mut().unwrap().autocorrect.as_mut().unwrap();p.working.table.clear();cx.notify();});
     buttons::click(&mut s,"autocorrect-add");assert!(s.with(|e,_|e.doc_state().unwrap().autocorrect.as_ref().unwrap().entry_open));
@@ -40,9 +40,9 @@ fn print_content(){
     s.update(|e,w,cx|e.open_doc_print_panel(w,cx));
     s.update(|e,w,cx|{let input=e.doc_state().unwrap().print_panel.as_ref().unwrap().copies_input.clone();input.update(cx,|i,cx|{i.set_value("3",w,cx);cx.emit(InputEvent::Change);});});
     assert_eq!(s.with(|e,_|e.docx_print_settings().copies),3);
-    shot(&mut s,"print-settings-top");let b=s.with(|e,_|e.panel_dialog.bounds.unwrap());s.wheel((f32::from(b.center().x),f32::from(b.center().y)),-10000.);
-    assert!(s.with(|e,_|e.panel_dialog.scroll.offset().y)<px(0.));shot(&mut s,"print-settings-bottom");
-    s.size(1200.,1600.);s.update(|e,_,cx|{e.panel_dialog.bounds=None;e.panel_dialog.scroll.set_offset(Point::default());cx.notify();});shot(&mut s,"print-settings-all");
+    shot(&mut s,"print-settings-top");let b=s.with(|e,_|e.dialog.bounds.unwrap());s.wheel((f32::from(b.center().x),f32::from(b.center().y)),-10000.);
+    assert!(s.with(|e,_|e.dialog.scroll.offset().y)<px(0.));shot(&mut s,"print-settings-bottom");
+    s.size(1200.,1600.);s.update(|e,_,cx|{e.dialog.bounds=None;e.dialog.scroll.set_offset(Point::default());cx.notify();});shot(&mut s,"print-settings-all");
 }
 thread_local! {
     static DROPDOWN_INPUT:std::cell::RefCell<Option<Entity<gpui_kit::component::input::InputState>>>=const{std::cell::RefCell::new(None)};
@@ -58,7 +58,7 @@ impl Drop for DropdownCleanup {fn drop(&mut self){crate::shell::chrome::FORCED_S
 fn dropdown_threshold(){
     let _probe=buttons::Probe::new();let mut s=Scenario::open("test/editing/docx-report.docx");s.size(1200.,800.);
     s.update(|_,w,cx|DROPDOWN_INPUT.with(|f|*f.borrow_mut()=Some(cx.new(|cx|gpui_kit::component::input::InputState::new(w,cx).default_value("Choice 00")))));
-    crate::shell::chrome::FORCED_SIDEBAR.with(|c|c.set(Some((dropdown_panel,"threshold-fixture",crate::shell::panel_dialog::PanelMode::Sidebar))));
+    crate::shell::chrome::FORCED_SIDEBAR.with(|c|c.set(Some((dropdown_panel,"threshold-fixture",crate::shell::dialog::DialogMode::Sidebar))));
     let _cleanup=DropdownCleanup;
     for count in [20,21]{
         CHOICES.with(|n|n.set(count));s.update(|e,_,cx|{e.sidebar_open=true;cx.notify();});buttons::click(&mut s,"threshold-dropdown");

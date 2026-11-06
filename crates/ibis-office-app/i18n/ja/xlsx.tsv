@@ -155,7 +155,7 @@ xlsx.pivot-value-settings	値フィールドの設定…
 xlsx.pivot-options	ピボットテーブル オプション…
 xlsx.pivot-show-details	詳細データの表示
 xlsx.pivot-group	グループ化…
-xlsx.pivot-ungroup	グループ解除
+xlsx.pivot-ungroup	ピボットテーブルのグループ解除
 xlsx.table-design	テーブルのデザイン…
 xlsx.theme-lighter	{name}、白 + 基本色 {n}%
 xlsx.theme-darker	{name}、黒 + 基本色 {n}%
@@ -237,9 +237,6 @@ xlsx.alt-text.description	説明
 xlsx.alt-text.hint	スクリーンリーダーで読み上げられる画像や図形の説明文を入力します。
 xlsx.alt-text.apply	適用
 xlsx.comment-delete	コメントの削除
-comment.cell	セル {cell} のコメント
-_xlsx.type-a-reply-and-press-enter	返信を入力して Enter
-_xlsx.post	投稿
 xlsx.export-xltx	Excel テンプレート（.xltx）
 xlsx.new-from-template	テンプレートから新規作成…
 xlsx.accessibility-check	アクセシビリティ チェック…
@@ -476,7 +473,7 @@ xlsx.change-shape.heart	ハート
 xlsx.shape-textlink	セルと連動
 xlsx.shape-textlink.current-cell	選択中のセルと連動
 xlsx.shape-textlink.clear	セルとの連動を解除
-xlsx.copy-as-picture	画像としてコピー
+xlsx.copy-as-picture	図としてコピー
 xlsx.move-chart	グラフの移動…
 xlsx.chart-radar-style	レーダーのスタイル
 xlsx.chart-3d-rotation	3-D 回転
@@ -521,16 +518,12 @@ _xlsx.comparison-value-or-formula-e-g-10-a1-0	比較値または数式（10、A1
 _xlsx.second-comparison-value-or-formula	もう一つの比較値・数式
 _xlsx.the-sheet-or-rule-has-changed-reopen-it	シートまたはルールが変わりました。開き直してください。
 _xlsx.enter-a-valid-range-or-formula-and-a-6-digit-fil	有効な範囲・数式と6桁の塗りつぶし色を入力してください。
-_xlsx.fill-color-rgb	塗りつぶし色（RGB）
-_xlsx.stop-if-true-on	条件を満たす場合は停止：オン
-_xlsx.stop-if-true-off	条件を満たす場合は停止：オフ
 _xlsx.update-rule	ルールを更新
 _xlsx.add-rule	ルールを追加
 _xlsx.add-as-copy	コピーとして追加
 _xlsx.delete-rules-in-selection	選択範囲内のルールを削除
 _xlsx.stop-on	停止：オン
 _xlsx.stop-off	停止：オフ
-_xlsx.apply-to-selection	選択範囲に設定
 _xlsx.number-format-custom	表示形式（ユーザー定義）
 _xlsx.the-sheet-has-changed-reopen-it	シートが変わりました。開き直してください。
 _xlsx.enter-a-valid-cell-range	有効なセル範囲を入力してください。
@@ -1046,10 +1039,8 @@ _xlsx.filter-by-selected-cell-s-color	選択したセルの色でフィルター
 _xlsx.filter-by-selected-cell-s-font-color	選択したセルのフォントの色でフィルター
 _xlsx.indent	インデント
 _xlsx.set-size	サイズを設定
-_xlsx.size-points	サイズ（ポイント）
-_xlsx.sample	サンプル
-_xlsx.set-font	フォントを設定
-_xlsx.font-name	フォント名
+_xlsx.sample	サンプル: 
+_xlsx.font-name	フォント
 _xlsx.locked	ロック
 _xlsx.locked-and-hidden-take-effect-when-the-sheet-is	ロックと表示しないは、シートを保護したときに効きます。
 _xlsx.top-2	上詰め
@@ -1137,7 +1128,7 @@ _xlsx.use-descriptive-text-that-explains-what-the-link	リンク先の内容が�
 _xlsx.workbook-protection	ブックの保護
 _xlsx.range-n	範囲{n}
 _xlsx.recovered-file-name	[回復済み] {file_name}
-_xlsx.copied-kind-name-as-a-picture	{kind_name}を画像としてコピーしました
+_xlsx.copied-kind-name-as-a-picture	{kind_name}を図としてコピーしました
 _xlsx.invalid-reference-text	参照が正しくありません: {text}
 _xlsx.backup-of-stem-ext	{stem} のバックアップ.{ext}
 _xlsx.could-not-create-the-backup-e	バックアップの作成に失敗しました: {e}
@@ -1246,7 +1237,7 @@ _xlsx.monochrome-6	モノクロ 6
 _xlsx.header-page-of	&C&P / &N ページ
 _xlsx.header-options	ヘッダー設定
 _xlsx.you-can-t-fill-here	ここにはフィルできません
-_xlsx.copied-the-selection-as-a-picture	選択範囲を画像としてコピーしました
+_xlsx.copied-the-selection-as-a-picture	選択範囲を図としてコピーしました
 _xlsx.select-a-cell-or-an-object-to-copy	コピーするセルまたはオブジェクトを選択してください
 _xlsx.invalid-reference	参照が正しくありません。
 _xlsx.wordart-default-text	ワードアート
@@ -1725,9 +1716,10 @@ xlsx.solver.non-negative	制約のない変数を非負数にする
 xlsx.solver.method	解決方法の選択
 xlsx.solver.precision	制約条件の精度
 xlsx.solver.convergence	収束
-xlsx.solver.integer-tolerance	整数の最適性 (%)
+xlsx.solver.integer-tolerance	整数の最適性
 xlsx.solver.max-iterations	反復回数の上限（空欄：なし）
-xlsx.solver.max-time	最大時間（秒、空欄：なし）
+xlsx.solver.max-time	最大時間（空欄：なし）
+xlsx.solver.max-time-unit	秒
 xlsx.solver.solve	解決
 xlsx.solver.keep	ソルバーの解を保持
 xlsx.solver.restore	元の値に戻す
@@ -2133,8 +2125,8 @@ xlsx.control-properties.step	変化の増分
 xlsx.control-properties.page	ページの増分
 xlsx.control-properties.three-d	3-D 陰影表示
 xlsx.control-properties.font	フォント名
-xlsx.control-properties.font-size	フォント サイズ (pt)
-xlsx.control-properties.text-color	文字の色 (#RRGGBB)
+xlsx.control-properties.font-size	フォント サイズ
+xlsx.control-properties.text-color	文字の色
 xlsx.design-mode	デザイン モード
 xlsx.design-mode.enabled	デザイン モード: 有効
 xlsx.design-mode.disabled	デザイン モード: 無効
@@ -2177,7 +2169,7 @@ xlsx.chart-ex.treemap	ツリーマップの設定
 xlsx.chart-ex.treemap-overlapping	親ラベルを重ねて表示
 xlsx.chart-ex.funnel	じょうごグラフの設定
 xlsx.chart-ex.pareto	パレート図の設定
-xlsx.chart-ex.gap-width	要素の間隔 (%)
+xlsx.chart-ex.gap-width	要素の間隔
 xlsx.chart-ex.apply-gap	間隔を適用
 xlsx.image.curl-missing	curlがみつかりません。
 xlsx.paste-picture	図
@@ -2325,7 +2317,7 @@ xlsx.picture.compress.web	Web 用（150 ppi）
 xlsx.picture.compress.email	電子メール用（96 ppi）
 xlsx.picture.compress.delete-crop	トリミング部分を削除して圧縮
 _xlsx.row-height	行の高さ…
-_xlsx.row-height-pt	行の高さ（pt）
+_xlsx.row-height-pt	行の高さ
 _xlsx.column-width	列の幅…
 _xlsx.column-width-chars	列の幅（標準文字数）
 _xlsx.presets	プリセット
@@ -2453,6 +2445,16 @@ xlsx.names.scope.workbook	ブック
 xlsx.names.scope.sheet	現在のシート
 xlsx.move-sheet-first	先頭へ移動
 xlsx.move-sheet-last	末尾へ移動
+xlsx.move-copy-sheet	移動またはコピー
+xlsx.sheet-transfer.title	シートの移動またはコピー
+xlsx.sheet-transfer.book	移動先ブック名
+xlsx.sheet-transfer.before	次のシートの前
+xlsx.sheet-transfer.to-end	（末尾へ移動）
+xlsx.sheet-transfer.copy	コピーを作成する
+xlsx.sheet-transfer.this-book	{name}（このブック）
+xlsx.sheet-transfer.closed	移動先のブックは閉じられました。
+xlsx.sheet-transfer.last-sheet	ブックにはシートが 1 枚しかないため、別のブックへ移動できません。コピーを作成するか、シートを追加してください。
+xlsx.sheet-transfer.failed	シートを移動またはコピーできませんでした。
 xlsx.unhide-all-sheets	すべての非表示シートを再表示
 xlsx.status-bar-summary	ステータス バーの集計
 xlsx.status-summary-average	平均
@@ -2465,7 +2467,6 @@ xlsx.cf.preset-red	濃い赤の文字、明るい赤の背景
 xlsx.cf.preset-yellow	濃い黄色の文字、黄色の背景
 xlsx.cf.preset-green	濃い緑の文字、緑の背景
 xlsx.cf.preset-red-text	赤の文字
-xlsx.cf.text-color-rgb	文字の色 (RGB)
 xlsx.cf.filter-sheet	このワークシート
 xlsx.cf.filter-selection	現在の選択範囲
 xlsx.validation.apply-same	同じ入力規則のすべてのセルに変更を適用する
@@ -2583,7 +2584,7 @@ xlsx.word-count.sheet	シート全体
 xlsx.word-count.cells	データのあるセル
 xlsx.page-break-preview-page	{page} ページ
 _xlsx.headings	見出しを表示
-xlsx.delete-menu	削除
+xlsx.delete-menu	行・列・セルの削除
 xlsx.sheet-menu	シート
 xlsx.view-mode	ビューモード
 xlsx.insert-cells-menu	挿入
@@ -2657,8 +2658,6 @@ xlsx.cf.other-rule	その他のルール
 xlsx.cf.manage-title	条件付き書式ルールの管理
 xlsx.cf.edit-title	条件付き書式ルールを編集
 
-xlsx.cf.move-up	優先順位を上げる
-xlsx.cf.move-down	優先順位を下げる
 
 xlsx.sort-level.edit	並べ替え条件を編集
 
@@ -2681,3 +2680,150 @@ xlsx.shape-panel.rotation	回転
 xlsx.shape-panel.horizontal	横位置
 xlsx.shape-panel.vertical	縦位置
 chart.ui.first-cell-name	先頭セルを系列名として使用する
+xlsx.infobar.final.title	最終版
+xlsx.infobar.final.message	作成者によって、このブックの最終版としてマークされたため、編集できないようになっています。
+xlsx.infobar.final.edit-anyway	それでも編集する
+xlsx.print-panel.title	印刷
+xlsx.print-panel.note	この環境では、印刷すると PDF を作って既定のアプリで開きます。印刷はそのアプリで行ってください。
+xlsx.paste-names.title	名前の競合
+xlsx.paste-names.title-duplicate	名前の重複
+xlsx.paste-names.exists	名前 '{name}' は既に存在します。この名前にする場合は [はい] をクリックします。貼り付けのために '{name}' の名前を変更する場合は、[いいえ] をクリックして、新しい名前を入力します。
+xlsx.paste-names.duplicate	同じ名前がリンク先のシートに既に存在します。
+xlsx.paste-names.new-name	新しい名前
+xlsx.paste-names.invalid	この名前は使えません。使われていない名前を入力してください。
+xlsx.paste-names.yes-to-all	すべて
+xlsx.print-panel.scale-100	100%
+xlsx.status.mode-enter	入力
+xlsx.status.mode-edit	編集
+xlsx.names.title	名前の管理
+xlsx.names.search.placeholder	名前・参照先を検索
+xlsx.names.filter.button	フィルター
+xlsx.names.filter.scope-all	スコープ: すべて
+xlsx.names.filter.scope-book	スコープ: ブック
+xlsx.names.filter.scope-sheet	スコープ: シート {sheet}
+xlsx.names.filter.kind-range	種類: 範囲
+xlsx.names.filter.kind-constant	種類: 定数
+xlsx.names.filter.kind-formula	種類: 数式
+xlsx.names.filter.kind-lambda	種類: LAMBDA
+xlsx.names.filter.errors-only	エラーのある名前だけ
+xlsx.names.filter.hide-helpers	補助名（_・¥ で始まる）を除く
+xlsx.names.filter.clear	絞り込みを解除
+xlsx.names.count	{total} 件
+xlsx.names.count-filtered	全 {total} 件中 {shown} 件を表示
+xlsx.names.col.name	名前
+xlsx.names.col.value	値
+xlsx.names.col.ref	参照範囲または数式
+xlsx.names.col.scope	スコープ
+xlsx.names.col.kind	種類
+xlsx.names.kind.error	エラー: 参照先が無効
+xlsx.names.value.function	（関数）
+xlsx.names.empty.none	名前はまだありません
+xlsx.names.empty.nomatch	条件に合う名前がありません
+xlsx.names.scope.book	ブック
+xlsx.names.dialog.title-new	新しい名前
+xlsx.names.dialog.title-edit	名前を編集
+xlsx.names.dialog.name	名前
+xlsx.names.dialog.scope	スコープ
+xlsx.names.dialog.ref	参照範囲または数式
+xlsx.names.dialog.current-value	現在の値
+xlsx.names.dialog.lambda-args	引数
+xlsx.names.dialog.arg-required	必須
+xlsx.names.dialog.arg-optional	省略可
+xlsx.names.dialog.length	{n} 文字
+xlsx.names.dialog.error-ref	参照先のシートまたはセルが削除されています。参照範囲を選び直してください。
+xlsx.names.action.add	追加
+xlsx.names.action.update	更新
+xlsx.names.action.cancel	キャンセル
+xlsx.names.action.edit-row	編集: {name}
+xlsx.names.action.delete-row	削除: {name}
+xlsx.names.action.more	その他の操作
+xlsx.names.menu.paste	シートに一覧を貼り付け（表示中の {n} 件を {cell} から）
+xlsx.names.menu.copy	表示中の名前を TSV でコピー
+xlsx.names.menu.create-from-selection	選択範囲から作成（上端行）
+xlsx.names.menu.create-left	選択範囲から作成（左端列）
+xlsx.names.menu.create-both	選択範囲から作成（上端行と左端列）
+xlsx.names.menu.delete-errors	エラーの名前をすべて削除（{n}）
+xlsx.names.err.empty	名前を入力してください
+xlsx.names.err.cell-ref	セル参照と同じ名前は使えません
+xlsx.names.err.first-char	先頭は文字・_・¥ にしてください
+xlsx.names.err.chars	空白と記号（. と _ 以外）は使えません
+xlsx.names.err.dupe-book	ブックに同じ名前があります
+xlsx.names.err.dupe-sheet	シート「{sheet}」に同じ名前があります
+xlsx.names.err.ref-empty	参照範囲または数式を入力してください
+xlsx.names.status.invalid-name	「{name}」は名前として使えません
+xlsx.names.toast.added	名前「{name}」を追加しました
+xlsx.names.toast.updated	名前「{name}」を更新しました
+xlsx.names.toast.deleted	名前「{name}」を削除しました（元に戻せます）
+xlsx.names.toast.pasted	{n} 件の名前を {cell} に貼り付けました（元に戻せます）
+xlsx.names.toast.deleted-errors	エラーの名前を {n} 件削除しました（元に戻せます）
+xlsx.names.toast.copied	{n} 件の名前をコピーしました
+xlsx.cf.fill-color	塗りつぶし色
+xlsx.cf.text-color	文字の色
+xlsx.cf.stop-if-true	条件を満たす場合は停止
+xlsx.cf.no-rules	ルールがありません
+xlsx.format-pane.tab-format	書式
+xlsx.format-pane.tab-border	罫線
+xlsx.format-pane.tab-protection	保護
+xlsx.table-design.tab-design	デザイン
+xlsx.table-design.tab-commands	コマンド
+xlsx.pivot-fields.search-placeholder	フィールドを検索
+xlsx.pivot-fields.count-all	{n} 件
+xlsx.pivot-fields.count-found	全 {total} 件中 {n} 件
+xlsx.pivot-fields.hint	ドラッグまたはチェックで配置
+xlsx.pivot-fields.column-field	フィールド
+xlsx.pivot-fields.column-area	配置
+xlsx.pivot-fields.no-match	一致するフィールドがありません
+xlsx.pivot-fields.layout-title	配置
+xlsx.pivot-fields.layout-note	項目の順に集計
+xlsx.pivot-fields.drop-here	ここにドラッグ
+xlsx.pivot-fields.action.value-settings	値フィールドの設定
+xlsx.pivot-fields.action.field-settings	フィールドの設定
+xlsx.pivot-fields.action.remove	{name} をレイアウトから削除
+xlsx.pivot-field.title	フィールドの設定
+xlsx.pivot-value.title	値フィールドの設定
+xlsx.pivot-value.tab-summarize	集計方法
+xlsx.pivot-value.tab-show-as	計算の種類
+xlsx.pivot-value.source-name	元のフィールド
+xlsx.pivot-value.custom-name	値の名前
+xlsx.pivot-value.summarize-by	集計方法
+xlsx.pivot-value.summarize-help	選んだフィールドのデータを集計する計算を選びます。
+xlsx.pivot-value.number-format	表示形式
+xlsx.pivot-value.sample	見本：{sample}
+xlsx.pivot-value.show-as	計算の種類
+xlsx.pivot-value.base-field	基準フィールド
+xlsx.pivot-value.base-item	基準アイテム
+xlsx.pivot-value.not-needed	（不要）
+xlsx.pivot-value.fn.sum	合計
+xlsx.pivot-value.fn.count	個数
+xlsx.pivot-value.fn.average	平均
+xlsx.pivot-value.fn.max	最大
+xlsx.pivot-value.fn.min	最小
+xlsx.pivot-value.fn.product	積
+xlsx.pivot-value.fn.count-numbers	数値の個数
+xlsx.pivot-value.fn.stddev	標本標準偏差
+xlsx.pivot-value.fn.stddevp	標準偏差
+xlsx.pivot-value.fn.var	標本分散
+xlsx.pivot-value.fn.varp	分散
+xlsx.format-pane.category	表示形式
+xlsx.format-pane.angle	角度
+xlsx.format-pane.size	サイズ
+xlsx.format-pane.style	スタイル
+xlsx.recommended-charts.menu	おすすめグラフ...
+xlsx.pivot-expand-collapse	展開/折りたたみ
+xlsx.pivot-expand	展開
+xlsx.pivot-collapse	折りたたみ
+xlsx.pivot-expand-field	フィールドの展開
+xlsx.pivot-collapse-field	フィールドの折りたたみ
+xlsx.pivot-select-an-item	+/- ボタンのある項目のセルを選んでください
+xlsx.pivot.cannot-change-part	ピボットテーブルで現在選択されている部分は変更できません。
+xlsx.pivot.affects-pivot	ピボットテーブルに影響するため、選択したセルに対してこの変更を行うことはできません。レポートを変更するには、フィールド リストを使ってください。セルを挿入または削除するには、ピボットテーブルを移動してからもう一度お試しください。
+xlsx.pivot.name-exists	指定したフィールド名は既に使用されています。
+xlsx.pivot.name-null	ピボットテーブル レポートのアイテム名またはフィールド名に Null 値を入力することはできません。
+xlsx.pivot.name-formula	ピボットテーブル レポートのアイテムまたはフィールド名に数式を入力することはできません。
+xlsx.pivot.not-an-item	「{item}」はこのフィールドのアイテムではありません。
+xlsx.format-pane.live-update	リアルタイム更新
+xlsx.format-pane.rotation-numeric	数値指定
+xlsx.format-pane.underline	下線
+xlsx.format-pane.stop-color	ストップの色
+xlsx.format-pane.stop-position	ストップの位置
+xlsx.format-pane.remove-stop	ストップを削除

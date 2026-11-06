@@ -5,7 +5,7 @@
 use crate::shell::scenario::Scenario;
 use crate::docx::scenarios::DocSteps;
 use crate::xlsx::scenarios::SheetSteps;
-use crate::shell::panel_dialog::PanelMode;
+use crate::shell::dialog::DialogMode;
 pub(crate) fn dump_all_right_panels() {
     use crate::shell::chrome::{FORCED_SIDEBAR, LAST_SIDEBAR_TITLE, SidebarPanel};
     use crate::shell::editor::SlideEditor;
@@ -37,14 +37,37 @@ pub(crate) fn dump_all_right_panels() {
     let wants_format=|fmt:&str|requested.is_empty()||requested_formats.is_empty()||requested_formats.contains(fmt);
     let mut snap = |s: &mut Scenario, fmt: &str, idx: usize, name: &'static str, f: fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) -> Option<SidebarPanel>| {
         if let Ok(only)=std::env::var("IBIS_GALLERY_ONLY") {
-            if !only.split(',').any(|entry|entry==name) {s.update(|e,w,cx|e.close_panel_dialog(w,cx));return;}
+            if !only.split(',').any(|entry|entry==name) {s.update(|e,w,cx|e.close_dialog(w,cx));return;}
         }
         let file_name = format!("{idx:02}-{name}.png");
         let panel_path = root.join(fmt).join(&file_name);
         let win_path = root.join("window").join(fmt).join(&file_name);
+        // Screens that are not sidebar panels (overlay dialogs of the workspace, the status line): the window is
+        // pictured as it is, cropped by `overlay_crop`.
+        if let Some(crop)=overlay_crop(name) {
+            let (w,raw)=s.picture();let h=raw.len() as u32/(w*4);let scale=w/1200;
+            let img=image::RgbaImage::from_raw(w,h,raw).expect("rgba image");
+            let (x,y,cw,ch)=match crop {
+                OverlayCrop::Workspace=>(0,108*scale,w,h.saturating_sub((108+28)*scale)),
+                OverlayCrop::Status=>(0,h.saturating_sub(28*scale),w,28*scale),
+            };
+            image::imageops::crop_imm(&img,x,y,cw,ch).to_image().save(&panel_path).unwrap();
+            let title=overlay_title(name);
+            println!("DUMPED {fmt} #{idx:02} {name} -> overlay title={title:?}");
+            existing.retain(|(format,_),line|format!=fmt || line.split('\t').nth(2)!=Some(name));
+            existing.insert((fmt.to_string(),name.to_string()),format!("{fmt}\t{idx:02}\t{name}\t{title}\t{}\t{}\tOverlay",panel_path.display(),win_path.display()));
+            let lines: Vec<String> = existing.values().cloned().collect();
+            std::fs::write(&manifest_path, lines.join("\n") + "\n").unwrap();
+            s.update(|e,w,cx|{
+                e.close_dialog(w,cx);e.zoom_dialog_open=false;e.status=None;
+                if let Some(p)=e.pptx_mut(){p.slide_zoom_dialog=None;p.section_zoom_dialog=None;p.summary_zoom_dialog=None;}
+                cx.notify();
+            });
+            return;
+        }
         super::button_probe::clear();
         let (key, mode) = panel_mode(fmt, name);
-        let capture_mode=if name.starts_with("tab_row_editor") {PanelMode::Modal} else {mode};
+        let capture_mode=if name.starts_with("tab_row_editor") {DialogMode::Modal} else {mode};
         FORCED_SIDEBAR.with(|c| c.set(Some((f, key, mode))));
         LAST_SIDEBAR_TITLE.with(|t| t.borrow_mut().clear());
         s.update(|e, _, cx| {
@@ -55,9 +78,9 @@ pub(crate) fn dump_all_right_panels() {
         let title = LAST_SIDEBAR_TITLE.with(|t| t.borrow().clone());
         assert!(!title.is_empty(), "{fmt}::{name} returned None (no sidebar title rendered)");
         if super::dialog_apply::active(){
-            if mode==PanelMode::Modal{super::dialog_apply::audit(s,fmt,name);}
+            if mode==DialogMode::Modal{super::dialog_apply::audit(s,fmt,name);}
             FORCED_SIDEBAR.with(|c|c.set(None));
-            s.update(|e,w,cx|e.close_panel_dialog(w,cx));return;
+            s.update(|e,w,cx|e.close_dialog(w,cx));return;
         }
         let (w, raw) = s.picture();
         let h = raw.len() as u32 / (w * 4);
@@ -67,15 +90,15 @@ pub(crate) fn dump_all_right_panels() {
         let full_content=matches!(name,"sparkline_panel"|"conditional_panel"|"custom_format_panel"|"text_columns_panel"|"print_panel"|"threed_model_panel"|"import_text_panel"|"animation_pane");
         let (w,img)=if full_content {
             s.size(1200.,2000.);
-            s.update(|e,_,cx|{e.panel_dialog.bounds=None;cx.notify();});
+            s.update(|e,_,cx|{e.dialog.bounds=None;cx.notify();});
             let (width,rgba)=s.picture();let height=rgba.len() as u32/(width*4);
             (width,image::RgbaImage::from_raw(width,height,rgba).unwrap())
         }else{(w,img)};
         let h=img.height();
         let scale = w / 1200;
         let (sx, sy, sw, sh) = s.with(|e, _| {
-            if e.panel_dialog.active {
-                let b = e.panel_dialog.bounds.expect("dialog bounds");
+            if e.dialog.active {
+                let b = e.dialog.bounds.expect("dialog bounds");
                 ((f32::from(b.origin.x) * scale as f32).round() as u32,
                  (f32::from(b.origin.y) * scale as f32).round() as u32,
                  (f32::from(b.size.width) * scale as f32).round() as u32,
@@ -84,14 +107,14 @@ pub(crate) fn dump_all_right_panels() {
         });
         let cropped = image::imageops::crop_imm(&img, sx, sy, sw, sh).to_image();
         cropped.save(&panel_path).unwrap();
-        if full_content {s.size(1200.,720.);s.update(|e,_,cx|{e.panel_dialog.bounds=None;cx.notify();});}
+        if full_content {s.size(1200.,720.);s.update(|e,_,cx|{e.dialog.bounds=None;cx.notify();});}
         println!("DUMPED {fmt} #{idx:02} {name} -> title={title:?}");
         existing.retain(|(format,_),line|format!=fmt || line.split('\t').nth(2)!=Some(name));
         existing.insert((fmt.to_string(), name.to_string()), format!("{fmt}\t{idx:02}\t{name}\t{title}\t{}\t{}\t{capture_mode:?}", panel_path.display(), win_path.display()));
         let lines: Vec<String> = existing.values().cloned().collect();
         std::fs::write(&manifest_path, lines.join("\n") + "\n").unwrap();
         FORCED_SIDEBAR.with(|c| c.set(None));
-        s.update(|e, window, cx| e.close_panel_dialog(window, cx));
+        s.update(|e, window, cx| e.close_dialog(window, cx));
     };
 
     // ==================== 1. DOCX ====================
@@ -260,12 +283,13 @@ pub(crate) fn dump_all_right_panels() {
         x!("symbol_panel", |e, _, cx| e.open_symbols(cx), symbol_panel);
         x!("custom_format_panel", |e, w, cx| {
             e.open_custom_format(w, cx);
-            e.wb_mut().format_open = [true; 6];
+            e.wb_mut().format_tab = 0;
         }, custom_format_panel);
         x!("page_setup_panel", |e, _, cx| {
             if let Some(st) = e.sheet_state_mut() { st.header_footer_edit = None; }
             e.open_page_setup(cx);
         }, page_setup_panel);
+        x!("xlsx_print_panel", |e, _, cx| e.open_xlsx_print_panel(cx), xlsx_print_panel);
         x!("header_footer_edit_panel", |e, w, cx| {
             e.open_header_footer_edit(crate::xlsx::header_footer_edit::HfTarget::Header, w, cx);
         }, header_footer_edit_panel);
@@ -285,7 +309,6 @@ pub(crate) fn dump_all_right_panels() {
         x!("cells_dialog_panel_delete", |e, _, cx| e.open_cells_dialog(false, cx), cells_dialog_panel);
         x!("external_links_panel", |e, w, cx| e.open_external_links_panel(w, cx), external_links_panel);
         x!("goto_special_panel", |e, _, cx| e.open_goto_special_panel(cx), goto_special_panel);
-        x!("note_panel", |e, w, cx| e.open_note_panel(w, cx), note_panel);
         x!("threaded_comment_panel", |e, w, cx| e.open_threaded_comment_panel(w, cx), threaded_comment_panel);
         x!("protect_panel", |e, w, cx| e.open_protect_panel(w, cx), protect_panel);
         x!("protect_workbook_panel", |e, w, cx| e.open_protect_workbook_panel(w, cx), protect_workbook_panel);
@@ -343,7 +366,7 @@ pub(crate) fn dump_all_right_panels() {
         // Paste special panel: copy a cell first
         s.click_cell("B3");
         s.key("cmd-c");
-        x!("paste_special_panel", |e, _, cx| e.open_paste_special_dialog(cx), paste_special_panel);
+        x!("paste_special_panel", |e, _, cx| e.open_paste_special_dialog_panel(cx), paste_special_panel);
 
         // Table design & new table style panels: create a table on A1:D5
         s.click_cell("A2");
@@ -548,8 +571,233 @@ pub(crate) fn dump_all_right_panels() {
         i+=1;
         snap(&mut s,"pptx",i,"autocorrect_entry",|e,_,cx|e.pptx_autocorrect_panel(cx));
     }
+
+    // ==================== 4. Screens the sections above do not open (added 2026-11-03) ====================
+    // Own scenarios (own documents), so the numbers and the images of the screens above do not change. Skipped by the
+    // dialog audit (`dialog_apply`), whose inventory is the screens above.
+    if wants_format("docx") && !super::dialog_apply::active() {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        let first_para = s.with(|e, _| {
+            e.flow().unwrap().body.iter().find_map(|b| match b {
+                ibis_doc_model::Block::Paragraph(p) => Some(p.id),
+                _ => None,
+            }).unwrap()
+        });
+        s.double_click_text(ibis_doc_model::FlowPos::new(first_para, 0));
+        let mut i = 99usize;
+        macro_rules! d {
+            ($name:expr, $setup:expr, $panel:ident) => {{
+                i += 1;
+                s.update($setup);
+                snap(&mut s, "docx", i, $name, |e, _, cx| e.$panel(cx));
+            }};
+        }
+        d!("fit_text_panel", |e, w, cx| {select_plain_text(e, 3); e.open_fit_text(w, cx);}, fit_text_panel);
+        d!("tate_chu_yoko_panel", |e, w, cx| {select_plain_text(e, 2); let _ = e.open_tate_chu_yoko(w, cx);}, tate_chu_yoko_panel);
+        d!("quick_parts_new_form", |e, w, cx| {select_plain_text(e, 6); e.open_save_building_block_dialog(w, cx);}, quick_parts_panel);
+        d!("merge_compose_step", |e, w, cx| {
+            e.open_merge(w, cx);
+            let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
+            input.update(cx, |i, cx| i.set_value("Name,Company,City\nAlice,Sample A,Tokyo\nBob,Sample B,Osaka\nCarol,Sample C,Nagoya", w, cx));
+            e.apply_merge_data(cx);
+            e.set_merge_step(crate::docx::merge_panel::MergeStep::Compose, cx);
+        }, merge_panel);
+        i += 1;
+        s.update(|e, w, cx| e.open_zoom_dialog(w, cx));
+        snap(&mut s, "docx", i, "zoom_dialog", |_, _, _| None);
+    }
+
+    if wants_format("xlsx") && !super::dialog_apply::active() {
+        let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+        let mut i = 99usize;
+        macro_rules! x {
+            ($name:expr, $setup:expr, $panel:ident) => {{
+                i += 1;
+                s.update($setup);
+                snap(&mut s, "xlsx", i, $name, |e, _, cx| e.$panel(cx));
+            }};
+        }
+        // ユーザー設定のビュー: the add form, then the list with two views.
+        x!("custom_views_add", |e, w, cx| {e.open_custom_views_panel(w, cx); e.open_add_custom_view(w, cx);}, custom_views_panel);
+        x!("custom_views_list", |e, w, cx| {
+            e.open_custom_views_panel(w, cx);
+            for name in ["Print layout", "Review"] {
+                e.open_add_custom_view(w, cx);
+                let input = e.wb().panels.custom_views.as_ref().unwrap().name_input.clone();
+                input.update(cx, |i, cx| i.set_value(name, w, cx));
+                e.apply_add_custom_view_ui(w, cx);
+            }
+        }, custom_views_panel);
+        // ウィンドウの再表示: with the workbook window hidden.
+        x!("unhide_window_hidden", |e, _, cx| {e.hide_workbook_window(cx); e.open_unhide_window_panel(cx);}, unhide_window_panel);
+        s.update(|e, _, cx| e.unhide_workbook_window(cx));
+        // 範囲の編集を許可: after the add button (two ranges), after the delete button.
+        x!("allow_edit_ranges_added", |e, w, cx| {
+            e.open_allow_edit_ranges_panel(w, cx);
+            for (title, range) in [("Sales input", "B2:B5"), ("Notes", "D2:D5")] {
+                let (t, r) = e.wb().panels.allow_edit_ranges.as_ref().map(|p| (p.title.clone(), p.sqref.clone())).unwrap();
+                t.update(cx, |i, cx| i.set_value(title, w, cx));
+                r.update(cx, |i, cx| i.set_value(range, w, cx));
+                e.apply_add_edit_range(cx);
+            }
+        }, allow_edit_ranges_panel);
+        x!("allow_edit_ranges_deleted", |e, w, cx| {
+            e.open_allow_edit_ranges_panel(w, cx);
+            e.wb_mut().panels.allow_edit_ranges.as_mut().unwrap().selected = Some(0);
+            e.delete_edit_range(cx);
+        }, allow_edit_ranges_panel);
+        // 統合: after two adds (the second one selected), after the delete of the selected one.
+        x!("consolidate_added", |e, w, cx| {
+            e.open_consolidate_panel(w, cx);
+            let slide = e.current_slide;
+            for end in [(1, 3), (3, 5)] {
+                {let st = e.wb_mut(); st.cells.insert(slide, (0, 1)); st.cell_ends.insert(slide, end);}
+                e.add_consolidate_selection(w, cx);
+            }
+            e.wb_mut().panels.consolidate.as_mut().unwrap().selected_ref = Some(1);
+        }, consolidate_panel);
+        x!("consolidate_deleted", |e, w, cx| {
+            e.open_consolidate_panel(w, cx);
+            let slide = e.current_slide;
+            for end in [(1, 3), (3, 5)] {
+                {let st = e.wb_mut(); st.cells.insert(slide, (0, 1)); st.cell_ends.insert(slide, end);}
+                e.add_consolidate_selection(w, cx);
+            }
+            let p = e.wb_mut().panels.consolidate.as_mut().unwrap();
+            p.references.remove(1);
+            p.selected_ref = None;
+        }, consolidate_panel);
+        // セルの書式設定: the header tabs 罫線 and 保護.
+        x!("custom_format_border_tab", |e, w, cx| {e.open_custom_format(w, cx); e.wb_mut().format_tab = 1;}, custom_format_panel);
+        x!("custom_format_protection_tab", |e, w, cx| {e.open_custom_format(w, cx); e.wb_mut().format_tab = 2;}, custom_format_panel);
+        // テーブルのデザイン: the コマンド tab.
+        s.click_cell("A2");
+        x!("table_design_commands_tab", |e, w, cx| {
+            let _ = e.make_table(ibis_doc_model::CellRange { first_column: 0, first_row: 1, last_column: 3, last_row: 5 }, true, cx);
+            e.open_table_design(w, cx);
+            e.wb_mut().panels.table_design.as_mut().unwrap().tab = 1;
+        }, table_design_panel);
+        i += 1;
+        s.update(|e, w, cx| e.open_zoom_dialog(w, cx));
+        snap(&mut s, "xlsx", i, "zoom_dialog", |_, _, _| None);
+        drop(s);
+
+        // The pivot table's dialogs, with the fields to choose from.
+        let mut sp = Scenario::open("test/editing/xlsx-slicers-excel.xlsx");
+        let piv_cell = sp.with(|e, _| {
+            let (_, sh) = e.current_sheet().unwrap();
+            let p = &sh.pivots[0];
+            (p.location.first_column, p.location.first_row + 1)
+        });
+        let piv_pt = sp.with(move |e, _| e.cell_center(piv_cell.0, piv_cell.1)).unwrap();
+        sp.click((f32::from(piv_pt.x), f32::from(piv_pt.y)));
+        macro_rules! xp {
+            ($name:expr, $setup:expr, $panel:ident) => {{
+                i += 1;
+                sp.update($setup);
+                snap(&mut sp, "xlsx", i, $name, |e, _, cx| e.$panel(cx));
+            }};
+        }
+        xp!("slicer_insert_filled", |e, w, cx| {
+            e.open_slicer_insert_panel(w, cx);
+            for (k, c) in e.wb_mut().panels.slicer_insert.as_mut().unwrap().checked.iter_mut().enumerate() {*c = k < 2;}
+        }, slicer_insert_panel);
+        xp!("timeline_insert_filled", |e, w, cx| {
+            e.open_timeline_insert_panel(w, cx);
+            for (k, c) in e.wb_mut().panels.timeline_insert.as_mut().unwrap().checked.iter_mut().enumerate() {*c = k < 1;}
+        }, timeline_insert_panel);
+        xp!("pivot_row_field_settings", |e, w, cx| {e.open_pivot_fields(w, cx); e.open_pivot_field_dialog(2, 0, cx);}, pivot_panel);
+        xp!("pivot_column_field_settings", |e, w, cx| {e.open_pivot_fields(w, cx); e.open_pivot_field_dialog(1, 0, cx);}, pivot_panel);
+    }
+
+    if wants_format("pptx") && !super::dialog_apply::active() {
+        let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+        let mut i = 59usize;
+        macro_rules! p {
+            ($name:expr, $setup:expr, $panel:ident) => {{
+                i += 1;
+                s.update($setup);
+                snap(&mut s, "pptx", i, $name, |e, _, cx| e.$panel(cx));
+            }};
+        }
+        macro_rules! o {
+            ($name:expr, $setup:expr) => {{
+                i += 1;
+                s.update($setup);
+                snap(&mut s, "pptx", i, $name, |_, _, _| None);
+            }};
+        }
+        // マスターの名前の変更
+        p!("master_name_panel", |e, w, cx| {let master = e.presentation().masters[0].id; e.open_master_rename(master, w, cx);}, layout_name_panel);
+        // Two sections, for the section screens.
+        s.update(|e, _, cx| {
+            let ids: Vec<_> = e.presentation().slides.iter().map(|sl| sl.id).collect();
+            let half = ids.len().div_ceil(2);
+            let sections = vec![
+                ibis_doc_model::Section { id: "{11111111-1111-4111-8111-111111111111}".into(), name: "はじめに".into(), slides: ids[..half].to_vec() }, // i18n-ok: Japanese test fixture, not a UI label.
+                ibis_doc_model::Section { id: "{22222222-2222-4222-8222-222222222222}".into(), name: "詳細".into(), slides: ids[half..].to_vec() }, // i18n-ok: Japanese test fixture, not a UI label.
+            ];
+            e.run(vec![ibis_doc_model::Command::SetSections { sections }], cx);
+        });
+        p!("pptx_section_rename_panel", |e, w, cx| e.open_section_panel(true, w, cx), pptx_section_panel);
+        o!("slide_zoom_dialog", |e, w, cx| e.open_slide_zoom_dialog(w, cx));
+        o!("section_zoom_dialog", |e, w, cx| e.open_section_zoom_dialog(w, cx));
+        o!("summary_zoom_dialog", |e, w, cx| e.open_summary_zoom_dialog(w, cx));
+        p!("slide_orientation_panel", |e, w, cx| e.open_slide_orientation(true, w, cx), slide_size_panel);
+        o!("word_count_status", |e, _, cx| e.show_word_count(cx));
+        o!("zoom_dialog", |e, w, cx| e.open_zoom_dialog(w, cx));
+    }
 }
-fn panel_mode(_format: &str, name: &'static str) -> (&'static str, PanelMode) {
+/// How the window is cropped for a screen that is not a sidebar panel.
+#[derive(Clone, Copy)]
+enum OverlayCrop {
+    /// The workspace area (between the toolbars and the status line).
+    Workspace,
+    /// The status line.
+    Status,
+}
+
+fn overlay_crop(name: &str) -> Option<OverlayCrop> {
+    match name {
+        "slide_zoom_dialog" | "section_zoom_dialog" | "summary_zoom_dialog" | "zoom_dialog" => Some(OverlayCrop::Workspace),
+        "word_count_status" => Some(OverlayCrop::Status),
+        _ => None,
+    }
+}
+
+fn overlay_title(name: &str) -> &'static str {
+    match name {
+        "slide_zoom_dialog" => "スライド ズームの挿入", // i18n-ok: Japanese test fixture, not a UI label.
+        "section_zoom_dialog" => "セクション ズームの挿入", // i18n-ok: Japanese test fixture, not a UI label.
+        "summary_zoom_dialog" => "サマリー ズームの挿入", // i18n-ok: Japanese test fixture, not a UI label.
+        "zoom_dialog" => "ズーム", // i18n-ok: Japanese test fixture, not a UI label.
+        "word_count_status" => "文字カウント（ステータス行）", // i18n-ok: Japanese test fixture, not a UI label.
+        _ => "",
+    }
+}
+
+/// The first characters of the first run of text of a paragraph, selected (a fixture for the screens that need a selection).
+fn select_plain_text(e: &mut crate::shell::editor::SlideEditor, len: usize) {
+    let (para, offset, chars) = e.flow().unwrap().body.iter().find_map(|b| {
+        if let ibis_doc_model::Block::Paragraph(p) = b {
+            let mut at = 0;
+            for run in &p.runs {
+                if let ibis_doc_model::FlowRunKind::Text(t) = &run.kind {
+                    if t.chars().count() >= 2 {
+                        return Some((p.id, at, t.chars().count()));
+                    }
+                }
+                at += run.len();
+            }
+        }
+        None
+    }).expect("plain text to select");
+    let state = e.doc_state_mut().unwrap();
+    state.anchor = Some(ibis_doc_model::FlowPos::new(para, offset));
+    state.caret = Some(ibis_doc_model::FlowPos::new(para, offset + len.min(chars)));
+}
+
+fn panel_mode(_format: &str, name: &'static str) -> (&'static str, DialogMode) {
     let key = match name {
         "row_col_size_panel_row" => "row_col_size_panel",
         "row_col_size_panel_col" => "row_col_size_panel",
@@ -563,13 +811,27 @@ fn panel_mode(_format: &str, name: &'static str) -> (&'static str, PanelMode) {
         "pptx_gradient_panel_linear" => "pptx_gradient_panel",
         "pptx_gradient_panel_path" => "pptx_gradient_panel",
         "pptx_gradient_panel_pattern" => "pptx_gradient_panel",
+        "master_name_panel" => "layout_name_panel",
+        "pptx_section_rename_panel" => "pptx_section_panel",
+        "slide_orientation_panel" => "slide_size_panel",
+        "custom_views_add" | "custom_views_list" => "custom_views_panel",
+        "unhide_window_hidden" => "unhide_window_panel",
+        "allow_edit_ranges_added" | "allow_edit_ranges_deleted" => "allow_edit_ranges_panel",
+        "consolidate_added" | "consolidate_deleted" => "consolidate_panel",
+        "custom_format_border_tab" | "custom_format_protection_tab" => "custom_format_panel",
+        "table_design_commands_tab" => "table_design_panel",
+        "slicer_insert_filled" => "slicer_insert_panel",
+        "timeline_insert_filled" => "timeline_insert_panel",
+        "pivot_row_field_settings" | "pivot_column_field_settings" => "pivot_panel",
+        "quick_parts_new_form" => "quick_parts_panel",
+        "merge_compose_step" => "merge_panel",
         _ => name,
     };
     let mode = match key {
-        "merge_row_editor" | "names_panel" | "conditional_panel" => PanelMode::Modal,
-        "sheet_alt_text_panel" | "theme_palette_editor" | "solver_constraint_editor" | "watch_editor" | "autocorrect_entry" | "advanced_filter_panel" | "allow_edit_ranges_panel" | "alt_text_panel" | "analysis_panel" | "animation_options_panel" | "arrange_windows_panel" | "audio_record_panel" | "autocorrect_panel" | "autorecover_settings_panel" | "bookmark_panel" | "caption_panel" | "cell_link_panel" | "cell_size_panel" | "cells_dialog_panel" | "chart_panel" | "chart_template_panel" | "color_panel" | "compare_panel" | "compress_panel" | "consolidate_panel" | "control_panel" | "control_properties_panel" | "crop_panel" | "cross_reference_panel" | "custom_views_panel" | "data_table_panel" | "dedupe_panel" | "doc_autocorrect_panel" | "doc_compatibility_panel" | "doc_inspect_panel" | "doc_page_setup_panel" | "doc_print_panel" | "doc_properties_panel" | "doc_repair_panel" | "doc_source_manager_panel" | "doc_template_panel" | "docx_compress_panel" | "docx_math_panel" | "docx_theme_panel" | "error_options_panel" | "external_links_panel" | "field_panel" | "font_panel" | "forecast_panel" | "frame_panel" | "glow_panel" | "goal_seek_panel" | "goto_special_panel" | "header_footer_panel" | "import_text_panel" | "kinsoku_panel" | "layout_name_panel" | "link_panel" | "list_style_panel" | "move_chart_panel" | "new_cell_style_panel" | "new_style_panel" | "new_table_style_panel" | "notes_marks_panel" | "notes_panel" | "page_setup_panel" | "paragraph_panel" | "paste_special_panel" | "phonetic_panel" | "photo_album_panel" | "pivot_calc_field_panel" | "pivot_calc_item_panel" | "pivot_group_panel" | "pivot_options_panel" | "pivot_panel" | "pptx_autocorrect_panel" | "pptx_compatibility_panel" | "pptx_gradient_panel" | "pptx_math_panel" | "pptx_paragraph_panel" | "pptx_section_panel" | "pptx_trust_center_panel" | "presentation_inspect_panel" | "presentation_properties_panel" | "print_panel" | "protect_panel" | "protect_workbook_panel" | "queries_panel" | "recommended_charts_panel" | "recover_unsaved_panel" | "replace_fonts_panel" | "row_col_size_panel" | "ruby_panel" | "scenario_manager_panel" | "series_panel" | "shadow_panel" | "sheet_doc_properties_panel" | "sheet_spelling_panel" | "sheet_word_count_panel" | "show_panel" | "slicer_insert_panel" | "slicer_settings_panel" | "slide_link_panel" | "slide_size_panel" | "solver_panel" | "sparkline_panel" | "style_panel" | "subtotal_panel" | "symbol_panel" | "table_formula_panel" | "table_size_panel" | "text_columns_panel" | "text_insets_panel" | "theme_panel" | "timeline_insert_panel" | "timing_panel" | "unhide_window_panel" | "update_toc_panel" | "user_info_panel" | "validation_panel" | "watermark_panel" | "xlsx_backup_save_settings_panel" | "xlsx_compatibility_panel" | "xlsx_repair_panel" | "xlsx_theme_panel" | "xml_map_properties_panel" => PanelMode::Modal,
-        "evaluate_formula_panel" | "function_panel" | "go_to_panel" | "watch_window_panel" => PanelMode::Modeless,
-        _ => PanelMode::Sidebar,
+        "merge_row_editor" | "conditional_panel" => DialogMode::Modal,
+        "sheet_alt_text_panel" | "theme_palette_editor" | "solver_constraint_editor" | "watch_editor" | "autocorrect_entry" | "advanced_filter_panel" | "allow_edit_ranges_panel" | "alt_text_panel" | "analysis_panel" | "animation_options_panel" | "arrange_windows_panel" | "audio_record_panel" | "autocorrect_panel" | "autorecover_settings_panel" | "bookmark_panel" | "caption_panel" | "cell_link_panel" | "cell_size_panel" | "cells_dialog_panel" | "chart_panel" | "chart_template_panel" | "color_panel" | "compare_panel" | "compress_panel" | "consolidate_panel" | "control_panel" | "control_properties_panel" | "crop_panel" | "cross_reference_panel" | "custom_views_panel" | "data_table_panel" | "dedupe_panel" | "doc_autocorrect_panel" | "doc_compatibility_panel" | "doc_inspect_panel" | "doc_page_setup_panel" | "doc_print_panel" | "doc_properties_panel" | "doc_repair_panel" | "doc_source_manager_panel" | "doc_template_panel" | "docx_compress_panel" | "docx_math_panel" | "docx_theme_panel" | "error_options_panel" | "external_links_panel" | "field_panel" | "font_panel" | "forecast_panel" | "frame_panel" | "glow_panel" | "goal_seek_panel" | "goto_special_panel" | "header_footer_panel" | "import_text_panel" | "kinsoku_panel" | "layout_name_panel" | "link_panel" | "list_style_panel" | "move_chart_panel" | "new_cell_style_panel" | "new_style_panel" | "new_table_style_panel" | "notes_marks_panel" | "notes_panel" | "page_setup_panel" | "xlsx_print_panel" | "paragraph_panel" | "paste_special_panel" | "phonetic_panel" | "photo_album_panel" | "pivot_calc_field_panel" | "pivot_calc_item_panel" | "pivot_group_panel" | "pivot_options_panel" | "pivot_panel" | "pptx_autocorrect_panel" | "pptx_compatibility_panel" | "pptx_gradient_panel" | "pptx_math_panel" | "pptx_paragraph_panel" | "pptx_section_panel" | "pptx_trust_center_panel" | "presentation_inspect_panel" | "presentation_properties_panel" | "print_panel" | "protect_panel" | "protect_workbook_panel" | "queries_panel" | "recommended_charts_panel" | "recover_unsaved_panel" | "replace_fonts_panel" | "row_col_size_panel" | "ruby_panel" | "scenario_manager_panel" | "series_panel" | "shadow_panel" | "sheet_doc_properties_panel" | "sheet_spelling_panel" | "sheet_word_count_panel" | "show_panel" | "slicer_insert_panel" | "slicer_settings_panel" | "slide_link_panel" | "slide_size_panel" | "solver_panel" | "sparkline_panel" | "style_panel" | "subtotal_panel" | "symbol_panel" | "table_formula_panel" | "table_size_panel" | "text_columns_panel" | "text_insets_panel" | "theme_panel" | "timeline_insert_panel" | "timing_panel" | "unhide_window_panel" | "update_toc_panel" | "user_info_panel" | "validation_panel" | "watermark_panel" | "xlsx_backup_save_settings_panel" | "xlsx_compatibility_panel" | "xlsx_repair_panel" | "xlsx_theme_panel" | "xml_map_properties_panel" | "fit_text_panel" | "tate_chu_yoko_panel" => DialogMode::Modal,
+        "evaluate_formula_panel" | "function_panel" | "go_to_panel" | "watch_window_panel" => DialogMode::Modeless,
+        _ => DialogMode::Sidebar,
     };
     (key, mode)
 }

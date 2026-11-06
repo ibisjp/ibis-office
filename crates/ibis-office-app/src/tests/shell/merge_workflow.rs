@@ -79,7 +79,7 @@ fn files_and_drafts() {
                 .records
                 .clone()
         });
-        s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+        s.update(|e, w, cx| e.close_dialog(w, cx));
         assert_eq!(
             s.with(|e, _| e
                 .doc_state()
@@ -148,7 +148,7 @@ fn files_and_drafts() {
         input.update(cx, |i, cx| i.set_value("Changed", w, cx));
         e.save_merge_row(w, cx);
     });
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     assert_eq!(
         s.with(|e, _| e
             .doc_state()
@@ -165,7 +165,7 @@ fn files_and_drafts() {
     s.update(|e, _, cx| e.open_merge_task(MergeDialog::Columns, cx));
     s.update(|e, w, cx| {
         e.delete_merge_field(1, w, cx);
-        e.close_panel_dialog(w, cx);
+        e.close_dialog(w, cx);
     });
     assert_eq!(
         s.with(|e, _| e
@@ -218,7 +218,7 @@ fn files_and_drafts() {
     s.update(|e, _, cx| e.open_merge_task(MergeDialog::Output, cx));
     s.update(|e, w, cx| {
         e.set_merge_print_range(ibis_doc_model::merge::MergePrintRange::FromTo(2, 2), cx);
-        e.close_panel_dialog(w, cx);
+        e.close_dialog(w, cx);
     });
     assert!(
         s.with(|e, _| matches!(
@@ -235,7 +235,7 @@ fn shot(s: &mut Scenario, name: &str) {
     let (w, h) = image.dimensions();
     let (x, y, width, height) = s.update(|e, window, _| {
         let scale = w as f32 / f32::from(window.viewport_size().width);
-        let b = e.panel_dialog.bounds.filter(|_| e.panel_dialog.active);
+        let b = e.dialog.bounds.filter(|_| e.dialog.active);
         if let Some(b) = b {
             (
                 (f32::from(b.origin.x) * scale).round() as u32,
@@ -264,12 +264,12 @@ fn screens() {
     s.key("cmd-a");
     s.type_text("New product briefing\n\nDear customer,\n\nWe are pleased to invite you to our product briefing.\n\nPlease contact us to reserve your seat.\n\nAoba Trading");
     s.update(|e, w, cx| e.open_merge(w, cx));
-    assert!(!s.with(|e, _| e.panel_dialog_is_modal()));
+    assert!(!s.with(|e, _| e.dialog_is_modal()));
     shot(&mut s, "01-start");
     let path = s.screenshot_path("recipients").with_extension("xlsx");
     std::fs::write(&path,ibis_pptx::csv::workbook_from("Name,Company,Address\nAlice Yamada,Aoba Trading,Tokyo\nBob Sato,Sakura Design,Osaka\nCarol Suzuki,Minato Works,Nagoya","Recipients").unwrap()).unwrap();
     s.update(|e, w, cx| e.read_merge_file(&path, w, cx));
-    assert!(s.with(|e, _| e.panel_dialog_is_modal()));
+    assert!(s.with(|e, _| e.dialog_is_modal()));
     shot(&mut s, "02-import");
     s.update(|e, _, cx| {
         e.doc_state_mut()
@@ -310,27 +310,27 @@ fn screens() {
     shot(&mut s, "16-filtered-recipients");
     s.update(|e, _, cx| e.clear_merge_filter(cx));
     s.update(|e, _, cx| {
-        let mut b = e.panel_dialog.bounds.unwrap();
+        let mut b = e.dialog.bounds.unwrap();
         b.size.width = gpui_kit::px(320.);
         b.origin.x = gpui_kit::px(440.);
-        e.panel_dialog.bounds = Some(b);
-        e.panel_dialog.user_resized = true;
+        e.dialog.bounds = Some(b);
+        e.dialog.user_resized = true;
         cx.notify();
     });
     shot(&mut s, "17-compact-recipients");
     s.update(|e, _, cx| {
-        e.panel_dialog.bounds = None;
+        e.dialog.bounds = None;
         cx.notify();
     });
     s.update(|e, w, cx| e.open_merge_row(Some(1), w, cx));
     shot(&mut s, "05-row");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     s.update(|e, _, cx| e.open_merge_task(MergeDialog::Columns, cx));
     shot(&mut s, "06-columns");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     s.update(|e, _, cx| e.open_merge_task(MergeDialog::Filter, cx));
     shot(&mut s, "07-filter");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     s.update(|e, _, cx| e.finish_merge_task(cx));
     s.update(|e, _, cx| e.set_merge_step(MergeStep::Compose, cx));
     let para = s
@@ -376,7 +376,7 @@ fn screens() {
     shot(&mut s, "08-compose");
     s.update(|e, _, cx| e.open_merge_task(MergeDialog::Condition, cx));
     shot(&mut s, "09-condition");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     s.update(|e, _, cx| e.set_merge_step(MergeStep::Preview, cx));
     shot(&mut s, "10-preview");
     s.update(|e, _, cx| {
@@ -388,7 +388,7 @@ fn screens() {
         e.doc_state_mut().unwrap().merge.as_mut().unwrap().records[0][0] = "Alice Yamada".into();
         cx.notify();
     });
-    assert!(!s.with(|e, _| e.panel_dialog_is_modal()));
+    assert!(!s.with(|e, _| e.dialog_is_modal()));
     s.update(|e, _, cx| e.set_merge_step(MergeStep::Output, cx));
     shot(&mut s, "11-output");
     s.update(|e, _, cx| e.open_merge_task(MergeDialog::Output, cx));
@@ -398,13 +398,13 @@ fn screens() {
         e.set_merge_print_range(ibis_doc_model::merge::MergePrintRange::Current, cx);
     });
     shot(&mut s, "19-current-output");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     s.update(|e, _, cx| {
         e.doc_state_mut().unwrap().merge.as_mut().unwrap().output = MergeOutput::Pdf;
         e.open_merge_task(MergeDialog::Output, cx);
     });
     shot(&mut s, "13-pdf-settings");
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     s.update(|e, _, cx| e.set_merge_step(MergeStep::Recipients, cx));
     super::button_probe::click(&mut s,"merge-kind");
     shot(&mut s,"14-kind");
@@ -507,7 +507,7 @@ fn review_scope_and_preflight() {
         vec![true, true, false],
         "bulk operations only affect visible, filter-matching rows"
     );
-    s.update(|e, w, cx| e.close_panel_dialog(w, cx));
+    s.update(|e, w, cx| e.close_dialog(w, cx));
     assert_eq!(
         s.with(|e, _| e
             .doc_state()

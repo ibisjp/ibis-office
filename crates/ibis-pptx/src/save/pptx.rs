@@ -128,7 +128,7 @@ pub struct SourceMap {
 
 /// Whether two models have the same content (slides and what is on them).
 pub(crate) fn same_content(a: &Presentation, b: &Presentation) -> bool {
-    a.slide_size == b.slide_size && a.first_slide_number == b.first_slide_number && a.layout_scale == b.layout_scale && !super::pptx_layouts::changed(a, b) && a.slides == b.slides && a.sections == b.sections && a.header_footer == b.header_footer && a.notes_marks == b.notes_marks && a.show_properties == b.show_properties && a.custom_shows == b.custom_shows && a.mark_as_final == b.mark_as_final && a.read_only_recommended == b.read_only_recommended && a.modify_verifier == b.modify_verifier && a.properties == b.properties && a.object_defaults == b.object_defaults && a.theme_colors == b.theme_colors && a.theme_fonts == b.theme_fonts && a.theme_effects == b.theme_effects && a.fonts == b.fonts && a.font_substitutions == b.font_substitutions
+    a.same_saved_content(b) && !super::pptx_layouts::changed(a, b)
 }
 
 /// Change only p:sldSz; slide parts, masters and p:notesSz stay intact.
@@ -233,6 +233,11 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
         } else {
             doc.set_attr(root, "firstSlideNum", &current.first_slide_number.to_string());
         }
+    }
+    if baseline.guides != current.guides {
+        let doc = package.xml_mut(&map.presentation)?;
+        let root = doc.root_element().ok_or_else(|| Error::new("プレゼンテーションが空です"))?;
+        super::pptx_guides::write(doc, root, &current.guides, super::pptx_guides::URI_PRESENTATION)?;
     }
     if baseline.layout_scale != current.layout_scale {
         scale_layout_parts(package, map, current.layout_scale)?;
@@ -543,7 +548,33 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
                 }
             }
             let has_zoom_changes = rtz.is_some() || zoom_show_bg.is_some() || zoom_duration.is_some();
-            if has_zoom_changes {
+            // A ズーム object of the file (`zmPr` in the choice of the picture's `mc:AlternateContent`): its own attributes are set.
+            let zoom_pr = if has_zoom_changes && slide.zoom_objects.contains_key(shape) {
+                doc.parent(node)
+                    .and_then(|nv| doc.parent(nv))
+                    .and_then(|pic| doc.parent(pic))
+                    .filter(|&p| doc.local_name(p) == "Fallback")
+                    .and_then(|f| doc.parent(f))
+                    .and_then(|a| doc.child(a, "Choice"))
+                    .and_then(|c| doc.descendants(c).into_iter().find(|&n| doc.local_name(n) == "zmPr"))
+            } else {
+                None
+            };
+            if let Some(zm) = zoom_pr {
+                if slide.shape_return_to_zoom.contains(shape) {
+                    doc.set_attr(zm, "returnToParent", "1");
+                } else {
+                    doc.set_attr(zm, "returnToParent", "0");
+                }
+                match slide.shape_zoom_show_bg.get(shape) {
+                    Some(true) | None => doc.remove_attr(zm, "showBg"),
+                    Some(false) => doc.set_attr(zm, "showBg", "0"),
+                }
+                match slide.shape_zoom_durations.get(shape) {
+                    Some(d) => doc.set_attr(zm, "transitionDur", &d.to_string()),
+                    None => doc.remove_attr(zm, "transitionDur"),
+                }
+            } else if has_zoom_changes && !slide.zoom_objects.contains_key(shape) {
                 const ZOOM_URI: &str = "{D3508630-5900-4276-8680-4D969FE36771}";
                 let cur_rtz = slide.shape_return_to_zoom.contains(shape);
                 let cur_show_bg = slide.shape_zoom_show_bg.get(shape).copied();
@@ -648,6 +679,16 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
             doc.remove_attr(root, "showMasterSp");
         }
     }
+    // ガイド線 (the guides of a page of the master view; the slide's own).
+    for (slide, target) in current.slides.iter().zip(&targets) {
+        let was = old_slides.get(&slide.id).map(|o| &o.guides);
+        if was == Some(&slide.guides) || (was.is_none() && slide.guides.is_empty() && target.lookup.is_none()) {
+            continue;
+        }
+        let doc = package.xml_mut(&target.part)?;
+        let root = doc.root_element().ok_or_else(|| Error::new(format!("{} が空です", target.part)))?;
+        super::pptx_guides::write(doc, root, &slide.guides, super::pptx_guides::URI_PAGE)?;
+    }
     // Slides skipped in the show.
     for (slide, target) in current.slides.iter().zip(&targets) {
         let was = old_slides.get(&slide.id).map(|o| o.hidden);
@@ -678,6 +719,32 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
                 _ => doc.remove_attr(csld, "name"),
             }
         }
+    }
+    // ズーム cards the editor made are written as PowerPoint writes them (last: the pictures and their links are written by now).
+    if current.slides.iter().any(|s| !s.zoom_objects.is_empty()) {
+        let mut numbers = super::pptx_zoom::SlideNumbers::new();
+        for (id, part) in &slide_parts {
+            if let Ok((sld_id, _)) = slide_numbers(package, &map.presentation, part) {
+                // The slide's creation id is `p14:creationId` in the extension list of its `p:cSld` (not the shapes' `a16` one).
+                let cid = package.xml(part).ok().and_then(|d| {
+                    let root = d.root_element()?;
+                    d.descendants(root).into_iter().find(|&n| d.local_name(n) == "creationId" && d.parent(n).and_then(|e| d.parent(e)).and_then(|l| d.parent(l)).is_some_and(|c| d.local_name(c) == "cSld")).and_then(|n| d.attr(n, "val")).and_then(|v| v.parse().ok())
+                });
+                numbers.insert(*id, (sld_id, cid.unwrap_or(0)));
+            }
+        }
+        let mut native: HashMap<SlideId, HashMap<ShapeId, String>> = HashMap::new();
+        for slide in &current.slides {
+            if slide.zoom_objects.is_empty() {
+                continue;
+            }
+            let mut ids = drawing_ids(package, map, slide)?;
+            if let Some(created) = created_ids.get(&slide.id) {
+                ids.extend(created.iter().map(|(k, v)| (*k, v.clone())));
+            }
+            native.insert(slide.id, ids);
+        }
+        super::pptx_zoom::write(package, current, &slide_parts, &numbers, &native)?;
     }
     Ok(())
 }

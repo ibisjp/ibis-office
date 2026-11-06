@@ -571,6 +571,12 @@ impl SlideEditor {
         self.delete_ink_at_positions(positions, cx)
     }
 
+    /// Whether the document has any ink stroke.
+    fn has_docx_ink(&self) -> bool {
+        let Some(doc) = self.flow() else { return false };
+        doc.body.iter().any(|block| matches!(block, Block::Paragraph(p) if p.runs.iter().any(|run| matches!(&run.kind, FlowRunKind::Shape(shape) if is_docx_ink_shape(shape)))))
+    }
+
     /// 文書内のすべてのインク ストロークを消去する（DOCX-INK-003）。
     pub(crate) fn erase_all_docx_ink(&mut self, cx: &mut Context<Self>) -> usize {
         let Some(doc) = self.flow() else { return 0 };
@@ -1256,29 +1262,18 @@ impl SlideEditor {
         let selected_count=self.target_docx_ink_positions().len();
         let tr=crate::shell::i18n::text;
         let tools=[("docx-ink-pen","docx.ink.pen",PenKind::Pen),("docx-ink-pencil","docx.ink.pencil",PenKind::Pencil),("docx-ink-highlighter","docx.ink.highlighter",PenKind::Highlighter),("docx-ink-eraser","docx.ink.eraser",PenKind::Eraser),("docx-ink-lasso","docx.ink.lasso",PenKind::Select)].into_iter().map(|(id,label,kind)|InkChoice::new(id,tr(label),ink.pen==kind,move|e,_,cx|e.set_docx_ink_pen(kind,cx))).collect();
-        let widths=INK_WIDTHS.into_iter().enumerate().map(|(i,width)|InkChoice::new(("docx-ink-width",i),format!("{width} pt"),(ink.width-width).abs()<0.01,move|e,_,cx|e.set_docx_ink_width(width,cx))).collect();
+        let widths=INK_WIDTHS.into_iter().enumerate().map(|(i,width)|InkChoice::new(("docx-ink-width",i),format!("{width} pt"),(ink.width-width).abs()<0.01,move|e,_,cx|e.set_docx_ink_width(width,cx)).points(width)).collect();
         let mut effects=vec![InkChoice::new("docx-ink-eff-none",tr("docx.ink.effect.none"),ink.effect.is_none(),|e,_,cx|e.set_docx_ink_effect(None,cx))];
-        effects.extend(InkEffect::ALL.into_iter().map(|effect|InkChoice::new(effect.id(),tr(effect.label_key()),ink.effect==Some(effect),move|e,_,cx|e.set_docx_ink_effect(Some(effect),cx))));
+        effects.extend(InkEffect::ALL.into_iter().map(|effect|InkChoice::new(effect.id(),tr(effect.label_key()),ink.effect==Some(effect),move|e,_,cx|e.set_docx_ink_effect(Some(effect),cx)).texture(crate::shell::ink_panel::InkTexture::Gradient(effect.stops().iter().map(|s|(s.position,s.color.rgb.0)).collect()))));
         let options=InkSection{title:None,rows:vec![
             InkRow::Toggle(InkToggle::new("docx-ink-to-shape-mode",tr("docx.ink.ink-to-shape"),ink.ink_to_shape_mode,|e,_,cx|e.toggle_docx_ink_to_shape_mode(cx))),
             InkRow::Toggle(InkToggle::new("docx-ink-editor-mode",tr("docx.ink.ink-editor"),ink.ink_editor_mode,|e,_,cx|e.toggle_docx_ink_editor_mode(cx))),
         ]};
-        let actions=InkSection{title:Some(format!("{} ({selected_count})",tr("docx.ink.actions")).into()),rows:vec![
-            InkRow::Commands(vec![
-                InkCommand::new("docx-ink-select-all",tr("docx.ink.select-all"),true,|e,_,cx|{e.select_all_docx_ink(cx);}),
-                InkCommand::new("docx-ink-convert-selected",tr("docx.ink.convert-now"),selected_count>0,|e,_,cx|{e.docx_ink_to_shape(cx);}),
-                InkCommand::new("docx-ink-erase-selected",tr("docx.ink.erase-selected"),selected_count>0,|e,_,cx|{e.erase_selected_docx_ink(cx);}).destructive(),
-                InkCommand::new("docx-ink-erase-all",tr("docx.ink.erase-all"),true,|e,_,cx|{e.erase_all_docx_ink(cx);}).destructive(),
-            ]),
-            InkRow::Commands(vec![
-                InkCommand::new("docx-ink-move-left","←",selected_count>0,|e,_,cx|{e.move_selected_docx_ink(-12.,0.,cx);}),
-                InkCommand::new("docx-ink-move-right","→",selected_count>0,|e,_,cx|{e.move_selected_docx_ink(12.,0.,cx);}),
-                InkCommand::new("docx-ink-move-up","↑",selected_count>0,|e,_,cx|{e.move_selected_docx_ink(0.,-12.,cx);}),
-                InkCommand::new("docx-ink-move-down","↓",selected_count>0,|e,_,cx|{e.move_selected_docx_ink(0.,12.,cx);}),
-                InkCommand::new("docx-ink-scale-up",tr("docx.ink.scale-up"),selected_count>0,|e,_,cx|{e.resize_selected_docx_ink(1.25,1.25,cx);}),
-                InkCommand::new("docx-ink-scale-down",tr("docx.ink.scale-down"),selected_count>0,|e,_,cx|{e.resize_selected_docx_ink(0.8,0.8,cx);}),
-            ]),
-        ]};
+        let has_ink=self.has_docx_ink();
+        let actions=crate::shell::ink_panel::InkActions{selected:selected_count,has_ink,
+            to_shape:std::rc::Rc::new(|e,_,cx|{e.docx_ink_to_shape(cx);}),select_all:std::rc::Rc::new(|e,_,cx|{e.select_all_docx_ink(cx);}),
+            erase_selected:std::rc::Rc::new(|e,_,cx|{e.erase_selected_docx_ink(cx);}),erase_all:std::rc::Rc::new(|e,_,cx|{e.erase_all_docx_ink(cx);}),
+            to_text:None,to_math:None,replay:None}.section();
         Some(crate::shell::ink_panel::panel(InkPanelSpec{
             color_id:"docx-ink-color-field",tools,widths,drawing:matches!(ink.pen,PenKind::Pen|PenKind::Pencil|PenKind::Highlighter),color:ink.color,
             change_color:std::rc::Rc::new(|e,color,_,cx|e.set_docx_ink_color(color,cx)),effects,

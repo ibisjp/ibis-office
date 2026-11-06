@@ -452,6 +452,10 @@ impl SlideEditor {
                     })
                     .into(),
             ];
+            // 展開/折りたたみ: on the label of an item with fields under it.
+            if let Some(entry) = self.pivot_expand_collapse_menu() {
+                pivot_items.push(entry);
+            }
             if let Some((_, _, current_fn, current_show)) = self.active_pivot_data_field() {
                 let fn_items: Vec<MenuEntry> = [
                     ("xlsx.cell-pivot-fn-sum", "sum", "_xlsx.sum"),
@@ -1214,7 +1218,7 @@ impl SlideEditor {
             MenuItem::tr(if has_note { "xlsx.note-edit" } else { "xlsx.note-new" })
                 .icon("note_add")
                 .shortcut("⇧F2")
-                .on(|this, window, cx| this.open_note_panel(window, cx))
+                .on(|this, window, cx| this.begin_note_edit(window, cx))
                 .into(),
         );
         if has_note {
@@ -1261,7 +1265,7 @@ impl SlideEditor {
         } else {
             out.push(MenuItem::new("xlsx.cell-link", "_xlsx.hyperlink").icon("link").shortcut("⌘K").on(|this, window, cx| this.open_link_panel(window, cx)).into());
         }
-        out.push(MenuItem::new("xlsx.cell-define-name", "_xlsx.define-name").on(|this, window, cx| this.open_names(window, cx)).into());
+        out.push(MenuItem::new("xlsx.cell-define-name", "_xlsx.define-name").on(|this, window, cx| { this.open_names(window, cx); this.names_open_dialog(None, window, cx); }).into());
         out.push(
             Submenu::new(
                 "xlsx.cell-create-names",
@@ -1628,6 +1632,7 @@ impl SlideEditor {
         out.extend(menus.find_entry("xlsx.move-sheet-right"));
         out.extend(menus.find_entry("xlsx.move-sheet-first"));
         out.extend(menus.find_entry("xlsx.move-sheet-last"));
+        out.extend(menus.find_entry("xlsx.move-copy-sheet"));
         out.push(MenuEntry::Separator);
         out.extend(menus.find_entry("xlsx.view-code"));
         out.push(

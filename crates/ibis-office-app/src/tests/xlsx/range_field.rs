@@ -21,7 +21,7 @@ pub(crate) fn range_picker() {
     s.click(chart_point);
     s.menu("xlsx.chart-format");
     s.update(|e, w, cx| e.open_chart_series_editor(Some(0), w, cx));
-    let original_bounds = s.with(|e, _| e.panel_dialog.bounds.unwrap());
+    let original_bounds = s.with(|e, _| e.dialog.bounds.unwrap());
     assert_eq!(original_bounds.right(), px(1200.));
     let input = s.with(|e, _| {
         e.wb()
@@ -62,7 +62,7 @@ pub(crate) fn range_picker() {
     buttons::click(&mut s, "chart-series-values");
     assert!(s.with(|e, _| e.sheet_range_pick_active()));
     assert_eq!(
-        s.with(|e, _| e.panel_dialog.bounds.unwrap().size.width),
+        s.with(|e, _| e.dialog.bounds.unwrap().size.width),
         px(320.)
     );
     let from = point(&mut s, 1, 3);
@@ -94,7 +94,7 @@ pub(crate) fn range_picker() {
         "Escape cancels only picking"
     );
     assert_eq!(
-        s.with(|e, _| e.panel_dialog.bounds.unwrap().size.width),
+        s.with(|e, _| e.dialog.bounds.unwrap().size.width),
         original_bounds.size.width
     );
     buttons::click(&mut s, "chart-series-values");
@@ -103,7 +103,7 @@ pub(crate) fn range_picker() {
     assert!(!s.with(|e, _| e.sheet_range_pick_active()));
     assert_eq!(s.with(|_, cx| input.read(cx).value().to_string()), changed);
     assert_eq!(
-        s.with(|e, _| e.panel_dialog.bounds.unwrap().size.width),
+        s.with(|e, _| e.dialog.bounds.unwrap().size.width),
         original_bounds.size.width
     );
     buttons::click(&mut s, "chart-series-values");
@@ -115,7 +115,7 @@ pub(crate) fn range_picker() {
         "clicking the owner dialog ends picking"
     );
     assert_eq!(
-        s.with(|e, _| e.panel_dialog.bounds.unwrap().size.width),
+        s.with(|e, _| e.dialog.bounds.unwrap().size.width),
         original_bounds.size.width
     );
     s.screenshot("chart-range-picking-complete");

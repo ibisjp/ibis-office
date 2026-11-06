@@ -300,6 +300,8 @@ pptx.crop-panel.top-percent	Top
 pptx.crop-panel.right-percent	Right
 pptx.crop-panel.bottom-percent	Bottom
 pptx.crop-panel.crop-picture	Crop Picture
+pptx.crop-panel.unit	Unit
+pptx.crop-panel.size	Size: {width} x {height}
 pptx.editing.click-drag-place-text-box	Click or drag to place a text box (Esc to cancel)
 pptx.editing.drag-place-shape-shift-square	Drag to place a shape (Shift for square/circle, Esc to cancel)
 pptx.misc.drag-draw-line-shift-45	Drag to draw a line (Shift for 45° steps, Esc to cancel)
@@ -318,9 +320,9 @@ pptx.frame-panel.size-position	Size & Position
 pptx.glow-panel.target-shape-has-changed-reopen	The target shape has changed. Reopen the settings.
 pptx.glow-panel.enter-radius-0-169093-20055118	Enter a radius of 0-169093.20055118 pt, a 6-digit RGB color, and an intensity of 0-100%.
 pptx.glow-panel.glow-cannot-saved-selected-shape	This glow cannot be saved for the selected shape.
-pptx.glow-panel.radius-pt	Radius (pt)
-pptx.gradient-panel.color-rgb-rrggbb	Color (RGB: RRGGBB)
-pptx.gradient-panel.intensity-percent	Intensity (%)
+pptx.glow-panel.radius-pt	Radius
+pptx.gradient-panel.color-rgb-rrggbb	Color
+pptx.gradient-panel.intensity-percent	Opacity
 pptx.gradient-panel.horizontal-lines	Horizontal Lines
 pptx.gradient-panel.vertical-lines	Vertical Lines
 pptx.gradient-panel.light-horizontal-lines	Light Horizontal Lines
@@ -363,21 +365,21 @@ pptx.gradient-panel.shingle	Shingle
 pptx.gradient-panel.trellis	Trellis
 pptx.gradient-panel.zig-zag	Zig Zag
 pptx.gradient-panel.target-has-changed-reopen-settings	The target has changed. Reopen the settings.
-pptx.gradient-panel.enter-6-digit-rgb-color	Enter a 6-digit RGB color and an intensity of 0-100%.
+pptx.gradient-panel.enter-6-digit-rgb-color	Enter a 6-digit RGB color and an opacity of 0-100%.
 pptx.gradient-panel.enter-position-intensity-0-100	Enter position and intensity of 0-100%, a 6-digit RGB color, and focus of -2147483.648 to 2147483.647%.
-pptx.gradient-panel.enter-angle-0-more-less	Enter an angle of 0 or more and less than 360 degrees, position and intensity of 0-100%, and a 6-digit RGB color.
+pptx.gradient-panel.enter-angle-0-more-less	Enter an angle of 0 or more and less than 360 degrees, position and opacity of 0-100%, and a 6-digit RGB color.
 pptx.gradient-panel.fill-cannot-saved-selected-target	This fill cannot be saved for the selected target.
 pptx.gradient-panel.path-gradient	Path Gradient
 pptx.gradient-panel.linear-gradient	Linear Gradient
 pptx.gradient-panel.not-supported	Not supported
-pptx.gradient-panel.focus-left-percent	Focus Left (%)
-pptx.gradient-panel.focus-top-percent	Focus Top (%)
-pptx.gradient-panel.focus-right-percent	Focus Right (%)
-pptx.gradient-panel.focus-bottom-percent	Focus Bottom (%)
-pptx.gradient-panel.angle-degrees	Angle (degrees)
+pptx.gradient-panel.focus-left-percent	Focus Left
+pptx.gradient-panel.focus-top-percent	Focus Top
+pptx.gradient-panel.focus-right-percent	Focus Right
+pptx.gradient-panel.focus-bottom-percent	Focus Bottom
+pptx.gradient-panel.angle-degrees	Angle
 pptx.gradient-panel.foreground	Foreground
-pptx.gradient-panel.position-percent	Position (%)
-pptx.gradient-panel.select-type	Select a type
+pptx.gradient-panel.position-percent	Position
+pptx.gradient-panel.select-type	Type
 pptx.insets-panel.enter-finite-number-0-more	Enter a finite number of 0 or more for the margins.
 pptx.paragraph-panel.target-text-has-changed-confirm	The target text has changed. Confirm your input and reopen the panel.
 pptx.insets-panel.enter-text-scale-1-100	Enter a text scale of 1-100%, or leave it blank to keep the current value.
@@ -407,8 +409,8 @@ pptx.section-panel.default-section	Default Section
 pptx.section-panel.cannot-apply-because-original	Cannot apply because the original cannot be preserved when saving
 pptx.shadow-panel.enter-blur-distance-0-169093	Enter blur and distance of 0-169093.20055118 pt, an angle of 0 or more and less than 360 degrees, a 6-digit RGB color, and an intensity of 0-100%.
 pptx.shadow-panel.outer-shadow-cannot-saved-selected	This outer shadow cannot be saved for the selected shape.
-pptx.shadow-panel.blur-pt	Blur (pt)
-pptx.shadow-panel.distance-pt	Distance (pt)
+pptx.shadow-panel.blur-pt	Blur
+pptx.shadow-panel.distance-pt	Distance
 pptx.size-panel.width-cm	Width cm
 pptx.size-panel.height-cm	Height cm
 pptx.size-panel.enter-width-height-between-2	Enter a width and height between 2.54 and 142.24 cm.
@@ -626,10 +628,6 @@ pptx.chart-data.chart-data	Chart Data
 pptx.chrome.edit-data	Edit Data
 pptx.chrome.edit-chart-data	Edit Chart Data
 pptx.chrome.data-labels	Data Labels
-pptx.comments.comment-selected-shape	Comment on the selected shape
-pptx.comments.comment-slide	Comment on the slide
-pptx.comments.new-comment-insert-comment	New comment: Insert > Comment
-pptx.comments.there-no-comments-slide	There are no comments on this slide
 pptx.misc.click-add-title	Click to add title
 pptx.misc.click-add-subtitle	Click to add subtitle
 pptx.misc.click-add-text	Click to add text
@@ -883,7 +881,6 @@ xlsx.note-new	New Note
 xlsx.note-edit	Edit Note
 xlsx.note-delete	Delete Note
 xlsx.clear-comments	Clear Comments and Notes
-pptx.notes.note	Note
 pptx.anim.preview	Preview
 pptx.anim.play-all	Play All
 pptx.anim.entrance	Entrance
@@ -953,7 +950,7 @@ pptx.anim.smooth.both	Both (Start & End)
 pptx.anim.smooth-start	Smooth Start
 pptx.anim.smooth-end	Smooth End
 pptx.anim.after	After animation
-pptx.anim.after.hold	Don't Dim
+pptx.anim.after.hold	Keep Showing
 pptx.anim.after.hide	Hide After Animation
 pptx.anim.after.dim	Dim with Color
 pptx.anim.after.hide-next	Hide on Next Click
@@ -1078,8 +1075,6 @@ pptx.chrome.doughnut-hole-size	Doughnut Hole Size
 pptx.chrome.bubble-size	Bubble Size
 pptx.chrome.bubble-size-scale	Bubble Size (Scale)
 pptx.chrome.smooth-lines	Smooth Lines
-pptx.video	Video…
-pptx.audio	Audio…
 pptx.clips.cannot-played-here	This cannot be played here
 pptx.clips.file-cannot-inserted	This file cannot be inserted
 pptx.misc.play	Play
@@ -1180,7 +1175,7 @@ transition.dir.spokes-2	2 Spokes
 transition.dir.spokes-3	3 Spokes
 transition.dir.spokes-4	4 Spokes
 transition.dir.spokes-8	8 Spokes
-pptx.show-settings-actions	Slide Show Settings
+pptx.show-settings-actions	Slide Show Settings Input
 pptx.show-settings.apply	Apply
 pptx.show-settings.cancel	Cancel
 pptx.show-panel.set-up-slide-show	Set Up Slide Show
@@ -1588,13 +1583,14 @@ pptx.layout.duplicate	Duplicate Layout
 pptx.layout-panel.layout-not-found	Layout not found
 pptx.misc.layout-name	Layout Name
 pptx.layout-panel.copy-name	Copy of {name}
-pptx.layout.masters	Slide Masters
+pptx.layout.masters	Manage Slide Masters
 pptx.layout.master.rename	Rename Master…
 pptx.layout.master.duplicate	Duplicate Master
 pptx.layout.master.remove	Delete Master
 pptx.print-panel.slides-print	Slides to Print
 pptx.print-panel.current-slide	Current Slide
 pptx.print-panel.custom-range	Custom Range
+pptx.print-panel.slides-placeholder	e.g. 1,3,5-8
 pptx.print-panel.full-page-slides	Full Page Slides
 pptx.print-panel.handouts-n-slides-per-page	Handouts ({n} Slides Per Page)
 pptx.print-panel.color	Color
@@ -1633,7 +1629,6 @@ pptx.clips.linked-file-was-not-found	The linked file was not found: {path}
 pptx.clips.linking-file-not-available-here	Linking to a file is not available here
 pptx.spelling.check	Spelling…
 pptx.autocorrect-options	AutoCorrect Options…
-pptx.math	Equation…
 pptx.math.title	Equation
 pptx.math.hint	Type the equation in linear form (UnicodeMath) or LaTeX (e.g. a/b, \frac{a}{b}, x^2, \sqrt{x+1}, \sum_{i=1}^n x)
 pptx.math.insert	Insert
@@ -1672,7 +1667,7 @@ pptx.master-view.close-master-view	Close Master View
 pptx.master-view.master-could-not-saved-error	The master could not be saved: {error}
 pptx.master-view.slide-master-view-closed-undo	Slide Master view closed (the undo history was cleared)
 pptx.misc.close-slide-master-view-before	Close the Slide Master view before saving
-pptx.master-view.size-pt	Size (pt)
+pptx.master-view.size-pt	Size
 pptx.master-view.color-rrggbb	Color (RRGGBB)
 pptx.master-view.text-styles	Text Styles
 pptx.master-view.body	Body
@@ -1703,7 +1698,7 @@ pptx.notes-format.handout-master	Handout Master
 pptx.print-panel.notes-pages-1-slide-its	Notes Pages (1 slide with its notes per page)
 pptx.modify-password	Password to Modify…
 pptx.infobar.modify.title	Password to Modify
-pptx.infobar.modify.message	This presentation is protected with a password to modify. Enter the password to edit it.
+pptx.infobar.modify.message	This file is protected with a password to modify. Enter the password to edit it.
 pptx.infobar.modify.unlock	Enter Password to Edit…
 pptx.modify-password.password-modify-uses-method-not	This password to modify uses a method that is not supported
 pptx.modify-password.password-information-file-damaged	The password information in the file is damaged
@@ -1812,7 +1807,7 @@ _pptx.smooth-start	✓ Smooth Start
 _pptx.smooth-end	✓ Smooth End
 _pptx.auto-reverse	✓ Auto Reverse
 _pptx.auto-reverse-2	Auto Reverse
-_pptx.don-t-hide	Don't Hide
+_pptx.don-t-hide	Keep Showing
 _pptx.dim-2	Dim
 _pptx.after-animation	After Animation
 _pptx.with-previous-2	With Previous
@@ -1859,7 +1854,6 @@ _pptx.first-line-indent-pt	First line indent
 _pptx.custom-show	Custom Show
 _pptx.add-captions	Add Captions
 _pptx.n-of-total	{n} of {total}
-_pptx.type-label	Type: {label}
 _pptx.speaker-notes	Speaker Notes
 _pptx.paragraph-line-spacing-spacing-indentation	Paragraph (Line Spacing, Spacing, Indentation)
 _pptx.this-file-is-not-a-picture	This file is not a picture.
@@ -2102,15 +2096,15 @@ pptx.3d-model.anim.turntable	Turntable
 pptx.3d-model.anim.swing	Swing
 pptx.3d-model.anim.jump-turn	Jump & Turn
 pptx.3d-model.anim.leave	Leave
-pptx.3d-model.web-note	Desktop supports local 3D model insertion and full editing. Web supports viewing, 3-axis rotation, view switching, and resizing existing models.
 pptx.record-preview	Recording Preview…
 pptx.record-preview.title	Recording Preview
 pptx.record-preview.play	Play
 pptx.record-preview.pause	Pause
 pptx.record-preview.prev-slide	Previous
 pptx.record-preview.next-slide	Next
-pptx.record-preview.clear-timing	Clear Current Slide Timing
-pptx.record-preview.set-5s	Set Slide Timing to 5s
+pptx.record-preview.seconds	Slide time
+pptx.record-preview.on-click	On click
+pptx.record-preview.automatic	Automatic
 pptx.record-preview.start-show	Start Show from Current Slide
 pptx.screen-reader	Screen Reader Navigation…
 pptx.screen-reader.title	Screen Reader Navigation
@@ -2137,7 +2131,7 @@ pptx.customize-ribbon.group.drawing	Drawing & Shapes
 pptx.customize-ribbon.group.arrange	Arrange & View
 pptx.customize-ribbon.reset-groups	Reset Group Visibility
 pptx.customize-ribbon.qat	Quick Access Toolbar (QAT)
-pptx.customize-ribbon.qat-reset	Reset QAT to Default
+pptx.customize-ribbon.qat-reset	Reset to Default
 pptx.trust-center	Trust Center…
 pptx.trust-center.title	Trust Center & Security Settings
 pptx.trust-center.links-warning	Show warning when opening presentations with external links
@@ -2145,8 +2139,6 @@ pptx.trust-center.media-warning	Confirm before playing external media or linked 
 pptx.trust-center.protected-view	Open files from untrusted locations in Protected View (read-only)
 pptx.trust-center.macro-note	Macro-enabled files (.pptm / .ppsm / .potm) are safely preserved on round-trip without executing VBA code.
 pptx.common.close	Close
-pptx.comments.post-tip-mac	Post (⌘Enter)
-pptx.comments.post-tip-other	Post (Ctrl+Enter)
 pptx.compare.kind.text-box	Text Box
 pptx.compare.kind.picture	Picture
 pptx.compare.kind.chart	Chart
@@ -2197,10 +2189,120 @@ pptx.chart.legend.trendline.power	Power ({series})
 pptx.chart.legend.trendline.moving-avg	{period} per. Mov. Avg. ({series})
 pptx.tools.word-count	Slides: {slides}, Words: {words}, Characters (no spaces): {chars}
 
-chart.data.add-row	Add row
-chart.data.add-series	Add series
 pptx.common.automatic	Automatic
 pptx.common.seconds-unit	s
 pptx.paragraph-panel.keep-existing	Keep current
 pptx.smartart.add-item-short	Add
 pptx.3d-model.zoom	Zoom
+pptx.guides.add-vertical	Add Vertical Guide
+pptx.guides.add-horizontal	Add Horizontal Guide
+pptx.guides.remove-all	Delete All Guides
+pptx.master-view.rename	Rename
+pptx.master-view.duplicate-layout	Duplicate Layout
+pptx.master-view.delete-layout	Delete Layout
+pptx.master-view.apply-to-slide	Apply to Slide and Close
+pptx.master-view.layout-in-use	A layout used by a slide cannot be deleted.
+pptx.anim.preset.blinds	Blinds
+pptx.anim.preset.blinds.horizontal	Horizontal
+pptx.anim.preset.blinds.vertical	Vertical
+pptx.anim.preset.box	Box
+pptx.anim.preset.box.in	In
+pptx.anim.preset.box.out	Out
+pptx.anim.preset.checkerboard	Checkerboard
+pptx.anim.preset.checkerboard.across	Across
+pptx.anim.preset.checkerboard.down	Down
+pptx.anim.preset.circle	Circle
+pptx.anim.preset.circle.in	In
+pptx.anim.preset.circle.out	Out
+pptx.anim.preset.diamond	Diamond
+pptx.anim.preset.diamond.in	In
+pptx.anim.preset.diamond.out	Out
+pptx.anim.preset.peek	Peek
+pptx.anim.preset.peek.bottom	From Bottom
+pptx.anim.preset.peek.left	From Left
+pptx.anim.preset.peek.right	From Right
+pptx.anim.preset.peek.top	From Top
+pptx.anim.preset.plus	Plus
+pptx.anim.preset.plus.in	In
+pptx.anim.preset.plus.out	Out
+pptx.anim.preset.randombar	Random Bars
+pptx.anim.preset.randombar.horizontal	Horizontal
+pptx.anim.preset.randombar.vertical	Vertical
+pptx.anim.preset.split	Split
+pptx.anim.preset.split.out-vertical	Vertical Out
+pptx.anim.preset.split.in-vertical	Vertical In
+pptx.anim.preset.split.out-horizontal	Horizontal Out
+pptx.anim.preset.split.in-horizontal	Horizontal In
+pptx.anim.preset.strips	Strips
+pptx.anim.preset.strips.down-left	Down Left
+pptx.anim.preset.strips.up-left	Up Left
+pptx.anim.preset.strips.down-right	Down Right
+pptx.anim.preset.strips.up-right	Up Right
+pptx.anim.preset.other	Other Effect
+transition.checker	Checkerboard
+transition.blinds	Blinds
+transition.comb	Comb
+transition.strips	Strips
+transition.wedge	Wedge
+transition.diamond	Diamond
+transition.plus	Plus
+transition.random	Random
+transition.newsflash	Newsflash
+transition.switch	Switch
+transition.flip	Flip
+transition.honeycomb	Honeycomb
+transition.cube	Cube
+transition.box	Box
+transition.rotate	Rotate
+transition.orbit	Orbit
+transition.doors	Doors
+transition.window	Window
+transition.ferris	Ferris Wheel
+transition.gallery	Gallery
+transition.conveyor	Conveyor
+transition.pan	Pan
+transition.warp	Warp
+transition.flythrough	Fly Through
+transition.flash	Flash
+transition.shred	Shred
+transition.reveal	Reveal
+transition.wheelReverse	Clock
+transition.curtains	Curtains
+transition.wind	Wind
+transition.prestige	Prestige
+transition.fracture	Fracture
+transition.crush	Crush
+transition.peelOff	Peel Off
+transition.pageCurlDouble	Page Curl Double
+transition.pageCurlSingle	Page Curl Single
+transition.airplane	Airplane
+transition.origami	Origami
+transition.fallOver	Fall Over
+transition.drape	Drape
+transition.dir.left-down	From Bottom Left
+transition.dir.left-up	From Top Left
+transition.dir.right-down	From Bottom Right
+transition.dir.right-up	From Top Right
+transition.dir.center	From Center
+transition.dir.smoothly	Smoothly
+transition.dir.through-black	Through Black
+transition.dir.strips-in	Strips In
+transition.dir.strips-out	Strips Out
+transition.dir.rects-in	Rectangles In
+transition.dir.rects-out	Rectangles Out
+pptx.anim.trigger.shape-click	On Click of Shape
+pptx.anim.trigger.target	Shape
+pptx.anim.unit.seconds	s
+pptx.gradient-panel.path-shape	Shape
+pptx.gradient-panel.stop-n	Stop {n}
+pptx.anim.pane.col.order	Order
+pptx.anim.pane.col.effect	Shape and effect
+pptx.anim.pane.total	Total {s} s
+pptx.zoom.summary-section	Summary Section
+pptx.zoom.summary-needs-sections	A summary zoom needs sections. Add sections first.
+pptx.notes-format.close-format-editing	Close Format Editing
+pptx.anim.media.play	Play
+pptx.anim.media.pause	Pause
+pptx.anim.media.stop	Stop
+pptx.anim.media.class	Media
+pptx.anim.panel.effect-change	Change effect

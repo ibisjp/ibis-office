@@ -611,8 +611,13 @@ impl SlideEditor {
                 return;
             }
         }
+        // The sections or the slides' order changed: the summary zooms follow (`refresh_summary_zooms`).
+        let structural = commands.iter().any(|c| matches!(c, Command::SetSections { .. } | Command::InsertSlide { .. } | Command::RemoveSlide { .. } | Command::MoveSlide { .. } | Command::SlideStructure { .. }));
         if let Err(err) = self.document.execute(commands) {
             log::warn!("edit rejected: {err}");
+        }
+        if structural {
+            self.refresh_summary_zooms(cx);
         }
         if let Some(edit) = self.pptx_mut().and_then(|s| s.edit.as_mut()) {
             edit.is_new = false;
@@ -1995,7 +2000,7 @@ impl SlideEditor {
             script_fonts: Some(if east_asian { (look.fallback_font, look.font) } else { (look.font, look.fallback_font) }),
             highlight: Some(run.highlight), outline: Some(run.outline), baseline: Some(run.baseline), spacing: Some(run.spacing),
             strike: Some(run.strike), caps: Some(run.caps), shadow: Some(run.shadow), link: None, link_tooltip: None,
-            lang: Some(run.lang.clone()),
+            lang: Some(run.lang.clone()), tate_chu_yoko: None, char_scale: None,
         };
         if let Some(state) = self.pptx_mut() { state.character_format_copy = Some(format); }
         cx.notify();
@@ -2524,24 +2529,13 @@ impl SlideEditor {
 
     /// Insert a screenshot specifically from the clipboard (image or copied image files).
     pub(crate) fn insert_screenshot_from_clipboard(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
-        if let Some(item) = cx.read_from_clipboard() {
+        let item = cx.read_from_clipboard();
+        if let Some(item) = &item {
             for entry in item.entries() {
                 match entry {
-                    ClipboardEntry::Image(image) => {
-                        let ext = match image.format {
-                            ImageFormat::Png => "png",
-                            ImageFormat::Jpeg => "jpg",
-                            ImageFormat::Gif => "gif",
-                            ImageFormat::Svg => "svg",
-                            ImageFormat::Bmp => "bmp",
-                            _ => "png",
-                        };
-                        let name = format!("Screenshot.{}", ext);
-                        return self.insert_picture(&name, image.bytes.clone(), cx);
-                    }
                     ClipboardEntry::ExternalPaths(paths) => {
                         for path in paths.paths() {
-                            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg"));
+                            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "emf" | "wmf"));
                             if let (true, Ok(data)) = (ok, std::fs::read(path)) {
                                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Screenshot.png".into());
                                 return self.insert_picture(&name, data, cx);
@@ -2551,6 +2545,12 @@ impl SlideEditor {
                     _ => {}
                 }
             }
+        }
+        // The picture itself: a drawing (SVG, a metafile) or a bitmap, named by what its bytes are.
+        if let Some((name, bytes)) = crate::native_shape_clipboard::clipboard_picture(item.as_ref()) {
+            // A screenshot is named "Screenshot" with the extension of what its bytes are.
+            let extension = name.rsplit_once('.').map_or("png", |(_, e)| e);
+            return self.insert_picture(&format!("Screenshot.{extension}"), bytes, cx);
         }
         None
     }
@@ -3257,11 +3257,8 @@ impl SlideEditor {
     pub(crate) fn crop_selected_pictures(&mut self, crop: ibis_doc_model::Crop, cx: &mut Context<Self>) {
         let commands = self.selected_shapes().into_iter().filter_map(|shape| {
             let ShapeKind::Picture(picture) = &shape.kind else { return None };
-            if picture.crop == crop { return None; }
-            let mut picture = picture.clone();
-            picture.crop = crop;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
-        }).collect();
+            Some(crop_commands(self.current_slide, &shape, picture, crop))
+        }).flatten().collect();
         self.run(commands, cx);
     }
 
@@ -3276,11 +3273,8 @@ impl SlideEditor {
                 .map(|(w, h)| (w as u64, h as u64))
                 .unwrap_or_else(|| (shape.frame.width.max(1) as u64, shape.frame.height.max(1) as u64));
             let crop = crop_for_aspect(orig_w, orig_h, num, den);
-            if picture.crop == crop { return None; }
-            let mut picture = picture.clone();
-            picture.crop = crop;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
-        }).collect();
+            Some(crop_commands(self.current_slide, &shape, picture, crop))
+        }).flatten().collect();
         self.run(commands, cx);
     }
 
@@ -3755,9 +3749,15 @@ impl SlideEditor {
         // layout gives its text (formats, theme colours).
         // A layout copied and not yet saved is not in the file to read.
         let unsaved = self.presentation().layout(layout).is_some_and(|l| l.copy_of.is_some());
-        let new = match &self.source {
-            Some(source) if !unsaved => source.with_layout(self.presentation(), slide, layout).map_err(|e| e.to_string()),
-            _ => self.presentation().with_layout(slide, layout).ok_or_else(|| "no such layout".to_string()),
+        let new = {
+            // Ids for the placeholders the layout may add (at most one for each of its own).
+            let count = self.presentation().layout(layout).map_or(0, |l| l.placeholders.len());
+            let mut spare: std::collections::VecDeque<_> = (0..count).map(|_| self.document.ids().new_shape_id()).collect();
+            let mut next = || spare.pop_front().expect("an id for each placeholder of the layout");
+            match &self.source {
+                Some(source) if !unsaved => source.with_layout_ids(self.presentation(), slide, layout, &mut next).map_err(|e| e.to_string()),
+                _ => self.presentation().with_layout_ids(slide, layout, &mut next).ok_or_else(|| "no such layout".to_string()),
+            }
         };
         match new {
             Ok(new) if Some(&new) != self.presentation().slide(slide) => self.run(vec![Command::SetSlide { slide: new }], cx),
@@ -3807,10 +3807,15 @@ impl SlideEditor {
     }
 
     pub(crate) fn toggle_pptx_guides(&mut self, cx: &mut Context<Self>) {
-        if let Some(s) = self.pptx_mut() {
+        let on = self.pptx_mut().map(|s| {
             s.guides = !s.guides;
-            cx.notify();
+            s.guides
+        });
+        // Shown with none in the file: PowerPoint's two through the middle (ガイド線).
+        if on == Some(true) {
+            self.seed_guides(cx);
         }
+        cx.notify();
     }
 
     pub(crate) fn is_pptx_snap_to_grid_enabled(&self) -> bool {
@@ -3915,6 +3920,10 @@ fn is_svg_header(data: &[u8]) -> bool {
 /// The pixel size of a PNG, JPEG, GIF, BMP or SVG picture, from its header.
 pub(crate) fn validated_picture_size(format: ibis_doc_model::MediaFormat, data: &[u8]) -> Option<(u32, u32)> {
     use ibis_doc_model::MediaFormat;
+    // A metafile is as large as the picture it draws (an EMF or WMF of a freeform pasted from Office).
+    if matches!(format, MediaFormat::Emf | MediaFormat::Wmf) {
+        return metafile_picture_size(format, data);
+    }
     let signature = match format {
         MediaFormat::Png => data.starts_with(b"\x89PNG\r\n\x1a\n"),
         MediaFormat::Jpeg => data.starts_with(&[0xff, 0xd8, 0xff]),
@@ -3957,6 +3966,18 @@ pub(crate) fn validated_picture_size(format: ibis_doc_model::MediaFormat, data: 
     Some((width, height))
 }
 
+/// The pixel size (96 dpi) of what an EMF or WMF draws: of its SVG, or of the one bitmap it holds.
+fn metafile_picture_size(format: ibis_doc_model::MediaFormat, data: &[u8]) -> Option<(u32, u32)> {
+    let size = match format {
+        ibis_doc_model::MediaFormat::Emf => match ibis_emf::emf_picture(data)? {
+            ibis_emf::Picture::Svg(svg) => picture_size(svg.as_bytes()),
+            ibis_emf::Picture::Image(_, bytes) => picture_size(&bytes),
+        },
+        _ => picture_size(ibis_emf::wmf_to_svg(data)?.as_bytes()),
+    }?;
+    (size.0 > 0 && size.1 > 0).then_some(size)
+}
+
 pub(crate) fn picture_size(data: &[u8]) -> Option<(u32, u32)> {
     if is_svg_header(data) {
         if let Some((w, h)) = svg_pixels(data) {
@@ -3972,7 +3993,8 @@ pub(crate) fn picture_size(data: &[u8]) -> Option<(u32, u32)> {
         return Some((le(6, 2)?, le(8, 2)?));
     }
     if data.starts_with(b"BM") {
-        return Some((le(18, 4)?, le(22, 4)?.min(i32::MAX as u32)));
+        // The height of a top-down bitmap is negative.
+        return Some((le(18, 4)?, (le(22, 4)? as i32).unsigned_abs()));
     }
     if data.starts_with(&[0xff, 0xd8]) {
         // The first start-of-frame marker.
@@ -3993,6 +4015,19 @@ pub(crate) fn picture_size(data: &[u8]) -> Option<(u32, u32)> {
         }
     }
     None
+}
+
+/// The commands that crop a picture to `crop`: the crop, and the frame cut by what is cropped (the part that stays is not
+/// moved or stretched; see `crop_mode::recropped_frame`).
+pub(crate) fn crop_commands(slide: SlideId, shape: &ibis_doc_model::Shape, picture: &ibis_doc_model::Picture, crop: ibis_doc_model::Crop) -> Vec<Command> {
+    if picture.crop == crop { return Vec::new(); }
+    let mut commands = Vec::new();
+    let mut picture = picture.clone();
+    picture.crop = crop;
+    let frame = crate::shell::crop_mode::recropped_frame(shape.frame, shape.rotation, shape.flip_h, shape.flip_v, match &shape.kind { ShapeKind::Picture(p) => p.crop, _ => crop }, crop);
+    commands.push(Command::SetKind { slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) });
+    if let Some(frame) = frame && frame != shape.frame { commands.push(Command::SetFrame { slide, shape: shape.id, frame }); }
+    commands
 }
 
 /// Calculate centered Crop for given original dimensions and target aspect ratio (`num:den`).
@@ -4305,168 +4340,6 @@ impl SlideEditor {
     pub(crate) fn toggle_pptx_read_only_recommended(&mut self, cx: &mut Context<Self>) {
         let next = !self.is_pptx_read_only_recommended();
         self.set_pptx_read_only_recommended(next, cx);
-    }
-
-    /// PowerPoint 標準の情報バー（最終版 / 読み取り専用の推奨）。
-    pub(crate) fn render_pptx_infobar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.is_pptx_mark_as_final() {
-            Some(
-                div()
-                    .id("pptx-infobar-final")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(crate::shell::i18n::text("pptx.infobar.final.title")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("pptx.infobar.final.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-edit-anyway")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("pptx.infobar.final.edit-anyway"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.pptx_edit_anyway(cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
-        } else if self.is_pptx_modify_locked() {
-            Some(
-                div()
-                    .id("pptx-infobar-modify")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(div().text_size(px(12.)).font_weight(FontWeight::BOLD).text_color(rgb(0x323130)).child(crate::shell::i18n::text("pptx.infobar.modify.title")))
-                            .child(div().text_size(px(12.)).text_color(rgb(0x605e5c)).child(crate::shell::i18n::text("pptx.infobar.modify.message"))),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-modify-password")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("pptx.infobar.modify.unlock"))
-                            .on_click(cx.listener(|this, _, window, cx| this.ask_modify_password_to_unlock(window, cx))),
-                    )
-                    .into_any_element(),
-            )
-        } else if self.is_pptx_read_only_recommended() && !self.is_pptx_read_only_dismissed() {
-            Some(
-                div()
-                    .id("pptx-infobar-readonly")
-                    .w_full()
-                    .bg(rgb(0xfff4ce))
-                    .border_b_1()
-                    .border_color(rgb(0xedebe9))
-                    .px(px(16.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0x323130))
-                                    .child(crate::shell::i18n::text("pptx.infobar.readonly.title")),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(0x605e5c))
-                                    .child(crate::shell::i18n::text("pptx.infobar.readonly.message")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("infobar-btn-enable-editing")
-                            .px(px(12.))
-                            .py(px(4.))
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(rgb(0x8a8886))
-                            .bg(rgb(0xffffff))
-                            .text_size(px(12.))
-                            .text_color(rgb(0x323130))
-                            .cursor_pointer()
-                            .hover(|h| h.bg(rgb(0xf3f2f1)))
-                            .child(crate::shell::i18n::text("pptx.infobar.readonly.enable-editing"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.dismiss_pptx_read_only(cx);
-                            })),
-                    )
-                    .into_any_element(),
-            )
-        } else {
-            None
-        }
     }
 
     /// 非表示スライド タイトルを追加する (Add Hidden Slide Title: PPTX-ACCESS-003).

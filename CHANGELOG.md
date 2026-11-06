@@ -5,6 +5,98 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-11-06
+
+### Added
+
+#### All apps
+
+- Replace Fonts is one shared pane in .docx, .xlsx and .pptx (Edit menu).
+- Ink panel: the same rows in .docx, .xlsx and .pptx (select and clear ink, a line-width drop-down that shows the line).
+- Open a file that is write-protected (.xlsx `fileSharing`, .docx `writeProtection`, .pptx `modifyVerifier`): it opens read-only until the password is entered, and it can no longer be edited and saved without it (#111).
+- Check for updates: Help > Check for Updates in the three screens and the Start window. The Start window checks in the background whatever the start-up setting says, and shows an "Update ibisOffice" button when a newer version exists (#92).
+- Modal dialogs close with Esc. A click outside an open menu or drop-down only closes it and does not reach what is under it.
+- Number fields keep the exact value of the model: retyping or leaving a field unedited no longer rounds the stored value (glow, shadow and internal margins use it). When several objects are selected, a panel shows a value only when every object has it and writes only the fields you change; a mixed value is shown as empty.
+- Shared slider with a hover highlight and a typed value (Enter confirms, Esc cancels); disabled sliders, spinners and segmented controls are drawn in the disabled color.
+- A file changed by another program is detected: the window offers to reload it, or to save your changes under another name (a window that already shows the file is brought to the front).
+- A save dialog that cannot open (for example on a network share) says so in a message instead of doing nothing (#110).
+- Dark mode: a lighter selection blue in text fields and lists.
+- .doc and .dot files open in all three screens (see Documents), and macOS lists ibisOffice under "Open With" for .doc and .dot files (#71).
+- The About ibisOffice window has a Close button, and Esc or Enter closes it.
+
+#### Documents (.docx)
+
+- Word 97-2003 files (.doc, .dot) are opened with their formatting: fonts, styles, character and paragraph properties, sections and page numbers, tables (borders, floating tables, nested tables, merged cells, text direction), lists, headers and footers, footnotes, frames, fields, pictures, drawings (preset shapes, groups, rotation, text boxes) and the document's typography and compatibility settings (#71).
+- Text columns: text flows line by line through the columns, the caret and Up/Down follow the columns, and the setting is saved (#77).
+- A table of contents marked dirty (or with `updateFields`) is rebuilt when the file is opened (#112).
+- Crop a picture in the document screen with the same in-place preview as the slide and sheet screens.
+- The chart data of a chart in a document is edited in the spreadsheet grid, also for charts without an embedded workbook (#53).
+- Fit Text (distribute characters evenly) has entries in the menu and the toolbar (#53).
+- Tate-chu-yoko (horizontal text in vertical text) fits its width by a formula and the dialog sets its length and row thickness (#94).
+- Quick parts offer the document properties.
+- A vertical input method lays out its candidates vertically beside the column on Windows (#60).
+- Shapes in .docx files read the full DrawingML shape properties (fill, outline, shadow, glow, soft edge, reflection and bevel), as slides do.
+
+#### Spreadsheets (.xlsx)
+
+- Notes are an editable yellow box: it appears when the pointer rests on the cell for one second, can be moved and resized with handles, holds rich text (font, size, color, bold, italic, underline) and is linked to the cell corner by a line.
+- Copy as Picture puts the cells on the clipboard as a vector PDF, SVG and PNG, with cells that have no fill left transparent; a pasted PDF or SVG becomes a vector picture, and an EMF is written on Windows (#83).
+- Pivot tables: expanding and collapsing items, field names and protection.
+- Names Manager (with the scope of a name) and Paste Names (#100, #102).
+- Cell Format pane with live update, a gradient slider and icons; the conditional formatting manager.
+- Page Break Preview greys everything beyond the pages, and a new sheet's page range is its used range, which shapes put on the sheet enlarge (#104).
+- LAMBDA helpers: a function can be passed as a value and is evaluated per element (`MAP`, `SCAN`, `REDUCE`, `BYROW`, `BYCOL`, `TAKE`, `DROP`, `XLOOKUP`, `HSTACK(SUM,MAX)`), checked against Microsoft Excel on hundreds of formulas (#98, #99, #106).
+- `TAKE`, `DROP`, `INDEX`, `CHOOSE` and `CELL` return references, and `GROUPBY` and `PIVOTBY` match Microsoft Excel (#98, #99, #101).
+- `TYPE` follows Microsoft Excel for ranges and unions (#69).
+- Day and month names and era formats with a locale (`[$-411]`, `[$-ja-JP]`) are shown as Microsoft Excel shows them (#113).
+- A sheet tab can be dragged only as far as the "+" button; the border button defaults to all borders; a form control's list hangs from its button (#95).
+- Find shortcuts, and F2 edits the cell.
+- Data validation with a half-width entry.
+
+#### Presentations (.pptx)
+
+- Animation pane: a table of the effects in a pane at the right (also opened from a sidebar button). Change an effect from a drop-down, delete it in the edit dialog, play all with the total time, and set the start trigger with radio buttons (#38).
+  - Rows are reordered by drag and drop: the row is lifted under the pointer with a shadow, the other rows make room while it moves, and dropping never loses or merges effects.
+  - A text box row folds and opens its paragraph rows, and a paragraph row moves within its text box.
+  - Video and audio have their own rows; the space key plays or pauses the selected clip, and the Animation menu has Play, Pause and Stop for it (#86).
+- Slide transitions: 55 transitions with Effect Options and the direction, and animations keep their `behaviors` when saved (#88, #89, #90).
+- Slide Zoom, Section Zoom and Summary Zoom: read and kept as Microsoft PowerPoint writes them, made from the Insert menu with a picture of the target, zoomed in and out in the slide show with the transition time, and the summary section and its slide are kept up to date.
+- Slide Master view: the left pane lists every master with its layouts, thumbnails switch at once, and Close Master View (and the close buttons of the notes and handout masters) returns to the slides; Apply and Close applies the layout you were viewing (#84).
+- Text glow is drawn as Microsoft PowerPoint draws it: a Gaussian blur whose size follows the font size (measured on 176 samples), also in the Web version (#91).
+- Shadows: a blurred shadow is a Gaussian of the outline, follows the fill's transparency and is also cast by shapes without a fill; an inner shadow is exported to PDF (`a:innerShdw`).
+- Right-pane panels for glow, shadow, internal margins and the 3-D model use number fields with decimals, color fields and sliders; the pattern fill drop-down shows the 54 patterns; the Show Settings and Print panels were rearranged; recording preview is Click or Auto with a 0.5 s stepper that applies live.
+- Pie charts: the percentage labels add up to 100% as in Microsoft PowerPoint, and the label separator follows it.
+- Cropping keeps what stays where it was, and a picture turns with its handle.
+
+#### Charts (all formats)
+
+- Chart data without a workbook is edited in a grid, in .docx and .pptx files too (#53).
+- The chart's default look follows Microsoft PowerPoint: no fill without `spPr`, the 2-D `c:style` defaults (line color, bold, trendlines), the automatic value-axis ticks, and 3-D boxes drawn by projection with `hPercent`, clustered 3-D columns, and no fill on empty walls.
+
+#### Web version
+
+- Half-width Latin letters and digits are drawn with the font installed in the browser instead of IBM Plex Sans (#73).
+- Images are written to the clipboard (#83).
+- The About window is a modal dialog.
+
+### Changed
+
+- Duplicate menu commands were removed in the three screens.
+- Line breaking of .docx, .xlsx and .pptx files follows one set of rules for the characters that cannot start or end a line, hanging punctuation, squeezing and the automatic spaces between Japanese and Latin text (#68).
+- The Animation pane's move arrows, trash button and play-order column were removed; reorder by dragging.
+- .docx tables that are not fixed-width are laid out from their cells' widths and content, as Microsoft Word does.
+- A justified line's spaces: the automatic spaces between Japanese and Latin text widen first, up to half an em, then the rest of the room is spread over every gap (#67).
+
+### Fixed
+
+- All apps: a click in an open menu or a drop-down no longer passes to the cell or shape under it; the Start window's "..." menu no longer closes by itself when the mouse moves; the window's close button asks to save before closing a changed document (#38).
+- .docx: justified lines break where Microsoft Word breaks them, with the last word taking the room that the spaces give (#67); lines of a multiple of the line grid, line heights of East Asian faces (1.3 times for Meiryo, Yu Gothic, Yu Mincho and others), character-grid spacing, empty paragraphs, footers that take room off the body, and the first-page header's room were matched against Microsoft Word's own PDFs, so documents break onto the same pages (corpus of 150 documents: the pages and lines agree more often); a character that the vertical text squeezes is turned like the others (#54); an emoji is drawn in color and not squeezed into the run's cell, and a character with a variation selector stays one cluster, also on Windows (#66, #79); the bullets of Wingdings and Symbol are drawn with their own glyphs; an inline picture fills its frame; an installed proportional MS Mincho or MS PGothic keeps its own widths (#56); a shape's text, group and picture inside a group are placed as Microsoft Word places them; footnotes and endnotes keep the position and widow control Microsoft Word gives them; text broken between Latin letters when "break Latin words" is on; the underline of spaces at the end of a line follows `ulTrailSpace`; merged cells with centered, bottom-aligned or turned text stay with their first row; a font table is kept whole on save.
+- .xlsx: Excel 2007 form controls (VML only) are drawn (#95); a tab character in pasted text no longer crashes (#108); a file that stayed on "loading" because of a column range reaching 4.3 billion opens (#82); `IF` evaluates a branch once so LAMBDA recursion no longer slows down, and `XNPV` and `XIRR` evaluate their arguments once (#109); the printed layout follows Microsoft Excel: rows by their fonts, custom rows cut to whole points, the printed column width, a Letter-sized layout on A4 for sheets without a paper size, the default paper of the region, text breaking in the printer's units, shapes following their rows and charts, rows below the last cell, and a blank last page (#93, #68); a distributed (justify) cell spreads its characters (#75); a wrapped cell no longer ends a line at its last space; a copied sheet's "(number)" counts up without a limit (#78); sorting moves a row's hyperlinks with the row; a pasted picture keeps its size as in Microsoft Excel (#103); a hidden group box no longer steals clicks from the option buttons in the Web version (#96).
+- .pptx: the presenter view with two displays no longer aborts (#51); a text in a custom shape whose text rectangle has no area is one line, not one character per line; fonts of a variable font are written at the weight they are drawn at; text shrunk by autofit is drawn at a whole-point size and "space before" is rounded to a whole point as Microsoft PowerPoint does; table borders keep their thickness in PDF; pattern fills are one picture in PDF; the media bar's time fits the bar; placeholder buttons have the toolbar size; the slide master's thumbnails switch without rebuilding the pictures; dashed lines are written to PDF as dashes with their pattern; a new layout adds the placeholders the slide lacks, empty (#85).
+- Windows: the save dialog opens for a file on a network share (#110); the title row's icon shows the system menu without the app being killed (#74); emoji that Unicode draws as emoji by default and color emoji (COLR version 1) are drawn, and kana in an emoji run use their fallback font's width (#66); printing opens the PDF app also for a file whose name contains "test" (#19); the colors of an embedded video are no longer inverted (#87).
+- Linux: the pen and touch of a Wayland session (Wacom tablets) work (#97).
+- Web version: half-width Latin uses the installed font (#73); copied images reach the clipboard (#83); the About window shows as a dialog.
+
 ## [0.8.5] - 2026-10-30
 
 ### Added

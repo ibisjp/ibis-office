@@ -6,7 +6,7 @@
 //! (with or without BOM), UTF-16, and Shift_JIS (CP932); with auto-detected
 //! delimiters (comma, tab, semicolon), and writing sheets as CSV or TSV.
 
-use ibis_calc::input::{Typed, parse_input};
+use ibis_calc::input::{Typed, parse_imported};
 use ibis_doc_model::{CellValue, Presentation};
 
 use crate::Error;
@@ -374,7 +374,7 @@ pub fn workbook_from_with_delimiter(text: &str, name: &str, delimiter: char) -> 
                 continue;
             }
             let at = format!("{}{}", column_name(c as u32), r + 1);
-            match parse_input(field, false) {
+            match parse_imported(field, false) {
                 Typed::Formula(f) => cells.push_str(&format!(r#"<c r="{at}"><f>{}</f></c>"#, escape(&ibis_calc::formula::to_file(&f)))),
                 Typed::Value(v, format) => {
                     let style = match format {

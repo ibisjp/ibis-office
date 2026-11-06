@@ -39,6 +39,9 @@ pub(crate) mod notes;
 #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 #[path = "../tests/pptx/scenarios.rs"]
 pub(crate) mod scenarios;
+#[cfg(all(headless_export, any(all(test, windows), all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))))]
+#[path = "../tests/pptx/text_rect.rs"]
+pub(crate) mod text_rect;
 #[cfg(all(target_os = "macos", feature = "scenarios"))]
 #[path = "../tests/pptx/corpus_report.rs"]
 pub(crate) mod corpus_report;
@@ -48,6 +51,7 @@ pub(crate) mod section_panel;
 pub(crate) mod layout_panel;
 pub(crate) mod print_panel;
 pub(crate) mod master_view;
+pub(crate) mod guides;
 pub(crate) mod notes_format;
 pub(crate) mod spelling_panel;
 mod thesaurus_panel;
@@ -67,7 +71,6 @@ pub(crate) mod outline_edit;
 pub(crate) mod ink;
 pub(crate) mod autocorrect_panel;
 pub(crate) mod math_panel;
-pub(crate) mod modify_password;
 pub(crate) mod path_draw;
 pub(crate) mod shape_menu;
 pub(crate) mod smartart;
@@ -84,6 +87,7 @@ pub(crate) mod replace_fonts;
 pub(crate) mod grid_view;
 pub(crate) mod thumbnails;
 pub(crate) mod slide_zoom;
+pub(crate) mod zoom_cards;
 pub(crate) mod photo_album;
 pub(crate) mod compare;
 pub(crate) mod audio_record;
@@ -150,6 +154,14 @@ pub(crate) struct State {
     pub(crate) header_footer: Option<header_footer::HeaderFooterPanel>,
     /// アニメーション ウィンドウ shown.
     pub(crate) animation_pane: bool,
+    /// The text boxes whose per-paragraph effects the animation pane lists open (a parent row of them, expanded).
+    pub(crate) animation_expanded: std::collections::HashSet<animation_ui::BoxKey>,
+    /// The text boxes that were open when a text box's row was pressed to be dragged (all of them fold while it is dragged);
+    /// the pane opens them again when the drag ends.
+    pub(crate) animation_drag_folded: Vec<animation_ui::BoxKey>,
+    /// The animation pane's table (scroll position, column widths) and its row drag and drop.
+    pub(crate) animation_table: crate::shell::chrome::virtual_table::TableState,
+    pub(crate) animation_dnd: crate::shell::chrome::row_dnd::RowDnd,
     /// SmartArt テキスト ウィンドウ shown.
     pub(crate) sidebar_settings: Option<sidebar_settings::SidebarSettings>,
     pub(crate) smartart_text_pane: bool,
@@ -196,7 +208,6 @@ pub(crate) struct State {
     /// goes there once the text has been painted.
     pub(crate) pending_click: Option<Point<Pixels>>,
     /// フォントの置換, while open.
-    pub(crate) replace_fonts: Option<replace_fonts::ReplaceFontsState>,
     /// フォトアルバムの設定・作成, while open.
     pub(crate) photo_album: Option<photo_album::PhotoAlbumState>,
     /// The speaker notes field, and whether the notes pane is hidden.
@@ -234,8 +245,6 @@ pub(crate) struct State {
     pub(crate) slide_popup: Option<SlidePopup>,
     /// 読み取り専用推奨の情報バーで「編集を有効にする」を押したか.
     pub(crate) read_only_dismissed: bool,
-    /// The password to modify the file was given (or set here).
-    pub(crate) modify_unlocked: bool,
     /// What the system's clipboard held when shapes were last copied.
     pub(crate) clipboard_stamp: Option<u64>,
     /// The slides selected in the list when there are several (Shift or ⌘ and a click); empty for the one shown.
@@ -281,7 +290,7 @@ pub(crate) struct SlidePopup {
 
 impl Default for State {
     fn default() -> Self {
-        Self { selection: Vec::new(), tool: editing::Tool::Select, drag: None, shift: false, clipboard: Vec::new(), clipboard_groups: Vec::new(), character_format_copy: None, paragraph_format_copy: None, animation_copy: None, find: None, replace_fonts: None, photo_album: None, section_panel: None, layout_panel: None, print_panel: None, spelling: None, thesaurus: None, #[cfg(feature = "export")] compress_panel: None, edit_points: None, spell_cache: Default::default(), path_draw: None, notes_marks_panel: None, print_settings: Default::default(), folded_sections: Default::default(), section_selection: None, size_panel: None, insets_panel: None, crop_panel: None, frame_panel: None, cell_size_panel: None, alt_text_panel: None, comments: None, chart_panel: None, chart_data: None, header_footer: None, animation_pane: false, sidebar_settings: None, smartart_text_pane: false, smartart_reorder: Default::default(), animation_options_panel: None, selection_pane: None, reading_order_pane: None, link_panel: None, clips: Vec::new(), clip_hover: None, clip_seek: None, clip_volume: Default::default(), symbols: None, defaults: Default::default(), theme_panel: None, timing_panel: None, show_panel: None, glow_panel: None, shadow_panel: None, gradient_panel: None, paragraph_panel: None, clipboard_slide: None, pastes: 0, edit: None, positions: Default::default(), goal_x: None, pending_click: None, notes_field: None, notes_hidden: false, pane_width: None, notes_height: notes::PANE_HEIGHT, pane_drag: None, grid_view: false, outline_view: false, outline_edit: None, ink: None, autocorrect: None, math_panel: None, notes_page_view: false, gridlines: false, guides: false, snap_to_grid: false, snap_to_shape: false, slide_popup: None, read_only_dismissed: false, modify_unlocked: false, clipboard_stamp: None, slide_selection: Vec::new(), align_to_slide: false, properties_panel: None, inspect_panel: None, accessibility_panel: None, compatibility_panel: None, slide_zoom_dialog: None, section_zoom_dialog: None, summary_zoom_dialog: None, compare_panel: None, audio_record: None, threed_panel: None, record_preview: None, screen_reader: None, ribbon_qat: None, trust_center: None }
+        Self { selection: Vec::new(), tool: editing::Tool::Select, drag: None, shift: false, clipboard: Vec::new(), clipboard_groups: Vec::new(), character_format_copy: None, paragraph_format_copy: None, animation_copy: None, find: None, photo_album: None, section_panel: None, layout_panel: None, print_panel: None, spelling: None, thesaurus: None, #[cfg(feature = "export")] compress_panel: None, edit_points: None, spell_cache: Default::default(), path_draw: None, notes_marks_panel: None, print_settings: Default::default(), folded_sections: Default::default(), section_selection: None, size_panel: None, insets_panel: None, crop_panel: None, frame_panel: None, cell_size_panel: None, alt_text_panel: None, comments: None, chart_panel: None, chart_data: None, header_footer: None, animation_pane: false, animation_expanded: Default::default(), animation_drag_folded: Vec::new(), animation_table: Default::default(), animation_dnd: Default::default(), sidebar_settings: None, smartart_text_pane: false, smartart_reorder: Default::default(), animation_options_panel: None, selection_pane: None, reading_order_pane: None, link_panel: None, clips: Vec::new(), clip_hover: None, clip_seek: None, clip_volume: Default::default(), symbols: None, defaults: Default::default(), theme_panel: None, timing_panel: None, show_panel: None, glow_panel: None, shadow_panel: None, gradient_panel: None, paragraph_panel: None, clipboard_slide: None, pastes: 0, edit: None, positions: Default::default(), goal_x: None, pending_click: None, notes_field: None, notes_hidden: false, pane_width: None, notes_height: notes::PANE_HEIGHT, pane_drag: None, grid_view: false, outline_view: false, outline_edit: None, ink: None, autocorrect: None, math_panel: None, notes_page_view: false, gridlines: false, guides: false, snap_to_grid: false, snap_to_shape: false, slide_popup: None, read_only_dismissed: false, clipboard_stamp: None, slide_selection: Vec::new(), align_to_slide: false, properties_panel: None, inspect_panel: None, accessibility_panel: None, compatibility_panel: None, slide_zoom_dialog: None, section_zoom_dialog: None, summary_zoom_dialog: None, compare_panel: None, audio_record: None, threed_panel: None, record_preview: None, screen_reader: None, ribbon_qat: None, trust_center: None }
     }
 }
 
@@ -310,6 +319,21 @@ impl FormatEditor for Presentation {
         cx.bind_keys([
             KeyBinding::new(if crate::is_mac() { "cmd-shift-h" } else { "ctrl-h" }, slide_view::OpenFind, Some(slide_view::CONTEXT)),
             KeyBinding::new(if crate::is_mac() { "cmd-f" } else { "ctrl-f" }, slide_view::OpenFind, Some(slide_view::CONTEXT)),
+            // ⌘G / ⇧⌘G: Mac only (PowerPoint for Mac). Windows and Linux have no such key here.
+            KeyBinding::new(if crate::is_mac() { "cmd-f" } else { "ctrl-f" }, slide_view::OpenFind, Some(find::FIND_PANEL_CONTEXT)),
+            KeyBinding::new(if crate::is_mac() { "cmd-shift-h" } else { "ctrl-h" }, slide_view::OpenFind, Some(find::FIND_PANEL_CONTEXT)),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-g", slide_view::FindNext, Some(find::FIND_PANEL_CONTEXT)),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-shift-g", slide_view::FindPrevious, Some(find::FIND_PANEL_CONTEXT)),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-g", slide_view::FindNext, Some(slide_view::CONTEXT)),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-shift-g", slide_view::FindPrevious, Some(slide_view::CONTEXT)),
+            KeyBinding::new("f3", slide_view::FindNext, Some(find::FIND_PANEL_CONTEXT)),
+            KeyBinding::new("shift-f3", slide_view::FindPrevious, Some(find::FIND_PANEL_CONTEXT)),
+            KeyBinding::new("f3", slide_view::FindNext, Some(slide_view::CONTEXT)),
+            KeyBinding::new("shift-f3", slide_view::FindPrevious, Some(slide_view::CONTEXT)),
             KeyBinding::new("delete", slide_view::DeleteForward, Some(slide_view::CONTEXT)),
             KeyBinding::new(if crate::is_mac() { "cmd-\\" } else { "ctrl-\\" }, slide_view::ClearFormatting, Some(slide_view::CONTEXT)),
             KeyBinding::new(if crate::is_mac() { "cmd-alt-g" } else { "ctrl-alt-g" }, slide_view::GroupShapes, Some(slide_view::CONTEXT)),
@@ -340,10 +364,12 @@ impl FormatEditor for Presentation {
 
     /// The slide list beside the slide, or the slide sorter grid view.
     fn render_body(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> AnyElement {
+        // The pictures of the master view's list of pages.
+        editor.fill_master_thumbs(cx);
         let popup = editor.pptx().and_then(|s| s.slide_popup.as_ref()).map(|p| {
             deferred(anchored().position(p.position).snap_to_window_with_margin(px(8.)).child(p.menu.clone())).with_priority(2)
         });
-        let infobar = editor.render_pptx_infobar(cx);
+        let infobar = editor.render_infobar(cx);
         let content = if editor.is_grid_view() {
             div()
                 .size_full()
@@ -503,7 +529,7 @@ impl FormatEditor for Presentation {
     }
 
     fn sidebar(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<SidebarPanel> {
-        editor.threed_model_panel(cx).or_else(|| editor.record_preview_panel(cx)).or_else(|| editor.pptx_screen_reader_panel(cx)).or_else(|| editor.pptx_ribbon_qat_panel(cx)).or_else(|| editor.pptx_trust_center_panel(cx).map(|panel| panel.modal_named("pptx_trust_center_panel"))).or_else(|| editor.audio_record_panel(cx).map(|panel| panel.modal_named("audio_record_panel"))).or_else(|| editor.compare_panel(cx).map(|panel| panel.modal_named("compare_panel"))).or_else(|| editor.smartart_text_pane(cx)).or_else(|| editor.photo_album_panel(cx).map(|panel| panel.modal_named("photo_album_panel"))).or_else(|| editor.pptx_ink_panel(cx)).or_else(|| editor.pptx_autocorrect_panel(cx).map(|panel| panel.modal_named("pptx_autocorrect_panel"))).or_else(|| editor.pptx_math_panel(cx).map(|panel| panel.modal_named("pptx_math_panel"))).or_else(|| editor.master_view_panel(cx)).or_else(|| editor.notes_format_panel(cx)).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.animation_options_panel(cx).map(|panel| panel.modal_named("animation_options_panel"))).or_else(|| editor.pptx_compatibility_panel(cx).map(|panel| panel.modal_named("pptx_compatibility_panel"))).or_else(|| editor.pptx_accessibility_panel(cx)).or_else(|| editor.presentation_inspect_panel(cx).map(|panel| panel.modal_named("presentation_inspect_panel"))).or_else(|| editor.presentation_properties_panel(cx).map(|panel| panel.modal_named("presentation_properties_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.notes_marks_panel(cx).map(|panel| panel.modal_named("notes_marks_panel"))).or_else(|| editor.spelling_panel(cx)).or_else(|| editor.pptx_thesaurus_panel(cx)).or_else(|| editor.compress_panel(cx).map(|panel| panel.modal_named("compress_panel"))).or_else(|| editor.print_panel(cx).map(|panel| panel.modal_named("print_panel"))).or_else(|| editor.layout_name_panel(cx).map(|panel| panel.modal_named("layout_name_panel"))).or_else(|| editor.pptx_section_panel(cx).map(|panel| panel.modal_named("pptx_section_panel"))).or_else(|| editor.pptx_gradient_panel(cx).map(|panel| panel.modal_named("pptx_gradient_panel"))).or_else(|| editor.shadow_panel(cx).map(|panel| panel.modal_named("shadow_panel"))).or_else(|| editor.glow_panel(cx).map(|panel| panel.modal_named("glow_panel"))).or_else(|| editor.pptx_paragraph_panel(cx).map(|panel| panel.modal_named("pptx_paragraph_panel"))).or_else(|| editor.timing_panel(cx).map(|panel| panel.modal_named("timing_panel"))).or_else(|| editor.show_panel(cx).map(|panel| panel.modal_named("show_panel"))).or_else(|| editor.crop_panel(cx).map(|panel| panel.modal_named("crop_panel"))).or_else(|| editor.frame_panel(cx).map(|panel| panel.modal_named("frame_panel"))).or_else(|| editor.cell_size_panel(cx).map(|panel| panel.modal_named("cell_size_panel"))).or_else(|| editor.alt_text_panel(cx).map(|panel| panel.modal_named("alt_text_panel"))).or_else(|| editor.chart_panel(cx).map(|panel| panel.modal_named("chart_panel"))).or_else(|| editor.header_footer_panel(cx).map(|panel| panel.modal_named("header_footer_panel"))).or_else(|| editor.animation_pane(cx)).or_else(|| editor.reading_order_pane(cx)).or_else(|| editor.selection_pane(cx)).or_else(|| editor.slide_link_panel(cx).map(|panel| panel.modal_named("slide_link_panel"))).or_else(|| editor.theme_panel(cx).map(|panel| panel.modal_named("theme_panel"))).or_else(|| editor.text_insets_panel(cx).map(|panel| panel.modal_named("text_insets_panel"))).or_else(|| editor.slide_size_panel(cx).map(|panel| panel.modal_named("slide_size_panel"))).or_else(|| editor.pptx_find_panel(cx)).or_else(|| editor.replace_fonts_panel(cx).map(|panel| panel.modal_named("replace_fonts_panel"))).or_else(|| editor.slide_comments_panel(cx)).or_else(|| chrome::sidebar(editor, window, cx))
+        editor.threed_model_panel(cx).or_else(|| editor.record_preview_panel(cx)).or_else(|| editor.pptx_screen_reader_panel(cx)).or_else(|| editor.pptx_ribbon_qat_panel(cx)).or_else(|| editor.pptx_trust_center_panel(cx).map(|panel| panel.modal_named("pptx_trust_center_panel"))).or_else(|| editor.audio_record_panel(cx).map(|panel| panel.modal_named("audio_record_panel"))).or_else(|| editor.compare_panel(cx).map(|panel| panel.modal_named("compare_panel"))).or_else(|| editor.smartart_text_pane(cx)).or_else(|| editor.photo_album_panel(cx).map(|panel| panel.modal_named("photo_album_panel"))).or_else(|| editor.pptx_ink_panel(cx)).or_else(|| editor.pptx_autocorrect_panel(cx).map(|panel| panel.modal_named("pptx_autocorrect_panel"))).or_else(|| editor.pptx_math_panel(cx).map(|panel| panel.modal_named("pptx_math_panel"))).or_else(|| editor.master_view_panel(cx)).or_else(|| editor.notes_format_panel(cx)).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.animation_options_panel(cx).map(|panel| panel.modal_named("animation_options_panel"))).or_else(|| editor.pptx_compatibility_panel(cx).map(|panel| panel.modal_named("pptx_compatibility_panel"))).or_else(|| editor.pptx_accessibility_panel(cx)).or_else(|| editor.presentation_inspect_panel(cx).map(|panel| panel.modal_named("presentation_inspect_panel"))).or_else(|| editor.presentation_properties_panel(cx).map(|panel| panel.modal_named("presentation_properties_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.notes_marks_panel(cx).map(|panel| panel.modal_named("notes_marks_panel"))).or_else(|| editor.spelling_panel(cx)).or_else(|| editor.pptx_thesaurus_panel(cx)).or_else(|| editor.compress_panel(cx).map(|panel| panel.modal_named("compress_panel"))).or_else(|| editor.print_panel(cx).map(|panel| panel.modal_named("print_panel"))).or_else(|| editor.layout_name_panel(cx).map(|panel| panel.modal_named("layout_name_panel"))).or_else(|| editor.pptx_section_panel(cx).map(|panel| panel.modal_named("pptx_section_panel"))).or_else(|| editor.pptx_gradient_panel(cx).map(|panel| panel.modal_named("pptx_gradient_panel"))).or_else(|| editor.shadow_panel(cx).map(|panel| panel.modal_named("shadow_panel"))).or_else(|| editor.glow_panel(cx).map(|panel| panel.modal_named("glow_panel"))).or_else(|| editor.pptx_paragraph_panel(cx).map(|panel| panel.modal_named("pptx_paragraph_panel"))).or_else(|| editor.timing_panel(cx).map(|panel| panel.modal_named("timing_panel"))).or_else(|| editor.show_panel(cx).map(|panel| panel.modal_named("show_panel"))).or_else(|| editor.crop_panel(cx).map(|panel| panel.modal_named("crop_panel"))).or_else(|| editor.frame_panel(cx).map(|panel| panel.modal_named("frame_panel"))).or_else(|| editor.cell_size_panel(cx).map(|panel| panel.modal_named("cell_size_panel"))).or_else(|| editor.alt_text_panel(cx).map(|panel| panel.modal_named("alt_text_panel"))).or_else(|| editor.chart_panel(cx).map(|panel| panel.modal_named("chart_panel"))).or_else(|| editor.header_footer_panel(cx).map(|panel| panel.modal_named("header_footer_panel"))).or_else(|| editor.text_insets_panel(cx).map(|panel| panel.modal_named("text_insets_panel"))).or_else(|| editor.animation_pane(cx)).or_else(|| editor.reading_order_pane(cx)).or_else(|| editor.selection_pane(cx)).or_else(|| editor.slide_link_panel(cx).map(|panel| panel.modal_named("slide_link_panel"))).or_else(|| editor.theme_panel(cx).map(|panel| panel.modal_named("theme_panel"))).or_else(|| editor.slide_size_panel(cx).map(|panel| panel.modal_named("slide_size_panel"))).or_else(|| editor.pptx_find_panel(cx)).or_else(|| editor.slide_comments_panel(cx)).or_else(|| chrome::sidebar(editor, window, cx))
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]

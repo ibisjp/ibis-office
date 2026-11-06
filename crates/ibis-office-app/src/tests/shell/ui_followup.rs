@@ -75,7 +75,7 @@ fn tab_fixture(_: &mut crate::shell::editor::SlideEditor,_:&mut Window,cx:&mut C
 fn tab_modes(){
  struct Reset;impl Drop for Reset{fn drop(&mut self){crate::shell::chrome::FORCED_SIDEBAR.with(|s|s.set(None));}}
  let _reset=Reset;let _probe=buttons::Probe::new();let mut s=Scenario::open("test/editing/xlsx-sales.xlsx");s.size(1200.,800.);
- crate::shell::chrome::FORCED_SIDEBAR.with(|slot|slot.set(Some((tab_fixture,"tab-mode-test",crate::shell::panel_dialog::PanelMode::Sidebar))));s.update(|e,_,cx|{e.sidebar_open=true;cx.notify();});
+ crate::shell::chrome::FORCED_SIDEBAR.with(|slot|slot.set(Some((tab_fixture,"tab-mode-test",crate::shell::dialog::DialogMode::Sidebar))));s.update(|e,_,cx|{e.sidebar_open=true;cx.notify();});
  let bounds=|id:&str,index|{let key=buttons::all().into_iter().find(|k|k.contains(id)&&k.ends_with(&format!(", {index})"))).unwrap();buttons::bounds(&key).unwrap()};
  assert_eq!(bounds("tabs-equal",0).size.width,bounds("tabs-equal",1).size.width);
  assert!(bounds("tabs-intrinsic",0).size.width<bounds("tabs-intrinsic",1).size.width);
@@ -95,7 +95,7 @@ fn action_bar_insets(){
  s.update(|e,_,cx|e.open_cells_dialog(false,cx));check_action_bar(&mut s,"cells-ok","delete-cells");
 }
 fn check_action_bar(s:&mut Scenario,id:&str,name:&str){
- let button=buttons::bounds(id).expect("primary action");let(frame,footer)=s.with(|e,_|(e.panel_dialog.bounds.unwrap(),e.panel_dialog.footer_height));
+ let button=buttons::bounds(id).expect("primary action");let(frame,footer)=s.with(|e,_|(e.dialog.bounds.unwrap(),e.dialog.footer_height));
  let bottom=frame.bottom()-px(1.);let top=bottom-footer;
  let above=f32::from(button.origin.y-top);let below=f32::from(bottom-button.bottom());
  let expected=crate::shell::chrome::ACTION_BAR_PADDING_Y;
@@ -116,7 +116,7 @@ fn palette_wrap(){
   Some(SidebarPanel::with_footer("Palette test",body.into_any_element(),chrome::action_bar().action(chrome::dialog_close_definition(cx))))
  }
  let _probe=buttons::Probe::new();let mut s=Scenario::open("test/editing/docx-report.docx");s.size(800.,600.);
- FORCED_SIDEBAR.with(|v|v.set(Some((panel,"palette-wrap-test",crate::shell::panel_dialog::PanelMode::Modal))));
+ FORCED_SIDEBAR.with(|v|v.set(Some((panel,"palette-wrap-test",crate::shell::dialog::DialogMode::Modal))));
  s.update(|e,_,cx|{e.sidebar_open=true;cx.notify();});
  let b=FIELD.with(|v|v.get().unwrap());s.click((f32::from(b.origin.x)+16.,f32::from(b.center().y)));
  let colors=crate::shell::color_editor::palette_colors();assert!(colors.len()>10);
@@ -215,7 +215,7 @@ mod submenu_cascade_review {
             let dismissed = Rc::new(Cell::new(0));
             STATE.with(|slot| *slot.borrow_mut() = Some(State { case, popup: None, parent: parent.clone(), invoked: invoked.clone(), dismissed: dismissed.clone(), subscription: None }));
             buttons::clear();
-            FORCED_SIDEBAR.with(|slot| slot.set(Some((panel, "submenu-cascade-review", crate::shell::panel_dialog::PanelMode::Sidebar))));
+            FORCED_SIDEBAR.with(|slot| slot.set(Some((panel, "submenu-cascade-review", crate::shell::dialog::DialogMode::Sidebar))));
             s.update(|e, _, cx| { e.sidebar_open = true; cx.notify(); });
             s.settle();
             let bounds = parent.get().expect("parent popup is rendered");

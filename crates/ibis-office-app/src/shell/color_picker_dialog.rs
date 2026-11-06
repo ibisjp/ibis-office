@@ -53,7 +53,7 @@ impl SlideEditor {
         }));
         self.document_memory.set(KEY, Some(state));
         self.sidebar_open = true;
-        self.panel_dialog = Default::default();
+        self.dialog = Default::default();
         cx.notify();
     }
     fn change_color_picker(&mut self, action: ColorAction, w: &mut Window, cx: &mut Context<Self>) {
@@ -72,7 +72,7 @@ impl SlideEditor {
             self.sidebar_open = state.borrow().sidebar;
         }
         self.document_memory.set(KEY, None::<Shared>);
-        self.panel_dialog = Default::default();
+        self.dialog = Default::default();
         self.focus_handle.focus(w, cx);
         cx.notify();
     }

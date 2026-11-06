@@ -9,7 +9,7 @@ use crate::shell::i18n::{self, Language, LanguageSetting};
 use crate::shell::scenario::Scenario;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
-    vec![("shell::i8_language_switch_and_kept", i8_language_switch_and_kept), ("shell::i8_panels_and_status_in_english", i8_panels_and_status_in_english), ("shell::fix16_font_names_in_english", fix16_font_names_in_english), ("shell::i8_docx_panels_in_english", i8_docx_panels_in_english), ("shell::fix34_start_view_in_english", fix34_start_view_in_english), ("shell::fix34_new_file_names_in_english", fix34_new_file_names_in_english), ("shell::fix36_font_lists_from_the_system", fix36_font_lists_from_the_system), ("shell::split_buttons_in_english", split_buttons_in_english), ("shell::fix_font_dialog_item_leads_the_list", fix_font_dialog_item_leads_the_list)]
+    vec![("shell::i8_language_switch_and_kept", i8_language_switch_and_kept), ("shell::i8_panels_and_status_in_english", i8_panels_and_status_in_english), ("shell::fix16_font_names_in_english", fix16_font_names_in_english), ("shell::i8_docx_panels_in_english", i8_docx_panels_in_english), ("shell::fix34_start_view_in_english", fix34_start_view_in_english), ("shell::fix34_new_file_names_in_english", fix34_new_file_names_in_english), ("shell::fix36_font_lists_from_the_system", fix36_font_lists_from_the_system), ("shell::split_buttons_in_english", split_buttons_in_english), ("shell::fix_font_dialog_item_leads_the_list", fix_font_dialog_item_leads_the_list), ("shell::replace_fonts_document_and_workbook", replace_fonts_document_and_workbook)]
 }
 
 /// The label of the menu item `id` and of the ファイル menu, as shown now.
@@ -284,4 +284,48 @@ fn fix_font_dialog_item_leads_the_list() {
         assert_eq!((first.as_str(), second.as_str()), (id, "-"), "{kind:?}");
         assert_ne!(last, id, "{kind:?}: the dialog item is also at the end");
     }
+}
+
+/// フォントの置換 on the document and the spreadsheet screens: the panel lists the fonts the file uses, and 置換 sets the other
+/// font on every run (cell) drawn in the first one. The Edit menu has the item on both screens.
+fn replace_fonts_document_and_workbook() {
+    use ibis_doc_model::{CellEdit, CellInput, CellRange, Command, SheetCommand, StyleChange};
+    // Document.
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    s.menu("edit.replace-fonts");
+    let first = s.with(|e, _| e.replace_fonts.as_ref().and_then(|r| r.used_fonts.first().cloned())).expect("the report uses a font");
+    s.update(|e, w, cx| {
+        let r = e.replace_fonts.as_ref().unwrap();
+        let (t, d) = (r.target.clone(), r.replacement.clone());
+        let first = first.clone();
+        t.update(cx, |f, cx| f.set_value(&first, w, cx));
+        d.update(cx, |f, cx| f.set_value("Georgia", w, cx));
+        e.replace_presentation_fonts(w, cx);
+    });
+    let fonts = s.with(|e, _| e.used_fonts());
+    assert!(fonts.iter().any(|f| f == "Georgia") && !fonts.iter().any(|f| f.eq_ignore_ascii_case(&first)) || first == "Georgia", "{first} {fonts:?}");
+    s.screenshot("replace-fonts-docx");
+    drop(s);
+    // Workbook.
+    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let range = CellRange { first_row: 0, first_column: 0, last_row: 0, last_column: 1 };
+        e.run(vec![
+            Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row: 0, column: 0, input: CellInput::Value(ibis_doc_model::CellValue::Text("a".into())) }, CellEdit { row: 0, column: 1, input: CellInput::Value(ibis_doc_model::CellValue::Text("b".into())) }] }),
+            Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: StyleChange::Font(Some("Courier New".into())) }),
+        ], cx);
+    });
+    s.menu("edit.replace-fonts");
+    assert!(s.with(|e, _| e.replace_fonts.as_ref().is_some_and(|r| r.used_fonts.iter().any(|f| f == "Courier New"))));
+    s.update(|e, w, cx| {
+        let r = e.replace_fonts.as_ref().unwrap();
+        let (t, d) = (r.target.clone(), r.replacement.clone());
+        t.update(cx, |f, cx| f.set_value("Courier New", w, cx));
+        d.update(cx, |f, cx| f.set_value("Georgia", w, cx));
+        e.replace_presentation_fonts(w, cx);
+    });
+    let fonts = s.with(|e, _| e.used_fonts());
+    assert_eq!(fonts, vec!["Georgia".to_string()]);
+    s.screenshot("replace-fonts-xlsx");
 }

@@ -8,7 +8,7 @@ use super::{
     i18n::text,
 };
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
+use gpui_kit::component::slider::{SliderEvent, SliderState};
 use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 use ibis_doc_model::Rgb;
@@ -272,7 +272,7 @@ pub(crate) fn color_editor(
                 div()
                     .flex_1()
                     .min_w(px(48.))
-                    .child(Slider::new(&state.sliders[i])),
+                    .child(chrome::slider(format!("color-slider-{i}"), &state.sliders[i])),
             )
             .child(chrome::text_field(&state.numbers[i]).no_clear().compact_spinner().spinner(
                 format!("color-channel-{i}"),

@@ -55,6 +55,7 @@ impl SlideEditor {
             .ordered_selection()
             .filter(|(a, b)| a.para == b.para && a != b);
         let Some((from, to)) = selection.or_else(|| existing.map(|(a, b, _, _)| (a, b))) else {
+            self.show_panel_message(crate::shell::i18n::text("docx.fit-text.no-selection"), cx);
             return;
         };
         let Some(p) = self
@@ -75,8 +76,8 @@ impl SlideEditor {
         let width = existing
             .map(|(_, _, w, _)| w as f64 * 5. / size as f64)
             .unwrap_or((to.offset - from.offset) as f64);
-        if self.panel_dialog.active {
-            self.close_panel_dialog(window, cx);
+        if self.dialog.active {
+            self.close_dialog(window, cx);
         }
         let input = cx.new(|cx| InputState::new(window, cx));
         input.update(cx, |i, cx| {

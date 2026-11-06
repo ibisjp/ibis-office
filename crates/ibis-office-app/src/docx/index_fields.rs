@@ -290,7 +290,7 @@ pub(crate) fn index_paragraphs(doc: &FlowDocument, instruction: &str, page_of: &
     let mut out: Vec<FlowParagraph> = Vec::new();
     let mut id = first_id;
     let mut heading: Option<String> = None;
-    let tab = ibis_doc_model::TabChange { position: width, stop: Some(ibis_doc_model::TabStop { position: width, align: ibis_doc_model::TabAlign::Right, leader: true }) };
+    let tab = ibis_doc_model::TabChange { position: width, stop: Some(ibis_doc_model::TabStop { position: width, align: ibis_doc_model::TabAlign::Right, leader: ibis_doc_model::TabLeader::Dot }) };
     for &i in &order {
         let e = &entries[i];
         if spec.headings.is_some() && e.levels.len() == 1 {

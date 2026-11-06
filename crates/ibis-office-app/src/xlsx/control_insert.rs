@@ -287,45 +287,22 @@ impl SlideEditor {
                 .child(mark("text", crate::shell::chrome::text_field(&p.text).full_width().into_any_element()))
                 .child(div().text_sm().child(text("xlsx.control-properties.font")))
                 .child(mark("font", crate::shell::chrome::panel_font_dropdown("panel-font-xlsx-control-insert-1",&p.font,cx).into_any_element()))
-                .child(div().text_sm().child(text("xlsx.control-properties.font-size")))
-                .child(mark("font_size", control_spin(&p.font_size, "control-prop-font-size", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 409.0), cx).into_any_element()))
-                .child(div().text_sm().child(text("xlsx.control-properties.text-color")))
-                .child(mark("text_color", crate::shell::chrome::panel_color_field("panel-color-xlsx-control-insert-2",&p.text_color,cx).into_any_element()))
-                .child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(mark(
-                            "bold",
-                            {
-                                let btn = crate::shell::chrome::action_button("control-prop-bold")
-                                    .small()
-                                    .label(text("xlsx.text.bold"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(p) = this.wb_mut().panels.control_properties.as_mut() {
-                                            p.bold = !p.bold;
-                                        }
-                                        cx.notify();
-                                    }));
-                                if bold { btn.primary() } else { btn }.into_any_element()
-                            },
-                        ))
-                        .child(mark(
-                            "italic",
-                            {
-                                let btn = crate::shell::chrome::action_button("control-prop-italic")
-                                    .small()
-                                    .label(text("xlsx.text.italic"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(p) = this.wb_mut().panels.control_properties.as_mut() {
-                                            p.italic = !p.italic;
-                                        }
-                                        cx.notify();
-                                    }));
-                                if italic { btn.primary() } else { btn }.into_any_element()
-                            },
-                        )),
-                );
+                .child(mark("font_size", crate::shell::chrome::text_field_row(text("xlsx.control-properties.font-size"),
+                    crate::shell::chrome::text_field(&p.font_size).unit("pt", px(20.)).spinner("control-prop-font-size", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 409.0), cx, |_, _, _, _| {})).into_any_element()))
+                .child(crate::shell::chrome::color_row(text("xlsx.control-properties.text-color"),
+                    mark("text_color", crate::shell::chrome::panel_color_field("panel-color-xlsx-control-insert-2",&p.text_color,cx))))
+                .child(mark("style", crate::shell::chrome::toolbar_row(text("_shell.style"), [
+                    crate::shell::chrome::ToolbarItem::icon("control-prop-bold", "format_bold").on(bold).tooltip(text("xlsx.text.bold"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(p) = this.wb_mut().panels.control_properties.as_mut() { p.bold = !p.bold; }
+                            cx.notify();
+                        })),
+                    crate::shell::chrome::ToolbarItem::icon("control-prop-italic", "format_italic").on(italic).tooltip(text("xlsx.text.italic"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(p) = this.wb_mut().panels.control_properties.as_mut() { p.italic = !p.italic; }
+                            cx.notify();
+                        })),
+                ]).into_any_element()));
         }
 
         // リンクするセル (CheckBox, Radio, Scroll, Spin, Drop, List)

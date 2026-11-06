@@ -96,35 +96,194 @@ pub(crate) fn reveal_log(cx: &mut App) {
 // ---- Start-up ----------------------------------------------------------
 
 /// What the background check found.
+#[derive(Clone)]
 enum Found {
+    /// This copy is the latest.
     Nothing,
+    /// The check could not be made (no network, no version.txt line, the download failed) or this copy is a build that does
+    /// not update itself (run out of `target/`). Silent at start-up; the user's own check says so.
+    Failed,
     /// The zip of `version` is downloaded.
     Ready { version: String, zip: PathBuf },
     /// There is a newer version this copy cannot update to by itself.
     Manual { version: String },
 }
 
-/// Called once the first window is open: look for an update without delaying anything.
-pub(crate) fn start(cx: &mut App) {
-    if !check_enabled() {
+thread_local! {
+    /// The newer version the start-up check found (kept for the About window's 「新しいバージョンがあります。」 button, which asks
+    /// the question again whatever was answered, or the setting 起動時に更新を確かめる says, at start-up).
+    static AVAILABLE: std::cell::RefCell<Option<Found>> = const { std::cell::RefCell::new(None) };
+    /// For the tests: the versions the question was asked about again.
+    /// A check of the user's own is running (a second click while it runs does nothing).
+    static CHECKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// For the tests: how many times the user's own check was asked for.
+    #[cfg(any(test, feature = "scenarios"))]
+    static CHECKED_NOW: std::cell::RefCell<u32> = const { std::cell::RefCell::new(0) };
+    #[cfg(any(test, feature = "scenarios"))]
+    static ASKED_AGAIN: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The newer version the start-up check found, if it did.
+pub(crate) fn available_version() -> Option<String> {
+    AVAILABLE.with(|a| match a.borrow().as_ref() {
+        Some(Found::Ready { version, .. } | Found::Manual { version }) => Some(version.clone()),
+        _ => None,
+    })
+}
+
+/// For the tests (no network): what the start-up check would have found.
+#[cfg(any(test, feature = "scenarios"))]
+pub(crate) fn set_available_for_test(version: Option<&str>) {
+    AVAILABLE.with(|a| *a.borrow_mut() = version.map(|v| Found::Ready { version: v.to_string(), zip: PathBuf::new() }));
+}
+
+/// For the tests: how many times 更新を確認 was used.
+#[cfg(any(test, feature = "scenarios"))]
+pub(crate) fn checked_now_for_test() -> u32 {
+    CHECKED_NOW.with(|c| *c.borrow())
+}
+
+/// For the tests: the versions the question was asked about again, oldest first.
+#[cfg(any(test, feature = "scenarios"))]
+pub(crate) fn asked_again_for_test() -> Vec<String> {
+    ASKED_AGAIN.with(|a| a.borrow().clone())
+}
+
+/// Ask the question the start-up check asked (「新しいバージョンが見つかりました。更新しますか？」) again. A click asks
+/// whatever was answered before and whatever the setting says: an update that was refused is still there.
+pub(crate) fn offer_again(cx: &mut App) {
+    let _ = &cx;
+    let Some(found) = AVAILABLE.with(|a| a.borrow().clone()) else { return };
+    #[cfg(any(test, feature = "scenarios"))]
+    {
+        if let Found::Ready { version, .. } | Found::Manual { version } = &found {
+            ASKED_AGAIN.with(|a| a.borrow_mut().push(version.clone()));
+        }
         return;
     }
-    cx.spawn(async move |cx: &mut AsyncApp| {
-        // Not while the app is starting.
-        cx.background_executor().timer(Duration::from_secs(3)).await;
-        let found = cx.background_executor().spawn(async { check() }).await;
-        match found {
-            Found::Nothing => {}
-            Found::Manual { version } => {
-                if settings::get(NOTIFIED_KEY).as_deref() != Some(&version) {
-                    settings::set(NOTIFIED_KEY, &version);
-                    show_failed(cx).await;
-                }
-            }
-            Found::Ready { version, zip } => offer(cx, version, zip).await,
-        }
+    #[allow(unreachable_code)]
+    cx.spawn(async move |cx: &mut AsyncApp| match found {
+        Found::Ready { version, zip } => offer(cx, version, zip, true).await,
+        Found::Manual { .. } => show_failed(cx).await,
+        Found::Nothing | Found::Failed => {}
     })
     .detach();
+}
+
+/// ヘルプ > 更新を確認 / the start page's 更新を確認: the user's own check, whatever the setting 起動時に更新を確かめる says
+/// and whether the start-up question was refused. A newer version asks the update question; none says so (「最新です」);
+/// a check that could not be made says so too. Not in the browser (no updater there; the caller does not show it).
+pub(crate) fn check_now(cx: &mut App) {
+    #[cfg(any(test, feature = "scenarios"))]
+    {
+        let _ = &cx;
+        CHECKED_NOW.with(|c| *c.borrow_mut() += 1);
+        return;
+    }
+    #[allow(unreachable_code)]
+    {
+        if CHECKING.with(|c| c.replace(true)) {
+            return;
+        }
+        cx.spawn(async move |cx: &mut AsyncApp| {
+            // A version the start-up check found and downloaded is asked about at once.
+            let known = AVAILABLE.with(|a| a.borrow().clone());
+            let found = match known {
+                Some(found @ (Found::Ready { .. } | Found::Manual { .. })) => found,
+                _ => cx.background_executor().spawn(async { check() }).await,
+            };
+            if matches!(found, Found::Ready { .. } | Found::Manual { .. }) {
+                AVAILABLE.with(|a| *a.borrow_mut() = Some(found.clone()));
+            }
+            match found {
+                Found::Ready { version, zip } => offer(cx, version, zip, true).await,
+                Found::Manual { .. } => show_failed(cx).await,
+                Found::Nothing => {
+                    let detail = i18n::format("fix.update.latest.detail", &[("current", &CURRENT)]);
+                    prompt(cx, PromptLevel::Info, i18n::text("fix.update.latest").to_string(), detail, vec![PromptButton::ok("OK")]).await;
+                }
+                Found::Failed => {
+                    let log = paths::log_file().map(|p| p.display().to_string()).unwrap_or_default();
+                    let detail = format!("{}\n\n{}", i18n::text("fix.update.check-failed.detail"), i18n::format("fix.update.log-path", &[("log", &log)]));
+                    prompt(cx, PromptLevel::Warning, i18n::text("fix.update.check-failed").to_string(), detail, vec![PromptButton::ok("OK")]).await;
+                }
+            }
+            CHECKING.with(|c| c.set(false));
+        })
+        .detach();
+    }
+}
+
+/// Called once the first window is open: look for an update without delaying anything. The check is made whatever the setting
+/// 起動時に更新を確かめる says (the start window's 「ibisOffice を更新する」 button needs it); the setting only decides whether
+/// the question 「更新しますか？」 is asked by itself.
+pub(crate) fn start(cx: &mut App) {
+    background_check(cx, check_enabled(), Duration::from_secs(3));
+}
+
+/// A start window was opened (at launch or by the logo): look for an update in the background, unless that was done lately.
+/// Nothing is asked; the window shows 「ibisOffice を更新する」 once a newer version is known. Not in the browser.
+pub(crate) fn check_for_start_window(cx: &mut App) {
+    background_check(cx, false, Duration::ZERO);
+}
+
+/// Minutes during which a check that was made is not made again.
+const RECHECK_MILLIS: u64 = 30 * 60 * 1000;
+
+thread_local! {
+    /// A background check is running.
+    static BACKGROUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// When the last background check was started (`clock::unix_millis`).
+    static LAST_BACKGROUND: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+fn background_check(cx: &mut App, ask: bool, delay: Duration) {
+    // No network in the tests.
+    #[cfg(any(test, feature = "scenarios"))]
+    {
+        let _ = (&cx, ask, delay);
+        return;
+    }
+    #[allow(unreachable_code)]
+    {
+        let now = crate::clock::unix_millis();
+        // A newer version is already known; or the check was made lately, or is running (a start window opened at launch).
+        if available_version().is_some() || BACKGROUND.with(|b| b.get()) {
+            return;
+        }
+        if LAST_BACKGROUND.with(|l| l.get()).is_some_and(|last| now.saturating_sub(last) < RECHECK_MILLIS) {
+            return;
+        }
+        BACKGROUND.with(|b| b.set(true));
+        LAST_BACKGROUND.with(|l| l.set(Some(now)));
+        cx.spawn(async move |cx: &mut AsyncApp| {
+            if !delay.is_zero() {
+                // Not while the app is starting.
+                cx.background_executor().timer(delay).await;
+            }
+            let found = cx.background_executor().spawn(async { check() }).await;
+            BACKGROUND.with(|b| b.set(false));
+            if matches!(found, Found::Ready { .. } | Found::Manual { .. }) {
+                AVAILABLE.with(|a| *a.borrow_mut() = Some(found.clone()));
+                // The start window shows its button.
+                cx.update(|cx| cx.refresh_windows());
+            }
+            if !ask {
+                return;
+            }
+            match found {
+                Found::Nothing | Found::Failed => {}
+                Found::Manual { version } => {
+                    if settings::get(NOTIFIED_KEY).as_deref() != Some(&version) {
+                        settings::set(NOTIFIED_KEY, &version);
+                        show_failed(cx).await;
+                    }
+                }
+                Found::Ready { version, zip } => offer(cx, version, zip, false).await,
+            }
+        })
+        .detach();
+    }
 }
 
 /// The steps up to the downloaded zip (run off the main thread).
@@ -135,15 +294,15 @@ fn check() -> Found {
     let url = env("IBIS_UPDATE_URL_BASE").map(|base| format!("{}/version.txt", base.trim_end_matches('/'))).unwrap_or_else(|| VERSION_URL.to_string());
     let text = match fetch_text(&url) {
         Ok(text) => text,
-        Err(_) => return Found::Nothing,
+        Err(_) => return Found::Failed,
     };
     let Some(latest) = version::find(&text, version::PLATFORM) else {
-        return Found::Nothing;
+        return Found::Failed;
     };
     if !version::is_newer(&latest, CURRENT) {
         return Found::Nothing;
     }
-    let Some(log) = log_for(&latest) else { return Found::Nothing };
+    let Some(log) = log_for(&latest) else { return Found::Failed };
     log.ok("check", &format!("a newer version: {latest} (current {CURRENT})"));
 
     if attempts(&latest) >= MAX_ATTEMPTS {
@@ -152,14 +311,14 @@ fn check() -> Found {
     }
     if let Err(reason) = installed_copy().map(|_| ()) {
         log.fail("check", &format!("this copy cannot update itself: {reason}"));
-        return if reason.starts_with("a build run") { Found::Nothing } else { Found::Manual { version: latest } };
+        return if reason.starts_with("a build run") { Found::Failed } else { Found::Manual { version: latest } };
     }
 
     match download(&log, &latest) {
         Ok(zip) => Found::Ready { version: latest, zip },
         Err(err) => {
             log.fail("download", &err);
-            Found::Nothing
+            Found::Failed
         }
     }
 }
@@ -495,9 +654,10 @@ async fn show_failed(cx: &mut AsyncApp) {
     }
 }
 
-async fn offer(cx: &mut AsyncApp, version: String, zip: PathBuf) {
-    // Not while there is work not saved: the app quits when the update starts.
-    while cx.update(|cx| any_unsaved(cx)) {
+async fn offer(cx: &mut AsyncApp, version: String, zip: PathBuf, asked_by_user: bool) {
+    // Not while there is work not saved: the app quits when the update starts. (Not at the user's own click: the question is
+    // shown at once, and saying はい with work unsaved is turned away below.)
+    while !asked_by_user && cx.update(|cx| any_unsaved(cx)) {
         cx.background_executor().timer(Duration::from_secs(30)).await;
     }
     let answer = if env("IBIS_UPDATE_AUTO_YES").as_deref() == Some("1") {

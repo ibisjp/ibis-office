@@ -47,7 +47,7 @@ pub struct Dependencies {
     pub volatile: bool,
 }
 
-fn dependencies(book: &dyn Book, sheet: usize, expr: &Expr, out: &mut Dependencies, depth: u32) {
+fn dependencies(book: &dyn Book, sheet: usize, at: (u32, u32), expr: &Expr, out: &mut Dependencies, depth: u32) {
     let resolve = |s: &Option<crate::formula::SheetRef>| -> Option<(usize, usize)> {
         match s {
             None => Some((sheet, sheet)),
@@ -72,7 +72,7 @@ fn dependencies(book: &dyn Book, sheet: usize, expr: &Expr, out: &mut Dependenci
             };
             match book.defined_name(name, scope) {
                 Some(f) if depth < 32 => match parse(f.trim_start_matches('=')) {
-                    Ok(e) => dependencies(book, scope.unwrap_or(sheet), &e, out, depth + 1),
+                    Ok(e) => dependencies(book, scope.unwrap_or(sheet), at, &e, out, depth + 1),
                     Err(_) => {}
                 },
                 Some(_) => out.volatile = true,
@@ -86,30 +86,38 @@ fn dependencies(book: &dyn Book, sheet: usize, expr: &Expr, out: &mut Dependenci
             }
             if crate::functions::lookup(name).is_none() && crate::functions::table::function_info(name).is_none() {
                 // A defined name holding a LAMBDA.
-                dependencies(book, sheet, &Expr::Name { sheet: None, name: name.clone() }, out, depth);
+                dependencies(book, sheet, at, &Expr::Name { sheet: None, name: name.clone() }, out, depth);
             }
             for a in args {
-                dependencies(book, sheet, a, out, depth);
+                dependencies(book, sheet, at, a, out, depth);
             }
         }
         Expr::Invoke { callee, args } => {
-            dependencies(book, sheet, callee, out, depth);
+            dependencies(book, sheet, at, callee, out, depth);
             for a in args {
-                dependencies(book, sheet, a, out, depth);
+                dependencies(book, sheet, at, a, out, depth);
             }
         }
-        Expr::Array(rows) => rows.iter().flatten().for_each(|e| dependencies(book, sheet, e, out, depth)),
-        Expr::Neg(x) | Expr::Plus(x) | Expr::Percent(x) | Expr::Implicit(x) => dependencies(book, sheet, x, out, depth),
+        Expr::Array(rows) => rows.iter().flatten().for_each(|e| dependencies(book, sheet, at, e, out, depth)),
+        Expr::Neg(x) | Expr::Plus(x) | Expr::Percent(x) | Expr::Implicit(x) => dependencies(book, sheet, at, x, out, depth),
         Expr::Spill(inner) => {
             out.volatile = true;
-            dependencies(book, sheet, inner, out, depth);
+            dependencies(book, sheet, at, inner, out, depth);
         }
-        Expr::Structured { .. } => out.volatile = true,
+        // The cells the reference names (not the whole table: a formula in the table reads its own row, and the whole
+        // table would include the formula itself). One that cannot be resolved depends on everything, as it did.
+        Expr::Structured { table, spec } => {
+            let info = if table.is_empty() { book.table_at(sheet, at.0, at.1) } else { book.table(table) };
+            match info.and_then(|i| crate::eval::structured::area(&i, spec, at.0).ok().map(|a| (i.sheet, a))) {
+                Some((s, (r0, c0, r1, c1))) => out.areas.push((s, s, r0, c0, r1, c1)),
+                None => out.volatile = true,
+            }
+        }
         Expr::Binary(_, a, b) | Expr::Range(a, b) | Expr::Intersect(a, b) => {
-            dependencies(book, sheet, a, out, depth);
-            dependencies(book, sheet, b, out, depth);
+            dependencies(book, sheet, at, a, out, depth);
+            dependencies(book, sheet, at, b, out, depth);
         }
-        Expr::Union(items) => items.iter().for_each(|e| dependencies(book, sheet, e, out, depth)),
+        Expr::Union(items) => items.iter().for_each(|e| dependencies(book, sheet, at, e, out, depth)),
         Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::Missing => {}
     }
 }
@@ -132,6 +140,10 @@ struct Recalc<'b> {
     arrays: RefCell<HashMap<Area, (u64, Rc<Array>)>>,
     spill_version: std::cell::Cell<u64>,
     cycle_detected: std::cell::Cell<bool>,
+    /// Cells whose value Excel did not calculate (the formula was given up on, or reads such a cell).
+    tainted: RefCell<HashSet<CellId>>,
+    /// Set when a cell that is tainted was read while a cell was being calculated.
+    read_tainted: std::cell::Cell<bool>,
     _book: std::marker::PhantomData<&'b ()>,
     /// What IMAGE asked for in each cell calculated.
     images: RefCell<HashMap<CellId, crate::eval::ImageSpec>>,
@@ -156,11 +168,19 @@ impl Recalc<'_> {
                 self.in_progress.borrow_mut().insert(cell);
                 let prev_cycle = self.cycle_detected.replace(false);
                 let mut ctx = Ctx::new(book, self, cell.0, cell.1, cell.2);
+                let prev_read = self.read_tainted.replace(false);
                 let v = ctx.eval(&expr);
+                let read = self.read_tainted.replace(prev_read);
+                if ctx.aborted || read {
+                    self.tainted.borrow_mut().insert(cell);
+                } else {
+                    self.tainted.borrow_mut().remove(&cell);
+                }
                 let had_cycle = self.cycle_detected.get();
                 self.cycle_detected.set(prev_cycle || had_cycle);
                 let is_dynamic = book.dynamic(cell.0, cell.1, cell.2);
                 if is_dynamic
+                    && !ctx.aborted
                     && let Some(spill) = ctx.spill_result(&v)
                 {
                     self.spills.borrow_mut().insert(cell, spill);
@@ -171,7 +191,8 @@ impl Recalc<'_> {
                 } else {
                     ctx.cell_result(v)
                 };
-                let unsupported = ctx.unsupported;
+                // A cell that reads a cell Excel did not calculate keeps the value Excel left in it.
+                let unsupported = ctx.unsupported || (read && !ctx.aborted);
                 match ctx.image.take() {
                     Some(image) => self.images.borrow_mut().insert(cell, image),
                     None => self.images.borrow_mut().remove(&cell),
@@ -190,10 +211,8 @@ impl Recalc<'_> {
         self.results.borrow_mut().insert(cell, result.clone());
         result
     }
-}
 
-impl Cells for Recalc<'_> {
-    fn fresh(&self, book: &dyn Book, sheet: usize, row: u32, column: u32) -> Option<CellValue> {
+    fn fresh_value(&self, book: &dyn Book, sheet: usize, row: u32, column: u32) -> Option<CellValue> {
         let cell = (sheet, row, column);
         if let Some(v) = self.iter_values.borrow().get(&cell) {
             return Some(v.clone());
@@ -226,6 +245,16 @@ impl Cells for Recalc<'_> {
             return Some(book.value(sheet, row, column));
         }
         Some(value)
+    }
+}
+
+impl Cells for Recalc<'_> {
+    fn fresh(&self, book: &dyn Book, sheet: usize, row: u32, column: u32) -> Option<CellValue> {
+        let v = self.fresh_value(book, sheet, row, column);
+        if self.tainted.borrow().contains(&(sheet, row, column)) {
+            self.read_tainted.set(true);
+        }
+        v
     }
 
     fn cached_array(&self, area: &Area) -> Option<Rc<Array>> {
@@ -301,68 +330,117 @@ impl Cells for Recalc<'_> {
 }
 
 fn find_sccs(nodes: &[CellId], adj: &HashMap<CellId, Vec<CellId>>) -> Vec<Vec<CellId>> {
-    struct State<'a> {
-        adj: &'a HashMap<CellId, Vec<CellId>>,
-        index: usize,
-        indices: HashMap<CellId, usize>,
-        lowlink: HashMap<CellId, usize>,
-        on_stack: HashSet<CellId>,
-        stack: Vec<CellId>,
-        sccs: Vec<Vec<CellId>>,
-    }
+    // Tarjan's algorithm with an explicit stack: a long chain of dependent
+    // cells (a running-total column of a million rows) must not use the call
+    // stack, which is small on the web build.
+    let mut index = 0usize;
+    let mut indices: HashMap<CellId, usize> = HashMap::new();
+    let mut lowlink: HashMap<CellId, usize> = HashMap::new();
+    let mut on_stack: HashSet<CellId> = HashSet::new();
+    let mut stack: Vec<CellId> = Vec::new();
+    let mut sccs: Vec<Vec<CellId>> = Vec::new();
+    const NO_NEIGHBORS: &[CellId] = &[];
 
-    fn strongconnect(u: CellId, st: &mut State) {
-        st.indices.insert(u, st.index);
-        st.lowlink.insert(u, st.index);
-        st.index += 1;
-        st.stack.push(u);
-        st.on_stack.insert(u);
-
-        if let Some(neighbors) = st.adj.get(&u) {
-            for &v in neighbors {
-                if !st.indices.contains_key(&v) {
-                    strongconnect(v, st);
-                    let v_low = st.lowlink[&v];
-                    let u_low = st.lowlink.get_mut(&u).unwrap();
-                    *u_low = (*u_low).min(v_low);
-                } else if st.on_stack.contains(&v) {
-                    let v_idx = st.indices[&v];
-                    let u_low = st.lowlink.get_mut(&u).unwrap();
+    for &root in nodes {
+        if indices.contains_key(&root) {
+            continue;
+        }
+        // Each frame: the node and the position of the next neighbour to visit.
+        let mut call: Vec<(CellId, usize)> = Vec::new();
+        indices.insert(root, index);
+        lowlink.insert(root, index);
+        index += 1;
+        stack.push(root);
+        on_stack.insert(root);
+        call.push((root, 0));
+        while let Some(&mut (u, ref mut pos)) = call.last_mut() {
+            let neighbors: &[CellId] = adj.get(&u).map(|v| v.as_slice()).unwrap_or(NO_NEIGHBORS);
+            if *pos < neighbors.len() {
+                let v = neighbors[*pos];
+                *pos += 1;
+                if !indices.contains_key(&v) {
+                    indices.insert(v, index);
+                    lowlink.insert(v, index);
+                    index += 1;
+                    stack.push(v);
+                    on_stack.insert(v);
+                    call.push((v, 0));
+                } else if on_stack.contains(&v) {
+                    let v_idx = indices[&v];
+                    let u_low = lowlink.get_mut(&u).unwrap();
                     *u_low = (*u_low).min(v_idx);
                 }
-            }
-        }
-
-        if st.lowlink[&u] == st.indices[&u] {
-            let mut scc = Vec::new();
-            while let Some(w) = st.stack.pop() {
-                st.on_stack.remove(&w);
-                scc.push(w);
-                if w == u {
-                    break;
+            } else {
+                call.pop();
+                if lowlink[&u] == indices[&u] {
+                    let mut scc = Vec::new();
+                    while let Some(w) = stack.pop() {
+                        on_stack.remove(&w);
+                        scc.push(w);
+                        if w == u {
+                            break;
+                        }
+                    }
+                    sccs.push(scc);
+                }
+                if let Some(&(parent, _)) = call.last() {
+                    let u_low = lowlink[&u];
+                    let p_low = lowlink.get_mut(&parent).unwrap();
+                    *p_low = (*p_low).min(u_low);
                 }
             }
-            st.sccs.push(scc);
         }
     }
 
-    let mut state = State {
-        adj,
-        index: 0,
-        indices: HashMap::new(),
-        lowlink: HashMap::new(),
-        on_stack: HashSet::new(),
-        stack: Vec::new(),
-        sccs: Vec::new(),
-    };
+    sccs
+}
 
-    for &node in nodes {
-        if !state.indices.contains_key(&node) {
-            strongconnect(node, &mut state);
+/// The formulas that refer to cells of one column of one sheet, found by the row of a changed cell.
+#[derive(Clone, Debug, Default)]
+pub struct ColumnDependents {
+    /// Formulas whose area is a single cell of this column: row -> formulas.
+    points: HashMap<u32, Vec<CellId>>,
+    /// Formulas whose area covers several rows of this column: (first row, last row, formula).
+    spans: std::collections::BTreeSet<(u32, u32, CellId)>,
+    /// An upper bound of the rows a span covers: a span containing a row starts no earlier than this many rows above it.
+    longest: u32,
+}
+
+impl ColumnDependents {
+    fn add(&mut self, r0: u32, r1: u32, cell: CellId) {
+        if r0 == r1 {
+            let list = self.points.entry(r0).or_default();
+            if !list.contains(&cell) {
+                list.push(cell);
+            }
+        } else {
+            self.longest = self.longest.max(r1 - r0);
+            self.spans.insert((r0, r1, cell));
         }
     }
 
-    state.sccs
+    fn remove(&mut self, r0: u32, r1: u32, cell: &CellId) {
+        if r0 == r1 {
+            if let Some(list) = self.points.get_mut(&r0) {
+                list.retain(|c| c != cell);
+                if list.is_empty() {
+                    self.points.remove(&r0);
+                }
+            }
+        } else {
+            self.spans.remove(&(r0, r1, *cell));
+        }
+    }
+
+    /// The formulas with an area on this column that contains `row`.
+    fn at_row(&self, row: u32, out: &mut Vec<CellId>) {
+        if let Some(list) = self.points.get(&row) {
+            out.extend_from_slice(list);
+        }
+        let from = (row.saturating_sub(self.longest), 0, (0, 0, 0));
+        let to = (row, u32::MAX, (usize::MAX, u32::MAX, u32::MAX));
+        out.extend(self.spans.range(from..=to).filter(|&&(_, r1, _)| r1 >= row).map(|&(_, _, cell)| cell));
+    }
 }
 
 /// Precomputed dependencies per referenced sheet.
@@ -370,8 +448,8 @@ fn find_sccs(nodes: &[CellId], adj: &HashMap<CellId, Vec<CellId>>) -> Vec<Vec<Ce
 pub struct SheetDependencies {
     /// Formulas referencing wide column ranges (> 32 cols) or the whole sheet
     pub wide_formulas: Vec<CellId>,
-    /// Formulas referencing specific column: col -> Vec<CellId>
-    pub by_col: HashMap<u32, Vec<CellId>>,
+    /// Formulas referencing specific column: col -> the formulas, by row
+    pub by_col: HashMap<u32, ColumnDependents>,
 }
 
 /// Precomputed dependencies and parsed ASTs for workbook formulas,
@@ -428,12 +506,12 @@ impl DependencyIndex {
             };
             let mut d = Dependencies::default();
             if let Some(e) = &expr {
-                dependencies(book, cell.0, e, &mut d, 0);
+                dependencies(book, cell.0, (cell.1, cell.2), e, &mut d, 0);
             }
             if d.volatile {
                 volatile.push(cell);
             }
-            for &(s0, s1, _r0, c0, _r1, c1) in &d.areas {
+            for &(s0, s1, r0, c0, r1, c1) in &d.areas {
                 for s in s0..=s1 {
                     if s < sheet_count {
                         let col_count = c1.saturating_sub(c0) + 1;
@@ -441,7 +519,7 @@ impl DependencyIndex {
                             sheets[s].wide_formulas.push(cell);
                         } else {
                             for c in c0..=c1 {
-                                sheets[s].by_col.entry(c).or_default().push(cell);
+                                sheets[s].by_col.entry(c).or_default().add(r0, r1, cell);
                             }
                         }
                     }
@@ -467,7 +545,7 @@ impl DependencyIndex {
         let expr = self.ast_cache.entry(text.to_string()).or_insert_with(|| parse(text).ok().map(Arc::new)).clone();
         let mut d = Dependencies::default();
         if let Some(e) = &expr {
-            dependencies(book, cell.0, e, &mut d, 0);
+            dependencies(book, cell.0, (cell.1, cell.2), e, &mut d, 0);
         }
         if d.volatile {
             self.volatile.push(cell);
@@ -476,7 +554,7 @@ impl DependencyIndex {
         if self.sheets.len() < sheet_count {
             self.sheets.resize_with(sheet_count, SheetDependencies::default);
         }
-        for &(s0, s1, _r0, c0, _r1, c1) in &d.areas {
+        for &(s0, s1, r0, c0, r1, c1) in &d.areas {
             for s in s0..=s1 {
                 if s < self.sheets.len() {
                     let col_count = c1.saturating_sub(c0) + 1;
@@ -484,7 +562,7 @@ impl DependencyIndex {
                         self.sheets[s].wide_formulas.push(cell);
                     } else {
                         for c in c0..=c1 {
-                            self.sheets[s].by_col.entry(c).or_default().push(cell);
+                            self.sheets[s].by_col.entry(c).or_default().add(r0, r1, cell);
                         }
                     }
                 }
@@ -499,7 +577,7 @@ impl DependencyIndex {
         if let Some(d) = self.deps.remove(cell) {
             self.parsed.remove(cell);
             self.volatile.retain(|c| c != cell);
-            for &(s0, s1, _r0, c0, _r1, c1) in &d.areas {
+            for &(s0, s1, r0, c0, r1, c1) in &d.areas {
                 for s in s0..=s1 {
                     if s < self.sheets.len() {
                         let col_count = c1.saturating_sub(c0) + 1;
@@ -508,7 +586,7 @@ impl DependencyIndex {
                         } else {
                             for c in c0..=c1 {
                                 if let Some(cols) = self.sheets[s].by_col.get_mut(&c) {
-                                    cols.retain(|c| c != cell);
+                                    cols.remove(r0, r1, cell);
                                 }
                             }
                         }
@@ -529,26 +607,29 @@ impl DependencyIndex {
             // The changed cells by (sheet, column, row), to ask whether any lies in an area.
             let by_column: std::collections::BTreeSet<(usize, u32, u32)> = frontier.iter().map(|&(s, r, c)| (s, c, r)).collect();
 
+            // Formulas that must be asked whether they refer to a changed cell: volatile ones and
+            // ones on wide areas. The rest are found by the column and row of the changed cell.
             let mut candidate_cells: Vec<CellId> = Vec::new();
             if first_round {
                 candidate_cells.extend_from_slice(&self.volatile);
             }
-
-            // What refers to a column is listed once per column, not once per
-            // changed cell (a sort changes tens of thousands of cells).
+            let mut hits: Vec<CellId> = Vec::new();
             let mut sheets_seen: HashSet<usize> = HashSet::new();
-            let mut columns_seen: HashSet<(usize, u32)> = HashSet::new();
-            for &(s, _r, c) in &frontier {
+            for &(s, r, c) in &frontier {
                 if s < self.sheets.len() {
                     let s_deps = &self.sheets[s];
                     if sheets_seen.insert(s) {
                         candidate_cells.extend_from_slice(&s_deps.wide_formulas);
                     }
-                    if columns_seen.insert((s, c))
-                        && let Some(cols) = s_deps.by_col.get(&c)
-                    {
-                        candidate_cells.extend_from_slice(cols);
+                    // Each formula listed under the column has an area that contains the cell: no more asking.
+                    if let Some(cols) = s_deps.by_col.get(&c) {
+                        cols.at_row(r, &mut hits);
                     }
+                }
+            }
+            for cell in hits {
+                if dirty.insert(cell) {
+                    next.push(cell);
                 }
             }
 
@@ -607,6 +688,8 @@ impl DependencyIndex {
             arrays: RefCell::new(HashMap::new()),
             spill_version: std::cell::Cell::new(0),
             cycle_detected: std::cell::Cell::new(false),
+            tainted: RefCell::new(HashSet::new()),
+            read_tainted: std::cell::Cell::new(false),
             _book: std::marker::PhantomData,
             images: Default::default(),
         };
@@ -737,6 +820,49 @@ pub fn evaluate(book: &dyn Book, cell: CellId, formula: &str) -> (CellValue, boo
 mod tests {
     use super::*;
 
+    /// A dependency chain of a million cells is walked without the call stack
+    /// (the thread here has a stack as small as the web build's).
+    #[test]
+    fn find_sccs_deep_chain_does_not_overflow() {
+        const N: u32 = 1_000_000;
+        let handle = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let nodes: Vec<CellId> = (0..N).rev().map(|r| (0usize, r, 0u32)).collect();
+                let mut adj: HashMap<CellId, Vec<CellId>> = HashMap::new();
+                for r in 1..N {
+                    adj.insert((0, r, 0), vec![(0, r - 1, 0)]);
+                }
+                let started = crate::clock::monotonic_nanos().unwrap_or(0);
+                let sccs = find_sccs(&nodes, &adj);
+                let ms = (crate::clock::monotonic_nanos().unwrap_or(0) - started) / 1_000_000;
+                eprintln!("find_sccs on a {N}-cell chain: {ms} ms");
+                assert_eq!(sccs.len(), N as usize);
+                assert!(sccs.iter().all(|s| s.len() == 1));
+            })
+            .unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn find_sccs_finds_cycles() {
+        let a = (0usize, 0u32, 0u32);
+        let b = (0, 1, 0);
+        let c = (0, 2, 0);
+        let d = (0, 3, 0);
+        let mut adj: HashMap<CellId, Vec<CellId>> = HashMap::new();
+        adj.insert(a, vec![b]);
+        adj.insert(b, vec![c]);
+        adj.insert(c, vec![a, d]);
+        adj.insert(d, vec![d]);
+        let mut sccs = find_sccs(&[a, b, c, d], &adj);
+        for s in sccs.iter_mut() {
+            s.sort();
+        }
+        sccs.sort();
+        assert_eq!(sccs, vec![vec![a, b, c], vec![d]]);
+    }
+
     struct MockBook {
         sheets: Vec<String>,
         formulas: HashMap<CellId, String>,
@@ -844,6 +970,73 @@ mod tests {
         }
     }
 
+    /// C2: B1 = A1, Bn = B(n-1) + An. Changing A1 dirties every B; finding them looks each changed cell up by its
+    /// column and row, so the time grows with the rows (it grew with their square: 210 s for 100,000 rows).
+    #[test]
+    fn a_running_total_column_is_found_dirty_in_time_linear_in_its_rows() {
+        let rows: u32 = 100_000;
+        let mut book = MockBook::new(false);
+        for r in 0..rows {
+            let f = if r == 0 { "A1".to_string() } else { format!("B{}+A{}", r, r + 1) };
+            book.formulas.insert((0, r, 1), f);
+        }
+        let cells: Vec<CellId> = (0..rows).map(|r| (0, r, 1)).collect();
+        let index = DependencyIndex::build(&book, &cells);
+        let started = crate::clock::monotonic_nanos();
+        let dirty = index.find_dirty(&[(0, 0, 0)]);
+        let elapsed = crate::clock::monotonic_nanos().zip(started).map(|(n, s)| n - s);
+        assert_eq!(dirty.len(), rows as usize);
+        // Linear work takes well under a second; the square would take minutes.
+        assert!(elapsed.is_none_or(|n| n < 5_000_000_000), "find_dirty took {elapsed:?} ns");
+    }
+
+    #[test]
+    fn dirty_cells_are_found_by_the_row_inside_a_range_and_a_single_cell() {
+        let mut book = MockBook::new(false);
+        book.formulas.insert((0, 0, 3), "SUM(A2:A5)".into()); // D1: rows 1..=4 of A
+        book.formulas.insert((0, 1, 3), "A7".into()); // D2
+        book.formulas.insert((0, 2, 3), "SUM(A1:A100000)".into()); // D3: a long span
+        book.formulas.insert((0, 3, 3), "SUM(A20:A30)+SUM(A1:A2)".into()); // D4: two spans
+        let cells: Vec<CellId> = (0..4).map(|r| (0, r, 3)).collect();
+        let mut index = DependencyIndex::build(&book, &cells);
+        let at = |index: &DependencyIndex, row: u32| {
+            let mut v: Vec<u32> = index.find_dirty(&[(0, row, 0)]).into_iter().map(|c| c.1).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(at(&index, 0), vec![2, 3]);
+        assert_eq!(at(&index, 2), vec![0, 2]); // A3
+        assert_eq!(at(&index, 6), vec![1, 2]); // A7
+        assert_eq!(at(&index, 24), vec![2, 3]); // A25
+        assert_eq!(at(&index, 40), vec![2]);
+        // A formula taken out of the index is no longer found.
+        index.remove_formula(&(0, 2, 3));
+        assert_eq!(at(&index, 6), vec![1]);
+        book.formulas.insert((0, 2, 3), "A41".into());
+        index.update_formula(&book, (0, 2, 3));
+        assert_eq!(at(&index, 40), vec![2]);
+        assert_eq!(at(&index, 0), vec![3]);
+    }
+
+    /// D1: a function's answer comes from its calculation, not from the input of a test.
+    #[test]
+    fn multinomial_gives_the_same_answer_with_or_without_a_zero() {
+        let mut book = MockBook::new(false);
+        let cases = ["MULTINOMIAL(2,2)", "MULTINOMIAL(2,2,0)", "MULTINOMIAL(2,2,2)", "MULTINOMIAL(2,2,2,0)", "MULTINOMIAL(5)", "MULTINOMIAL(10)"];
+        for (i, f) in cases.iter().enumerate() {
+            book.formulas.insert((0, i as u32, 3), f.to_string());
+        }
+        let cells: Vec<_> = (0..cases.len()).map(|i| (0, i as u32, 3)).collect();
+        let r = recalculate(&book, &cells, &cells);
+        let get = |i: u32| r.iter().find(|x| x.cell == (0, i, 3)).unwrap().value.clone();
+        assert_eq!(get(0), CellValue::Number(6.0));
+        assert_eq!(get(1), CellValue::Number(6.0));
+        assert_eq!(get(2), CellValue::Number(90.0));
+        assert_eq!(get(3), CellValue::Number(90.0));
+        assert_eq!(get(4), CellValue::Number(1.0));
+        assert_eq!(get(5), CellValue::Number(1.0));
+    }
+
     #[test]
     fn github_44_45_46_50_array_limits_and_reference_values() {
         let mut book=MockBook::new(false);
@@ -853,6 +1046,11 @@ mod tests {
         let cases=[
             ("SEQUENCE(2^20+1)",CellValue::Error(CellError::Num)),
             ("SEQUENCE(1,2^14+1)",CellValue::Error(CellError::Num)),
+            // N4: each side fits, the product does not (Excel: #VALUE!, and nothing is allocated).
+            ("SEQUENCE(1048576,1000)",CellValue::Error(CellError::Value)),
+            ("SEQUENCE(1048576,16384)",CellValue::Error(CellError::Value)),
+            ("SEQUENCE(8000,8000)",CellValue::Error(CellError::Value)),
+            ("SEQUENCE(1048576,52)",CellValue::Error(CellError::Value)),
             ("ISREF(TAKE(A1,1))",CellValue::Bool(true)),
             ("SUM(TAKE(A1:A2,-1))",CellValue::Number(6.)),
             ("LAMBDA(a,[b],a+b)(10)",CellValue::Number(10.)),
@@ -1381,8 +1579,10 @@ mod tests {
             ((0, 2, 0), "TYPE({1, 2; 3, 4})", CellValue::Number(64.0)),
             // TYPE: single cell reference is cell type (1 for number)
             ((0, 0, 5), "TYPE(A1)", CellValue::Number(1.0)),
-            // TYPE: out-of-intersection range reference is #VALUE! -> type 16
-            ((0, 10, 0), "TYPE(A1:A2)", CellValue::Number(16.0)),
+            // TYPE: a multi-cell range is an array (64), whatever row the formula is in (#69)
+            ((0, 10, 0), "TYPE(A1:A2)", CellValue::Number(64.0)),
+            ((0, 1, 6), "TYPE(A1:A2)", CellValue::Number(64.0)),
+            ((0, 1, 7), "TYPE(A1:B1)", CellValue::Number(64.0)),
         ];
 
         let mut formula_cells = Vec::new();
@@ -1395,6 +1595,51 @@ mod tests {
         for (cell, formula, expected) in cases {
             let actual = res.iter().find(|r| r.cell == *cell).map(|r| &r.value).expect(formula);
             assert_eq!(actual, expected, "formula `{formula}` evaluated incorrectly");
+        }
+    }
+
+    /// TYPE against the table measured in Excel for Mac 16.114.3 (target/issue69/excel-type.md):
+    /// the results do not depend on where the formula is.
+    #[test]
+    fn type_matches_excel_table() {
+        let mut book = MockBook::new(false);
+        let data = [
+            ((0, 0, 0), CellValue::Number(10.0)),
+            ((0, 1, 0), CellValue::Text("x".into())),
+            ((0, 2, 0), CellValue::Bool(true)),
+            ((0, 3, 0), CellValue::Error(CellError::NA)),
+            ((0, 6, 0), CellValue::Text(String::new())),
+            ((0, 5, 0), CellValue::Number(6.0)),
+            ((0, 0, 1), CellValue::Number(20.0)),
+            ((0, 9, 0), CellValue::Number(1.0)),
+            ((0, 9, 1), CellValue::Text("a".into())),
+            ((0, 9, 2), CellValue::Bool(true)),
+        ];
+        for (cell, v) in data {
+            book.values.insert(cell, v);
+        }
+        let table: &[(&str, f64)] = &[
+            ("TYPE(A1)", 1.0), ("TYPE(A2)", 2.0), ("TYPE(A3)", 4.0), ("TYPE(A4)", 16.0), ("TYPE(A5)", 1.0), ("TYPE(A7)", 2.0),
+            ("TYPE(A1:A2)", 64.0), ("TYPE(A1:A1)", 1.0), ("TYPE(A1:B1)", 64.0), ("TYPE(A1:A6)", 64.0), ("TYPE(A10:C10)", 64.0),
+            ("TYPE(A1:C3)", 64.0), ("TYPE({1,2})", 64.0), ("TYPE({1;2})", 64.0), ("TYPE({1})", 64.0), ("TYPE({\"a\",1})", 64.0),
+            ("TYPE(1)", 1.0), ("TYPE(\"a\")", 2.0), ("TYPE(TRUE)", 4.0), ("TYPE(#N/A)", 16.0), ("TYPE(1/0)", 16.0),
+            ("TYPE(A1:A2+0)", 64.0), ("TYPE((A1,A2))", 16.0), ("TYPE(A:A)", 64.0), ("TYPE(1:1)", 64.0),
+            ("TYPE(INDEX(A1:A2,1))", 1.0), ("TYPE(INDEX(A1:A2,0))", 64.0), ("TYPE(SUM(A1:A2))", 1.0),
+            ("TYPE(OFFSET(A1,0,0,2,1))", 64.0), ("TYPE(SEQUENCE(2))", 64.0), ("TYPE(ROW(A1:A2))", 64.0), ("TYPE(\"\")", 2.0),
+            ("TYPE(A1&\"\")", 2.0), ("TYPE(Sheet1!A1:A2)", 64.0),
+        ];
+        // Where Excel was asked: rows inside and outside the range, columns inside and outside.
+        let places: &[(u32, u32)] = &[(0, 7), (1, 7), (7, 7), (11, 1), (9, 3), (11, 4)];
+        for (formula, expected) in table {
+            for &(row, column) in places {
+                let cell = (0, row, column);
+                let mut b = MockBook::new(false);
+                b.values = book.values.clone();
+                b.formulas.insert(cell, formula.to_string());
+                let res = recalculate(&b, &[cell], &[cell]);
+                let actual = res.iter().find(|r| r.cell == cell).map(|r| &r.value).expect(formula);
+                assert_eq!(actual, &CellValue::Number(*expected), "`{formula}` at row {row} column {column}");
+            }
         }
     }
 
@@ -1715,7 +1960,7 @@ mod tests {
             ((0, 50, 51), "ISPMT(10, 3, 2.9, 0.25)", CellValue::Number(0.08620689655172421)),
             ((0, 50, 52), "NOMINAL(123456789, 5)", CellValue::Number(202.62182322772847)),
             ((0, 50, 53), "PV(3.7, 2, 10, 0.5, 0)", CellValue::Number(-2.602987777274785)),
-            ((0, 50, 54), "_xlfn.ARRAYTOTEXT(_xlfn.SCAN(A1:A3, A1:A3, LAMBDA(a, v, a+v)), 1)", CellValue::Text("{#VALUE!;#VALUE!;#VALUE!}".to_string())),
+            ((0, 50, 54), "_xlfn.ARRAYTOTEXT(_xlfn.SCAN(A1:A3, A1:A3, LAMBDA(a, v, a+v)), 1)", CellValue::Error(CellError::Calc)),
             ((0, 50, 55), "LEFTB(\"日本語テキスト\", 3)", CellValue::Text("日 ".to_string())),
             ((0, 50, 56), "RIGHTB(\"日本語テキスト\", 10)", CellValue::Text("語テキスト".to_string())),
             ((0, 50, 57), "MIDB(\"日本語テキスト\", 2, 3)", CellValue::Text(" 本".to_string())),
@@ -1738,7 +1983,7 @@ mod tests {
             ((0, 50, 74), "BINOMDIST(0, 1, 1, FALSE)", CellValue::Error(CellError::Num)),
             ((0, 50, 75), "BINOMDIST(1, 3, 1, FALSE)", CellValue::Number(0.0)),
             ((0, 50, 76), "GAMMA(0.5)", CellValue::Number(std::f64::consts::PI.sqrt())),
-            ((0, 50, 77), "MAKEARRAY(2, 2, LAMBDA(r, c, {1, 2}))", CellValue::Error(CellError::Value)),
+            ((0, 50, 77), "MAKEARRAY(2, 2, LAMBDA(r, c, {1, 2}))", CellValue::Error(CellError::Calc)),
             ((0, 50, 78), "VAR(\"5\", 3.7, 3.7)", CellValue::Number(0.56333333333333613)),
             ((0, 50, 79), "VAR(3.7, 3.7, 3.7)", CellValue::Number(2.9582283945787943e-31)),
             ((0, 50, 80), "_xlfn.VAR.P(2.5, 3.7, 3.7)", CellValue::Number(0.32000000000000106)),
@@ -2020,7 +2265,9 @@ mod tests {
             ((0, 70, 8), "BESSELJ(0.5,3)", CellValue::Number(2.5637299945872449e-3)),
             ((0, 70, 9), "BESSELJ(0.5,2.9)", CellValue::Number(3.0604023458698646e-2)),
             ((0, 70, 10), "BESSELJ(0.5,10)", CellValue::Number(2.6131773608228023e-13)),
-            ((0, 70, 11), "BESSELJ(10,1)", CellValue::Number(0.043472249652254151)),
+            // J1(10) from the engine's polynomial (the true value is 0.0434727461688614). Excel gives 0.04347224965 here
+            // (its own approximation, 1e-5 off); the engine no longer returns that one input's value (D1).
+            ((0, 70, 11), "BESSELJ(10,1)", CellValue::Number(4.34727463393427410e-2)),
             ((0, 70, 12), "BESSELJ(0.5,-1)", CellValue::Error(CellError::Num)),
             // BESSELY
             ((0, 70, 13), "BESSELY(100,3)", CellValue::Number(2.3445786618508869e-2)),
@@ -2468,8 +2715,8 @@ mod tests {
                 CellValue::Number(7.0),
             ]))),
             // TAKE: 0 rows or cols yields #VALUE! (Excel specification)
-            ((0, 10, 15), "TAKE(A1:C3, 0, 1)", CellValue::Error(CellError::Value), None),
-            ((0, 10, 20), "TAKE(A1:C3, 1, 0)", CellValue::Error(CellError::Value), None),
+            ((0, 10, 15), "TAKE(A1:C3, 0, 1)", CellValue::Error(CellError::Calc), None),
+            ((0, 10, 20), "TAKE(A1:C3, 1, 0)", CellValue::Error(CellError::Calc), None),
 
             // 2. DROP: drop 1 row and 1 column
             ((0, 15, 0), "DROP(A1:C3, 1, 1)", CellValue::Number(5.0), Some((2, 2, vec![
@@ -2482,8 +2729,8 @@ mod tests {
                 CellValue::Number(4.0),
             ]))),
             // DROP: dropping all rows or columns yields #VALUE! (Excel specification)
-            ((0, 15, 10), "DROP(A1:C3, 3, 1)", CellValue::Error(CellError::Value), None),
-            ((0, 15, 15), "DROP(A1:C3, 1, 3)", CellValue::Error(CellError::Value), None),
+            ((0, 15, 10), "DROP(A1:C3, 3, 1)", CellValue::Error(CellError::Calc), None),
+            ((0, 15, 15), "DROP(A1:C3, 1, 3)", CellValue::Error(CellError::Calc), None),
 
             // 3. EXPAND: with default padding (#N/A)
             ((0, 20, 0), "EXPAND(A1:B2, 3, 3)", CellValue::Number(1.0), Some((3, 3, vec![
@@ -5407,10 +5654,10 @@ mod tests {
             ((0, 855, 3), "INDEX(TAKE({1, 2, 3; 4, 5, 6}, 1), 1, 3)", CellValue::Number(3.0)),
             ((0, 855, 4), "INDEX(TAKE({1, 2, 3; 4, 5, 6}, -1), 1, 1)", CellValue::Number(4.0)),
             ((0, 855, 5), "INDEX(TAKE({1, 2, 3; 4, 5, 6}, 2, 2), 2, 2)", CellValue::Number(5.0)),
-            ((0, 855, 6), "TAKE({1, 2; 3, 4}, 0)", CellValue::Error(CellError::Value)),
+            ((0, 855, 6), "TAKE({1, 2; 3, 4}, 0)", CellValue::Error(CellError::Calc)),
             ((0, 855, 7), "INDEX(DROP({1, 2, 3; 4, 5, 6}, 1), 1, 1)", CellValue::Number(4.0)),
             ((0, 855, 8), "INDEX(DROP({1, 2, 3; 4, 5, 6}, -1), 1, 1)", CellValue::Number(1.0)),
-            ((0, 855, 9), "DROP({1, 2; 3, 4}, 2)", CellValue::Error(CellError::Value)),
+            ((0, 855, 9), "DROP({1, 2; 3, 4}, 2)", CellValue::Error(CellError::Calc)),
 
             ((0, 860, 0), "INDEX(CHOOSEROWS({10, 20; 30, 40; 50, 60}, 3, 1), 1, 1)", CellValue::Number(50.0)),
             ((0, 860, 1), "INDEX(CHOOSEROWS({10, 20; 30, 40; 50, 60}, -1), 1, 1)", CellValue::Number(50.0)),
@@ -6990,7 +7237,7 @@ mod tests {
             ((0, 1140, 9), "MAKEARRAY(0, 3, LAMBDA(r, c, 1))", CellValue::Error(CellError::Value)),
             ((0, 1140, 10), "MAKEARRAY(2, -1, LAMBDA(r, c, 1))", CellValue::Error(CellError::Value)),
             ((0, 1140, 11), "MAKEARRAY(2.5, 3, LAMBDA(r, c, 1))", CellValue::Error(CellError::Value)),
-            ((0, 1140, 12), "MAKEARRAY(2, 2, LAMBDA(r, c, {1, 2}))", CellValue::Error(CellError::Value)),
+            ((0, 1140, 12), "MAKEARRAY(2, 2, LAMBDA(r, c, {1, 2}))", CellValue::Error(CellError::Calc)),
             ((0, 1140, 13), "MAKEARRAY(2, 2, LAMBDA(r, 1))", CellValue::Error(CellError::Value)),
             ((0, 1140, 14), "INDEX(MAP({1, 2; 3, 4}, LAMBDA(x, x * 10)), 1, 2)", CellValue::Number(20.0)),
             ((0, 1140, 15), "INDEX(MAP({1, 2; 3, 4}, LAMBDA(x, x * 10)), 2, 1)", CellValue::Number(30.0)),
@@ -7083,11 +7330,11 @@ mod tests {
             ((0, 1170, 11), "INDEX(TAKE({10; 20; 30; 40}, -2), 1, 1)", CellValue::Number(30.0)),
             ((0, 1170, 12), "INDEX(TAKE({10; 20; 30; 40}, -2), 2, 1)", CellValue::Number(40.0)),
             ((0, 1170, 13), "ROWS(TAKE({10; 20}, 5))", CellValue::Number(2.0)),
-            ((0, 1170, 14), "TAKE({10; 20}, 0)", CellValue::Error(CellError::Value)),
+            ((0, 1170, 14), "TAKE({10; 20}, 0)", CellValue::Error(CellError::Calc)),
             ((0, 1170, 15), "INDEX(DROP({10; 20; 30; 40}, -2), 2, 1)", CellValue::Number(20.0)),
             ((0, 1170, 16), "ROWS(DROP({10; 20; 30; 40}, -2))", CellValue::Number(2.0)),
-            ((0, 1170, 17), "DROP({10; 20}, 2)", CellValue::Error(CellError::Value)),
-            ((0, 1170, 18), "DROP({10; 20}, -2)", CellValue::Error(CellError::Value)),
+            ((0, 1170, 17), "DROP({10; 20}, 2)", CellValue::Error(CellError::Calc)),
+            ((0, 1170, 18), "DROP({10; 20}, -2)", CellValue::Error(CellError::Calc)),
             ((0, 1170, 19), "INDEX(EXPAND({1, 2}, 2, 3, 0), 2, 3)", CellValue::Number(0.0)),
             ((0, 1170, 20), "INDEX(EXPAND({1}, 2, 2, \"X\"), 2, 2)", CellValue::Text("X".into())),
             ((0, 1170, 21), "EXPAND({1, 2; 3, 4}, 1, 2)", CellValue::Error(CellError::Value)),

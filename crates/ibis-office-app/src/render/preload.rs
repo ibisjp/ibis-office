@@ -450,6 +450,11 @@ fn prepare(media: &Media) -> Option<Prepared> {
     Some((Arc::new(Image::from_bytes(format, bytes)), source))
 }
 
+/// What GPUI draws of a metafile put in after the file was opened (pasted, inserted): the SVG it draws, or the bitmap it holds.
+pub(crate) fn metafile_picture(format: MediaFormat, data: &[u8]) -> Option<(ImageFormat, Vec<u8>)> {
+    decode(&Media { id: MediaId(0), format, data: data.into() })
+}
+
 /// A picture GPUI can draw, as its encoding and bytes. Metafiles give the
 /// bitmap they carry when they draw nothing.
 fn decode(media: &Media) -> Option<(ImageFormat, Vec<u8>)> {
@@ -863,6 +868,13 @@ fn image_format(format: MediaFormat) -> Option<ImageFormat> {
 
 /// An embedded font as TrueType, unless its licence forbids using it here.
 fn decode_font(data: &[u8]) -> DecodedFont {
+    // A plain font file (a Word file's embedded font, already restored from its obfuscation).
+    if let Some(embedding) = ibis_eot::embedding_of_font(data) {
+        if embedding == ibis_eot::Embedding::Restricted {
+            return None;
+        }
+        return Some((ibis_eot::family_name(data)?, data.to_vec()));
+    }
     match ibis_eot::header(data).map(|h| h.embedding) {
         Ok(ibis_eot::Embedding::Restricted) | Err(_) => return None,
         Ok(_) => {}

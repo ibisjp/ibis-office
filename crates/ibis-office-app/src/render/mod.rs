@@ -5,13 +5,16 @@
 //! shared by the views of every format (and the export).
 
 pub(crate) mod chart_view;
+pub(crate) mod fallback_widths;
 pub(crate) mod font_metrics;
 pub(crate) mod glyph_outline;
 pub(crate) mod bevel;
+pub(crate) mod blur_shadow;
 pub(crate) mod metafile_fonts;
 pub(crate) mod picture_svg;
 pub(crate) mod preload;
 pub(crate) mod gradient;
+pub(crate) mod line_break;
 pub(crate) mod math_font;
 pub(crate) mod math_view;
 pub(crate) mod rich_text;

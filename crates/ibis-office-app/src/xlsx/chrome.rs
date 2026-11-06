@@ -87,12 +87,12 @@ fn format_copy_items(editor: &SlideEditor) -> Vec<MenuEntry> {
 
 fn crop_items() -> Vec<MenuEntry> {
     use ibis_doc_model::Crop;
-    [("pptx.crop.left", "_shell.crop-10-from-left", Crop { left: 10_000, ..Default::default() }),
+    std::iter::once(MenuItem::new("pptx.crop.mode", "_shell.crop-mode").icon("crop").on(|e, w, cx| e.begin_crop_mode(w, cx)).into()).chain(std::iter::once(MenuEntry::Separator)).chain([("pptx.crop.left", "_shell.crop-10-from-left", Crop { left: 10_000, ..Default::default() }),
      ("pptx.crop.right", "_shell.crop-10-from-right", Crop { right: 10_000, ..Default::default() }),
      ("pptx.crop.top", "_shell.crop-10-from-top", Crop { top: 10_000, ..Default::default() }),
      ("pptx.crop.bottom", "_shell.crop-10-from-bottom", Crop { bottom: 10_000, ..Default::default() }),
      ("pptx.crop.center", "_shell.crop-10-from-all-sides", Crop { left: 10_000, top: 10_000, right: 10_000, bottom: 10_000 })]
-        .into_iter().map(|(id, name, crop)| MenuItem::new(id, name).on(move |e, _, cx| e.crop_selected_pictures(crop, cx)).into()).chain(std::iter::once(MenuItem::new("pptx.crop.custom", "_shell.crop-settings").on(|e, w, cx| e.open_crop_panel(w, cx)).into())).collect()
+        .into_iter().map(|(id, name, crop)| MenuItem::new(id, name).on(move |e, _, cx| e.crop_selected_pictures(crop, cx)).into())).chain(std::iter::once(MenuItem::new("pptx.crop.custom", "_shell.crop-settings").on(|e, w, cx| e.open_crop_panel(w, cx)).into())).collect()
 }
 
 fn image_items() -> Vec<MenuEntry> {

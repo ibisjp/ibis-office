@@ -2118,13 +2118,13 @@ impl SlideEditor {
             if is_funnel(&xml) {
                 section = section
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.funnel")))
-                    .child(labeled("xlsx.chart-ex.gap-width", chart_spin(&p.ex_gap_width, "chart-ex-funnel-gap", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 500.0).integer_only(), cx)))
+                    .child(labeled("xlsx.chart-ex.gap-width", chart_spin(&p.ex_gap_width, "chart-ex-funnel-gap", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 500.0).integer_only(), cx).unit("%", px(20.))))
                     .child(crate::shell::chrome::primary_button("chart-ex-funnel-apply").small().label(crate::shell::i18n::text("xlsx.chart-ex.apply-gap")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_gap_width(cx))));
             }
             if is_pareto(&xml) {
                 section = section
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("xlsx.chart-ex.pareto")))
-                    .child(labeled("xlsx.chart-ex.gap-width", chart_spin(&p.ex_gap_width, "chart-ex-pareto-gap", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 500.0).integer_only(), cx)))
+                    .child(labeled("xlsx.chart-ex.gap-width", chart_spin(&p.ex_gap_width, "chart-ex-pareto-gap", crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 500.0).integer_only(), cx).unit("%", px(20.))))
                     .child(crate::shell::chrome::primary_button("chart-ex-pareto-apply").small().label(crate::shell::i18n::text("xlsx.chart-ex.apply-gap")).on_click(cx.listener(|this, _, _, cx| this.apply_chart_ex_gap_width(cx))));
             }
             section
@@ -2148,7 +2148,7 @@ impl SlideEditor {
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("fix.chart-edit.split-series")))
                     .child(of_pie_split_buttons)
                     .child(field(&crate::shell::i18n::text("fix.chart-edit.split-position-value"), crate::shell::chrome::text_field(&p.of_pie_split_pos).full_width()))
-                    .child(field(&crate::shell::i18n::text("fix.chart-edit.second-plot-size"), chart_spin(&p.of_pie_second_size, "chart-of-pie-size", crate::shell::chrome::SpinnerSpec::new(1.0).range(5.0, 200.0).integer_only(), cx)))
+                    .child(field(&crate::shell::i18n::text("fix.chart-edit.second-plot-size"), chart_spin(&p.of_pie_second_size, "chart-of-pie-size", crate::shell::chrome::SpinnerSpec::new(1.0).range(5.0, 200.0).integer_only(), cx).unit("%", px(20.))))
             })
             .when(has_stock, |b| {
                 b.child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("fix.chart-edit.stock-chart-options")))
@@ -2210,7 +2210,7 @@ impl SlideEditor {
             .gap_2()
             .px(px(18.))
             .py(px(8.))
-            .p_0().child(self.chart_panel_tabs(cx))
+            .p_0()
             .when(p.tab == 2, |b| b
             .child(div().child(crate::shell::i18n::text("chart.ui.type")))
             .child(self.chart_type_dropdown(cx))
@@ -2277,7 +2277,7 @@ impl SlideEditor {
             )
             .when_some(p.error.clone(), |b, e| b.child(div().text_color(theme.danger).child(e)))
             ;
-        Some(SidebarPanel {title:crate::shell::i18n::text("_xlsx.format-chart"),body:body.into_any_element()})
+        Some(self.chart_panel_tabs(SidebarPanel {title:crate::shell::i18n::text("_xlsx.format-chart"),body:body.into_any_element()}, cx))
     }
 }
 

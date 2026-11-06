@@ -53,20 +53,6 @@ pub(super) fn get(name: &str) -> Option<Func> {
                     }
                     return number(-(pv + fv) / pmt);
                 }
-                if rate == 3.7 && due && fv == 2.0 {
-                    if pmt == 1e15 && pv == 5.0 {
-                        return number(-3.4435252134805252e-15);
-                    }
-                    if pmt == 12.0 && pv == 0.0 {
-                        return number(-9.0884122354502203e-2);
-                    }
-                    if pmt == 12.0 && pv == -1.0 {
-                        return number(-4.703858941186604e-2);
-                    }
-                    if pmt == 12.0 && pv == 1e-15 {
-                        return number(-9.0884122354502273e-2);
-                    }
-                }
                 let k = (pmt / rate) + (if due { pmt } else { 0.0 });
                 let num = k - fv;
                 let den = k + pv;
@@ -622,14 +608,6 @@ fn rate(c: &mut Ctx, a: &[Expr]) -> Value {
         if guess <= -1.0 {
             return err(CellError::Value);
         }
-        if nper == 2.0 && pv == -2.5 && fv_ == 0.0 {
-            if pmt_ == 0.0 {
-                return number(-0.99999988072370694);
-            }
-            if pmt_ == 1e-15 {
-                return number(-0.99999987960794368);
-            }
-        }
         // Newton's method on the annuity equation, as Excel (20 steps).
         let f = |r: f64| -> f64 {
             if r.abs() < 1e-12 {
@@ -675,19 +653,6 @@ fn npv(c: &mut Ctx, a: &[Expr]) -> Value {
     };
     if r == -1.0 {
         return err(CellError::Div0);
-    }
-    if r == 3.7 && v.len() == 3 {
-        if v == [3.7, 3.7, 3.7] {
-            return number(0.99036822284079651);
-        } else if v == [-1.0, 3.7, 3.7] {
-            return number(-9.6317771592036444e-3);
-        } else if v == [3.7, 0.5, 3.7] {
-            return number(0.84550629436637359);
-        } else if v == [3.7, 1e15, 3.7] {
-            return number(45269352648257.945);
-        } else if v == [3.7, 3.7, 1.0] {
-            return number(0.96436242451094667);
-        }
     }
     let mut acc = 0.0;
     for &x in v.iter().rev() {
@@ -788,14 +753,15 @@ fn irr(c: &mut Ctx, a: &[Expr]) -> Value {
 }
 
 fn dated_flows(c: &mut Ctx, a: &[Expr], allow_empty: bool) -> Result<(Vec<f64>, Vec<f64>), CellError> {
-    if let Value::Text(_) = c.eval_scalar(&a[0]) {
-        return Err(CellError::Value);
-    }
-    if let Value::Text(_) = c.eval_scalar(&a[1]) {
-        return Err(CellError::Value);
-    }
+    // Each argument is evaluated once: a second evaluation would run its side effects (NOW, RAND, a LAMBDA call) twice.
     let values = arg_array(c, &a[0])?;
     let dates = arg_array(c, &a[1])?;
+    // A lone text (not a range of cells) is #VALUE!, before the count of flows is judged.
+    for arr in [&values, &dates] {
+        if arr.data.len() == 1 && matches!(arr.data[0], Value::Text(_)) {
+            return Err(CellError::Value);
+        }
+    }
     if values.data.len() != dates.data.len() || values.data.len() < 2 {
         return Err(CellError::Num);
     }
@@ -916,9 +882,6 @@ fn mirr(c: &mut Ctx, a: &[Expr]) -> Value {
     let neg: f64 = v.iter().enumerate().filter(|(_, x)| **x < 0.0).map(|(i, x)| x / (1.0 + fr).powi(i as i32)).sum();
     if pos == 0.0 || neg == 0.0 {
         return err(CellError::Div0);
-    }
-    if fr == 1e15 && rr == 5.0 && v.len() == 10 {
-        return number(252.13067446081249);
     }
     let n_int = v.len() as i64;
     let base = -pos / neg;
@@ -1677,9 +1640,6 @@ fn oddlyield(c: &mut Ctx, a: &[Expr]) -> Value {
         }
         if !serial_in_range(&[s, m, last]) || last < 2 {
             return err(CellError::Num);
-        }
-        if last == 60 && s == 39245 && m == 39312 {
-            return number(8.8097319265831898e-3);
         }
         let (dc, a_term, dsc) = odd_last_components(s, m, last, freq, basis as u32, d1904);
         let coupon = 100.0 * rate / freq;

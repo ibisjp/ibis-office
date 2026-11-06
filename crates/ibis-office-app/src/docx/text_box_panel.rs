@@ -260,6 +260,12 @@ impl ShapeDrag {
     }
 }
 
+/// Whether `shape` is how the layout draws the inline picture of `media` that is cut, outlined or recoloured (a shape of its
+/// own, with no id and no anchor).
+fn is_laid_out_inline_picture(shape: &ibis_doc_model::Shape, media: ibis_doc_model::MediaId) -> bool {
+    shape.id == ibis_doc_model::ShapeId(0) && shape.floating.is_none() && matches!(&shape.kind, ShapeKind::Picture(p) if p.media == media)
+}
+
 /// The handles of a selected text box: the corners and the middles of the sides.
 const HANDLES: &[(i8, i8)] = &[(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
 
@@ -418,6 +424,12 @@ impl SlideEditor {
                                 return Some((FlowPos::new(para_id, offset), (0, 0)));
                             }
                         }
+                        // An inline picture that is cut, outlined or recoloured is laid out as a shape without an id of its own.
+                        if let FlowRunKind::Picture { media, .. } | FlowRunKind::PictureControl { media, .. } = &run.kind
+                            && is_laid_out_inline_picture(shape, *media)
+                        {
+                            return Some((FlowPos::new(para_id, offset), (0, 0)));
+                        }
                         None
                     };
                     if let Some((pos, off)) = find_in_blocks(&doc.body, &mut check)
@@ -489,6 +501,9 @@ impl SlideEditor {
                         return Some((page, (*x, *y, *w, *h), *anchor_offset));
                     }
                     (Target::Picture(media), super::flow_layout::Item::Picture { media: m, x, y, w, h }) if m == media => {
+                        return Some((page, (*x, *y, *w, *h), (0, 0)));
+                    }
+                    (Target::Picture(media), super::flow_layout::Item::Shape { shape, x, y, w, h }) if is_laid_out_inline_picture(shape, *media) => {
                         return Some((page, (*x, *y, *w, *h), (0, 0)));
                     }
                     _ => {}
@@ -1420,6 +1435,11 @@ impl SlideEditor {
     /// (`k` pixels to the point).
     pub(crate) fn text_box_overlay(&self, index: usize, k: f32, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out = Vec::new();
+        // トリミング on the page (`shell/crop_mode.rs`) takes the place of the selection.
+        if let Some(crop) = self.render_flow_crop_mode(index, k, cx) {
+            out.push(crop.into_any_element());
+            return out;
+        }
         out.extend(self.draw_table_overlay(index, k));
         out.extend(self.wrap_points_overlay(index, k));
         out.extend(self.docx_ink_overlay(index, k));
@@ -1863,8 +1883,9 @@ impl SlideEditor {
 
     pub(crate) fn text_box_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let tab=self.doc_state()?.text_box.as_ref()?.effects.tab;
-        let tabs=crate::shell::chrome::tab_control_with_mode([crate::shell::i18n::text("shape.effects.basic"),crate::shell::i18n::text("shape.effects.decoration")],tab,"text-box-tabs",crate::shell::chrome::TabMode::Intrinsic,|e,index,cx|{if let Some(s)=e.doc_state_mut().and_then(|d|d.text_box.as_mut()){s.effects.tab=index;}cx.notify();},cx);
-        if tab==1 {let body=crate::shell::chrome::panel_form().p_0().child(tabs).child(self.text_box_decoration_panel(cx)?);return Some(SidebarPanel{title:crate::shell::i18n::text("_shell.text-box"),body:body.into_any_element()});}
+        // The basic / decoration tabs are in the panel header area.
+        let with_tabs=move |panel:SidebarPanel,cx:&Context<Self>|panel.header_tabs("text-box-tabs",[crate::shell::i18n::text("shape.effects.basic"),crate::shell::i18n::text("shape.effects.decoration")],tab,|e,index,cx|{if let Some(s)=e.doc_state_mut().and_then(|d|d.text_box.as_mut()){s.effects.tab=index;}cx.notify();},cx);
+        if tab==1 {let body=crate::shell::chrome::panel_form().p_0().child(self.text_box_decoration_panel(cx)?);return Some(with_tabs(SidebarPanel{title:crate::shell::i18n::text("_shell.text-box"),body:body.into_any_element()},cx));}
         let state = self.doc_state()?.text_box.as_ref()?;
         let (geometry, font_size, color, floating) = (state.geometry.clone(), state.font_size.clone(), state.color.clone(), state.initial.floating);
         let (fill, line, line_width, has_text, is_line) = (state.fill.clone(), state.line.clone(), state.line_width.clone(), state.initial.has_text, state.initial.is_line);
@@ -2022,6 +2043,7 @@ impl SlideEditor {
                 .shadow_md()
                 .occlude()
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    gpui_kit::component::popup_guard::note_outside_dismiss();
                     if let Some(state) = this.doc_state_mut().and_then(|s| s.text_box.as_mut()) {
                         state.line_dash_open = false;
                         state.hovered_dash = None;
@@ -2104,7 +2126,7 @@ impl SlideEditor {
         let body = v_flex()
             .gap_2()
             .px(px(18.))
-            .py(px(8.)).p_0().child(tabs)
+            .py(px(8.)).p_0()
             .children((!is_line).then(|| v_flex().gap_1().child(div().text_sm().child(crate::shell::i18n::text("docx.text-box-panel.shape-styles"))).child(h_flex().gap_1().flex_wrap().children(SHAPE_STYLES.iter().enumerate().map(|(i, &(f, l, _))| {
                 let hex = |c: &str| u32::from_str_radix(c, 16).unwrap_or(0);
                 div().id(("shape-style", i)).w(px(26.)).h(px(20.)).rounded_sm().border_2().border_color(rgb(hex(l))).bg(rgb(hex(f))).cursor_pointer().on_click(cx.listener(move |this, _, window, cx| this.apply_shape_style(i, window, cx)))
@@ -2122,6 +2144,6 @@ impl SlideEditor {
             .children(is_line.then(|| h_flex().gap_1().child(toggle("line-head", "docx.text-box-panel.arrow-start", head, |s| s.head = !s.head)).child(toggle("line-tail", "docx.text-box-panel.arrow-end", tail, |s| s.tail = !s.tail))))
             .children(has_text.then(|| row_el("docx.text-box-panel.font-size", fs_el)))
             .children(has_text.then(|| row_el("docx.text-box-panel.text-color", color_el)));
-        Some(SidebarPanel { title: crate::shell::i18n::text("_shell.text-box"), body: body.into_any_element() })
+        Some(with_tabs(SidebarPanel { title: crate::shell::i18n::text("_shell.text-box"), body: body.into_any_element() }, cx))
     }
 }

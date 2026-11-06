@@ -210,6 +210,7 @@ fn change_sheet(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
     *outline = std::mem::take(outline).into_iter().filter_map(|(i, l)| Some((move_index(i, at, count)?, l))).collect();
     if axis == Axis::Columns {
         sheet.custom_columns = std::mem::take(&mut sheet.custom_columns).into_iter().filter_map(|i| move_index(i, at, count)).collect();
+        sheet.widened_columns = std::mem::take(&mut sheet.widened_columns).into_iter().filter_map(|i| move_index(i, at, count)).collect();
     }
     let hidden = match axis {
         Axis::Rows => &mut sheet.hidden_rows,
@@ -526,7 +527,10 @@ fn apply_sheet_edit(presentation: &mut Presentation, edit: &StructureEdit) -> Ve
             let mut new = Slide::new(*slide);
             new.name = Some(name.clone());
             let frame = EmuRect::new(0, 0, content.columns.iter().sum(), content.rows.iter().sum());
-            new.size = Some(crate::geometry::EmuSize::new(frame.width.max(1), frame.height.max(1)));
+            // The page is what the sheet uses (A1 on a new sheet), not its whole grid: the page break preview
+            // shows that range and greys the rest, and printing it prints that (sheet_command.rs `used_extents`).
+            let (w, h) = crate::sheet_command::used_cells_corner(content);
+            new.size = Some(crate::geometry::EmuSize::new(w.max(1), h.max(1)));
             new.shapes.push(Shape { id: *shape, frame, rotation: 0, flip_h: false, flip_v: false, kind: ShapeKind::Sheet(content.clone()), floating: None });
             presentation.slides.insert(at.min(presentation.slides.len()), new);
             let wb = Arc::make_mut(presentation.workbook.as_mut().unwrap());
@@ -651,6 +655,41 @@ pub fn valid_sheet_name(presentation: &Presentation, name: &str, except: Option<
     presentation.workbook.as_ref().is_none_or(|w| !w.sheets.iter().enumerate().any(|(i, s)| Some(i) != except && s.name.to_lowercase() == name.to_lowercase()))
 }
 
+/// The name a copy of the sheet called `base` gets, as Excel names it: a name ending in a
+/// number in parentheses ("業務管理(2610)", "Sheet1 (2)") counts that number up to the first
+/// name not taken ("業務管理(2611)"); any other name gets " (2)" and on ("Sheet1 (2)").
+/// Digits written with leading zeros keep their width ("(007)" → "(008)"). The name is kept
+/// within 31 characters by cutting the text before the parentheses.
+pub fn copy_sheet_name(presentation: &Presentation, base: &str) -> String {
+    let chars: Vec<char> = base.chars().collect();
+    let counted = (chars.last() == Some(&')'))
+        .then(|| {
+            let digits_end = chars.len() - 1;
+            let digits_start = chars[..digits_end].iter().rposition(|c| !c.is_ascii_digit()).map_or(0, |i| i + 1);
+            (digits_start < digits_end && digits_start > 0 && chars[digits_start - 1] == '(' && digits_end - digits_start <= 18)
+                .then(|| (digits_start - 1, chars[digits_start..digits_end].iter().collect::<String>()))
+        })
+        .flatten();
+    let (stem, first, width, spaced): (String, u64, usize, bool) = match counted {
+        Some((open, digits)) => {
+            let width = if digits.starts_with('0') && digits.len() > 1 { digits.len() } else { 0 };
+            (chars[..open].iter().collect(), digits.parse::<u64>().unwrap_or(0).saturating_add(1), width, false)
+        }
+        None => (base.to_string(), 2, 0, true),
+    };
+    let mut n = first;
+    loop {
+        let number = format!("{n:0width$}");
+        let tail = format!("{}({number})", if spaced { " " } else { "" });
+        let room = 31usize.saturating_sub(tail.chars().count());
+        let name = format!("{}{tail}", stem.chars().take(room).collect::<String>());
+        if valid_sheet_name(presentation, &name, None) {
+            return name;
+        }
+        n += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -665,6 +704,34 @@ mod tests {
         change_sheet(&mut sheet, Axis::Rows, 0, -2);
         assert_eq!(sheet.measured_rows.0, vec![4, 6]);
         assert_eq!(sheet.fitted_rows.0, [(4, 40), (6, 60)].into());
+    }
+
+    #[test]
+    fn copy_names_count_up_the_number_in_parentheses() {
+        let mut presentation = Presentation::default();
+        let mut workbook = crate::sheet::Workbook::default();
+        workbook.sheets.clear();
+        for name in ["業務管理(2610)", "業務管理(2611)", "Sheet1", "Sheet1 (2)", "Rep(007)"] {
+            workbook.sheets.push(WorkbookSheet { name: name.to_string(), state: Default::default(), slide: None, hidden: None, other: false });
+        }
+        presentation.workbook = Some(Arc::new(workbook));
+        // A taken number is skipped; the text before the parentheses is kept as it is.
+        assert_eq!(copy_sheet_name(&presentation, "業務管理(2610)"), "業務管理(2612)");
+        assert_eq!(copy_sheet_name(&presentation, "業務管理(2611)"), "業務管理(2612)");
+        assert_eq!(copy_sheet_name(&presentation, "Sheet1"), "Sheet1 (3)");
+        assert_eq!(copy_sheet_name(&presentation, "Sheet1 (2)"), "Sheet1 (3)");
+        assert_eq!(copy_sheet_name(&presentation, "Rep(007)"), "Rep(008)");
+        // Past Excel's own limit of 32768 the count goes on.
+        assert_eq!(copy_sheet_name(&presentation, "計(32768)"), "計(32769)");
+        assert_eq!(copy_sheet_name(&presentation, "計(99999)"), "計(100000)");
+        // "()" and "(x)" are not counts.
+        assert_eq!(copy_sheet_name(&presentation, "A()"), "A() (2)");
+        assert_eq!(copy_sheet_name(&presentation, "(5)"), "(6)");
+        // Kept within 31 characters.
+        let long = format!("{}(9)", "あ".repeat(27));
+        let copy = copy_sheet_name(&presentation, &long);
+        assert_eq!(copy.chars().count(), 31);
+        assert!(copy.ends_with("(10)"));
     }
 
     #[test]

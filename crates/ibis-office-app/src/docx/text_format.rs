@@ -13,7 +13,7 @@ impl SlideEditor {
         let Some((start, end)) = self.ordered_selection() else { return false };
         if start == end {
             let Some(p) = self.paragraph_of(start.para) else { return false };
-            let (format, char_style, _) = super::editing::visible_format_at(p, start.offset);
+            let (format, char_style, _) = super::editing::visible_format_at(&self.resources.markup_view, p, start.offset);
             let mut pending = self.doc_state().and_then(|s| s.pending.clone()).unwrap_or(InsertFormat { format, char_style });
             pending.format.overlay(&properties);
             if let Some(state) = self.doc_state_mut() { state.pending = Some(pending); }
@@ -40,7 +40,7 @@ impl SlideEditor {
             let after = p.split_off_runs(b);
             let mut selected = p.split_off_runs(a);
             for r in &mut selected {
-                if !super::flow_layout::showing_markup() && matches!(r.revision.as_ref().map(|v| &v.kind), Some(RevisionKind::Delete)) { continue; }
+                if !self.resources.markup_view.showing_markup() && matches!(r.revision.as_ref().map(|v| &v.kind), Some(RevisionKind::Delete)) { continue; }
                 if track && r.revision.is_none() {
                     r.revision = Some(Revision { kind: RevisionKind::Format(r.format.clone()), author: who.author.clone(), date: who.date.clone() });
                 }
@@ -83,11 +83,11 @@ impl SlideEditor {
     pub(crate) fn capture_doc_format_brush(&mut self, persistent: bool, cx: &mut Context<Self>) {
         let Some((start, end)) = self.ordered_selection() else { return };
         let Some(p) = self.paragraph_of(start.para) else { return };
-        let format = if !super::flow_layout::showing_markup() {
+        let format = if !self.resources.markup_view.showing_markup() {
             // A selection copies its first visible character. A caret copies
             // its visible predecessor, or the mark if every run is deleted.
             let offset = if start != end { start.offset + 1 } else { start.offset };
-            let (format, char_style, style) = super::editing::visible_format_at(p, offset);
+            let (format, char_style, style) = super::editing::visible_format_at(&self.resources.markup_view, p, offset);
             let source = ibis_doc_model::FlowRun { kind: ibis_doc_model::FlowRunKind::Text(String::new()), format, char_style, style, link: None, revision: None, show_field_code: false, field_locked: false, control: None };
             super::clipboard::resolved_format(&source)
         } else {
@@ -126,7 +126,7 @@ impl SlideEditor {
         let Some((start, end)) = self.ordered_selection() else { return false };
         if start == end {
             if let Some(p) = self.paragraph_of(start.para) {
-                let (format, char_style, _) = super::editing::visible_format_at(p, start.offset);
+                let (format, char_style, _) = super::editing::visible_format_at(&self.resources.markup_view, p, start.offset);
                 let mut pending = self.doc_state().and_then(|s| s.pending.clone()).unwrap_or(InsertFormat { format, char_style });
                 pending.format.overlay(&brush.run);
                 if let Some(state) = self.doc_state_mut() { state.pending = Some(pending); }
@@ -161,7 +161,7 @@ impl SlideEditor {
             let after = p.split_off_runs(b);
             let mut selected = p.split_off_runs(a);
             for r in &mut selected {
-                if !super::flow_layout::showing_markup() && matches!(r.revision.as_ref().map(|v| &v.kind), Some(RevisionKind::Delete)) { continue; }
+                if !self.resources.markup_view.showing_markup() && matches!(r.revision.as_ref().map(|v| &v.kind), Some(RevisionKind::Delete)) { continue; }
                 if track && r.revision.is_none() {
                     r.revision = Some(Revision { kind: RevisionKind::Format(r.format.clone()), author: who.author.clone(), date: who.date.clone() });
                 }

@@ -3,13 +3,14 @@
 # Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 name: Build Linux Packages (AppImage & Flatpak)
 
+# By hand only (2026-10-30): run it before the release is published, so that what is attached is what was checked
+# (gh workflow run flatpak.yml --ref main -f release_tag=v0.8.5). A run started by publishing the release built the
+# packages again and attached them over the checked ones.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Optional GitHub release tag to upload the Linux packages to (e.g. v0.8.4)'
+        description: 'Optional GitHub release tag to upload the Linux packages to (e.g. v0.8.5)'
         required: false
         type: string
 
@@ -66,9 +67,9 @@ jobs:
       # installed apps update from it), so a release build takes its version
       # from the tag (v0.8.5 -> 0.8.5).
       - name: Use the release tag's version
-        if: github.event_name == 'release' || inputs.release_tag != ''
+        if: inputs.release_tag != ''
         env:
-          TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+          TAG: ${{ inputs.release_tag }}
         run: |
           v="${TAG#v}"
           printf 'Windows\t%s\nmacOS\t%s\nwasm\t%s\nLinux\t%s\n' "$v" "$v" "$v" "$v" > version.txt
@@ -89,10 +90,10 @@ jobs:
 
       - name: Attach AppImage to GitHub Release
         timeout-minutes: 10
-        if: github.event_name == 'release' || inputs.release_tag != ''
+        if: inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+          TAG: ${{ inputs.release_tag }}
         run: |
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
           chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
@@ -159,9 +160,9 @@ jobs:
       # installed apps update from it), so a release build takes its version
       # from the tag (v0.8.5 -> 0.8.5).
       - name: Use the release tag's version
-        if: github.event_name == 'release' || inputs.release_tag != ''
+        if: inputs.release_tag != ''
         env:
-          TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+          TAG: ${{ inputs.release_tag }}
         run: |
           v="${TAG#v}"
           printf 'Windows\t%s\nmacOS\t%s\nwasm\t%s\nLinux\t%s\n' "$v" "$v" "$v" "$v" > version.txt
@@ -182,10 +183,10 @@ jobs:
 
       - name: Attach Flatpak to GitHub Release
         timeout-minutes: 10
-        if: github.event_name == 'release' || inputs.release_tag != ''
+        if: inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+          TAG: ${{ inputs.release_tag }}
         run: |
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
             target/dist/ibisOffice-*-Linux-${{ matrix.arch }}.flatpak \

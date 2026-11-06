@@ -41,7 +41,6 @@ impl Render for DraggedSlideView {
 }
 
 pub(crate) const PANE_WIDTH: f32 = 216.0;
-pub(crate) const OUTLINE_PANE_WIDTH: f32 = 340.0;
 const SECTION_HEADER_HEIGHT: f32 = 24.0;
 
 /// Extract title and body bullet paragraphs from a slide for Outline View.
@@ -500,7 +499,11 @@ impl SlideEditor {
         let is_outline = self.is_outline_view();
         let pane_w = self.pane_width_now();
 
-        let items = if is_outline {
+        // The slide master view lists the file's masters and layouts, and has no outline (nor tabs).
+        let master_view = self.is_master_view();
+        let items = if master_view {
+            self.render_master_page_items(cx)
+        } else if is_outline {
             self.render_outline_items(cx)
         } else {
             self.render_thumbnail_items(cx)
@@ -552,7 +555,7 @@ impl SlideEditor {
             .bg(theme.sidebar)
             .border_r_1()
             .border_color(theme.sidebar_border)
-            .child(tab_bar)
+            .children((!master_view).then_some(tab_bar))
             .child(
                 div()
                     .relative()
@@ -563,7 +566,8 @@ impl SlideEditor {
                         v_flex()
                             .id("slide-list")
                             .key_context(crate::shell::editor::LIST_CONTEXT)
-                            .track_focus(&self.list_focus)
+                            .when(!master_view, |d| d.track_focus(&self.list_focus))
+                            .when_some(self.master_view_focus(), |d, focus| d.track_focus(&focus))
                             .track_scroll(&self.list_scroll)
                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| this.list_focus.focus(window, cx)))
                             // ⌘↑ / ⌘↓ move the current slide up or down the list.
@@ -637,6 +641,9 @@ impl SlideEditor {
             Submenu::tr("pptx.grid-and-guides", "grid_4x4", vec![
                 MenuItem::tr("pptx.gridlines").icon("grid_on").checked(self.is_pptx_gridlines_enabled()).on(|e, _, cx| e.toggle_pptx_gridlines(cx)).into(),
                 MenuItem::tr("pptx.guides").icon("straighten").checked(self.is_pptx_guides_enabled()).on(|e, _, cx| e.toggle_pptx_guides(cx)).into(),
+                MenuItem::tr("pptx.guides.add-vertical").icon("vertical_align_center").on(|e, _, cx| e.add_guide(false, cx)).into(),
+                MenuItem::tr("pptx.guides.add-horizontal").icon("horizontal_rule").on(|e, _, cx| e.add_guide(true, cx)).into(),
+                MenuItem::tr("pptx.guides.remove-all").icon("delete_sweep").disabled(self.guide_list().is_empty()).on(|e, _, cx| e.remove_all_guides(cx)).into(),
                 MenuItem::tr("pptx.snap-to-grid").icon("grid_goldenratio").checked(self.is_pptx_snap_to_grid_enabled()).on(|e, _, cx| e.toggle_pptx_snap_to_grid(cx)).into(),
                 MenuItem::tr("pptx.snap-to-shape").icon("view_compact").checked(self.is_pptx_snap_to_shape_enabled()).on(|e, _, cx| e.toggle_pptx_snap_to_shape(cx)).into(),
             ]).into(),

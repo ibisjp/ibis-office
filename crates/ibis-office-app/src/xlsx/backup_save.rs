@@ -565,8 +565,7 @@ impl SlideEditor {
                     .child(
                         crate::shell::chrome::Checkbox::new("toggle-wb-backup-override-btn")
                             .label(text("xlsx.backupsave.wb-backup-label"))
-                            .checked(wb_override == Some(true))
-                            .indeterminate(wb_override.is_none())
+                            .shown(&match wb_override { Some(on) => crate::shell::chrome::Shown::One(on), None => crate::shell::chrome::Shown::Mixed })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(p) = this.wb_mut().panels.backup_save.as_mut() {
                                     p.workbook_override = match p.workbook_override {

@@ -20,9 +20,15 @@ pub(crate) mod autorecover;
 pub(crate) mod editor;
 pub mod embed;
 pub(crate) mod file_actions;
+pub(crate) mod file_watch;
+pub(crate) mod view_state;
+pub(crate) mod message_box;
+pub(crate) mod comments;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod open_guard;
 pub(crate) mod chrome;
 pub(crate) mod links;
-pub(crate) mod panel_dialog;
+pub(crate) mod dialog;
 pub(crate) mod color_palette;
 pub(crate) mod color_editor;
 pub(crate) mod color_picker_dialog;
@@ -30,8 +36,12 @@ pub(crate) mod theme_colors;
 pub(crate) mod math_editor;
 pub(crate) mod ink_panel;
 pub(crate) mod chrome_defaults;
+pub(crate) mod infobar;
 pub(crate) mod format;
 pub(crate) mod font_list;
+pub(crate) mod replace_fonts;
+pub(crate) mod crop_units;
+pub(crate) mod crop_mode;
 pub(crate) mod font_preview;
 pub(crate) mod i18n;
 pub(crate) mod settings;
@@ -40,11 +50,15 @@ pub(crate) mod qat;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod update;
 pub(crate) mod about_window;
+pub(crate) mod modify_password;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod password_window;
 pub(crate) mod icons;
 pub(crate) mod palette;
 pub(crate) mod menu_bar;
+pub(crate) mod menu_search_history;
+pub(crate) mod menu_tiles;
+pub(crate) mod menu_scrollbar;
 pub(crate) mod input;
 pub(crate) mod plain_path;
 pub(crate) mod recent_files;
@@ -66,8 +80,14 @@ pub(crate) mod scenario_i18n;
 pub(crate) mod scenario_menus;
 pub(crate) mod menu_bridge;
 #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "../tests/shell/scenario_menu_search.rs"]
+pub(crate) mod scenario_menu_search;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 #[path = "../tests/shell/scenario_fix.rs"]
 pub(crate) mod scenario_fix;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "../tests/shell/scenario_open_save.rs"]
+pub(crate) mod scenario_open_save;
 pub(crate) mod start_view;
 pub(crate) mod workspace;
 

@@ -47,98 +47,6 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// Insert a Slide Zoom shape targeting `target_slide_id` onto the current slide.
-    pub(crate) fn insert_slide_zoom(
-        &mut self,
-        target_slide_id: SlideId,
-        cx: &mut Context<Self>,
-    ) -> Option<ShapeId> {
-        let current_slide_id = self.current_slide;
-        let slide_size = self.presentation().slide_size;
-
-        // Retrieve information about the target slide
-        let (target_index, target_title) = {
-            let p = self.presentation();
-            let idx = p.slide_index(target_slide_id)?;
-            let title = p
-                .slide(target_slide_id)
-                .and_then(|s| {
-                    s.shapes.iter().find_map(|sh| {
-                        if let Some(tb) = sh.text_body() {
-                            let t = tb.text().trim().to_string();
-                            if !t.is_empty() {
-                                return Some(t);
-                            }
-                        }
-                        None
-                    })
-                })
-                .unwrap_or_else(|| format!("Slide {}", idx + 1));
-            (idx + 1, title)
-        };
-
-        // Determine zoom card dimensions (roughly 35% of slide dimensions, maintaining aspect ratio)
-        let zoom_w = 2_800_000.min(slide_size.width / 2);
-        let zoom_h = (zoom_w as f64 * (slide_size.height as f64 / slide_size.width as f64)) as i64;
-
-        // Position on current slide (centered, with staggered offset if existing zoom shapes exist)
-        let existing_zooms = self
-            .slide()
-            .shape_links
-            .values()
-            .filter(|l| matches!(l, SlideLink::Slide(_)))
-            .count();
-        let offset = (existing_zooms as i64 % 5) * 300_000;
-        let x = ((slide_size.width - zoom_w) / 2 + offset).max(200_000);
-        let y = ((slide_size.height - zoom_h) / 2 + offset).max(200_000);
-        let frame = EmuRect::new(x, y, zoom_w, zoom_h);
-
-        // Create the Slide Zoom shape: AutoShape card with border and slide title preview
-        let shape_id = self.document.ids().new_shape_id();
-        let stroke = Stroke::solid(Color::opaque(Rgb(0xd0d0d0)), 12_700);
-        let fill = Fill::Solid(Color::opaque(Rgb(0xffffff)));
-
-        let header_text = format!("🔍 Slide {} (Zoom)\n{}", target_index, target_title);
-        let body = TextBody::plain(
-            &header_text,
-            TextStyle {
-                font_size: 14_00,
-                color: Rgb(0x333333),
-                bold: true,
-                ..Default::default()
-            },
-        );
-
-        let mut auto = AutoShape::new(Geometry::Rect, fill, Some(stroke));
-        auto.text = Some(body);
-        let shape = Shape::new(shape_id, frame, ibis_doc_model::ShapeKind::Auto(auto));
-
-        let insert_index = self.slide().shapes.len();
-        let link_tooltip = format!("Slide {} Zoom: {}", target_index, target_title);
-
-        let commands = vec![
-            Command::InsertShape {
-                slide: current_slide_id,
-                index: insert_index,
-                shape,
-            },
-            Command::SetShapeLink {
-                slide: current_slide_id,
-                shape: shape_id,
-                link: Some(SlideLink::Slide(target_slide_id)),
-            },
-            Command::SetShapeLinkTooltip {
-                slide: current_slide_id,
-                shape: shape_id,
-                tooltip: Some(link_tooltip),
-            },
-        ];
-
-        self.run(commands, cx);
-        self.set_selection(vec![shape_id]);
-        Some(shape_id)
-    }
-
     /// Render the Insert Slide Zoom modal dialog if open.
     pub(crate) fn render_slide_zoom_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let pptx = self.pptx()?;
@@ -316,105 +224,6 @@ impl SlideEditor {
             pptx.section_zoom_dialog = None;
         }
         cx.notify();
-    }
-
-    /// Insert a Section Zoom shape targeting `section_id` onto the current slide.
-    pub(crate) fn insert_section_zoom(
-        &mut self,
-        section_id: &str,
-        cx: &mut Context<Self>,
-    ) -> Option<ShapeId> {
-        let current_slide_id = self.current_slide;
-        let slide_size = self.presentation().slide_size;
-
-        let p = self.presentation();
-        let section = p.sections.iter().find(|s| s.id == section_id)?;
-        let first_slide_id = section.slides.first().copied()?;
-        let section_name = section.name.clone();
-
-        // Retrieve information about the first slide of the section
-        let (slide_index, slide_title) = {
-            let idx = p.slide_index(first_slide_id)?;
-            let title = p
-                .slide(first_slide_id)
-                .and_then(|s| {
-                    s.shapes.iter().find_map(|sh| {
-                        if let Some(tb) = sh.text_body() {
-                            let t = tb.text().trim().to_string();
-                            if !t.is_empty() {
-                                return Some(t);
-                            }
-                        }
-                        None
-                    })
-                })
-                .unwrap_or_else(|| format!("Slide {}", idx + 1));
-            (idx + 1, title)
-        };
-
-        // Determine zoom card dimensions
-        let zoom_w = 2_800_000.min(slide_size.width / 2);
-        let zoom_h = (zoom_w as f64 * (slide_size.height as f64 / slide_size.width as f64)) as i64;
-
-        let existing_zooms = self
-            .slide()
-            .shape_links
-            .values()
-            .filter(|l| matches!(l, SlideLink::Slide(_)))
-            .count();
-        let offset = (existing_zooms as i64 % 5) * 300_000;
-        let x = ((slide_size.width - zoom_w) / 2 + offset).max(200_000);
-        let y = ((slide_size.height - zoom_h) / 2 + offset).max(200_000);
-        let frame = EmuRect::new(x, y, zoom_w, zoom_h);
-
-        let shape_id = self.document.ids().new_shape_id();
-        let stroke = Stroke::solid(Color::opaque(Rgb(0xd0d0d0)), 12_700);
-        let fill = Fill::Solid(Color::opaque(Rgb(0xffffff)));
-
-        let header_text = format!("🔍 Section: {} (Zoom)\n{}", section_name, slide_title);
-        let body = TextBody::plain(
-            &header_text,
-            TextStyle {
-                font_size: 14_00,
-                color: Rgb(0x333333),
-                bold: true,
-                ..Default::default()
-            },
-        );
-
-        let mut auto = AutoShape::new(Geometry::Rect, fill, Some(stroke));
-        auto.text = Some(body);
-        let shape = Shape::new(shape_id, frame, ibis_doc_model::ShapeKind::Auto(auto));
-
-        let insert_index = self.slide().shapes.len();
-        let link_tooltip = format!("Section Zoom: {} (Slide {})", section_name, slide_index);
-
-        let commands = vec![
-            Command::InsertShape {
-                slide: current_slide_id,
-                index: insert_index,
-                shape,
-            },
-            Command::SetShapeLink {
-                slide: current_slide_id,
-                shape: shape_id,
-                link: Some(SlideLink::Slide(first_slide_id)),
-            },
-            Command::SetShapeLinkTooltip {
-                slide: current_slide_id,
-                shape: shape_id,
-                tooltip: Some(link_tooltip),
-            },
-            Command::SetShapeReturnToZoom {
-                slide: current_slide_id,
-                shape: shape_id,
-                return_to_zoom: true,
-            },
-        ];
-
-        self.run(commands, cx);
-        self.set_selection(vec![shape_id]);
-        Some(shape_id)
     }
 
     /// Render the Insert Section Zoom modal dialog if open.
@@ -626,6 +435,10 @@ impl SlideEditor {
 
     /// Whether the zoom shape has a custom image (Picture kind).
     pub(crate) fn has_custom_zoom_image(&self, shape_id: ShapeId) -> bool {
+        // A ズーム object says so itself (`imageType="cover"`); a card of an older file is a shape that is a picture.
+        if let Some(zoom) = self.slide().zoom_objects.get(&shape_id) {
+            return zoom.cover_image;
+        }
         self.is_zoom_shape(shape_id)
             && self.slide().shape(shape_id).is_some_and(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Picture(_)))
     }
@@ -644,6 +457,14 @@ impl SlideEditor {
         let Some(shape) = self.slide().shape(shape_id).cloned() else { return false };
         let media = self.document.ids().add_media(format, data.clone());
         self.resources.add_picture(media, format, &data);
+        // A ズーム object takes the picture as its cover (`imageType="cover"`) and keeps being the object.
+        if let (Some(zoom), ibis_doc_model::ShapeKind::Picture(old)) = (self.slide().zoom_objects.get(&shape_id).cloned(), &shape.kind) {
+            let mut picture = old.clone();
+            picture.media = media;
+            let zoom = ibis_doc_model::ZoomObject { cover_image: true, ..zoom };
+            self.run(vec![Command::SetKind { slide: current_slide_id, shape: shape_id, kind: Box::new(ibis_doc_model::ShapeKind::Picture(picture)) }, Command::SetZoomObject { slide: current_slide_id, shape: shape_id, zoom: Some(zoom) }], cx);
+            return true;
+        }
 
         let stroke = match &shape.kind {
             ibis_doc_model::ShapeKind::Auto(a) => a.stroke.clone(),
@@ -679,6 +500,15 @@ impl SlideEditor {
             Some(ibis_doc_model::SlideLink::Slide(id)) => *id,
             _ => return false,
         };
+        // A ズーム object shows the picture of the slide again (`imageType="preview"`).
+        if let (Some(zoom), Some(ibis_doc_model::ShapeKind::Picture(old))) = (self.slide().zoom_objects.get(&shape_id).cloned(), self.slide().shape(shape_id).map(|s| s.kind.clone())) {
+            let media = self.zoom_preview_media(target_slide_id, shape_id);
+            let mut picture = old;
+            picture.media = media;
+            let zoom = ibis_doc_model::ZoomObject { cover_image: false, ..zoom };
+            self.run(vec![Command::SetKind { slide: current_slide_id, shape: shape_id, kind: Box::new(ibis_doc_model::ShapeKind::Picture(picture)) }, Command::SetZoomObject { slide: current_slide_id, shape: shape_id, zoom: Some(zoom) }], cx);
+            return true;
+        }
 
         let p = self.presentation();
         let target_idx = p.slide_index(target_slide_id).unwrap_or(0);
@@ -802,149 +632,16 @@ impl SlideEditor {
         }
     }
 
-    /// Insert Summary Zoom cards targeting `target_slide_ids` onto the current slide.
-    pub(crate) fn insert_summary_zoom(
-        &mut self,
-        target_slide_ids: &[SlideId],
-        cx: &mut Context<Self>,
-    ) -> Vec<ShapeId> {
-        if target_slide_ids.is_empty() {
+    /// 挿入 > ズーム > サマリー ズーム for the sections the slides `target_slide_ids` are in (the dialog lists the first slide of each
+    /// section). A presentation with no section has none to summarise: the status says so.
+    pub(crate) fn insert_summary_zoom(&mut self, target_slide_ids: &[SlideId], window: &mut Window, cx: &mut Context<Self>) -> Vec<ShapeId> {
+        let sections = self.presentation().sections.clone();
+        let chosen: Vec<String> = sections.iter().filter(|s| s.slides.iter().any(|id| target_slide_ids.contains(id))).map(|s| s.id.clone()).collect();
+        if chosen.is_empty() {
+            self.set_status(crate::shell::i18n::text("pptx.zoom.summary-needs-sections").to_string(), cx);
             return Vec::new();
         }
-
-        let p = self.presentation();
-        let mut sorted_targets: Vec<SlideId> = target_slide_ids.to_vec();
-        sorted_targets.sort_by_key(|id| p.slide_index(*id).unwrap_or(usize::MAX));
-
-        let current_slide_id = self.current_slide;
-        let slide_size = p.slide_size;
-        let count = sorted_targets.len();
-
-        let cols = match count {
-            1 => 1,
-            2 => 2,
-            3 => 3,
-            4 => 2,
-            5..=6 => 3,
-            7..=8 => 4,
-            _ => 4,
-        };
-        let rows = (count + cols - 1) / cols;
-
-        let margin_x = (slide_size.width as f64 * 0.08) as i64;
-        let margin_top = (slide_size.height as f64 * 0.18) as i64;
-        let margin_bottom = (slide_size.height as f64 * 0.08) as i64;
-
-        let avail_w = slide_size.width - margin_x * 2;
-        let avail_h = slide_size.height - margin_top - margin_bottom;
-
-        let gap_x = (avail_w as f64 * 0.04) as i64;
-        let gap_y = (avail_h as f64 * 0.04) as i64;
-
-        let total_gap_x = gap_x * (cols as i64 - 1).max(0);
-        let total_gap_y = gap_y * (rows as i64 - 1).max(0);
-
-        let cell_w = (avail_w - total_gap_x) / cols as i64;
-        let cell_h = (avail_h - total_gap_y) / rows as i64;
-
-        let slide_aspect = slide_size.width as f64 / slide_size.height as f64;
-        let (card_w, card_h) = if cell_w as f64 / cell_h as f64 > slide_aspect {
-            let h = cell_h;
-            let w = (h as f64 * slide_aspect) as i64;
-            (w, h)
-        } else {
-            let w = cell_w;
-            let h = (w as f64 / slide_aspect) as i64;
-            (w, h)
-        };
-
-        let grid_w = card_w * cols as i64 + total_gap_x;
-        let grid_h = card_h * rows as i64 + total_gap_y;
-        let offset_x = margin_x + (avail_w - grid_w) / 2;
-        let offset_y = margin_top + (avail_h - grid_h) / 2;
-
-        let mut commands = Vec::new();
-        let mut created_ids = Vec::new();
-        let mut insert_index = self.slide().shapes.len();
-
-        for (i, &target_slide_id) in sorted_targets.iter().enumerate() {
-            let row = i / cols;
-            let col = i % cols;
-
-            let x = offset_x + col as i64 * (card_w + gap_x);
-            let y = offset_y + row as i64 * (card_h + gap_y);
-            let frame = EmuRect::new(x, y, card_w, card_h);
-
-            let (target_index, target_title) = {
-                let p = self.presentation();
-                let idx = p.slide_index(target_slide_id).unwrap_or(0);
-                let title = p
-                    .slide(target_slide_id)
-                    .and_then(|s| {
-                        s.shapes.iter().find_map(|sh| {
-                            if let Some(tb) = sh.text_body() {
-                                let t = tb.text().trim().to_string();
-                                if !t.is_empty() {
-                                    return Some(t);
-                                }
-                            }
-                            None
-                        })
-                    })
-                    .unwrap_or_else(|| format!("Slide {}", idx + 1));
-                (idx + 1, title)
-            };
-
-            let shape_id = self.document.ids().new_shape_id();
-            let stroke = Stroke::solid(Color::opaque(Rgb(0xd0d0d0)), 12_700);
-            let fill = Fill::Solid(Color::opaque(Rgb(0xffffff)));
-
-            let font_size = if cols >= 4 || rows >= 3 { 11_00 } else { 13_00 };
-            let header_text = format!("🔍 Slide {} (Zoom)\n{}", target_index, target_title);
-            let body = TextBody::plain(
-                &header_text,
-                TextStyle {
-                    font_size,
-                    color: Rgb(0x333333),
-                    bold: true,
-                    ..Default::default()
-                },
-            );
-
-            let mut auto = AutoShape::new(Geometry::Rect, fill, Some(stroke));
-            auto.text = Some(body);
-            let shape = Shape::new(shape_id, frame, ibis_doc_model::ShapeKind::Auto(auto));
-
-            let link_tooltip = format!("Slide {} Zoom: {}", target_index, target_title);
-
-            commands.push(Command::InsertShape {
-                slide: current_slide_id,
-                index: insert_index,
-                shape,
-            });
-            commands.push(Command::SetShapeLink {
-                slide: current_slide_id,
-                shape: shape_id,
-                link: Some(SlideLink::Slide(target_slide_id)),
-            });
-            commands.push(Command::SetShapeLinkTooltip {
-                slide: current_slide_id,
-                shape: shape_id,
-                tooltip: Some(link_tooltip),
-            });
-            commands.push(Command::SetShapeReturnToZoom {
-                slide: current_slide_id,
-                shape: shape_id,
-                return_to_zoom: true,
-            });
-
-            created_ids.push(shape_id);
-            insert_index += 1;
-        }
-
-        self.run(commands, cx);
-        self.set_selection(created_ids.clone());
-        created_ids
+        self.insert_summary_zoom_for_sections(&chosen, window, cx)
     }
 
     /// Render the Insert Summary Zoom modal dialog if open.
@@ -1024,7 +721,6 @@ impl SlideEditor {
                 .id("summary-zoom-modal-scrim")
                 .absolute()
                 .inset_0()
-                .bg(rgba(0x00000066))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1089,8 +785,8 @@ impl SlideEditor {
                                             t("pptx.zoom.insert").to_string()
                                         }, crate::shell::chrome::ActionButtonKind::Primary)
                                         .disabled(count == 0)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.insert_summary_zoom(&selected_vec, cx);
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.insert_summary_zoom(&selected_vec, window, cx);
                                             this.close_summary_zoom_dialog(cx);
                                         })),
                                 )

@@ -34,11 +34,27 @@ fn dump_corpus_layout() {
         let pagination = super::flow_layout::pages(flow, &resources);
         summary.push_str(&format!("{name}\t{}\n", pagination.pages.len()));
         let mut tsv = String::new();
+        // The vertical rules (thin rectangles) of each page: `<name>.rules.tsv`, the page, x and top, bottom of each (table column edges).
+        let mut rules = String::new();
         for (p, page) in pagination.pages.iter().enumerate() {
             for item in &page.items {
                 if let Item::Line { para, x, y, h, .. } = item {
                     tsv.push_str(&format!("{}	{:.2}	{:.2}	{:.2}	{:.2}	#line para {para} h {h:.2}
 ", p + 1, page.height, y, x, h));
+                }
+                if let Item::Rect { x, y, w, h, .. } = item
+                    && *w < 1.0
+                    && *h > 5.0
+                {
+                    rules.push_str(&format!("{}	{:.2}	{:.2}	{:.2}
+", p + 1, x + w / 2.0, y, y + h));
+                }
+                if let Item::Stroke { x, y, x2, y2, .. } = item
+                    && (x - x2).abs() < 0.01
+                    && (y2 - y).abs() > 5.0
+                {
+                    rules.push_str(&format!("{}	{:.2}	{:.2}	{:.2}
+", p + 1, x, y.min(*y2), y.max(*y2)));
                 }
                 if let Item::Text { x, y, text, size, offsets, .. } = item {
                     let shown: String = text.chars().take(200).collect();
@@ -51,6 +67,7 @@ fn dump_corpus_layout() {
             }
         }
         std::fs::write(std::path::Path::new(&out).join(format!("{name}.tsv")), tsv).expect("write");
+        std::fs::write(std::path::Path::new(&out).join(format!("{name}.rules.tsv")), rules).expect("write");
         // IBIS_DUMP_PDF=1: the PDF the export writes, to look at (`<name>.pdf` in the output folder).
         if std::env::var("IBIS_DUMP_PDF").is_ok_and(|v| v == "1") {
             let again = ibis_pptx::read(&bytes).expect("a document");

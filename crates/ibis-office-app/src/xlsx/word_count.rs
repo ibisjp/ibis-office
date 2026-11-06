@@ -120,6 +120,6 @@ impl SlideEditor {
             .child(row("xlsx.word-count.words", "docx.help-panels.words", stats.words))
             .child(row("xlsx.word-count.chars-no-spaces", "docx.help-panels.characters-no-spaces", stats.characters_no_spaces))
             .child(row("xlsx.word-count.chars-with-spaces", "docx.help-panels.characters-spaces", stats.characters_with_spaces));
-        Some(SidebarPanel::with_footer(text("docx.help-panels.word-count"),body.into_any_element(),crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("sheet-word-count-close", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.close")).on_click(cx.listener(|e,_,w,cx|e.close_panel_dialog(w,cx))))))
+        Some(SidebarPanel::with_footer(text("docx.help-panels.word-count"),body.into_any_element(),crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("sheet-word-count-close", "", crate::shell::chrome::ActionButtonKind::Normal).label(text("_shell.close")).on_click(cx.listener(|e,_,w,cx|e.close_dialog(w,cx))))))
     }
 }

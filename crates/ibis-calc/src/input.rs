@@ -18,8 +18,33 @@ pub enum Typed {
     Value(CellValue, Option<&'static str>),
 }
 
+/// Where the text comes from. Excel reads a sign-led word (`-x`, `+SUM(1)`)
+/// typed into a cell as a formula, but reads the same text from a file or a
+/// paste as plain text (a telephone number `+81-90-1234-5678`, `- note`,
+/// `-----`). The one rule for that difference lives here, so that changing
+/// the rule for typing cannot change the other entrances.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputSource {
+    /// Typed into a cell (or a dialog field that takes what a cell takes).
+    Typed,
+    /// Read from a CSV/text file, pasted text, Text to Columns, or a
+    /// replacement: data, not an expression.
+    Imported,
+}
+
 /// Read what was typed into a cell.
 pub fn parse_input(text: &str, date1904: bool) -> Typed {
+    parse_input_from(text, date1904, InputSource::Typed)
+}
+
+/// Read a field of a text file, pasted text or a replacement result: as
+/// `parse_input`, but a sign-led word that is not a number stays text.
+pub fn parse_imported(text: &str, date1904: bool) -> Typed {
+    parse_input_from(text, date1904, InputSource::Imported)
+}
+
+/// Read `text` as Excel does for an entrance of kind `source`.
+pub fn parse_input_from(text: &str, date1904: bool, source: InputSource) -> Typed {
     if let Some(f) = text.strip_prefix('=')
         && !f.is_empty()
     {
@@ -94,7 +119,7 @@ pub fn parse_input(text: &str, date1904: bool) -> Typed {
     // Signed literals have already been read as numbers/dates above. Remaining
     // leading signs introduce an expression, while apostrophe-escaped text was
     // handled before numeric parsing. Preserve the sign as a unary operator.
-    if text.starts_with(['+', '-']) && text.len()>1 {
+    if source == InputSource::Typed && text.starts_with(['+', '-']) && text.len() > 1 {
         return Typed::Formula(text.to_string());
     }
     Typed::Value(CellValue::Text(text.to_string()), None)
@@ -189,6 +214,16 @@ mod tests {
             Typed::Value(v, f) => (v, f),
             Typed::Formula(f) => panic!("formula {f}"),
         }
+    }
+
+    #[test]
+    fn imported_sign_led_text_stays_text() {
+        for t in ["+81-90-1234-5678", "- 備考", "-----", "+HYPERLINK(\"x\")", "-x"] {
+            assert_eq!(parse_imported(t, false), Typed::Value(CellValue::Text(t.into()), None), "{t}");
+            assert!(matches!(parse_input(t, false), Typed::Formula(_)), "typed {t}");
+        }
+        assert_eq!(parse_imported("-5", false), Typed::Value(CellValue::Number(-5.0), None));
+        assert_eq!(parse_imported("=1+1", false), Typed::Formula("1+1".into()));
     }
 
     #[test]

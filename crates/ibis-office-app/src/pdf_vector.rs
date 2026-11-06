@@ -5,7 +5,7 @@
 //! `PaintRecord`s): text as text in the fonts it was drawn with (subset and
 //! embedded, with the characters for copying and searching), shapes as
 //! paths, pictures as images. A blurred shadow (a drop shadow, a soft edge, a glow) is a picture of its blur (as PowerPoint writes one: a bitmap
-//! with an alpha mask, PDF having no blur); an inner shadow is left out.
+//! with an alpha mask, PDF having no blur); an inner shadow is the same picture of the blur of what is not in its hole, cut to the shape.
 //!
 //! The records are in logical pixels from the page's top-left corner; each
 //! page is scaled to its size in points.
@@ -344,11 +344,10 @@ impl PdfWriter {
                         }
                     });
                 }
-                PaintRecord::Shadow { bounds, corner_radii, color: shadow_color, blur_radius, inset, clip } => {
-                    if *inset {
-                        continue;
-                    }
-                    let Some((image, rect)) = shadow_image(bounds, corner_radii, *shadow_color, f32::from(*blur_radius)) else { continue };
+                PaintRecord::Shadow { bounds, corner_radii, color: shadow_color, blur_radius, inset, element, element_radii, clip } => {
+                    let sigma = f32::from(*blur_radius);
+                    let made = if *inset { inner_shadow_image(element, element_radii, bounds, corner_radii, *shadow_color, sigma) } else { shadow_image(bounds, corner_radii, *shadow_color, sigma) };
+                    let Some((image, rect)) = made else { continue };
                     with_clip(&mut surface, clip, within(&rect, clip), |s| {
                         s.push_transform(&Transform::from_translate(f32::from(rect.left()), f32::from(rect.top())));
                         if let Some(size) = Size::from_wh(f32::from(rect.size.width), f32::from(rect.size.height)) {
@@ -458,47 +457,60 @@ fn with_clip(s: &mut Surface, clip: &Bounds<Pixels>, inside: bool, f: impl FnOnc
     }
 }
 
-/// The picture of a blurred shadow: the rounded rectangle `bounds` (the shadow before it is blurred), its coverage blurred by a Gaussian of deviation
-/// `sigma` (pixels) and coloured, as straight RGBA with the shadow's alpha where the rectangle is whole. As PowerPoint writes a shadow, the picture's
-/// pixels are as coarse as keeps the blur at about 2.2 of them (`sigma / 2.2` logical pixels, at least half a pixel; PowerPoint 16.0.20527.20088's PDFs
-/// of blurRad 1.5pt to 24pt: the deviation is 2.2 to 2.5 pixels of the shadow's bitmap, whose resolution goes from 200 dpi down to 29 dpi), at most
-/// 1500 across. The rectangle the picture covers goes with it.
-fn shadow_image(bounds: &Bounds<Pixels>, radii: &Corners<Pixels>, shadow_color: Hsla, sigma: f32) -> Option<(Image, Bounds<Pixels>)> {
-    let rgba = shadow_color.to_rgb();
-    let (bw, bh) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
-    if rgba.a <= 0.0 || bw <= 0.0 || bh <= 0.0 {
-        return None;
+/// The raster a shadow is made on: `cols` × `rows` cells of `pitch` logical pixels from (`left`, `top`).
+struct Grid {
+    cols: usize,
+    rows: usize,
+    left: f32,
+    top: f32,
+    pitch: f32,
+}
+
+impl Grid {
+    /// A grid over the rectangle (`left`, `top`, `width`, `height`) with the pixel pitch a blur of deviation `sigma` calls for: as PowerPoint writes a
+    /// shadow, the picture's pixels are as coarse as keeps the blur at about 2.2 of them (`sigma / 2.2` logical pixels, at least half a pixel;
+    /// PowerPoint 16.0.20527.20088's PDFs of blurRad 1.5pt to 24pt: the deviation is 2.2 to 2.5 pixels of the shadow's bitmap, whose resolution goes
+    /// from 200 dpi down to 29 dpi), at most 1500 across.
+    fn over(left: f32, top: f32, width: f32, height: f32, sigma: f32) -> Grid {
+        let pitch = (sigma / 2.2).max(0.5).max(width / 1500.0).max(height / 1500.0);
+        Grid { cols: (width / pitch).ceil() as usize + 1, rows: (height / pitch).ceil() as usize + 1, left, top, pitch }
     }
-    let sigma = sigma.max(0.0);
-    let margin = 3.0 * sigma;
-    let pitch = (sigma / 2.2).max(0.5).max((bw + 2.0 * margin) / 1500.0).max((bh + 2.0 * margin) / 1500.0);
-    let cols = ((bw + 2.0 * margin) / pitch).ceil() as usize + 1;
-    let rows = ((bh + 2.0 * margin) / pitch).ceil() as usize + 1;
-    let (left, top) = (f32::from(bounds.left()) - margin, f32::from(bounds.top()) - margin);
-    let (cx, cy) = (f32::from(bounds.left()) + bw / 2.0, f32::from(bounds.top()) + bh / 2.0);
-    let (hx, hy) = (bw / 2.0, bh / 2.0);
-    let radius = |right: bool, bottom: bool| {
-        let r = match (right, bottom) {
-            (false, false) => radii.top_left,
-            (true, false) => radii.top_right,
-            (false, true) => radii.bottom_left,
-            (true, true) => radii.bottom_right,
+
+    /// The coverage (0 to 1, anti-aliased by a pixel) of the rounded rectangle `bounds` at each cell.
+    fn coverage(&self, bounds: &Bounds<Pixels>, radii: &Corners<Pixels>) -> Vec<f32> {
+        let (bw, bh) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+        let (cx, cy) = (f32::from(bounds.left()) + bw / 2.0, f32::from(bounds.top()) + bh / 2.0);
+        let (hx, hy) = (bw / 2.0, bh / 2.0);
+        let radius = |right: bool, bottom: bool| {
+            let r = match (right, bottom) {
+                (false, false) => radii.top_left,
+                (true, false) => radii.top_right,
+                (false, true) => radii.bottom_left,
+                (true, true) => radii.bottom_right,
+            };
+            f32::from(r).min(hx).min(hy).max(0.0)
         };
-        f32::from(r).min(hx).min(hy).max(0.0)
-    };
-    let mut coverage = vec![0f32; cols * rows];
-    for j in 0..rows {
-        let y = top + (j as f32 + 0.5) * pitch;
-        for i in 0..cols {
-            let x = left + (i as f32 + 0.5) * pitch;
-            let r = radius(x > cx, y > cy);
-            let (qx, qy) = ((x - cx).abs() - hx + r, (y - cy).abs() - hy + r);
-            let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
-            coverage[j * cols + i] = (0.5 - d / pitch).clamp(0.0, 1.0);
+        let mut coverage = vec![0f32; self.cols * self.rows];
+        for j in 0..self.rows {
+            let y = self.top + (j as f32 + 0.5) * self.pitch;
+            for i in 0..self.cols {
+                let x = self.left + (i as f32 + 0.5) * self.pitch;
+                let r = radius(x > cx, y > cy);
+                let (qx, qy) = ((x - cx).abs() - hx + r, (y - cy).abs() - hy + r);
+                let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
+                coverage[j * self.cols + i] = (0.5 - d / self.pitch).clamp(0.0, 1.0);
+            }
         }
+        coverage
     }
-    let deviation = sigma / pitch;
-    if deviation > 0.3 {
+
+    /// `coverage` blurred by a Gaussian of deviation `sigma` (pixels).
+    fn blur(&self, coverage: &mut [f32], sigma: f32) {
+        let (cols, rows) = (self.cols, self.rows);
+        let deviation = sigma / self.pitch;
+        if deviation <= 0.3 {
+            return;
+        }
         let reach = (3.0 * deviation).ceil() as isize;
         let kernel: Vec<f32> = (-reach..=reach).map(|k| (-((k * k) as f32) / (2.0 * deviation * deviation)).exp()).collect();
         let total: f32 = kernel.iter().sum();
@@ -529,11 +541,59 @@ fn shadow_image(bounds: &Bounds<Pixels>, radii: &Corners<Pixels>, shadow_color: 
             }
         }
     }
-    let (r, g, b) = ((rgba.r * 255.0).round() as u8, (rgba.g * 255.0).round() as u8, (rgba.b * 255.0).round() as u8);
-    let pixels: Vec<u8> = coverage.iter().flat_map(|c| [r, g, b, (c * rgba.a * 255.0).round().clamp(0.0, 255.0) as u8]).collect();
-    let image = Image::from_rgba8(pixels, cols as u32, rows as u32);
-    let rect = Bounds::new(gpui_kit::point(gpui_kit::px(left), gpui_kit::px(top)), gpui_kit::size(gpui_kit::px(cols as f32 * pitch), gpui_kit::px(rows as f32 * pitch)));
-    Some((image, rect))
+
+    /// The picture of `alpha` (0 to 1 at each cell) in `rgba`'s colour, and the rectangle it covers.
+    fn image(&self, alpha: &[f32], rgba: Rgba) -> (Image, Bounds<Pixels>) {
+        let (r, g, b) = ((rgba.r * 255.0).round() as u8, (rgba.g * 255.0).round() as u8, (rgba.b * 255.0).round() as u8);
+        let pixels: Vec<u8> = alpha.iter().flat_map(|c| [r, g, b, (c * rgba.a * 255.0).round().clamp(0.0, 255.0) as u8]).collect();
+        let image = Image::from_rgba8(pixels, self.cols as u32, self.rows as u32);
+        let rect = Bounds::new(gpui_kit::point(gpui_kit::px(self.left), gpui_kit::px(self.top)), gpui_kit::size(gpui_kit::px(self.cols as f32 * self.pitch), gpui_kit::px(self.rows as f32 * self.pitch)));
+        (image, rect)
+    }
+}
+
+/// The picture of a blurred shadow: the rounded rectangle `bounds` (the shadow before it is blurred), its coverage blurred by a Gaussian of deviation
+/// `sigma` (pixels) and coloured, as straight RGBA with the shadow's alpha where the rectangle is whole. The rectangle the picture covers goes with it.
+fn shadow_image(bounds: &Bounds<Pixels>, radii: &Corners<Pixels>, shadow_color: Hsla, sigma: f32) -> Option<(Image, Bounds<Pixels>)> {
+    let rgba = shadow_color.to_rgb();
+    let (bw, bh) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    if rgba.a <= 0.0 || bw <= 0.0 || bh <= 0.0 {
+        return None;
+    }
+    let sigma = sigma.max(0.0);
+    let margin = 3.0 * sigma;
+    let grid = Grid::over(f32::from(bounds.left()) - margin, f32::from(bounds.top()) - margin, bw + 2.0 * margin, bh + 2.0 * margin, sigma);
+    let mut coverage = grid.coverage(bounds, radii);
+    grid.blur(&mut coverage, sigma);
+    Some(grid.image(&coverage, rgba))
+}
+
+/// The shadow inside a shape (`a:innerShdw`) as a coverage over a grid: it falls where the `hole` (the shape moved by the shadow's offset, with the
+/// same corners) does not cover, its edge blurred by `sigma`, and only inside the shape `element`. The grid covers the shape's rectangle and the
+/// reach of the blur round it (the hole is blurred where it goes past the shape too).
+fn inner_shadow_alpha(element: &Bounds<Pixels>, element_radii: &Corners<Pixels>, hole: &Bounds<Pixels>, hole_radii: &Corners<Pixels>, sigma: f32) -> Option<(Grid, Vec<f32>)> {
+    let (ew, eh) = (f32::from(element.size.width), f32::from(element.size.height));
+    if ew <= 0.0 || eh <= 0.0 {
+        return None;
+    }
+    let sigma = sigma.max(0.0);
+    let margin = 3.0 * sigma;
+    let grid = Grid::over(f32::from(element.left()) - margin, f32::from(element.top()) - margin, ew + 2.0 * margin, eh + 2.0 * margin, sigma);
+    let mut covered = grid.coverage(hole, hole_radii);
+    grid.blur(&mut covered, sigma);
+    let inside = grid.coverage(element, element_radii);
+    let alpha = covered.iter().zip(&inside).map(|(c, i)| (1.0 - c) * i).collect();
+    Some((grid, alpha))
+}
+
+/// The picture of a shadow inside a shape (`a:innerShdw`, see `inner_shadow_alpha`), and the rectangle it covers.
+fn inner_shadow_image(element: &Bounds<Pixels>, element_radii: &Corners<Pixels>, hole: &Bounds<Pixels>, hole_radii: &Corners<Pixels>, shadow_color: Hsla, sigma: f32) -> Option<(Image, Bounds<Pixels>)> {
+    let rgba = shadow_color.to_rgb();
+    if rgba.a <= 0.0 {
+        return None;
+    }
+    let (grid, alpha) = inner_shadow_alpha(element, element_radii, hole, hole_radii, sigma)?;
+    Some(grid.image(&alpha, rgba))
 }
 
 /// A hash of all the bytes of a picture (8 at a time, multiplied and folded in), to tell pictures by what they hold.
@@ -790,4 +850,46 @@ fn glyph_characters(data: &[u8], index: u32) -> HashMap<u32, char> {
         }
     }
     out.into_iter().map(|(g, (_, c))| (g, c)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{point, px, size};
+
+    fn bounds(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(w), px(h)))
+    }
+
+    /// An inner shadow (`a:innerShdw`) is no longer left out of the PDF: with the shape moved 6 px right and down as the hole, the shadow is
+    /// along the shape's top and left edges inside it, and nowhere else (not in the middle, not along the bottom and right edges, not outside).
+    #[test]
+    fn an_inner_shadow_falls_inside_the_shape_along_the_edges_the_offset_uncovers() {
+        let element = bounds(10.0, 10.0, 60.0, 60.0);
+        let hole = bounds(16.0, 16.0, 60.0, 60.0);
+        let (grid, alpha) = inner_shadow_alpha(&element, &Corners::default(), &hole, &Corners::default(), 0.1).expect("a shadow");
+        let at = |x: f32, y: f32| {
+            let (i, j) = (((x - grid.left) / grid.pitch).floor() as usize, ((y - grid.top) / grid.pitch).floor() as usize);
+            alpha[j * grid.cols + i]
+        };
+        assert!(at(12.0, 40.0) > 0.9, "left edge strip: {}", at(12.0, 40.0));
+        assert!(at(40.0, 12.0) > 0.9, "top edge strip: {}", at(40.0, 12.0));
+        assert!(at(40.0, 40.0) < 0.05, "the middle: {}", at(40.0, 40.0));
+        assert!(at(68.0, 40.0) < 0.05, "right edge, covered by the hole: {}", at(68.0, 40.0));
+        assert!(at(40.0, 68.0) < 0.05, "bottom edge, covered by the hole: {}", at(40.0, 68.0));
+        // Blurred (3 px), the shadow is still nowhere outside the shape: no cell whose centre is a pitch past its edge.
+        let (grid, alpha) = inner_shadow_alpha(&element, &Corners::default(), &hole, &Corners::default(), 3.0).expect("a shadow");
+        assert!(alpha.iter().any(|a| *a > 0.2), "a blurred shadow is still there");
+        for j in 0..grid.rows {
+            for i in 0..grid.cols {
+                let (x, y) = (grid.left + (i as f32 + 0.5) * grid.pitch, grid.top + (j as f32 + 0.5) * grid.pitch);
+                if x < 10.0 - grid.pitch || x > 70.0 + grid.pitch || y < 10.0 - grid.pitch || y > 70.0 + grid.pitch {
+                    assert!(alpha[j * grid.cols + i] < 0.05, "outside the shape at ({x}, {y}): {}", alpha[j * grid.cols + i]);
+                }
+            }
+        }
+        // The picture is made, and covers the shape.
+        let (_, rect) = inner_shadow_image(&element, &Corners::default(), &hole, &Corners::default(), gpui_kit::rgba(0x000000ff).into(), 0.1).expect("a picture");
+        assert!(rect.left() <= element.left() && rect.right() >= element.right());
+    }
 }

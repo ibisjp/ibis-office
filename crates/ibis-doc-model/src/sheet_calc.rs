@@ -121,6 +121,18 @@ impl<'a> BookView<'a> {
         out
     }
 
+    /// The cells whose formula calls the function `name` (upper case, without the parenthesis).
+    pub fn formula_cells_calling(&self, name: &str) -> Vec<CellId> {
+        let call = format!("{name}(");
+        let mut out = Vec::new();
+        for (i, s) in self.sheets.iter().enumerate() {
+            if let Some(sheet) = s.sheet {
+                out.extend(sheet.cells.iter().filter(|c| c.formula.as_deref().is_some_and(|f| f.as_bytes().windows(call.len()).any(|w| w.eq_ignore_ascii_case(call.as_bytes())))).map(|c| (i, c.row, c.column)));
+            }
+        }
+        out
+    }
+
     /// The formula cells with no value: a file written by a program that does
     /// not calculate (C#'s Open XML SDK, openpyxl) has none cached.
     pub fn formula_cells_without_value(&self) -> Vec<CellId> {

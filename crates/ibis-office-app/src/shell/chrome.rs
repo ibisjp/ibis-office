@@ -43,6 +43,8 @@ use crate::shell::palette::rgb;
 
 mod form;
 pub(crate) mod font_size;
+pub(crate) mod number_stepper;
+pub(crate) use number_stepper::{bound_number_stepper, number_stepper, StepperPopup};
 pub(crate) const TOOLBAR_CARET_WIDTH:f32=16.;
 pub(crate) const CONTROL_INDENT:f32=14.;
 pub(crate) use form::FORM_PADDING;
@@ -53,16 +55,27 @@ mod scrollbar;
 pub(crate) mod action_bar;
 pub(crate) use action_bar::{ActionBar, ActionDefinition};
 pub(crate) mod preview_dropdown;
+pub(crate) mod synced_field;
+pub(crate) mod shown;
+pub(crate) mod shown_number;
+pub(crate) use shown::{Shown, Typed};
+pub(crate) use shown_number::{ShownNumber, ShownText};
 pub(crate) mod gradient_slider;
+pub(crate) mod slider;
+pub(crate) use slider::{slider, ValueSlider};
 pub(crate) mod collapsible_section;
 pub(crate) use collapsible_section::collapsible_section;
 pub(crate) mod control_row;
-pub(crate) use control_row::{SegmentControlRow, control_row, text_field_row, color_field_row, color_text_field_row, dropdown_row, segment_control_row};
+pub(crate) use control_row::{slider_row, SegmentControlRow, control_row, text_field_row, color_row, color_field_row, color_text_field_row, dropdown_row, dropdown_row_scaled, font_dropdown_row, document_font_dropdown_row, segment_control_row, toolbar_row, toolbar_group, ToolbarItem};
 mod tab_control;
+mod button_group;
+pub(crate) use button_group::{ButtonGroup, ButtonGroupItem, button_group};
 pub(crate) mod segment_control;
 pub(crate) use tab_control::{tab_control,tab_control_with_mode,TabMode};
 pub(crate) mod panel;
 pub(crate) mod data_table;
+pub(crate) mod virtual_table;
+pub(crate) mod row_dnd;
 mod sheet_preview;
 pub(crate) use sheet_preview::sheet_preview;
 pub(crate) use form::{table_list,table_fill,panel_form, panel_message, table, table_row,table_row_with_actions};
@@ -162,6 +175,10 @@ pub(crate) enum MenuEntry {
     Submenu(Submenu),
     /// The squares of a colour palette (`color_palette.rs`).
     Palette(crate::shell::color_palette::Palette),
+    /// One row of a grid of pictures (`menu_tiles.rs`): items that have a [`MenuItem::thumb`], each drawn as its
+    /// picture over its name. Made by `menu_tiles::group_tiles` just before a menu is filled; the menus the rest of
+    /// the code reads and looks items up in hold the plain items.
+    Tiles(Vec<MenuItem>),
 }
 
 /// A menu item. It is enabled when it has a handler and is not disabled.
@@ -180,11 +197,17 @@ pub(crate) struct MenuItem {
     pub disabled: bool,
     pub handler: Option<Handler>,
     pub dropdown_content: Option<dropdown::ItemContent>,
+    /// A picture of the item for a grid of pictures (`menu_tiles.rs`): given the editor and the picture's width in
+    /// pixels, it makes the 4:3 picture. Items that have one are laid out in a grid when a menu is filled.
+    pub thumb: Option<Thumb>,
 }
+
+/// Makes the picture of a [`MenuItem::thumb`] (the editor to read the document from, the width in pixels).
+pub(crate) type Thumb = Rc<dyn Fn(&SlideEditor, f32) -> AnyElement>;
 
 impl MenuItem {
     pub(crate) fn new(id: &'static str, label: impl Into<SharedString>) -> Self {
-        Self { id, icon: None, swatch: None, label: label.into(), shortcut: None, checked: false, disabled: false, handler: None, dropdown_content: None }
+        Self { id, icon: None, swatch: None, label: label.into(), shortcut: None, checked: false, disabled: false, handler: None, dropdown_content: None, thumb: None }
     }
 
     /// An item labelled in the UI's language by its id (`i18n/*.tsv`).
@@ -224,6 +247,12 @@ impl MenuItem {
 
     pub(crate) fn on(mut self, f: impl Fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) -> Self {
         self.handler = Some(Rc::new(f));
+        self
+    }
+
+    /// Draw the item as a picture in a grid (`menu_tiles.rs`).
+    pub(crate) fn thumb(mut self, f: impl Fn(&SlideEditor, f32) -> AnyElement + 'static) -> Self {
+        self.thumb = Some(Rc::new(f));
         self
     }
 
@@ -483,7 +512,7 @@ impl ToolButton {
                 }
             }
         }
-        self.color = Some(rgb(last.0).into());
+        self.color = Some(crate::shell::palette::doc(last.0).into());
         self.quick = pick.map(|pick| -> Handler { Rc::new(move |e, w, cx| pick(e, Some(last), w, cx)) });
         self.menu = Some(items);
         self
@@ -645,7 +674,7 @@ pub(crate) struct SidebarPanel {
 
 // The opt-in gallery renders each real panel independently, without stale panel precedence.
 #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
-pub(crate) type CapturedPanel = (fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) -> Option<SidebarPanel>, &'static str, super::panel_dialog::PanelMode);
+pub(crate) type CapturedPanel = (fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) -> Option<SidebarPanel>, &'static str, super::dialog::DialogMode);
 #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
 thread_local! {
     pub(crate) static FORCED_SIDEBAR: std::cell::Cell<Option<CapturedPanel>> = const { std::cell::Cell::new(None) };
@@ -653,14 +682,75 @@ thread_local! {
 }
 
 thread_local! {
-    static PANEL_MODE: std::cell::Cell<super::panel_dialog::PanelMode> = const { std::cell::Cell::new(super::panel_dialog::PanelMode::Sidebar) };
+    static PANEL_MODE: std::cell::Cell<super::dialog::DialogMode> = const { std::cell::Cell::new(super::dialog::DialogMode::Sidebar) };
     static PANEL_KEY: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+    /// The dialog attribute `backdrop` (see `SidebarPanel::backdrop`); read once by `render_dialog`.
+    static PANEL_BACKDROP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The dialog attribute `esc_closes` (see `SidebarPanel::esc_closes`; default ON); read once by `render_dialog`.
+    static PANEL_ESC_CLOSES: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    /// The pane attribute `fill` (see `SidebarPanel::fill`); read once when the right pane is built.
+    static PANEL_FILL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static SIDEBAR_FOOTER: std::cell::RefCell<Option<ActionBar>> = const { std::cell::RefCell::new(None) };
+    /// The panel header area (see `SidebarPanel::header`); taken once by the host that shows the panel.
+    static PANEL_HEADER: std::cell::RefCell<Option<AnyElement>> = const { std::cell::RefCell::new(None) };
+    /// The pinned part (see `SidebarPanel::pinned`); taken once by the host that shows the panel.
+    static PANEL_PINNED: std::cell::RefCell<Option<AnyElement>> = const { std::cell::RefCell::new(None) };
 }
 
+/// The pinned part set by the panel being built (`SidebarPanel::pinned`), if any; reading it empties it.
+pub(crate) fn take_panel_pinned() -> Option<AnyElement> { PANEL_PINNED.with(|h| h.borrow_mut().take()) }
+
+/// The panel header area set by the panel being built (`SidebarPanel::header`), if any; reading it empties it.
+pub(crate) fn take_panel_header() -> Option<AnyElement> { PANEL_HEADER.with(|h| h.borrow_mut().take()) }
+/// Puts a header back for the host that shows the panel it belongs to.
+pub(crate) fn set_panel_header(header: Option<AnyElement>) { PANEL_HEADER.with(|h| *h.borrow_mut() = header); }
+
+/// Whether the panel being turned into a dialog asked for the backdrop; reading it resets it.
+pub(crate) fn take_panel_backdrop() -> bool { PANEL_BACKDROP.with(|b| b.replace(false)) }
+
+/// Whether the panel being turned into a dialog lets Escape close it (default ON); reading it resets it.
+pub(crate) fn take_panel_esc_closes() -> bool { PANEL_ESC_CLOSES.with(|b| b.replace(true)) }
+
 impl SidebarPanel {
-    pub(crate) fn submit_type(self,submit:super::panel_dialog::SubmitType)->Self {super::panel_dialog::form::OPTIONS.with(|o|o.set(super::panel_dialog::form::Options{submit,..o.get()}));self}
-    pub(crate) fn auto_focus(self,auto_focus:bool)->Self {super::panel_dialog::form::OPTIONS.with(|o|o.set(super::panel_dialog::form::Options{auto_focus,..o.get()}));self}
+    /// The dialog attribute `esc_closes` (default ON): whether Escape closes this modal dialog, as Cancel does. Turn it OFF
+    /// only for a dialog that must not be left by Escape (say, one that cannot be cancelled, a process in progress), and
+    /// say why where it is turned off. Escape is not offered to the dialog while an input method is composing, a drag is
+    /// being cancelled, or a menu / dropdown list is open (they take it). Has no effect on modeless / sidebar.
+    #[allow(dead_code)]
+    pub(crate) fn esc_closes(self, on: bool) -> Self {
+        PANEL_ESC_CLOSES.with(|b| b.set(on)); self
+    }
+    /// A pane whose content is one table (`DataTable::virtualized`): the pane does not scroll as a whole, the body
+    /// takes the pane's height and the table scrolls its value rows under a fixed heading row.
+    pub(crate) fn fill(self) -> Self {
+        PANEL_FILL.with(|f| f.set(true)); self
+    }
+    /// The panel header area: a fixed strip ([`panel::PANEL_HEADER_HEIGHT`] high) at the top of the panel, under the
+    /// title and OUTSIDE the scrolling body, in a right pane and in a dialog alike. Its content is made by the common
+    /// part ([`SidebarPanel::header_tabs`]); a panel does not draw its own header.
+    pub(crate) fn header(self, header: AnyElement) -> Self {
+        PANEL_HEADER.with(|h| *h.borrow_mut() = Some(header)); self
+    }
+    /// A part pinned to the bottom of the right pane, outside the scrolling body (above the footer): what must stay in
+    /// sight while the body scrolls (the comments' field for an answer). Right panes only; a dialog does not show it.
+    pub(crate) fn pinned(self, part: AnyElement) -> Self {
+        PANEL_PINNED.with(|h| *h.borrow_mut() = Some(part)); self
+    }
+    /// A tab control in the panel header area (書式 / 罫線 / 保護…). `selected` and the body to show belong to the
+    /// panel's own state: `change` stores the new index, and the next build of the panel shows that tab's body.
+    pub(crate) fn header_tabs(
+        self,
+        id: &'static str,
+        labels: impl IntoIterator<Item = SharedString>,
+        selected: usize,
+        change: impl Fn(&mut SlideEditor, usize, &mut Context<SlideEditor>) + 'static,
+        cx: &Context<SlideEditor>,
+    ) -> Self {
+        let tabs = tab_control(labels, selected, id, change, cx);
+        self.header(tabs.into_any_element())
+    }
+    pub(crate) fn submit_type(self,submit:super::dialog::SubmitType)->Self {super::dialog::form::OPTIONS.with(|o|o.set(super::dialog::form::Options{submit,..o.get()}));self}
+    pub(crate) fn auto_focus(self,auto_focus:bool)->Self {super::dialog::form::OPTIONS.with(|o|o.set(super::dialog::form::Options{auto_focus,..o.get()}));self}
 
     pub(crate) fn modal_named(self, key: &'static str) -> Self {
         PANEL_KEY.with(|current| current.set(Some(key)));
@@ -670,11 +760,16 @@ impl SidebarPanel {
         PANEL_KEY.with(|current| current.set(Some(key)));
         self.modeless()
     }
+    /// Dim the window behind a modal dialog. Default OFF; ON only for a very important question such as the
+    /// save confirmation (doc/rule/implimentationRule.md, the dialog section). Has no effect on modeless / sidebar.
+    pub(crate) fn backdrop(self, on: bool) -> Self {
+        PANEL_BACKDROP.with(|b| b.set(on)); self
+    }
     pub(crate) fn modal(self) -> Self {
-        PANEL_MODE.with(|mode| mode.set(super::panel_dialog::PanelMode::Modal)); self
+        PANEL_MODE.with(|mode| mode.set(super::dialog::DialogMode::Modal)); self
     }
     pub(crate) fn modeless(self) -> Self {
-        PANEL_MODE.with(|mode| mode.set(super::panel_dialog::PanelMode::Modeless)); self
+        PANEL_MODE.with(|mode| mode.set(super::dialog::DialogMode::Modeless)); self
     }
 
     /// Construct a `SidebarPanel` with a sticky bottom footer rendered below the scrollable body (#151).
@@ -729,7 +824,7 @@ fn listener(editor: &WeakEntity<SlideEditor>, handler: &Handler) -> impl Fn(&Cli
         editor.update(cx, |this, cx| {
             // PopupMenu invokes commands with a default event, including keyboard confirmation.
             // Only actual pointer positions can be checked against the title row.
-            if this.panel_dialog_is_modal() && event.position() != point(px(0.), px(0.)) && event.position().y < px(36.) {
+            if this.dialog_is_modal() && event.position() != point(px(0.), px(0.)) && event.position().y < px(36.) {
                 return;
             }
             this.ruler_settings_open = false;
@@ -741,7 +836,7 @@ fn listener(editor: &WeakEntity<SlideEditor>, handler: &Handler) -> impl Fn(&Cli
 /// Resolve the display label for `item`: UI keys go through `i18n::text`, installed font names
 /// go through `i18n::font_label`, and document-specific / user-defined names are returned as-is.
 pub(crate) fn menu_item_display_label(item: &MenuItem) -> SharedString {
-    const NAMES: [&str; 12] = [
+    const NAMES: [&str; 11] = [
         "file.recent.item",
         "xlsx.unhide-sheet",
         "merge.import.sheet",
@@ -751,12 +846,12 @@ pub(crate) fn menu_item_display_label(item: &MenuItem) -> SharedString {
         "pptx.layout.apply",
         "pptx.clip.bookmark-jump",
         "pptx.clip.caption-item",
-        "pptx.custom-show-item",
         "docx.style.update",
         "xlsx.function",
     ];
     let is_dynamic_id = item.id.starts_with("window.open.")
         || item.id.starts_with("font.section.")
+        || item.id.starts_with("menu-search.")
         || item.id.starts_with("docx.style.doc.")
         || item.id.starts_with("docx.style.char.")
         || item.id.starts_with("docx.track.reviewers.author:")
@@ -859,7 +954,7 @@ fn menu_item_row_for_width(item:&MenuItem,editor:&WeakEntity<SlideEditor>,width:
                             .items_center()
                             .gap(px(6.))
                             .when_some(swatch, |d, c| {
-                                d.child(div().w(px(10.)).h(px(10.)).rounded(px(2.)).bg(rgb(c.0)).border_1().border_color(crate::shell::palette::shade(0.0, 0.2)))
+                                d.child(div().w(px(10.)).h(px(10.)).rounded(px(2.)).bg(crate::shell::palette::doc(c.0)).border_1().border_color(crate::shell::palette::shade(0.0, 0.2)))
                             })
                             .child(div().flex_1().min_w_0().truncate().text_color(fg).child(display_label.clone())).into_any_element()
                     };
@@ -949,6 +1044,7 @@ pub(crate) fn menu_width_for_entries(entries: &[MenuEntry]) -> f32 {
                 let w = 48.0 + text_width(&label, 14.0) + 36.0;
                 max_w = max_w.max(w);
             }
+            MenuEntry::Tiles(items) => max_w = max_w.max(crate::shell::menu_tiles::row_width(items.len())),
             _ => {}
         }
     }
@@ -967,6 +1063,7 @@ pub(crate) fn fill_menu_entries(mut menu: PopupMenu, entries: &[MenuEntry], widt
                 menu.submenu_with_icon(icon, caption, window, cx, move |m, window, cx| fill_menu(m, &items, &editor, window, cx))
             }
             MenuEntry::Palette(palette) => crate::shell::color_palette::fill_palette(menu, palette, editor, cx),
+            MenuEntry::Tiles(items) => menu.item(crate::shell::menu_tiles::tile_row(items, editor)),
             MenuEntry::Item(item) => menu.item(menu_item_row_for_width(item, editor,width)),
         };
     }
@@ -975,7 +1072,7 @@ pub(crate) fn fill_menu_entries(mut menu: PopupMenu, entries: &[MenuEntry], widt
 
 /// `entries` into `menu`.
 pub(crate) fn fill_menu(menu: PopupMenu, entries: &[MenuEntry], editor: &WeakEntity<SlideEditor>, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
-    let entries = prune_entries(entries.to_vec());
+    let entries = crate::shell::menu_tiles::group_tiles(prune_entries(entries.to_vec()));
     let width = menu_width_for_entries(&entries);
     crate::shell::menu_bar::fill_scrollable_popup_menu(menu, entries, width, editor, window, cx)
 }
@@ -1367,7 +1464,7 @@ impl SlideEditor {
             }
         }
         for (_, entries) in &mut menus.menus { wrap(entries); }
-        if self.panel_dialog_is_modal() {
+        if self.dialog_is_modal() {
             fn disable(entries: &mut [MenuEntry]) {
                 for entry in entries {
                     match entry {
@@ -1496,7 +1593,8 @@ impl SlideEditor {
             };
             d
         };
-        let slideshow = self.pages_are_slides().then(|| self.render_slideshow_button(&editor, false));
+        // In the slide master view the slide show's button gives its place to the one that closes the view.
+        let slideshow = self.pages_are_slides().then(|| self.render_slideshow_or_close_button(&editor, false));
         #[cfg(target_os = "windows")]
         let row = row.child(system_menu_icon());
         #[cfg(not(target_arch = "wasm32"))]
@@ -1611,6 +1709,48 @@ impl SlideEditor {
 
     /// スライドショー, with ▼ for how to start; `icon_only` leaves out its
     /// label (in the toolbar's title row).
+    /// The title row's button of the presentation screen: the one that closes the mode being in (slide master, notes
+    /// master, handout master, notes formatting), else the slide show's.
+    fn render_slideshow_or_close_button(&self, editor: &WeakEntity<SlideEditor>, icon_only: bool) -> AnyElement {
+        let close_mode: Option<(&'static str, Handler)> = if self.is_master_view() {
+            Some(("pptx.master-view.close-master-view", Rc::new(|this: &mut SlideEditor, window, cx| this.close_master_view(window, cx))))
+        } else if self.is_page_view() {
+            // The notes master closes as the slide master does; the notes page and the handout master are "format editing".
+            let label = if self.is_notes_master() { "pptx.master-view.close-master-view" } else { "pptx.notes-format.close-format-editing" };
+            Some((label, Rc::new(|this: &mut SlideEditor, window, cx| this.close_notes_format(window, cx))))
+        } else {
+            None
+        };
+        match close_mode {
+            Some((label, close)) => self.render_close_mode_button(editor, label, close),
+            None => self.render_slideshow_button(editor, icon_only),
+        }
+    }
+
+    /// 「マスター表示を閉じる」「書式編集を閉じる」: a pill of the title row with a red frame, a red ✕ at the left and the label in black.
+    fn render_close_mode_button(&self, editor: &WeakEntity<SlideEditor>, label: &'static str, close: Handler) -> AnyElement {
+        const CLOSE_RED: u32 = 0xd93025;
+        h_flex()
+            .id("pptx-master-title-close")
+            .h(px(30.))
+            .px(px(12.))
+            .gap(px(6.))
+            .items_center()
+            .rounded_full()
+            .border_1()
+            .border_color(rgb(CLOSE_RED))
+            .bg(crate::shell::palette::white())
+            .text_size(px(13.))
+            .text_color(rgb(TEXT))
+            .font_weight(FontWeight::MEDIUM)
+            .cursor_pointer()
+            .hover(|s| s.bg(crate::shell::palette::shade(0.0, 0.04)))
+            .child(icon("close", 18.0, rgb(CLOSE_RED).into()))
+            .child(crate::shell::i18n::text(label))
+            .on_click(listener(editor, &close))
+            .into_any_element()
+    }
+
     fn render_slideshow_button(&self, editor: &WeakEntity<SlideEditor>, icon_only: bool) -> AnyElement {
         let disabled = self.loading;
         let start: Handler = Rc::new(|this: &mut SlideEditor, window, cx| this.start_slideshow(window, cx));
@@ -1684,7 +1824,6 @@ impl SlideEditor {
     /// The toolbar: the common left part, the format's right part, the
     /// buttons that do not fit folded into ︙, and ^ to hide the menus.
     pub(crate) fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        set_current_toolbar_open(self.font_size_menu_open, self.toolbar_search_open);
         let editor = cx.entity().downgrade();
         let mut items = self.toolbar_items();
         items.retain(|item| !matches!(item, ToolItem::Button(b) if b.hidden));
@@ -1781,7 +1920,7 @@ impl SlideEditor {
                 .flex_shrink_0()
                 .items_start()
                 .bg(rgb(APP_BG))
-                .child(icons.child(self.start_window_button(&editor)).children(self.pages_are_slides().then(|| self.render_slideshow_button(&editor, true))))
+                .child(icons.child(self.start_window_button(&editor)).children(self.pages_are_slides().then(|| self.render_slideshow_or_close_button(&editor, true))))
                 .child(div().flex_1().min_w_0().px(px(8.)).py(px(4.)).child(bar))
                 .children(render_window_controls(window, &editor))
                 .into_any_element();
@@ -1793,29 +1932,33 @@ impl SlideEditor {
     /// format has for it. Also records `right_pane` (shown, and whether the toggle can show it), which the title row's
     /// button and 表示 > サイドバー read.
     pub(crate) fn render_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.panel_dialog.active {
-            let restore_focus = self.panel_dialog.focus.as_ref().is_some_and(|focus| focus.contains_focused(window, cx));
+        if self.dialog.active {
+            let restore_focus = self.dialog.focus.as_ref().is_some_and(|focus| focus.contains_focused(window, cx));
             let editor = cx.weak_entity();
             // A dialog can disappear by replacing its panel state, including after Apply.
             // Restore document keys centrally instead of leaving focus in a removed input.
             window.defer(cx, move |window, cx| {
                 let _ = editor.update(cx, |e, cx| {
-                    if !e.panel_dialog.active {
-                        e.panel_dialog.form_controls.clear();
-                        e.panel_dialog.submit_handler = None;
-                        e.panel_dialog.has_submit_action = false;
+                    if !e.dialog.active {
+                        e.dialog.form_controls.clear();
+                        e.dialog.submit_handler = None;
+                        e.dialog.has_submit_action = false;
                         if restore_focus { e.focus_handle.focus(window, cx); }
                     }
                 });
             });
         }
-        if !self.panel_dialog.active { self.panel_dialog.bounds = None; }
-        self.panel_dialog.overlay = None;
-        self.panel_dialog.active = false;
-        self.panel_dialog.key = None;
+        if !self.dialog.active { self.dialog.bounds = None; }
+        self.dialog.overlay = None;
+        self.dialog.active = false;
+        self.dialog.key = None;
         PANEL_KEY.with(|key| key.set(None));
-        super::panel_dialog::form::OPTIONS.with(|o|o.set(Default::default()));
-        PANEL_MODE.with(|mode| mode.set(super::panel_dialog::PanelMode::Sidebar));
+        PANEL_BACKDROP.with(|b| b.set(false));
+        PANEL_ESC_CLOSES.with(|b| b.set(true));
+        PANEL_FILL.with(|f| f.set(false));
+        PANEL_HEADER.with(|h| *h.borrow_mut() = None);
+        super::dialog::form::OPTIONS.with(|o|o.set(Default::default()));
+        PANEL_MODE.with(|mode| mode.set(super::dialog::DialogMode::Sidebar));
         let editor = cx.entity().downgrade();
         let tabs_of = with_format!(self, sidebar_tabs());
         let on_request = with_format!(self, sidebar_on_request()) || !tabs_of.is_empty();
@@ -1823,20 +1966,26 @@ impl SlideEditor {
         // only that); one that always has something is not asked (its panel would be made for nothing).
         #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
         super::scenario::button_probe::input_scope(true);
+        // A workbook's fields pane follows the current cell into a pivot table and back out, closed or not (xlsx/pivot_pane.rs).
+        if self.is_workbook() {
+            self.sync_pivot_pane(window, cx);
+        }
         let panel = if self.sidebar_open || !on_request {
             SIDEBAR_FOOTER.with(|cell| *cell.borrow_mut() = None);
             #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
             let forced = FORCED_SIDEBAR.with(|slot| slot.get());
             #[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
-            let forced: Option<(fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) -> Option<SidebarPanel>, &'static str, super::panel_dialog::PanelMode)> = None;
+            let forced: Option<(fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) -> Option<SidebarPanel>, &'static str, super::dialog::DialogMode)> = None;
             if let Some((render, key, mode)) = forced {
                 render(self, window, cx).map(|p| match mode {
-                    super::panel_dialog::PanelMode::Modal => p.modal_named(key),
-                    super::panel_dialog::PanelMode::Modeless => p.modeless_named(key),
-                    super::panel_dialog::PanelMode::Sidebar => p,
+                    super::dialog::DialogMode::Modal => p.modal_named(key),
+                    super::dialog::DialogMode::Modeless => p.modeless_named(key),
+                    super::dialog::DialogMode::Sidebar => p,
                 })
             } else if let Some(panel)=self.color_picker_dialog(cx) {
                 Some(panel.modal_named("color_picker_dialog"))
+            } else if let Some(panel) = self.replace_fonts_panel(cx) {
+                Some(panel.modal_named("replace_fonts_panel"))
             } else if self.ruler_settings_open && self.is_document() {
                 self.ruler_panel(cx)
             } else {
@@ -1850,7 +1999,7 @@ impl SlideEditor {
         let has_content = panel.is_some() || !tabs_of.is_empty();
         self.right_pane = RightPane { available: on_request || panel.is_some(), shown: self.sidebar_open && has_content };
         if !self.right_pane.shown {
-            self.panel_dialog.form_controls.clear();self.panel_dialog.submit_handler=None;self.panel_dialog.has_submit_action=false;
+            self.dialog.form_controls.clear();self.dialog.submit_handler=None;self.dialog.has_submit_action=false;
             return None;
         }
         let mut panel = match panel {
@@ -1861,21 +2010,49 @@ impl SlideEditor {
         #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
         LAST_SIDEBAR_TITLE.with(|title| *title.borrow_mut() = panel::panel_title(&panel.title).to_string());
         let mut footer = SIDEBAR_FOOTER.with(|cell| cell.borrow_mut().take());
+        let mut header = take_panel_header();
+        let pinned = take_panel_pinned();
         let mode = PANEL_MODE.with(|mode| mode.get());
-        self.panel_dialog.key = PANEL_KEY.with(|key| key.get());
-        if mode != super::panel_dialog::PanelMode::Sidebar {
-            let child_key = self.panel_dialog.key;
+        self.dialog.key = PANEL_KEY.with(|key| key.get());
+        if mode != super::dialog::DialogMode::Sidebar {
+            let child_key = self.dialog.key;
             let retain_chart = self.is_workbook() && self.sheet_state().is_some_and(|state| state.chart_edit.is_some())
                 && matches!(child_key, Some("move_chart_panel" | "chart_template_panel" | "chart_series_editor"));
             let retain_sort = self.is_workbook() && child_key == Some("sort_level_editor");
-            let background = if retain_chart { self.sheet_chart_panel(cx) } else if retain_sort { self.sort_background_panel(cx) } else { None };
+            let retain_names = self.is_workbook() && child_key == Some("names_dialog");
+            let retain_animation = self.is_presentation() && child_key == Some("animation_options_panel") && self.pptx().is_some_and(|s| s.animation_pane);
+            let retain_pivot = self.is_workbook() && matches!(child_key, Some("pivot_value_dialog" | "pivot_field_dialog"));
+            let background = if retain_pivot { self.pivot_fields_background(cx) } else if retain_chart { self.sheet_chart_panel(cx) } else if retain_sort { self.sort_background_panel(cx) } else if retain_names { self.names_list_panel(cx) } else if retain_animation { self.animation_pane(cx) } else { None };
             let background_footer = SIDEBAR_FOOTER.with(|cell| cell.borrow_mut().take());
-            self.panel_dialog.key = child_key;
-            self.panel_dialog.overlay = Some(self.render_panel_dialog(panel, footer, mode, window, cx));
+            let background_header = take_panel_header();
+            self.dialog.key = child_key;
+            // A dialog opened from another dialog (the rule editor over the conditional formatting manager): the parent stays.
+            let parent_view = if self.is_workbook() && child_key == Some("conditional_rule_editor") && self.dialog.parent.is_some() {
+                self.conditional_parent_panel(cx).map(|p| (p, SIDEBAR_FOOTER.with(|cell| cell.borrow_mut().take()), take_panel_header()))
+            } else {
+                None
+            };
+            set_panel_header(header.take());
+            let child_overlay = self.render_dialog(panel, footer, mode, window, cx);
+            self.dialog.overlay = Some(match parent_view {
+                Some((parent_panel, parent_footer, parent_header)) => {
+                    let mut parent_state = *self.dialog.parent.take().expect("the parent dialog");
+                    parent_state.inert = true;
+                    std::mem::swap(&mut self.dialog, &mut parent_state);
+                    set_panel_header(parent_header);
+                    let parent_overlay = self.render_dialog(parent_panel, parent_footer, super::dialog::DialogMode::Modal, window, cx);
+                    std::mem::swap(&mut self.dialog, &mut parent_state);
+                    parent_state.inert = false;
+                    self.dialog.parent = Some(Box::new(parent_state));
+                    div().absolute().inset_0().child(parent_overlay).child(super::dialog::viewport_shield()).child(child_overlay).into_any_element()
+                }
+                None => child_overlay,
+            });
             if let Some(background) = background {
                 panel = background;
                 footer = background_footer;
-                PANEL_MODE.with(|mode| mode.set(super::panel_dialog::PanelMode::Sidebar));
+                header = background_header;
+                PANEL_MODE.with(|mode| mode.set(super::dialog::DialogMode::Sidebar));
                 PANEL_KEY.with(|key| key.set(None));
             } else {
                 self.right_pane.shown = false;
@@ -1885,40 +2062,41 @@ impl SlideEditor {
         if self.is_document() {
             if let Some((child,key))=self.merge_workflow_dialog(cx) {
                 let child_footer=SIDEBAR_FOOTER.with(|cell|cell.borrow_mut().take());
-                self.panel_dialog.key=Some(key);
-                self.panel_dialog.overlay=Some(self.render_panel_dialog(child,child_footer,super::panel_dialog::PanelMode::Modal,window,cx));
+                self.dialog.key=Some(key);
+                self.dialog.overlay=Some(self.render_dialog(child,child_footer,super::dialog::DialogMode::Modal,window,cx));
             }
         }
         if self.is_document() {
             if let Some(child)=self.tab_row_dialog(cx) {
                 let child_footer=SIDEBAR_FOOTER.with(|cell|cell.borrow_mut().take());
-                self.panel_dialog.key=Some("tab_stop_editor");
-                self.panel_dialog.overlay=Some(self.render_panel_dialog(child,child_footer,super::panel_dialog::PanelMode::Modal,window,cx));
+                self.dialog.key=Some("tab_stop_editor");
+                self.dialog.overlay=Some(self.render_dialog(child,child_footer,super::dialog::DialogMode::Modal,window,cx));
             }
         }
-        if self.is_workbook() && !self.panel_dialog.active {
+        if self.is_workbook() && !self.dialog.active {
             if let Some(child) = self.chart_series_editor_panel(cx) {
                 let child_footer = SIDEBAR_FOOTER.with(|cell| cell.borrow_mut().take());
-                self.panel_dialog.key = Some("chart_series_editor");
+                self.dialog.key = Some("chart_series_editor");
                 let child_mode = if self.sheet_range_pick_active() {
-                    super::panel_dialog::PanelMode::Modeless
+                    super::dialog::DialogMode::Modeless
                 } else {
-                    super::panel_dialog::PanelMode::Modal
+                    super::dialog::DialogMode::Modal
                 };
-                self.panel_dialog.overlay = Some(self.render_panel_dialog(child, child_footer, child_mode, window, cx));
-                PANEL_MODE.with(|mode| mode.set(super::panel_dialog::PanelMode::Sidebar));
+                self.dialog.overlay = Some(self.render_dialog(child, child_footer, child_mode, window, cx));
+                PANEL_MODE.with(|mode| mode.set(super::dialog::DialogMode::Sidebar));
                 PANEL_KEY.with(|key| key.set(None));
             }
         }
-        if self.is_workbook() && self.sheet_range_pick_active() && !self.panel_dialog.active {
+        if self.is_workbook() && self.sheet_range_pick_active() && !self.dialog.active {
             if let Some(picker)=self.generic_range_pick_panel(cx) {
                 let footer=take_sidebar_footer();
-                self.panel_dialog.key=Some("generic_range_picker");
-                self.panel_dialog.overlay=Some(self.render_panel_dialog(picker,footer,super::panel_dialog::PanelMode::Modeless,window,cx));
+                self.dialog.key=Some("generic_range_picker");
+                self.dialog.overlay=Some(self.render_dialog(picker,footer,super::dialog::DialogMode::Modeless,window,cx));
             }
         }
-        let pane_blocked = self.is_workbook() && self.panel_dialog.active
-            && matches!(self.panel_dialog.key, Some("chart_series_editor" | "move_chart_panel" | "chart_template_panel" | "sort_level_editor"));
+        let pane_blocked = self.is_workbook() && self.dialog.active
+            && matches!(self.dialog.key, Some("chart_series_editor" | "move_chart_panel" | "chart_template_panel" | "sort_level_editor" | "names_dialog" | "pivot_value_dialog" | "pivot_field_dialog"));
+        let pane_blocked = pane_blocked || (self.is_presentation() && self.dialog.active && self.dialog.key == Some("animation_options_panel"));
         // The tabs show with their panels, or with none open; another
         // panel (the name manager, ...) has its own title only.
         let selected = tabs_of.iter().position(|t| crate::shell::i18n::text(t.panel_title) == crate::shell::i18n::text(&panel.title));
@@ -1949,10 +2127,12 @@ impl SlideEditor {
             window.refresh();
         });
         let sidebar_scroll = self.sidebar_scroll.clone();
+        let sidebar_width = self.sidebar_width.max(SIDEBAR_WIDTH);
+        let drag_editor = editor.clone();
         Some(
             v_flex()
                 .relative()
-                .w(px(SIDEBAR_WIDTH))
+                .w(px(sidebar_width))
                 .h_full()
                 .flex_shrink_0()
                 .bg(crate::shell::palette::white())
@@ -1970,7 +2150,9 @@ impl SlideEditor {
                         .child(title_button("sidebar-close", "close", "_shell.close", Some(close), &editor)),
                 )
                 .children(tabs)
-                .child(panel::panel_contents(panel.body,footer,sidebar_scroll,self.sidebar_layout.clone(),editor.clone()))
+                .children(header.map(panel::panel_header_host))
+                .child(panel::panel_contents(panel.body,pinned,footer,sidebar_scroll,self.sidebar_layout.clone(),editor.clone(),PANEL_FILL.with(|f| f.replace(false))))
+                .child(sidebar_width_handle(drag_editor, cx))
                 .when(pane_blocked, |d| d.child(div().absolute().inset_0().occlude()
                     .on_mouse_down(MouseButton::Left, |_,_,cx| cx.stop_propagation())
                     .on_mouse_down(MouseButton::Right, |_,_,cx| cx.stop_propagation())
@@ -1981,8 +2163,63 @@ impl SlideEditor {
     }
 }
 
+/// The widest the right pane can be dragged to.
+pub(crate) const SIDEBAR_MAX_WIDTH: f32 = 720.0;
+
+/// The right pane's left edge, which the pointer drags to change the pane's width (every panel's, in every format).
+/// The pane stays at least [`SIDEBAR_WIDTH`] and at most [`SIDEBAR_MAX_WIDTH`] (and a part of the window).
+fn sidebar_width_handle(editor: WeakEntity<SlideEditor>, cx: &mut Context<SlideEditor>) -> impl IntoElement {
+    let tracker = editor.clone();
+    div()
+        .id("sidebar-width-handle")
+        .absolute()
+        .left(px(-3.))
+        .top_0()
+        .bottom_0()
+        .w(px(6.))
+        .cursor_col_resize()
+        .on_mouse_down(MouseButton::Left, cx.listener(|this, event: &MouseDownEvent, _, cx| {
+            this.sidebar_drag = Some((f32::from(event.position.x), this.sidebar_width.max(SIDEBAR_WIDTH)));
+            cx.stop_propagation();
+        }))
+        .child(
+            canvas(
+                |_, _, _| (),
+                move |_, _, window, _| {
+                    let moving = tracker.clone();
+                    window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Capture {
+                            let viewport = f32::from(window.viewport_size().width);
+                            let _ = moving.update(cx, |this, cx| {
+                                if let Some((x0, w0)) = this.sidebar_drag {
+                                    let widest = SIDEBAR_MAX_WIDTH.min((viewport * 0.6).max(SIDEBAR_WIDTH));
+                                    this.sidebar_width = (w0 + x0 - f32::from(event.position.x)).clamp(SIDEBAR_WIDTH, widest);
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    });
+                    let released = tracker.clone();
+                    window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+                        if phase == DispatchPhase::Capture {
+                            let _ = released.update(cx, |this, cx| {
+                                if this.sidebar_drag.take().is_some() {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    });
+                },
+            )
+            .absolute()
+            .size_0(),
+        )
+}
+
 /// Shared height for labeled command buttons across all document formats.
 pub(crate) const BUTTON_HEIGHT: f32 = 28.;
+/// The size of an icon in a toolbar button (the button is [`BUTTON_HEIGHT`] square).
+pub(crate) const TOOLBAR_ICON_SIZE: f32 = 20.;
 
 #[derive(Clone, Copy, Default)]
 pub(crate) enum ActionButtonKind { Primary, #[default] Normal, Destructive }
@@ -2012,21 +2249,21 @@ pub(crate) fn primary_button(id: impl Into<ElementId>) -> Button { styled_action
 pub(crate) fn destructive_button(id: impl Into<ElementId>, cx: &App) -> Button { styled_action_button(id, ActionButtonStyle {kind:ActionButtonKind::Destructive},Some(cx)) }
 pub(crate) fn dialog_close_button(cx: &Context<SlideEditor>) -> Button {
     action_button("dialog-close").label(crate::shell::i18n::text("_shell.close"))
-        .on_click(cx.listener(|this, _, window, cx| this.close_panel_dialog(window, cx)))
+        .on_click(cx.listener(|this, _, window, cx| this.close_dialog(window, cx)))
 }
 
 pub(crate) fn dialog_cancel_button(cx: &Context<SlideEditor>) -> Button {
     action_button("dialog-cancel").label(crate::shell::i18n::text("_shell.cancel"))
-        .on_click(cx.listener(|this, _, window, cx| this.close_panel_dialog(window, cx)))
+        .on_click(cx.listener(|this, _, window, cx| this.close_dialog(window, cx)))
 }
 
 pub(crate) fn dialog_cancel_definition(cx: &Context<SlideEditor>) -> ActionDefinition {
     ActionDefinition::new("dialog-cancel", crate::shell::i18n::text("_shell.cancel"), ActionButtonKind::Normal)
-        .on_click(cx.listener(|this, _, window, cx| this.close_panel_dialog(window, cx)))
+        .on_click(cx.listener(|this, _, window, cx| this.close_dialog(window, cx)))
 }
 pub(crate) fn dialog_close_definition(cx: &Context<SlideEditor>) -> ActionDefinition {
     ActionDefinition::new("dialog-close", crate::shell::i18n::text("_shell.close"), ActionButtonKind::Normal)
-        .on_click(cx.listener(|this, _, window, cx| this.close_panel_dialog(window, cx)))
+        .on_click(cx.listener(|this, _, window, cx| this.close_dialog(window, cx)))
 }
 
 /// The shared terminal action area, in a pane or a dialog. No controls follow this area.
@@ -2069,20 +2306,12 @@ fn title_button_icon(id: &'static str, icon: Icon, tooltip: &'static str, handle
         .child(icon)
         .when_some(handler, |d, h| {
             let guarded: Handler = Rc::new(move |this, window, cx| {
-                if !this.panel_dialog_is_modal() { h(this, window, cx); }
+                if !this.dialog_is_modal() { h(this, window, cx); }
             });
             d.on_click(listener(editor, &guarded))
         })
         .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(crate::shell::i18n::text(&tooltip)).build(window, cx))
         .into_any_element()
-}
-
-thread_local! {
-    static CURRENT_TOOLBAR_OPEN: std::cell::Cell<(bool, Option<&'static str>)> = const { std::cell::Cell::new((false, None)) };
-}
-
-pub(crate) fn set_current_toolbar_open(font_size_open: bool, search_open: Option<&'static str>) {
-    CURRENT_TOOLBAR_OPEN.with(|c| c.set((font_size_open, search_open)));
 }
 
 pub(crate) const FONT_SIZE_CANDIDATES: &[f32] = &[
@@ -2205,7 +2434,7 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
             match b.color {
                 // The icon over a colour bar.
                 Some(bar) => d.child(v_flex().items_center().pt(px(2.)).child(icon(name, 18.0, color)).child(div().w(px(18.)).h(px(3.)).mt(px(-1.)).rounded(px(1.)).bg(bar))),
-                None => d.child(icon(name, 20.0, color)),
+                None => d.child(icon(name, TOOLBAR_ICON_SIZE, color)),
             }
         })
         .when_some(b.text.clone(), |d, text| d.child(div().px(px(3.)).text_size(px(14.)).text_color(if enabled { rgb(TEXT).into() } else { disabled_color() }).child(crate::shell::i18n::text(&text))))
@@ -2229,7 +2458,7 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
                     .justify_center()
                     .when_some(b.icon, |d, name| match b.color {
                         Some(bar) => d.child(v_flex().items_center().pt(px(2.)).child(icon(name, 18.0, color)).child(div().w(px(18.)).h(px(3.)).mt(px(-1.)).rounded(px(1.)).bg(bar))),
-                        None => d.child(icon(name, 20.0, color)),
+                        None => d.child(icon(name, TOOLBAR_ICON_SIZE, color)),
                     })
                     .when_some(b.text.clone(), |d, text| d.child(div().px(px(3.)).text_size(px(14.)).text_color(rgb(TEXT)).child(crate::shell::i18n::text(&text)))),
             )
@@ -2349,6 +2578,40 @@ pub(crate) fn filter_menu_items(items: &[MenuItem], query: &str) -> Vec<MenuItem
         .collect()
 }
 
+/// Ids of the rows the menu search adds to the commands: the two section headings and a lately searched string.
+pub(crate) const MENU_SEARCH_HISTORY_HEADING: &str = "menu-search.section.history";
+pub(crate) const MENU_SEARCH_COMMANDS_HEADING: &str = "menu-search.section.commands";
+pub(crate) const MENU_SEARCH_HISTORY_ITEM: &str = "menu-search.history";
+
+/// A heading row of a list (a font list's, the menu search's): drawn as a small bold caption, never chosen.
+pub(crate) fn is_section_heading(item: &MenuItem) -> bool {
+    item.id.starts_with("font.section.") || item.id.starts_with("menu-search.section.")
+}
+
+/// The rows the menu search lists: while a string is typed, the commands whose names hold it; with nothing typed,
+/// the "履歴" section (the lately searched strings, if there are any) and then the "コマンド" section (all the
+/// commands, which has its heading also when there is no history). A history row puts its string into the search field when it is chosen.
+pub(crate) fn menu_search_rows(items: &[MenuItem], query: &str, history: &[String]) -> Vec<MenuItem> {
+    if !query.trim().is_empty() {
+        return filter_menu_items(items, query);
+    }
+    let mut rows = Vec::with_capacity(items.len() + history.len() + 2);
+    if !history.is_empty() {
+        rows.push(MenuItem::new(MENU_SEARCH_HISTORY_HEADING, crate::shell::i18n::text("shell.menu-search.history")));
+        for text in history {
+            let chosen = text.clone();
+            rows.push(
+                MenuItem::new(MENU_SEARCH_HISTORY_ITEM, text.clone())
+                    .icon("history")
+                    .on(move |editor, window, cx| editor.set_menu_search_text(&chosen, window, cx)),
+            );
+        }
+    }
+    rows.push(MenuItem::new(MENU_SEARCH_COMMANDS_HEADING, crate::shell::i18n::text("shell.menu-search.commands")));
+    rows.extend(items.iter().cloned());
+    rows
+}
+
 /// The width of a field in the right pane (a number with its ▲▼, a colour code, a dropdown of line styles…): the
 /// boxes of a row line up when they all use it. [`text_field`]'s default width.
 pub(crate) const FIELD_WIDTH: Pixels = px(124.);
@@ -2362,14 +2625,22 @@ pub(crate) const FONT_DROPDOWN_WIDTH: Pixels = px(186.);
 ///   (2026-10-23 ユーザー).
 /// - `.width(px)` / `.full_width()`: another width, or fill the parent (a name, a range, a search box…).
 /// - `.spinner(id, spec, cx, on_step)`: ▲▼ buttons for a number. A click steps the value by `spec`, writes it into the
-///   field and calls `on_step`, which applies it as typing it and pressing Enter does.
+///   field and calls `on_step`, which applies it as typing it and pressing Enter does. A field with ▲▼ has no ✕ (2026-11-03
+///   ユーザー決定) and selects all of its text when it gets the focus, in every screen.
 /// - `.disabled(bool)`.
 ///
 /// It is an element: `.child(text_field(&input))`, or `.into_any_element()`.
 pub(crate) fn text_field(input: &Entity<gpui_kit::component::input::InputState>) -> TextField {
+    synced_field::require_registered(input);
+    transient_text_field(input)
+}
+
+/// [`text_field`] for an input that a shared part owns and that is not a value of the document (the number typed over a slider's
+/// value: it is a draft until Enter): it need not be declared with `SyncedFields::add`.
+pub(crate) fn transient_text_field(input: &Entity<gpui_kit::component::input::InputState>) -> TextField {
     #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
     super::scenario::button_probe::record_input(input);
-    TextField { input: input.clone(), clear: true, width: Some(FIELD_WIDTH), disabled: false, spinner: None, compact_spinner: false, unit: None, picker: None, trailing: None }
+    TextField { input: input.clone(), clear: true, width: Some(FIELD_WIDTH), disabled: false, spinner: None, compact_spinner: false, unit: None, picker: None, trailing: None, select_on_focus: false }
 }
 
 type StepHandler = Rc<dyn Fn(&mut SlideEditor, f32, &mut Window, &mut Context<SlideEditor>)>;
@@ -2394,6 +2665,7 @@ pub(crate) struct TextField {
     unit: Option<(SharedString, Pixels)>,
     picker: Option<FieldPathPicker>,
     trailing: Option<FieldTrailingIcon>,
+    select_on_focus: bool,
 }
 
 struct FieldTrailingIcon {
@@ -2425,11 +2697,22 @@ impl TextField {
     pub(crate) fn path_picker(mut self, id: impl Into<SharedString>, mode: PathMode, extensions: &[&str], cx: &Context<SlideEditor>, selected: impl Fn(&mut SlideEditor, std::path::PathBuf, &mut Window, &mut Context<SlideEditor>) + 'static) -> Self {
         self.picker = Some(FieldPathPicker { id: id.into(), mode, extensions: extensions.iter().map(|s| s.to_string()).collect(), editor: cx.weak_entity(), selected: Rc::new(selected) }); self
     }
+    /// All the text is selected when the field gets the focus by the keyboard or by `focus()` (the find panels' fields). A click that
+    /// gives the focus puts the caret where it was pressed. A number field (with `.spinner`) does this without the attribute.
+    pub(crate) fn select_on_focus(mut self) -> Self { self.select_on_focus = true; self }
+    /// [`Self::unit`] when `on`.
+    pub(crate) fn when_unit(self, on: bool, label: impl Into<SharedString>, width: Pixels) -> Self { if on { self.unit(label, width) } else { self } }
     pub(crate) fn unit(mut self, label: impl Into<SharedString>, width: Pixels) -> Self { self.unit=Some((label.into(),width)); self }
     /// Compact three-digit color channel input; other numeric fields retain the standard width.
     pub(crate) fn compact_spinner(mut self) -> Self { self.compact_spinner = true; self }
 
     /// No ✕ to clear the field.
+    /// The objects the field edits have different values (`Shown::Mixed`): the field is empty (made by `ShownNumber::input` /
+    /// `ShownText::input`, which give no text for it) and shows no clear button for the empty text. Typing a value makes it
+    /// an ordinary field. The one entry of every shared control for several objects is `.shown(&Shown<V>)`.
+    pub(crate) fn shown<V>(self, shown: &Shown<V>) -> Self {
+        if shown.is_mixed() { self.no_clear() } else { self }
+    }
     pub(crate) fn no_clear(mut self) -> Self {
         self.clear = false;
         self
@@ -2463,23 +2746,86 @@ impl TextField {
         self.spinner = Some(FieldSpinner { id: id.into(), spec, editor: cx.weak_entity(), on_step: Rc::new(on_step) });
         self
     }
+
+    /// [`Self::spinner`] for a field that is not drawn by the editor's own render (a view of a shared part): `editor` is the editor.
+    pub(crate) fn spinner_of(
+        mut self,
+        id: impl Into<SharedString>,
+        spec: SpinnerSpec,
+        editor: WeakEntity<SlideEditor>,
+        on_step: impl Fn(&mut SlideEditor, f32, &mut Window, &mut Context<SlideEditor>) + 'static,
+    ) -> Self {
+        self.spinner = Some(FieldSpinner { id: id.into(), spec, editor, on_step: Rc::new(on_step) });
+        self
+    }
+}
+
+/// Whether a text field shows its ✕: asked for (the default), and not a number with ▲▼ (those have none).
+pub(crate) fn clear_button_shown(clear: bool, numeric: bool) -> bool {
+    clear && !numeric
+}
+
+/// What the select-all of a field with ▲▼ knows between renders.
+struct SelectAllState {
+    /// The input had the focus at the render before.
+    had_focus: bool,
+    /// The mouse was pressed on the field since the render before: the focus came with a click.
+    pressed: bool,
+}
+
+/// Selects all of `input`'s text when it gets the focus by the keyboard (Tab) or by `focus()`. A click that gives the focus puts the
+/// caret where it was pressed instead (as Office's fields do), and a click on a field that has the focus already does too. It is seen at
+/// the render of the field: the state in the window's element state says whether the input had the focus at the render before and whether
+/// a press on it came since. Returns that state, for the press to be noted on the field's box ([`note_press`]).
+fn select_all_on_focus(input: &Entity<gpui_kit::component::input::InputState>, window: &mut Window, cx: &mut App) -> Entity<SelectAllState> {
+    let key = ElementId::from(SharedString::from(format!("text-field-select-all-{}", input.entity_id().as_u64())));
+    let state = window.use_keyed_state(key, cx, |_, _| SelectAllState { had_focus: false, pressed: false });
+    let focused = input.read(cx).focus_handle(cx).is_focused(window);
+    let (had, pressed) = { let s = state.read(cx); (s.had_focus, s.pressed) };
+    if had != focused || pressed {
+        state.update(cx, |s, _| { s.had_focus = focused; s.pressed = false; });
+        if focused && !had && !pressed {
+            let input = input.clone();
+            window.defer(cx, move |window, cx| input.update(cx, |i, cx| i.select_all(window, cx)));
+        }
+    }
+    state
+}
+
+/// Notes a left press on the box of a field made by [`select_all_on_focus`].
+fn note_press(state: &Entity<SelectAllState>) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+    let state = state.clone();
+    move |_, _, cx| { state.update(cx, |s, _| s.pressed = true); }
 }
 
 impl RenderOnce for TextField {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(mut self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let spinner_width = if self.compact_spinner { px(80.) } else { FIELD_WIDTH };
-        let mut field = gpui_kit::component::input::Input::new(&self.input).small().cleanable(self.clear).disabled(self.disabled);
+        // A field with ▲▼ (a number) has no ✕, and takes all its text when it gets the focus: the number is typed over or stepped.
+        let numeric = self.spinner.is_some();
+        let mut field = gpui_kit::component::input::Input::new(&self.input).small().cleanable(clear_button_shown(self.clear, numeric)).disabled(self.disabled);
+        let press_state = (numeric || self.select_on_focus).then(|| select_all_on_focus(&self.input, _window, _cx));
         #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
         let probe_id = self.trailing.as_ref().map(|t| format!("{}-field", t.id));
-        if let Some(trailing) = self.trailing {
-            let button = action_button(trailing.id).ghost().xsmall().w(px(24.)).h(px(24.)).px(px(0.))
+        // The unit ("pt", "%", "°") is drawn inside the field's box, after the text, so the field keeps its width
+        // and the unit never wraps away from it. Its width is the room reserved for it (the same across a screen).
+        let unit = self.unit.take().map(|(label, width)| {
+            div().flex_none().min_w(width).whitespace_nowrap().text_sm().text_color(rgb(TEXT_SECONDARY)).child(label)
+        });
+        let trailing_button = self.trailing.take().map(|trailing| {
+            action_button(trailing.id).ghost().xsmall().w(px(24.)).h(px(24.)).px(px(0.))
                 .disabled(self.disabled).tooltip(trailing.tooltip)
                 .child(icon(trailing.icon, 18., rgb(ICON).into()))
                 .on_click(move |_, window, cx| {
                     let clicked = trailing.clicked.clone();
                     let _ = trailing.editor.update(cx, |this, cx| clicked(this, window, cx));
-                });
-            field = field.suffix(button);
+                })
+        });
+        match (unit, trailing_button) {
+            (Some(unit), Some(button)) => field = field.suffix(h_flex().items_center().gap_1().child(unit).child(button)),
+            (Some(unit), None) => field = field.suffix(unit),
+            (None, Some(button)) => field = field.suffix(button),
+            (None, None) => {}
         }
         if let Some(picker) = self.picker {
             let input = self.input.clone();
@@ -2506,6 +2852,11 @@ impl RenderOnce for TextField {
                 Some(w) => field.w(w).into_any_element(),
                 None => field.into_any_element(),
             };
+            let element = match press_state.as_ref() {
+                Some(st) => div().when(self.width.is_none(), |d| d.w_full()).when_some(self.width, |d, w| d.w(w))
+                    .on_mouse_down(MouseButton::Left, note_press(st)).child(element).into_any_element(),
+                None => element,
+            };
             // Scenario measurement of the box's outer edge (compare with a dropdown's right edge).
             #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
             if let Some(key) = probe_id {
@@ -2528,7 +2879,7 @@ impl RenderOnce for TextField {
                 .h(px(12.))
                 .px(px(0.))
                 .disabled(disabled)
-                .child(icon(icon_name, 12.0, rgb(ICON).into()))
+                .child(icon(icon_name, 12.0, if disabled { disabled_color() } else { rgb(ICON).into() }))
                 .on_click(move |_, window, cx| {
                     let raw = input.read(cx).value().to_string();
                     let (current, unit) = split_number(&raw).unwrap_or((spec.empty_value(), ""));
@@ -2544,14 +2895,17 @@ impl RenderOnce for TextField {
             .gap_1()
             .items_center()
             .w(spinner_width).min_w(spinner_width).max_w(spinner_width).flex_none()
-            .child(div().flex_1().min_w(px(48.)).child(field))
+            .child(div().flex_1().min_w(px(48.)).when_some(press_state.as_ref(), |d, st| d.on_mouse_down(MouseButton::Left, note_press(st))).child(field))
             .child(v_flex().items_center().justify_center().child(up_btn).child(down_btn))
             .into_any_element();
-        if let Some((label,width))=self.unit {
-            h_flex().items_center().gap_2().flex_none().child(numeric)
-                .child(div().w(width).min_w(width).flex_none().text_sm().child(label)).into_any_element()
-        } else { numeric }
+        numeric
     }
+}
+
+/// The multi-line form of [`text_field`] (the comments' field: it grows with its text, Ctrl+Enter ends it): the same
+/// small field filling its parent, with the ✕ inside that clears it. The placeholder is the state's.
+pub(crate) fn text_area_field(state: &Entity<gpui_kit::component::input::TextareaState>) -> impl IntoElement {
+    gpui_kit::component::input::Textarea::new(state).small().cleanable(true)
 }
 
 /// Shared right-pane row with left-aligned label, right-aligned `text_field`, and fixed-width unit label
@@ -2616,6 +2970,13 @@ pub(crate) fn font_dropdown(
 #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
 thread_local! {pub(crate) static DROPDOWN_LAYOUT: std::cell::RefCell<std::collections::HashMap<&'static str,(f32,bool)>> = Default::default();}
 thread_local! {
+    /// The row height of each dropdown list last drawn ([`dropdown::Options::row_height`]), for the keyboard's scroll-to-row.
+    static DROPDOWN_ROW_HEIGHTS: std::cell::RefCell<std::collections::HashMap<&'static str,f32>> = Default::default();
+}
+pub(crate) fn dropdown_row_height(id: &str) -> f32 {
+    DROPDOWN_ROW_HEIGHTS.with(|h| h.borrow().get(id).copied()).unwrap_or(dropdown_list::ROW_HEIGHT)
+}
+thread_local! {
     static DROPDOWN_BUTTON_WIDTHS: std::cell::RefCell<std::collections::HashMap<&'static str,f32>> = Default::default();
 }
 /// Render a dropdown button whose popup menu has a `✕`-clearable search TextField at the top,
@@ -2623,7 +2984,6 @@ thread_local! {
 /// when 0 items match, and supports keyboard navigation (`↑`, `↓`, `PageUp`, `PageDown`, `Enter`)
 /// plus an always-visible scrollbar when scrollable (#98, #103, #125, #126, #127).
 
-thread_local! {static DROPDOWN_INSTANCE:std::cell::Cell<Option<(&'static str,usize)>>=const{std::cell::Cell::new(None)};}
 #[derive(IntoElement)]
 struct HoverDropdownTrigger{button:Button,group:&'static str,selected:bool}
 impl gpui_kit::component::Selectable for HoverDropdownTrigger{fn selected(mut self,value:bool)->Self{self.selected=value;self.button=self.button.selected(value);self}fn is_selected(&self)->bool{self.selected}}
@@ -2636,12 +2996,14 @@ fn render_dropdown(
     index: usize,
     editor: &WeakEntity<SlideEditor>,
     options: dropdown::Options,
+    cx: &App,
 ) -> AnyElement {
     let static_items = Rc::new(flatten_menu_entries(&entries));
     let editor_open = editor.clone();
     let items_open = static_items.clone();
     let editor_content = editor.clone();
-    let is_open = CURRENT_TOOLBAR_OPEN.with(|c| c.get().1 == Some(id)) && DROPDOWN_INSTANCE.with(|c|c.get().is_none_or(|(open_id,open_index)|open_id!=id || open_index==index));
+    // Which dropdown is open is read from the editor that owns this button (its own window), never from a state shared by windows.
+    let is_open = editor.upgrade().is_some_and(|e|{let e=e.read(cx);e.toolbar_search_open==Some(id)&&e.toolbar_dropdown_instance.is_none_or(|(open_id,open_index)|open_id!=id||open_index==index)});
     // Toolbar buttons (like `menu-search`) open downward (`Anchor::TopLeft` places the popup's top-left at the button's bottom-left);
     // bottom-bar buttons (like `sheet-list`) open upward (`Anchor::BottomLeft` places the popup's bottom-left at the button's top-left).
     let anchor = if id == "sheet-list" { Anchor::BottomLeft } else { Anchor::TopLeft };
@@ -2652,10 +3014,10 @@ fn render_dropdown(
         .open(is_open);
     let popup=if let Some(group)=options.hover_reveal{popup.trigger(HoverDropdownTrigger{button,group,selected:is_open})}else{popup.trigger(button)};
     let popup=popup.on_open_change(move |open, window, cx| {
-            if *open {DROPDOWN_INSTANCE.with(|c|c.set(Some((id,index))));}
-            else {DROPDOWN_INSTANCE.with(|c|{if c.get()==Some((id,index)){c.set(None);}});}
             editor_open
                 .update(cx, |this, cx| {
+                    if *open {this.toolbar_dropdown_instance=Some((id,index));}
+                    else if this.toolbar_dropdown_instance==Some((id,index)) {this.toolbar_dropdown_instance=None;}
                     let input = this.ensure_toolbar_search_input(id, window, cx);
                     let scroll = this.ensure_toolbar_search_scroll(id);
                     if *open {
@@ -2664,8 +3026,10 @@ fn render_dropdown(
                         this.font_size_selected = None;
                         this.toolbar_search_open = Some(id);
                         let items = if items_open.is_empty() { this.searchable_menu_items_for(id) } else { (*items_open).clone() };
-                        let initial=items.iter().position(|item|item.checked && item.enabled())
-                            .or_else(||items.iter().position(|item|item.enabled()));
+                        // The menu search lists its history and a heading first: nothing is chosen until a key or the pointer does.
+                        if id=="menu-search" {crate::shell::menu_search_history::invalidate();}
+                        let initial=if id=="menu-search" {None} else {items.iter().position(|item|item.checked && item.enabled())
+                            .or_else(||items.iter().position(|item|item.enabled()))};
                         this.toolbar_search_popup_items = Some((id, items));
                         this.toolbar_search_selected.insert(id, initial);
                         scroll.set_offset(Point::default());
@@ -2678,7 +3042,6 @@ fn render_dropdown(
                         this.toolbar_search_popup_items = None;
                         this.toolbar_search_selected.insert(id, None);
                     }
-                    set_current_toolbar_open(this.font_size_menu_open, this.toolbar_search_open);
                     cx.notify();
                 })
                 .ok();
@@ -2711,7 +3074,8 @@ fn render_dropdown(
                     text_width+68.+item.shortcut.map_or(0.,|sc|dropdown_list::label_width(window,&format_shortcut_for_platform(sc),12.)+20.)
                 },button_width),
             };
-            let row_h = dropdown_list::ROW_HEIGHT;
+            let row_h = options.row_height;
+            DROPDOWN_ROW_HEIGHTS.with(|h| {h.borrow_mut().insert(id,row_h);});
             let avail_list_h = (f32::from(window.viewport_size().height) - 214.0).max(224.0);
             let max_rows = ((avail_list_h / row_h).floor() as usize).max(8);
             let visible_rows = all_items.len().clamp(1, max_rows);
@@ -2721,7 +3085,11 @@ fn render_dropdown(
             DROPDOWN_LAYOUT.with(|m|{m.borrow_mut().insert(id,(fixed_width,show_search));});
             let query = if show_search {input.read(cx).value().to_string()} else {String::new()};
             let has_query = !query.trim().is_empty();
-            let matched = filter_menu_items(&all_items, &query);
+            let matched = if id == "menu-search" {
+                menu_search_rows(&all_items, &query, &crate::shell::menu_search_history::load(ed.read(cx).kind()))
+            } else {
+                filter_menu_items(&all_items, &query)
+            };
             let reserve_left=options.checkmarks || all_items.iter().any(|i|i.icon.is_some()||i.swatch.is_some());
             let matched_len = matched.len();
             let first_enabled_idx = if has_query {
@@ -2764,7 +3132,7 @@ fn render_dropdown(
                                         .into_iter()
                                         .enumerate()
                                         .map(|(row_idx, item)| {
-                                            if item.id.starts_with("font.section.") {
+                                            if is_section_heading(&item) {
                                                 return div()
                                                     .id((SharedString::from(format!("searchable-item-{id}")), row_idx))
                                                     .w_full()
@@ -2793,7 +3161,7 @@ fn render_dropdown(
                                                 let g = ((c.0 >> 8) & 0xff) as f32 / 255.0;
                                                 let b = (c.0 & 0xff) as f32 / 255.0;
                                                 let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                                                if luma < 0.45 { rgb(0xffffff).into() } else { rgb(0x1f1f1f).into() }
+                                                if luma < 0.45 { crate::shell::palette::doc(0xffffff).into() } else { crate::shell::palette::doc(0x1f1f1f).into() }
                                             } else {
                                                 fg
                                             };
@@ -2802,7 +3170,7 @@ fn render_dropdown(
                                                 .h(px(row_h))
                                                 .flex_none()
                                                 .rounded(px(0.))
-                                                .when_some(item.swatch, |d, c| d.bg(rgb(c.0)))
+                                                .when_some(item.swatch, |d, c| d.bg(crate::shell::palette::doc(c.0)))
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
@@ -2825,12 +3193,22 @@ fn render_dropdown(
                                             };
 
                                             let row_id=ElementId::from((SharedString::from(format!("searchable-item-{id}")),row_idx));
+                                            let keeps_open=item.id==MENU_SEARCH_HISTORY_ITEM;
                                             let activate=move |_: &ClickEvent,window:&mut Window,cx:&mut App| {
                                                 if let Some(h)=handler.as_ref().filter(|_|enabled) {
+                                                    if keeps_open {
+                                                        // A lately searched string goes into the field; the list stays open.
+                                                        let owner=ed_click.clone();let h=h.clone();window.defer(cx,move|w,cx|{owner.update(cx,|e,cx|h(e,w,cx)).ok();});
+                                                        return;
+                                                    }
+                                                    if id=="menu-search" {
+                                                        let typed=input_click.read(cx).value().to_string();
+                                                        ed_click.update(cx,|this,_|this.record_menu_search(&typed)).ok();
+                                                    }
                                                     input_click.update(cx,|s,cx|s.set_value("",window,cx));
                                                     ed_click.update(cx,|this,cx| {
                                                         this.toolbar_search_open=None;this.toolbar_search_popup_items=None;
-                                                        this.toolbar_search_selected.insert(id,None);set_current_toolbar_open(this.font_size_menu_open,None);cx.notify();
+                                                        this.toolbar_search_selected.insert(id,None);cx.notify();
                                                     }).ok();
                                                     let owner=ed_click.clone();let h=h.clone();window.defer(cx,move|w,cx|{owner.update(cx,|e,cx|h(e,w,cx)).ok();});
                                                 }
@@ -2838,8 +3216,17 @@ fn render_dropdown(
                                             let has_left=reserve_left;
                                             if is_preview {
                                                 let tooltip=item.label.clone();
-                                                let row=dropdown_list::option(row_id.clone(),selected_row_bg,is_highlighted,enabled)
-                                                    .tooltip(move|w,cx|gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(w,cx))
+                                                let row_bounds:Rc<std::cell::Cell<Bounds<Pixels>>>=Default::default();
+                                                let written=row_bounds.clone();
+                                                let row=dropdown_list::option(row_id.clone(),selected_row_bg,is_highlighted,enabled).h(px(row_h));
+                                                // A picture of the item (Custom): its name is at the left of the row; a palette's is by the pointer.
+                                                let row=if matches!(&item.dropdown_content,Some(dropdown::ItemContent::Custom(_))) {
+                                                    row.tooltip(move|w,cx|dropdown::left_tooltip(tooltip.clone(),row_bounds.clone())(w,cx))
+                                                } else {
+                                                    row.tooltip(move|w,cx|gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(w,cx))
+                                                };
+                                                let row=row
+                                                    .child(canvas(|_,_,_|(),move|b,_,_,_|written.set(b)).absolute().inset_0())
                                                     .child(h_flex().w_full().min_w_0().items_center().gap(px(6.)).when(has_left,|d|d.child(left_slot)).child(label_el))
                                                     .on_mouse_down_stop().on_click(activate);
                                                 #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
@@ -2874,6 +3261,28 @@ fn render_dropdown(
 
 /// The shared radio indicator, matching the Go To Special panel.
 pub(crate) fn radio_dot(selected: bool) -> Div {
+    radio_dot_state(if selected { RadioState::On } else { RadioState::Off })
+}
+
+/// The state of a radio button: chosen, not chosen, or (the objects differ, `Shown::Mixed`) none of the group is chosen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RadioState { On, Off, Mixed }
+impl RadioState {
+    /// The state of the radio for `value` of a group whose objects have `shown`: chosen only when all objects have `value`;
+    /// `Mixed` for every radio of the group when they differ.
+    pub(crate) fn of<V: PartialEq>(shown: &Shown<V>, value: &V) -> Self {
+        match shown { Shown::One(v) if v == value => Self::On, Shown::Mixed => Self::Mixed, _ => Self::Off }
+    }
+}
+
+/// The radio indicator for a state: `Mixed` is a grey filled circle with a middle dot in it.
+fn radio_dot_state(state: RadioState) -> Div {
+    if state == RadioState::Mixed {
+        return div().size(px(14.)).rounded(px(7.)).border_1().border_color(rgb(0x888888)).bg(rgb(0xdadce0))
+            .flex().flex_none().items_center().justify_center()
+            .child(div().size(px(4.)).rounded(px(2.)).bg(rgb(0x5f6368)));
+    }
+    let selected = state == RadioState::On;
     div().size(px(14.)).rounded(px(7.)).border_1()
         .border_color(if selected { rgb(PRIMARY_BUTTON_BG) } else { rgb(0x888888) })
         .flex().flex_none().items_center().justify_center()
@@ -2893,6 +3302,30 @@ pub(crate) fn radio_button(
     label: impl Into<SharedString>,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    radio_button_state(id, if selected { RadioState::On } else { RadioState::Off }, disabled, label, on_click)
+}
+
+/// A radio button of a group that edits several objects: chosen when all have `value`; none of the group is chosen (the grey
+/// filled circle with a middle dot) when they differ. The state comes from the one `Shown`.
+pub(crate) fn radio_button_shown<V: PartialEq>(
+    id: impl Into<ElementId>,
+    shown: &Shown<V>,
+    value: &V,
+    disabled: bool,
+    label: impl Into<SharedString>,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    radio_button_state(id, RadioState::of(shown, value), disabled, label, on_click)
+}
+
+fn radio_button_state(
+    id: impl Into<ElementId>,
+    state: RadioState,
+    disabled: bool,
+    label: impl Into<SharedString>,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let selected = state == RadioState::On;
     let label = label.into();
     let id: ElementId = id.into();
     let control = h_flex().id(id.clone()).role(gpui_kit::Role::RadioButton).aria_label(label.clone())
@@ -2901,7 +3334,7 @@ pub(crate) fn radio_button(
         .when(disabled, |d| d.opacity(0.45))
         .when(!disabled, |d| d.cursor_pointer().hover(|s| s.bg(rgb(0xedf2f7))).on_click(on_click))
         .child(FormControlMarker(disabled))
-        .child(radio_dot(selected))
+        .child(radio_dot_state(state))
         .child(div().text_sm().child(label));
     // The scenario tests press it by its rendered bounds.
     #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
@@ -2972,8 +3405,19 @@ impl Checkbox {
     }
     pub(crate) fn label(mut self, label: impl Into<SharedString>) -> Self { self.label = label.into(); self }
     pub(crate) fn accessibility_label(mut self,label:impl Into<SharedString>)->Self {self.accessibility_label=Some(label.into());self}
-    pub(crate) fn indeterminate(mut self, mixed: bool) -> Self { self.indeterminate = mixed; self }
+    /// Private: a panel gives the state as one `Shown` (`shown`), so "checked but mixed" cannot be asked for.
+    fn indeterminate(mut self, mixed: bool) -> Self { self.indeterminate = mixed; self }
     pub(crate) fn checked(mut self, checked: bool) -> Self { self.checked = checked; self }
+    /// The state of several objects: all on or all off is a tick or an empty box, differing objects the "mixed" dash
+    /// (third state). A click on the dash turns the box on (the next value is `true`).
+    pub(crate) fn shown(mut self, shown: &Shown<bool>) -> Self {
+        match shown {
+            Shown::One(on) => { self.checked = *on; self.indeterminate = false; }
+            Shown::Mixed => { self.checked = false; self.indeterminate = true; }
+            Shown::None => { self.checked = false; self.indeterminate = false; }
+        }
+        self
+    }
     pub(crate) fn disabled(mut self, disabled: bool) -> Self { self.disabled = disabled; self }
     pub(crate) fn on_click(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
         self.on_change = Some(Rc::new(handler)); self
@@ -3066,6 +3510,10 @@ pub(crate) fn checkbox_button(
 /// The colour of the chrome's text, for panels.
 pub(crate) fn text_secondary() -> Hsla {
     rgb(TEXT_SECONDARY).into()
+}
+/// The colour of the text and the icons of a control.
+pub(crate) fn text_primary() -> Hsla {
+    rgb(TEXT).into()
 }
 
 /// A pressed-state background, for panels.
@@ -3213,15 +3661,42 @@ pub(crate) fn render_align_v_group(
 }
 
 pub(crate) fn panel_font_dropdown(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, cx: &Context<SlideEditor>) -> AnyElement {
+    panel_font_dropdown_applying(id, input, cx, |_, _, _, _| {})
+}
+/// [`panel_font_dropdown`] that also calls `picked` with the font chosen, for a pane that applies it at once (no 設定 button).
+pub(crate) fn panel_font_dropdown_applying(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, cx: &Context<SlideEditor>,
+    picked: impl Fn(&mut SlideEditor, &str, &mut Window, &mut Context<SlideEditor>) + Clone + 'static) -> AnyElement {
+    font_dropdown_in_pane(id, input, cx, picked, false)
+}
+/// A pane font dropdown whose list is grouped "used in this file" / "all" (`include_all`; false lists only the used fonts).
+pub(crate) fn panel_document_font_dropdown(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, used: &[String], include_all: bool,
+    cx: &Context<SlideEditor>, picked: impl Fn(&mut SlideEditor, &str, &mut Window, &mut Context<SlideEditor>) + Clone + 'static) -> AnyElement {
+    synced_field::require_registered(input);
     #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
     super::scenario::button_probe::record_input(input);
     let current=input.read(cx).value().to_string(); let field=input.clone();
-    let entries=crate::shell::font_list::build_font_menu_entries(id,Vec::new(),Some(&current),move |name,_,w,cx| {
-        field.update(cx,|i,cx|i.set_value(name.to_string(),w,cx));cx.notify();
+    let entries=crate::shell::font_list::build_grouped_font_menu_entries(id,used,include_all,Some(&current),move |name,e,w,cx| {
+        field.update(cx,|i,cx|i.set_value(name.to_string(),w,cx));picked(e,name,w,cx);cx.notify();
     });
+    FontDropdown::new(id,&current,entries,0,&cx.weak_entity()).fill_width().into_any_element()
+}
+/// The font dropdown of [`font_dropdown_row`]: the button fills the row's control cell (up to [`FONT_DROPDOWN_WIDTH`]).
+fn font_dropdown_in_pane(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, cx: &Context<SlideEditor>,
+    picked: impl Fn(&mut SlideEditor, &str, &mut Window, &mut Context<SlideEditor>) + Clone + 'static, fill: bool) -> AnyElement {
+    synced_field::require_registered(input);
+    #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
+    super::scenario::button_probe::record_input(input);
+    let current=input.read(cx).value().to_string(); let field=input.clone();
+    let entries=crate::shell::font_list::build_font_menu_entries(id,Vec::new(),Some(&current),move |name,e,w,cx| {
+        field.update(cx,|i,cx|i.set_value(name.to_string(),w,cx));picked(e,name,w,cx);cx.notify();
+    });
+    if fill {
+        return FontDropdown::new(id,&current,entries,0,&cx.weak_entity()).fill_width().into_any_element();
+    }
     div().w(FONT_DROPDOWN_WIDTH).flex_none().child(font_dropdown(id,&current,entries,0,&cx.weak_entity())).into_any_element()
 }
 pub(crate) fn panel_color_field(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, cx: &Context<SlideEditor>) -> AnyElement {
+    synced_field::require_registered(input);
     #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
     super::scenario::button_probe::record_input(input);
     let current=u32::from_str_radix(input.read(cx).value().trim_start_matches('#'),16).ok().map(ibis_doc_model::Rgb);
@@ -3236,11 +3711,11 @@ pub(crate) fn panel_color_field(id: &'static str, input: &Entity<gpui_kit::compo
 pub(crate) fn panel_color_field_enabled(id:&'static str,input:&Entity<gpui_kit::component::input::InputState>,enabled:bool,cx:&Context<SlideEditor>)->AnyElement {
  if enabled{return panel_color_field(id,input,cx);}
  let current=u32::from_str_radix(input.read(cx).value().trim_start_matches('#'),16).unwrap_or(0);
- h_flex().gap_1().w(FIELD_WIDTH).items_center().child(action_button(id).disabled(true).w(px(32.)).px_1().child(div().size(px(14.)).bg(rgb(current))))
+ h_flex().gap_1().w(FIELD_WIDTH).items_center().child(action_button(id).disabled(true).w(px(32.)).px_1().child(div().size(px(14.)).bg(crate::shell::palette::doc(current))))
  .child(div().flex_1().min_w_0().child(text_field(input).no_clear().disabled(true).full_width())).into_any_element()
 }
 pub(crate) fn color_name_label(color:u32,label:impl Into<SharedString>) -> Div {
-    h_flex().items_center().gap_2().child(div().size(px(14.)).rounded(px(2.)).border_1().border_color(rgb(BORDER)).bg(rgb(color)))
+    h_flex().items_center().gap_2().child(div().size(px(14.)).rounded(px(2.)).border_1().border_color(rgb(BORDER)).bg(crate::shell::palette::doc(color)))
         .child(div().text_sm().child(label.into()))
 }
 pub(crate) fn color_radio_button(id:impl Into<ElementId>, selected:bool,color:u32,label:impl Into<SharedString>, on_click:impl Fn(&ClickEvent,&mut Window,&mut App)+'static)->Stateful<Div> {
@@ -3250,6 +3725,7 @@ pub(crate) fn color_radio_button(id:impl Into<ElementId>, selected:bool,color:u3
 }
 pub(crate) fn take_sidebar_footer()->Option<ActionBar>{SIDEBAR_FOOTER.with(|c|c.borrow_mut().take())}
 pub(crate) fn input_dropdown(id: &'static str, input: &Entity<gpui_kit::component::input::InputState>, choices:Vec<String>, cx:&Context<SlideEditor>) -> AnyElement {
+    synced_field::require_registered(input);
     #[cfg(all(feature="scenarios",any(target_os="macos",target_os="linux")))]
     super::scenario::button_probe::record_input(input);
     let current=input.read(cx).value().to_string();
@@ -3272,7 +3748,7 @@ impl RenderOnce for ColorTextField {
             .w(px(14.))
             .h(px(14.))
             .rounded(px(2.))
-            .bg(rgb(c.0))
+            .bg(crate::shell::palette::doc(c.0))
             .border_1()
             .border_color(rgb(BORDER)),
         None => div()
@@ -3361,6 +3837,9 @@ pub(crate) struct SpinnerSpec {
     pub min: Option<f32>,
     pub max: Option<f32>,
     pub integer_only: bool,
+    /// The most digits shown after the decimal point (`None`: up to 2, as before). Typed and stepped values are rounded to it;
+    /// trailing zeros are not shown.
+    pub decimals: Option<u8>,
 }
 
 impl SpinnerSpec {
@@ -3372,7 +3851,14 @@ impl SpinnerSpec {
             min: None,
             max: None,
             integer_only: false,
+            decimals: None,
         }
+    }
+
+    /// The most digits shown after the decimal point (`.decimals(1)`: 5.25 is shown 5.3, 5.0 is shown 5).
+    pub const fn decimals(mut self, decimals: u8) -> Self {
+        self.decimals = Some(decimals);
+        self
     }
 
     pub const fn steps(mut self, steps: &'static [f32]) -> Self {
@@ -3470,11 +3956,17 @@ impl SpinnerSpec {
         if self.integer_only {
             clamped.round()
         } else {
-            (clamped * 100.0).round() / 100.0
+            let scale = 10f32.powi(self.decimals.unwrap_or(2) as i32);
+            (clamped * scale).round() / scale
         }
     }
 
     pub fn format_value(&self, val: f32) -> String {
+        if let Some(d) = self.decimals.filter(|_| !self.integer_only) {
+            // At most `d` digits, trailing zeros dropped (5.0 -> "5", 5.25 with d = 1 -> "5.3").
+            let text = format!("{val:.*}", d as usize);
+            return if d == 0 { text } else { text.trim_end_matches('0').trim_end_matches('.').to_string() };
+        }
         if self.integer_only || (val - val.round()).abs() < 1e-4 {
             format!("{}", val.round() as i64)
         } else if ((val * 10.0) - (val * 10.0).round()).abs() < 1e-3 {
@@ -3600,6 +4092,13 @@ mod tests {
     }
 
     #[test]
+    fn spinner_fields_have_no_clear_button() {
+        assert!(super::clear_button_shown(true, false), "a text field has its ✕");
+        assert!(!super::clear_button_shown(true, true), "a field with ▲▼ has none");
+        assert!(!super::clear_button_shown(false, false), "no_clear stays off");
+    }
+
+    #[test]
     fn spinner_spec_steps_and_clamps() {
         let spec = super::SpinnerSpec::new(1.0).range(0.0, 10.0).integer_only();
         assert_eq!(spec.step_value(5.0, true), 6.0);
@@ -3614,6 +4113,11 @@ mod tests {
         assert_eq!(table_spec.step_value(0.6, true), 0.75);
         assert_eq!(table_spec.step_value(0.75, true), 1.0);
         assert_eq!(table_spec.step_value(0.75, false), 0.5);
+        let one = super::SpinnerSpec::new(0.1).decimals(1);
+        assert_eq!(one.format_value(5.26), "5.3");
+        assert_eq!(one.format_value(5.0), "5");
+        assert_eq!(one.format_value(12.34567), "12.3");
+        assert_eq!(super::SpinnerSpec::new(0.01).decimals(2).format_value(0.2), "0.2");
     }
 
     #[test]

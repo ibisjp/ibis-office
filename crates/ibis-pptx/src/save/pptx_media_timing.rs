@@ -6,19 +6,19 @@
 //! A clip (`p:pic` with `a:videoFile` / `a:audioFile` and `p14:media`) is
 //! played by what is in the slide's `p:timing`, not by the picture:
 //!
-//! - an effect of class `mediacall` in the main sequence whose `p:cmd` calls
-//!   `playFrom(0.0)` (a click of its own, or started with the slide: 自動),
+//! - a clip put on a slide has no effect in the main sequence (PowerPoint 16, AddMediaObject2); one
+//!   started with the slide (自動) has a `mediacall` effect there whose `p:cmd` calls `playFrom(0.0)`,
 //! - a `p:video` / `p:audio` holding the `p:cMediaNode` (volume, `numSld`,
 //!   `showWhenStopped`, full screen; `repeatCount` and `fill` on its `p:cTn`),
-//! - for a video, an `interactiveSeq` that pauses and resumes it by a click
-//!   on the video (`togglePause`).
+//! - an `interactiveSeq` for a click on the clip: a video pauses and resumes (`togglePause`), an
+//!   audio not started with the slide plays (`playFrom(0.0)`).
 //!
 //! Without them the picture is only a picture: the animation pane lists no
 //! 再生 and the slide show cannot play it. The options (volume, loop…) are not
 //! attributes of `p14:media` (it has `r:embed` and `r:link` and the trim,
 //! fade and bookmarks only).
 
-use ibis_doc_model::{ClipOptions, MediaStart, MediaVolume};
+use ibis_doc_model::{ClipOptions, MediaCommand, MediaStart, MediaVolume};
 use ibis_ooxml::{NodeId, XmlDocument};
 
 use super::pptx_new::Prefixes;
@@ -204,21 +204,23 @@ fn add(doc: &mut XmlDocument, x: &Prefixes, clip: &MediaPlay) -> Result<(), Erro
     // Started with the slide: the first click group of the sequence, joined when it already starts with the slide.
     let first = doc.elements(main_list).next();
     let first_auto = first.is_some_and(|f| doc.descendants(f).into_iter().any(|n| doc.is_element(n) && doc.local_name(n) == "tn" && doc.attr(n, "val") == Some("2")));
-    let click_node = x.import(doc, &click)?;
-    if auto && first_auto {
-        // Into the group that starts with the slide, next to what is there (with it).
-        let group_list = first.and_then(|f| doc.child(f, "cTn")).and_then(|c| doc.child(c, "childTnLst")).ok_or_else(|| Error::new("タイミングが壊れています"))?;
-        let timed = doc.elements(click_node).next().and_then(|c| doc.child(c, "childTnLst")).and_then(|l| doc.elements(l).next()).ok_or_else(|| Error::new("タイミングが壊れています"))?;
-        if let Some(effect_ctn) = doc.descendants(timed).into_iter().find(|&n| doc.is_element(n) && doc.attr(n, "presetClass") == Some("mediacall")) {
-            doc.set_attr(effect_ctn, "nodeType", "withEffect");
+    // PowerPoint 16 (measured, AddMediaObject2): a clip put on a slide has no effect in the main sequence. A click on the
+    // video pauses and resumes it (`togglePause`), a click on the audio plays it (`playFrom(0.0)`), both in an interactive
+    // sequence. Only a clip started with the slide (自動) has the play call in the main sequence.
+    if auto && !has_call(doc, timing, spid, false) {
+        let click_node = x.import(doc, &click)?;
+        if first_auto {
+            // Into the group that starts with the slide, next to what is there (with it).
+            let group_list = first.and_then(|f| doc.child(f, "cTn")).and_then(|c| doc.child(c, "childTnLst")).ok_or_else(|| Error::new("タイミングが壊れています"))?;
+            let timed = doc.elements(click_node).next().and_then(|c| doc.child(c, "childTnLst")).and_then(|l| doc.elements(l).next()).ok_or_else(|| Error::new("タイミングが壊れています"))?;
+            if let Some(effect_ctn) = doc.descendants(timed).into_iter().find(|&n| doc.is_element(n) && doc.attr(n, "presetClass") == Some("mediacall")) {
+                doc.set_attr(effect_ctn, "nodeType", "withEffect");
+            }
+            let at = doc.children(group_list).len();
+            doc.insert(group_list, at, timed);
+        } else {
+            doc.insert(main_list, 0, click_node);
         }
-        let at = doc.children(group_list).len();
-        doc.insert(group_list, at, timed);
-    } else if auto {
-        doc.insert(main_list, 0, click_node);
-    } else {
-        let at = doc.children(main_list).len();
-        doc.insert(main_list, at, click_node);
     }
     // The media node, after the main sequence.
     let media_id = next();
@@ -246,12 +248,13 @@ fn add(doc: &mut XmlDocument, x: &Prefixes, clip: &MediaPlay) -> Result<(), Erro
     let node = x.import(doc, &media)?;
     let after = doc.children(tm_root).iter().rposition(|&c| doc.is_element(c) && matches!(doc.local_name(c), "seq" | "audio" | "video") && !(doc.local_name(c) == "seq" && !has_node_type(doc, c, "mainSeq"))).map_or(0, |i| i + 1);
     doc.insert(tm_root, after, node);
-    // A video: a click on it pauses and resumes it (`togglePause`).
-    if !clip.audio {
+    // A click on the clip: a video pauses and resumes (`togglePause`), an audio not started with the slide plays (`playFrom(0.0)`).
+    let (preset, cmd, call_dur) = if !clip.audio { (2, "togglePause", "1".to_string()) } else { (1, "playFrom(0.0)", dur.clone()) };
+    if (!clip.audio || !auto) && !has_call(doc, timing, spid, true) {
         let (seq_id, a, b, c, d) = (next(), next(), next(), next(), next());
         let click_target = format!("<{p}cond evt=\"onClick\" delay=\"0\"><{p}tgtEl><{p}spTgt spid=\"{spid}\"/></{p}tgtEl></{p}cond>");
         let toggle = format!(
-            "<{p}seq concurrent=\"1\" nextAc=\"seek\"><{p}cTn id=\"{seq_id}\" restart=\"whenNotActive\" fill=\"hold\" evtFilter=\"cancelBubble\" nodeType=\"interactiveSeq\"><{p}stCondLst>{click_target}</{p}stCondLst><{p}endSync evt=\"end\" delay=\"0\"><{p}rtn val=\"all\"/></{p}endSync><{p}childTnLst><{p}par><{p}cTn id=\"{a}\" fill=\"hold\"><{p}stCondLst><{p}cond delay=\"0\"/></{p}stCondLst><{p}childTnLst><{p}par><{p}cTn id=\"{b}\" fill=\"hold\"><{p}stCondLst><{p}cond delay=\"0\"/></{p}stCondLst><{p}childTnLst><{p}par><{p}cTn id=\"{c}\" presetID=\"2\" presetClass=\"mediacall\" presetSubtype=\"0\" fill=\"hold\" nodeType=\"clickEffect\"><{p}stCondLst><{p}cond delay=\"0\"/></{p}stCondLst><{p}childTnLst><{p}cmd type=\"call\" cmd=\"togglePause\"><{p}cBhvr><{p}cTn id=\"{d}\" dur=\"1\" fill=\"hold\"/>{target}</{p}cBhvr></{p}cmd></{p}childTnLst></{p}cTn></{p}par></{p}childTnLst></{p}cTn></{p}par></{p}childTnLst></{p}cTn></{p}par></{p}childTnLst></{p}cTn><{p}nextCondLst>{click_target}</{p}nextCondLst></{p}seq>"
+            "<{p}seq concurrent=\"1\" nextAc=\"seek\"><{p}cTn id=\"{seq_id}\" restart=\"whenNotActive\" fill=\"hold\" evtFilter=\"cancelBubble\" nodeType=\"interactiveSeq\"><{p}stCondLst>{click_target}</{p}stCondLst><{p}endSync evt=\"end\" delay=\"0\"><{p}rtn val=\"all\"/></{p}endSync><{p}childTnLst><{p}par><{p}cTn id=\"{a}\" fill=\"hold\"><{p}stCondLst><{p}cond delay=\"0\"/></{p}stCondLst><{p}childTnLst><{p}par><{p}cTn id=\"{b}\" fill=\"hold\"><{p}stCondLst><{p}cond delay=\"0\"/></{p}stCondLst><{p}childTnLst><{p}par><{p}cTn id=\"{c}\" presetID=\"{preset}\" presetClass=\"mediacall\" presetSubtype=\"0\" fill=\"hold\" nodeType=\"clickEffect\"><{p}stCondLst><{p}cond delay=\"0\"/></{p}stCondLst><{p}childTnLst><{p}cmd type=\"call\" cmd=\"{cmd}\"><{p}cBhvr><{p}cTn id=\"{d}\" dur=\"{call_dur}\" fill=\"hold\"/>{target}</{p}cBhvr></{p}cmd></{p}childTnLst></{p}cTn></{p}par></{p}childTnLst></{p}cTn></{p}par></{p}childTnLst></{p}cTn></{p}par></{p}childTnLst></{p}cTn><{p}nextCondLst>{click_target}</{p}nextCondLst></{p}seq>"
         );
         let seq = x.import(doc, &toggle)?;
         let at = doc.children(tm_root).len();
@@ -295,8 +298,76 @@ pub(crate) fn take(doc: &mut XmlDocument, timing: NodeId) -> Vec<NodeId> {
     out
 }
 
-/// Put what [`take`] took back into the (rebuilt) timing, its time nodes numbered anew.
-pub(crate) fn restore(doc: &mut XmlDocument, pieces: Vec<NodeId>) -> Result<(), Error> {
+/// The drawing id the call (`p:cmd`) of a piece taken out by [`take`] targets, and whether the model reads that call
+/// as an effect (再生・一時停止・停止) and so lists it in the animation pane.
+pub(crate) fn call_target(doc: &XmlDocument, piece: NodeId) -> Option<(String, bool)> {
+    let cmd = doc.descendants(piece).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "cmd")?;
+    let spid = doc.descendants(cmd).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "spTgt").and_then(|n| doc.attr(n, "spid").map(str::to_string))?;
+    let read = doc.attr(cmd, "cmd").is_some_and(|c| c.starts_with("play") || matches!(c, "resume" | "togglePause" | "pause" | "stop"));
+    Some((spid, read))
+}
+
+/// What a piece taken out by [`take`] calls: the drawing id of its shape, whether a click on a shape starts it (an
+/// interactive sequence) and the command (as the model reads the call). `None` for a call the model does not read.
+pub(crate) fn piece_key(doc: &XmlDocument, piece: NodeId) -> Option<(String, bool, MediaCommand)> {
+    let (spid, read) = call_target(doc, piece)?;
+    if !read {
+        return None;
+    }
+    let cmd = doc.descendants(piece).into_iter().find(|&n| doc.is_element(n) && doc.local_name(n) == "cmd").and_then(|n| doc.attr(n, "cmd"))?;
+    let command = if cmd.starts_with("play") || cmd == "resume" {
+        MediaCommand::Play
+    } else if cmd == "togglePause" || cmd == "pause" {
+        MediaCommand::Pause
+    } else {
+        MediaCommand::Stop
+    };
+    Some((spid, doc.local_name(piece) == "seq", command))
+}
+
+/// A new call (`p:par` of the main sequence, or an interactive `p:seq` for a click on the shape itself) that plays, pauses
+/// or stops the clip `spid`, as PowerPoint writes one (preset 1, 2, 3 of the class `mediacall`). Its time nodes are
+/// numbered by [`restore`]. `dur` is the length of the call in milliseconds.
+pub(crate) fn call_piece(doc: &mut XmlDocument, x: &Prefixes, spid: &str, command: MediaCommand, interactive: bool, dur: u32) -> Result<NodeId, Error> {
+    let p = &x.p;
+    let (preset, cmd) = match (command, interactive) {
+        (MediaCommand::Play, _) => (1, "playFrom(0.0)"),
+        (MediaCommand::Pause, true) => (2, "togglePause"),
+        (MediaCommand::Pause, false) => (2, "pause"),
+        (MediaCommand::Stop, _) => (3, "stop"),
+    };
+    let target = format!("<{p}tgtEl><{p}spTgt spid=\"{spid}\"/></{p}tgtEl>");
+    let effect = format!(
+        "<{p}par><{p}cTn id=\"1\" presetID=\"{preset}\" presetClass=\"mediacall\" presetSubtype=\"0\" fill=\"hold\" nodeType=\"clickEffect\"><{p}stCondLst><{p}cond delay=\"0\"/></{p}stCondLst><{p}childTnLst><{p}cmd type=\"call\" cmd=\"{cmd}\"><{p}cBhvr><{p}cTn id=\"1\" dur=\"{}\" fill=\"hold\"/>{target}</{p}cBhvr></{p}cmd></{p}childTnLst></{p}cTn></{p}par>",
+        dur.max(1)
+    );
+    let group = |inner: &str| format!("<{p}par><{p}cTn id=\"1\" fill=\"hold\"><{p}stCondLst><{p}cond delay=\"0\"/></{p}stCondLst><{p}childTnLst>{inner}</{p}childTnLst></{p}cTn></{p}par>");
+    let xml = if interactive {
+        let click = format!("<{p}cond evt=\"onClick\" delay=\"0\"><{p}tgtEl><{p}spTgt spid=\"{spid}\"/></{p}tgtEl></{p}cond>");
+        format!(
+            "<{p}seq concurrent=\"1\" nextAc=\"seek\"><{p}cTn id=\"1\" restart=\"whenNotActive\" fill=\"hold\" evtFilter=\"cancelBubble\" nodeType=\"interactiveSeq\"><{p}stCondLst>{click}</{p}stCondLst><{p}endSync evt=\"end\" delay=\"0\"><{p}rtn val=\"all\"/></{p}endSync><{p}childTnLst>{}</{p}childTnLst></{p}cTn><{p}nextCondLst>{click}</{p}nextCondLst></{p}seq>",
+            group(&group(&effect))
+        )
+    } else {
+        format!("<{p}par><{p}cTn id=\"1\" fill=\"hold\"><{p}stCondLst><{p}cond delay=\"indefinite\"/></{p}stCondLst><{p}childTnLst>{}</{p}childTnLst></{p}cTn></{p}par>", group(&effect))
+    };
+    x.import(doc, &xml)
+}
+
+/// Whether the timing already calls the clip `spid` (`p:cmd`) in an interactive sequence (`interactive`) or in the main sequence.
+fn has_call(doc: &XmlDocument, timing: NodeId, spid: &str, interactive: bool) -> bool {
+    let kind = if interactive { "interactiveSeq" } else { "mainSeq" };
+    doc.descendants(timing).into_iter().filter(|&n| doc.is_element(n) && doc.local_name(n) == "seq" && has_node_type(doc, n, kind)).any(|seq| {
+        doc.descendants(seq).into_iter().any(|c| {
+            doc.is_element(c) && doc.local_name(c) == "cmd" && doc.descendants(c).into_iter().any(|t| doc.is_element(t) && doc.local_name(t) == "spTgt" && doc.attr(t, "spid") == Some(spid))
+        })
+    })
+}
+
+/// Put what [`take`] took back into the (rebuilt) timing, its time nodes numbered anew. The click groups of the main
+/// sequence go to the places `slots` give (one for each of them, in order: how many click groups of other effects come
+/// before it); without a place a group goes last.
+pub(crate) fn restore(doc: &mut XmlDocument, pieces: Vec<NodeId>, slots: &[usize]) -> Result<(), Error> {
     if pieces.is_empty() {
         return Ok(());
     }
@@ -305,6 +376,8 @@ pub(crate) fn restore(doc: &mut XmlDocument, pieces: Vec<NodeId>) -> Result<(), 
     let (tm_root, main_list) = skeleton(doc, &x)?;
     let timing = doc.child(root, "timing").ok_or_else(|| Error::new("タイミングが壊れています"))?;
     let mut id = max_ctn_id(doc, timing) + 1;
+    let mut placed = 0usize;
+    let mut main_nodes = Vec::new();
     for piece in pieces {
         for n in doc.descendants(piece) {
             if doc.is_element(n) && doc.local_name(n) == "cTn" {
@@ -313,15 +386,20 @@ pub(crate) fn restore(doc: &mut XmlDocument, pieces: Vec<NodeId>) -> Result<(), 
             }
         }
         match doc.local_name(piece) {
-            "par" => {
-                let at = doc.children(main_list).len();
-                doc.insert(main_list, at, piece);
-            }
+            "par" => main_nodes.push(piece),
             _ => {
                 let at = doc.children(tm_root).len();
                 doc.insert(tm_root, at, piece);
             }
         }
+    }
+    // The main sequence's groups in the order of their places (the sort is stable).
+    let mut order: Vec<(usize, NodeId)> = main_nodes.into_iter().enumerate().map(|(i, n)| (slots.get(i).copied().unwrap_or(usize::MAX), n)).collect();
+    order.sort_by_key(|(slot, _)| *slot);
+    for (slot, node) in order {
+        let at = if slot == usize::MAX { doc.children(main_list).len() } else { (slot + placed).min(doc.children(main_list).len()) };
+        doc.insert(main_list, at, node);
+        placed += 1;
     }
     Ok(())
 }

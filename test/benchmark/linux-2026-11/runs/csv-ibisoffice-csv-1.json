@@ -1,0 +1,53 @@
+{
+ "end": 0.721,
+ "last_change": 5.723,
+ "end_video_frame": 7,
+ "first_change": 0.044,
+ "window_end": 5.723,
+ "doc_changes_count": 4,
+ "doc_changes": [
+  [
+   0.044,
+   0.07948
+  ],
+  [
+   0.089,
+   0.00413
+  ],
+  [
+   0.721,
+   0.23796
+  ],
+  [
+   5.723,
+   0.1282
+  ]
+ ],
+ "recorded_until": 13.726,
+ "grabs": 1297,
+ "capped": false,
+ "tag": "csv-ibisoffice-csv-1",
+ "scenario": "csv",
+ "app": "ibisoffice",
+ "kind": "csv",
+ "run": 1,
+ "file": "kpi-max-rows.csv",
+ "command": [
+  "click: 最近開いたファイル",
+  "kpi-max-rows.csv"
+ ],
+ "rects": [
+  [
+   0.0,
+   "-20 7 1320 840"
+  ]
+ ],
+ "covered": [],
+ "cap": 900,
+ "measured_at": "2026-11-03 21:12:14",
+ "load_before": [
+  1.13,
+  0.62,
+  0.39
+ ]
+}

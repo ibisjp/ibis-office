@@ -11,7 +11,7 @@ use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use crate::shell::palette::rgb;
-use ibis_doc_model::{Emu, FlowDocument, ParaChange, TabAlign, TabChange, TabStop};
+use ibis_doc_model::{Emu, FlowDocument, ParaChange, TabAlign, TabChange, TabLeader, TabStop};
 
 use crate::shell::{chrome::SidebarPanel, editor::SlideEditor};
 
@@ -19,7 +19,7 @@ pub(crate) struct TabEditState {
     pub(crate) editor: Option<Option<usize>>,
     pub(crate) pos_field: Entity<InputState>,
     pub(crate) align: TabAlign,
-    pub(crate) leader: bool,
+    pub(crate) leader: TabLeader,
     pub(crate) stops: Vec<TabStop>,
     pub(crate) original_stops: Vec<TabStop>,
     pub(crate) selected_index: Option<usize>,
@@ -41,12 +41,25 @@ fn format_pt(pt: f64) -> String {
     format!("{:.1}", pt)
 }
 
+fn leader_name(leader: TabLeader) -> gpui::SharedString {
+    crate::shell::i18n::text(match leader {
+        TabLeader::None => "_shell.none",
+        TabLeader::Dot => "_docx.dotted",
+        TabLeader::Hyphen => "_docx.tab-leader-hyphen",
+        TabLeader::Underscore => "_docx.tab-leader-underscore",
+        TabLeader::Heavy => "_docx.tab-leader-heavy",
+        TabLeader::MiddleDot => "_docx.tab-leader-middle-dot",
+    })
+}
+
 fn align_name(align: TabAlign) -> gpui::SharedString {
     match align {
         TabAlign::Left => crate::shell::i18n::text("docx.page-number.bottom-left"),
         TabAlign::Center => crate::shell::i18n::text("_shell.center-2"),
         TabAlign::Right => crate::shell::i18n::text("docx.page-number.bottom-right"),
         TabAlign::Decimal => crate::shell::i18n::text("_docx.decimal"),
+        TabAlign::Bar => crate::shell::i18n::text("_docx.tab-bar"),
+        TabAlign::Num => crate::shell::i18n::text("_docx.tab-num"),
     }
 }
 
@@ -60,7 +73,7 @@ impl SlideEditor {
         let is_empty = p.tabs.is_empty();
         let initial_val = stops.first().map_or("72".to_string(), |s| format_pt(emu_to_pt(s.position)));
         let initial_align = stops.first().map_or(TabAlign::Left, |s| s.align);
-        let initial_leader = stops.first().map_or(false, |s| s.leader);
+        let initial_leader = stops.first().map_or(TabLeader::None, |s| s.leader);
 
         let pos_field = cx.new(|cx| {
             let mut state = InputState::new(window, cx);
@@ -109,7 +122,7 @@ impl SlideEditor {
         cx.notify();
     }
 
-    pub(crate) fn choose_tab_leader(&mut self, leader: bool, cx: &mut Context<Self>) {
+    pub(crate) fn choose_tab_leader(&mut self, leader: TabLeader, cx: &mut Context<Self>) {
         let Some(edit) = self.doc_state_mut().and_then(|s| s.tab_edit.as_mut()) else { return };
         edit.leader = leader;
         cx.notify();
@@ -221,7 +234,7 @@ impl SlideEditor {
         if let Some(p)=self.doc_state_mut().and_then(|s|s.tab_edit.as_mut()) {
             p.editor=Some(index);p.error=None;
             p.pos_field.update(cx,|i,cx|i.focus(w,cx));
-            if index.is_none() {p.align=TabAlign::Left;p.leader=false;let next=p.stops.last().map_or(72.,|s|emu_to_pt(s.position)+72.);let value=if next<=1584. {format_pt(next)}else{String::new()};p.pos_field.update(cx,|i,cx|i.set_value(value,w,cx));}
+            if index.is_none() {p.align=TabAlign::Left;p.leader=TabLeader::None;let next=p.stops.last().map_or(72.,|s|emu_to_pt(s.position)+72.);let value=if next<=1584. {format_pt(next)}else{String::new()};p.pos_field.update(cx,|i,cx|i.set_value(value,w,cx));}
         } cx.notify();
     }
     pub(crate) fn finish_tab_row_editor(&mut self,w:&mut Window,cx:&mut Context<Self>) {
@@ -264,7 +277,7 @@ impl SlideEditor {
                 .gap_1()
                 .child(div().w(px(56.)).flex_none().text_sm().child(format!("{} pt", format_pt(emu_to_pt(stop.position)))))
                 .child(div().w(px(70.)).flex_none().text_sm().child(align_name(stop.align)))
-                .child(div().flex_1().min_w_0().overflow_hidden().text_sm().child(crate::shell::i18n::text(if stop.leader { "_docx.dotted" } else { "_shell.none" })))
+                .child(div().flex_1().min_w_0().overflow_hidden().text_sm().child(leader_name(stop.leader)))
                 .when(on, |d| d
                     .child(crate::shell::chrome::action_button(("tab-edit", i)).small().w(px(crate::shell::chrome::BUTTON_HEIGHT)).px_0()
                         .icon(crate::shell::icons::Material("edit"))
@@ -296,8 +309,8 @@ impl SlideEditor {
             .child(crate::shell::chrome::text_field(&input).spinner("tab-position",crate::shell::chrome::SpinnerSpec::new(6.).range(0.05,1584.),cx,|_,_,_,_|{}).unit("pt",px(24.)))
             .child(div().text_sm().child(crate::shell::i18n::text("_shell.arrange"))).child(group)
             .child(div().text_sm().child(crate::shell::i18n::text("_docx.leader")))
-            .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).child(crate::shell::chrome::segment_control::SegmentItem::label("tab-none",crate::shell::i18n::text("_shell.none"),!leader).on_click(cx.listener(|e,_,_,cx|e.choose_tab_leader(false,cx))))
-                .child(crate::shell::chrome::segment_control::SegmentItem::label("tab-dot",crate::shell::i18n::text("_docx.dotted"),leader).on_click(cx.listener(|e,_,_,cx|e.choose_tab_leader(true,cx)))))
+            .child(crate::shell::chrome::SegmentControlRow::new(crate::shell::chrome::segment_control::Mode::Intrinsic).child(crate::shell::chrome::segment_control::SegmentItem::label("tab-none",crate::shell::i18n::text("_shell.none"),leader==TabLeader::None).on_click(cx.listener(|e,_,_,cx|e.choose_tab_leader(TabLeader::None,cx))))
+                .child(crate::shell::chrome::segment_control::SegmentItem::label("tab-dot",crate::shell::i18n::text("_docx.dotted"),leader==TabLeader::Dot).on_click(cx.listener(|e,_,_,cx|e.choose_tab_leader(TabLeader::Dot,cx)))))
             .children(p.error.clone().map(|s|div().text_sm().text_color(rgb(0xd93025)).child(s)));
         let footer=crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("tab-ok", "OK", crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e,_,w,cx|e.finish_tab_row_editor(w,cx))))
             .action(crate::shell::chrome::dialog_cancel_definition(cx))

@@ -65,6 +65,9 @@ pub struct FormControl {
     pub items: Vec<String>,
     /// The part of the file (`ctrlProp`) it was read from, for saving its state.
     pub part: String,
+    /// The `id` of its legacy VML shape (`_x0000_s1043`) when the sheet describes it only by VML
+    /// (Excel 2007: no `controls` element); empty when it was read from a `control` element.
+    pub vml_id: String,
 }
 
 impl FormControl {
@@ -92,6 +95,7 @@ impl FormControl {
             text_color: None,
             items: Vec::new(),
             part: String::new(),
+            vml_id: String::new(),
         }
     }
 }

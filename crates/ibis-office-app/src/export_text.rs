@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! A line of text drawn on a page picture (the header, date, footer and
-//! number of a printed handout), with the system's own font and its fallback
-//! for the other scripts (CoreText, drawn into a CoreGraphics bitmap).
+//! Text drawn on a printed page's picture (the notes, the outline, and the header, date, footer and number of a handout).
+//!
+//! It is laid out and drawn by the text layout the slides' own text is (`TextLayer`, made over the headless window the export
+//! draws in), so it is the same on every platform and in the same fonts, and not by a platform's own text API.
 
-use core_foundation::attributed_string::CFMutableAttributedString;
-use core_foundation::base::{CFRange, TCFType};
-use core_foundation::string::CFString;
-use core_graphics::color_space::CGColorSpace;
-use core_graphics::context::CGContext;
-use core_graphics::geometry::{CGPoint, CGRect, CGSize};
-use core_graphics::path::CGPath;
-use core_text::font::new_ui_font_for_language;
-use core_text::framesetter::CTFramesetter;
-use core_text::line::CTLine;
-use core_text::string_attributes::kCTFontAttributeName;
+use ibis_doc_model::{Bullet, Paragraph, Rgb, Run, RunStyle, TextAlign, TextBody, TextStyle};
 use image::{Rgba, RgbaImage};
+
+use crate::export_print::NoteText;
+
+/// What lays text out and draws it: the slides' own text drawing, in a box.
+pub(crate) trait TextLayer {
+    /// `body` laid out in a box `width` pixels wide (a page picture's pixels) and at most `height` tall: the picture of the box (the
+    /// text on white) and the top and bottom of each of its lines in that picture's pixels.
+    fn typeset(&mut self, body: &TextBody, width: u32, height: u32) -> Option<(RgbaImage, Vec<(f32, f32)>)>;
+}
 
 /// Where a line sits against the `x` given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,238 +26,154 @@ pub(crate) enum Align {
     Right,
 }
 
-/// `text`, `size` pixels high, in black on `image`: its left (or right) end at `x`, the top of its letters
-/// at `top`.
-pub(crate) fn draw_text(image: &mut RgbaImage, text: &str, x: f32, top: f32, size: f32, align: Align) {
+/// The tallest picture of text a layer is asked for (the renderer's textures reach 16 384 pixels).
+const MAX_HEIGHT: u32 = 15_000;
+/// The most paragraphs laid out as one picture (an outline of many slides comes in pieces).
+const CHUNK: usize = 60;
+/// A level's indent and a bullet's hang, in points.
+const LEVEL_PT: i64 = 18;
+
+/// `text` as paragraphs of the slides' text model: a level's indent, the bullet hanging, the runs' own size, weight and colour.
+pub(crate) fn note_paragraphs(text: &NoteText) -> Vec<Paragraph> {
+    const BASE_PT: f32 = 12.0;
+    text.paragraphs
+        .iter()
+        .map(|p| {
+            let size = |pt: Option<f32>| ((pt.unwrap_or(BASE_PT) * 100.0).round() as u32).clamp(TextStyle::MIN_FONT_SIZE, TextStyle::MAX_FONT_SIZE);
+            let runs = p
+                .runs
+                .iter()
+                .map(|r| Run {
+                    text: r.text.clone(),
+                    style: RunStyle { font_size: Some(size(r.size_pt)), bold: r.bold.then_some(true), color: r.color.map(|(r, g, b)| Rgb(((r as u32) << 16) | ((g as u32) << 8) | b as u32)), ..RunStyle::default() },
+                })
+                .collect();
+            let hang = LEVEL_PT * 12_700;
+            let level = p.level as i64 * hang;
+            let bullet = p.bullet.as_ref().map(|b| Bullet { text: b.clone(), picture: None, size: 100_000, color: None, auto: None, symbol: None });
+            Paragraph {
+                runs,
+                margin_left: if bullet.is_some() { level + hang } else { level },
+                indent: if bullet.is_some() { -hang } else { 0 },
+                bullet,
+                end_style: RunStyle { font_size: Some(size(p.runs.first().and_then(|r| r.size_pt))), ..RunStyle::default() },
+                ..Paragraph::default()
+            }
+        })
+        .collect()
+}
+
+/// `paragraphs` as a text in a box (no insets, wrapped, from the top).
+fn body_of(paragraphs: Vec<Paragraph>, align: TextAlign) -> TextBody {
+    let style = TextStyle { font_size: 1200, align, ..TextStyle::default() };
+    TextBody { paragraphs, style, insets: ibis_doc_model::Insets { left: 0, top: 0, right: 0, bottom: 0 }, ..TextBody::default() }
+}
+
+/// `layer`'s picture put on `page` with its rows `from..to` at (`x`, `y`): the text is black or coloured on white, so each pixel
+/// multiplies what is on the page (white leaves it, text darkens it).
+fn multiply(page: &mut RgbaImage, layer: &RgbaImage, (from, to): (u32, u32), (x, y): (i64, i64)) {
+    for row in from..to.min(layer.height()) {
+        for column in 0..layer.width() {
+            let (px, py) = (x + column as i64, y + (row - from) as i64);
+            if px < 0 || py < 0 || px >= page.width() as i64 || py >= page.height() as i64 {
+                continue;
+            }
+            let over = layer.get_pixel(column, row).0;
+            if over[..3] == [255, 255, 255] {
+                continue;
+            }
+            let under = page.get_pixel(px as u32, py as u32).0;
+            let mix = |u: u8, o: u8| ((u as u32 * o as u32 + 127) / 255) as u8;
+            page.put_pixel(px as u32, py as u32, Rgba([mix(under[0], over[0]), mix(under[1], over[1]), mix(under[2], over[2]), 255]));
+        }
+    }
+}
+
+/// `text`, `size` pixels high (`px_per_pt` to a point), in black on `page`: its left (or right, or middle) at `x`, the top of its
+/// line at `top`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_text(layer: &mut dyn TextLayer, page: &mut RgbaImage, px_per_pt: f32, text: &str, x: f32, top: f32, size: f32, align: Align) {
     if text.is_empty() {
         return;
     }
-    // The system's own UI font (kCTFontUIFontSystem = 2): the other scripts come from its fallback.
-    let font = new_ui_font_for_language(2, size as f64, None);
-    let mut string = CFMutableAttributedString::new();
-    let cf = CFString::new(text);
-    string.replace_str(&cf, CFRange::init(0, 0));
-    let length = string.char_len();
-    string.set_attribute(CFRange::init(0, length), unsafe { kCTFontAttributeName }, &font);
-    let line = CTLine::new_with_attributed_string(string.as_concrete_TypeRef());
-    let bounds = line.get_typographic_bounds();
-    let width = bounds.width.ceil() as usize + 4;
-    let height = (bounds.ascent + bounds.descent + bounds.leading).ceil() as usize + 4;
-    // Drawn in black on transparent: CoreGraphics' rows go from the bottom.
-    let mut buffer = vec![0u8; width * height * 4];
-    {
-        let space = CGColorSpace::create_device_rgb();
-        // kCGImageAlphaPremultipliedLast
-        let context = CGContext::create_bitmap_context(Some(buffer.as_mut_ptr() as *mut std::ffi::c_void), width, height, 8, width * 4, &space, 1);
-        context.set_rgb_fill_color(0.0, 0.0, 0.0, 1.0);
-        context.set_text_position(2.0, 2.0 + bounds.descent);
-        line.draw(&context);
-    }
-    let left = match align {
-        Align::Left => x,
-        Align::Center => x - (width as f32 - 4.0) / 2.0,
-        Align::Right => x - (width as f32 - 4.0),
-    };
-    let (ox, oy) = ((left - 2.0).round() as i64, (top - 2.0).round() as i64);
-    for row in 0..height {
-        // The buffer's first row is the top of the picture.
-        let source = row * width * 4;
-        for column in 0..width {
-            let alpha = buffer[source + column * 4 + 3] as u32;
-            if alpha == 0 {
-                continue;
-            }
-            let (px, py) = (ox + column as i64, oy + row as i64);
-            if px < 0 || py < 0 || px >= image.width() as i64 || py >= image.height() as i64 {
-                continue;
-            }
-            // Black with alpha over what is there.
-            let under = image.get_pixel(px as u32, py as u32).0;
-            let mix = |c: u8| ((c as u32 * (255 - alpha)) / 255) as u8;
-            image.put_pixel(px as u32, py as u32, Rgba([mix(under[0]), mix(under[1]), mix(under[2]), 255]));
+    let width = page.width() as f32;
+    let (left, box_width, text_align) = match align {
+        Align::Left => (x, width - x, TextAlign::Left),
+        Align::Right => (0.0, x, TextAlign::Right),
+        Align::Center => {
+            let half = x.min(width - x);
+            (x - half, 2.0 * half, TextAlign::Center)
         }
+    };
+    if box_width < 8.0 {
+        return;
     }
+    let pt = size / px_per_pt;
+    let run = Run { text: text.to_string(), style: RunStyle { font_size: Some((pt * 100.0).round() as u32), ..RunStyle::default() } };
+    let body = body_of(vec![Paragraph { runs: vec![run], ..Paragraph::default() }], text_align);
+    let Some((picture, _)) = layer.typeset(&body, box_width.round() as u32, (size * 2.0).ceil() as u32) else { return };
+    multiply(page, &picture, (0, picture.height()), (left.round() as i64, top.round() as i64));
 }
 
-/// The notes of one slide as one text to lay out: paragraphs (a bullet, a level's indent) of
-/// runs (bold, size, colour), broken into lines, and over as many boxes (pages) as it takes.
+/// A height (pixels) the `paragraphs` surely fit in at `width`: every character as wide as its size, a line and a half to a line.
+fn room_for(paragraphs: &[Paragraph], width: u32) -> u32 {
+    let px_per_pt = crate::export_print::PX_PER_PT;
+    let total: f32 = paragraphs
+        .iter()
+        .map(|p| {
+            let size = p.runs.iter().filter_map(|r| r.style.font_size).max().or(p.end_style.font_size).unwrap_or(1200) as f32 / 100.0 * px_per_pt;
+            let chars: usize = p.runs.iter().map(|r| r.text.chars().count()).sum::<usize>() + 4;
+            let lines = (chars as f32 * size / width.max(1) as f32).ceil() + 1.0;
+            lines * size * 1.5
+        })
+        .sum();
+    (total.ceil() as u32 + 16).min(MAX_HEIGHT)
+}
+
+/// The notes of one slide (or the outline) laid out as one text, and put into boxes (pages) as many lines as each takes.
 pub(crate) struct NoteFlow {
-    setter: CTFramesetter,
-    // The text the framesetter was made of.
-    _string: CFMutableAttributedString,
-    length: isize,
-    at: isize,
+    /// The paragraphs not laid out yet, in pieces.
+    pieces: std::collections::VecDeque<Vec<Paragraph>>,
+    width: u32,
+    /// The piece being drawn: its picture and its lines, and the line to go on from.
+    current: Option<(RgbaImage, Vec<(f32, f32)>)>,
+    at: usize,
 }
 
 impl NoteFlow {
-    /// `None` for notes with no text. A size is `base_pt` unless a run has its own (`px` per point).
-    pub(crate) fn new(text: &crate::export_print::NoteText, px_per_pt: f32) -> Option<Self> {
-        use core_graphics::color::CGColor;
-        use core_text::string_attributes::kCTForegroundColorAttributeName;
-        let mut plain = String::new();
-        // (UTF-16 start, length, run) of each run, once the text is in.
-        let mut spans: Vec<(isize, isize, &crate::export_print::NoteRun)> = Vec::new();
-        let mut at = 0isize;
-        let push = |plain: &mut String, text: &str, at: &mut isize| -> (isize, isize) {
-            let start = *at;
-            plain.push_str(text);
-            let n = text.encode_utf16().count() as isize;
-            *at += n;
-            (start, n)
-        };
-        let mut first = true;
-        for paragraph in &text.paragraphs {
-            if !first {
-                push(&mut plain, "\n", &mut at);
-            }
-            first = false;
-            let lead = format!("{}{}", "    ".repeat(paragraph.level as usize), paragraph.bullet.as_ref().map(|b| format!("{b} ")).unwrap_or_default());
-            push(&mut plain, &lead, &mut at);
-            for run in &paragraph.runs {
-                let (start, n) = push(&mut plain, &run.text, &mut at);
-                spans.push((start, n, run));
-            }
-        }
-        if plain.trim().is_empty() {
+    /// `None` for notes with no text. The boxes are `width` pixels wide.
+    pub(crate) fn new(text: &NoteText, width: u32) -> Option<Self> {
+        if text.paragraphs.iter().all(|p| p.runs.iter().all(|r| r.text.trim().is_empty())) {
             return None;
         }
-        let mut string = CFMutableAttributedString::new();
-        string.replace_str(&CFString::new(&plain), CFRange::init(0, 0));
-        let length = string.char_len();
-        let base = new_ui_font_for_language(2, 12.0 * px_per_pt as f64, None);
-        string.set_attribute(CFRange::init(0, length), unsafe { kCTFontAttributeName }, &base);
-        for (start, n, run) in spans {
-            if n == 0 {
-                continue;
-            }
-            let size = run.size_pt.unwrap_or(12.0) as f64 * px_per_pt as f64;
-            // 2 is the UI's text font, 3 its emphasized (bold) one.
-            let font = new_ui_font_for_language(if run.bold { 3 } else { 2 }, size, None);
-            let range = CFRange::init(start, n);
-            string.set_attribute(range, unsafe { kCTFontAttributeName }, &font);
-            if let Some((r, g, b)) = run.color {
-                let color = CGColor::rgb(r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0, 1.0);
-                string.set_attribute(range, unsafe { kCTForegroundColorAttributeName }, &color);
-            }
-        }
-        let setter = CTFramesetter::new_with_attributed_string(string.as_concrete_TypeRef());
-        Some(Self { setter, _string: string, length, at: 0 })
+        let paragraphs = note_paragraphs(text);
+        let pieces = paragraphs.chunks(CHUNK).map(<[Paragraph]>::to_vec).collect();
+        Some(Self { pieces, width, current: None, at: 0 })
     }
 
     /// Whether there is text not drawn yet.
     pub(crate) fn has_more(&self) -> bool {
-        self.at < self.length
+        self.current.is_some() || !self.pieces.is_empty()
     }
 
-    /// The text from where the last box ended, in the box `(x, y, width, height)` of `image`, as much
-    /// as fits (the next box takes the rest).
-    pub(crate) fn draw_next(&mut self, image: &mut RgbaImage, (x, y, width, height): (f32, f32, f32, f32)) {
-        let (w, h) = (width.round() as usize, height.round() as usize);
-        if !self.has_more() || w < 8 || h < 8 {
-            return;
+    /// The text from where the last box ended, in the box `(x, y, width, height)` of `page`, as many whole lines as fit (the next
+    /// box takes the rest).
+    pub(crate) fn draw_next(&mut self, layer: &mut dyn TextLayer, page: &mut RgbaImage, (x, y, _, height): (f32, f32, f32, f32)) {
+        while self.current.is_none() {
+            let Some(paragraphs) = self.pieces.pop_front() else { return };
+            let height = room_for(&paragraphs, self.width);
+            self.current = layer.typeset(&body_of(paragraphs, TextAlign::Left), self.width, height).filter(|(_, lines)| !lines.is_empty());
+            self.at = 0;
         }
-        let remaining = CFRange::init(self.at, self.length - self.at);
-        let (_, fit) = self.setter.suggest_frame_size_with_constraints(remaining, std::ptr::null(), CGSize::new(w as f64, h as f64));
-        // Always on: a box too small for a line takes a piece, so the text ends.
-        let take = if fit.length > 0 { fit.length } else { remaining.length.min(40) };
-        let range = CFRange::init(self.at, take);
+        let Some((picture, lines)) = &self.current else { return };
+        let start = lines[self.at].0;
+        // Always at least a line: a box too small for one takes it, so the text ends.
+        let take = lines[self.at..].iter().take_while(|l| l.1 - start <= height).count().max(1);
+        let end = lines[self.at + take - 1].1;
+        multiply(page, picture, (start.floor().max(0.0) as u32, end.ceil() as u32), (x.round() as i64, y.round() as i64));
         self.at += take;
-        let path = CGPath::from_rect(CGRect::new(&CGPoint::new(0.0, 0.0), &CGSize::new(w as f64, h as f64)), None);
-        let frame = self.setter.create_frame(range, &path);
-        let mut buffer = vec![0u8; w * h * 4];
-        {
-            let space = CGColorSpace::create_device_rgb();
-            let context = CGContext::create_bitmap_context(Some(buffer.as_mut_ptr() as *mut std::ffi::c_void), w, h, 8, w * 4, &space, 1);
-            context.set_rgb_fill_color(0.0, 0.0, 0.0, 1.0);
-            frame.draw(&context);
+        if self.at >= lines.len() {
+            self.current = None;
         }
-        let (ox, oy) = (x.round() as i64, y.round() as i64);
-        for row in 0..h {
-            for column in 0..w {
-                let o = (row * w + column) * 4;
-                let alpha = buffer[o + 3] as u32;
-                if alpha == 0 {
-                    continue;
-                }
-                let (px, py) = (ox + column as i64, oy + row as i64);
-                if px < 0 || py < 0 || px >= image.width() as i64 || py >= image.height() as i64 {
-                    continue;
-                }
-                // The buffer holds premultiplied colour over transparent: over what is there.
-                let under = image.get_pixel(px as u32, py as u32).0;
-                let mix = |u: u8, c: u8| (((u as u32 * (255 - alpha)) / 255) + c as u32).min(255) as u8;
-                image.put_pixel(px as u32, py as u32, Rgba([mix(under[0], buffer[o]), mix(under[1], buffer[o + 1]), mix(under[2], buffer[o + 2]), 255]));
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{draw_text, Align, NoteFlow};
-    use image::{Rgba, RgbaImage};
-
-    fn dark(image: &RgbaImage) -> Vec<(u32, u32)> {
-        image.enumerate_pixels().filter(|(_, _, p)| p.0[0] < 128).map(|(x, y, _)| (x, y)).collect()
-    }
-
-    #[test]
-    fn notes_are_broken_into_lines_and_boxes() {
-        use crate::export_print::{NotePara, NoteRun, NoteText};
-        let run = |text: &str, bold: bool, size: Option<f32>, color: Option<(u8, u8, u8)>| NoteRun { text: text.into(), bold, size_pt: size, color };
-        let text = NoteText {
-            paragraphs: vec![
-                NotePara { level: 0, bullet: None, runs: vec![run("The quick brown fox jumps over the lazy dog and runs on and on across the whole field. ", false, None, None), run("二つ目の段落です。", true, Some(16.0), Some((200, 0, 0)))] },
-                NotePara { level: 1, bullet: Some("•".into()), runs: vec![run("A bulleted line, one level in, with more words to fill a few lines of the box.", false, None, None)] },
-            ],
-        };
-        let mut flow = NoteFlow::new(&text, 1.0).unwrap();
-        // A box with room for part of it: the rest is for the next box.
-        let mut first = RgbaImage::from_pixel(300, 200, Rgba([255, 255, 255, 255]));
-        flow.draw_next(&mut first, (20.0, 20.0, 200.0, 40.0));
-        let marks = dark(&first);
-        assert!(marks.len() > 100 && flow.has_more(), "part of it fits: {} {}", marks.len(), flow.has_more());
-        let max_y = marks.iter().map(|m| m.1).max().unwrap();
-        assert!(max_y <= 62, "inside the box: {max_y}");
-        let mut second = RgbaImage::from_pixel(300, 200, Rgba([255, 255, 255, 255]));
-        flow.draw_next(&mut second, (20.0, 20.0, 200.0, 150.0));
-        assert!(!flow.has_more(), "all of it is drawn");
-        assert!(dark(&second).len() > 100);
-        // The red bold run: red pixels somewhere in the two.
-        let red = |i: &RgbaImage| i.pixels().filter(|p| p[0] > 150 && p[1] < 80 && p[2] < 80).count();
-        assert!(red(&first) + red(&second) > 20, "coloured");
-        assert!(NoteFlow::new(&NoteText::default(), 1.0).is_none());
-    }
-
-    #[test]
-    fn text_is_drawn_where_it_is_put() {
-        let mut page = RgbaImage::from_pixel(400, 100, Rgba([255, 255, 255, 255]));
-        draw_text(&mut page, "Header 123", 20.0, 30.0, 24.0, Align::Left);
-        let marks = dark(&page);
-        assert!(marks.len() > 100, "{}", marks.len());
-        let (min_x, max_x) = (marks.iter().map(|m| m.0).min().unwrap(), marks.iter().map(|m| m.0).max().unwrap());
-        assert!((15..=30).contains(&min_x), "left {min_x}");
-        assert!(max_x < 200, "right {max_x}");
-        let (min_y, max_y) = (marks.iter().map(|m| m.1).min().unwrap(), marks.iter().map(|m| m.1).max().unwrap());
-        assert!(min_y >= 25 && max_y < 75, "{min_y}..{max_y}");
-        // Right-aligned: it ends at the x given; Japanese is drawn too.
-        let mut right = RgbaImage::from_pixel(400, 100, Rgba([255, 255, 255, 255]));
-        draw_text(&mut right, "社外秘 2026/10/11", 380.0, 30.0, 24.0, Align::Right);
-        let marks = dark(&right);
-        assert!(marks.len() > 100);
-        let max_x = marks.iter().map(|m| m.0).max().unwrap();
-        assert!((370..=384).contains(&max_x), "{max_x}");
-        // The right way up: a T has its bar at the top.
-        let mut t = RgbaImage::from_pixel(100, 100, Rgba([255, 255, 255, 255]));
-        draw_text(&mut t, "T", 40.0, 30.0, 40.0, Align::Left);
-        let marks = dark(&t);
-        let (top, bottom) = (marks.iter().map(|m| m.1).min().unwrap(), marks.iter().map(|m| m.1).max().unwrap());
-        let third = (bottom - top) / 3;
-        let wide = |from: u32, to: u32| marks.iter().filter(|m| m.1 >= from && m.1 < to).count();
-        assert!(wide(top, top + third) > 2 * wide(bottom - third, bottom + 1), "the bar of the T is at the top");
-        // Nothing for nothing.
-        let mut empty = RgbaImage::from_pixel(10, 10, Rgba([255, 255, 255, 255]));
-        draw_text(&mut empty, "", 0.0, 0.0, 12.0, Align::Left);
-        assert!(dark(&empty).is_empty());
     }
 }

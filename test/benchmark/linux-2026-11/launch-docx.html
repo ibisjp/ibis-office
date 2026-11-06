@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>起動込みのベンチマーク</title>
+<style>
+:root { --bg:#f8fafc; --card:#ffffff; --ink:#0f172a; --sub:#475569; --mute:#64748b; --line:#e2e8f0; --accent:#0284c7; --good:#047857; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0b1220; --card:#111a2c; --ink:#e2e8f0; --sub:#cbd5e1; --mute:#94a3b8; --line:#23304a; --accent:#38bdf8; --good:#34d399; } }
+:root[data-theme="dark"] { --bg:#0b1220; --card:#111a2c; --ink:#e2e8f0; --sub:#cbd5e1; --mute:#94a3b8; --line:#23304a; --accent:#38bdf8; --good:#34d399; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family:"Noto Sans JP","Hiragino Sans",system-ui,sans-serif; line-height:1.7; }
+main { max-width:1000px; margin:0 auto; padding:32px 16px 64px; }
+h1 { font-size:28px; margin:0 0 4px; }
+h2 { font-size:21px; margin:44px 0 12px; padding-top:8px; border-top:1px solid var(--line); }
+.lead { color:var(--sub); margin:0 0 20px; }
+.answer { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--good); border-radius:12px; padding:14px 18px; margin:20px 0; }
+.answer strong { color:var(--good); }
+.graph { background:#fff; border-radius:16px; margin:16px 0; overflow:hidden; }
+.graph img { display:block; width:100%; height:auto; }
+table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; font-size:14px; margin:12px 0; }
+th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:right; vertical-align:top; }
+th:first-child { text-align:left; }
+thead th { background:var(--bg); color:var(--sub); font-weight:600; }
+td.best strong { color:var(--accent); }
+.ratio { color:var(--mute); font-size:13px; }
+.runs { color:var(--mute); font-size:12px; }
+.scroll { overflow-x:auto; }
+ul { padding-left:1.3em; } li { margin:4px 0; }
+code { font-size:13px; background:var(--card); border:1px solid var(--line); border-radius:4px; padding:0 4px; }
+.shots { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; }
+figure { margin:0; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px; }
+figcaption { font-size:13px; color:var(--sub); margin-bottom:6px; }
+figure img { width:100%; height:auto; border:1px solid var(--line); display:block; }
+</style>
+</head>
+<body>
+<main>
+<h1>起動込みのファイル表示速度（.docx）</h1>
+<p class="lead">ibisOffice 0.8.5・LibreOffice 26.8.2・ONLYOFFICE 10.0.0。アプリが動いていない状態から、ファイルを指定してアプリを起動し、1 ページ目が完全に表示されるまでの時間を、公開中の「起動済みのアプリで開く」計測と比べました。各 3 回の中央値。Linux の同じ PC・同じ計り方（Intel Core i7-10700K（メモリ 16GB）、Ubuntu 20.04.6 LTS（GNOME・X11））。</p>
+
+<div class="answer">
+<p><strong>結論：倍率は「起動済みのアプリで開く」（今の計測）のほうが大きく、マーケティングにはそちらが有利です。</strong></p>
+<ul>
+<li>LibreOffice との差：「開く」だけ 1.14 倍 → 起動込み 1.05 倍。ONLYOFFICE との差：3.00 倍 → 2.55 倍。どちらも、起動を含めると倍率が<strong>下がりました</strong>。</li>
+<li>理由：起動の時間はどのアプリにも上乗せされ（下の表で +0.24〜+0.34 秒）、しかも ibisOffice の上乗せ（+0.34 秒）が一番大きいためです。ibisOffice は窓が出るまでに約 0.47 秒かかり（AppImage の展開を含む）、LibreOffice（0.22 秒）・ONLYOFFICE（0.31 秒）より遅れて窓を出します。</li>
+<li>同じ足し算になるので、pptx・xlsx・CSV でも起動込みにすると倍率は下がる見込みです（ibisOffice が速いほど、同じくらいの起動時間を足したときの倍率の下がり方は大きい）。</li>
+</ul>
+</div>
+
+<h2>グラフ</h2>
+<div class="graph"><img src="benchmark-launch-docx-ja.svg" alt="起動込みのファイル表示速度ベンチマーク（Linux）"></div>
+
+<h2>結果</h2>
+<div class="scroll"><table><thead><tr><th>計り方</th><th>ibisOffice</th><th>LibreOffice</th><th>ONLYOFFICE</th></tr></thead><tbody>
+<tr><th scope="row">アプリの起動から（起動込み）</th><td class="best"><strong>1.72 秒</strong><div class="runs">3 回：1.70 / 1.79 / 1.72<br>窓が出るまで 0.47 秒</div></td><td><strong>1.81 秒</strong><span class="ratio">（1.05 倍）</span><div class="runs">3 回：1.81 / 1.81 / 1.82<br>窓が出るまで 0.22 秒</div></td><td><strong>4.37 秒</strong><span class="ratio">（2.55 倍）</span><div class="runs">3 回：4.37 / 4.46 / 4.35<br>窓が出るまで 0.31 秒</div></td></tr>
+<tr><th scope="row">起動済みのアプリで開く（公開中）</th><td class="best"><strong>1.37 秒</strong><div class="runs">3 回：1.37 / 1.33 / 1.39</div></td><td><strong>1.57 秒</strong><span class="ratio">（1.14 倍）</span><div class="runs">3 回：1.53 / 1.57 / 1.59</div></td><td><strong>4.11 秒</strong><span class="ratio">（3.00 倍）</span><div class="runs">3 回：4.16 / 4.11 / 4.00</div></td></tr>
+</tbody></table></div>
+
+<h2>どちらの倍率が大きいか</h2>
+<div class="scroll"><table><thead><tr><th></th><th>「開く」だけ</th><th>起動込み</th><th>倍率が大きいほう</th></tr></thead><tbody><tr><th scope="row">LibreOffice は ibisOffice の何倍かかったか</th><td>1.14 倍</td><td>1.05 倍</td><td>「開く」だけ</td></tr><tr><th scope="row">ONLYOFFICE は ibisOffice の何倍かかったか</th><td>3.00 倍</td><td>2.55 倍</td><td>「開く」だけ</td></tr></tbody></table></div>
+<p>起動で増えた時間（起動込み − 「開く」だけ、中央値）：</p>
+<div class="scroll"><table><thead><tr><th>アプリ</th><th>「開く」だけ</th><th>起動込み</th><th>増えた時間</th></tr></thead><tbody><tr><th scope="row">ibisOffice</th><td>1.37 秒</td><td>1.72 秒</td><td>+0.34 秒</td></tr><tr><th scope="row">LibreOffice</th><td>1.57 秒</td><td>1.81 秒</td><td>+0.24 秒</td></tr><tr><th scope="row">ONLYOFFICE</th><td>4.11 秒</td><td>4.37 秒</td><td>+0.26 秒</td></tr></tbody></table></div>
+
+<h2>起動込みで差を開くには</h2>
+<ul>
+<li>ibisOffice の起動（窓が出るまで約 0.47 秒）は、Linux では AppImage の展開（自前のランタイム <code>crates/ibis-appimage</code>）を含みます。ここが LibreOffice 並み（約 0.2 秒）に縮めば、起動込みでも「開く」だけと同じくらいの倍率になります。</li>
+<li>OS のディスクのキャッシュが空の状態（PC を起動した直後など）では、ファイルの大きいアプリほど起動が遅くなるため、差が開く可能性があります。試しに回した最初の 1 回（3 回の計測とは別、キャッシュが一部空だった可能性がある回）は ibisOffice 1.95 秒・LibreOffice 2.47 秒・ONLYOFFICE 4.89 秒でした（LibreOffice の 1.27 倍）。ただし 1 回だけで、キャッシュを空にする操作（管理者の権限が要る）もしていないので、数字としては使えません。きちんと計るなら、管理者の権限で <code>drop_caches</code> してから計る必要があります。</li>
+</ul>
+
+<h2>計り方</h2>
+<ul>
+<li><code>scripts/benchmark-linux/bench.py</code> の <code>launch</code>：3 アプリのプロセスがすべて終了した状態から、<code>ibisOffice-0.8.5-Linux.AppImage &lt;ファイル&gt;</code>・<code>soffice &lt;ファイル&gt;</code>・<code>DesktopEditors &lt;ファイル&gt;</code> を実行した時点から計りました。窓が出る場所（各アプリの設定で決まる）を最初から記録し、窓が出る前の背景との違いを含めて、文書の部分の最後の変化を終わりとしました（「開く」の計測と同じ判定）。</li>
+<li>LibreOffice は、ほかの計測と同じく <code>soffice.bin</code> を直接起動しています（<code>oosplash</code> を通さない）。この PC では glibc 2.35 のローダーを通して起動しています（<code>report.html</code> の「この PC に固有の事情」）。</li>
+<li>3 回とも続けて計ったので、OS のディスクのキャッシュは温まった状態です（2 回目以降はファイルがメモリにある）。</li>
+<li>結果：<code>runs/launch-*-docx-*.json</code>。報告とグラフは <code>scripts/benchmark-linux/report_launch.py</code> で作りました。</li>
+</ul>
+
+<h2>終わりのフレーム（起動込み、中央値の回）</h2>
+<div class="shots"><figure><figcaption>ibisOffice：1.72 秒（launch-ibisoffice-docx-3）</figcaption><img src="runs/frames/launch-ibisoffice-docx-3/end.png" alt="ibisOffice の終わりのフレーム" loading="lazy"></figure><figure><figcaption>LibreOffice：1.81 秒（launch-libreoffice-docx-1）</figcaption><img src="runs/frames/launch-libreoffice-docx-1/end.png" alt="LibreOffice の終わりのフレーム" loading="lazy"></figure><figure><figcaption>ONLYOFFICE：4.37 秒（launch-onlyoffice-docx-1）</figcaption><img src="runs/frames/launch-onlyoffice-docx-1/end.png" alt="ONLYOFFICE の終わりのフレーム" loading="lazy"></figure></div>
+</main>
+</body>
+</html>

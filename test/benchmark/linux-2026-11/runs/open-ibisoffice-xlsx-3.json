@@ -1,0 +1,49 @@
+{
+ "end": 0.713,
+ "last_change": 0.713,
+ "end_video_frame": 5,
+ "first_change": 0.088,
+ "window_end": 0.848,
+ "doc_changes_count": 3,
+ "doc_changes": [
+  [
+   0.088,
+   0.0801
+  ],
+  [
+   0.18,
+   0.00454
+  ],
+  [
+   0.713,
+   0.25385
+  ]
+ ],
+ "recorded_until": 8.722,
+ "grabs": 845,
+ "capped": false,
+ "tag": "open-ibisoffice-xlsx-3",
+ "scenario": "open",
+ "app": "ibisoffice",
+ "kind": "xlsx",
+ "run": 3,
+ "file": "coffee-chain-sales-report.xlsx",
+ "command": [
+  "click: 最近開いたファイル",
+  "coffee-chain-sales-report.xlsx"
+ ],
+ "rects": [
+  [
+   0.0,
+   "-20 7 1320 840"
+  ]
+ ],
+ "covered": [],
+ "cap": 15,
+ "measured_at": "2026-11-03 21:11:51",
+ "load_before": [
+  0.71,
+  0.5,
+  0.34
+ ]
+}

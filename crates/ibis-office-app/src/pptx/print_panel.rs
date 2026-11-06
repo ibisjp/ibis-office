@@ -5,7 +5,6 @@
 //! 現在のスライド・範囲指定), as slides or as handouts (1・2・3・4・6・9
 //! 枚/ページ), in colour, grey or black and white, with or without a frame.
 use gpui_kit::component::button::{ButtonVariants as _};
-use crate::shell::chrome::Checkbox;
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
@@ -128,8 +127,84 @@ pub(crate) fn valid_slide_list(text: &str, total: usize) -> Option<String> {
     Some(text)
 }
 
+/// One entry of the print layout dropdown.
+#[derive(Clone, Copy, PartialEq)]
+enum PrintLayout { Slides, Notes, Outline, Handout(u8) }
+const PRINT_LAYOUTS: [PrintLayout; 9] = [PrintLayout::Slides, PrintLayout::Notes, PrintLayout::Outline, PrintLayout::Handout(1), PrintLayout::Handout(2), PrintLayout::Handout(3), PrintLayout::Handout(4), PrintLayout::Handout(6), PrintLayout::Handout(9)];
+/// The list of slides is indented by one full-width character at the 14 px of the radio labels.
+const CUSTOM_INDENT: f32 = 14.;
+/// The layout dropdown's button and list items are 2.5 times the usual height, each with a 4:3 picture of the page (2026-11-04 user).
+const LAYOUT_ROW_SCALE: f32 = 2.5;
+const LAYOUT_WIDTH_SCALE: f32 = 3.5;
+/// The picture's height (a row less 4 px of padding above and below); its width is 4:3.
+const THUMB_HEIGHT: f32 = crate::shell::chrome::BUTTON_HEIGHT * LAYOUT_ROW_SCALE - 8.;
+const THUMB_PAD: f32 = 6.;
+const THUMB_GAP: f32 = 3.;
+
+impl PrintLayout {
+    fn of(settings: &PrintSettings) -> Self {
+        if settings.notes_pages { Self::Notes } else if settings.outline { Self::Outline } else if let Some(n) = settings.handout { Self::Handout(n) } else { Self::Slides }
+    }
+    fn label(self) -> SharedString {
+        match self {
+            Self::Slides => crate::shell::i18n::text("pptx.print-panel.full-page-slides"),
+            Self::Notes => crate::shell::i18n::text("pptx.print-panel.notes-pages-1-slide-its"),
+            Self::Outline => crate::shell::i18n::text("pptx.print-panel.outline"),
+            Self::Handout(n) => crate::shell::i18n::format("pptx.print-panel.handouts-n-slides-per-page", &[("n", &n)]).into(),
+        }
+    }
+    fn apply(self, s: &mut PrintSettings) {
+        s.handout = None; s.notes_pages = false; s.outline = false;
+        match self { Self::Slides => {} Self::Notes => s.notes_pages = true, Self::Outline => s.outline = true, Self::Handout(n) => s.handout = Some(n) }
+    }
+    /// Slides across and down of the picture of a handout page (and whether the text lines are at the right of them).
+    fn grid(n: u8) -> (usize, usize, bool) {
+        match n { 1 => (1, 1, false), 2 => (1, 2, false), 3 => (1, 3, true), 4 => (2, 2, false), 6 => (2, 3, false), _ => (3, 3, false) }
+    }
+    /// A 4:3 picture of the page: the slides (blue) and the text lines (grey) as the layout prints them.
+    fn thumbnail(self) -> AnyElement {
+        let (w, h) = (THUMB_HEIGHT * 4. / 3., THUMB_HEIGHT);
+        let (inner_w, inner_h) = (w - THUMB_PAD * 2. - 2., h - THUMB_PAD * 2. - 2.);
+        let slide = |w: f32, h: f32| div().w(px(w)).h(px(h)).flex_none().bg(rgb(0x8ab4d8)).border_1().border_color(rgb(0x5f6368));
+        let lines = |count: usize, w: f32| v_flex().gap(px(THUMB_GAP)).children((0..count).map(move |i| div().h(px(2.)).w(px(if i + 1 == count { w * 0.6 } else { w })).bg(rgb(0xbdc1c6))));
+        let page = match self {
+            Self::Slides => slide(inner_w, inner_h).into_any_element(),
+            Self::Notes => {
+                let sh = inner_h * 0.55;
+                v_flex().items_center().gap(px(THUMB_GAP * 2.)).child(slide(sh * 4. / 3., sh)).child(lines(3, inner_w)).into_any_element()
+            }
+            Self::Outline => lines(6, inner_w).into_any_element(),
+            Self::Handout(n) => {
+                let (cols, rows, text) = Self::grid(n);
+                let area_w = if text { inner_w * 0.5 } else { inner_w };
+                let cw = (area_w - THUMB_GAP * (cols as f32 - 1.)) / cols as f32;
+                let ch = (inner_h - THUMB_GAP * (rows as f32 - 1.)) / rows as f32;
+                let grid = h_flex().gap(px(THUMB_GAP)).children((0..cols).map(|_| v_flex().gap(px(THUMB_GAP)).children((0..rows).map(|_| slide(cw, ch)))));
+                if text {
+                    h_flex().gap(px(THUMB_GAP * 2.)).items_center().child(grid).child(v_flex().gap(px(THUMB_GAP * 3.)).children((0..rows).map(|_| lines(2, inner_w * 0.4)))).into_any_element()
+                } else { grid.into_any_element() }
+            }
+        };
+        div().w(px(w)).h(px(h)).flex_none().flex().items_center().justify_center().bg(rgb(0xffffff)).border_1().border_color(rgb(0xdadce0)).child(page).into_any_element()
+    }
+}
+
+/// The print layout (slides, notes, outline, handouts of 1 to 9 slides): a dropdown whose button and items show a 4:3 picture of the page and its name.
+fn layout_dropdown(settings: &PrintSettings, cx: &mut Context<SlideEditor>) -> impl IntoElement {
+    let current = PrintLayout::of(settings);
+    let choices = PRINT_LAYOUTS.into_iter().map(|layout| crate::shell::chrome::preview_dropdown::PreviewChoice {
+        label: layout.label(),
+        content: std::rc::Rc::new(move || h_flex().w_full().items_center().gap(px(10.)).child(layout.thumbnail()).child(div().flex_1().min_w_0().truncate().text_size(px(13.)).child(layout.label())).into_any_element()),
+        choose: std::rc::Rc::new(move |e: &mut SlideEditor, _, cx| e.edit_print_panel(|s| layout.apply(s), cx)),
+    }).collect();
+    let selected = PRINT_LAYOUTS.iter().position(|l| *l == current).unwrap_or(0);
+    let height = crate::shell::chrome::BUTTON_HEIGHT * LAYOUT_ROW_SCALE;
+    let size = crate::shell::chrome::preview_dropdown::PreviewSize { width: crate::shell::chrome::FIELD_WIDTH * LAYOUT_WIDTH_SCALE, height, row_height: height };
+    crate::shell::chrome::preview_dropdown::preview_dropdown_sized("pptx-print-layout", choices, selected, size, cx)
+}
+
 pub(crate) struct PrintPanel {
-    settings: PrintSettings,
+    pub(crate) settings: PrintSettings,
     custom: Entity<InputState>,
     error: Option<SharedString>,
 }
@@ -143,7 +218,7 @@ impl SlideEditor {
     pub(crate) fn open_print_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.end_text_edit(window, cx);
         let settings = self.print_settings();
-        let custom = cx.new(|cx| InputState::new(window, cx).default_value(settings.custom.clone()));
+        let custom = cx.new(|cx| InputState::new(window, cx).placeholder(crate::shell::i18n::text("pptx.print-panel.slides-placeholder")).default_value(settings.custom.clone()));
         let focus = custom.clone();
         if let Some(s) = self.pptx_mut() {
             s.section_panel = None;
@@ -213,24 +288,17 @@ impl SlideEditor {
             .child(crate::shell::chrome::radio_button("pptx-print-all", settings.range == PrintRange::All, false, crate::shell::i18n::text("pptx.slideshow.see-all-slides"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.range = PrintRange::All, cx))))
             .child(crate::shell::chrome::radio_button("pptx-print-current", settings.range == PrintRange::Current, false, crate::shell::i18n::text("pptx.print-panel.current-slide"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.range = PrintRange::Current, cx))))
             .child(crate::shell::chrome::radio_button("pptx-print-custom", settings.range == PrintRange::Custom, false, crate::shell::i18n::text("pptx.print-panel.custom-range"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.range = PrintRange::Custom, cx))))
-            .child(div().w(px(200.)).child(crate::shell::chrome::text_field(&custom).full_width()))
+            // The list of slides is indented by one full-width character (the label of the radio above it) and is as wide as the dialog.
+            .child(div().w_full().pl(px(CUSTOM_INDENT)).child(crate::shell::chrome::text_field(&custom).full_width()))
             .child(heading("_shell.print-layout"))
-            .child(crate::shell::chrome::radio_button("pptx-print-slides", settings.handout.is_none() && !settings.notes_pages && !settings.outline, false, crate::shell::i18n::text("pptx.print-panel.full-page-slides"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = false; s.outline = false }, cx))))
-            .child(crate::shell::chrome::radio_button("pptx-print-notes", settings.notes_pages, false, crate::shell::i18n::text("pptx.print-panel.notes-pages-1-slide-its"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = true; s.outline = false }, cx))))
-            .child(crate::shell::chrome::radio_button("pptx-print-outline", settings.outline, false, crate::shell::i18n::text("pptx.print-panel.outline"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| { s.handout = None; s.notes_pages = false; s.outline = true }, cx))));
-        for n in [1u8, 2, 3, 4, 6, 9] {
-            let label = crate::shell::i18n::format("pptx.print-panel.handouts-n-slides-per-page", &[("n", &n)]);
-            body = body.child(crate::shell::chrome::radio_button(ElementId::Name(format!("pptx-print-handout-{n}").into()), settings.handout == Some(n), false, label, cx.listener(move |e, _, _, cx| e.edit_print_panel(|s| { s.handout = Some(n); s.notes_pages = false; s.outline = false }, cx))));
-        }
+            .child(crate::shell::chrome::checkbox_button("pptx-print-landscape", crate::shell::i18n::text("pptx.print-panel.landscape-handouts"), settings.landscape, false, cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.landscape = !s.landscape, cx))))
+            .child(layout_dropdown(&settings, cx));
+        // 色: the label and the three choices on one line when they fit the pane (two lines when they do not).
+        let colors = crate::shell::chrome::segment_control_row(crate::shell::i18n::text("docx.common.color"), [(PrintColorKind::Color, "pptx.print-panel.color", "pptx-print-color"), (PrintColorKind::Gray, "pptx.print-panel.grayscale", "pptx-print-gray"), (PrintColorKind::BlackWhite, "pptx.print-panel.pure-black-white", "pptx-print-bw")].into_iter().map(|(value, label, id)| {
+            crate::shell::chrome::segment_control::SegmentItem::label(id, crate::shell::i18n::text(label), settings.color == value).on_click(cx.listener(move |e, _, _, cx| e.edit_print_panel(|s| s.color = value, cx)))
+        }));
         body = body
-            .child(Checkbox::new("pptx-print-landscape").label(crate::shell::i18n::text("pptx.print-panel.landscape-handouts")).checked(settings.landscape).on_click(cx.listener(|e, on: &bool, _, cx| {
-                let on = *on;
-                e.edit_print_panel(|s| s.landscape = on, cx)
-            })))
-            .child(heading("docx.common.color"))
-            .child(crate::shell::chrome::radio_button("pptx-print-color", settings.color == PrintColorKind::Color, false, crate::shell::i18n::text("pptx.print-panel.color"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.color = PrintColorKind::Color, cx))))
-            .child(crate::shell::chrome::radio_button("pptx-print-gray", settings.color == PrintColorKind::Gray, false, crate::shell::i18n::text("pptx.print-panel.grayscale"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.color = PrintColorKind::Gray, cx))))
-            .child(crate::shell::chrome::radio_button("pptx-print-bw", settings.color == PrintColorKind::BlackWhite, false, crate::shell::i18n::text("pptx.print-panel.pure-black-white"), cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.color = PrintColorKind::BlackWhite, cx))))
+            .child(colors)
             .child(crate::shell::chrome::checkbox_button("pptx-print-frame", crate::shell::i18n::text("pptx.print-panel.frame-slides"), settings.frame, false, cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.frame = !s.frame, cx))));
         if let Some(error) = error {
             body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));

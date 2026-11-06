@@ -26,8 +26,14 @@ pub(crate) struct EditPanels {
     /// 形式を選択して貼り付け > 空白セルを無視する: copied cells with
     /// nothing in them leave the cells pasted on as they are.
     pub(crate) skip_blanks: bool,
-    /// メモ (a cell's note).
-    pub(crate) note: Option<super::notes::NotePanel>,
+    /// Pasting cells whose formulas use a name this workbook has: Excel's question.
+    pub(crate) paste_names: Option<super::paste_names_dialog::PasteNamesPanel>,
+    /// The answers to it, while the paste is done again.
+    pub(crate) paste_answers: Option<Vec<super::paste_names::Answer>>,
+    /// シートの移動またはコピー.
+    pub(crate) sheet_transfer: Option<super::sheet_transfer::SheetTransferPanel>,
+    /// A sheet from another workbook, waiting for the answers about the names it brings.
+    pub(crate) sheet_in: Option<super::sheet_transfer::PendingSheet>,
     /// シートの保護 / シート保護の解除.
     pub(crate) protect: Option<super::protection::ProtectPanel>,
     /// ブックの保護 / ブック保護の解除.
@@ -54,6 +60,8 @@ pub(crate) struct EditPanels {
     pub(crate) table_design: Option<super::table_design::TableDesignPanel>,
     /// データ > 詳細設定…
     pub(crate) advanced_filter: Option<super::advanced_filter::AdvancedFilterPanel>,
+    /// ▼ > ユーザー設定フィルター / トップテン: the two dialogs of a column's filter.
+    pub(crate) filter_dialog: Option<super::filter::FilterDialogPanel>,
     /// ツール > オートコレクトのオプション…
     pub(crate) autocorrect: Option<super::autocorrect::AutoCorrectPanel>,
     /// ツール > エラー チェックのオプション…
@@ -165,7 +173,6 @@ impl EditPanels {
         self.paste_special_dialog = None;
         self.external_links = None;
         self.goto_special = None;
-        self.note = None;
         self.protect = None;
         self.protect_workbook = None;
         self.allow_edit_ranges = None;
@@ -178,6 +185,7 @@ impl EditPanels {
         self.pivot = None;
         self.table_design = None;
         self.advanced_filter = None;
+        self.filter_dialog = None;
         self.consolidate = None;
         self.analysis = None;
         self.solver = None;
@@ -211,6 +219,7 @@ impl EditPanels {
         self.custom_views = None;
         self.unhide_window = None;
         self.move_chart = None;
+        self.sheet_transfer = None;
         self.chart_template = None;
         self.arrange_windows = None;
         self.backup_save = None;
@@ -234,8 +243,9 @@ impl crate::shell::editor::SlideEditor {
             .or_else(|| self.cells_dialog_panel(cx).map(|panel| panel.modal_named("cells_dialog_panel")))
             .or_else(|| self.external_links_panel(cx).map(|panel| panel.modal_named("external_links_panel")))
             .or_else(|| self.goto_special_panel(cx).map(|panel| panel.modal_named("goto_special_panel")))
-            .or_else(|| self.note_panel(cx))
             .or_else(|| self.threaded_comment_panel(cx))
+            .or_else(|| self.paste_names_panel(cx).map(|panel| panel.modal_named("paste_names_panel")))
+            .or_else(|| self.sheet_transfer_panel(cx).map(|panel| panel.modal_named("sheet_transfer_panel")))
             .or_else(|| self.protect_panel(cx).map(|panel| panel.modal_named("protect_panel")))
             .or_else(|| self.protect_workbook_panel(cx).map(|panel| panel.modal_named("protect_workbook_panel")))
             .or_else(|| self.allow_edit_ranges_panel(cx).map(|panel| panel.modal_named("allow_edit_ranges_panel")))
@@ -252,9 +262,10 @@ impl crate::shell::editor::SlideEditor {
             .or_else(|| self.pivot_options_panel(cx).map(|panel| panel.modal_named("pivot_options_panel")))
             .or_else(|| self.pivot_calc_field_panel(cx).map(|panel| panel.modal_named("pivot_calc_field_panel")))
             .or_else(|| self.pivot_calc_item_panel(cx).map(|panel| panel.modal_named("pivot_calc_item_panel")))
-            .or_else(|| self.pivot_panel(cx).map(|panel| panel.modal_named("pivot_panel")))
+            .or_else(|| self.pivot_panel(cx))
             .or_else(|| self.table_design_panel(cx))
             .or_else(|| self.advanced_filter_panel(cx).map(|panel| panel.modal_named("advanced_filter_panel")))
+            .or_else(|| self.filter_dialog_panel(cx))
             .or_else(|| self.consolidate_panel(cx).map(|panel| panel.modal_named("consolidate_panel")))
             .or_else(|| self.analysis_panel(cx).map(|panel| panel.modal_named("analysis_panel")))
             .or_else(|| self.solver_panel(cx).map(|panel| panel.modal_named(if self.wb().panels.solver.as_ref().is_some_and(|p|p.editor.is_some()){"solver_constraint_editor"}else{"solver_panel"})))

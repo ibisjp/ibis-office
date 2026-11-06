@@ -642,24 +642,16 @@ impl SlideEditor {
     /// ⌘V with no text edited and no shapes copied: the clipboard's text in a new text box in the middle of the slide.
     pub(crate) fn paste_text_as_text_box(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         // A picture (a screenshot, a copied image) or picture files (copied in the Finder) come first.
-        if let Some(item) = cx.read_from_clipboard() {
+        let item = cx.read_from_clipboard();
+        {
             let mut inserted = false;
-            for entry in item.entries() {
+            for entry in item.iter().flat_map(|item| item.entries()) {
                 match entry {
-                    ClipboardEntry::Image(image) => {
-                        let extension = match image.format {
-                            ImageFormat::Png => "png",
-                            ImageFormat::Jpeg => "jpg",
-                            ImageFormat::Gif => "gif",
-                            ImageFormat::Svg => "svg",
-                            ImageFormat::Bmp => "bmp",
-                            _ => continue,
-                        };
-                        inserted |= self.insert_picture(&format!("clipboard.{extension}"), image.bytes.clone(), cx).is_some();
-                    }
+                    // The picture is read below, named by what its bytes are.
+                    ClipboardEntry::Image(_) => {}
                     ClipboardEntry::ExternalPaths(paths) => {
                         for path in paths.paths() {
-                            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg"));
+                            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "svg" | "emf" | "wmf"));
                             if let (true, Ok(data)) = (ok, std::fs::read(path)) {
                                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                                 inserted |= self.insert_picture(&name, data, cx).is_some();
@@ -668,6 +660,10 @@ impl SlideEditor {
                     }
                     ClipboardEntry::String(_) => {}
                 }
+            }
+            // A drawing (SVG, a metafile) or a bitmap: a TIFF or a metafile is a picture, not an unsupported image.
+            if !inserted && let Some((name, bytes)) = crate::native_shape_clipboard::clipboard_picture(item.as_ref()) {
+                inserted = self.insert_picture(&name, bytes, cx).is_some();
             }
             if inserted {
                 return true;
@@ -1043,6 +1039,19 @@ impl SlideEditor {
         let list = marks.painted()?;
         // In the text's own coordinates (it may be turned).
         let (x, y) = list.first()?.text_point(f32::from(p.x), f32::from(p.y));
+        // Text in columns: the column at x, then its line at y (the paragraphs are not stacked where they are painted).
+        if list.iter().any(|q| q.lines.iter().any(|l| l.column > 0)) {
+            let lines = || list.iter().enumerate().flat_map(|(n, q)| q.lines.iter().map(move |l| (n, q, l)));
+            let column = lines()
+                .min_by(|a, b| {
+                    let distance = |l: &crate::render::rich_text::LinePosition| if x < l.left { l.left - x } else { (x - l.right).max(0.0) };
+                    distance(a.2).total_cmp(&distance(b.2))
+                })?
+                .2
+                .column;
+            let (n, q, line) = lines().filter(|(_, _, l)| l.column == column).find(|(_, _, l)| y < l.top + l.height).or_else(|| lines().filter(|(_, _, l)| l.column == column).last())?;
+            return Some(marks.lengths[..n].iter().map(|n| n + 1).sum::<usize>() + q.index_in_line(x, line));
+        }
         // The paragraph at y, or the nearest one.
         let index = list
             .iter()
@@ -1183,7 +1192,8 @@ impl CaretMarks {
         let (x, line) = p.caret(local);
         let x = goal.unwrap_or(x);
         let l = *p.lines.get(line)?;
-        let at = |n: usize, line: &crate::render::rich_text::LinePosition| starts[n] + list[n].index_at(x, line.top + line.height / 2.0);
+        // (Moving to a line of another column keeps the distance from the column's left edge.)
+        let at = |n: usize, line: &crate::render::rich_text::LinePosition| starts[n] + list[n].index_in_line(x - l.left + line.left, line);
         Some(match key {
             "home" => starts[n] + l.start,
             "end" => {

@@ -329,3 +329,34 @@ mod other {
         }
     }
 }
+
+/// The rows of a `DXGI_FORMAT_B8G8R8A8_UNORM` texture mapped with `pitch` bytes
+/// per row, as `width` x `height` pixels in the bytes order GPUI draws images
+/// in (blue, green, red, alpha: `RenderImage` is BGRA, so the bytes are kept
+/// as they are, not swapped to RGBA), made opaque (a video frame has no alpha).
+#[cfg(any(windows, test))]
+pub(crate) fn opaque_bgra_rows(src: &[u8], width: usize, height: usize, pitch: usize) -> Vec<u8> {
+    let mut out = vec![0; width * height * 4];
+    for y in 0..height {
+        let row = &src[y * pitch..y * pitch + width * 4];
+        for (x, pixel) in row.chunks_exact(4).enumerate() {
+            let at = (y * width + x) * 4;
+            out[at..at + 4].copy_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod bgra_tests {
+    use super::opaque_bgra_rows;
+
+    /// A texture whose pixel is blue-first (B8G8R8A8) keeps that order, skips the row padding and is made opaque.
+    #[test]
+    fn video_frame_keeps_gpui_bgra_order() {
+        // 2 x 2, 12 bytes a row (4 of padding); pure red = (b 0, g 0, r 255), pure blue = (255, 0, 0).
+        let src = [0, 0, 255, 0, 255, 0, 0, 0, 9, 9, 9, 9, /**/ 0, 255, 0, 0, 10, 20, 30, 0, 9, 9, 9, 9];
+        let out = opaque_bgra_rows(&src, 2, 2, 12);
+        assert_eq!(out, [0, 0, 255, 255, 255, 0, 0, 255, 0, 255, 0, 255, 10, 20, 30, 255]);
+    }
+}

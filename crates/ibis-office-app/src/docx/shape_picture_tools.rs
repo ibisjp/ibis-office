@@ -943,7 +943,7 @@ pub(crate) fn register_menus(menus: &mut Menus, editor: &SlideEditor) {
     let can_group = editor.can_group_docx_shapes();
     let is_grouped = editor.is_docx_shape_grouped();
     menus.items_mut(MenuId::Format).push(
-        MenuItem::new("docx.shape.group", crate::shell::i18n::text("docx.form.group"))
+        MenuItem::new("docx.shape.group", crate::shell::i18n::text("pptx.group"))
             .icon("group_work")
             .disabled(!can_group)
             .on(|this, _, cx| {
@@ -952,7 +952,7 @@ pub(crate) fn register_menus(menus: &mut Menus, editor: &SlideEditor) {
             .into(),
     );
     menus.items_mut(MenuId::Format).push(
-        MenuItem::new("docx.shape.ungroup", crate::shell::i18n::text("docx.form.ungroup"))
+        MenuItem::new("docx.shape.ungroup", crate::shell::i18n::text("pptx.ungroup"))
             .icon("workspaces")
             .disabled(!is_grouped)
             .on(|this, _, cx| {

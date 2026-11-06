@@ -43,9 +43,9 @@ pub(crate) struct Issue {
 }
 
 /// Every word not known or grammar issue in the document, in reading order.
-pub(crate) fn scan(doc: &FlowDocument, ignored: &HashSet<String>) -> Vec<Issue> {
+pub(crate) fn scan(view: &crate::docx::flow_layout::MarkupView, doc: &FlowDocument, ignored: &HashSet<String>) -> Vec<Issue> {
     let mut found = Vec::new();
-    for (para, chars) in paragraphs(doc, SearchScope::All) {
+    for (para, chars) in paragraphs(view, doc, SearchScope::All) {
         if chars.is_empty() {
             continue;
         }
@@ -114,12 +114,12 @@ pub(crate) fn scan(doc: &FlowDocument, ignored: &HashSet<String>) -> Vec<Issue> 
 }
 
 /// What the checker suggests for `issue`.
-fn suggestions_for(doc: &FlowDocument, issue: &Issue) -> Vec<String> {
+fn suggestions_for(view: &crate::docx::flow_layout::MarkupView, doc: &FlowDocument, issue: &Issue) -> Vec<String> {
     if issue.kind == IssueKind::Grammar && !issue.rule_suggestions.is_empty() {
         return issue.rule_suggestions.clone();
     }
     let Some(p) = flow_command::paragraph(doc, issue.para) else { return Vec::new() };
-    let chars = super::editing::visible_chars(p);
+    let chars = super::editing::visible_chars(view, p);
     let text: String = chars.iter().map(|(_, c)| *c).collect();
     let (Some(start), Some(end)) = (chars.iter().position(|(o, _)| *o == issue.start), chars.iter().position(|(o, _)| *o == issue.end - 1)) else { return Vec::new() };
     crate::spelling::suggestions(&text, start, end + 1, None)
@@ -131,7 +131,7 @@ impl SlideEditor {
         if let Some(s)=self.doc_state_mut(){s.tab_edit=None;}
         let Some(doc) = self.flow().cloned() else { return };
         let ignored = HashSet::new();
-        let issues = scan(&doc, &ignored);
+        let issues = scan(&self.resources.markup_view, &doc, &ignored);
         if let Some(s) = self.doc_state_mut() {
             s.find = None;
             s.link = None;
@@ -174,7 +174,7 @@ impl SlideEditor {
             }
             return cx.notify();
         };
-        let suggestions = self.flow().map(|d| suggestions_for(d, &issue)).unwrap_or_default();
+        let suggestions = self.flow().map(|d| suggestions_for(&self.resources.markup_view, d, &issue)).unwrap_or_default();
         if let Some(p) = self.doc_state_mut().and_then(|s| s.helper.spelling.as_mut()) {
             p.current = index;
             p.suggestions = suggestions;
@@ -198,7 +198,7 @@ impl SlideEditor {
     /// The check made again (after a change), at the word number `near`.
     fn doc_spelling_rescan(&mut self, near: usize, cx: &mut Context<Self>) {
         let Some(ignored) = self.doc_state().and_then(|s| s.helper.spelling.as_ref()).map(|p| p.ignored.clone()) else { return };
-        let issues = self.flow().map(|d| scan(d, &ignored)).unwrap_or_default();
+        let issues = self.flow().map(|d| scan(&self.resources.markup_view, d, &ignored)).unwrap_or_default();
         let index = near.min(issues.len().saturating_sub(1));
         if let Some(p) = self.doc_state_mut().and_then(|s| s.helper.spelling.as_mut()) {
             p.issues = issues;
@@ -217,7 +217,7 @@ impl SlideEditor {
         let mut commands = Vec::new();
         for hit in hits.iter().rev() {
             let (a, b) = (FlowPos::new(hit.para, hit.start), FlowPos::new(hit.para, hit.end));
-            commands.extend(Self::replacement_commands(&doc, a, b, text, None).0);
+            commands.extend(Self::replacement_commands(&self.resources.markup_view, &doc, a, b, text, None).0);
         }
         self.run_flow(commands, cx);
         self.doc_spelling_rescan(at, cx);

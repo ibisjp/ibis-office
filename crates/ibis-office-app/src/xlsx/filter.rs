@@ -11,10 +11,10 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{ButtonVariants as _};
-use crate::shell::chrome::Checkbox;
+use crate::shell::chrome::{ActionButtonKind, ActionDefinition, Checkbox, Dropdown, DropdownItem, RadioGroupLayout, SidebarPanel, radio_button, radio_group};
+use crate::shell::dialog::SubmitType;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use crate::shell::palette::rgb;
@@ -22,6 +22,10 @@ use ibis_doc_model::sheet_command::SortBy;
 use ibis_doc_model::{AutoFilter, CellRange, CellValue, ColumnFilter, Command, Rgb, SheetCommand};
 
 use crate::shell::editor::SlideEditor;
+
+/// The keys of the two filter dialogs in the shared dialog host (`shell/dialog.rs` closes and sizes them by key).
+pub(crate) const FILTER_CONDITION_DIALOG: &str = "autofilter_condition_dialog";
+pub(crate) const FILTER_TOP_DIALOG: &str = "autofilter_top_dialog";
 
 /// What a column holds, for which filters its panel offers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,8 +118,6 @@ pub(crate) struct ConditionDialog {
     pub(crate) ops: [Option<usize>; 2],
     pub(crate) values: [Entity<InputState>; 2],
     pub(crate) and: bool,
-    /// The comparison whose list is open.
-    pub(crate) choosing: Option<usize>,
     pub(crate) error: Option<SharedString>,
 }
 
@@ -127,9 +129,19 @@ pub(crate) struct TopDialog {
     pub(crate) error: Option<SharedString>,
 }
 
-pub(crate) enum Dialog {
+pub(crate) enum FilterDialog {
     Condition(ConditionDialog),
     Top(TopDialog),
+}
+
+/// One of the two filter dialogs, while open. The ▼ panel is closed when it opens (as Excel's popup is); the dialog
+/// is a shared dialog (`shell/dialog.rs`) of the column it was opened for.
+pub(crate) struct FilterDialogPanel {
+    pub(crate) target: FilterTarget,
+    pub(crate) column: u32,
+    pub(crate) heading: String,
+    pub(crate) kind: ColumnKind,
+    pub(crate) dialog: FilterDialog,
 }
 
 /// A ▼'s panel, while open.
@@ -144,7 +156,6 @@ pub(crate) struct FilterPanel {
     pub(crate) values: Rc<Vec<String>>,
     pub(crate) ticked: HashSet<String>,
     pub(crate) section: Option<Section>,
-    pub(crate) dialog: Option<Dialog>,
     /// The fills (`None`: none) and text colours in the column, when more than one.
     pub(crate) fills: Vec<Option<Rgb>>,
     pub(crate) fonts: Vec<Rgb>,
@@ -448,7 +459,7 @@ impl SlideEditor {
         });
         let s = self.wb_mut();
         s.list_popup = None;
-        s.filter_panel = Some(FilterPanel { target, column, position, heading, kind, search, values: Rc::new(values), ticked, section: None, dialog: None, fills, fonts, icons, _search: subscription });
+        s.filter_panel = Some(FilterPanel { target, column, position, heading, kind, search, values: Rc::new(values), ticked, section: None, fills, fonts, icons, _search: subscription });
         cx.notify();
     }
 
@@ -521,10 +532,9 @@ impl SlideEditor {
     /// kept if `and`); ユーザー設定フィルター on a column already filtered so
     /// shows its comparisons.
     pub(crate) fn filter_panel_condition(&mut self, ops: [Option<usize>; 2], and: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((target, column)) = self.wb().filter_panel.as_ref().map(|p| (p.target, p.column)) else { return };
+        let Some((target, column, kind, heading)) = self.wb().filter_panel.as_ref().map(|p| (p.target, p.column, p.kind, p.heading.clone())) else { return };
         let current = self.target_filter(target).and_then(|f| f.columns.iter().find(|(c, _)| *c == column).map(|(_, x)| x.clone()));
         let d1904 = self.book_date1904();
-        let kind = self.wb().filter_panel.as_ref().map_or(ColumnKind::Text, |p| p.kind);
         let mut texts = [String::new(), String::new()];
         let (mut ops, mut and) = (ops, and);
         if let (Some(ColumnFilter::Custom { and: a, conditions }), [Some(0), None]) = (&current, ops) {
@@ -541,33 +551,40 @@ impl SlideEditor {
             input.update(cx, |s, cx| s.set_value(text, window, cx));
             input
         });
+        // The first field has the focus when the dialog opens (the first control of the dialog is a list).
         values[0].update(cx, |s, cx| s.focus(window, cx));
-        if let Some(p) = self.wb_mut().filter_panel.as_mut() {
-            p.dialog = Some(Dialog::Condition(ConditionDialog { ops, values, and, choosing: None, error: None }));
-        }
-        cx.notify();
+        self.open_filter_dialog(FilterDialogPanel { target, column, heading, kind, dialog: FilterDialog::Condition(ConditionDialog { ops, values, and, error: None }) }, cx);
     }
 
     /// Open トップテン オートフィルター.
     pub(crate) fn filter_panel_top(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((target, column, kind, heading)) = self.wb().filter_panel.as_ref().map(|p| (p.target, p.column, p.kind, p.heading.clone())) else { return };
         let count = cx.new(|cx| InputState::new(window, cx));
         count.update(cx, |s, cx| {
             s.set_value("10", window, cx);
             s.focus(window, cx);
         });
-        if let Some(p) = self.wb_mut().filter_panel.as_mut() {
-            p.dialog = Some(Dialog::Top(TopDialog { top: true, percent: false, count, error: None }));
-        }
+        self.open_filter_dialog(FilterDialogPanel { target, column, heading, kind, dialog: FilterDialog::Top(TopDialog { top: true, percent: false, count, error: None }) }, cx);
+    }
+
+    /// Show `dialog` in place of the ▼ panel (Excel closes the popup when its dialog opens; キャンセル does not bring it back).
+    fn open_filter_dialog(&mut self, dialog: FilterDialogPanel, cx: &mut Context<Self>) {
+        let state = self.wb_mut();
+        state.filter_panel = None;
+        state.list_popup = None;
+        state.close_settings();
+        state.panels.filter_dialog = Some(dialog);
+        self.sidebar_open = true;
         cx.notify();
     }
 
     /// The open dialog's OK.
     pub(crate) fn filter_dialog_ok(&mut self, cx: &mut Context<Self>) {
         let d1904 = self.book_date1904();
-        let Some(p) = self.wb().filter_panel.as_ref() else { return };
+        let Some(p) = self.sheet_state().and_then(|s| s.panels.filter_dialog.as_ref()) else { return };
         let kind = p.kind;
         let result: Result<ColumnFilter, &str> = match &p.dialog {
-            Some(Dialog::Condition(d)) => {
+            FilterDialog::Condition(d) => {
                 let mut conditions = Vec::new();
                 let mut bad = false;
                 for i in 0..2 {
@@ -587,7 +604,7 @@ impl SlideEditor {
                     Ok(ColumnFilter::Custom { and: d.and && conditions.len() == 2, conditions })
                 }
             }
-            Some(Dialog::Top(d)) => {
+            FilterDialog::Top(d) => {
                 let text = d.count.read(cx).value().trim().to_string();
                 let most = if d.percent { 100.0 } else { 500.0 };
                 match text.parse::<f64>() {
@@ -595,16 +612,19 @@ impl SlideEditor {
                     _ => Err(if d.percent { "_xlsx.please-enter-a-number-from-1-to-100" } else { "_xlsx.please-enter-a-number-from-1-to-500" }),
                 }
             }
-            None => return,
         };
         match result {
-            Ok(filter) => self.filter_panel_apply(Some(filter), cx),
+            Ok(filter) => {
+                let (target, column) = (p.target, p.column);
+                self.wb_mut().panels.filter_dialog = None;
+                self.sidebar_open = false;
+                self.filter_column_in(target, column, Some(filter), cx);
+            }
             Err(message) => {
-                if let Some(p) = self.wb_mut().filter_panel.as_mut() {
+                if let Some(p) = self.wb_mut().panels.filter_dialog.as_mut() {
                     match &mut p.dialog {
-                        Some(Dialog::Condition(d)) => d.error = Some(crate::shell::i18n::text(message)),
-                        Some(Dialog::Top(d)) => d.error = Some(crate::shell::i18n::text(message)),
-                        None => {}
+                        FilterDialog::Condition(d) => d.error = Some(crate::shell::i18n::text(message)),
+                        FilterDialog::Top(d) => d.error = Some(crate::shell::i18n::text(message)),
                     }
                 }
                 cx.notify();
@@ -613,14 +633,14 @@ impl SlideEditor {
     }
 
     pub(crate) fn with_condition(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut ConditionDialog)) {
-        if let Some(Dialog::Condition(d)) = self.wb_mut().filter_panel.as_mut().and_then(|p| p.dialog.as_mut()) {
+        if let Some(FilterDialog::Condition(d)) = self.wb_mut().panels.filter_dialog.as_mut().map(|p| &mut p.dialog) {
             f(d);
         }
         cx.notify();
     }
 
     pub(crate) fn with_top(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut TopDialog)) {
-        if let Some(Dialog::Top(d)) = self.wb_mut().filter_panel.as_mut().and_then(|p| p.dialog.as_mut()) {
+        if let Some(FilterDialog::Top(d)) = self.wb_mut().panels.filter_dialog.as_mut().map(|p| &mut p.dialog) {
             f(d);
         }
         cx.notify();
@@ -630,14 +650,10 @@ impl SlideEditor {
     pub(crate) fn render_filter_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = self.sheet_state()?.filter_panel.as_ref()?;
         let theme = cx.theme().clone();
-        let body = match &p.dialog {
-            Some(Dialog::Condition(d)) => self.render_condition_dialog(p, d, cx),
-            Some(Dialog::Top(d)) => self.render_top_dialog(d, cx),
-            None => self.render_filter_menu(p, cx),
-        };
+        let body = self.render_filter_menu(p, cx);
         let panel = v_flex()
             .id("filter-panel")
-            .w(px(if p.dialog.is_some() { 360. } else { 280. }))
+            .w(px(280.))
             .p_2()
             .gap_1()
             .bg(theme.background)
@@ -647,7 +663,7 @@ impl SlideEditor {
             .shadow_lg()
             .text_size(px(12.))
             .occlude()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_filter_panel(cx)))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {gpui_kit::component::popup_guard::note_outside_dismiss();this.close_filter_panel(cx)}))
             .child(body);
         Some(deferred(anchored().position(p.position).snap_to_window_with_margin(px(8.)).child(panel)).with_priority(2).into_any_element())
     }
@@ -835,75 +851,83 @@ impl SlideEditor {
         list.child(self.panel_row("filter-custom", "_xlsx.custom-filter", true, dialog([Some(0), None], true), cx)).into_any_element()
     }
 
-    fn render_condition_dialog(&self, p: &FilterPanel, d: &ConditionDialog, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        let mut body = v_flex().gap_2().child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.autofilter-options"))).child(crate::shell::i18n::format("_xlsx.show-rows-where-name", &[("name", &p.heading)]));
+    /// The dialog opened from the ▼ panel, for the shared dialog host (`edit_panels.rs` lists it).
+    pub(crate) fn filter_dialog_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        let p = self.sheet_state()?.panels.filter_dialog.as_ref()?;
+        let (panel, key) = match &p.dialog {
+            FilterDialog::Condition(d) => (self.render_condition_dialog(p, d, cx), FILTER_CONDITION_DIALOG),
+            FilterDialog::Top(d) => (self.render_top_dialog(d, cx), FILTER_TOP_DIALOG),
+        };
+        Some(panel.modal_named(key).submit_type(SubmitType::Enter))
+    }
+
+    fn render_condition_dialog(&self, p: &FilterDialogPanel, d: &ConditionDialog, cx: &mut Context<Self>) -> SidebarPanel {
+        let editor = cx.weak_entity();
+        let mut body = v_flex().gap_2().child(crate::shell::i18n::format("_xlsx.show-rows-where-name", &[("name", &p.heading)]));
         for i in 0..2 {
             let current = crate::shell::i18n::text(d.ops[i].map_or("_xlsx.none", |o| CONDITIONS[o].label));
+            let mut items = Vec::new();
+            if i == 1 {
+                items.push(DropdownItem::new(crate::shell::i18n::text("_xlsx.none")).checked(d.ops[1].is_none())
+                    .on_select(Rc::new(|this, _, cx| this.with_condition(cx, |d| d.ops[1] = None))));
+            }
+            for &o in conditions_for(p.kind) {
+                items.push(DropdownItem::new(crate::shell::i18n::text(CONDITIONS[o].label)).checked(d.ops[i] == Some(o))
+                    .on_select(Rc::new(move |this, _, cx| this.with_condition(cx, |d| d.ops[i] = Some(o)))));
+            }
             body = body.child(
                 h_flex()
                     .gap_2()
-                    .child(crate::shell::chrome::action_button(("filter-dialog-op", i)).small().w(px(160.)).label(format!("{current} ▾")).on_click(cx.listener(move |this, _, _, cx| this.with_condition(cx, |d| d.choosing = if d.choosing == Some(i) { None } else { Some(i) }))))
+                    .items_center()
+                    .child(Dropdown::new("filter-dialog-op", current, items, &editor).instance(i).button_width(px(160.)))
                     .child(div().flex_1().child(crate::shell::chrome::text_field(&d.values[i]).full_width())),
             );
-            if d.choosing == Some(i) {
-                let mut list = v_flex().border_1().border_color(theme.border).rounded_sm();
-                if i == 1 {
-                    list = list.child(self.panel_row("filter-dialog-none", "_xlsx.none", true, Rc::new(|this, _, cx| this.with_condition(cx, |d| {
-                        d.ops[1] = None;
-                        d.choosing = None;
-                    })), cx));
-                }
-                for &o in conditions_for(p.kind) {
-                    list = list.child(self.panel_row(format!("filter-dialog-{i}-{o}"), CONDITIONS[o].label, true, Rc::new(move |this, _, cx| this.with_condition(cx, |d| {
-                        d.ops[i] = Some(o);
-                        d.choosing = None;
-                    })), cx));
-                }
-                body = body.child(list);
-            }
             if i == 0 {
                 body = body.child(
-                    h_flex()
-                        .gap_3()
-                        .pl_2()
-                        .child(Checkbox::new("filter-dialog-and").label("AND").checked(d.and).on_click(cx.listener(|this, _, _, cx| this.with_condition(cx, |d| d.and = true))))
-                        .child(Checkbox::new("filter-dialog-or").label("OR").checked(!d.and).on_click(cx.listener(|this, _, _, cx| this.with_condition(cx, |d| d.and = false)))),
+                    radio_group()
+                        .layout(RadioGroupLayout::Flow)
+                        .child(radio_button("filter-dialog-and", d.and, false, "AND", cx.listener(|this, _, _, cx| this.with_condition(cx, |d| d.and = true))))
+                        .child(radio_button("filter-dialog-or", !d.and, false, "OR", cx.listener(|this, _, _, cx| this.with_condition(cx, |d| d.and = false)))),
                 );
             }
         }
-        body.child(div().text_color(theme.muted_foreground).child(crate::shell::i18n::text("_xlsx.use-to-represent-any-single-character-use-to-rep")))
-            .when_some(d.error.clone(), |b, e| b.child(div().text_color(theme.danger).child(e)))
-            .child(
-                crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
-                    .action(crate::shell::chrome::ActionDefinition::new("filter-dialog-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|this, _, _, cx| this.filter_dialog_ok(cx))))
-                    .action(crate::shell::chrome::ActionDefinition::new("filter-dialog-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_filter_panel(cx)))))),
-            )
-            .into_any_element()
+        body = body.child(div().text_color(cx.theme().muted_foreground).child(crate::shell::i18n::text("_xlsx.use-to-represent-any-single-character-use-to-rep")));
+        if let Some(e) = d.error.as_ref() {
+            body = body.children(crate::shell::chrome::panel_message(e));
+        }
+        SidebarPanel::with_footer(crate::shell::i18n::text("_xlsx.autofilter-options"), body.into_any_element(), self.filter_dialog_actions(cx))
     }
 
-    fn render_top_dialog(&self, d: &TopDialog, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme().clone();
-        v_flex()
-            .gap_2()
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::shell::i18n::text("_xlsx.top-10-autofilter")))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(crate::shell::chrome::action_button("filter-top-which").small().label(crate::shell::i18n::text(if d.top { "_xlsx.top" } else { "_xlsx.bottom" })).on_click(cx.listener(|this, _, _, cx| this.with_top(cx, |d| d.top = !d.top))))
-                    .child(div().w(px(70.)).child(
-                        // Applied by OK (not on Enter): a step only changes the box. Excel: 1–500 items or percent.
-                        crate::shell::chrome::text_field(&d.count).full_width().spinner("filter-top-count", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 500.0).integer_only(), cx, |_, _, _, _| {}),
-                    ))
-                    .child(crate::shell::chrome::action_button("filter-top-unit").small().label(crate::shell::i18n::text(if d.percent { "_xlsx.percent" } else { "_xlsx.items" })).on_click(cx.listener(|this, _, _, cx| this.with_top(cx, |d| d.percent = !d.percent)))),
-            )
-            .when_some(d.error.clone(), |b, e| b.child(div().text_color(theme.danger).child(e)))
-            .child(
-                crate::shell::chrome::action_bar_host((crate::shell::chrome::action_bar()
-                    .action(crate::shell::chrome::ActionDefinition::new("filter-top-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label("OK").on_click(cx.listener(|this, _, _, cx| this.filter_dialog_ok(cx))))
-                    .action(crate::shell::chrome::ActionDefinition::new("filter-top-cancel", "", crate::shell::chrome::ActionButtonKind::Normal).label(crate::shell::i18n::text("_shell.cancel")).on_click(cx.listener(|this, _, _, cx| this.close_filter_panel(cx)))))),
-            )
-            .into_any_element()
+    fn render_top_dialog(&self, d: &TopDialog, cx: &mut Context<Self>) -> SidebarPanel {
+        let editor = cx.weak_entity();
+        let which = Dropdown::new("filter-top-which", crate::shell::i18n::text(if d.top { "_xlsx.cf-top" } else { "_xlsx.cf-bottom" }),
+            [(true, "_xlsx.cf-top"), (false, "_xlsx.cf-bottom")].into_iter().map(|(top, id)| {
+                DropdownItem::new(crate::shell::i18n::text(id)).checked(d.top == top).on_select(Rc::new(move |this, _, cx| this.with_top(cx, |d| d.top = top)))
+            }).collect(), &editor).button_width(px(90.));
+        let unit = Dropdown::new("filter-top-unit", crate::shell::i18n::text(if d.percent { "_xlsx.percent-2" } else { "_xlsx.cf-items" }),
+            [(false, "_xlsx.cf-items"), (true, "_xlsx.percent-2")].into_iter().map(|(percent, id)| {
+                DropdownItem::new(crate::shell::i18n::text(id)).checked(d.percent == percent).on_select(Rc::new(move |this, _, cx| this.with_top(cx, |d| d.percent = percent)))
+            }).collect(), &editor).button_width(px(100.));
+        let mut body = v_flex().gap_2().child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(which)
+                // Applied by OK (not on Enter): a step only changes the box. Excel: 1–500 items or percent.
+                .child(div().w(px(70.)).child(crate::shell::chrome::text_field(&d.count).full_width().spinner("filter-top-count", crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 500.0).integer_only(), cx, |_, _, _, _| {})))
+                .child(unit),
+        );
+        if let Some(e) = d.error.as_ref() {
+            body = body.children(crate::shell::chrome::panel_message(e));
+        }
+        SidebarPanel::with_footer(crate::shell::i18n::text("_xlsx.top-10-autofilter"), body.into_any_element(), self.filter_dialog_actions(cx))
+    }
+
+    /// OK and キャンセル of both dialogs (キャンセル closes the shared dialog).
+    fn filter_dialog_actions(&self, cx: &mut Context<Self>) -> crate::shell::chrome::ActionBar {
+        crate::shell::chrome::action_bar()
+            .action(ActionDefinition::new("filter-dialog-ok", crate::shell::i18n::text("shell.action.ok"), ActionButtonKind::Primary).on_click(cx.listener(|this, _, _, cx| this.filter_dialog_ok(cx))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx))
     }
 
     /// The ▼ buttons of the filter's headings, laid over the headers' area

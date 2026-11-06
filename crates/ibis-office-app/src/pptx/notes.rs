@@ -48,10 +48,10 @@ impl SlideEditor {
         self.pptx().is_some_and(|s| !s.notes_hidden)
     }
 
-    /// The slide list's width now: dragged, or the view's own.
+    /// The slide list's width now: dragged, or the default.
     pub(crate) fn pane_width_now(&self) -> f32 {
-        let own = if self.is_outline_view() { super::thumbnails::OUTLINE_PANE_WIDTH } else { super::thumbnails::PANE_WIDTH };
-        self.pptx().and_then(|s| s.pane_width).unwrap_or(own)
+        // One width for the thumbnails and the outline: switching the tab does not move the slide beside it.
+        self.pptx().and_then(|s| s.pane_width).unwrap_or(super::thumbnails::PANE_WIDTH)
     }
 
     /// A thumbnail's width: it fills the list less its margins.

@@ -196,6 +196,40 @@ pub enum SlideLink {
     EndShow,
 }
 
+/// How a run of vertical writing is horizontal in vertical (縦中横, `w:eastAsianLayout w:vert`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TateChuYoko {
+    /// Not (the run is set as ordinary vertical text).
+    #[default]
+    Off,
+    /// 行の幅に合わせる (`w:vertCompress`): squeezed to the line's width when wider.
+    Fit,
+    /// Not squeezed: the line grows to hold it.
+    Grow,
+}
+
+/// The width (in em, the font size) Word fits a 縦中横 run into when 行の幅に合わせる is turned on.
+///
+/// Source: measured in Word for Mac 16.114 (Format > Asian Layout > Combine... with 行の幅に合わせる on, then saved; report
+/// `tasks/doc/reports/2026-11-04-issue94-tate-chu-yoko-fit.md`). The `w:w` Word writes is `floor(100 * T / natural width)` with
+/// T = 1.29 em for every font (MS Mincho / Gothic, Yu Gothic, Times New Roman, Arial, Meiryo, Yu Mincho), size (9 to 16 pt),
+/// character grid and compatibility mode tried. It is Office's constant, not derived from this crate's layout.
+pub const TATE_CHU_YOKO_FIT_WIDTH_EM: f32 = 1.29;
+
+/// The `w:w` (percent) Word stores when 縦中横 with 行の幅に合わせる is applied to characters whose advances (em) are `advances`.
+///
+/// Word shrinks the run so that its width `sum * w / 100` is [`TATE_CHU_YOKO_FIT_WIDTH_EM`]; a run that is not wider than that
+/// (the usual two digits) is not shrunk and gets no `w:w` (`None`). The value is stored once, as Word does: Word, when it opens
+/// the file, does not shrink a run by `w:vertCompress` alone, it applies the stored `w:w`.
+pub fn tate_chu_yoko_fit_scale(advances: &[f32]) -> Option<u32> {
+    let natural: f32 = advances.iter().sum();
+    if natural <= 0.0 {
+        return None;
+    }
+    let w = (100.0 * TATE_CHU_YOKO_FIT_WIDTH_EM / natural).floor();
+    (w < 100.0 && w >= 1.0).then_some(w as u32)
+}
+
 /// Character formatting of a run that differs from its body's [`TextStyle`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RunStyle {
@@ -230,6 +264,12 @@ pub struct RunStyle {
     pub field: Option<TextField>,
     /// A line through the characters (`a:rPr/@strike`).
     pub strike: Strike,
+    /// 縦中横 of vertical writing (Word's `w:eastAsianLayout w:vert`): the run's characters stand upright side by side in one
+    /// cell of the line. `None`: not set, so the text is set as PowerPoint sets it (the digits two by two); `Some(Off)`: set
+    /// by Word, not horizontal in vertical.
+    pub tate_chu_yoko: Option<TateChuYoko>,
+    /// 文字の拡大縮小 (Word's `w:w`, in percent; `None` = 100). Windows Word shrinks 縦中横 by this alone (`w:vertCompress` shrinks nothing of itself).
+    pub char_scale: Option<u32>,
     /// Letters drawn as capitals (`a:rPr/@cap`).
     pub caps: Caps,
     /// How the underline is drawn when `underline` is set (`a:rPr/@u`).
@@ -468,6 +508,13 @@ pub struct Paragraph {
     pub default_tab: Option<Emu>,
     /// Whether `w:snapToGrid` is explicitly disabled (`false`) on this paragraph in a Word text box.
     pub no_snap_to_grid: bool,
+    /// The pitch of the page's line grid (`w:docGrid`) in hundredths of a point, set while a vertical Word text box is laid out on it: a
+    /// line of 縦中横 that is not squeezed (行を広げる) takes whole pitches. `None` off the grid.
+    pub grid_pitch: Option<u32>,
+    /// `a:pPr/@hangingPunct` off: no punctuation hangs past the end of a line (PowerPoint hangs 、。，．,. when it is on, its masters' setting).
+    pub no_hanging_punct: bool,
+    /// `a:pPr/@latinLnBrk` on: a line may break inside a Latin word.
+    pub latin_line_break: bool,
 }
 
 impl Paragraph {
@@ -565,6 +612,10 @@ pub struct CharacterFormat {
     pub baseline: Option<i32>,
     pub spacing: Option<i32>,
     pub strike: Option<Strike>,
+    /// 縦中横 (Word's command): `Some(None)` takes it away (the text is then Word's, which sets no digits upright).
+    pub tate_chu_yoko: Option<Option<TateChuYoko>>,
+    /// 文字の拡大縮小 (`w:w`, percent): `Some(None)` returns to 100.
+    pub char_scale: Option<Option<u32>>,
     pub caps: Option<Caps>,
     /// `Some(None)` takes the hyperlink away.
     pub link: Option<Option<SlideLink>>,
@@ -618,6 +669,12 @@ impl CharacterFormat {
         }
         if let Some(v) = self.spacing {
             run.spacing = v;
+        }
+        if let Some(v) = self.tate_chu_yoko {
+            run.tate_chu_yoko = Some(v.unwrap_or(TateChuYoko::Off));
+        }
+        if let Some(v) = self.char_scale {
+            run.char_scale = v.filter(|s| *s != 100);
         }
         if let Some(v) = self.strike {
             run.strike = v;
@@ -886,6 +943,9 @@ pub struct TextBody {
     pub warp_adjust: Vec<(String, i64)>,
     /// The text is cut at the shape's edge (a Word text box: what does not fit is not seen).
     pub clip: bool,
+    /// The text is a Word text box's, laid out by Word's rules: the last line of a justified paragraph is not spread, whatever
+    /// follows it (PowerPoint spreads it when the next paragraph has no space before it).
+    pub word_lines: bool,
 }
 
 impl Default for TextBody {
@@ -908,6 +968,7 @@ impl Default for TextBody {
             warp: None,
             warp_adjust: Vec::new(),
             clip: false,
+            word_lines: false,
         }
     }
 }

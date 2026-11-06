@@ -26,3 +26,15 @@ pub(crate) fn unix_nanos() -> Option<u64> {
     #[cfg(target_family = "wasm")]
     None
 }
+
+/// Nanoseconds on a monotonic clock since the first call, to time a calculation (tests, profiling); `None` in the browser.
+pub fn monotonic_nanos() -> Option<u64> {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let start = START.get_or_init(std::time::Instant::now);
+        Some(start.elapsed().as_nanos() as u64)
+    }
+    #[cfg(target_family = "wasm")]
+    None
+}

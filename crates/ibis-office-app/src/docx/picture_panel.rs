@@ -9,6 +9,7 @@ use gpui_kit::*;
 use gpui_kit::prelude::FluentBuilder as _;
 use crate::shell::palette::rgb;
 use ibis_doc_model::{FlowPos,FlowRunKind,FlowCommand,EmuSize,MediaId,PictureLook,Crop,Stroke,Color,Rgb,LineDash};
+use crate::shell::crop_units::{CropUnit,cropped_size};
 use crate::shell::{chrome::SidebarPanel,editor::SlideEditor,icons::Material};
 
 pub(crate) const PICTURE_BORDER_WIDTHS: [(&str, i64); 7] = [
@@ -89,8 +90,12 @@ pub(crate) struct PictureEditState {
     pub(crate) name_field: Entity<InputState>,
     pub(crate) initial_name: String,
     pub(crate) fields:[Entity<InputState>;2],
-    /// The cut at the top, bottom, left and right, in percent.
+    /// The cut at the top, bottom, left and right, in `crop_unit`.
     pub(crate) crop:[Entity<InputState>;4],
+    /// The unit the crop fields are typed and shown in (the same as the other screens' crop panel).
+    pub(crate) crop_unit:CropUnit,
+    /// The natural size of the picture in pixels (width, height): what an amount in a length unit is a fraction of.
+    crop_source:(f64,f64),
     pub(crate) keep_ratio:bool,
     pub(crate) alt_title: Entity<InputState>,
     pub(crate) alt_desc: Entity<InputState>,
@@ -156,9 +161,11 @@ impl SlideEditor {
         subscriptions.push(cx.subscribe_in(&name_field, window, |this, _, event: &InputEvent, _window, cx| {
             if matches!(event,InputEvent::Change|InputEvent::PressEnter{..}) { this.apply_picture_name(cx); }
         }));
-        let percent=|v:i32|{let p=v as f64/1000.;if p.fract()==0.{format!("{}",p as i64)}else{format!("{p:.1}")}};
-        let crop=[crop_now.top,crop_now.bottom,crop_now.left,crop_now.right].map(|v|cx.new(|cx|{
-            let mut field=InputState::new(window,cx);field.set_value(percent(v),window,cx);field
+        let crop_unit=CropUnit::default();
+        let crop_source=self.picture_source_pixels(target.1,target.2);
+        let crop_texts=Self::crop_field_texts(crop_unit,crop_source,crop_now);
+        let crop=crop_texts.map(|text|cx.new(|cx|{
+            let mut field=InputState::new(window,cx);field.set_value(text,window,cx);field
         }));
         subscriptions.extend(crop.iter().map(|f|cx.subscribe_in(f,window,|e,_,event:&InputEvent,_,cx|{if matches!(event,InputEvent::Change|InputEvent::PressEnter{..}){e.apply_picture_crop(cx);}})));
         let alt_title = cx.new(|cx| {
@@ -178,7 +185,7 @@ impl SlideEditor {
             if matches!(event,InputEvent::Change|InputEvent::PressEnter{..}) { this.apply_picture_alt_text(cx); }
         }));
         if let Some(state)=self.doc_state_mut() {
-            state.picture_edit=Some(PictureEditState {name_field,initial_name,fields,crop,keep_ratio:true,alt_title,alt_desc,initial_alt,decorative,initial_decorative:decorative,target,ratio_size:target.2,initial,error:None,_subscriptions:subscriptions});
+            state.picture_edit=Some(PictureEditState {name_field,initial_name,fields,crop,crop_unit,crop_source,keep_ratio:true,alt_title,alt_desc,initial_alt,decorative,initial_decorative:decorative,target,ratio_size:target.2,initial,error:None,_subscriptions:subscriptions});
             state.table_size=None;state.font_edit=None; state.color_edit=None; state.paragraph_edit=None;state.style_edit=None;state.link=None;state.find=None;state.comments=None;
         }
         self.sidebar_open=true;cx.notify();
@@ -186,6 +193,10 @@ impl SlideEditor {
     /// How the picture at the caret is turned, flipped and cut.
     pub(crate) fn picture_look_at_caret(&self)->Option<PictureLook> {
         let (at,..)=self.picture_at_caret()?;
+        self.picture_look_of(at)
+    }
+    /// How the picture at `at` is turned, flipped and cut.
+    pub(crate) fn picture_look_of(&self,at:FlowPos)->Option<PictureLook> {
         let p=self.paragraph_of(at.para)?;
         let mut offset=0;
         for run in &p.runs {
@@ -208,6 +219,9 @@ impl SlideEditor {
                             name: pic.name.clone(),
                             linked_file: None,
                             soft_edge: pic.soft_edge,
+                            shadow: pic.shadow,
+                            reflection: pic.reflection.clone(),
+                            clear: pic.clear,
                             effects: pic.effects,
                             geometry: pic.geometry.clone(),
                         });
@@ -930,10 +944,54 @@ impl SlideEditor {
     pub(crate) fn flip_picture(&mut self,horizontal:bool,cx:&mut Context<Self>) {
         self.change_picture_look(|l|if horizontal {l.flip_h=!l.flip_h} else {l.flip_v=!l.flip_v},cx);
     }
-    /// Cut the picture as the four fields say (percent of its size; each 0 to 99, together under 100 a side).
+    /// The picture's size in pixels: its file's (the media), else its frame's at 96 dpi.
+    fn picture_source_pixels(&self,media:MediaId,frame:EmuSize)->(f64,f64) {
+        self.presentation().media(media).and_then(|m|super::editing::picture_pixels(&m.data))
+            .map(|(w,h)|(f64::from(w),f64::from(h)))
+            .unwrap_or((frame.width as f64/9525.,frame.height as f64/9525.))
+    }
+    /// The texts of the crop fields (top, bottom, left, right) for `crop`, in `unit`.
+    fn crop_field_texts(unit:CropUnit,source:(f64,f64),crop:Crop)->[String;4] {
+        let text=|v:i32,side:f64|unit.format(unit.amount(f64::from(v)/100_000.,side));
+        [text(crop.top,source.1),text(crop.bottom,source.1),text(crop.left,source.0),text(crop.right,source.0)]
+    }
+    /// 単位: the crop fields written in `unit` (what is typed is kept as the same lengths; a field that is not a number stays).
+    pub(crate) fn set_picture_crop_unit(&mut self,unit:CropUnit,window:&mut Window,cx:&mut Context<Self>) {
+        let Some(edit)=self.doc_state().and_then(|s|s.picture_edit.as_ref()) else{return};
+        if edit.crop_unit==unit {return;}
+        let (old,source,fields)=(edit.crop_unit,edit.crop_source,edit.crop.clone());
+        for (i,field) in fields.iter().enumerate() {
+            let side=if i<2 {source.1} else {source.0};
+            let Ok(amount)=field.read(cx).value().trim().parse::<f64>() else {continue};
+            let text=unit.format(unit.amount(old.fraction(amount,side),side));
+            field.update(cx,|f,cx|f.set_value(text,window,cx));
+        }
+        if let Some(edit)=self.doc_state_mut().and_then(|s|s.picture_edit.as_mut()) {edit.crop_unit=unit;edit.error=None;}
+        cx.notify();
+    }
+    /// The panel's size and crop fields written again from the picture (after the crop on the page changed them).
+    pub(crate) fn sync_picture_crop_fields(&mut self,window:&mut Window,cx:&mut Context<Self>) {
+        if !self.doc_state().is_some_and(|s|s.picture_edit.is_some()) {return;}
+        let Some((at,media,size))=self.picture_at_caret() else{return};
+        let Some(look)=self.picture_look_of(at) else{return};
+        let source=self.picture_source_pixels(media,size);
+        let Some(edit)=self.doc_state_mut().and_then(|s|s.picture_edit.as_mut()) else{return};
+        let initial=[format!("{:.2}",size.width as f64/12700.),format!("{:.2}",size.height as f64/12700.)];
+        let sizes=edit.fields.clone();
+        let texts=Self::crop_field_texts(edit.crop_unit,source,look.crop);
+        let crops=edit.crop.clone();
+        edit.target.2=size;edit.ratio_size=size;edit.initial=initial.clone();edit.crop_source=source;edit.error=None;
+        for (field,text) in sizes.iter().zip(initial).chain(crops.iter().zip(texts)) {
+            field.update(cx,|f,cx|f.set_value(text,window,cx));
+        }
+        cx.notify();
+    }
+    /// Cut the picture as the four fields say (in the unit chosen; each from 0 up to less than the whole, together under the
+    /// whole a side).
     pub(crate) fn apply_picture_crop(&mut self,cx:&mut Context<Self>) {
-        let Some(fields)=self.doc_state().and_then(|s|s.picture_edit.as_ref()).map(|e|e.crop.clone()) else{return};
-        let values=fields.map(|f|f.read(cx).value().trim().parse::<f64>().ok().filter(|v|v.is_finite()&&*v>=0.&&*v<100.).map(|v|(v*1000.).round() as i32));
+        let Some((fields,unit,source))=self.doc_state().and_then(|s|s.picture_edit.as_ref()).map(|e|(e.crop.clone(),e.crop_unit,e.crop_source)) else{return};
+        let value=|f:&Entity<InputState>,side:f64|f.read(cx).value().trim().parse::<f64>().ok().map(|v|unit.fraction(v,side)).filter(|v|v.is_finite()&&*v>=0.&&*v<1.).map(|v|(v*100_000.).round() as i32);
+        let values=[value(&fields[0],source.1),value(&fields[1],source.1),value(&fields[2],source.0),value(&fields[3],source.0)];
         let [Some(top),Some(bottom),Some(left),Some(right)]=values else {
             if let Some(edit)=self.doc_state_mut().and_then(|s|s.picture_edit.as_mut()) {edit.error=Some(crate::shell::i18n::text("fix.picture-panel.enter-crop-number-0-up").into());}
             cx.notify();return;
@@ -1079,6 +1137,7 @@ impl SlideEditor {
         let name_field = edit.name_field.clone();
         let fields = edit.fields.clone();
         let crop = edit.crop.clone();
+        let (crop_unit, crop_source) = (edit.crop_unit, edit.crop_source);
         let ratio = edit.keep_ratio;
         let error = edit.error.clone();
         let geom_preset = self.picture_geometry_preset_at_caret();
@@ -1087,14 +1146,20 @@ impl SlideEditor {
         type Step = fn(&mut SlideEditor, f32, &mut Window, &mut Context<SlideEditor>);
         let spin_row = |label: &'static str, field: &Entity<InputState>, id: &'static str, spec: crate::shell::chrome::SpinnerSpec, on_step: Step| h_flex().gap_2()
             .child(div().w(px(80.)).text_sm().child(crate::shell::i18n::text(label)))
-            .child(crate::shell::chrome::text_field(field).full_width().unit(if id.starts_with("picture-crop"){"%"}else{"pt"},px(22.)).spinner(id, spec, field_cx, on_step));
+            .child(crate::shell::chrome::text_field(field).full_width().unit(if id.starts_with("picture-crop"){crop_unit.abbreviation()}else{"pt"},px(if id.starts_with("picture-crop"){32.}else{22.})).spinner(id, spec, field_cx, on_step));
         // Size (pt): Enter applies it, so does ▲▼. Crop (%): applied by its button only, ▲▼ only change the number.
         let size_spec = crate::shell::chrome::SpinnerSpec::new(1.0).range(1.0, 1584.0);
-        let crop_spec = crate::shell::chrome::SpinnerSpec::new(1.0).range(0.0, 99.0);
+        let crop_spec = crate::shell::chrome::SpinnerSpec::new(crop_unit.step() as f32).min(0.0);
+        let crop_spec = if crop_unit == CropUnit::Percent { crop_spec.max(99.0) } else { crop_spec };
+        // The size left after the crop follows what is typed, in the unit.
+        let amounts: Vec<f64> = crop.iter().map(|f| f.read(field_cx).value().trim().parse::<f64>().unwrap_or(0.)).collect();
+        let fractions = [crop_unit.fraction(amounts[2], crop_source.0), crop_unit.fraction(amounts[0], crop_source.1), crop_unit.fraction(amounts[3], crop_source.0), crop_unit.fraction(amounts[1], crop_source.1)];
+        let (kept_w, kept_h) = cropped_size(crop_unit, crop_source, fractions);
+        let crop_size_text = crate::shell::i18n::format("pptx.crop-panel.size", &[("width", &format!("{} {}", crop_unit.format(kept_w), crop_unit.abbreviation())), ("height", &format!("{} {}", crop_unit.format(kept_h), crop_unit.abbreviation()))]);
         let apply_size: Step = |this, _, window, cx| this.apply_picture_edit(window, cx);
         let no_apply: Step = |e, _, _, cx| e.apply_picture_crop(cx);
         Some(
-            body.child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("docx.picture.name"),crate::shell::chrome::text_field(&name_field).full_width()).flex_col().items_start().gap_1())
+            body.child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("docx.picture.name"),crate::shell::chrome::text_field(&name_field).full_width()).stacked())
                 .child(spin_row("docx.picture-panel.width-pt", &fields[0], "picture-width", size_spec, apply_size))
                 .child(spin_row("docx.picture-panel.height-pt", &fields[1], "picture-height", size_spec, apply_size))
                 .child(crate::shell::chrome::checkbox_button("picture-ratio",crate::shell::i18n::text("docx.picture-panel.lock-aspect-ratio"),ratio,false,cx.listener(|this,_,_,cx|this.toggle_picture_ratio(cx))))
@@ -1111,10 +1176,16 @@ impl SlideEditor {
                     .child(crate::shell::chrome::action_button("picture-flip-v").small().icon(Icon::new(crate::shell::icons::Material("flip")).transform(gpui::Transformation::rotate(gpui::radians(std::f32::consts::FRAC_PI_2)))).tooltip(crate::shell::i18n::text("fix.picture-panel.flip-vertical")).on_click(cx.listener(|this, _, _, cx| this.flip_picture(false, cx)))))
                 .child(crate::shell::chrome::action_button("picture-reset").small().label(crate::shell::i18n::text("docx.picture.reset")).on_click(cx.listener(|this, _, _, cx| this.reset_picture(cx))))
                 .child(div().pt_2().text_sm().child(crate::shell::i18n::text("fix.picture-panel.crop")))
+                .child(crate::shell::chrome::action_button("picture-crop-mode").small().icon(crate::shell::icons::Material("crop")).label(crate::shell::i18n::text("_shell.crop-mode")).on_click(cx.listener(|this, _, window, cx| this.begin_crop_mode(window, cx))))
+                .child(crate::shell::chrome::segment_control_row(crate::shell::i18n::text("pptx.crop-panel.unit"), CropUnit::ALL.map(|u| {
+                    crate::shell::chrome::segment_control::SegmentItem::label(format!("picture-crop-unit-{}", u.abbreviation()), u.abbreviation(), u == crop_unit)
+                        .on_click(cx.listener(move |e, _, w, cx| e.set_picture_crop_unit(u, w, cx)))
+                })))
                 .child(spin_row("_shell.top", &crop[0], "picture-crop-top", crop_spec, no_apply))
                 .child(spin_row("_shell.bottom", &crop[1], "picture-crop-bottom", crop_spec, no_apply))
                 .child(spin_row("_shell.left", &crop[2], "picture-crop-left", crop_spec, no_apply))
                 .child(spin_row("_shell.right", &crop[3], "picture-crop-right", crop_spec, no_apply))
+                .child(div().id("picture-crop-size").text_sm().child(crop_size_text))
                 .child(div().pt_2().text_sm().child(crate::shell::i18n::text("docx.picture.crop-to-shape.label")))
                 .child(crate::shell::chrome::radio_group().layout(crate::shell::chrome::RadioGroupLayout::Flow)
                     .child(crate::shell::chrome::radio_button("pic-crop-rect",geom_preset.is_none(),false,crate::shell::i18n::text("docx.picture.crop-to-shape.rect"),cx.listener(|this, _, _, cx| this.crop_picture_to_shape(None, cx))))

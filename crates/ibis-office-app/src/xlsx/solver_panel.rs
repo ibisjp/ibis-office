@@ -155,7 +155,7 @@ pub(crate) struct SolverPanel {
     pub(crate) constraints: Vec<(String, Rel, String)>,
     pub(crate) selected: Option<usize>,
     pub(crate) editor: Option<bool>,
-    constraint_scroll:ScrollHandle,
+    constraint_table:crate::shell::chrome::virtual_table::TableState,
     pub(crate) c_lhs: Entity<InputState>,
     pub(crate) c_rhs: Entity<InputState>,
     pub(crate) c_rel: Rel,
@@ -281,7 +281,7 @@ impl SlideEditor {
             constraints: d.constraints.clone(),
             selected: None,
             editor:None,
-            constraint_scroll:ScrollHandle::new(),
+            constraint_table:Default::default(),
             c_lhs: make(String::new(), window, cx),
             c_rhs: make(String::new(), window, cx),
             c_rel: Rel::Le,
@@ -682,7 +682,7 @@ impl SlideEditor {
             let(lhs,rel,rhs)=index.and_then(|i|p.constraints.get(i).cloned()).unwrap_or((String::new(),Rel::Le,String::new()));
             p.c_lhs.update(cx,|i,cx|i.set_value(lhs,w,cx));p.c_rhs.update(cx,|i,cx|i.set_value(rhs,w,cx));p.c_rel=rel;p.editor=Some(index.is_some());p.message.clear();
         }
-        self.panel_dialog.bounds=None;cx.notify();
+        self.dialog.bounds=None;cx.notify();
     }
     fn solver_constraint_panel(&self,cx:&Context<Self>)->Option<SidebarPanel>{
         let p=self.sheet_state()?.panels.solver.as_ref()?;let editing=p.editor?;
@@ -695,10 +695,10 @@ impl SlideEditor {
         let footer=crate::shell::chrome::action_bar()
             .action(crate::shell::chrome::ActionDefinition::new("solver-constraint-ok",text("OK"),crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(move|e,_,_,cx|{
                 e.solver_put_constraint(editing,cx);
-                if let Some(p)=e.wb_mut().panels.solver.as_mut(){if p.message.is_empty(){p.editor=None;e.panel_dialog.bounds=None;}}
+                if let Some(p)=e.wb_mut().panels.solver.as_mut(){if p.message.is_empty(){p.editor=None;e.dialog.bounds=None;}}
                 cx.notify();
             })))
-            .action(crate::shell::chrome::ActionDefinition::new("solver-constraint-cancel",text("_shell.cancel"),crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,_,cx|{if let Some(p)=e.wb_mut().panels.solver.as_mut(){p.editor=None;p.message.clear();}e.panel_dialog.bounds=None;cx.notify();})));
+            .action(crate::shell::chrome::ActionDefinition::new("solver-constraint-cancel",text("_shell.cancel"),crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e,_,_,cx|{if let Some(p)=e.wb_mut().panels.solver.as_mut(){p.editor=None;p.message.clear();}e.dialog.bounds=None;cx.notify();})));
         Some(SidebarPanel::with_footer(text("xlsx.solver.constraints"),body.into_any_element(),footer).modal_named("solver_constraint_editor"))
     }
 
@@ -766,16 +766,24 @@ impl SlideEditor {
             .child(mark("variables", super::range_field::local_range_field(&p.variables,"solver_panel-p-variables",false,cx).into_any_element()));
 
         // Constraints are edited separately; the main table stays focused on the model.
-        let header=crate::shell::chrome::table_row(vec![text("xlsx.solver.cell-reference").into_any_element(),text("xlsx.solver.constraints").into_any_element(),text("xlsx.solver.report.value").into_any_element()],div().into_any_element(),false);
-        let mut rows=v_flex();
-        for(i,(lhs,rel,rhs))in p.constraints.iter().enumerate(){
-            let actions=h_flex().gap_1()
-                .child(crate::shell::chrome::action_button(("solver-constraint-edit",i)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("edit")).on_click(cx.listener(move|e,_,w,cx|e.open_solver_constraint(Some(i),w,cx))))
-                .child(crate::shell::chrome::action_button(("solver-constraint-delete",i)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("delete")).on_click(cx.listener(move|e,_,_,cx|{if let Some(p)=e.wb_mut().panels.solver.as_mut(){if i<p.constraints.len(){p.constraints.remove(i);}}cx.notify();})));
-            rows=rows.child(crate::shell::chrome::table_row(vec![div().truncate().child(lhs.clone()).into_any_element(),text(relation_id(*rel)).into_any_element(),div().truncate().child(rhs.clone()).into_any_element()],actions.into_any_element(),false));
-        }
+        let header=vec![text("xlsx.solver.cell-reference").into_any_element(),text("xlsx.solver.constraints").into_any_element(),text("xlsx.solver.report.value").into_any_element(),div().into_any_element()];
+        let constraint_rows:Vec<(String,Rel,String)>=p.constraints.clone();
+        let row_count=constraint_rows.len();
+        let editor_weak=cx.entity().downgrade();
+        let build=move|range:std::ops::Range<usize>,_:&mut Window,_:&mut App|->Vec<crate::shell::chrome::virtual_table::TableRow>{
+            range.filter_map(|i|constraint_rows.get(i).map(|r|(i,r))).map(|(i,(lhs,rel,rhs))|{
+                let (edit_editor,delete_editor)=(editor_weak.clone(),editor_weak.clone());
+                let actions=h_flex().gap_1()
+                    .child(crate::shell::chrome::action_button(("solver-constraint-edit",i)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("edit")).on_click(move|_,w,cx|{let _=edit_editor.update(cx,|e,cx|e.open_solver_constraint(Some(i),w,cx));}))
+                    .child(crate::shell::chrome::action_button(("solver-constraint-delete",i)).w(px(28.)).h(px(28.)).px_0().icon(crate::shell::icons::Material("delete")).on_click(move|_,_,cx|{let _=delete_editor.update(cx,|e,cx|{if let Some(p)=e.wb_mut().panels.solver.as_mut(){if i<p.constraints.len(){p.constraints.remove(i);}}cx.notify();});}));
+                crate::shell::chrome::virtual_table::TableRow::new(vec![div().truncate().child(lhs.clone()).into_any_element(),text(relation_id(*rel)).into_any_element(),div().truncate().child(rhs.clone()).into_any_element(),actions.into_any_element()])
+            }).collect()
+        };
+        use crate::shell::chrome::virtual_table::TableColumn;
+        let columns=vec![TableColumn::resizable("lhs",60.,110.,260.),TableColumn::resizable("rel",40.,80.,160.),TableColumn::flex("rhs"),TableColumn::fixed("actions",64.)];
+        let table=crate::shell::chrome::data_table::DataTable::virtualized("solver-constraints",columns,header,p.constraint_table.clone(),row_count,build,cx);
         body=body.child(h_flex().w_full().items_center().justify_between().child(caption("xlsx.solver.constraints")).child(mark("c-add",crate::shell::chrome::action_button("solver-add").label(text("xlsx.solver.add")).on_click(cx.listener(|e,_,w,cx|e.open_solver_constraint(None,w,cx))).into_any_element())))
-            .child(crate::shell::chrome::table("solver-constraints",header.into_any_element(),rows.into_any_element(),p.constraint_scroll.clone(),px(180.)));
+            .child(div().w_full().h(px(180.)).child(table));
 
         // Options.
         body = body.child(mark(
@@ -817,6 +825,11 @@ impl SlideEditor {
                 _ => None,
             };
             let field = crate::shell::chrome::text_field(entity).full_width();
+            let field = match id {
+                "integer-tolerance" => field.unit("%", px(20.)),
+                "max-time" => field.unit(text("xlsx.solver.max-time-unit"), px(20.)),
+                _ => field,
+            };
             let field = match spec {
                 Some(spec) => field.spinner(format!("solver-{id}"), spec, cx, |_, _, _, _| {}),
                 None => field,

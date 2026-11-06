@@ -13,8 +13,8 @@
 //! What is decided here, and why (PowerPoint was not looked at for these;
 //! to be checked on the real thing, see the report of the change):
 //! - Under the clip's box, just outside it (rotation included), as wide as the
-//!   box but never narrower than [`MIN_W`] so the controls fit: a speaker icon
-//!   is small. Over the slide's bottom edge it goes on into the grey around the
+//!   box but never narrower than the controls and the time label need (see
+//!   [`min_width`]: the label is measured): a speaker icon is small. Over the slide's bottom edge it goes on into the grey around the
 //!   slide.
 //! - Shown while the pointer is over the clip or over its bar, and while the
 //!   clip plays, whatever the pointer does. A clip paused or stopped hides its
@@ -43,8 +43,6 @@ use crate::shell::editor::{SlideEditor, SlideLayout};
 
 /// The bar's height, in screen pixels: the seek bar's row and the controls' row.
 pub(crate) const BAR_H: f32 = 54.0;
-/// The bar's least width.
-pub(crate) const MIN_W: f32 = 250.0;
 /// The space between the clip's box and the bar.
 const GAP: f32 = 2.0;
 const PAD: f32 = 8.0;
@@ -98,6 +96,24 @@ pub(crate) fn geometry(w: f32) -> Geometry {
         volume: (v0, v0 + SLIDER_W),
         time_x: v0 + SLIDER_W + THUMB / 2.0 + 12.0,
     }
+}
+
+/// The width the time label `text` takes at the bar's text size (`text_xs`, 0.75 rem; the app keeps GPUI's 16 px rem), measured
+/// in the theme's font: every digit counts as the widest digit of the font, so the label does not outgrow it as the clip plays.
+fn label_width(text: &str, cx: &App) -> f32 {
+    let theme = cx.theme();
+    let system = cx.text_system();
+    let font_id = system.resolve_font(&gpui_kit::font(theme.font_family.clone()));
+    let size = px(16.0 * 0.75);
+    let advance = |ch: char| system.advance(font_id, size, ch).map_or(0.0, |a| f32::from(a.width));
+    let digit = ('0'..='9').map(advance).fold(0.0, f32::max);
+    text.chars().map(|ch| if ch.is_ascii_digit() { digit } else { advance(ch) }).sum()
+}
+
+/// The least width of a bar whose time label reads `label`: the controls, the label and the margins.
+pub(crate) fn min_width(label: &str, cx: &App) -> f32 {
+    // The bar's border (1 px) is inside its width.
+    geometry(0.0).time_x + label_width(label, cx) + PAD + 2.0
 }
 
 /// The volume of a clip's bar (see the module's notes).
@@ -200,19 +216,23 @@ impl SlideEditor {
     }
 
     /// The bar of `shape` in the window: under the box the shape takes.
-    pub(crate) fn clip_bar_bounds(&self, shape: ShapeId, layout: SlideLayout) -> Option<Bounds<Pixels>> {
+    pub(crate) fn clip_bar_bounds(&self, shape: ShapeId, layout: SlideLayout, cx: &App) -> Option<Bounds<Pixels>> {
+        let id = shape;
         let shape = self.slide().shape(shape)?;
         let EmuRect { x, y, width, height } = interaction::bounds(shape);
         let (left, bottom) = (f32::from(layout.to_px(x)), f32::from(layout.to_px(y + height)));
-        let w = f32::from(layout.to_px(width)).max(MIN_W);
+        // The widest the time label gets: the clip's whole length as both the time and the total.
+        let whole = clock_text(self.clip_bar_state(id).length_ms);
+        let widest = crate::shell::i18n::format("pptx.clip.bar.time", &[("current", &whole), ("total", &whole)]);
+        let w = f32::from(layout.to_px(width)).max(min_width(&widest, cx));
         Some(Bounds::new(point(layout.origin.x + px(left), layout.origin.y + px(bottom + GAP)), size(px(w), px(BAR_H))))
     }
 
     /// What a press at `position` is on a bar shown, if it is on one.
-    pub(crate) fn clip_bar_part_at(&self, position: Point<Pixels>) -> Option<(ShapeId, BarPart)> {
+    pub(crate) fn clip_bar_part_at(&self, position: Point<Pixels>, cx: &App) -> Option<(ShapeId, BarPart)> {
         let layout = self.slide_layout()?;
         self.clip_bars_shown().into_iter().find_map(|shape| {
-            let bounds = self.clip_bar_bounds(shape, layout)?;
+            let bounds = self.clip_bar_bounds(shape, layout, cx)?;
             if !bounds.contains(&position) {
                 return None;
             }
@@ -240,11 +260,11 @@ impl SlideEditor {
     /// The pointer moved: the clip under it gets its bar (its player opened
     /// to know the length), and the bar goes when the pointer leaves both.
     pub(crate) fn update_clip_hover(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
-        if event.pressed_button.is_some() || self.panel_dialog_is_modal() {
+        if event.pressed_button.is_some() || self.dialog_is_modal() {
             return;
         }
         let Some(layout) = self.slide_layout() else { return };
-        let over_bar = self.clip_bar_part_at(event.position).map(|(shape, _)| shape);
+        let over_bar = self.clip_bar_part_at(event.position, cx).map(|(shape, _)| shape);
         let next = over_bar.or_else(|| self.clip_at(layout.to_emu(event.position)));
         let Some(state) = self.pptx_mut() else { return };
         if state.clip_hover == next {
@@ -267,7 +287,7 @@ impl SlideEditor {
         if event.button != MouseButton::Left {
             return false;
         }
-        let Some((shape, part)) = self.clip_bar_part_at(event.position) else { return false };
+        let Some((shape, part)) = self.clip_bar_part_at(event.position, cx) else { return false };
         self.focus_handle.focus(window, cx);
         match part {
             BarPart::Play => self.toggle_clip(shape, cx),
@@ -301,7 +321,7 @@ impl SlideEditor {
     /// The seek bar or the slider dragged: it goes where the pointer is. Whether a drag of the bar goes on.
     pub(crate) fn clip_seek_move(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) -> bool {
         let Some((shape, volume)) = self.pptx().and_then(|s| s.clip_seek) else { return false };
-        let Some(bounds) = self.slide_layout().and_then(|l| self.clip_bar_bounds(shape, l)) else { return true };
+        let Some(bounds) = self.slide_layout().and_then(|l| self.clip_bar_bounds(shape, l, cx)) else { return true };
         let g = geometry(f32::from(bounds.size.width));
         let (x0, x1) = if volume { g.volume } else { g.seek };
         let fraction = ((f32::from(position.x - bounds.origin.x) - x0) / (x1 - x0)).clamp(0.0, 1.0);
@@ -370,7 +390,7 @@ impl SlideEditor {
         self.clip_bars_shown()
             .into_iter()
             .filter_map(|shape| {
-                let bounds = self.clip_bar_bounds(shape, layout)?;
+                let bounds = self.clip_bar_bounds(shape, layout, cx)?;
                 let state = self.clip_bar_state(shape);
                 let volume = self.clip_bar_volume(shape);
                 let g = geometry(f32::from(bounds.size.width));

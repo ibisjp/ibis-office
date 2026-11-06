@@ -1,0 +1,92 @@
+{
+ "end": 0.154,
+ "last_change": 66.354,
+ "end_video_frame": 1,
+ "first_change": 0.155,
+ "window_end": 66.354,
+ "doc_changes_count": 11,
+ "doc_changes": [
+  [
+   0.155,
+   0.0064
+  ],
+  [
+   1.53,
+   0.0022
+  ],
+  [
+   1.563,
+   0.00385
+  ],
+  [
+   1.574,
+   0.00475
+  ],
+  [
+   1.596,
+   0.0033
+  ],
+  [
+   1.618,
+   0.00303
+  ],
+  [
+   3.274,
+   0.01603
+  ],
+  [
+   3.296,
+   0.00489
+  ],
+  [
+   3.318,
+   0.0289
+  ],
+  [
+   3.792,
+   0.03915
+  ],
+  [
+   66.354,
+   0.08629
+  ]
+ ],
+ "recorded_until": 74.367,
+ "grabs": 6869,
+ "capped": false,
+ "loading_box": [
+  [
+   3.879,
+   66.377
+  ]
+ ],
+ "dialog": {
+  "shown": 3.277048349380493,
+  "confirmed": 3.2783138751983643
+ },
+ "end_with_dialog": 0.155,
+ "tag": "csv-onlyoffice-csv300k-2",
+ "scenario": "csv",
+ "app": "onlyoffice",
+ "kind": "csv300k",
+ "run": 2,
+ "file": "kpi-300k-rows.csv",
+ "command": [
+  "onlyoffice10",
+  "/tmp/ibis-bench-okx0qxji/kpi-300k-rows.csv"
+ ],
+ "rects": [
+  [
+   0.0,
+   "293 115 1334 850"
+  ]
+ ],
+ "covered": [],
+ "cap": 900,
+ "measured_at": "2026-11-03 21:15:39",
+ "load_before": [
+  1.58,
+  1.11,
+  0.63
+ ]
+}

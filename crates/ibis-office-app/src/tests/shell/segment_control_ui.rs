@@ -179,7 +179,7 @@ fn run() {
         slot.set(Some((
             panel,
             "segment-control-verification",
-            crate::shell::panel_dialog::PanelMode::Sidebar,
+            crate::shell::dialog::DialogMode::Sidebar,
         )))
     });
     s.update(|e, _, cx| {

@@ -106,6 +106,8 @@ pub enum RunChange {
     Combine(Option<crate::flow::Combine>),
     /// 縦中横 (`w:eastAsianLayout w:vert`).
     TateChuYoko(bool),
+    /// 縦中横の「行の幅に合わせる」.
+    TateChuYokoFit(bool),
     /// 文字の囲み線 (`w:bdr`).
     Border(Option<crate::flow::FlowBorder>),
     /// カーニング (`w:kern`, half-points; Some(0) turns off, None clears direct override).
@@ -205,6 +207,7 @@ impl RunChange {
             RunChange::Emphasis(v) => f.emphasis = Some(*v),
             RunChange::Combine(v) => f.combine = Some(*v),
             RunChange::TateChuYoko(v) => f.tate_chu_yoko = Some(*v),
+            RunChange::TateChuYokoFit(v) => f.tate_chu_yoko_fit = Some(*v),
             RunChange::Border(v) => f.border = Some(*v),
             RunChange::Kern(v) => f.kern = *v,
             RunChange::Hidden(v) => f.hidden = Some(*v),
@@ -945,10 +948,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
         FlowCommand::SetNumbering { numbering } => {
             let styles = Arc::make_mut(&mut doc.styles);
             let old = std::mem::replace(&mut styles.numbering, numbering);
-            let styles = doc.styles.clone();
-            for list in [&mut doc.body, &mut doc.header, &mut doc.footer] {
-                resolve_all(list, &styles);
-            }
+            resolve_document(doc);
             Ok(FlowCommand::SetNumbering { numbering: old })
         }
         FlowCommand::SetStyle { id, style } => {
@@ -957,10 +957,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 Some(s) => styles.styles.insert(id.clone(), s),
                 None => styles.styles.remove(&id),
             };
-            let styles = doc.styles.clone();
-            for list in [&mut doc.body, &mut doc.header, &mut doc.footer, &mut doc.header_first, &mut doc.footer_first, &mut doc.header_even, &mut doc.footer_even] {
-                resolve_all(list, &styles);
-            }
+            resolve_document(doc);
             Ok(FlowCommand::SetStyle { id, style: old })
         }
         FlowCommand::SetDocumentParagraphSpacing { preset, styles } => {
@@ -987,10 +984,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                     s.defaults_para.line = Some(line);
                 }
             }
-            let styles = doc.styles.clone();
-            for list in [&mut doc.body, &mut doc.header, &mut doc.footer, &mut doc.header_first, &mut doc.footer_first, &mut doc.header_even, &mut doc.footer_even] {
-                resolve_all(list, &styles);
-            }
+            resolve_document(doc);
             Ok(FlowCommand::SetDocumentParagraphSpacing {
                 preset: old_preset,
                 styles: Some(old_styles),
@@ -1006,10 +1000,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 let s = std::sync::Arc::make_mut(&mut doc.styles);
                 preset.apply(s);
             }
-            let styles = doc.styles.clone();
-            for list in [&mut doc.body, &mut doc.header, &mut doc.footer, &mut doc.header_first, &mut doc.footer_first, &mut doc.header_even, &mut doc.footer_even] {
-                resolve_all(list, &styles);
-            }
+            resolve_document(doc);
             Ok(FlowCommand::SetDocumentStyleSet {
                 preset: old_preset,
                 styles: Some(old_styles),
@@ -1067,6 +1058,13 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 }
                 table.rows.push(row);
             }
+            // As a reader finds it in the saved file (`w:tblW` auto, each cell's `w:tcW` its column's width, the grid agreeing): a table laid out by the grid.
+            let column_width = table.columns[0];
+            table.autofit = Some(crate::flow::AutoFit {
+                width: crate::flow::PreferredWidth::Auto,
+                cells: table.rows.iter().map(|r| r.cells.iter().map(|_| crate::flow::PreferredWidth::Fixed(column_width)).collect()).collect(),
+                grid_trusted: true,
+            });
             table.resolve_borders();
             let len = p.len();
             let in_cell = matches!(container, Container::Cell { .. });
@@ -1184,6 +1182,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                         pic.name = look.name;
                         pic.effects = look.effects;
                         pic.soft_edge = look.soft_edge;
+                        pic.shadow = look.shadow;
+                        pic.reflection = look.reflection;
+                        pic.clear = look.clear;
                         pic.geometry = look.geometry;
                     }
                 }
@@ -1798,6 +1799,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             name: pic.name.clone(),
                             linked_file: None,
                             soft_edge: pic.soft_edge,
+                            shadow: pic.shadow,
+                            reflection: pic.reflection.clone(),
+                            clear: pic.clear,
                             effects: pic.effects,
                             geometry: pic.geometry.clone(),
                         };
@@ -1852,6 +1856,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             name: pic.name.clone(),
                             linked_file: None,
                             soft_edge: pic.soft_edge,
+                            shadow: pic.shadow,
+                            reflection: pic.reflection.clone(),
+                            clear: pic.clear,
                             effects: pic.effects,
                             geometry: pic.geometry.clone(),
                         };
@@ -3729,6 +3736,15 @@ pub fn reply_comment(doc: &FlowDocument, parent: u32, who: &CommentAuthor, text:
     Some(commands)
 }
 
+/// The command giving comment `id` a new text (編集): its body is one paragraph of `text`; its author, date and marks
+/// stay.
+pub fn edit_comment(doc: &FlowDocument, id: u32, text: &str) -> Option<FlowCommand> {
+    let mut comments = doc.comments.clone();
+    let c = comments.iter_mut().find(|c| c.id == id)?;
+    c.blocks = vec![Block::Paragraph(comment_paragraph(doc, doc.new_id(), text))];
+    Some(FlowCommand::SetComments(comments))
+}
+
 /// The command resolving a comment (and its replies), or opening it again.
 pub fn resolve_comment(doc: &FlowDocument, id: u32, done: bool) -> FlowCommand {
     let mut comments = doc.comments.clone();
@@ -3840,7 +3856,7 @@ pub fn resolve_revisions_filter(
     doc: &FlowDocument,
     range: Option<(FlowPos, FlowPos)>,
     accept: bool,
-    author_filter: Option<&std::collections::HashSet<String>>,
+    author_filter: Option<&std::collections::BTreeSet<String>>,
 ) -> Vec<FlowCommand> {
     if doc.lock_tracking {
         return Vec::new();
@@ -4357,6 +4373,7 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
             t.autofit = Some(crate::flow::AutoFit {
                 width: crate::flow::PreferredWidth::Auto,
                 cells: t.rows.iter().map(|r| r.cells.iter().map(|_| crate::flow::PreferredWidth::Auto).collect()).collect(),
+                grid_trusted: false,
             });
         }
         TableEdit::AutoFitWindow(available) => {
@@ -4389,6 +4406,7 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
             t.autofit = Some(crate::flow::AutoFit {
                 width: crate::flow::PreferredWidth::Percent(5000),
                 cells: t.rows.iter().map(|r| r.cells.iter().map(|_| crate::flow::PreferredWidth::Auto).collect()).collect(),
+                grid_trusted: false,
             });
         }
         TableEdit::FixedColumns => {
@@ -4573,6 +4591,36 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
     t.apply_style(styles);
     t.resolve_borders();
     Ok(Some(t))
+}
+
+/// Resolve every paragraph of the document again against its styles: the body, the headers and footers (the document's and the
+/// sections' own), the footnotes, the endnotes and the comments. A change of styles or numbering ends here, so that no
+/// container is left with the formatting of the styles it had before (review 0.8.5, B1: the notes were left out).
+fn resolve_document(doc: &mut FlowDocument) {
+    let styles = doc.styles.clone();
+    let FlowDocument { body, header, footer, header_first, footer_first, header_even, footer_even, footnotes, endnotes, comments, .. } = doc;
+    for list in [&mut *header, footer, header_first, footer_first, header_even, footer_even] {
+        resolve_all(list, &styles);
+    }
+    for note in footnotes.iter_mut().chain(endnotes.iter_mut()) {
+        resolve_all(&mut note.blocks, &styles);
+    }
+    for comment in comments.iter_mut() {
+        resolve_all(&mut comment.blocks, &styles);
+    }
+    // The sections' own headers and footers sit in the section-break paragraphs of the body.
+    for block in body.iter_mut() {
+        if let Block::Paragraph(p) = block {
+            if let Some(section) = p.section.as_mut() {
+                if section.parts.iter().flatten().next().is_some() {
+                    for part in Arc::make_mut(section).parts.iter_mut().flatten() {
+                        resolve_all(part, &styles);
+                    }
+                }
+            }
+        }
+    }
+    resolve_all(body, &styles);
 }
 
 /// Resolve every paragraph of `blocks` again (after the definitions changed).
@@ -6181,6 +6229,26 @@ mod tests {
         }
     }
 
+    /// B1 (review 0.8.5): changing a style reaches the paragraphs of the footnotes, endnotes and comments, as it does the body's.
+    #[test]
+    fn style_change_reaches_notes_and_comments() {
+        let style = |size: u32| FlowStyle { kind: StyleKind::Paragraph, name: "Note".into(), run: crate::flow::RunFormat { size: Some(size), ..Default::default() }, ..FlowStyle::default() };
+        let para = |id: u32| FlowParagraph { id, style: Some("Note".into()), runs: vec![FlowRun::new(FlowRunKind::Text("x".into()), FlowRunStyle::default())], ..FlowParagraph::default() };
+        let mut d = FlowDocument::default();
+        Arc::make_mut(&mut d.styles).styles.insert("Note".into(), style(900));
+        d.body.push(Block::Paragraph(para(1)));
+        d.footnotes.push(crate::flow::Note { id: 1, blocks: vec![Block::Paragraph(para(2))] });
+        d.endnotes.push(crate::flow::Note { id: 2, blocks: vec![Block::Paragraph(para(3))] });
+        d.comments.push(crate::flow::Comment { id: 3, author: String::new(), initials: String::new(), date: String::new(), blocks: vec![Block::Paragraph(para(4))], parent: None, done: false, para_id: None });
+        resolve_document(&mut d);
+        apply_to(&mut d, FlowCommand::SetStyle { id: "Note".into(), style: Some(style(1400)) }).unwrap();
+        let sizes: Vec<u32> = [&d.body, &d.footnotes[0].blocks, &d.endnotes[0].blocks, &d.comments[0].blocks]
+            .iter()
+            .map(|list| match &list[0] { Block::Paragraph(p) => p.runs[0].style.size, _ => 0 })
+            .collect();
+        assert_eq!(sizes, [1400, 1400, 1400, 1400], "body, footnote, endnote, comment");
+    }
+
     fn text_para(id: u32, text: &str) -> Block {
         Block::Paragraph(FlowParagraph { id, runs: vec![FlowRun::new(FlowRunKind::Text(text.into()), FlowRunStyle::default())], ..FlowParagraph::default() })
     }
@@ -6255,7 +6323,7 @@ mod tests {
             let Block::Paragraph(p) = b else { panic!() };
             assert_eq!(p.align, FlowAlign::Center);
         }
-        let stop = crate::flow::TabStop { position: 72 * 12_700, align: crate::flow::TabAlign::Right, leader: true };
+        let stop = crate::flow::TabStop { position: 72 * 12_700, align: crate::flow::TabAlign::Right, leader: crate::flow::TabLeader::Dot };
         run(&mut d, FlowCommand::SetParagraphFormat { first: 1, last: 1, change: ParaChange::Tabs(vec![crate::flow::TabChange { position: stop.position, stop: Some(stop) }]) });
         let Block::Paragraph(p) = &d.body[0] else { panic!() };
         assert_eq!(p.tabs, vec![stop]);
@@ -7095,6 +7163,7 @@ pub fn heading_numbering(doc: &FlowDocument) -> Option<Vec<FlowCommand>> {
             para: crate::flow::ParaFormat::default(),
             run: RunFormat::default(),
             pic_bullet: None,
+            symbol: None,
         })
         .collect();
     numbering.abstracts.insert(abstract_id, AbstractList { levels, num_style_link: None });
@@ -8427,7 +8496,7 @@ pub fn missing_header_footer_style(styles: &crate::flow::FlowStyles, footer: boo
     }
     let normal = styles.default_paragraph.clone();
     let (center, right) = if normal.as_deref() == Some("a") { (4252, 8504) } else { (4513, 9026) };
-    let stop = |twips: i64, align| TabChange { position: twips * 635, stop: Some(TabStop { position: twips * 635, align, leader: false }) };
+    let stop = |twips: i64, align| TabChange { position: twips * 635, stop: Some(TabStop { position: twips * 635, align, leader: crate::flow::TabLeader::None }) };
     let mut id = if footer { "Footer".to_string() } else { "Header".to_string() };
     while styles.styles.contains_key(&id) {
         id.push('_');
@@ -8548,7 +8617,7 @@ pub fn toc_entries_with_instruction(
         } else {
             None
         };
-        let mut direct = crate::flow::ParaFormat { tabs: vec![TabChange { position: width, stop: Some(TabStop { position: width, align: TabAlign::Right, leader: true }) }], ..Default::default() };
+        let mut direct = crate::flow::ParaFormat { tabs: vec![TabChange { position: width, stop: Some(TabStop { position: width, align: TabAlign::Right, leader: crate::flow::TabLeader::Dot }) }], ..Default::default() };
         if style.is_none() {
             direct.left = Some((level as i64 - 1) * 210 * 635);
         }
@@ -8585,7 +8654,7 @@ pub fn manual_toc_entries(doc: &FlowDocument, first_id: u32, width: crate::geome
     let mut entries = Vec::new();
     for (i, (level, text, page)) in [(1u32, "章のタイトル（レベル 1）", "1"), (2, "章のタイトル（レベル 2）", "2"), (3, "章のタイトル（レベル 3）", "3")].into_iter().enumerate() {
         let style = styles.paragraph_style_named(&format!("toc {level}")).map(str::to_string);
-        let mut direct = crate::flow::ParaFormat { tabs: vec![TabChange { position: width, stop: Some(TabStop { position: width, align: TabAlign::Right, leader: true }) }], ..Default::default() };
+        let mut direct = crate::flow::ParaFormat { tabs: vec![TabChange { position: width, stop: Some(TabStop { position: width, align: TabAlign::Right, leader: crate::flow::TabLeader::Dot }) }], ..Default::default() };
         if style.is_none() {
             direct.left = Some((level as i64 - 1) * 210 * 635);
         }
@@ -8703,7 +8772,7 @@ pub fn table_of_figures_entries(
         let direct = crate::flow::ParaFormat {
             tabs: vec![TabChange {
                 position: width,
-                stop: Some(TabStop { position: width, align: TabAlign::Right, leader: true }),
+                stop: Some(TabStop { position: width, align: TabAlign::Right, leader: crate::flow::TabLeader::Dot }),
             }],
             ..Default::default()
         };

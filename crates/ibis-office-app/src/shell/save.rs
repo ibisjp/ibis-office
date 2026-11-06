@@ -21,7 +21,8 @@ impl SlideEditor {
     pub(crate) fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_edit(window, cx);
         #[cfg(not(target_family = "wasm"))]
-        match self.path.clone() {
+        // A file opened read-only for its password to modify is not written over: 名前を付けて保存 (as Office does).
+        match self.path.clone().filter(|_| !self.is_modify_locked()) {
             Some(path) => {
                 let result = self.save_to(path, window);
                 self.report_save(result, cx);
@@ -38,6 +39,11 @@ impl SlideEditor {
 
     /// ⌘⇧S: ask where, and save there.
     pub(crate) fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_as_then(window, cx, |_, _, _| {});
+    }
+
+    /// ⌘⇧S, and then, once the file is written, `then`. A cancelled or failed save does not go on to `then`.
+    pub(crate) fn save_as_then(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) {
         self.commit_edit(window, cx);
         if self.source.is_none() {
             self.status = Some(crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").into());
@@ -60,10 +66,22 @@ impl SlideEditor {
             let name = self.file_name.clone().unwrap_or_default();
             let picked = cx.prompt_for_new_path_with_formats(&directory, Some(&name), &self.save_formats());
             cx.spawn_in(window, async move |this, cx| {
-                let Ok(Ok(Some(path))) = picked.await else { return };
+                // The dialog failing to open is told in a message box (not taken for a cancel).
+                let path = match picked.await {
+                    Ok(Ok(Some(path))) => path,
+                    Ok(Err(error)) => {
+                        this.update(cx, |this, cx| this.show_alert(crate::shell::i18n::text("shell.save-failed.title"), error.to_string().into(), cx)).ok();
+                        return;
+                    }
+                    _ => return,
+                };
                 this.update_in(cx, |this, window, cx| {
                     let result = this.save_to(path, window);
+                    let saved = result.is_ok();
                     this.report_save(result, cx);
+                    if saved {
+                        then(this, window, cx);
+                    }
                 })
                 .ok();
             })
@@ -71,7 +89,7 @@ impl SlideEditor {
         }
         #[cfg(target_family = "wasm")]
         {
-            let _ = window;
+            let _ = (window, then);
             self.status = Some(crate::shell::i18n::text("_shell.saving-is-not-yet-available-in-the-browser-versi").into());
             cx.notify();
         }
@@ -85,7 +103,7 @@ impl SlideEditor {
         self.commit_edit(window, cx);
         #[cfg(not(target_family = "wasm"))]
         {
-            if let Some(path) = self.path.clone() {
+            if let Some(path) = self.path.clone().filter(|_| !self.is_modify_locked()) {
                 let result = self.save_to(path, window);
                 let saved = result.is_ok();
                 self.report_save(result, cx);
@@ -106,7 +124,15 @@ impl SlideEditor {
             let name = self.file_name.clone().unwrap_or_default();
             let picked = cx.prompt_for_new_path_with_formats(&directory, Some(&name), &self.save_formats());
             cx.spawn_in(window, async move |this, cx| {
-                let Ok(Ok(Some(path))) = picked.await else { return };
+                // The dialog failing to open is told in a message box (not taken for a cancel).
+                let path = match picked.await {
+                    Ok(Ok(Some(path))) => path,
+                    Ok(Err(error)) => {
+                        this.update(cx, |this, cx| this.show_alert(crate::shell::i18n::text("shell.save-failed.title"), error.to_string().into(), cx)).ok();
+                        return;
+                    }
+                    _ => return,
+                };
                 this.update_in(cx, |this, window, cx| {
                     let result = this.save_to(path, window);
                     let saved = result.is_ok();
@@ -155,6 +181,10 @@ impl SlideEditor {
         // The master view is closed first: what is saved is the file, with what was made in it.
         if self.is_master_view() || self.is_page_view() {
             return Err(crate::shell::i18n::text("_shell.close-slide-master-view-and-notes-formatting-bef").to_string());
+        }
+        // The password to modify not given: the file itself is not written over (another name is).
+        if self.is_modify_locked() && self.path.as_deref().is_some_and(|own| same_file(own, &path)) {
+            return Err(crate::shell::i18n::text("file.modify-locked-no-overwrite").to_string());
         }
         let source = self.source.clone().ok_or(crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").to_string())?;
         // A workbook saved as .csv: the sheet shown, as CSV (Excel's 「CSV UTF-8」).
@@ -214,7 +244,10 @@ impl SlideEditor {
         self.file_name = Some(name);
         // A newly created file becomes recent as soon as its first save succeeds.
         self.recent_files = crate::shell::recent_files::add(&path);
-        self.set_file_path(Some(path));
+        self.set_file_path(Some(path.clone()));
+        // The file as written here: the watching for other apps' changes (shell/file_watch.rs) does not take it for one.
+        self.watch.known = crate::shell::file_watch::DiskStamp::after_write(&path, &bytes);
+        self.watch.asked = None;
         self.document.mark_clean();
         if self.is_workbook() || self.is_presentation() || self.is_document() {
             self.cleanup_active_autorecover_file();
@@ -260,4 +293,10 @@ pub(crate) fn write_replacing(path: &std::path::Path, bytes: &[u8]) -> std::io::
     std::fs::rename(&temporary, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&temporary);
     })
+}
+
+/// Whether `a` and `b` are one file (the same path, or one that links to the other).
+#[cfg(not(target_family = "wasm"))]
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }

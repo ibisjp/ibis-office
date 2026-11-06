@@ -96,6 +96,9 @@ pub(crate) struct Resources {
     pub(crate) collapsed_headings: Arc<std::collections::BTreeSet<u32>>,
     /// Word documents: the values the merge fields show (差し込み印刷's 結果のプレビュー); `None`: the field codes' own text.
     pub(crate) merge_values: Option<Arc<std::collections::HashMap<String, String>>>,
+    /// Word documents: this window's tracked-change display, hidden-text display and reviewer filter (the window's own, not the
+    /// process's: see `MarkupView`).
+    pub(crate) markup_view: crate::docx::flow_layout::MarkupView,
     /// The scale a printed sheet is drawn at on its paper (for where Excel
     /// starts its dashed borders), set by the export before each sheet.
     pub(crate) print_scale: std::cell::Cell<f64>,
@@ -156,7 +159,7 @@ impl Resources {
         fonts.substitutions = presentation.font_substitutions.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         // A presentation's text; Word's and Excel's draw such a typeface otherwise (`Fonts::family`).
         fonts.calibri_for_missing = presentation.flow.is_none() && presentation.workbook.is_none();
-        fonts.docx_font_families = presentation.flow.as_ref().map(|f| f.font_families.clone());
+        fonts.docx_font_table = presentation.flow.as_ref().map(|f| f.font_table.clone());
         crate::clock::debug_timing::report("resources: Fonts::new", t);
         let t = crate::clock::debug_timing::start();
         fonts.add_embedded(&presentation.fonts, &preload, cx);
@@ -212,6 +215,7 @@ impl Resources {
             dark_page: false,
             collapsed_headings: Default::default(),
             merge_values: None,
+            markup_view: Default::default(),
             print_scale: std::cell::Cell::new(1.0),
             print_breaks: Default::default(),
             exact: false,
@@ -225,7 +229,7 @@ impl Resources {
     /// The frame of the video of clip `media` to draw now (`None`: its poster).
     pub(crate) fn set_live_frame(&self, media: MediaId, frame: Option<crate::media_player::Frame>) {
         #[cfg(all(windows,feature="export"))]
-        let frame=frame.and_then(|f|image::RgbaImage::from_raw(f.width,f.height,(*f.rgba).clone()).map(|rgba|Arc::new(RenderImage::new([image::Frame::new(rgba)]))));
+        let frame=frame.and_then(|f|image::RgbaImage::from_raw(f.width,f.height,(*f.bgra).clone()).map(|bgra|Arc::new(RenderImage::new([image::Frame::new(bgra)]))));
         match frame {
             Some(frame) => self.live.borrow_mut().insert(media, frame),
             None => self.live.borrow_mut().remove(&media),
@@ -242,9 +246,35 @@ impl Resources {
         self.live.borrow().get(&media).cloned()
     }
 
+    /// The encoded data of a picture put in after the file was opened, as `source` gives it for the pictures of the file: what
+    /// wraps the picture in SVG to turn, cut or recolour it (without it a turned picture is drawn upright).
+    fn add_source(&self, media: MediaId, format: ImageFormat, data: &[u8]) {
+        use crate::render::picture_svg::Encoding;
+        let encoding = match format {
+            ImageFormat::Png => Encoding::Png,
+            ImageFormat::Jpeg => Encoding::Jpeg,
+            ImageFormat::Gif => Encoding::Gif,
+            ImageFormat::Webp => Encoding::Webp,
+            ImageFormat::Svg => Encoding::Svg,
+            _ => return,
+        };
+        self.sources.borrow_mut().insert(media, (encoding, Arc::from(data)));
+    }
+
     /// A picture put in the document after it was opened (inserted), for
     /// GPUI to decode.
     pub(crate) fn add_picture(&mut self, media: MediaId, format: MediaFormat, data: &[u8]) {
+        // A metafile is drawn as the SVG it makes (or the bitmap it holds), as one read from a file is.
+        if matches!(format, MediaFormat::Emf | MediaFormat::Wmf) {
+            let Some((image_format, bytes)) = crate::render::preload::metafile_picture(format, data) else { return };
+            if let Some(s) = crate::pptx::editing::picture_size(&bytes) {
+                self.sizes.insert(media, s);
+            }
+            self.add_source(media, image_format, &bytes);
+            self.images.insert(media, Arc::new(Image::from_bytes(image_format, bytes)));
+            self.formats.insert(media, format);
+            return;
+        }
         let image_format = match format {
             MediaFormat::Png => ImageFormat::Png,
             MediaFormat::Jpeg => ImageFormat::Jpeg,
@@ -255,6 +285,7 @@ impl Resources {
             MediaFormat::Svg => ImageFormat::Svg,
             _ => return,
         };
+        self.add_source(media, image_format, data);
         self.images.insert(media, Arc::new(Image::from_bytes(image_format, data.to_vec())));
         self.formats.insert(media, format);
         if let Some(s) = crate::pptx::editing::picture_size(data) {
@@ -428,11 +459,20 @@ impl Resources {
     /// advances (text is laid out without kerning).
     pub(crate) fn text_width(&self, text: &str, font: &Font, size: f32) -> f32 {
         let id = self.text_system.resolve_font(font);
+        // A selector, a joiner and the character it joins take no room of their own: they are one glyph with the character before.
+        let mut prev = None;
         text.chars()
-            .map(|c| match self.text_system.advance(id, px(size), c) {
-                Ok(advance) => f32::from(advance.width),
-                Err(_) if c as u32 >= 0x2e80 => size,
-                Err(_) => size * 0.5,
+            .map(|c| {
+                let joined = crate::render::rich_text::joins_previous(prev, c);
+                prev = Some(c);
+                if joined {
+                    return 0.0;
+                }
+                match self.text_system.advance(id, px(size), c) {
+                    Ok(advance) => f32::from(advance.width),
+                    Err(_) if c as u32 >= 0x2e80 => size,
+                    Err(_) => size * 0.5,
+                }
             })
             .sum()
     }
@@ -607,7 +647,7 @@ struct Fonts {
     /// Whether a Latin typeface that is not installed is drawn with Calibri (PowerPoint's choice; see `Fonts::family`).
     calibri_for_missing: bool,
     /// A Word document's font table (typeface to `w:family`), where one is read: see `family`.
-    docx_font_families: Option<std::collections::BTreeMap<String, String>>,
+    docx_font_table: Option<std::collections::BTreeMap<String, ibis_doc_model::FontTableEntry>>,
 }
 
 /// Weight words at the end of a typeface name, such as "Poppins SemiBold"
@@ -772,7 +812,19 @@ const TYPEFACE_ALIASES: &[(&str, &str)] = &[
 /// Hiragino, wrapped).
 #[cfg(target_family = "wasm")]
 fn browser_fallbacks(style: &TextStyle) -> Option<FontFallbacks> {
+    let names = browser_fallback_names(style);
+    (!names.is_empty()).then(|| FontFallbacks::from_fonts(names))
+}
+
+/// The typeface names for `browser_fallbacks`: first the ones the document asks
+/// for (the typeface, without a weight word, and what Windows or Linux calls it
+/// else), which the web build draws half-width Latin text with when the browser
+/// has one installed; then an empty name (the end of that list), then the
+/// browser's Japanese typefaces, which stand in for East Asian text only.
+#[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
+pub(crate) fn browser_fallback_names(style: &TextStyle) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
+    let mut east_asian = false;
     for name in [style.font.as_deref(), style.fallback_font.as_deref()].into_iter().flatten() {
         let base = WEIGHT_SUFFIXES.iter().find_map(|(suffix, _)| name.strip_suffix(suffix)).map_or(name, str::trim_end);
         for n in [name, base] {
@@ -785,16 +837,18 @@ fn browser_fallbacks(style: &TextStyle) -> Option<FontFallbacks> {
                 }
             }
         }
-        if is_east_asian_typeface(name) {
-            // Close in widths to Office's Japanese typefaces.
-            for n in ["Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "YuGothic", "Meiryo", "Noto Sans JP"] {
-                if !names.iter().any(|x| x == n) {
-                    names.push(n.to_string());
-                }
+        east_asian |= is_east_asian_typeface(name);
+    }
+    if east_asian {
+        names.push(String::new());
+        // Close in widths to Office's Japanese typefaces.
+        for n in ["Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "YuGothic", "Meiryo", "Noto Sans JP"] {
+            if !names.iter().any(|x| x == n) {
+                names.push(n.to_string());
             }
         }
     }
-    (!names.is_empty()).then(|| FontFallbacks::from_fonts(names))
+    names
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -1591,7 +1645,7 @@ impl Fonts {
             east_asian_fallback,
             substitutions: HashMap::new(),
             calibri_for_missing: false,
-            docx_font_families: None,
+            docx_font_table: None,
         }
     }
 
@@ -1656,6 +1710,12 @@ impl Fonts {
         if let Some(found) = self.available(name) {
             return found;
         }
+        // A Word file's font table names other typefaces for this one (`w:altName`, ECMA-376 Part 1 §17.8.3.2): the first installed one.
+        if let Some(entry) = self.docx_font_table.as_ref().and_then(|t| t.get(name))
+            && let Some(found) = entry.alt_names.iter().find_map(|alt| self.available(alt))
+        {
+            return found;
+        }
         let weight = strip_weight_suffix(name).map_or(FontWeight::NORMAL, |(_, w)| w);
         // A Mincho (serif) typeface gives way to an installed Mincho.
         if (name.contains("明朝") || name.contains("Mincho")) // i18n-ok（フォント名の照合（部分一致で明朝を判定）。i18n-ok）
@@ -1690,8 +1750,8 @@ impl Fonts {
             // its panose and pitch (its PDFs of `missing-font-fonttable-family.docx`: only the `roman` one is Cambria; of
             // `missing-font-ctx-*.docx`, with and without a font table and theme: four of five typefaces Cambria, "Noto Sans JP", a typeface
             // Word itself knows, Calibri: not decided here).
-            _ if self.docx_font_families.is_some() => {
-                let listed_other = self.docx_font_families.as_ref().is_some_and(|m| m.get(name).is_some_and(|f| f != "roman"));
+            _ if self.docx_font_table.is_some() => {
+                let listed_other = self.docx_font_table.as_ref().is_some_and(|m| m.get(name).is_some_and(|f| f.family != "roman"));
                 let wanted: &[&str] = if listed_other { &["Calibri", BUNDLED_FAMILY] } else { &["Cambria"] };
                 match wanted.iter().find(|f| self.installed.contains(**f)) {
                     Some(found) => ((*found).into(), weight),
@@ -2380,6 +2440,40 @@ fn shadow_anchor(align: ibis_doc_model::TileAlign, w: f64, h: f64, stroke_half: 
     (ax - s, ay - s)
 }
 
+/// Where a point of the shape (frame-relative EMU) goes in its shadow: scaled by `sx`, `sy` and skewed by `kx`, `ky` about the alignment point `anchor`
+/// (`a:outerShdw algn`), then moved by `dist` along `dir`.
+fn shadow_transform(shadow: &ibis_doc_model::Shadow, anchor: (f64, f64)) -> impl Fn((f64, f64)) -> (f64, f64) {
+    let (xa, ya) = anchor;
+    let sx = shadow.sx as f64 / 100_000.0;
+    let sy = shadow.sy as f64 / 100_000.0;
+    let tan_kx = (shadow.kx as f64 / 60_000.0).to_radians().tan();
+    let tan_ky = (shadow.ky as f64 / 60_000.0).to_radians().tan();
+    let dir_rad = (shadow.direction as f64 / 60_000.0).to_radians();
+    let dist = shadow.distance as f64;
+    let (off_x, off_y) = (dist * dir_rad.cos(), dist * dir_rad.sin());
+    move |p: (f64, f64)| {
+        let dx_rel = p.0 - xa;
+        let dy_rel = p.1 - ya;
+        (xa + sx * dx_rel + dy_rel * tan_kx + off_x, ya + sy * dy_rel + dx_rel * tan_ky + off_y)
+    }
+}
+
+/// The shadow of a no-fill shape's outline (PowerPoint shadows what is drawn: the line): `outlines` are the centre lines, `map` puts a point of them
+/// (frame-relative EMU) into the shadow's place in window pixels, `width` is the line's width in pixels.
+fn paint_stroke_shadow(window: &mut Window, outlines: &[ibis_doc_model::Outline], width: f32, map: &dyn Fn((f64, f64)) -> (f32, f32), blur: f32, color: Hsla) {
+    let mut quads: Vec<Vec<Vec<(f32, f32)>>> = Vec::new();
+    for outline in outlines.iter().filter(|o| o.stroke) {
+        for sub in &outline.subpaths {
+            let points: Vec<(f32, f32)> = sub.points.iter().map(|&p| map(p)).collect();
+            quads.extend(crate::render::blur_shadow::stroke_quads(&points, sub.closed, width));
+        }
+    }
+    if quads.is_empty() {
+        return;
+    }
+    crate::render::blur_shadow::paint(window, &quads, blur / 3.0, color);
+}
+
 fn render_transformed_shadow(
     window: &mut Window,
     outlines: &[ibis_doc_model::Outline],
@@ -2390,77 +2484,41 @@ fn render_transformed_shadow(
     exact: Point<Pixels>,
     scale: f32,
 ) {
-    let (xa, ya) = anchor;
-    let sx = shadow.sx as f64 / 100_000.0;
-    let sy = shadow.sy as f64 / 100_000.0;
-    let kx_rad = (shadow.kx as f64 / 60_000.0).to_radians();
-    let ky_rad = (shadow.ky as f64 / 60_000.0).to_radians();
-    let tan_kx = kx_rad.tan();
-    let tan_ky = ky_rad.tan();
-
-    let dir_rad = (shadow.direction as f64 / 60_000.0).to_radians();
-    let dist = shadow.distance as f64;
-    let off_x = dist * dir_rad.cos();
-    let off_y = dist * dir_rad.sin();
-
-    let transform_pt = |p: (f64, f64)| -> (f64, f64) {
-        let dx_rel = p.0 - xa;
-        let dy_rel = p.1 - ya;
-        let x_prime = sx * dx_rel + dy_rel * tan_kx;
-        let y_prime = sy * dy_rel + dx_rel * tan_ky;
-        (xa + x_prime + off_x, ya + y_prime + off_y)
-    };
-
-    let spots: Vec<(f32, f32, f32)> = if blur < 0.5 {
-        vec![(0.0, 0.0, 1.0)]
-    } else {
-        let mut s = Vec::with_capacity(37);
-        s.push((0.0, 0.0, 1.0));
-        let r1 = blur * 0.30;
-        for i in 0..8 {
-            let (sin, cos) = (i as f32 * std::f32::consts::FRAC_PI_4).sin_cos();
-            s.push((cos * r1, sin * r1, 0.7));
-        }
-        let r2 = blur * 0.70;
-        for i in 0..12 {
-            let (sin, cos) = (i as f32 * std::f32::consts::TAU / 12.0).sin_cos();
-            s.push((cos * r2, sin * r2, 0.6));
-        }
-        let r3 = blur * 1.05;
-        for i in 0..16 {
-            let (sin, cos) = (i as f32 * std::f32::consts::TAU / 16.0).sin_cos();
-            s.push((cos * r3, sin * r3, 0.25));
-        }
-        s
-    };
-
-    let total_weight: f32 = spots.iter().map(|(_, _, w)| *w).sum();
-
-    for &(ox, oy, weight) in &spots {
-        let faint = Hsla { a: (color.a * (weight / total_weight) * 1.25).min(1.0), ..color };
-        for outline in outlines.iter().filter(|o| o.fill != ibis_doc_model::PathFill::None) {
-            let subpaths: Vec<(Vec<Point<Pixels>>, bool)> = outline
+    let transform_pt = shadow_transform(shadow, anchor);
+    let mapped: Vec<Vec<Vec<(f32, f32)>>> = outlines
+        .iter()
+        .filter(|o| o.fill != ibis_doc_model::PathFill::None)
+        .map(|outline| {
+            outline
                 .subpaths
                 .iter()
                 .map(|s| {
-                    let pts: Vec<Point<Pixels>> = s
-                        .points
+                    s.points
                         .iter()
                         .map(|&p| {
                             let (tx, ty) = transform_pt(p);
-                            point(
-                                exact.x + px((tx * scale as f64) as f32 + ox),
-                                exact.y + px((ty * scale as f64) as f32 + oy),
-                            )
+                            (f32::from(exact.x) + (tx * scale as f64) as f32, f32::from(exact.y) + (ty * scale as f64) as f32)
                         })
-                        .collect();
-                    (pts, s.closed)
+                        .collect()
                 })
-                .collect();
+                .collect()
+        })
+        .collect();
+    paint_outline_shadow(window, &mapped, blur, color);
+}
+
+/// The shadow of the filled outlines `mapped` (in window pixels), blurred as PowerPoint blurs it: a hard copy when the blur is under half a pixel, otherwise
+/// the outlines' coverage under a Gaussian of a third of `blur` (`blur_shadow.rs`).
+fn paint_outline_shadow(window: &mut Window, mapped: &[Vec<Vec<(f32, f32)>>], blur: f32, color: Hsla) {
+    if blur < 0.5 {
+        for outline in mapped {
+            let subpaths: Vec<(Vec<Point<Pixels>>, bool)> = outline.iter().map(|s| (s.iter().map(|&(x, y)| point(px(x), px(y))).collect(), true)).collect();
             if let Some(p) = compound_path(&subpaths, None) {
-                window.paint_path(p, faint);
+                window.paint_path(p, color);
             }
         }
+    } else {
+        crate::render::blur_shadow::paint(window, mapped, blur / 3.0, color);
     }
 }
 
@@ -2761,11 +2819,15 @@ pub(crate) fn shape_element_with_positions(
         ShapeKind::Line(_) => true,
         _ => false,
     };
-    let is_point_text = is_1d_line && w <= 0.0 && h <= 0.0;
+    // A text rectangle with no area on a shape that has one (`a:rect l="0" t="0" r="0" b="0"` of a custom geometry, as LibreOffice
+    // and others write it) is a point: the text is not wrapped and starts there, as in PowerPoint's output. A shape with no width or
+    // height of its own draws no text (xlsx).
+    let degenerate_rect = !is_1d_line && fw > 0.0 && fh > 0.0 && w <= 0.0 && h <= 0.0;
+    let is_point_text = (is_1d_line || degenerate_rect) && w <= 0.0 && h <= 0.0;
     let text = text.or_else(|| {
         // Edited text is laid out even when empty, for its caret.
         let body = body.filter(|b| !b.is_empty() || positions.is_some())?;
-        if !is_1d_line && (w <= 0.0 || h <= 0.0) && positions.is_none() {
+        if !is_1d_line && !degenerate_rect && (w <= 0.0 || h <= 0.0) && positions.is_none() {
             return None;
         }
         let (body, max_w) = if is_point_text {
@@ -2813,7 +2875,20 @@ pub(crate) fn shape_element_with_positions(
             let text_left = (cx - w / 2.0) as f32 * scale;
             Some(frame.x as f32 * scale + text_left)
         };
-        Some(text_body_element(&body, max_w, Some(h), scale, res, positions, text_turn, origin_x).into_any_element())
+        // A shape without a fill has nothing but its line and text to throw a shadow: the shape's shadow falls on the text (the runs with none of their own).
+        let shadowed;
+        let body: &TextBody = match &shape.kind {
+            ShapeKind::Auto(auto) if auto.fill == Fill::None && let Some(shadow) = auto.shadow && body.paragraphs.iter().any(|p| p.runs.iter().any(|r| r.style.shadow.is_none())) => {
+                let mut with_shadow = body.as_ref().clone();
+                for run in with_shadow.paragraphs.iter_mut().flat_map(|p| p.runs.iter_mut()) {
+                    run.style.shadow.get_or_insert(shadow);
+                }
+                shadowed = with_shadow;
+                &shadowed
+            }
+            _ => &body,
+        };
+        Some(text_body_element(body, max_w, Some(h), scale, res, positions, text_turn, origin_x).into_any_element())
     });
     // The text goes in the text rectangle.
     let clip_text = body.is_some_and(|b| b.clip);
@@ -2929,13 +3004,19 @@ fn text_turn(shape: &Shape, body: &TextBody, (l, t, r, b): (f64, f64, f64, f64),
     Some(crate::render::rich_text::TextTurn { text, shape: shape_turn, frame: frame_offset, shape_turned })
 }
 
+/// The shape is grown by half the glow's radius (fitted 0.48, read as `rad / 2`).
+const GLOW_DILATE_PER_RADIUS: f32 = 0.5;
+/// The Gaussian's deviation is a sixth of the glow's radius (fitted 0.17).
+const GLOW_SIGMA_PER_RADIUS: f32 = 1.0 / 6.0;
+
 /// The spread and blur, in pixels, of the box shadow drawn for a glow
-/// `r` pixels wide. PowerPoint's glow is its full colour at the shape's edge
-/// and fades out at the radius (measured against its PDF: a 15 pt glow is
-/// full colour a third of the way out, half at half the radius and gone
-/// at the radius).
-fn glow_spread_blur(r: f32) -> (f32, f32) {
-    (r * 0.5, r * 0.2)
+/// `r` pixels wide. PowerPoint's glow of a filled shape is the shape grown by
+/// `r / 2` and then blurred with a Gaussian of deviation `r / 6` (LibreOffice's
+/// `GlowPrimitive2D` works the same way); fitted at once to the PDFs of 5, 10
+/// and 20 pt glows (`tasks/doc/glow-measurements-20261030.md`, squared error
+/// 0.021). The glow colour's alpha is applied to the finished shape.
+pub(crate) fn glow_spread_blur(r: f32) -> (f32, f32) {
+    (r * GLOW_DILATE_PER_RADIUS, r * GLOW_SIGMA_PER_RADIUS)
 }
 
 /// The outline of a rectangle, rounded rectangle or ellipse `w` by `h`
@@ -3120,6 +3201,15 @@ fn paint_bevel(window: &mut Window, pts: &[Point<Pixels>], bevel: &ibis_doc_mode
 }
 
 fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, scale: f32, res: &Resources) -> Div {
+    // A shadow is the shape's silhouette with its fill's opacity (a 50 % fill throws a shadow of half the alpha: measured in PowerPoint's PNG).
+    let faded;
+    let auto = match (&auto.fill, auto.shadow) {
+        (Fill::Solid(fill), Some(shadow)) if fill.alpha < 255 => {
+            faded = AutoShape { shadow: Some(ibis_doc_model::Shadow { color: DocColor { alpha: (u32::from(shadow.color.alpha) * u32::from(fill.alpha) / 255) as u8, ..shadow.color }, ..shadow }), ..auto.clone() };
+            &faded
+        }
+        _ => auto,
+    };
     let rotated = shape.rotation.rem_euclid(21_600_000) != 0;
     // Soft edges (`a:softEdge`) on a plain filled rectangle: the shape fades
     // out over the radius inside its edge, and its outline goes with it
@@ -3232,6 +3322,32 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                                 exact,
                                 scale,
                             );
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                );
+            }
+
+            // 1c. The shadow of an outline-only shape: of its line.
+            if let (Some(s), Some(stroke), Fill::None) = (auto.shadow, auto.stroke.as_ref(), &auto.fill) {
+                let stroke_half_emu = auto.stroke.as_ref().map(|st| st.width / 2).unwrap_or(0);
+                let anchor = shadow_anchor(s.align, frame.width as f64, frame.height as f64, stroke_half_emu as f64);
+                let centre = geometry_outlines(&auto.geometry, frame);
+                let width = f32::from(stroke_px(stroke, scale));
+                let blur = s.blur as f32 * scale;
+                let color = hsla(s.color);
+                container = container.child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, _, window, _| {
+                            let exact = exact_origin(bounds.origin, at, window.scale_factor());
+                            let transform = shadow_transform(&s, anchor);
+                            let map = |p: (f64, f64)| {
+                                let (x, y) = transform(p);
+                                (f32::from(exact.x) + (x * scale as f64) as f32, f32::from(exact.y) + (y * scale as f64) as f32)
+                            };
+                            paint_stroke_shadow(window, &centre, width, &map, blur, color);
                         },
                     )
                     .absolute()
@@ -3536,6 +3652,8 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
     let stroke_half_emu = auto.stroke.as_ref().map(|st| st.width / 2).unwrap_or(0);
     let shadow_outlines = shadow_outlines(&auto.geometry, frame, stroke_half_emu as f64);
     let shadow_spec = auto.shadow.filter(|_| auto.fill != Fill::None);
+    // (No fill: the shadow is the line's.)
+    let line_shadow = auto.shadow.zip(auto.stroke.as_ref()).filter(|_| auto.fill == Fill::None).map(|(s, st)| (s, f32::from(stroke_px(st, scale))));
     let at_px = (frame.x as f32 * scale, frame.y as f32 * scale);
     // Level and upright edges on whole pixels, as the screen has them; a
     // closed outline's of two pixels or more even when drawn exactly, as
@@ -3557,6 +3675,16 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                 let exact = exact_origin(bounds.origin, at_px, window.scale_factor());
                 // The shadow: the shape's outline moved by the offset, painted
                 // a few times around it, faintly, in place of a blur.
+                if let Some((s, width)) = line_shadow {
+                    let anchor = shadow_anchor(s.align, frame.width as f64, frame.height as f64, stroke_half_emu as f64);
+                    let transform = shadow_transform(&s, anchor);
+                    let map = |p: (f64, f64)| {
+                        let (x, y) = transform(p);
+                        let q = place.map(&[(x as f32, y as f32)], exact, scale);
+                        (f32::from(q[0].x), f32::from(q[0].y))
+                    };
+                    paint_stroke_shadow(window, &outlines, width, &map, s.blur as f32 * scale, hsla_mode(s.color, color_mode));
+                }
                 if let Some(s) = shadow_spec {
                     if s.has_transform() {
                         let (w_emu, h_emu) = (frame.width as f64, frame.height as f64);
@@ -3575,28 +3703,22 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                         );
                     } else {
                         let (dx, dy, blur, color) = shadow_parts(s, scale);
-                        let spots: Vec<(f32, f32)> = if blur < 0.5 {
-                            vec![(0.0, 0.0)]
-                        } else {
-                            (0..8).map(|i| (i as f32 * std::f32::consts::FRAC_PI_4).sin_cos()).map(|(s, c)| (c * blur / 2.0, s * blur / 2.0)).chain([(0.0, 0.0)]).collect()
-                        };
-                        let faint = Hsla { a: color.a / spots.len() as f32 * 1.6, ..color };
-                        for (sx, sy) in &spots {
-                            let origin = point(exact.x + px(dx + sx), exact.y + px(dy + sy));
-                            for outline in outlines.iter().filter(|o| o.fill != ibis_doc_model::PathFill::None) {
-                                let subpaths: Vec<(Vec<Point<Pixels>>, bool)> = outline
+                        let origin = point(exact.x + px(dx), exact.y + px(dy));
+                        let mapped: Vec<Vec<Vec<(f32, f32)>>> = outlines
+                            .iter()
+                            .filter(|o| o.fill != ibis_doc_model::PathFill::None)
+                            .map(|outline| {
+                                outline
                                     .subpaths
                                     .iter()
                                     .map(|s| {
                                         let points: Vec<(f32, f32)> = s.points.iter().map(|&(x, y)| (x as f32, y as f32)).collect();
-                                        (place.map(&points, origin, scale), s.closed)
+                                        place.map(&points, origin, scale).iter().map(|p| (f32::from(p.x), f32::from(p.y))).collect()
                                     })
-                                    .collect();
-                                if let Some(p) = compound_path(&subpaths, None) {
-                                    window.paint_path(p, faint);
-                                }
-                            }
-                        }
+                                    .collect()
+                            })
+                            .collect();
+                        paint_outline_shadow(window, &mapped, blur, color);
                     }
                 }
                 for (outline_idx, outline) in outlines.iter().enumerate() {
@@ -4507,32 +4629,22 @@ fn picture_element(container: Div, shape: &Shape, picture: &Picture, frame: EmuR
                             render_transformed_shadow(window, &shadow_outlines, anchor, &s, blur, color, exact, scale);
                         } else {
                             let (dx, dy, blur, color) = shadow_parts(s, scale);
-                            let spots: Vec<(f32, f32)> = if blur < 0.5 {
-                                vec![(0.0, 0.0)]
-                            } else {
-                                (0..8)
-                                    .map(|i| (i as f32 * std::f32::consts::FRAC_PI_4).sin_cos())
-                                    .map(|(s, c)| (c * blur / 2.0, s * blur / 2.0))
-                                    .chain([(0.0, 0.0)])
-                                    .collect()
-                            };
-                            let faint = Hsla { a: color.a / spots.len() as f32 * 1.6, ..color };
-                            for (sx, sy) in &spots {
-                                let origin = point(exact.x + px(dx + sx), exact.y + px(dy + sy));
-                                for outline in shadow_outlines.iter().filter(|o| o.fill != ibis_doc_model::PathFill::None) {
-                                    let subpaths: Vec<(Vec<Point<Pixels>>, bool)> = outline
+                            let origin = point(exact.x + px(dx), exact.y + px(dy));
+                            let mapped: Vec<Vec<Vec<(f32, f32)>>> = shadow_outlines
+                                .iter()
+                                .filter(|o| o.fill != ibis_doc_model::PathFill::None)
+                                .map(|outline| {
+                                    outline
                                         .subpaths
                                         .iter()
                                         .map(|sub| {
                                             let points: Vec<(f32, f32)> = sub.points.iter().map(|&(x, y)| (x as f32, y as f32)).collect();
-                                            (place_map.map(&points, origin, scale), sub.closed)
+                                            place_map.map(&points, origin, scale).iter().map(|p| (f32::from(p.x), f32::from(p.y))).collect()
                                         })
-                                        .collect();
-                                    if let Some(p) = compound_path(&subpaths, None) {
-                                        window.paint_path(p, faint);
-                                    }
-                                }
-                            }
+                                        .collect()
+                                })
+                                .collect();
+                            paint_outline_shadow(window, &mapped, blur, color);
                         }
                     },
                 )
@@ -5061,6 +5173,11 @@ pub(crate) fn text_body_element(
                         .as_deref()
                         .filter(|n| res.fonts.available(n).is_none())
                         .and_then(crate::render::font_metrics::fallback_kana_widths);
+                    let advance_table = s
+                        .font
+                        .as_deref()
+                        .filter(|n| res.fonts.available(n).is_none())
+                        .and_then(|n| crate::render::fallback_widths::fallback_advance_table(n, s.bold));
                     let proportional_alnum = s
                         .font
                         .as_deref()
@@ -5114,8 +5231,8 @@ pub(crate) fn text_body_element(
                             _ => segments.push((c.to_string(), m, other, sub)),
                         }
                     }
-                    if r.style.math.is_some() {
-                        // A formula is one piece.
+                    if r.style.math.is_some() || matches!(r.style.tate_chu_yoko, Some(ibis_doc_model::TateChuYoko::Fit | ibis_doc_model::TateChuYoko::Grow)) {
+                        // A formula, or text horizontal in vertical (縦中横), is one piece.
                         segments = vec![(r.text.clone(), latin, 0, 1.0)];
                     }
                     if segments.is_empty() {
@@ -5176,7 +5293,7 @@ pub(crate) fn text_body_element(
                                         (hsla_mode(s.color, res.color_mode), dist * rad.cos(), dist * rad.sin(), s.blur as f32 * scale)
                                     })
                                 },
-                                glow: r.style.glow.filter(|_| !r.style.invisible && res.color_mode != ColorMode::HighContrast).map(|(c, rad)| (hsla_mode(c, res.color_mode), rad as f32 * scale)),
+                                glow: r.style.glow.filter(|_| !r.style.invisible && res.color_mode != ColorMode::HighContrast).map(|(c, rad)| (hsla_mode(c, res.color_mode), rad as f32 * scale, size * k / px_per_point)),
                                 fill: r.style.fill.clone().filter(|_| !r.style.invisible),
                                 ascent: a * size,
                                 descent: d * size,
@@ -5185,7 +5302,11 @@ pub(crate) fn text_body_element(
                                 math: r.style.math.as_deref().cloned(),
                                 border: r.style.border.filter(|_| !r.style.invisible).map(|b| (rgb_hsla_mode(b.color, res.color_mode), (b.width as f32 * scale).max(0.5), b.space as f32 * scale)),
                                 kana_widths,
+                                advance_table,
                                 proportional_alnum,
+                                tate: r.style.tate_chu_yoko,
+                                tate_scale: r.style.char_scale.map_or(1.0, |s| s as f32 / 100.0),
+                                east_asian_lang: r.style.lang.as_deref().is_some_and(|l| ["ja", "zh", "ko"].iter().any(|p| l.starts_with(p))),
                             }
                         })
                         .collect::<Vec<_>>()
@@ -5201,11 +5322,14 @@ pub(crate) fn text_body_element(
                 align,
                 font_align: paragraph.font_align,
                 line,
+                grid_pitch: paragraph.grid_pitch.map(|p| p as f32 / 100.0 * px_per_point),
                 wrap: body.wrap && !single_path,
                 first_line: first_line as f32 * scale,
                 margin_left: paragraph.margin_left as f32 * scale,
                 tabs: paragraph.tabs.iter().map(|t| t.position as f32 * scale).collect(),
                 default_tab: paragraph.default_tab.unwrap_or(914_400).max(1) as f32 * scale,
+                hanging_punct: !paragraph.no_hanging_punct,
+                latin_line_break: paragraph.latin_line_break,
                 room: width.map(|w| {
                     let total_w = (w as f32 - (body.insets.left + body.insets.right) as f32).max(0.0);
                     let col_w = if body.columns > 1 && !body.vertical {
@@ -5227,6 +5351,7 @@ pub(crate) fn text_body_element(
                 bullet: turned_bullet.clone(),
                 positions: slots.as_ref().map(|s| s[index].clone()),
                 last: index + 1 == body.paragraphs.len(),
+                word_lines: body.word_lines,
                 upright: body.vertical,
                 mirror: body.vertical && body.vertical_kind == ibis_doc_model::VerticalKind::Mongolian,
                 at_x: origin_x.filter(|_| turn.is_none() && !body.vertical && paragraph.align.unwrap_or(body.style.align) == TextAlign::Left).map(|x0| {
@@ -5560,11 +5685,22 @@ mod font_resolution_tests {
     #[test]
     fn a_missing_latin_typeface_is_calibri_in_a_presentation_only() {
         let installed: HashSet<String> = ["Calibri", "Arial", "Carlito"].iter().map(|s| s.to_string()).collect();
-        let mut fonts = Fonts { installed, embedded_index: OpenTypeIndex::default(), east_asian_fallback: None, substitutions: HashMap::new(), calibri_for_missing: true, docx_font_families: None };
+        let mut fonts = Fonts { installed, embedded_index: OpenTypeIndex::default(), east_asian_fallback: None, substitutions: HashMap::new(), calibri_for_missing: true, docx_font_table: None };
         assert_eq!(fonts.family("Zzqx Missing Sans").0.as_ref(), "Calibri");
         assert_eq!(fonts.family("Helvetica").0.as_ref(), "Arial");
         fonts.calibri_for_missing = false;
         assert_eq!(fonts.family("Zzqx Missing Sans").0.as_ref(), "Arial");
+    }
+    /// A Word file's font table names other typefaces for one that is not installed (`w:altName`): the first installed one is used,
+    /// before the family of the table decides.
+    #[test]
+    fn a_font_table_alternate_name_is_used_when_the_typeface_is_missing() {
+        let installed: HashSet<String> = ["Cambria", "Calibri", "Georgia", "Arial"].iter().map(|s| s.to_string()).collect();
+        let entry = |alt: &[&str], family: &str| ibis_doc_model::FontTableEntry { alt_names: alt.iter().map(|s| s.to_string()).collect(), family: family.into(), ..Default::default() };
+        let table = [("Zzqx Serif".to_string(), entry(&["Zzqx Other", "Georgia"], "swiss")), ("Zzqx Plain".to_string(), entry(&[], "swiss"))].into_iter().collect();
+        let fonts = Fonts { installed, embedded_index: OpenTypeIndex::default(), east_asian_fallback: None, substitutions: HashMap::new(), calibri_for_missing: false, docx_font_table: Some(table) };
+        assert_eq!(fonts.family("Zzqx Serif").0.as_ref(), "Georgia");
+        assert_eq!(fonts.family("Zzqx Plain").0.as_ref(), "Calibri");
     }
     use core::prelude::v1::test;
 
@@ -5769,7 +5905,7 @@ mod font_resolution_tests {
             east_asian_fallback: None,
             substitutions: HashMap::new(),
             calibri_for_missing: false,
-            docx_font_families: None,
+            docx_font_table: None,
         };
 
         assert_eq!(

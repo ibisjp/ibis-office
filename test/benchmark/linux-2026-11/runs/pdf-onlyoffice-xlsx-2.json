@@ -1,0 +1,22 @@
+{
+ "tag": "pdf-onlyoffice-xlsx-2",
+ "scenario": "pdf",
+ "app": "onlyoffice",
+ "kind": "xlsx",
+ "run": 2,
+ "file": "coffee-chain-sales-report.xlsx",
+ "seconds": 28.421,
+ "returncode": 0,
+ "pdf_bytes": 102976791,
+ "pages": 15,
+ "command": [
+  "x2t",
+  "task.xml"
+ ],
+ "measured_at": "2026-11-03 18:58:48",
+ "load_before": [
+  1.04,
+  0.74,
+  0.4
+ ]
+}

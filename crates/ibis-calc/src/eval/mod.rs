@@ -515,11 +515,16 @@ pub struct Ctx<'a> {
     pub is_root: bool,
     /// Calls deep, against runaway recursion (LAMBDA).
     depth: u32,
+    /// Excel gave up on the whole formula: a function value in an array was
+    /// called (`LAMBDA(f,f(A1:A3))(HSTACK(SUM,MAX))`). The cell shows 0, whatever
+    /// the formula does with the result, and what depends on it is not
+    /// calculated (Excel keeps the values those cells had).
+    pub aborted: bool,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(book: &'a dyn Book, cells: &'a dyn Cells, sheet: usize, row: u32, column: u32) -> Self {
-        Self { book, cells, sheet, row, column, locals: Vec::new(), unsupported: false, image: None, in_array_context: false, is_root: true, depth: 0 }
+        Self { book, cells, sheet, row, column, locals: Vec::new(), unsupported: false, image: None, in_array_context: false, is_root: true, depth: 0, aborted: false }
     }
 
     pub fn date1904(&self) -> bool {
@@ -571,6 +576,9 @@ impl<'a> Ctx<'a> {
 
     /// The final value of a formula, for its cell.
     pub fn cell_result(&mut self, v: Value) -> CellValue {
+        if self.aborted {
+            return CellValue::Number(0.0);
+        }
         match v {
             Value::Ref(areas) => {
                 let v = if self.book.dynamic(self.sheet,self.row,self.column) {
@@ -614,7 +622,8 @@ impl<'a> Ctx<'a> {
             .iter()
             .map(|x| match x {
                 Value::Empty | Value::Omitted => CellValue::Number(0.0),
-                Value::Ref(_) | Value::Array(_) | Value::Lambda(_) => CellValue::Error(CellError::Value),
+                Value::Ref(_) | Value::Array(_) => CellValue::Error(CellError::Value),
+                // A function as a value is #CALC! in a cell (Excel: `=HSTACK(SUM,MAX)`).
                 other => other.to_cell(),
             })
             .collect();
@@ -624,6 +633,24 @@ impl<'a> Ctx<'a> {
     /// A reference's value where one value is wanted: a single cell's
     /// value, or the cell of a range in the formula's row (for a column)
     /// or column (for a row).
+    /// `@` and SINGLE: the one cell of a range that the formula's row or
+    /// column meets, as a reference to that cell (Excel: `ISREF(@A1:A3)` is TRUE).
+    pub fn implicit_ref(&self, areas: &[Area]) -> Value {
+        let [area] = areas else { return Value::Error(CellError::Value) };
+        if area.sheet != area.last_sheet {
+            return Value::Error(CellError::Value);
+        }
+        if area.is_cell() {
+            return Value::Ref(Rc::new(vec![*area]));
+        }
+        let row = if area.rows() == 1 { Some(area.first_row) } else { (area.first_row..=area.last_row).contains(&self.row).then_some(self.row) };
+        let column = if area.columns() == 1 { Some(area.first_column) } else { (area.first_column..=area.last_column).contains(&self.column).then_some(self.column) };
+        match (row, column) {
+            (Some(r), Some(c)) => Value::Ref(Rc::new(vec![Area::cell(area.sheet, r, c)])),
+            _ => Value::Error(CellError::Value),
+        }
+    }
+
     pub fn deref_implicit(&self, areas: &[Area]) -> Value {
         let [area] = areas else { return Value::Error(CellError::Value) };
         if area.sheet != area.last_sheet {
@@ -699,7 +726,21 @@ impl<'a> Ctx<'a> {
                 let data = rows.iter().flatten().map(|x| self.eval(x)).collect();
                 Value::Array(Rc::new(Array::new(rows.len(), columns, data)))
             }
-            Expr::Ref(r) => self.resolve_ref(r),
+            Expr::Ref(r) => {
+                // `x:x` where x is a LET or LAMBDA name is that name's range, not the column X (Excel).
+                if r.whole_columns && r.sheet.is_none() && r.start.column == r.end.column && !self.locals.is_empty() {
+                    let (mut n, mut letters) = (r.start.column + 1, Vec::new());
+                    while n > 0 {
+                        letters.push((b'A' + ((n - 1) % 26) as u8) as char);
+                        n = (n - 1) / 26;
+                    }
+                    let name: String = letters.into_iter().rev().collect();
+                    if let Some((_, v)) = self.locals.iter().rev().find(|(l, _)| l.eq_ignore_ascii_case(&name)) {
+                        return v.clone();
+                    }
+                }
+                self.resolve_ref(r)
+            }
             Expr::Name { sheet, name } => self.resolve_name(sheet.as_ref(), name),
             Expr::Structured { table, spec } => self.resolve_structured(table, spec),
             Expr::Call { name, args } => self.call(name, args),
@@ -717,7 +758,13 @@ impl<'a> Ctx<'a> {
             }
             Expr::Plus(x) => {
                 self.is_root = was_root;
-                self.eval(x)
+                // Unary plus gives the value, not a reference (Excel: `ISREF(+A1:A3)` is FALSE).
+                match self.eval(x) {
+                    // In a formula without the dynamic flag the reference is intersected with the cell first (Excel shows `+@B2#*2`).
+                    Value::Ref(r) if r.len() == 1 && r[0].sheet == r[0].last_sheet && !self.book.dynamic(self.sheet, self.row, self.column) => self.deref_implicit(&r),
+                    Value::Ref(r) if r.len() == 1 && r[0].sheet == r[0].last_sheet => self.ref_to_array(&r),
+                    v => v,
+                }
             }
             Expr::Percent(x) => {
                 let v = self.eval_scalar_or_array(x);
@@ -802,7 +849,7 @@ impl<'a> Ctx<'a> {
                 _ => Value::Error(CellError::Ref),
             },
             Expr::Implicit(x) => match self.eval(x) {
-                Value::Ref(r) => self.deref_implicit(&r),
+                Value::Ref(r) => self.implicit_ref(&r),
                 Value::Array(a) => a.data.first().cloned().unwrap_or(Value::Empty),
                 v => v,
             },
@@ -812,7 +859,15 @@ impl<'a> Ctx<'a> {
     /// Evaluate a value or array. Dynamic formulas retain referenced arrays;
     /// legacy formulas intersect references. Explicit @ intersects in `eval`.
     pub fn eval_scalar_or_array(&mut self, e: &Expr) -> Value {
-        match self.eval(e) {
+        let v = self.eval(e);
+        self.scalar_or_array_of(v)
+    }
+
+    /// `eval_scalar_or_array` for a value already evaluated.
+    pub fn scalar_or_array_of(&mut self, v: Value) -> Value {
+        match v {
+            // A reference to one cell is that cell's value, in an array formula too (Excel: `TYPE(A1&"")` is 2).
+            Value::Ref(r) if matches!(r.as_slice(), [a] if a.is_cell()) => self.deref_implicit(&r),
             Value::Ref(r) if self.in_array_context || self.book.dynamic(self.sheet, self.row, self.column) => self.ref_to_array(&r),
             Value::Ref(r) => self.deref_implicit(&r),
             Value::Omitted => Value::Empty,
@@ -1055,6 +1110,16 @@ impl<'a> Ctx<'a> {
         let Value::Lambda(l) = f else {
             return match f {
                 Value::Error(e) => Value::Error(*e),
+                // A cell or range called as a function is #REF!.
+                Value::Ref(_) => Value::Error(CellError::Ref),
+                // An array (even of one element) holding a function value, called: Excel cannot call it for each
+                // element and gives up on the whole formula (the cell shows 0; see `Ctx::aborted`).
+                Value::Array(x) if x.data.iter().any(|v| matches!(v, Value::Lambda(_))) => {
+                    self.aborted = true;
+                    Value::Number(0.0)
+                }
+                // An array of other things: #VALUE! for each.
+                Value::Array(x) => Value::Array(Rc::new(Array::new(x.rows, x.columns, vec![Value::Error(CellError::Value); x.data.len()]))),
                 _ => Value::Error(CellError::Value),
             };
         };
@@ -1144,6 +1209,10 @@ pub fn binary_ext(op: BinaryOp, a: &Value, b: &Value, date1904: bool, is_root: b
             }
             if let Value::Error(e) = b {
                 return Value::Error(*e);
+            }
+            // A function value is not comparable (Excel: `HSTACK(SUM,MAX)=SUM` is #VALUE! in each element).
+            if matches!(a, Value::Lambda(_)) || matches!(b, Value::Lambda(_)) {
+                return Value::Error(CellError::Value);
             }
             let ord = compare(a, b);
             use std::cmp::Ordering::*;

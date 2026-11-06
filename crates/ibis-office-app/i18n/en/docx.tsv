@@ -68,7 +68,6 @@ docx.text.case.katakana	Katakana
 docx.text.case.hiragana	Hiragana
 docx.text.enclose.none	(None)
 docx.paragraph.details#2	Details…
-docx.toc.update	Update Table of Contents
 docx.toc.update-menu	Update Table of Contents
 docx.toc.update-dialog	Update Table of Contents…
 docx.toc.update-dialog.title	Update Table of Contents
@@ -290,8 +289,6 @@ docx.toc	Table of Contents
 docx.cell-borders.all-borders	All Borders
 docx.color-panel.check-6-digit-rgb-value	Check the 6-digit RGB value (e.g. 2A7FC1) and the text selection.
 docx.color-panel.rgb-6-digit-hex	RGB (6-digit hex)
-docx.comments.comment-selection	Comment on selection
-docx.comments.select-text-then-insert-comment	Select text, then Insert > Comment
 docx.editing.replacing-deleting-across-multiple	Replacing or deleting across multiple paragraphs with tracked changes is not supported. Edit one paragraph at a time.
 docx.editing.select-changes-accept-reject	Select changes to accept or reject within the same body, header, or footnote.
 docx.find.replacing-across-multiple	Replacing across multiple paragraphs while tracking changes is not supported.
@@ -336,8 +333,9 @@ docx.paragraph-panel.left-indent	Left Indent
 docx.paragraph-panel.right-indent	Right Indent
 docx.paragraph-panel.first-line	First Line
 docx.paragraph-panel.line-spacing-mixed	Line Spacing (Mixed)
-docx.paragraph-panel.line-spacing-multiple	Line Spacing (Multiple)
-docx.paragraph-panel.line-spacing-pt	Line Spacing (pt)
+docx.paragraph-panel.line-spacing-multiple	Line Spacing
+docx.paragraph-panel.line-spacing-pt	Line Spacing
+docx.paragraph-panel.line-spacing-multiple-unit	×
 docx.paragraph-panel.blank-means-mixed-only-changed	Blank means mixed. Only changed items are applied.
 docx.picture-panel.check-picture-selection-value	Check the picture selection and a value between 0.01 and 1584 pt. With the aspect ratio locked, change either width or height.
 docx.picture-panel.width-pt	Width
@@ -1051,11 +1049,11 @@ insert.form-checkbox	Check Box Form Field
 insert.form-dropdown	Drop-Down Form Field
 docx.form.legacy-dropdown.cycle	Select Next Drop-Down Item
 docx.form.picture.replace	Replace Picture…
-docx.form.picture.reset	Reset to Placeholder
+docx.form.picture.reset	Reset Picture Control to Placeholder
 docx.form.picture.replaced	Picture replaced
 docx.form.picture.reset-done	Reset to placeholder
 docx.form.gallery.cycle	Select Next Building Block
-docx.form.gallery.reset	Reset to Placeholder
+docx.form.gallery.reset	Reset Building Block Gallery to Placeholder
 docx.form.gallery.cycled	Selected building block "{part}"
 docx.form.gallery.reset-done	Reset to placeholder
 docx.form.repeating.add	Add Section
@@ -1064,8 +1062,8 @@ docx.form.repeating.cycle	Select Next Section
 docx.form.repeating.added	Added section "{section}"
 docx.form.repeating.deleted	Deleted section "{section}"
 docx.form.repeating.cycled	Selected section "{section}"
-docx.form.group	Group
-docx.form.ungroup	Ungroup
+docx.form.group	Group Controls
+docx.form.ungroup	Ungroup Controls
 docx.form.grouped	Grouped content control
 docx.form.ungrouped	Ungrouped content control
 docx.form.design-mode	Design Mode
@@ -1730,8 +1728,6 @@ _docx.smartart-top	Top
 _docx.smartart-middle	Middle
 _docx.smartart-base	Base
 docx.insert.icon-categories	Icons by Category…
-docx.insert.smartart-presets	SmartArt Types
-docx.quick-parts-menu	Quick Parts Menu
 docx.inspect-document	Inspect Document…
 docx.inspect-panel.title	Document Inspector
 docx.inspect-panel.inspect-hint	Inspect the document for personal information and hidden content, and remove it.
@@ -1857,14 +1853,6 @@ docx.reference.source.type.report	Report
 docx.reference.source.type.website	Website
 docx.reference.source.type.proceedings	Conference Proceedings
 docx.reference.source.type.misc	Miscellaneous
-docx.comments.alert-no-selection.title	Information
-docx.comments.alert-no-selection.message	No text is selected. Please select a word or sentence before adding a comment.
-docx.comments.alert-no-selection.ok	OK
-docx.comments.delete-confirm.title	Confirm
-docx.comments.delete-confirm.message	Are you sure you want to delete this comment?\n(The entire thread will be deleted)
-docx.comments.delete-confirm.delete	Delete
-docx.comments.delete-confirm.cancel	Cancel
-docx.comments.post	Post
 docx.review.spelling-grammar	Spelling & Grammar…
 docx.review.thesaurus	Thesaurus…
 docx.thesaurus.title	Thesaurus
@@ -2075,8 +2063,6 @@ docx.ink.actions	Selected Ink Actions
 docx.ink.select-all	Select All Ink
 docx.ink.erase-selected	Erase Selected Ink
 docx.ink.erase-all	Erase All Ink
-docx.ink.scale-up	Scale Up (125%)
-docx.ink.scale-down	Scale Down (80%)
 docx.ink.status.drawn	Added ink stroke
 docx.ink.status.converted-shape	Converted ink to shape
 docx.ink.status.erased	Erased ink
@@ -2361,3 +2347,12 @@ docx.selection-pane.object-name	Object
 docx.fit-text.title	Fit Text
 docx.fit-text.width	Width
 docx.fit-text.characters	ch
+docx.fit-text.no-selection	There is no selection. Select some text and try again.
+docx.align.distribute-line	Distributed (Line)
+docx.tate-chu-yoko.fit-line	Fit in line
+_docx.tab-leader-hyphen	Hyphens
+_docx.tab-leader-underscore	Underscores
+_docx.tab-leader-heavy	Heavy line
+_docx.tab-leader-middle-dot	Middle dots
+_docx.tab-bar	Bar
+_docx.tab-num	List

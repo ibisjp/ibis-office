@@ -1,0 +1,52 @@
+{
+ "end": 4.162,
+ "last_change": 4.162,
+ "end_video_frame": 8,
+ "first_change": 0.103,
+ "window_end": 6.823,
+ "doc_changes_count": 4,
+ "doc_changes": [
+  [
+   0.103,
+   0.03661
+  ],
+  [
+   0.835,
+   0.0022
+  ],
+  [
+   2.259,
+   0.0395
+  ],
+  [
+   4.162,
+   0.1602
+  ]
+ ],
+ "recorded_until": 12.168,
+ "grabs": 1191,
+ "capped": false,
+ "tag": "open-onlyoffice-docx-1",
+ "scenario": "open",
+ "app": "onlyoffice",
+ "kind": "docx",
+ "run": 1,
+ "file": "securities-registration-statement.docx",
+ "command": [
+  "onlyoffice10",
+  "/tmp/ibis-bench-dq7vbr9_/securities-registration-statement.docx"
+ ],
+ "rects": [
+  [
+   0.0,
+   "293 115 1334 850"
+  ]
+ ],
+ "cap": 30,
+ "measured_at": "2026-11-03 19:45:32",
+ "load_before": [
+  1.11,
+  0.81,
+  0.56
+ ]
+}

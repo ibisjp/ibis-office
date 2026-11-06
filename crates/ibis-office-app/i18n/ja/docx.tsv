@@ -68,7 +68,6 @@ docx.text.case.katakana	カタカナ
 docx.text.case.hiragana	ひらがな
 docx.text.enclose.none	（囲い文字なし）
 docx.paragraph.details#2	詳細…
-docx.toc.update	目次の更新
 docx.toc.update-menu	目次の更新
 docx.toc.update-dialog	目次の更新…
 docx.toc.update-dialog.title	目次の更新
@@ -782,11 +781,11 @@ insert.form-checkbox	チェック ボックス フォーム フィールド
 insert.form-dropdown	ドロップダウン フォーム フィールド
 docx.form.legacy-dropdown.cycle	ドロップダウンの次の項目を選択
 docx.form.picture.replace	画像の差し替え…
-docx.form.picture.reset	初期プレースホルダーに戻す
+docx.form.picture.reset	画像コントロールを初期プレースホルダーに戻す
 docx.form.picture.replaced	画像を差し替えました
 docx.form.picture.reset-done	プレースホルダーに戻しました
 docx.form.gallery.cycle	次の文書パーツを選択
-docx.form.gallery.reset	初期プレースホルダーに戻す
+docx.form.gallery.reset	文書パーツ ギャラリーを初期プレースホルダーに戻す
 docx.form.gallery.cycled	文書パーツ「{part}」を選択しました
 docx.form.gallery.reset-done	プレースホルダーに戻しました
 docx.form.repeating.add	セクションの追加
@@ -795,8 +794,8 @@ docx.form.repeating.cycle	次のセクションを選択
 docx.form.repeating.added	セクション「{section}」を追加しました
 docx.form.repeating.deleted	セクション「{section}」を削除しました
 docx.form.repeating.cycled	セクション「{section}」を選択しました
-docx.form.group	グループ化
-docx.form.ungroup	グループ解除
+docx.form.group	コントロールのグループ化
+docx.form.ungroup	コントロールのグループ解除
 docx.form.grouped	グループ化しました
 docx.form.ungrouped	グループを解除しました
 docx.form.design-mode	デザイン モード
@@ -879,8 +878,6 @@ docx.format.text.color.custom	その他の色…
 docx.cell-borders.all-borders	四辺
 docx.color-panel.check-6-digit-rgb-value	6桁のRGB値（例：2A7FC1）と文字の選択を確認してください。
 docx.color-panel.rgb-6-digit-hex	RGB（6桁の16進数）
-docx.comments.comment-selection	選択した箇所へのコメント
-docx.comments.select-text-then-insert-comment	文字を選択してから 挿入 > コメント
 docx.editing.replacing-deleting-across-multiple	変更履歴を含む複数段落の置換・削除は未対応です。段落ごとに編集してください。
 docx.editing.select-changes-accept-reject	変更履歴の承諾・却下は同じ本文・ヘッダー・脚注内で選択してください。
 docx.find.replacing-across-multiple	変更履歴を記録中の複数段落への置換は未対応です。
@@ -925,8 +922,9 @@ docx.paragraph-panel.left-indent	左インデント
 docx.paragraph-panel.right-indent	右インデント
 docx.paragraph-panel.first-line	最初の行
 docx.paragraph-panel.line-spacing-mixed	行間（混在）
-docx.paragraph-panel.line-spacing-multiple	行間（倍）
-docx.paragraph-panel.line-spacing-pt	行間（pt）
+docx.paragraph-panel.line-spacing-multiple	行間
+docx.paragraph-panel.line-spacing-pt	行間
+docx.paragraph-panel.line-spacing-multiple-unit	倍
 docx.paragraph-panel.blank-means-mixed-only-changed	空欄は混在。変更した項目のみ適用します。
 docx.picture-panel.check-picture-selection-value	画像の選択と0.01〜1584ptの数値を確認してください。縦横比固定では幅か高さの一方を変更します。
 docx.picture-panel.width-pt	幅
@@ -1721,8 +1719,6 @@ _docx.smartart-top	トップ
 _docx.smartart-middle	ミドル
 _docx.smartart-base	ベース
 docx.insert.icon-categories	アイコン（カテゴリ別）…
-docx.insert.smartart-presets	SmartArt の種類
-docx.quick-parts-menu	クイック パーツ メニュー
 docx.inspect-document	ドキュメントの検査…
 docx.inspect-panel.title	ドキュメントの検査
 docx.inspect-panel.inspect-hint	文書内の個人情報や非表示コンテンツを検査し、削除します。
@@ -1848,14 +1844,6 @@ docx.reference.source.type.report	レポート
 docx.reference.source.type.website	Web サイト
 docx.reference.source.type.proceedings	会議録
 docx.reference.source.type.misc	その他
-docx.comments.alert-no-selection.title	情報
-docx.comments.alert-no-selection.message	選択範囲がありません。先に単語や文を選択してから追加してください。
-docx.comments.alert-no-selection.ok	OK
-docx.comments.delete-confirm.title	確認
-docx.comments.delete-confirm.message	コメントを削除していいですか？\n（スレッド全体が削除されます）
-docx.comments.delete-confirm.delete	削除
-docx.comments.delete-confirm.cancel	キャンセル
-docx.comments.post	投稿
 docx.review.spelling-grammar	スペルと文章校正…
 docx.review.thesaurus	類義語辞典…
 docx.thesaurus.title	類義語辞典
@@ -2066,8 +2054,6 @@ docx.ink.actions	選択中のインク操作
 docx.ink.select-all	すべてのインクを選択
 docx.ink.erase-selected	選択インクを消去
 docx.ink.erase-all	すべてのインクを消去
-docx.ink.scale-up	拡大 (125%)
-docx.ink.scale-down	縮小 (80%)
 docx.ink.status.drawn	インク ストロークを追加しました
 docx.ink.status.converted-shape	インクを図形に変換しました
 docx.ink.status.erased	インクを消去しました
@@ -2352,3 +2338,12 @@ docx.selection-pane.object-name	オブジェクト
 docx.fit-text.title	文字の均等割り付け
 docx.fit-text.width	割付幅
 docx.fit-text.characters	字
+docx.fit-text.no-selection	選択範囲がありません。文字列を選択してから実行してください。
+docx.align.distribute-line	均等割り付け（行）
+docx.tate-chu-yoko.fit-line	行の幅に合わせる
+_docx.tab-leader-hyphen	ハイフン
+_docx.tab-leader-underscore	下線
+_docx.tab-leader-heavy	太い下線
+_docx.tab-leader-middle-dot	中点
+_docx.tab-bar	縦線
+_docx.tab-num	リスト

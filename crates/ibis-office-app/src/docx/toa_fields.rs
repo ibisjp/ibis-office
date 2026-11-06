@@ -136,7 +136,7 @@ pub(crate) fn toa_paragraphs(doc: &FlowDocument, instruction: &str, page_of: &dy
     let marks: Vec<Mark> = marks(doc, page_of).into_iter().filter(|m| spec.category == 0 || m.spec.category == spec.category).collect();
     let styles = &doc.styles;
     let base = FlowRunStyle::default();
-    let tab = ibis_doc_model::TabChange { position: width, stop: Some(ibis_doc_model::TabStop { position: width, align: ibis_doc_model::TabAlign::Right, leader: true }) };
+    let tab = ibis_doc_model::TabChange { position: width, stop: Some(ibis_doc_model::TabStop { position: width, align: ibis_doc_model::TabAlign::Right, leader: ibis_doc_model::TabLeader::Dot }) };
     let mut out: Vec<FlowParagraph> = Vec::new();
     let mut id = first_id;
     for category in 1..=16u32 {

@@ -539,8 +539,7 @@ pub(crate) fn render_panel(editor: &mut SlideEditor, access: PanelAccess, cx: &m
             .id(("autocorrect-row",i)).cursor_pointer().on_click(cx.listener(move|e,_,_,cx|{if let Some(p)=get(e){p.selected=Some(i);}cx.notify();}));
         rows=rows.child(mark(&format!("entry-{i}"),row.into_any_element()));
     }
-    let tabs=crate::shell::chrome::tab_control_with_mode([text("autocorrect.tab.settings"),text("autocorrect.tab.dictionary")],usize::from(p.dictionary_tab),"autocorrect-tabs",crate::shell::chrome::TabMode::Intrinsic,move |e,index,cx|{if let Some(p)=get(e){p.dictionary_tab=index==1;}cx.notify();},cx);
-    let body=v_flex().size_full().min_h_0().gap_2().p_0().child(tabs.flex_none()).child(
+    let body=v_flex().size_full().min_h_0().gap_2().p_0().child(
         if p.dictionary_tab {
             crate::shell::chrome::panel_form().flex_1().min_h_0().overflow_hidden()
                 .child(dictionary_top)
@@ -552,7 +551,9 @@ pub(crate) fn render_panel(editor: &mut SlideEditor, access: PanelAccess, cx: &m
     let footer = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("autocorrect-ok", text("OK"), crate::shell::chrome::ActionButtonKind::Primary)
             .on_click(cx.listener(move |this, _, _, cx| apply(this, cx)))))
         .action(crate::shell::chrome::dialog_cancel_definition(cx));
-    Some(SidebarPanel::with_footer(text("xlsx.autocorrect.title"), body.into_any_element(), footer))
+    // The tabs are in the panel header area.
+    Some(SidebarPanel::with_footer(text("xlsx.autocorrect.title"), body.into_any_element(), footer)
+        .header_tabs("autocorrect-tabs",[text("autocorrect.tab.settings"),text("autocorrect.tab.dictionary")],usize::from(p.dictionary_tab),move |e,index,cx|{if let Some(p)=get(e){p.dictionary_tab=index==1;}cx.notify();},cx))
 
 }
 

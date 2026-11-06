@@ -339,7 +339,7 @@ impl SlideEditor {
             this.focus_handle.focus(window, cx);
         });
         menu.read(cx).focus_handle(cx).focus(window, cx);
-        self.wb_mut().list_popup = Some(super::validation::ListPopup { menu, position, _dismiss: dismiss });
+        self.wb_mut().list_popup = Some(super::validation::ListPopup { menu, position, anchor: Anchor::TopLeft, _dismiss: dismiss });
         cx.notify();
     }
 
@@ -601,6 +601,23 @@ impl SlideEditor {
 
     /// `fill_to` as `mode` says (オートフィル オプション).
     pub(crate) fn fill_to_as(&mut self, source: CellRange, column: u32, row: u32, mode: FillMode, cx: &mut Context<Self>) {
+        // The cells filled (beyond the source) are not a pivot table's.
+        let filled = if row > source.last_row {
+            Some(CellRange { first_row: source.last_row + 1, last_row: row, ..source })
+        } else if row < source.first_row {
+            Some(CellRange { first_row: row, last_row: source.first_row - 1, ..source })
+        } else if column > source.last_column {
+            Some(CellRange { first_column: source.last_column + 1, last_column: column, ..source })
+        } else if column < source.first_column {
+            Some(CellRange { first_column: column, last_column: source.first_column - 1, ..source })
+        } else {
+            None
+        };
+        if let Some(filled) = filled
+            && self.pivot_refuses_ranges(&[filled], cx)
+        {
+            return;
+        }
         let Some((_, sheet)) = self.current_sheet() else { return };
         let date = |style: &CellStyle| ibis_calc::numfmt::is_date_format(&style.number_format);
         let source_at = |r: u32, c: u32| -> (Source, CellStyle) {

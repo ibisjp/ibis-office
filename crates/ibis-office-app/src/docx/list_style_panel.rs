@@ -125,6 +125,7 @@ impl SlideEditor {
                         },
                         run: RunFormat::default(),
                         pic_bullet: None,
+                        symbol: None,
                     }
                 } else {
                     let indent = (l as i64 + 1) * 440 * 635;
@@ -141,6 +142,7 @@ impl SlideEditor {
                         },
                         run: RunFormat::default(),
                         pic_bullet: None,
+                        symbol: None,
                     }
                 }
             })

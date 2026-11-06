@@ -9,7 +9,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::table_pointer_reorder_cancel_and_commit", reorder),
         ("shell::pane_actions_flow_and_stick", pane_actions),
         ("shell::panel_dropdown_filter_enter", dropdown_enter),
-        ("shell::panel_dialog_eight_way_resize", eight_way_resize),
+        ("shell::dialog_eight_way_resize", eight_way_resize),
         ("shell::tab_control_underline_and_hover", tab_underline),
     ]
 }
@@ -98,7 +98,7 @@ fn reorder() {
     assert_eq!(state.borrow().dragging, None);
     assert_eq!(state.borrow().order, vec![0, 1, 2]);
     assert!(
-        s.with(|e, _| e.panel_dialog_is_modal()),
+        s.with(|e, _| e.dialog_is_modal()),
         "Escape cancels the drag, not the dialog"
     );
     s.dispatch(vec![PlatformInput::MouseUp(MouseUpEvent {
@@ -170,7 +170,7 @@ fn pane_actions() {
         p.set(Some((
             panel,
             "adaptive-actions",
-            crate::shell::panel_dialog::PanelMode::Sidebar,
+            crate::shell::dialog::DialogMode::Sidebar,
         )))
     });
     s.update(|e, _, cx| {
@@ -229,23 +229,23 @@ fn eight_way_resize() {
         ("nw",0.,0.,-30.,-20.,true,true,false,false),
     ] {
         s.update(|e,_,cx| {
-            e.panel_dialog.bounds=Some(Bounds::new(point(px(300.),px(150.)),size(px(500.),px(400.))));
-            e.panel_dialog.user_resized=true;e.panel_dialog.user_moved=true;cx.notify();
+            e.dialog.bounds=Some(Bounds::new(point(px(300.),px(150.)),size(px(500.),px(400.))));
+            e.dialog.user_resized=true;e.dialog.user_moved=true;cx.notify();
         });
-        let before=s.with(|e,_|e.panel_dialog.bounds.unwrap());
+        let before=s.with(|e,_|e.dialog.bounds.unwrap());
         let at=point(before.origin.x+px(2.)+(before.size.width-px(4.))*x,
             before.origin.y+px(2.)+(before.size.height-px(4.))*y);
         let to=at+point(px(dx),px(dy));
         s.dispatch(vec![PlatformInput::MouseDown(MouseDownEvent{button:MouseButton::Left,position:at,click_count:1,..Default::default()}),
             PlatformInput::MouseMove(MouseMoveEvent{position:to,pressed_button:Some(MouseButton::Left),..Default::default()})]);
-        let after=s.with(|e,_|e.panel_dialog.bounds.unwrap());
+        let after=s.with(|e,_|e.dialog.bounds.unwrap());
         assert!((after.origin.x-before.origin.x-px(if west{dx}else{0.})).abs()<px(1.),"{name} left");
         assert!((after.origin.y-before.origin.y-px(if north{dy}else{0.})).abs()<px(1.),"{name} top");
         assert!((after.size.width-before.size.width-px(if west{-dx}else if east{dx}else{0.})).abs()<px(1.),"{name} width: before={before:?}, after={after:?}");
         assert!((after.size.height-before.size.height-px(if north{-dy}else if south{dy}else{0.})).abs()<px(1.),"{name} height: before={before:?}, after={after:?}");
         // Release outside the dialog too; the gesture must never remain captured.
         s.dispatch(vec![PlatformInput::MouseUp(MouseUpEvent{button:MouseButton::Left,position:point(px(20.),px(20.)),click_count:1,..Default::default()})]);
-        assert!(s.with(|e,_| e.panel_dialog.drag.is_none()),"{name} releases outside");
+        assert!(s.with(|e,_| e.dialog.drag.is_none()),"{name} releases outside");
     }
     s.screenshot("eight-way-resized-dialog");
 }

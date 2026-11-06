@@ -137,7 +137,26 @@ impl SlideEditor {
         let lines = self.flow_lines();
         let (page, x, y, h) = self.caret_box(&lines, caret)?;
         let (origin, k) = self.page_origin(page)?;
-        Some(Bounds::new(point(origin.x + px(x * k), origin.y + px(y * k)), size(px(2.0), px(h * k))))
+        let at = point(origin.x + px(x * k), origin.y + px(y * k));
+        if Self::line_of(&lines, caret).is_some_and(|l| l.vertical) {
+            // The column across the line, down as far as the text being
+            // composed reaches (a character a font size tall, as drawn), so
+            // the input method's candidates stay off it.
+            let size_pt = self.current_format().map_or(h, |(_, style)| style.size as f32 / 100.0);
+            let n = self.doc_state().and_then(|s| s.marked.as_ref()).map_or(0, |m| m.chars().count());
+            return Some(Bounds::new(at, size(px(h * k), px((n as f32 * size_pt * k).max(2.0)))));
+        }
+        Some(Bounds::new(at, size(px(2.0), px(h * k))))
+    }
+
+    /// Whether the caret is in a vertical line of the page (a text box being
+    /// edited has its own caret).
+    pub(crate) fn doc_text_vertical(&self) -> bool {
+        if self.doc_state().is_none_or(|s| s.box_edit.is_some()) {
+            return false;
+        }
+        let Some((_, caret)) = self.text_selection() else { return false };
+        Self::line_of(&self.flow_lines(), caret).is_some_and(|l| l.vertical)
     }
 
     pub(crate) fn doc_character_index_for_point(&mut self, point: Point<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {

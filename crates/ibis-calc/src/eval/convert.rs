@@ -138,14 +138,28 @@ pub fn set_today(days: i64) {
     TODAY.store(days, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The clock the app gives: seconds since 1970 (UTC) and the computer's
+/// The clock the app gives: milliseconds since 1970 (UTC) and the computer's
 /// time zone's offset east of UTC in seconds. Without it (tests, tools),
 /// today's date in UTC is used and the time of day is not known.
 static CLOCK: std::sync::OnceLock<fn() -> (i64, i64)> = std::sync::OnceLock::new();
 
+thread_local! {
+    /// A clock for one thread, ahead of the app's: tests give a time they control.
+    static THREAD_CLOCK: std::cell::Cell<Option<fn() -> (i64, i64)>> = const { std::cell::Cell::new(None) };
+}
+
 /// Give the calculator the local clock (once; the first one stays).
 pub fn set_clock(now: fn() -> (i64, i64)) {
     let _ = CLOCK.set(now);
+}
+
+/// Give this thread its own clock (`None` takes it away), for tests.
+pub fn set_thread_clock(now: Option<fn() -> (i64, i64)>) {
+    THREAD_CLOCK.with(|c| c.set(now));
+}
+
+fn clock() -> Option<(i64, i64)> {
+    THREAD_CLOCK.with(|c| c.get()).or_else(|| CLOCK.get().copied()).map(|f| f())
 }
 
 /// The file of the workbook being calculated (its whole path), for `CELL("filename")` and the sheet
@@ -165,33 +179,43 @@ pub fn workbook_file() -> Option<String> {
     WORKBOOK_FILE.lock().ok().and_then(|f| f.clone())
 }
 
+/// The serial number of a day counted from 1970-01-01.
+fn serial_of_days(days: i64, date1904: bool) -> i64 {
+    let (y, m, d) = civil_from_days(days);
+    serial_from_date(y, m as i64, d as i64, date1904)
+}
+
 /// Today as a serial number, if known.
 pub fn today_serial(date1904: bool) -> Option<i64> {
     let set = TODAY.load(std::sync::atomic::Ordering::Relaxed);
     let days = if set != i64::MIN {
         set
-    } else if let Some(clock) = CLOCK.get() {
-        let (seconds, offset) = clock();
-        (seconds + offset).div_euclid(86_400)
+    } else if let Some((millis, offset)) = clock() {
+        (millis.div_euclid(1000) + offset).div_euclid(86_400)
     } else {
         crate::clock::unix_days()?
     };
-    let (y, m, d) = civil_from_days(days);
-    Some(serial_from_date(y, m as i64, d as i64, date1904))
+    Some(serial_of_days(days, date1904))
 }
 
-/// Now as a serial number with the time of day (local time), for `NOW`.
+/// Excel's `NOW` ticks every 10 milliseconds (measured with Excel 16.0 build 20527: the values of
+/// 200,000 calls in 0.1 s fell on 9 distinct values, all multiples of 0.01 s apart).
+const NOW_TICK_MILLIS: i64 = 10;
+
+/// Now as a serial number with the time of day (local time), for `NOW`: the clock's time at this call
+/// (Excel reads the clock at each call, not once per calculation), in 10-millisecond steps.
 /// Without a clock that knows the time, it is today's date alone.
 pub fn now_serial(date1904: bool) -> Option<f64> {
-    let today = today_serial(date1904)?;
     let set = TODAY.load(std::sync::atomic::Ordering::Relaxed);
-    match CLOCK.get() {
-        Some(clock) if set == i64::MIN => {
-            let (seconds, offset) = clock();
-            Some(today as f64 + (seconds + offset).rem_euclid(86_400) as f64 / 86_400.0)
+    if set == i64::MIN {
+        // One read of the clock gives both the day and the time of day.
+        if let Some((millis, offset)) = clock() {
+            let local = millis + offset * 1000;
+            let in_day = local.rem_euclid(86_400_000) / NOW_TICK_MILLIS * NOW_TICK_MILLIS;
+            return Some(serial_of_days(local.div_euclid(86_400_000), date1904) as f64 + in_day as f64 / 86_400_000.0);
         }
-        _ => Some(today as f64),
     }
+    Some(today_serial(date1904)? as f64)
 }
 
 static CURRENT_YEAR: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
@@ -208,9 +232,8 @@ pub fn current_year() -> i64 {
     if set != 0 {
         return set;
     }
-    if let Some(clock) = CLOCK.get() {
-        let (seconds, offset) = clock();
-        return civil_from_days((seconds + offset).div_euclid(86_400)).0;
+    if let Some((millis, offset)) = clock() {
+        return civil_from_days((millis.div_euclid(1000) + offset).div_euclid(86_400)).0;
     }
     if let Some(days) = crate::clock::unix_days() {
         return civil_from_days(days).0;

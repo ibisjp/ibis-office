@@ -101,6 +101,11 @@ fn glyph_pair(
     found
 }
 
+/// The font's vertical glyph (`vert`/`vrt2`) of `c` when it has one other than the horizontal glyph (for 、。「」ー…).
+pub(crate) fn vertical_glyph_id(ts: &gpui_kit::TextSystem, font_id: gpui_kit::FontId, c: char) -> Option<gpui_kit::GlyphId> {
+    glyph_pair(ts, font_id, c).filter(|(vertical, normal)| vertical != normal).map(|(vertical, _)| vertical)
+}
+
 /// UAX #50 Tr uses the horizontal glyph rotated when the selected face has
 /// no vert/vrt2 substitution. Use the same path for committed and IME text.
 pub(crate) fn paint_glyph(

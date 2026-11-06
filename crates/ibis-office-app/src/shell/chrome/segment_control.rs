@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! A closed segmented-control API: its track either hugs its items or is fully apportioned.
-use super::{TEXT, action_button};
+use super::{Shown, TEXT, action_button, disabled_color};
 use crate::shell::palette::rgb;
 use gpui_kit::component::button::ButtonVariants as _;
 use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, h_flex};
@@ -114,6 +114,7 @@ pub(crate) struct SegmentControl {
     mode: Mode,
     items: Vec<SegmentItem>,
     available: Option<Pixels>,
+    mixed: bool,
 }
 impl SegmentControl {
     pub(crate) fn new(mode: Mode) -> Self {
@@ -121,7 +122,19 @@ impl SegmentControl {
             mode,
             items: Vec::new(),
             available: None,
+            mixed: false,
         }
+    }
+    /// The objects the control edits have different values (`Shown::Mixed`): no segment is selected, whatever the items say,
+    /// and the highlight is not drawn. A click on a segment selects it as usual (the caller then passes `One`).
+    fn mixed(mut self, mixed: bool) -> Self {
+        self.mixed = mixed;
+        self
+    }
+    /// The state of the objects the control edits: `Shown::Mixed` selects no segment (whatever the items say); a common value is
+    /// drawn through the items (`SegmentItem::label(.., shown.selects(&value))`). The only way a panel gives the empty state.
+    pub(crate) fn shown<V>(self, shown: &Shown<V>) -> Self {
+        self.mixed(shown.is_mixed())
     }
     pub(crate) fn available_width(mut self, width: Pixels) -> Self {
         self.available = Some(width);
@@ -207,7 +220,12 @@ impl SegmentControl {
 }
 
 impl RenderOnce for SegmentControl {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if self.mixed {
+            for item in &mut self.items {
+                item.selected = false;
+            }
+        }
         if self.items.is_empty() {
             return div().into_any_element();
         }
@@ -284,6 +302,7 @@ impl RenderOnce for SegmentControl {
                     .w(px(at[2]))
                     .h(px(at[3]))
                     .rounded(px(5.))
+                    .when(self.mixed, |d| d.invisible())
                     .bg(rgb(0xffffff))
                     .shadow(vec![BoxShadow {
                         color: gpui_kit::black().opacity(0.18),
@@ -369,7 +388,7 @@ impl RenderOnce for SegmentControl {
                         .rounded(px(5.))
                         .text_size(px(14.))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(rgb(TEXT))
+                        .text_color(if item.disabled { disabled_color() } else { rgb(TEXT).into() })
                         .bg(gpui_kit::transparent_black())
                         .hover(|s| s.bg(gpui_kit::transparent_black()))
                         .child(content);

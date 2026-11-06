@@ -213,6 +213,7 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
         "emph" => AnimationClass::Emphasis,
         "exit" => AnimationClass::Exit,
         "path" => AnimationClass::Path,
+        "mediacall" => AnimationClass::Media,
         _ => return None,
     };
     let start = match e.attribute("nodeType") {
@@ -240,34 +241,72 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
         8 => Some(AnimationSide::Left),
         _ => None,
     };
+    let behaviors = parse_behaviors(&behaviours);
     let motion_path = behaviours.iter().find(|b| b.tag_name().name() == "animMotion").and_then(|b| b.attribute("path")).and_then(path_points);
+    // 再生・一時停止・停止: the call (`p:cmd`) says which; the preset (1, 2, 3) when it names none we know.
+    let media_command = behaviours.iter().find(|b| b.tag_name().name() == "cmd").and_then(|b| b.attribute("cmd")).and_then(|c| {
+        if c.starts_with("play") || c == "resume" {
+            Some(ibis_doc_model::MediaCommand::Play)
+        } else if c == "togglePause" || c == "pause" {
+            Some(ibis_doc_model::MediaCommand::Pause)
+        } else if c == "stop" {
+            Some(ibis_doc_model::MediaCommand::Stop)
+        } else {
+            None
+        }
+    });
     let look = match class {
+        AnimationClass::Media => AnimationLook::Media(media_command.or(match preset.0 {
+            1 => Some(ibis_doc_model::MediaCommand::Play),
+            2 => Some(ibis_doc_model::MediaCommand::Pause),
+            3 => Some(ibis_doc_model::MediaCommand::Stop),
+            _ => None,
+        })?),
         AnimationClass::Entrance | AnimationClass::Exit => match preset.0 {
             1 => AnimationLook::Appear,
             // Fly in / out (スライドイン): the subtype says from where.
-            2 => side(preset.1).map_or(AnimationLook::Fade, AnimationLook::Fly),
+            2 => match side(preset.1) {
+                Some(s) => AnimationLook::Fly(s),
+                None if !behaviors.is_empty() => AnimationLook::Preset,
+                None => AnimationLook::Fade,
+            },
             10 => AnimationLook::Fade,
-            22 => side(preset.1).map_or(AnimationLook::Wipe(AnimationSide::Bottom), AnimationLook::Wipe),
+            22 => match side(preset.1) {
+                Some(s) => AnimationLook::Wipe(s),
+                None if !behaviors.is_empty() => AnimationLook::Preset,
+                None => AnimationLook::Wipe(AnimationSide::Bottom),
+            },
             // PowerPoint MsoAnimEffectZoom=23 and Float=30 (Microsoft's enum). PowerPoint's own ズーム entry
             // is 53 (subtype 16 from the object's centre, 528 from the slide's centre; issue #62).
-            23 | 53 => AnimationLook::Zoom,
-            30 => AnimationLook::Float(if preset.1 == 2 { AnimationSide::Bottom } else { AnimationSide::Top }),
+            // ズーム (grow from the shape's centre, subtype 16 in / 32 out); its other options move the shape too.
+            23 if has("animScale") || matches!((class, preset.1), (AnimationClass::Entrance, 16) | (AnimationClass::Exit, 32)) => AnimationLook::Zoom,
+            // フロート as ibisOffice wrote it (a fade with a short rise); PowerPoint's own (with `ppt_y` and a turn) is played as it says.
+            30 if !has("anim") => AnimationLook::Float(if preset.1 == 2 { AnimationSide::Bottom } else { AnimationSide::Top }),
             28 => AnimationLook::Replay,
+            // Every other preset (including 53, PowerPoint's own ズーム, and スライドイン from a corner) is played as
+            // the behaviours the file gives it say, not as a fade.
+            _ if !behaviors.is_empty() => AnimationLook::Preset,
             _ if has("animEffect") || has("anim") || has("animScale") => AnimationLook::Fade,
             _ => AnimationLook::Appear,
         },
         AnimationClass::Emphasis => {
-            if let Some(rot) = behaviours.iter().find(|b| b.tag_name().name() == "animRot") {
-                AnimationLook::Spin(rot.attribute("by").and_then(|v| v.parse().ok()).unwrap_or(0))
-            } else if let Some(by) = behaviours.iter().find(|b| b.tag_name().name() == "animScale").and_then(|b| child(*b, "by")) {
+            // スピン and 拡大／収縮 as one behaviour alone; every other emphasis effect (シマー, ウェーブ…) is its behaviours.
+            let only = |name: &str| behaviours.len() == 1 && behaviours[0].tag_name().name() == name;
+            if only("animRot") && behaviours[0].attribute("by").is_some() {
+                AnimationLook::Spin(behaviours[0].attribute("by").and_then(|v| v.parse().ok()).unwrap_or(0))
+            } else if let Some(by) = behaviours.iter().find(|b| only(b.tag_name().name()) && b.tag_name().name() == "animScale").and_then(|b| child(*b, "by")) {
                 let v = |a: &str| by.attribute(a).and_then(|v| v.parse().ok()).unwrap_or(100_000);
                 AnimationLook::Scale(v("x"), v("y"))
+            } else if !behaviors.is_empty() {
+                AnimationLook::Preset
             } else {
                 AnimationLook::Other
             }
         }
         AnimationClass::Path => match motion_path {
             Some(ref points) => points.last().map_or(AnimationLook::Other, |&(x, y)| AnimationLook::Motion(x, y)),
+            // A path the model cannot draw as lines: kept as written.
+            None if !behaviors.is_empty() => AnimationLook::Preset,
             None => AnimationLook::Other,
         },
     };
@@ -332,13 +371,93 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
         };
         Some((unit, gap))
     });
-    Some(Animation { shape, class, start, look, delay: delay(e), duration, preset, repeat_count, auto_reverse, rewind, accel, decel, after_effect, trigger, paragraph: None, chars: None, text_unit, path, chart_element: None, chart_build: None, dgm_element: None, dgm_build: None })
+    Some(Animation { shape, class, start, look, delay: delay(e), duration, preset, repeat_count, auto_reverse, rewind, accel, decel, after_effect, trigger, paragraph: None, chars: None, text_unit, path, chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: if look == AnimationLook::Preset { behaviors } else { Vec::new() } })
+}
+
+/// An effect's behaviours as the model keeps them (`p:set`, `p:anim`, `p:animEffect`, `p:animScale`, `p:animRot`);
+/// others (motion paths, colours) are left out.
+fn parse_behaviors(nodes: &[Node]) -> Vec<ibis_doc_model::AnimBehavior> {
+    use ibis_doc_model::{AnimBehavior, BehaviorKind};
+    let value = |v: Node| -> Option<String> {
+        let inner = elements(v).next()?;
+        inner.attribute("val").map(str::to_string)
+    };
+    let pair = |n: Option<Node>| -> Option<(i32, i32)> {
+        let n = n?;
+        Some((n.attribute("x")?.parse().ok()?, n.attribute("y")?.parse().ok()?))
+    };
+    let mut out = Vec::new();
+    for b in nodes {
+        let Some(bhvr) = child(*b, "cBhvr") else { continue };
+        let time = ctn(bhvr);
+        let begin = time.map_or(0, delay);
+        let dur = time.and_then(|c| c.attribute("dur")).and_then(|d| d.parse::<u32>().ok()).unwrap_or(0);
+        let attr = child(bhvr, "attrNameLst").and_then(|l| child(l, "attrName")).and_then(|n| n.text()).map(|t| t.trim().to_string());
+        let kind = match b.tag_name().name() {
+            "set" => {
+                let (Some(attr), Some(to)) = (attr, child(*b, "to").and_then(value)) else { continue };
+                BehaviorKind::Set { attr, value: to }
+            }
+            "anim" => {
+                let Some(attr) = attr else { continue };
+                let mut keys: Vec<(u32, String)> = child(*b, "tavLst")
+                    .into_iter()
+                    .flat_map(elements)
+                    .filter(|t| t.tag_name().name() == "tav")
+                    .filter_map(|t| Some((t.attribute("tm")?.parse().ok()?, child(t, "val").and_then(value)?)))
+                    .collect();
+                if keys.is_empty() {
+                    if let (Some(from), Some(to)) = (b.attribute("from"), b.attribute("to")) {
+                        keys = vec![(0, from.to_string()), (100_000, to.to_string())];
+                    }
+                }
+                let formula = child(*b, "tavLst").into_iter().flat_map(elements).filter_map(|t| t.attribute("fmla")).last().map(str::to_string).or_else(|| b.attribute("fmla").map(str::to_string));
+                BehaviorKind::Anim { attr, keys, formula, discrete: b.attribute("calcmode") == Some("discrete") }
+            }
+            "animEffect" => {
+                let Some(filter) = b.attribute("filter") else { continue };
+                BehaviorKind::Effect { filter: filter.to_string(), enter: b.attribute("transition") != Some("out") }
+            }
+            "animScale" => BehaviorKind::Scale { from: pair(child(*b, "from")), to: pair(child(*b, "to")), by: pair(child(*b, "by")) },
+            "animRot" => {
+                let v = |a: &str| b.attribute(a).and_then(|v| v.parse::<i32>().ok());
+                BehaviorKind::Rotate { from: v("from"), to: v("to"), by: v("by") }
+            }
+            // Others (colours, motion…): kept as they are written, to be written back.
+            _ => {
+                let doc_text = b.document().input_text();
+                let mut raw = doc_text[b.range()].to_string();
+                // Its target and time node ids are filled in on writing.
+                if let (Some(a), Some(z)) = (raw.find("<p:tgtEl>"), raw.find("</p:tgtEl>")) {
+                    raw.replace_range(a..z + "</p:tgtEl>".len(), "\u{1}");
+                } else {
+                    continue;
+                }
+                let re_id = |text: &str| -> String {
+                    let mut out = String::new();
+                    let mut rest = text;
+                    while let Some(at) = rest.find("<p:cTn id=\"") {
+                        let after = at + "<p:cTn id=\"".len();
+                        let end = rest[after..].find('"').map_or(rest.len(), |e| after + e);
+                        out.push_str(&rest[..after]);
+                        out.push('\u{2}');
+                        rest = &rest[end..];
+                    }
+                    out.push_str(rest);
+                    out
+                };
+                BehaviorKind::Opaque(re_id(&raw))
+            }
+        };
+        out.push(AnimBehavior { kind, begin, dur });
+    }
+    out
 }
 
 /// The points a motion path (`M 0 0 L 0.25 0 C … E`, fractions of the slide)
 /// goes through after its start, in 1/100 000 of the slide. A curve (`C`,
 /// `Q`) is drawn as short lines; `Z` goes back to the start. Only the
-/// commands `M L C Q Z E` (upper case, relative to the shape's place) are read.
+/// commands `M L C Q Z E` are read (upper case from the shape's place, lower case from where the path is).
 fn path_points(path: &str) -> Option<Vec<(i32, i32)>> {
     let tokens: Vec<&str> = path.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty()).collect();
     let mut points: Vec<(f64, f64)> = Vec::new();
@@ -347,10 +466,21 @@ fn path_points(path: &str) -> Option<Vec<(i32, i32)>> {
     let mut i = 0;
     let num = |i: usize| -> Option<f64> { tokens.get(i)?.parse().ok() };
     let mut command = "";
+    // A lower case command (`l`, `c`, `q`, `m`) takes its points relative to where the path is.
+    let mut relative = false;
     while i < tokens.len() {
         let t = tokens[i];
         if t.len() == 1 && t.chars().all(|c| c.is_ascii_alphabetic()) {
-            command = t;
+            relative = t.chars().all(|c| c.is_ascii_lowercase());
+            command = match t {
+                "m" => "M",
+                "l" => "L",
+                "c" => "C",
+                "q" => "Q",
+                "z" => "Z",
+                "e" => "E",
+                other => other,
+            };
             i += 1;
             if command == "Z" {
                 here = start;
@@ -360,7 +490,10 @@ fn path_points(path: &str) -> Option<Vec<(i32, i32)>> {
         }
         match command {
             "M" | "L" => {
-                let p = (num(i)?, num(i + 1)?);
+                let mut p = (num(i)?, num(i + 1)?);
+                if relative {
+                    p = (here.0 + p.0, here.1 + p.1);
+                }
                 i += 2;
                 if command == "M" && points.is_empty() {
                     start = p;
@@ -372,7 +505,8 @@ fn path_points(path: &str) -> Option<Vec<(i32, i32)>> {
                 command = "L";
             }
             "C" => {
-                let (c1, c2, p) = ((num(i)?, num(i + 1)?), (num(i + 2)?, num(i + 3)?), (num(i + 4)?, num(i + 5)?));
+                let o = if relative { here } else { (0.0, 0.0) };
+                let (c1, c2, p) = ((o.0 + num(i)?, o.1 + num(i + 1)?), (o.0 + num(i + 2)?, o.1 + num(i + 3)?), (o.0 + num(i + 4)?, o.1 + num(i + 5)?));
                 i += 6;
                 for k in 1..=8 {
                     let t = k as f64 / 8.0;
@@ -383,7 +517,8 @@ fn path_points(path: &str) -> Option<Vec<(i32, i32)>> {
                 here = p;
             }
             "Q" => {
-                let (c, p) = ((num(i)?, num(i + 1)?), (num(i + 2)?, num(i + 3)?));
+                let o = if relative { here } else { (0.0, 0.0) };
+                let (c, p) = ((o.0 + num(i)?, o.1 + num(i + 1)?), (o.0 + num(i + 2)?, o.1 + num(i + 3)?));
                 i += 4;
                 for k in 1..=8 {
                     let t = k as f64 / 8.0;
@@ -409,6 +544,18 @@ fn is_single_line(points: &[(i32, i32)]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PowerPoint's own paths (ステアステップ, バウンス) are written with lower case commands, relative to where the path is.
+    #[test]
+    fn relative_path_commands_are_played() {
+        let p = path_points("M 0 0 l 0.036 0 l 0 0.036 l 0.036 0 E").unwrap();
+        assert_eq!(p, vec![(3600, 0), (3600, 3600), (7200, 3600)]);
+        let c = path_points("M 0 0 c -0.004 -0.008 -0.018 -0.016 -0.023 -0.016 c 0.031 0 0.05 0.01 0.05 0.02 E").unwrap();
+        assert_eq!(c.len(), 16);
+        assert_eq!(c[7], (-2300, -1600));
+        assert_eq!(c[15], (2700, 400));
+    }
+
 
     /// An effect on a group is one on each shape of the group: the first as
     /// the group's, the others with it.

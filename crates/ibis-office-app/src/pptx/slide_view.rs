@@ -51,6 +51,9 @@ actions!(
         DeleteForward,
         ClearFormatting,
         OpenFind,
+        /// 次を検索・前を検索（macOS の ⌘G・⇧⌘G）.
+        FindNext,
+        FindPrevious,
         ToggleGridlines,
         ToggleGuides,
         ToggleSnapToGrid,
@@ -91,18 +94,20 @@ pub(crate) enum Drag {
     TableBorder { shape: ShapeId, column: Option<usize>, row: Option<usize>, start: Point<Pixels>, current: Point<Pixels> },
     /// 頂点の編集: vertex `index` of outline `part` dragged.
     Vertex { part: usize, index: usize, handle: u8, start: Point<Pixels>, current: Point<Pixels> },
+    /// ガイド線: guide `index` dragged (out of the slide, it is removed).
+    Guide { index: usize, start: Point<Pixels>, current: Point<Pixels> },
 }
 
 impl Drag {
     fn current_mut(&mut self) -> &mut Point<Pixels> {
         match self {
-            Drag::Move { current, .. } | Drag::Resize { current, .. } | Drag::Rotate { current, .. } | Drag::Band { current, .. } | Drag::Place { current, .. } | Drag::Text { current, .. } | Drag::TableBorder { current, .. } | Drag::Vertex { current, .. } => current,
+            Drag::Move { current, .. } | Drag::Resize { current, .. } | Drag::Rotate { current, .. } | Drag::Band { current, .. } | Drag::Place { current, .. } | Drag::Text { current, .. } | Drag::TableBorder { current, .. } | Drag::Vertex { current, .. } | Drag::Guide { current, .. } => current,
         }
     }
 
     fn start_current(&self) -> (Point<Pixels>, Point<Pixels>) {
         match self {
-            Drag::Move { start, current, .. } | Drag::Resize { start, current, .. } | Drag::Rotate { start, current, .. } | Drag::Band { start, current, .. } | Drag::Place { start, current, .. } | Drag::Text { start, current } | Drag::TableBorder { start, current, .. } | Drag::Vertex { start, current, .. } => (*start, *current),
+            Drag::Move { start, current, .. } | Drag::Resize { start, current, .. } | Drag::Rotate { start, current, .. } | Drag::Band { start, current, .. } | Drag::Place { start, current, .. } | Drag::Text { start, current } | Drag::TableBorder { start, current, .. } | Drag::Vertex { start, current, .. } | Drag::Guide { start, current, .. } => (*start, *current),
         }
     }
 }
@@ -143,13 +148,15 @@ impl SlideEditor {
                         let (sdx, sdy) = interaction::snap_delta_to_grid(origin_p, dx, dy, interaction::GRID_INTERVAL);
                         dx = sdx;
                         dy = sdy;
-                    } else if self.is_pptx_snap_to_shape_enabled() {
+                    } else if self.is_pptx_snap_to_shape_enabled() || self.is_pptx_guides_enabled() {
                         let origin_f = origins.iter().find(|(o, _)| *o == id).map(|(_, f)| *f).unwrap_or(shape.frame);
                         let candidate_rect = origin_f.translated(dx, dy);
                         let others: Vec<EmuRect> = slide.shapes.iter().filter(|s| !origins.iter().any(|(o, _)| *o == s.id)).map(|s| s.frame).collect();
                         let size = self.presentation().size_of(slide);
                         let slop = emu(px(8.0));
-                        let (snap_dx, snap_dy, _) = interaction::snap_to_shapes(candidate_rect, &others, size.width, size.height, slop);
+                        let (guide_xs, guide_ys) = self.guide_snap_targets();
+                        let shapes = self.is_pptx_snap_to_shape_enabled();
+                        let (snap_dx, snap_dy, _) = interaction::snap_to_targets(candidate_rect, if shapes { &others } else { &[] }, size.width, size.height, slop, shapes, &guide_xs, &guide_ys);
                         dx += snap_dx;
                         dy += snap_dy;
                     }
@@ -302,6 +309,14 @@ impl SlideEditor {
                 cx.stop_propagation();
                 this.open_pptx_find(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &FindNext, window, cx| {
+                cx.stop_propagation();
+                this.pptx_find_shortcut(true, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FindPrevious, window, cx| {
+                cx.stop_propagation();
+                this.pptx_find_shortcut(false, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleGridlines, _, cx| {
                 cx.stop_propagation();
                 this.toggle_pptx_gridlines(cx);
@@ -415,7 +430,7 @@ impl SlideEditor {
             .children(self.render_slide_zoom_dialog(cx))
             .children(self.render_section_zoom_dialog(cx))
             .children(self.render_summary_zoom_dialog(cx))
-            .when(self.panel_dialog_is_modal(), |d| d.child(crate::shell::panel_dialog::viewport_shield()))
+            .when(self.dialog_is_modal(), |d| d.child(crate::shell::dialog::viewport_shield()))
             .scrollbar(&self.workspace_scroll, ScrollbarAxis::Both)
     }
 
@@ -591,21 +606,25 @@ impl SlideEditor {
     fn render_guides(&self, size: ibis_doc_model::EmuSize, scale: f32) -> impl IntoElement {
         let w = size.width as f32 * scale;
         let h = size.height as f32 * scale;
-        let mid_x = (size.width / 2) as f32 * scale;
-        let mid_y = (size.height / 2) as f32 * scale;
+        // Each guide: its line, where it is drawn (a guide dragged off the slide is not).
+        let lines: Vec<(bool, f32, u32)> = self
+            .guide_list()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, g)| self.guide_drawn_at(i, g).map(|at| (g.horizontal, at as f32 * scale, Self::guide_color(g))))
+            .collect();
         canvas(
             |_, _, _| (),
             move |bounds, _, window, _| {
-                let color = crate::shell::palette::doc(0xe05638);
-                let p1 = bounds.origin + point(px(mid_x), px(0.));
-                let p2 = bounds.origin + point(px(mid_x), px(h));
-                if let Some(path) = polygon(&[p1, p2], Some(px(1.0)), false) {
-                    window.paint_path(path, color);
-                }
-                let p3 = bounds.origin + point(px(0.), px(mid_y));
-                let p4 = bounds.origin + point(px(w), px(mid_y));
-                if let Some(path) = polygon(&[p3, p4], Some(px(1.0)), false) {
-                    window.paint_path(path, color);
+                for (horizontal, at, color) in &lines {
+                    let (p1, p2) = if *horizontal {
+                        (bounds.origin + point(px(0.), px(*at)), bounds.origin + point(px(w), px(*at)))
+                    } else {
+                        (bounds.origin + point(px(*at), px(0.)), bounds.origin + point(px(*at), px(h)))
+                    };
+                    if let Some(path) = polygon(&[p1, p2], Some(px(1.0)), false) {
+                        window.paint_path(path, crate::shell::palette::doc(*color));
+                    }
                 }
             },
         )
@@ -629,10 +648,11 @@ impl SlideEditor {
         }
     }
 
-    fn render_placeholder_icons(&self, actions: &[&'static str], scale: f32, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_placeholder_icons(&self, actions: &[&'static str], _scale: f32, cx: &mut Context<Self>) -> impl IntoElement {
+        // The buttons are the toolbar's size (not scaled with the slide).
         let mut row = h_flex().items_center().justify_center().gap(px(8.));
-        let btn_size = (32.0 * scale.clamp(0.6, 1.2)).round();
-        let icon_size = (18.0 * scale.clamp(0.6, 1.2)).round();
+        let btn_size = crate::shell::chrome::BUTTON_HEIGHT;
+        let icon_size = crate::shell::chrome::TOOLBAR_ICON_SIZE;
 
         for &action in actions {
             let (id_name, icon_name, tooltip_text) = match action {
@@ -719,6 +739,10 @@ impl SlideEditor {
     /// The outlines of the selected shapes, the handles of a single one,
     /// the rubber band and the outline of what is being placed.
     fn render_selection_overlay(&self, scale: f32, cx: &mut Context<Self>) -> Div {
+        // トリミング on the slide (`shell/crop_mode.rs`) takes the place of the selection.
+        if let Some(crop) = self.render_crop_mode(scale, cx) {
+            return crop;
+        }
         self.ensure_caret_blink(cx);
         let theme = cx.theme();
         let (primary, background) = (theme.primary, theme.background);
@@ -1115,7 +1139,9 @@ impl SlideEditor {
     }
 
     fn on_slide_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.panel_dialog_is_modal() { cx.stop_propagation(); return; }
+        if self.dialog_is_modal() { cx.stop_propagation(); return; }
+        // A press outside the crop on the slide keeps it (the press then acts as usual).
+        self.finish_crop_mode(true, cx);
         // The control bar of a video or audio clip (動画・音声): its own press.
         if self.clip_bar_down(event, window, cx) {
             return;
@@ -1157,6 +1183,13 @@ impl SlideEditor {
             if self.is_editing_points() {
                 return cx.notify();
             }
+        }
+        // ガイド線: a guide under the pointer is taken (shown guides come before the shapes).
+        if let Some(index) = self.guide_at(position) {
+            self.end_text_edit(window, cx);
+            self.focus_handle.focus(window, cx);
+            self.set_drag(Some(Drag::Guide { index, start: position, current: position }));
+            return cx.notify();
         }
         let p = P::of(layout.to_emu(position));
         let slop = interaction::LINE_SLOP_PX as f64 / layout.scale as f64;
@@ -1384,6 +1417,12 @@ impl SlideEditor {
         let (start, current) = drag.start_current();
         match &drag {
             Drag::Text { .. } => self.set_drag(None),
+            Drag::Guide { index, .. } => {
+                self.set_drag(None);
+                if moved(start, current) {
+                    self.drop_guide(*index, current, cx);
+                }
+            }
             Drag::Vertex { part, index, handle, .. } => {
                 self.set_drag(None);
                 if moved(start, current) {

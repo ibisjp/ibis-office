@@ -36,7 +36,7 @@ ttf-parser = "0.25"
 # support, which also turns on GPUI's entity leak tracking (a small cost).
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 gpui-pre-platform = { version = "=0.3.6", features = ["test-support"], optional = true }
-image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg"], optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg", "tiff"], optional = true }
 miniz_oxide = { version = "0.8", optional = true }
 # Vector PDF export: pages as text, paths and images (MIT OR Apache-2.0).
 # Without its text shaping (the export hands it positioned glyphs); its
@@ -49,10 +49,17 @@ skrifa = { version = "=0.42.1", optional = true }
 # Trying each font's subset before the PDF is written (the version krilla
 # uses; MIT OR Apache-2.0): a font it cannot subset is drawn as outlines.
 subsetter = { version = "=0.2.6", optional = true }
+# An SVG read into shapes and glyph outlines, to write it as a vector PDF (svg_pdf.rs: the picture a copy as a picture puts on the
+# clipboard; the version GPUI already uses; MIT OR Apache-2.0).
+usvg = { version = "=0.46.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts"], optional = true }
 
 # Automatic update (shell/update.rs): the log, paths and versions it shares with ibisOfficeUpdater.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 ibis-office-updater = { path = "../ibis-office-updater" }
+# Another app changing an open file (shell/file_watch.rs): the operating system's file watcher (CC0-1.0; FSEvents, inotify,
+# ReadDirectoryChangesW). Already in the tree through gpui-component; futures' channel (MIT OR Apache-2.0) carries its events.
+notify = "7"
+futures = { version = "0.3", default-features = false, features = ["std"] }
 
 # macOS only.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -84,7 +91,7 @@ default = ["export"]
 scenarios = ["export"]
 # `--export png|pdf|pdf-image|ui` on the command line (macOS, Windows and Linux;
 # build.rs sets `cfg(headless_export)` for it).
-export = ["dep:gpui-pre-platform", "dep:gpui-pre-windows", "dep:gpui-pre-wgpu", "dep:image", "dep:miniz_oxide", "dep:krilla", "dep:skrifa", "dep:subsetter", "dep:gpui-pre-macos"]
+export = ["dep:gpui-pre-platform", "dep:gpui-pre-windows", "dep:gpui-pre-wgpu", "dep:image", "dep:miniz_oxide", "dep:krilla", "dep:skrifa", "dep:subsetter", "dep:usvg", "dep:gpui-pre-macos"]
 
 # For the `export` feature on Linux: the headless renderer of ibisOffice's
 # fork of GPUI's wgpu renderer (GPUI has none for Linux).
@@ -96,6 +103,12 @@ gpui-pre-wgpu = { version = "=0.3.6", features = ["test-support"], optional = tr
 # GPUI already uses.
 futures = { version = "0.3", default-features = false, features = ["std"] }
 wasm-bindgen = "0.2"
+# The glyphs' outlines (render/glyph_outline.rs), as on the desktop: the glow of text is one blurred picture of them. The version krilla
+# uses (MIT OR Apache-2.0), already in the tree.
+skrifa = "=0.42.1"
+# The picture types of GPUI (`RenderImage` takes `image::Frame`) and the PNG writer of the zoom cards (pptx/zoom_cards.rs); the same
+# crate as the desktop one, already in the tree through GPUI.
+image = { version = "0.25", default-features = false, features = ["png"] }
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 console_error_panic_hook = "0.1"
