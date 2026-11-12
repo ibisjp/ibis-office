@@ -1,0 +1,19 @@
+# ibisOffice: the fonts that セットアップ (Help > Setup) offers to download. JSON Lines: one font per line; lines that are empty or
+# begin with # are ignored. The app reads this file at
+# https://raw.githubusercontent.com/ibisjp/ibis-office/main/docs/font-list.txt
+# The font files are on GitHub Pages, one folder per font: fonts/<id>/<file>, with its licence file (and README) beside it.
+#
+# keys (name_en, file and url are required):
+#   id           the font's folder name (letters, digits, . _ -); default: the file name without its extension, lower case
+#   name_en      the family name in English
+#   name_ja      the name in Japanese (default: name_en)
+#   file         the font file's name (.ttf, .otf or .ttc)
+#   size         the file's size in bytes (the download is checked against it)
+#   url          the font file's address on Pages (https)
+#   license      the licence's name, shown in the table
+#   license_url  the address of the licence file on Pages (https); it is saved beside the font
+#   sha256       the file's SHA-256 in hex (optional; checked when given)
+#
+# IPAmj Mincho (IPA Font License v1.0, Ver.006.01, from https://moji.or.jp/): the font file as distributed, not changed, with its LICENSE
+# and README beside it. Add "size" (the file's bytes) and "sha256" of the file put on Pages when it is published.
+{"id":"IPAmjMincho","name_en":"IPAmj Mincho","name_ja":"IPAmj\u660e\u671d","file":"ipamjm.ttf","size":46676744,"sha256":"a3e84f495f3c388db7a1473bf1985c1c076d0c814100f10a027ca6853eb1e8cb","url":"https://ibisjp.github.io/ibis-office/fonts/IPAmjMincho/ipamjm.ttf","license":"IPA Font License v1.0","license_url":"https://ibisjp.github.io/ibis-office/fonts/IPAmjMincho/LICENSE"}
