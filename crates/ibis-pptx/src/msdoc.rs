@@ -1995,7 +1995,6 @@ fn blocks_of(
     let mut cell = String::new();
     // The tables in a table's cell, from depth 2 down: each one's cells, the cell being filled, and its rows.
     let mut nest: Vec<(Vec<String>, String, Vec<Block>)> = Vec::new();
-    let mut para_start = 0;
     let mut i = from;
     let mut field_depth: Vec<bool> = Vec::new();
     // Each open field's instruction (its first word tells a SHAPE field, whose result is a drawing in line).
@@ -2231,8 +2230,7 @@ fn blocks_of(
             }
             blocks.push(Block::Para(para));
         }
-        para_start = end + 1;
-        i = para_start;
+        i = end + 1;
     }
     blocks
 }

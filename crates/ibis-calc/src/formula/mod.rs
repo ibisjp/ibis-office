@@ -32,6 +32,15 @@ pub fn from_file(text: &str) -> String {
     let mut at = 0;
     for t in &tokens {
         if let Token::Word(w) = &t.token {
+            // An optional LAMBDA parameter: the file spells `[b]` as `_xlop.b` (Excel writes it so; GitHub issue #168).
+            if w.get(..6).is_some_and(|p| p.eq_ignore_ascii_case("_xlop.")) && w.len() > 6 {
+                out.push_str(&text[at..t.start]);
+                out.push('[');
+                out.push_str(&w[6..]);
+                out.push(']');
+                at = t.end;
+                continue;
+            }
             let stripped = strip_prefixes(w);
             // Removing this parameter marker would change the parsed meaning.
             if w.get(..6).is_some_and(|p|p.eq_ignore_ascii_case("_xlpm."))
@@ -85,10 +94,20 @@ pub fn strip_formula_spaces(formula: &str) -> String {
 pub fn to_file(text: &str) -> String {
     let text = &implicit_to_single_calls(&spills_to_anchor_arrays(text));
     let Ok(tokens) = tokenize(text) else { return text.to_string() };
-    let params = lambda_parameters(&tokens);
+    let (params, optional) = lambda_parameters(&tokens);
     let mut out = String::with_capacity(text.len() + 8);
     let mut at = 0;
     for (i, t) in tokens.iter().enumerate() {
+        // An optional parameter `[b]` of LAMBDA is `_xlop.b` in the file (GitHub issue #168).
+        if optional.contains(&i)
+            && let Token::Brackets(raw) = &t.token
+        {
+            out.push_str(&text[at..t.start]);
+            out.push_str("_xlop.");
+            out.push_str(&raw[1..raw.len() - 1]);
+            at = t.end;
+            continue;
+        }
         let Token::Word(w) = &t.token else { continue };
         let is_call = matches!(tokens.get(i + 1).map(|t| &t.token), Some(Token::LParen));
         // A function named alone, as an argument (`BYROW(A1:C3, SUM)`): `_xleta.SUM`.
@@ -253,8 +272,9 @@ fn anchor_arrays_to_spills(text: &str) -> String {
 
 /// The names LAMBDA and LET bind: LAMBDA's arguments but the last, LET's
 /// odd arguments but the last.
-fn lambda_parameters(tokens: &[lexer::Spanned]) -> Vec<String> {
+fn lambda_parameters(tokens: &[lexer::Spanned]) -> (Vec<String>, Vec<usize>) {
     let mut names = Vec::new();
+    let mut optional = Vec::new();
     for (i, t) in tokens.iter().enumerate() {
         let Token::Word(w) = &t.token else { continue };
         let upper = w.to_uppercase();
@@ -265,8 +285,8 @@ fn lambda_parameters(tokens: &[lexer::Spanned]) -> Vec<String> {
         }
         // Split the arguments at the top level.
         let mut depth = 0;
-        let mut args: Vec<Vec<&Token>> = vec![Vec::new()];
-        for t in &tokens[i + 2..] {
+        let mut args: Vec<Vec<usize>> = vec![Vec::new()];
+        for (k, t) in tokens.iter().enumerate().skip(i + 2) {
             match &t.token {
                 Token::LParen | Token::LBrace => depth += 1,
                 Token::RParen | Token::RBrace if depth == 0 => break,
@@ -277,17 +297,29 @@ fn lambda_parameters(tokens: &[lexer::Spanned]) -> Vec<String> {
                 }
                 _ => {}
             }
-            args.last_mut().unwrap().push(&t.token);
+            args.last_mut().unwrap().push(k);
         }
         let count = args.len();
         for (k, arg) in args.iter().enumerate() {
             let binds = if is_lambda { k + 1 < count } else { k % 2 == 0 && k + 1 < count };
-            if binds && let [Token::Word(name)] = arg[..] {
-                names.push(name.to_string());
+            if !binds {
+                continue;
+            }
+            match arg[..] {
+                [at] => match &tokens[at].token {
+                    Token::Word(name) => names.push(name.to_string()),
+                    // `[b]`: an optional parameter of LAMBDA.
+                    Token::Brackets(raw) if is_lambda && raw.len() > 2 => {
+                        names.push(raw[1..raw.len() - 1].to_string());
+                        optional.push(at);
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }
-    names
+    (names, optional)
 }
 
 /// Move the relative references of `formula` by `rows` and `columns` (a
@@ -313,6 +345,45 @@ pub fn shift(formula: &str, rows: i64, columns: i64) -> String {
             }
         }
         Some(r)
+    })
+}
+
+/// The formula of a cell copied from (`from_row`, `from_column`) and pasted transposed at (`row`, `column`) (形式を選択して貼り付け
+/// with 行列を入れ替える): the offset of every relative reference swaps its rows and columns (`A1` in `B1`, pasted one down and
+/// one across, is the cell above), and a fixed part (`$`) stays fixed on the other axis. Whole rows and columns are left as
+/// written. A reference moved off the sheet becomes `#REF!`.
+pub fn transpose(formula: &str, from_row: u32, from_column: u32, row: u32, column: u32) -> String {
+    rewrite_references(formula, |r| {
+        if r.whole_columns || r.whole_rows {
+            return Some(r.clone());
+        }
+        let mut out = r.clone();
+        for (new, old) in [(&mut out.start, &r.start), (&mut out.end, &r.end)] {
+            // The new row comes from the old column, and the new column from the old row.
+            if old.column_fixed {
+                new.row = old.column;
+                new.row_fixed = true;
+            } else {
+                let v = row as i64 + (old.column as i64 - from_column as i64);
+                if !(0..=MAX_ROW as i64).contains(&v) {
+                    return None;
+                }
+                new.row = v as u32;
+                new.row_fixed = false;
+            }
+            if old.row_fixed {
+                new.column = old.row;
+                new.column_fixed = true;
+            } else {
+                let v = column as i64 + (old.row as i64 - from_row as i64);
+                if !(0..=MAX_COLUMN as i64).contains(&v) {
+                    return None;
+                }
+                new.column = v as u32;
+                new.column_fixed = false;
+            }
+        }
+        Some(out)
     })
 }
 
@@ -385,6 +456,77 @@ pub fn rewrite_references(formula: &str, mut f: impl FnMut(&AreaRef) -> Option<A
     }
     out.push_str(&formula[at..]);
     out
+}
+
+/// What Excel makes of a formula typed in when it is entered (#185): the letters of cell and range references, whole columns
+/// and rows (`a1` -> `A1`, `$b$2:c3` -> `$B$2:C3`, `a:a` -> `A:A`), the names of the functions the engine has (`sum` -> `SUM`) and
+/// `TRUE`/`FALSE` go to upper case, and a sheet written before a reference takes the case of the sheet's own name (`sheet2!c3` ->
+/// `Sheet2!C3`, `sheets` being the names of the workbook's sheets). Text in quotes, defined names, table and column names, and the
+/// spaces and everything else stay as typed. The formula is read by the lexer and the parser (no pattern on the text); one that does not
+/// read is returned as it is.
+pub fn normalize_case(formula: &str, sheets: &[&str]) -> String {
+    let refs = rewrite_references(formula, |area| {
+        let mut area = area.clone();
+        if let Some(sheet) = area.sheet.as_mut().filter(|s| s.book.is_none()) {
+            let own = |name: &str| sheets.iter().find(|s| s.eq_ignore_ascii_case(name)).map(|s| s.to_string());
+            if let Some(n) = own(&sheet.first) {
+                sheet.first = n;
+            }
+            if let Some(n) = sheet.last.as_deref().and_then(own) {
+                sheet.last = Some(n);
+            }
+        }
+        Some(area)
+    });
+    let Ok(tokens) = tokenize(&refs) else { return refs };
+    let mut out = String::with_capacity(refs.len());
+    let mut at = 0;
+    for (i, t) in tokens.iter().enumerate() {
+        let Token::Word(w) = &t.token else { continue };
+        let call = matches!(tokens.get(i + 1).map(|n| &n.token), Some(Token::LParen));
+        let upper = w.to_uppercase();
+        let is_function = call && !w.contains('_') && w.is_ascii() && crate::functions::lookup(&upper).is_some();
+        let is_logical = !call && w.is_ascii() && (upper == "TRUE" || upper == "FALSE") && !matches!(i.checked_sub(1).map(|k| &tokens[k].token), Some(Token::Sheet { .. }));
+        if (is_function || is_logical) && upper != *w {
+            out.push_str(&refs[at..t.start]);
+            out.push_str(&upper);
+            at = t.end;
+        }
+    }
+    out.push_str(&refs[at..]);
+    out
+}
+
+#[cfg(test)]
+mod normalize_case_tests {
+    use super::normalize_case;
+
+    #[test]
+    fn references_and_functions_go_to_upper_case() {
+        let n = |f: &str| normalize_case(f, &["Sheet1", "Sheet2", "My Data"]);
+        assert_eq!(n("a1"), "A1");
+        assert_eq!(n("sum(a1:b2)+\"abc\""), "SUM(A1:B2)+\"abc\"");
+        assert_eq!(n("$a$1+b$2"), "$A$1+B$2");
+        assert_eq!(n("sheet2!c3"), "Sheet2!C3");
+        assert_eq!(n("'my data'!c3"), "'My Data'!C3");
+        assert_eq!(n("sum(a:a)+sum(1:3)+sum($b:c)"), "SUM(A:A)+SUM(1:3)+SUM($B:C)");
+        assert_eq!(n("if(a1>1, true, false)"), "IF(A1>1, TRUE, FALSE)");
+        assert_eq!(n("sum( a1 , b2 )"), "SUM( A1 , B2 )");
+    }
+
+    #[test]
+    fn text_names_and_spacing_stay() {
+        let n = |f: &str| normalize_case(f, &["Sheet1"]);
+        assert_eq!(n("\"a1 sum(b2)\"&a1"), "\"a1 sum(b2)\"&A1");
+        // A defined name keeps its case, and a function the engine does not have (a LAMBDA's name) is left.
+        assert_eq!(n("myRate*a1"), "myRate*A1");
+        assert_eq!(n("myFunc(a1)"), "myFunc(A1)");
+        assert_eq!(n("Table1[Col a]+sum(a1)"), "Table1[Col a]+SUM(A1)");
+        assert_eq!(n("[1]sheet1!a1"), "[1]sheet1!A1");
+        // An unfinished formula is corrected as far as it reads.
+        assert_eq!(n("sum(a1"), "SUM(A1");
+        assert_eq!(n("SUM(A1)"), "SUM(A1)");
+    }
 }
 
 /// Whether `formula` refers to cells of an external workbook (`[1]Sheet1!A1`,
@@ -834,7 +976,21 @@ mod tests {
         assert_eq!(to_file("LET(x,1,x+1)"), "_xlfn.LET(_xlpm.x,1,_xlpm.x+1)");
         assert_eq!(from_file("_xlfn.LET(_xlpm.x,1,_xlpm.x+1)"), "LET(x,1,x+1)");
         for file in ["_xlfn.MAP({1;2},{3;4},_xlfn.LAMBDA(_xlpm.x0,_xlpm.x1,_xlpm.x0+_xlpm.x1))","_xlfn.LET(_xlpm.A1,5,_xlpm.A1+A1)","_xlfn.LET(_xlpm.TRUE,5,_xlpm.TRUE+IF(TRUE,1,0))","_xlfn.LET(_XLPM.A1,5,_xlpm.a1+A1)"] { assert_eq!(to_file(&from_file(file)),file); }
+        // An optional LAMBDA parameter (GitHub issue #168): Excel writes `_xlop.b` where it is declared, `_xlpm.b` where it is used.
+        assert_eq!(from_file("_xlfn.LAMBDA(_xlpm.a,_xlop.b,_xlpm.a)(10)"), "LAMBDA(a,[b],a)(10)");
+        assert_eq!(to_file("LAMBDA(a,[b],a+b)(10)"), "_xlfn.LAMBDA(_xlpm.a,_xlop.b,_xlpm.a+_xlpm.b)(10)");
+        assert_eq!(to_file(&from_file("_xlfn.LAMBDA(_xlpm.a,_xlop.b,_xlpm.a)(10)")), "_xlfn.LAMBDA(_xlpm.a,_xlop.b,_xlpm.a)(10)");
+        assert_eq!(to_file("[b]+1"), "[b]+1");
         assert_eq!(to_file("CONCAT(\"XLOOKUP(\",A1)"), "_xlfn.CONCAT(\"XLOOKUP(\",A1)");
+    }
+
+    #[test]
+    fn transposing() {
+        // B1 =A1*2 pasted transposed at A2: the cell above.
+        assert_eq!(transpose("A1*2", 0, 1, 1, 0), "A1*2");
+        assert_eq!(transpose("A1*2", 0, 1, 5, 4), "E5*2");
+        assert_eq!(transpose("SUM($A$1:B1)", 0, 2, 5, 4), "SUM($A$1:E5)");
+        assert_eq!(transpose("$A1+B$2", 3, 3, 3, 3), "A$1+$B2");
     }
 
     #[test]

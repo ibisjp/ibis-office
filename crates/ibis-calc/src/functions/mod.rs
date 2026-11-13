@@ -55,6 +55,30 @@ pub(crate) fn refuses_logical(name: &str) -> bool {
     )
 }
 
+/// Functions whose arguments (those of the returned bit mask: bit i is argument i) are scalars: given an array, or a range of several cells
+/// that is read as one, for one of them they run once for each element and give an array (Excel 365 does; measured on Excel 16.0.20527 with
+/// `Formula2` and the spill range, 2026-11-09, #141: `=BIN2DEC({"1","10",3})`, `=IMABS({1,2,3})`, `=ADDRESS({1,2,3},2)`,
+/// `=PERCENTILE(2,{1,2,3})`...). The arguments that are arrays by nature (the data of PERCENTILE, the holidays of WORKDAY, the schedule of
+/// FVSCHEDULE) are not in the mask. The other functions lift in their own code (`numeric`, `texts`, `map_args`).
+pub(crate) fn scalar_args_lifted(name: &str) -> u32 {
+    match name {
+        "ARABIC" | "ROMAN" | "ERROR.TYPE" | "HYPERLINK" | "IMAGE" | "ADDRESS" | "COMPLEX" | "DECIMAL" | "REGEXEXTRACT" => 0xFF,
+        "BIN2DEC" | "BIN2HEX" | "BIN2OCT" | "DEC2BIN" | "DEC2HEX" | "DEC2OCT" | "HEX2BIN" | "HEX2DEC" | "HEX2OCT" | "OCT2BIN" | "OCT2DEC" | "OCT2HEX" => 0xFF,
+        "IMABS" | "IMAGINARY" | "IMARGUMENT" | "IMCONJUGATE" | "IMCOS" | "IMCOSH" | "IMCOT" | "IMCSC" | "IMCSCH" | "IMDIV" | "IMEXP" | "IMLN" | "IMLOG10"
+        | "IMLOG2" | "IMPOWER" | "IMREAL" | "IMSEC" | "IMSECH" | "IMSIN" | "IMSINH" | "IMSQRT" | "IMSUB" | "IMTAN" => 0xFF,
+        // Start and end dates (and the weekend); the holidays are an array.
+        "NETWORKDAYS" | "WORKDAY" => 0b011,
+        "NETWORKDAYS.INTL" | "WORKDAY.INTL" => 0b111,
+        // The point asked for; the data are an array.
+        "PERCENTILE" | "PERCENTILE.INC" | "PERCENTILE.EXC" | "QUARTILE" | "QUARTILE.INC" | "QUARTILE.EXC" => 0b10,
+        "PERCENTRANK" | "PERCENTRANK.INC" | "PERCENTRANK.EXC" => 0b100 | 0b010,
+        "FVSCHEDULE" | "NPV" => 0b1,
+        "TEXTBEFORE" | "TEXTAFTER" => 0b101,
+        "VALUETOTEXT" | "ARRAYTOTEXT" => 0b10,
+        _ => 0,
+    }
+}
+
 /// The names of the functions the engine has.
 pub fn implemented() -> Vec<&'static str> {
     table::FUNCTIONS.iter().map(|f| f.name).filter(|n| lookup(n).is_some()).collect()

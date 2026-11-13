@@ -7,7 +7,10 @@
 //! browser client (wasm), the server and native builds, and published as OSS.
 
 pub mod analysis;
+pub mod cmyk;
+pub mod ibis_text;
 pub mod animation;
+pub mod animation_color;
 pub mod animation_preset;
 pub mod transition_catalog;
 pub mod transition_plan;
@@ -59,11 +62,12 @@ pub use chart::{ExFormat, ExLabels, View3D,
 pub use field_format::{AdvanceFieldInfo, HyperlinkFieldInfo, apply_instruction_text_switches, apply_text_switches, compare_field_text, default_listnum_format, evaluate_with_resolver, expand_nested_fields, format_ask, format_autonum, format_autotext, format_autotextlist, format_bibliography, format_citation, format_doc_variable, format_filesize, format_fillin, format_hyperlink_field, format_listnum, format_quote, format_symbol, format_template_field, format_user_address, format_user_initials, format_user_name, formula_text_with_resolver, if_field_text, initials_from_name, parse_advance_field, parse_ask_field, parse_hyperlink_field, parse_info_field, parse_set_field, TableCellResolver};
 pub use command::{Command, Document, EditError};
 pub use flow_command::{CaptionNumberFormat, CaseConversion, Container, CrossReferenceKind, CrossReferenceTarget, CrossReferenceType, FlowCommand, FlowPos, FlowTableCellResolver, missing_header_footer_style, InsertFormat, ParaChange, RunChange, TableEdit, TocInstruction, all_paragraphs, caption_description_text, caption_labels, comment_at_pos, comment_marks, comment_range, cross_reference_targets, edit_field_at, entire_caption_text, find_table_cell_for_paragraph, flow_cell_text, get_field_at, get_table_cell_at, insert_caption_detailed, insert_cross_reference_target, insert_field_at_range, missing_table_of_figures_style, missing_toc_styles_for_levels, parse_cell_number, parse_listnum, parse_toc_instruction, relative_paragraph_position, table_of_figures_entries, toc_caption_label, toc_entries_with_instruction, updated_fields_in_range};
-pub use sheet_command::{calculate_missing_values, ReportCell, CellEdit, CellInput, CellSlot, ChartMoveTarget, Edge, PutCell, SheetCommand, SheetPatch, SortBy, StyleChange};
+pub use sheet_command::{calculate_missing_values, calculate_volatile_on_open, ReportCell, CellEdit, CellInput, CellSlot, ChartMoveTarget, Edge, PutCell, SheetCommand, SheetPatch, SortBy, StyleChange};
 pub use drawing::{
     Bevel, BevelPreset, BlipFill, Color, EndSize, Fill, Geometry, GradientPath, GradientStop, LineAlignment, LineCap, LineCompound, LineDash, LineEnd, LineJoin, Reflection, Rgb, Shadow, Stroke, TileAlign, TileFlip, pattern_tile, spreadsheet_pattern_of_preset, spreadsheet_pattern_tile,
 };
 pub use flow::{
+    OPTIONAL_HYPHEN,
     SubdocumentInfo,
     ControlInfo, FontTableEntry, ControlLock, TextEffects, TextShadow, ArtBorder, Block, BorderStyle, CellAnchor, CellDirection, Combine, CustomProperty, CustomPropertyValue, DocProperties, DocumentInteractionMode, DocumentProtection, DocumentViewMode, DropCap, DropCapLocation, EmphasisMark, RubyAlign, TableAlign, TableAnchor, TableCondition, TableFloat, TableLook, TableRegion, TableStyleRef, FlowAlign, FlowBorder, FlowCell, FlowDocument, FlowParagraph, FlowRow, FlowRun, FlowRunKind, FlowRunStyle, PictureLook,
     FormFieldData, FormFieldKind,
@@ -82,11 +86,13 @@ pub use merge::{
 };
 pub use geometry::{EMU_PER_INCH, EMU_PER_POINT, Emu, EmuPoint, EmuRect, EmuSize, ResizeHandle};
 pub use slide_comment::{Author, CommentReply, SlideComment};
+pub use cmyk::{Cmyk, CmykConverter, CmykMode, OpenCmykConverter};
 pub use animation_preset::{AnimBehavior, BehaviorKind};
 pub use animation::{Animation, AnimationAfterEffect, AnimationClass, AnimationLook, AnimationRepeat, AnimationSide, AnimationStart, AnimationTrigger, ChartAnimationElement, ChartBuildStep, DiagramAnimationElement, DiagramBuildStep, MediaCommand, TextUnit, UnitGap};
+pub use ibis_text::{IbisShapeExt, ObjectWrap, ObjectWrapKind, TextChain};
 pub use model::{ZoomObject, ZoomTarget, 
     Glue, SlideGuide,
-    AltText, ArtisticEffect, AutoShape, BlipEffects, Clip, PictureTile, ClipOptions, Crop, CustomShow, EmbeddedFont, FloatingAnchor, Layout, LayoutId, LayoutPlaceholder, LayoutScale, Master, MasterId, NotesDate, NotesMarks, MediaBookmark, MediaCaptionTrack, MediaStart, MediaVolume, PlaceholderRef, SlidePlaceholder, Media, MediaFormat, MediaId, Picture, PictureWrapType, Placeholder, Presentation, Shape,
+    AltText, ArtisticEffect, AutoShape, BlipEffects, Clip, PictureTile, ClipOptions, Crop, CustomShow, EmbeddedFont, FloatingAnchor, Layout, LayoutId, LayoutPlaceholder, LayoutScale, Master, MasterId, NotesDate, NotesMarks, NotesPaneOpening, NotesPaneSave, MediaBookmark, MediaCaptionTrack, MediaStart, MediaVolume, PlaceholderRef, SlidePlaceholder, Media, MediaFormat, MediaId, Picture, PictureWrapType, Placeholder, Presentation, Shape, TypefaceTraits,
     WrapPoint, WrapPolygon,
     Section, ShapeGroup, GroupMember, ShapeId, ShapeKind, ShowProperties, ShowSlideRange, ShowType, Slide, SlideId, Tilt, CameraPreset, Transition, TransitionSound,
     ModifyVerifier, ObjectDefaults, ObjectPlacement, ShapeDefault,
@@ -96,14 +102,14 @@ pub use form_control::{ControlHit, ControlKind, FormControl};
 pub use shape_geometry::{FormulaGeometry, GeometryDef, GeometryPath, Guide, Outline, PathFill, PathOp, Subpath};
 pub use sheet::{
     cell_name, CellImage, ExternalBook, ExternalSheet, CalculationCompatibilityVersion, CalcMode, Border, BorderLine, CellUnderline, CellAlign, CellError, CellGradient, sorted_stops, CellKind, CellRange, CellStyle, CellValue, CellVerticalAlign, CustomCellStyle, DefinedName, Sheet,
-    SheetCell, CellRun, DataTable, ConsolidateFunction, DataConsolidate, SubtotalParams, ScenarioInputCell, SheetScenario, SheetScenarios, SheetComment, NoteRect, ThemeColor, Unsaved, SheetHeaderFooter, SheetPrint, SheetProtection, ProtectedRange, WorkbookProtection, PasswordHash, ProtectionAllowed, SheetState, Workbook, WorkbookSheet, SheetFloat, ConditionalFormat, CfRule, CfKind, CfValue, CfStyle, CfIcon, DataBarAxisPosition, DataBarDirection, Validation, Hyperlink, AutoFilter, ColumnFilter, DateGroup, SheetTable, TableStyleInfo, TableTotal, ThreadPost, ThreadedComment, Sparkline, SparklineAxis, SparklineEmpty, SparklineGroup, SparklineKind,
-    CustomWorkbookView, CustomSheetView,
-    PhoneticType, PhoneticAlignment, PhoneticProperties,
+    SheetCell, CellRun, DataTable, ConsolidateFunction, DataConsolidate, SubtotalParams, ScenarioInputCell, SheetScenario, SheetScenarios, SheetComment, NoteRect, ThemeColor, Unsaved, DefaultRowRule, SheetHeaderFooter, SheetPrint, SheetProtection, ProtectedRange, WorkbookProtection, PasswordHash, ProtectionAllowed, SheetState, Workbook, WorkbookSheet, SheetFloat, ConditionalFormat, CfRule, CfKind, CfValue, CfStyle, CfIcon, DataBarAxisPosition, DataBarDirection, Validation, Hyperlink, AutoFilter, ColumnFilter, DateGroup, SheetTable, TableStyleInfo, TableTotal, ThreadPost, ThreadedComment, Sparkline, SparklineAxis, SparklineEmpty, SparklineGroup, SparklineKind,
+    CustomWorkbookView, CustomSheetView, SheetViewPosition,
+    PhoneticType, PhoneticAlignment, PhoneticProperties, PhoneticPart, PhoneticDetail, PhoneticInfo,
 };
 pub use pivot::{DateGroupBy, PivotAliases, item_key as pivot_item_key, PivotAxis, PivotDataField, PivotDetails, PivotField, PivotFieldGrouping, PivotFilter, PivotItem, PivotLine, PivotPageField, PivotSort, PivotSource, PivotStyleInfo, PivotTable, chart_from_pivot, update_chart_from_pivot};
 pub use sheet_calc::{BookView, ensure_calc_index, warmup_calc_index_ahead};
 pub use table::{CellBorders, Table, TableCell, TableRow, TableStyleOptions};
-pub use text::{tate_chu_yoko_fit_scale, KernMin, TateChuYoko, TATE_CHU_YOKO_FIT_WIDTH_EM, NumberScheme, AutoNumber, 
+pub use text::{east_asian_language, EastAsianLang, tate_chu_yoko_fit_scale, KernMin, TateChuYoko, TATE_CHU_YOKO_FIT_WIDTH_EM, NumberScheme, AutoNumber, 
     Bullet, SymbolBullet, FONT_SIZE_STEPS, FontAlign, FontSet, CharacterFormat, ListKind, ParagraphFormat, ThemeFonts, is_east_asian, Insets, LineSpacing, Paragraph, Run, RunStyle, TextAlign, TextAutofit, TextBody,
     SlideLink, TextField, TextStyle, VerticalAnchor, step_font_size, autofit_font_size_pt, Strike, Caps, Underline, VerticalKind,
     TextTabAlign, TextTabStop,

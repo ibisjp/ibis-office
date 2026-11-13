@@ -297,6 +297,7 @@ pub(crate) fn print_titles(presentation: &Presentation, slide: &Slide) -> Titles
     )
 }
 
+#[cfg(any(test, all(target_os = "macos", feature = "scenarios")))]
 pub(crate) fn sheet_pages(slide: &Slide, area: EmuRect, titles: Titles, headings: (f64, f64)) -> Option<(SheetPrint, f64, Vec<EmuRect>)> {
     sheet_pages_with_text(slide, area, titles, headings, &[])
 }
@@ -526,6 +527,7 @@ fn page_spans(edges: &[i64], breaks: &[i64], start: i64, end: i64, room: f64, ti
 /// The pages a worksheet prints on (as spans of the slide, EMU), for the
 /// page break preview and the page layout view: the cut lines are where it
 /// breaks; and the scale it prints at (cells are drawn at that scale on paper).
+#[cfg(all(any(target_os = "macos", target_os = "windows"), feature = "export"))]
 pub(crate) fn preview_pages(presentation: &Presentation, slide: &Slide, resources: &Resources) -> (f64, Vec<EmuRect>) {
     let mut area = export_area(presentation, slide);
     let text: Vec<_> = slide.shapes.iter().filter_map(|shape| match &shape.kind {
@@ -824,6 +826,7 @@ impl crate::export_text::TextLayer for SlideTextLayer<'_> {
 /// out as in the editor) and its headless renderer if it has one, and the
 /// platform, to be kept as long as the app.
 pub(crate) fn headless_app() -> (Rc<dyn Platform>, HeadlessAppContext) {
+    crate::register_hooks();
     crate::xlsx::sheet_view::release_layouts();
     // On Windows the headless platform has no DirectWrite (its text system
     // lays out nothing): the full one, which opens no window either.
@@ -836,23 +839,8 @@ pub(crate) fn headless_app() -> (Rc<dyn Platform>, HeadlessAppContext) {
     (platform, cx)
 }
 
-/// The platform's renderer drawing without a window: GPUI's Metal one, or
-/// on Windows the DirectX one and on Linux the wgpu one of ibisOffice's
-/// forks (GPUI has none there).
-pub(crate) fn headless_renderer() -> Option<Box<dyn PlatformHeadlessRenderer>> {
-    #[cfg(windows)]
-    return gpui_windows::DirectXHeadlessRenderer::new()
-        .map_err(|e| log::error!("DirectX: {e:#}"))
-        .ok()
-        .map(|renderer| Box::new(renderer) as Box<dyn PlatformHeadlessRenderer>);
-    #[cfg(target_os = "linux")]
-    return gpui_wgpu::WgpuHeadlessRenderer::new()
-        .map_err(|e| log::error!("wgpu: {e:#}"))
-        .ok()
-        .map(|renderer| Box::new(renderer) as Box<dyn PlatformHeadlessRenderer>);
-    #[cfg(not(any(windows, target_os = "linux")))]
-    gpui_kit::platform::current_headless_renderer()
-}
+/// The platform's renderer drawing without a window (the shell's, which its scenarios and the clipboard's pictures use too).
+pub(crate) use crate::shell::headless::headless_renderer;
 
 /// Print the time since `since` (and restart it) under `IBIS_DEBUG_TIMING`.
 fn lap(what: &str, since: &mut crate::clock::Instant) {
@@ -860,6 +848,50 @@ fn lap(what: &str, since: &mut crate::clock::Instant) {
         eprintln!("export: {what} {:.0} ms", since.elapsed().as_secs_f64() * 1000.0);
     }
     *since = crate::clock::Instant::now();
+}
+
+/// `--export row-heights <file> [out.tsv]`: the height of each row of each sheet, in points, as the app lays it out when it opens the
+/// file (after `fit_measured_rows`, before printing's own scaling: what Excel's `Rows(i).Height` is compared with). Tab-separated,
+/// one line per row: sheet number (from 1), sheet name, row number (from 1), height (0 for a hidden row), `custom` or `auto`
+/// (`customHeight`), then a last line of `kind` `default` (the row number after the last one the sheet keeps, the height of every row from it on: an empty row beyond the sheet's own). Written to `out` or, without it, to the standard output. No window is opened.
+pub fn row_heights(mut presentation: Presentation, out: Option<&Path>) -> Result<(), String> {
+    let (_platform, mut cx) = headless_app();
+    cx.allow_parking();
+    let resources = Rc::new(cx.update(|app| {
+        let resources = Resources::new(&presentation, app);
+        resources.preload.wait_all();
+        resources
+    }));
+    crate::xlsx::row_fit::fit_measured_rows(&mut presentation, &resources);
+    let mut tsv = String::from("sheet\tname\trow\theight_pt\tkind\n");
+    let mut number = 0;
+    for slide in &presentation.slides {
+        for shape in &slide.shapes {
+            let ibis_doc_model::ShapeKind::Sheet(sheet) = &shape.kind else { continue };
+            number += 1;
+            let name = presentation
+                .workbook
+                .as_ref()
+                .and_then(|w| w.sheets.iter().find(|s| s.slide == Some(slide.id)))
+                .map(|s| s.name.clone())
+                .unwrap_or_default();
+            let name_cell = name.replace(['\t', '\n'], " ");
+            // The rows after the last one the sheet keeps are all this high (`kind` `default`, from its row number on).
+            let default_line = format!("{number}\t{name_cell}\t{}\t{}\tdefault\n", sheet.rows.len() + 1, ibis_calc::number_to_xml(sheet.default_row as f64 / ibis_doc_model::EMU_PER_POINT as f64));
+            for (row, &height) in sheet.rows.iter().enumerate() {
+                let kind = if sheet.custom_rows.contains(&(row as u32)) { "custom" } else { "auto" };
+                tsv.push_str(&format!("{number}\t{name_cell}\t{}\t{}\t{kind}\n", row + 1, ibis_calc::number_to_xml(height as f64 / ibis_doc_model::EMU_PER_POINT as f64)));
+            }
+            tsv.push_str(&default_line);
+        }
+    }
+    match out {
+        Some(path) => std::fs::write(path, tsv).map_err(|e| format!("{}: {e}", path.display())),
+        None => {
+            print!("{tsv}");
+            Ok(())
+        }
+    }
 }
 
 /// Export `presentation` as `options` say. Prints each file written.
@@ -942,6 +974,8 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
 
     lap("pictures, density", &mut lap_at);
     let mut pages = Vec::new();
+    // A file with the CMYK mode on: its colours go to the PDF as DeviceCMYK (pictures stay RGB).
+    crate::pdf_vector::set_cmyk_export(presentation.cmyk.enabled);
     let mut vector = (options.format == Format::Pdf).then(crate::pdf_vector::PdfWriter::new);
     crate::render::chart_view::VECTOR_EXPORT.with(|v| v.set(vector.is_some()));
     // The window a vector PDF's pages are drawn in, and its size.
@@ -1686,6 +1720,7 @@ fn write_pdf(path: &Path, pages: &[(image::RgbaImage, (f32, f32))]) -> Result<()
 #[cfg(test)]
 #[path = "tests/export_pagination.rs"]
 mod pagination_tests;
+
 
 #[cfg(test)]
 mod tests {

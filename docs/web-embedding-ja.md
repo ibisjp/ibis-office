@@ -85,7 +85,7 @@ window.addEventListener('message', (e) => {
 3 つとも、リリースのページ `https://github.com/ibisjp/ibis-office/releases/tag/v<版>` にあります。取ってきて、アーカイブを照合し、展開して、ファイルごとに照合します。
 
 ```sh
-V=0.8.6
+V=0.8.7
 BASE=https://github.com/ibisjp/ibis-office/releases/download/v$V
 curl -LO $BASE/ibisOffice-$V-Web.zip
 curl -LO $BASE/ibisOffice-$V-Web.zip.sha256

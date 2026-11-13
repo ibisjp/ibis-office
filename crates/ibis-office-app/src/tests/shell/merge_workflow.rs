@@ -6,6 +6,7 @@ use crate::docx::merge_panel::{MergeDialog, MergeOutput, MergeStep};
 use crate::docx::scenarios::DocSteps;
 use crate::shell::scenario::Scenario;
 use ibis_doc_model::{Block, FlowPos};
+use crate::docx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![

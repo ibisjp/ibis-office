@@ -19,6 +19,10 @@ fn ctn<'a, 'i>(node: Node<'a, 'i>) -> Option<Node<'a, 'i>> {
     child(node, "cTn")
 }
 
+fn is_true(v: Option<&str>) -> bool {
+    matches!(v, Some("1" | "true"))
+}
+
 /// A time node's own start delay (`stCondLst/cond/@delay`), milliseconds;
 /// 0 when `indefinite` or absent.
 fn delay(ctn: Node) -> u32 {
@@ -207,7 +211,7 @@ pub(crate) struct Targets<'a> {
     pub(crate) diagram_builds: &'a HashMap<String, ibis_doc_model::DiagramBuildStep>,
 }
 
-fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrigger) -> Option<Animation> {
+pub(crate) fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrigger) -> Option<Animation> {
     let class = match e.attribute("presetClass")? {
         "entr" => AnimationClass::Entrance,
         "emph" => AnimationClass::Emphasis,
@@ -230,7 +234,7 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
     let duration = behaviours
         .iter()
         .filter_map(|b| child(*b, "cBhvr").and_then(ctn))
-        .map(|c| delay(c) + c.attribute("dur").and_then(|d| d.parse::<u32>().ok()).unwrap_or(0))
+        .map(|c| delay(c) + c.attribute("dur").and_then(|d| d.parse::<u32>().ok()).unwrap_or(0) * if is_true(c.attribute("autoRev")) { 2 } else { 1 })
         .max()
         .unwrap_or(0);
     let has = |name: &str| behaviours.iter().any(|b| b.tag_name().name() == name);
@@ -241,7 +245,7 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
         8 => Some(AnimationSide::Left),
         _ => None,
     };
-    let behaviors = parse_behaviors(&behaviours);
+    let behaviors = parse_behaviors(&behaviours, e.attribute("fill") == Some("hold"));
     let motion_path = behaviours.iter().find(|b| b.tag_name().name() == "animMotion").and_then(|b| b.attribute("path")).and_then(path_points);
     // 再生・一時停止・停止: the call (`p:cmd`) says which; the preset (1, 2, 3) when it names none we know.
     let media_command = behaviours.iter().find(|b| b.tag_name().name() == "cmd").and_then(|b| b.attribute("cmd")).and_then(|c| {
@@ -282,7 +286,8 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
             23 if has("animScale") || matches!((class, preset.1), (AnimationClass::Entrance, 16) | (AnimationClass::Exit, 32)) => AnimationLook::Zoom,
             // フロート as ibisOffice wrote it (a fade with a short rise); PowerPoint's own (with `ppt_y` and a turn) is played as it says.
             30 if !has("anim") => AnimationLook::Float(if preset.1 == 2 { AnimationSide::Bottom } else { AnimationSide::Top }),
-            28 => AnimationLook::Replay,
+            // クレジット (28) as PowerPoint writes it has the behaviours that move the shape; ibisOffice's own had none.
+            28 if !has("anim") => AnimationLook::Replay,
             // Every other preset (including 53, PowerPoint's own ズーム, and スライドイン from a corner) is played as
             // the behaviours the file gives it say, not as a fade.
             _ if !behaviors.is_empty() => AnimationLook::Preset,
@@ -319,6 +324,8 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
     // what came before, which the slide show works out itself): only the
     // effect's own delay is its delay.
     let _ = group_delay;
+    // A preset played as its behaviours say keeps their time options (smooth start, auto-reverse…) on the behaviours.
+    let preset_look = look == AnimationLook::Preset;
     let parse_repeat = |val: &str| -> AnimationRepeat {
         if val == "indefinite" {
             AnimationRepeat::UntilNextClick
@@ -334,28 +341,28 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
         }
     };
     let repeat_count = e.attribute("repeatCount")
-        .or_else(|| behaviours.iter().filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("repeatCount")))
+        .or_else(|| behaviours.iter().filter(|_| !preset_look).filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("repeatCount")))
         .map_or(AnimationRepeat::None, parse_repeat);
     let auto_reverse = e.attribute("autoRev")
-        .or_else(|| behaviours.iter().filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("autoRev")))
+        .or_else(|| behaviours.iter().filter(|_| !preset_look).filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("autoRev")))
         .is_some_and(|v| v == "1" || v == "true");
     let accel = e.attribute("accel")
-        .or_else(|| behaviours.iter().filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("accel")))
+        .or_else(|| behaviours.iter().filter(|_| !preset_look).filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("accel")))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     let decel = e.attribute("decel")
-        .or_else(|| behaviours.iter().filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("decel")))
+        .or_else(|| behaviours.iter().filter(|_| !preset_look).filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("decel")))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     let rewind = e.attribute("rewind")
-        .or_else(|| behaviours.iter().filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("rewind")))
+        .or_else(|| behaviours.iter().filter(|_| !preset_look).filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("rewind")))
         .is_some_and(|v| v == "1" || v == "true");
     let parse_after_effect = |fill: &str| match fill {
         "remove" => AnimationAfterEffect::Hide,
         _ => AnimationAfterEffect::Hold,
     };
     let after_effect = e.attribute("fill")
-        .or_else(|| behaviours.iter().filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("fill")))
+        .or_else(|| behaviours.iter().filter(|_| !preset_look).filter_map(|b| child(*b, "cBhvr").and_then(ctn)).find_map(|c| c.attribute("fill")))
         .map_or(AnimationAfterEffect::Hold, parse_after_effect);
     // The text a word or a letter at a time (`p:iterate`).
     let text_unit = child(e, "iterate").and_then(|it| {
@@ -376,7 +383,7 @@ fn read_effect(e: Node, group_delay: u32, shape: ShapeId, trigger: AnimationTrig
 
 /// An effect's behaviours as the model keeps them (`p:set`, `p:anim`, `p:animEffect`, `p:animScale`, `p:animRot`);
 /// others (motion paths, colours) are left out.
-fn parse_behaviors(nodes: &[Node]) -> Vec<ibis_doc_model::AnimBehavior> {
+fn parse_behaviors(nodes: &[Node], inherit_hold: bool) -> Vec<ibis_doc_model::AnimBehavior> {
     use ibis_doc_model::{AnimBehavior, BehaviorKind};
     let value = |v: Node| -> Option<String> {
         let inner = elements(v).next()?;
@@ -386,18 +393,62 @@ fn parse_behaviors(nodes: &[Node]) -> Vec<ibis_doc_model::AnimBehavior> {
         let n = n?;
         Some((n.attribute("x")?.parse().ok()?, n.attribute("y")?.parse().ok()?))
     };
+    // A behaviour kept as its XML, its target and time node ids to be filled in on writing.
+    let opaque = |b: Node| -> Option<BehaviorKind> {
+        let doc_text = b.document().input_text();
+        let mut raw = doc_text[b.range()].to_string();
+        if let (Some(a), Some(z)) = (raw.find("<p:tgtEl>"), raw.find("</p:tgtEl>")) {
+            raw.replace_range(a..z + "</p:tgtEl>".len(), "\u{1}");
+        } else {
+            return None;
+        }
+        let mut out = String::new();
+        let mut rest = raw.as_str();
+        while let Some(at) = rest.find("<p:cTn id=\"") {
+            let after = at + "<p:cTn id=\"".len();
+            let end = rest[after..].find('"').map_or(rest.len(), |e| after + e);
+            out.push_str(&rest[..after]);
+            out.push('\u{2}');
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        Some(BehaviorKind::Opaque(out))
+    };
     let mut out = Vec::new();
     for b in nodes {
         let Some(bhvr) = child(*b, "cBhvr") else { continue };
         let time = ctn(bhvr);
         let begin = time.map_or(0, delay);
         let dur = time.and_then(|c| c.attribute("dur")).and_then(|d| d.parse::<u32>().ok()).unwrap_or(0);
+        let time_node = time;
+        let flag = |a: &str| time_node.is_some_and(|c| is_true(c.attribute(a)));
+        let behavior_time = ibis_doc_model::animation_preset::BehaviorTime {
+            accel: time_node.and_then(|c| c.attribute("accel")).and_then(|v| v.parse().ok()).unwrap_or(0),
+            decel: time_node.and_then(|c| c.attribute("decel")).and_then(|v| v.parse().ok()).unwrap_or(0),
+            auto_rev: flag("autoRev"),
+            // `by` alone is the amount added to the value the shape has (シマー's `by="(#ppt_w*0.10)"`), as `additive="sum"` says.
+            sum: bhvr.attribute("additive") == Some("sum") || (b.tag_name().name() == "anim" && b.attribute("by").is_some() && b.attribute("from").is_none() && b.attribute("to").is_none()),
+            // Held to the end of the effect by `fill="hold"` (or by running as long as the effect does, `dur="indefinite"`); a behaviour
+            // that says nothing of it takes its effect's (PowerPoint's exit 43 writes `fill="hold"` on the effect only).
+            remove: !(time_node.is_some_and(|c| c.attribute("fill") == Some("hold") || c.attribute("dur") == Some("indefinite") || (c.attribute("fill").is_none() && inherit_hold))),
+            filter: time_node.and_then(|c| c.attribute("tmFilter")).map(ibis_doc_model::animation_preset::BehaviorTime::parse_filter).unwrap_or_default(),
+        };
         let attr = child(bhvr, "attrNameLst").and_then(|l| child(l, "attrName")).and_then(|n| n.text()).map(|t| t.trim().to_string());
         let kind = match b.tag_name().name() {
+            // A colour (`<p:to><p:clrVal>`) is kept as it is written (see `animation_color`).
+            "set" if child(*b, "to").and_then(|t| child(t, "clrVal")).is_some() => match opaque(*b) {
+                Some(kind) => kind,
+                None => continue,
+            },
             "set" => {
                 let (Some(attr), Some(to)) = (attr, child(*b, "to").and_then(value)) else { continue };
                 BehaviorKind::Set { attr, value: to }
             }
+            // Colours that step (`valueType="clr"`, `<p:clrVal>`) are kept as they are written (see `animation_color`).
+            "anim" if child(*b, "tavLst").into_iter().flat_map(elements).any(|t| child(t, "val").is_some_and(|v| child(v, "clrVal").is_some())) => match opaque(*b) {
+                Some(kind) => kind,
+                None => continue,
+            },
             "anim" => {
                 let Some(attr) = attr else { continue };
                 let mut keys: Vec<(u32, String)> = child(*b, "tavLst")
@@ -409,6 +460,12 @@ fn parse_behaviors(nodes: &[Node]) -> Vec<ibis_doc_model::AnimBehavior> {
                 if keys.is_empty() {
                     if let (Some(from), Some(to)) = (b.attribute("from"), b.attribute("to")) {
                         keys = vec![(0, from.to_string()), (100_000, to.to_string())];
+                    } else if let Some(by) = b.attribute("by") {
+                        // `by`: from nothing to this much more (added to the value, `additive="sum"`).
+                        keys = vec![(0, "0".to_string()), (100_000, by.to_string())];
+                    } else if let Some(to) = b.attribute("to") {
+                        // `to` alone: from the shape's own value.
+                        keys = vec![(0, format!("#{attr}")), (100_000, to.to_string())];
                     }
                 }
                 let formula = child(*b, "tavLst").into_iter().flat_map(elements).filter_map(|t| t.attribute("fmla")).last().map(str::to_string).or_else(|| b.attribute("fmla").map(str::to_string));
@@ -424,32 +481,12 @@ fn parse_behaviors(nodes: &[Node]) -> Vec<ibis_doc_model::AnimBehavior> {
                 BehaviorKind::Rotate { from: v("from"), to: v("to"), by: v("by") }
             }
             // Others (colours, motion…): kept as they are written, to be written back.
-            _ => {
-                let doc_text = b.document().input_text();
-                let mut raw = doc_text[b.range()].to_string();
-                // Its target and time node ids are filled in on writing.
-                if let (Some(a), Some(z)) = (raw.find("<p:tgtEl>"), raw.find("</p:tgtEl>")) {
-                    raw.replace_range(a..z + "</p:tgtEl>".len(), "\u{1}");
-                } else {
-                    continue;
-                }
-                let re_id = |text: &str| -> String {
-                    let mut out = String::new();
-                    let mut rest = text;
-                    while let Some(at) = rest.find("<p:cTn id=\"") {
-                        let after = at + "<p:cTn id=\"".len();
-                        let end = rest[after..].find('"').map_or(rest.len(), |e| after + e);
-                        out.push_str(&rest[..after]);
-                        out.push('\u{2}');
-                        rest = &rest[end..];
-                    }
-                    out.push_str(rest);
-                    out
-                };
-                BehaviorKind::Opaque(re_id(&raw))
-            }
+            _ => match opaque(*b) {
+                Some(kind) => kind,
+                None => continue,
+            },
         };
-        out.push(AnimBehavior { kind, begin, dur });
+        out.push(AnimBehavior { kind, begin, dur, time: behavior_time });
     }
     out
 }

@@ -6,6 +6,8 @@ use super::{Scenario, button_probe as buttons};
 use crate::{docx::scenarios::DocSteps, xlsx::scenarios::SheetSteps};
 use gpui_kit::*;
 use ibis_doc_model::{CellValue, Command, EmuRect, FlowPos, FlowRunKind, Shape};
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("shell::edit20261028_empty_bar_signed", empty_bar),
@@ -22,6 +24,9 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::edit20261028_segment_motion", segment_motion),
         ("shell::edit20261028_insert_text_edit", insert_text),
         ("shell::edit20261028_font_size_no_search", font_popup),
+        ("shell::k0015_frame_band_press_moves", frame_band_press),
+        ("shell::k0015_docx_frame_band_press_moves", docx_frame_band_press),
+        ("shell::k0015_frame_band_right_click_shape_menu", frame_band_right_click),
     ]
 }
 fn workbook() -> Scenario {
@@ -567,4 +572,114 @@ fn live_handles() {
         click_count: 1,
         ..Default::default()
     })]);
+}
+
+/// K0015: while a shape's text is edited, the hand cursor and the press share one test (`selection_handles::on_border`).
+/// A press within its band (1 to 2.5 px outside the frame) drags the shape; a press well outside does not move it.
+fn frame_band_press() {
+    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+        let mut s = Scenario::start_view();
+        let index = s.update(|e, w, cx| {
+            e.new_file(kind, w, cx);
+            e.zoom = Some(1.);
+            let index = e.slide().shapes.len();
+            let shape = Shape::text_box(e.document.ids().new_shape_id(), EmuRect::new(2000000, 3000000, 2400000, 1200000), "Text");
+            e.run(vec![Command::InsertShape { slide: e.current_slide, index, shape }], cx);
+            e.set_selection(Vec::new());
+            index
+        });
+        s.click_shape(index);
+        let frame_x = |s: &mut Scenario| s.with(|e, _| e.slide().shapes[index].frame.x);
+        let edge = |s: &mut Scenario| {
+            s.with(|e, _| {
+                let layout = e.slide_layout().expect("laid out");
+                let f = e.slide().shapes[index].frame;
+                (f32::from(layout.origin.x + layout.to_px(f.x)), f32::from(layout.origin.y + layout.to_px(f.y + f.height / 4)))
+            })
+        };
+        for outside in [1.0_f32, 2.0, 2.5] {
+            let before = frame_x(&mut s);
+            let (x, y) = edge(&mut s);
+            s.drag_through(&[(x - outside, y), (x - outside + 20., y), (x - outside + 60., y)]);
+            let after = frame_x(&mut s);
+            assert!(after > before, "{kind:?}: a press {outside}px outside the frame drags it ({before} -> {after})");
+            s.click_shape(index);
+        }
+    }
+}
+
+/// K0015, document screen: a floating text box that is selected (its handles shown) is dragged by a press 1 to 2.5 px outside its frame.
+fn docx_frame_band_press() {
+    let mut s = Scenario::start_view();
+    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx));
+    let (p, _) = s.paragraph(0);
+    s.update(|e, _, cx| {
+        let mut shape = Shape::text_box(e.document.ids().new_shape_id(), EmuRect::new(0, 0, 2000000, 1000000), "Text");
+        shape.floating = Some(ibis_doc_model::FloatingAnchor {
+            offset_x: 1000000,
+            offset_y: 2000000,
+            relative_h: "page".into(),
+            relative_v: "page".into(),
+            wrap: "none".into(),
+            allow_overlap: true,
+            ..Default::default()
+        });
+        e.run_flow(vec![ibis_doc_model::FlowCommand::InsertField { at: FlowPos::new(p, 0), kind: FlowRunKind::Shape(Box::new(shape)) }], cx);
+    });
+    let frame = |s: &mut Scenario| s.with(|e, _| {
+        let (page, (x, y, w, h), _) = e.floating_text_box_frame_of(FlowPos::new(p, 0)).unwrap();
+        let (o, k) = e.page_origin(page).unwrap();
+        (f32::from(o.x) + x * k, f32::from(o.y) + y * k, w * k, h * k)
+    });
+    let (x, y, w, h) = frame(&mut s);
+    // One click enters the text; Escape leaves the box selected, with its handles.
+    s.click((x + w / 2., y + h / 2.));
+    s.key("escape");
+    assert!(s.with(|e, _| e.doc_state().unwrap().shape_selected), "the box is selected");
+    for outside in [1.0_f32, 2.0, 2.5] {
+        let (x, y, _, h) = frame(&mut s);
+        let before = x;
+        let at = (x - outside, y + h / 4.);
+        s.drag_through(&[at, (at.0 + 20., at.1), (at.0 + 60., at.1)]);
+        let after = frame(&mut s).0;
+        assert!(after > before + 20., "a press {outside}px outside the frame drags the box ({before} -> {after})");
+    }
+}
+
+/// K0015 F: a right press on the frame band of a selected shape (the hand cursor's band, 1 to 2.5 px outside or inside the
+/// rectangle) opens the shape's menu: the shape stays selected (it is not given up for the sheet or slide menu) and an edited
+/// text is left (it is not the text's menu).
+fn frame_band_right_click() {
+    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+        let mut s = Scenario::start_view();
+        let index = s.update(|e, w, cx| {
+            e.new_file(kind, w, cx);
+            e.zoom = Some(1.);
+            let index = e.slide().shapes.len();
+            let shape = Shape::text_box(e.document.ids().new_shape_id(), EmuRect::new(2000000, 3000000, 2400000, 1200000), "Text");
+            e.run(vec![Command::InsertShape { slide: e.current_slide, index, shape }], cx);
+            e.set_selection(Vec::new());
+            index
+        });
+        let id = s.with(|e, _| e.slide().shapes[index].id);
+        let edge = |s: &mut Scenario| {
+            s.with(|e, _| {
+                let layout = e.slide_layout().expect("laid out");
+                let f = e.slide().shapes[index].frame;
+                (f32::from(layout.origin.x + layout.to_px(f.x)), f32::from(layout.origin.y + layout.to_px(f.y + f.height / 4)))
+            })
+        };
+        for offset in [-2.5_f32, -2.0, -1.0, 1.0, 2.0] {
+            s.click_shape(index);
+            let (x, y) = edge(&mut s);
+            s.right_click((x + offset, y));
+            assert!(s.with(|e, _| e.selected_ids().contains(&id)), "{kind:?}: a right press at {offset}px of the frame keeps the shape selected");
+            assert!(s.with(|e, _| e.text_editing().is_none()), "{kind:?}: and does not open the text's menu ({offset}px)");
+            s.key("escape");
+            s.update(|e, _, cx| {
+                e.set_selection(Vec::new());
+                cx.notify();
+            });
+        }
+    }
 }

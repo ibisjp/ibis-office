@@ -13,21 +13,34 @@
 // model (render/), and each format's own editing and views: presentations
 // (pptx/), workbooks (xlsx/) and documents (docx/). A format's code stays in
 // its directory; see shell/format.rs for how the shell hands over to it.
-pub(crate) mod clock;
-pub(crate) use clock::debug_timing;
-mod docx;
-mod linux_desktop;
-mod media_player;
-mod dib_picture;
-mod native_shape_clipboard;
+pub(crate) use ibis_office_base::clock;
+// The document screen is its own crate (tasks/doc/crate-split-plan.md, 15); the app and the tests name it `crate::docx`.
+pub(crate) use ibis_office_docx as docx;
 #[cfg(windows)]
 mod open_with;
-mod pptx;
+// The presentation screen is its own crate (tasks/doc/crate-split-plan.md, 14); the app and its tests name it `crate::pptx`.
+pub(crate) use ibis_office_pptx as pptx;
 mod render;
-mod spelling;
-mod grammar;
-mod shell;
-mod xlsx;
+mod register_hooks;
+pub use register_hooks::register_hooks;
+mod format_drivers;
+// The shell is its own crate (tasks/doc/crate-split-plan.md, 12); the formats and the tests name it `crate::shell`.
+pub(crate) use ibis_office_shell as shell;
+pub(crate) use shell::actions::*;
+pub(crate) use shell::app::*;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use shell::read_file::*;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) use shell::timing;
+// What the shell took down from here (tasks/doc/crate-split-plan.md, 12.1), under the names the formats use.
+pub(crate) use shell::linux_desktop;
+// The formats are crates with their own aliases: only the app's checks name it.
+#[cfg(any(test, feature = "scenarios"))]
+pub(crate) use shell::native_shape_clipboard;
+#[cfg(all(headless_export, any(test, feature = "scenarios")))]
+pub(crate) use shell::pdf_picture;
+// The workbook screen is its own crate (tasks/doc/crate-split-plan.md, 16); the app and the tests name it `crate::xlsx`.
+pub(crate) use ibis_office_xlsx as xlsx;
 #[cfg(headless_export)]
 mod export;
 #[cfg(headless_export)]
@@ -37,12 +50,6 @@ mod export_text;
 #[cfg(headless_export)]
 mod pdf_vector;
 #[cfg(headless_export)]
-mod svg_pdf;
-#[cfg(headless_export)]
-mod svg_emf;
-#[cfg(headless_export)]
-mod pdf_picture;
-#[cfg(headless_export)]
 mod ui_snapshot;
 
 pub use shell::editor::SlideEditor;
@@ -51,166 +58,63 @@ pub use shell::editor::SlideEditor;
 #[path = "tests/shell/native_quit.rs"]
 mod native_quit_scenarios;
 
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/offscreen_3d.rs"]
+mod offscreen_3d_scenarios;
+
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+mod scenario_list;
+
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+mod pptx_scenarios;
+
+// The text rectangle check of a slide (`crate::export`, the app's): a `#[test]` on Windows, a scenario elsewhere, so it is declared here and
+// not under `pptx_scenarios` (which only Mac and Linux build).
+#[cfg(all(headless_export, any(all(test, windows), all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))))]
+#[path = "tests/pptx/text_rect.rs"]
+mod pptx_text_rect;
+
+// The document's layout checks that export a page (`crate::export`, the app's): they stay in the app (tasks/doc/crate-split-plan.md, 15.2).
+#[cfg(any(all(test, windows), all(any(target_os = "macos", target_os = "linux"), feature = "scenarios")))]
+#[path = "tests/docx/layout_tests.rs"]
+pub(crate) mod docx_layout_tests;
+#[cfg(any(all(test, windows), all(any(target_os = "macos", target_os = "linux"), feature = "scenarios")))]
+#[path = "tests/docx/layout_tests_grid.rs"]
+pub(crate) mod docx_layout_tests_grid;
+#[cfg(test)]
+#[path = "tests/docx/probe.rs"]
+mod docx_probe;
+// The workbook's checks that export a page or draw headless (`crate::export`, the app's): they stay in the app (tasks/doc/crate-split-plan.md, 16.2).
+#[cfg(all(target_os = "macos", feature = "scenarios"))]
+#[path = "tests/xlsx/corpus_report.rs"]
+pub(crate) mod xlsx_corpus_report;
+#[cfg(all(test, target_os = "windows", feature = "export"))]
+#[path = "tests/xlsx/print_bounds.rs"]
+mod xlsx_print_bounds;
+
+#[cfg(test)]
+#[path = "tests/shell/menu_context_table.rs"]
+mod menu_context_table;
+
 /// Run the scenario tests (`tests/scenarios.rs`; see `shell/scenario.rs`).
 #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 pub fn run_scenarios(filter: &[String]) -> i32 {
-    shell::scenario::run(filter)
+    register_hooks();
+    shell::scenario::run(filter, scenario_list::all, scenario_list::ignored)
 }
 use shell::editor;
 use pptx::slideshow;
 use xlsx::sheet_ui;
 
-use gpui_kit::component::Root;
-use gpui_kit::component::scroll::ScrollbarMode;
-use gpui_kit::component::theme::{Theme, ThemeMode};
 use gpui_kit::*;
 
-actions!(
-    ibis_office,
-    [
-        AddPresentationSlide,
-        DuplicatePresentationSelection,
-        /// Undo the last edit.
-        Undo,
-        /// Redo the last undone edit.
-        Redo,
-        /// Delete the selected shape.
-        DeleteSelection,
-        /// Leave text editing, the insert tool, or the selection, in that order.
-        CancelTool,
-        /// Open a PowerPoint, Excel or Word file.
-        OpenFile,
-        /// Make a new, empty Word document (ファイル > 新規作成 > ドキュメント).
-        NewDocument,
-        /// Open the start window (ファイル > スタートウィンドウ).
-        OpenStartWindow,
-        /// Make a new presentation from a template (ファイル > 新規 > テンプレートから新規作成…).
-        NewFromTemplate,
-        /// Close the open file and show the start screen (スタート画面).
-        CloseFile,
-        /// Save the open file (to the file it was opened from).
-        Save,
-        /// Save the open file under another name.
-        SaveAs,
-        /// Print the open file (ファイル > 印刷…, ⌘P).
-        PrintFile,
-        /// Hide or show the title row and the menu bar (the toolbar's ^).
-        ToggleMenus,
-        /// Show the next slide.
-        NextSlide,
-        /// Show the previous slide.
-        PreviousSlide,
-        /// Show the first slide.
-        FirstSlide,
-        /// Show the last slide.
-        LastSlide,
-        /// Start the slide show from the slide shown.
-        StartSlideshow,
-        /// Start the slide show from the first slide.
-        StartSlideshowFromBeginning,
-        /// Start the slide show from the slide shown with the presenter's
-        /// view (発表者ビュー).
-        StartPresenterView,
-        InsertComment,
-        /// 挿入 > リンク (a presentation's hyperlink).
-        InsertHyperlink,
-        /// Black out the slide show, or show it again.
-        BlackScreen,
-        /// White out the slide show, or show it again.
-        WhiteScreen,
-        /// Quit the application.
-        Quit,
-        /// Open the settings window (ibisOffice > 設定…, ⌘,).
-        OpenSettings,
-        /// Open the About window (ibisOffice > ibisOffice について).
-        OpenAbout,
-        /// Select the cell above the selected one on a worksheet.
-        SelectCellUp,
-        /// Select the cell below the selected one on a worksheet.
-        SelectCellDown,
-        /// Select the cell to the left of the selected one on a worksheet.
-        SelectCellLeft,
-        /// Select the cell to the right of the selected one on a worksheet.
-        SelectCellRight,
-        /// Show the next worksheet of a workbook.
-        NextSheet,
-        /// Show the previous worksheet of a workbook.
-        PreviousSheet,
-        /// Stretch the selected range of a worksheet a cell up.
-        ExtendCellsUp,
-        /// Stretch the selected range of a worksheet a cell down.
-        ExtendCellsDown,
-        /// Stretch the selected range of a worksheet a cell to the left.
-        ExtendCellsLeft,
-        /// Stretch the selected range of a worksheet a cell to the right.
-        ExtendCellsRight,
-        /// Scroll a document up by a few lines.
-        ScrollLineUp,
-        /// Scroll a document down by a few lines.
-        ScrollLineDown,
-        /// Scroll to the start of a document.
-        ScrollToStart,
-        /// Scroll to the end of a document.
-        ScrollToEnd,
-        /// Switch to laser pointer mode in the slide show.
-        LaserPointer,
-        /// Switch to pen drawing mode in the slide show.
-        PenPointer,
-        /// Switch to highlighter drawing mode in the slide show.
-        HighlighterPointer,
-        /// Switch back to arrow pointer mode in the slide show.
-        ArrowPointer,
-        /// Switch to eraser mode in the slide show.
-        EraserPointer,
-        /// Clear all ink annotations on the current slide.
-        ClearSlideInks,
-        /// Toggle the all slides grid overview in the slide show.
-        ToggleSlideshowGrid,
-        /// Zoom in the slide show view.
-        ZoomInSlideshow,
-        /// Zoom out the slide show view.
-        ZoomOutSlideshow,
-        /// Reset zoom in the slide show view to normal 1.0x.
-        ResetSlideshowZoom,
-        /// Start rehearsing slide show timings.
-        RehearseTimings,
-        /// 表示 > 拡大・縮小・100%・ウィンドウに合わせる（⌘+・⌘-・⌘0・⌥⌘0）.
-        ZoomInView,
-        ZoomOutView,
-        ZoomActualView,
-        ZoomFitView,
-        /// Toggle the slide sorter grid view in the presentation editor.
-        ToggleSlideGridView,
-        /// Start or exit reading view in the presentation editor.
-        ToggleReadingView,
-        /// Switch to normal view in the presentation editor.
-        SwitchToNormalView,
-        /// Toggle the outline view in the presentation editor.
-        ToggleOutlineView,
-        /// Switch to outline view in the presentation editor.
-        SwitchToOutlineView,
-        /// Toggle the notes page view in the presentation editor.
-        ToggleNotesPageView,
-        /// Switch to notes page view in the presentation editor.
-        SwitchToNotesPageView,
-        /// Open the zoom dialog.
-        OpenZoomDialog,
-        /// Open a new window duplicating current presentation or empty.
-        NewEditorWindow,
-        /// Arrange all editor windows evenly.
-        ArrangeAllWindows,
-        /// Cascade all editor windows.
-        CascadeWindows,
-        /// Copy animations of selected shape (Animation Painter).
-        CopyAnimation,
-        /// Paste animations onto selected shapes (Animation Painter).
-        PasteAnimation,
-    ]
-);
 
 /// Register components, theme and key bindings. Call once, before opening a window.
 pub fn init(cx: &mut App) {
+    register_hooks();
     shell::settings::migrate_on_startup();
+    // The window knows the system's fonts; the words (ibis-office-base) ask it for their English names.
+    ibis_office_base::i18n::set_english_font_name(shell::font_list::english_name);
     gpui_kit::init(cx);
     shell::dialog::init(cx);
     // Questions drawn as ibisOffice's dialogs where the system has none (Linux).
@@ -307,6 +211,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new(&secondary("end"), ScrollToEnd, Some(editor::DOCUMENT_CONTEXT)),
         KeyBinding::new(&secondary("up"), ScrollToStart, Some(editor::DOCUMENT_CONTEXT)),
         KeyBinding::new(&secondary("down"), ScrollToEnd, Some(editor::DOCUMENT_CONTEXT)),
+        // A space typed in a text field inside a popover (the search field of a font list) is a character of the field. The popover binds
+        // Space to Confirm in its own context (a trigger's activation key); the deeper context of the field takes the key off it.
+        KeyBinding::new("space", gpui::NoAction, Some("Input")),
         // The slide show, as in PowerPoint (Esc ends it, as `CancelTool`).
         KeyBinding::new("right", NextSlide, Some(slideshow::SLIDESHOW_CONTEXT)),
         KeyBinding::new("down", NextSlide, Some(slideshow::SLIDESHOW_CONTEXT)),
@@ -400,6 +307,19 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-shift-left",sheet_ui::ExtendJumpLeft,Some(editor::SHEET_CONTEXT)),
         KeyBinding::new("ctrl-shift-right",sheet_ui::ExtendJumpRight,Some(editor::SHEET_CONTEXT)),
     ]);}
+    // Switching between the open windows (menu bar redesign, stage 4): Ctrl+Tab lists them, Ctrl+F6 and Ctrl+Shift+F6 step
+    // through them (Windows and Linux; Office's own keys). On a Mac the system's Window menu has the ⌘` and ⌘⇧` keys. The
+    // browser has one document and no windows to switch.
+    #[cfg(not(target_family = "wasm"))]
+    {
+        cx.bind_keys([
+            KeyBinding::new("ctrl-tab", WindowList, context),
+            KeyBinding::new("ctrl-shift-tab", WindowListBack, context),
+        ]);
+        if !is_mac() {
+            cx.bind_keys([KeyBinding::new("ctrl-f6", NextWindow, context), KeyBinding::new("ctrl-shift-f6", PreviousWindow, context)]);
+        }
+    }
     // A document's text keys (the document担当's, in `docx/editing.rs`).
     cx.bind_keys(docx::key_bindings());
     cx.bind_keys(xlsx::key_bindings());
@@ -408,193 +328,15 @@ pub fn init(cx: &mut App) {
     // event loop; other platform layers currently call on_quit only after their loop has ended.
     #[cfg(any(target_os = "macos", feature = "scenarios"))]
     cx.on_quit_requested(native_quit_allowed).detach();
-    cx.on_action(|_: &OpenSettings, cx| crate::shell::settings_window::open(cx));
-    cx.on_action(|_: &OpenAbout, cx| crate::shell::about_window::open(cx));
+    cx.on_action(|_: &OpenSettings, cx| crate::shell::settings_dialog::open(cx));
+    cx.on_action(|_: &OpenAbout, cx| crate::shell::about::open(cx));
     cx.on_action(|_: &OpenStartWindow, cx| crate::open_editor(None, None, cx));
     // File > New with no window open (a window handles it itself otherwise): the start window.
     cx.on_action(|_: &NewDocument, cx| crate::open_editor(None, None, cx));
     set_app_menus(cx);
 }
 
-/// The last window has closed (⌘W / ファイル > 閉じる on the start window, or the red button): the app ends with it,
-/// on a Mac too. The scenarios record the request in `QUIT_REQUESTED` instead of ending.
-pub(crate) fn quit_if_last_window_closed(cx: &mut App) {
-    if !cx.windows().is_empty() {
-        return;
-    }
-    #[cfg(feature = "scenarios")]
-    QUIT_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
-    #[cfg(not(feature = "scenarios"))]
-    cx.quit();
-}
 
-#[cfg(feature = "scenarios")]
-pub(crate) static QUIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// A native quit request must not destroy windows before their save questions are answered.
-/// Once all documents have been saved/discarded, the next request is allowed synchronously.
-pub(crate) fn native_quit_allowed(cx: &mut App) -> bool {
-    let mut unsaved = false;
-    for handle in cx.windows() {
-        let Some(root) = handle.downcast::<Root>() else { continue };
-        let editor = root.update(cx, |root, _, _| root.view().clone().downcast::<SlideEditor>().ok());
-        match editor {
-            Ok(Some(editor)) => unsaved |= editor.read(cx).is_dirty(),
-            Ok(None) => {},
-            // A borrowed window must never be mistaken for a clean window.
-            Err(_) => unsaved = true,
-        }
-    }
-    if unsaved {
-        // The Dock can ask while the app is inactive; bring its save question into view.
-        cx.activate(true);
-        quit_asking_to_save(cx);
-        false
-    } else {
-        true
-    }
-}
-
-/// ibisOffice > 終了 (⌘Q): the windows with edits not saved stay and ask whether to save them (each goes once
-/// answered); the others close. The app ends with its last window (`quit_if_last_window_closed`), or at once when
-/// nothing is left to ask (GitHub issue #27).
-pub(crate) fn quit_asking_to_save(cx: &mut App) {
-    // ⌘Q comes while the window with the keys is being updated, when its editor cannot be read (the window would be
-    // passed over and the app end without asking): ask once the event is done.
-    cx.defer(quit_asking_to_save_now);
-}
-
-fn quit_asking_to_save_now(cx: &mut App) {
-    let mut asking = false;
-    for handle in cx.windows() {
-        let Some(root) = handle.downcast::<Root>() else { continue };
-        let editor = root.update(cx, |root, _, _| root.view().clone().downcast::<SlideEditor>().ok()).ok().flatten();
-        let Some(editor) = editor else { continue };
-        // A window that may close goes now; one that may not has opened the question.
-        let close = editor.update(cx, |editor, cx| editor.window_should_close(cx));
-        if close {
-            let _ = handle.update(cx, |_, window, _| window.remove_window());
-        } else {
-            asking = true;
-        }
-    }
-    if !asking {
-        #[cfg(feature = "scenarios")]
-        QUIT_REQUESTED.store(true, std::sync::atomic::Ordering::Relaxed);
-        #[cfg(not(feature = "scenarios"))]
-        cx.quit();
-    }
-}
-
-/// The app's menu bar (macOS's), in the UI's language: set again when the
-/// language changes.
-pub(crate) fn set_app_menus(cx: &mut App) {
-    use crate::shell::i18n::text;
-    cx.set_menus([
-        Menu::new("ibisOffice").items([MenuItem::action(text("help.about"), OpenAbout), MenuItem::separator(), MenuItem::action(text("app.settings"), OpenSettings), MenuItem::separator(), MenuItem::action(text("app.quit"), Quit)]),
-        Menu::new(text("menu.file")).items([
-            MenuItem::action(text("file.start-window"), OpenStartWindow),
-            MenuItem::separator(),
-            MenuItem::action(text("app.file.new"), NewDocument),
-            MenuItem::action(text("app.file.open"), OpenFile),
-            MenuItem::action(text("app.file.save"), Save),
-            MenuItem::action(text("app.file.save-as"), SaveAs),
-            MenuItem::action(text("app.file.print"), PrintFile),
-            MenuItem::action(text("app.file.close"), CloseFile),
-        ]),
-    ]);
-}
-
-/// The modifier of shortcuts such as undo: Command on a Mac, Control elsewhere.
-/// GPUI's `secondary` picks it by the build target, so in the browser (not
-/// macOS) it is always Control; ask the browser for its platform instead.
-fn secondary_modifier() -> &'static str {
-    #[cfg(target_family = "wasm")]
-    return if web::is_mac() { "cmd" } else { "ctrl" };
-    #[cfg(not(target_family = "wasm"))]
-    "secondary"
-}
-
-/// Whether the keys are a Mac's (the build target, or the browser's platform).
-fn is_mac() -> bool {
-    #[cfg(target_family = "wasm")]
-    return web::is_mac();
-    #[cfg(not(target_family = "wasm"))]
-    cfg!(target_os = "macos")
-}
-
-/// Open the editor window on `document` (a presentation and its file name),
-/// showing slide number `slide` (1-based), or on the start view without one.
-#[derive(Default)]
-struct StartWindows(std::collections::HashMap<gpui_kit::EntityId,(gpui_kit::AnyWindowHandle,bool)>);
-impl gpui_kit::Global for StartWindows {}
-/// Keep start-view identity outside an editor borrow, so its own command can reuse it.
-pub(crate) fn track_start_window(id:gpui_kit::EntityId,handle:Option<gpui_kit::AnyWindowHandle>,start:bool,cx:&mut App){
-    if cx.try_global::<StartWindows>().is_none(){cx.set_global(StartWindows::default());}
-    cx.update_global::<StartWindows,_>(|windows,_|{if let Some(handle)=handle{windows.0.insert(id,(handle,start));}else if let Some((_,state))=windows.0.get_mut(&id){*state=start;}});
-}
-pub fn open_editor(document: Option<(ibis_doc_model::Presentation, SharedString)>, slide: Option<usize>, cx: &mut App) {
-    if document.is_none(){
-        let alive=cx.windows();
-        if cx.try_global::<StartWindows>().is_some(){cx.update_global::<StartWindows,_>(|s,_|s.0.retain(|_,(w,_)|alive.contains(w)));}
-        let existing=cx.try_global::<StartWindows>().and_then(|s|s.0.values().find(|(w,start)|*start&&alive.contains(w)).map(|(w,_)|*w));
-        if let Some(handle)=existing{let _=handle.update(cx,|_,w,_|w.activate_window());cx.activate(true);return;}
-    }
-    // A start window is as wide as its view (shell/start_view.rs).
-    let width = if document.is_none() { shell::start_view::START_WINDOW_WIDTH } else { 1280. };
-    // A start window looks for a newer version (its 「ibisOffice を更新する」 button), whatever the setting says.
-    #[cfg(not(target_family = "wasm"))]
-    if document.is_none() {
-        shell::update::check_for_start_window(cx);
-    }
-    open_window_sized(width, cx, move |editor, window, cx| {
-        if let Some((presentation, name)) = document {
-            editor.load(presentation, name, window, cx);
-        }
-        if let Some(number) = slide {
-            editor.show_slide_number(number, window, cx);
-        }
-    });
-}
-
-/// A new editor window, its editor set up by `setup`.
-pub(crate) fn open_window_with(cx: &mut App, setup: impl FnOnce(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) {
-    open_window_sized(1280., cx, setup);
-}
-
-/// A new editor window `width` pixels wide, its editor set up by `setup`.
-fn open_window_sized(width: f32, cx: &mut App, setup: impl FnOnce(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) {
-    let mut options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(width), px(800.)),
-            cx,
-        ))),
-        titlebar: Some(TitlebarOptions {
-            appears_transparent: true,
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    linux_desktop::identify(&mut options);
-    cx.open_window(options, |window, cx| {
-        shell::palette::watch(window, cx);
-        let view = cx.new(|cx| {
-            let mut editor = SlideEditor::new(ibis_doc_model::Presentation::new(), window, cx);
-            setup(&mut editor, window, cx);
-            editor
-        });
-        let focus = view.read(cx).focus_handle.clone();
-        focus.focus(window, cx);
-        // The window's close button asks whether to save edits not saved (GitHub issue #27).
-        let editor = view.downgrade();
-        window.on_window_should_close(cx, move |_, cx| editor.update(cx, |editor, cx| editor.window_should_close(cx)).unwrap_or(true));
-        // Root hosts gpui-component's overlays (tooltips, popovers, dialogs).
-        cx.new(|cx| Root::new(view, window, cx))
-    })
-    .expect("failed to open the editor window");
-    cx.activate(true);
-}
 
 /// Command line:
 ///
@@ -627,6 +369,8 @@ struct Args {
     slide: Option<usize>,
     export: Option<String>,
     out_dir: Option<std::path::PathBuf>,
+    /// `--export row-heights <file> [out.tsv]`: the second file name.
+    out_file: Option<std::path::PathBuf>,
     width: Option<u32>,
     slides: Option<String>,
     layout: bool,
@@ -691,6 +435,7 @@ fn parse_args() -> Result<Args, String> {
             "--timing" => args.timing = true,
             "--quit-after-first-frame" => args.quit_after_first_frame = true,
             other if other.starts_with("--") => return Err(format!("unknown option: {other}")),
+            _ if args.path.is_some() && args.export.as_deref() == Some("row-heights") => args.out_file = Some(arg.into()),
             _ => args.path = Some(arg.into()),
         }
     }
@@ -703,6 +448,13 @@ fn run_export(args: &Args, format: &str) -> Result<(), String> {
     #[cfg(headless_export)]
     {
         let format = match format {
+            "row-heights" => {
+                let path = args.path.as_deref().ok_or("name the .xlsx or .xls file")?;
+                // Read as the PDF export reads it, so the rows are the ones its pages are laid out from.
+                let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+                let presentation = ibis_pptx::read(&data).map_err(|e| format!("{}: {e}", path.display()))?;
+                return export::row_heights(presentation, args.out_file.as_deref());
+            }
             "ui" => {
                 // Without a file, the start view.
                 let out_dir = args.out_dir.clone().unwrap_or_else(|| ".".into());
@@ -722,7 +474,7 @@ fn run_export(args: &Args, format: &str) -> Result<(), String> {
             "png" => export::Format::Png,
             "pdf" => export::Format::Pdf,
             "pdf-image" => export::Format::PdfImage,
-            other => return Err(format!("--export takes png, pdf, pdf-image or ui: {other}")),
+            other => return Err(format!("--export takes png, pdf, pdf-image, row-heights or ui: {other}")),
         };
         let path = args.path.as_deref().ok_or("name the .pptx, .xlsx or .docx file to export")?;
         let out_dir = args.out_dir.clone().unwrap_or_else(|| ".".into());
@@ -766,80 +518,6 @@ fn run_export(args: &Args, format: &str) -> Result<(), String> {
     }
 }
 
-/// A file read for editing: its model, and what saving it needs.
-#[cfg(not(target_family = "wasm"))]
-pub(crate) struct Loaded {
-    pub(crate) presentation: ibis_doc_model::Presentation,
-    pub(crate) source: std::sync::Arc<ibis_pptx::Source>,
-    /// The password a protected file was opened with: saving protects it again.
-    pub(crate) password: Option<String>,
-    pub(crate) csv_stream: Option<std::sync::mpsc::Receiver<ibis_pptx::CsvProgressiveChunk>>,
-}
-
-/// What `read_file` says when the file is protected and needs its password.
-pub(crate) const NEEDS_PASSWORD: &str = "\u{1}needs-password";
-/// What it says when the password given is not the file's.
-pub(crate) const WRONG_PASSWORD: &str = "\u{1}wrong-password";
-
-/// The file at `path`, read and parsed. Its pictures and fonts start
-/// decoding on other threads (`preload`).
-#[cfg(not(target_family = "wasm"))]
-pub(crate) fn read_file(path: &std::path::Path) -> Result<Loaded, String> {
-    read_file_with(path, None)
-}
-
-/// As `read_file`; `password` opens a protected file (パスワードを使用して暗号化).
-#[cfg(not(target_family = "wasm"))]
-pub(crate) fn read_file_with(path: &std::path::Path, password: Option<&str>) -> Result<Loaded, String> {
-    catch_read_panic(path, || read_file_unguarded(path, password))
-}
-
-/// Run `read` for the file at `path`. One file's reader going wrong must close that file only: every window shares this
-/// process, so a panic here would take the other open documents with it (review 0.8.5, C1). The panic is caught and becomes
-/// this file's open error. (No `panic = "abort"` is set anywhere in the workspace, so the unwind reaches this frame.)
-#[cfg(not(target_family = "wasm"))]
-pub(crate) fn catch_read_panic<T>(path: &std::path::Path, read: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).unwrap_or_else(|payload| {
-        let what = payload.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| payload.downcast_ref::<String>().cloned()).unwrap_or_default();
-        log::error!("{}: the reader panicked: {what}", path.display());
-        xlsx::repair::note_open_failed(path);
-        docx::repair::note_open_failed(path);
-        Err(shell::i18n::text("file.read-crashed").to_string())
-    })
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn read_file_unguarded(path: &std::path::Path, password: Option<&str>) -> Result<Loaded, String> {
-    timing::mark_read_start();
-    let read_t0 = crate::clock::Instant::now();
-    let mut data = std::fs::read(path).map_err(|e| e.to_string())?;
-    let read_fs_ms = read_t0.elapsed().as_secs_f64() * 1000.0;
-    timing::mark("read");
-    let mut used = None;
-    if ibis_pptx::is_encrypted(&data) {
-        let Some(password) = password else { return Err(NEEDS_PASSWORD.to_string()) };
-        data = ibis_pptx::decrypt(&data, password).map_err(|e| if e == ibis_pptx::DecryptError::WrongPassword { WRONG_PASSWORD.to_string() } else { e.to_string() })?;
-        used = Some(password.to_string());
-    }
-    let open_t0 = crate::clock::Instant::now();
-    let external_document_format=ibis_pptx::docx_convert::DocxConvertFormat::from_path(path);
-    let open_result=if let Some(format)=external_document_format {
-        ibis_pptx::docx_convert::import_docx_format(&data,format).map(|opened|(opened,None))
-    } else {ibis_pptx::open_progressive(data,100_000)};
-    let (opened, csv_stream) = open_result.map_err(|e| {
-        xlsx::repair::note_open_failed(path);
-        docx::repair::note_open_failed(path);
-        e.to_string()
-    })?;
-    xlsx::repair::note_opened(path);
-    docx::repair::note_opened(path);
-    let open_ms = open_t0.elapsed().as_secs_f64() * 1000.0;
-    timing::mark("parsed");
-    let total_file_ms = read_t0.elapsed().as_secs_f64() * 1000.0;
-    eprintln!("ibisOffice timing: read_file total: {total_file_ms:.1} ms (fs::read: {read_fs_ms:.1} ms, open: {open_ms:.1} ms)");
-    render::preload::Preload::start_for_next(&opened.presentation);
-    Ok(Loaded { presentation: opened.presentation, source: std::sync::Arc::new(opened.source), password: used, csv_stream })
-}
 
 /// The file at `path`, read and parsed, with its name.
 #[cfg(headless_export)]
@@ -872,137 +550,12 @@ fn url_path(url: &str) -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(String::from_utf8(out).ok()?))
 }
 
-/// Open `path` in the app: in the editor window if it shows no document
-/// (the start view), else in a new window. A file a window already has open
-/// is not opened again: that window is raised.
-#[cfg(not(target_family = "wasm"))]
-fn open_path_in_app(path: std::path::PathBuf, cx: &mut App) {
-    // A file already open is not opened again (each window edits its own copy in memory, and saving one would
-    // overwrite the other): its window comes to the front.
-    if shell::open_guard::raise_if_open(&path, None, cx) {
-        return;
-    }
-    for window in cx.windows() {
-        let Some(root) = window.downcast::<Root>() else { continue };
-        let editor = root.update(cx, |root, _, _| root.view().clone().downcast::<SlideEditor>().ok()).ok().flatten();
-        if let Some(editor) = editor
-            && !editor.read(cx).has_document
-        {
-            window
-                .update(cx, |_, window, cx| editor.update(cx, |e, cx| e.open_path(path.clone(), None, window, cx)))
-                .ok();
-            return;
-        }
-    }
-    open_editor_for(path, None, cx);
-}
 
-/// A new editor window that opens `path`, showing an empty document of its
-/// kind while it loads, then slide `slide` (1-based) if given.
-#[cfg(not(target_family = "wasm"))]
-fn open_editor_for(path: std::path::PathBuf, slide: Option<usize>, cx: &mut App) {
-    open_window_with(cx, move |editor, window, cx| editor.open_path(path, slide, window, cx));
-}
-
-/// `--timing`: stages of starting, in milliseconds since the process
-/// started.
-#[cfg(not(target_family = "wasm"))]
-mod timing {
-    use std::sync::OnceLock;
-    use std::time::{Duration, SystemTime};
-
-    static START: OnceLock<Option<SystemTime>> = OnceLock::new();
-
-    /// Start timing if `on`, from when the system says the process began
-    /// (before the executable was loaded), or failing that from now.
-    pub(crate) fn enable(on: bool) {
-        START.get_or_init(|| on.then(|| process_start().unwrap_or_else(crate::clock::system_now)));
-    }
-
-    static QUIT_AFTER_DOCUMENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    static FILE_READ_START: OnceLock<SystemTime> = OnceLock::new();
-
-    /// Mark the start of reading the file.
-    pub(crate) fn mark_read_start() {
-        FILE_READ_START.get_or_init(crate::clock::system_now);
-        mark("read-start");
-    }
-
-    /// Quit once the document opened at launch has been drawn twice.
-    pub(crate) fn quit_after_document(on: bool) {
-        QUIT_AFTER_DOCUMENT.store(on, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// The file is loaded into `window`: mark it and the next two frames,
-    /// the document drawn, and quit then if asked to.
-    pub(crate) fn document_loaded(window: &mut gpui_kit::Window) {
-        mark("loaded");
-        if let (Some(Some(_)), Some(read_start)) = (START.get(), FILE_READ_START.get()) {
-            let ms = crate::clock::system_now().duration_since(*read_start).unwrap_or(Duration::ZERO).as_secs_f64() * 1000.0;
-            eprintln!("ibisOffice timing: read-start to loaded: {ms:.1} ms ({:.3} s)", ms / 1000.0);
-        }
-        window.on_next_frame(|window, _| {
-            mark("document-frame");
-            if let (Some(Some(_)), Some(read_start)) = (START.get(), FILE_READ_START.get()) {
-                let ms = crate::clock::system_now().duration_since(*read_start).unwrap_or(Duration::ZERO).as_secs_f64() * 1000.0;
-                eprintln!("ibisOffice timing: read-start to document-frame (render complete): {ms:.1} ms ({:.3} s)", ms / 1000.0);
-            }
-            window.on_next_frame(|_, cx| {
-                mark("document-second-frame");
-                if QUIT_AFTER_DOCUMENT.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                    cx.quit();
-                }
-            });
-            window.refresh();
-        });
-        window.refresh();
-    }
-
-    pub(crate) fn mark(stage: &str) {
-        if let Some(Some(start)) = START.get() {
-            let ms = crate::clock::system_now().duration_since(*start).unwrap_or(Duration::ZERO).as_secs_f64() * 1000.0;
-            eprintln!("ibisOffice timing: {stage} {ms:.1}");
-        }
-    }
-
-    /// When this process was started, from `sysctl kern.proc.pid` (macOS).
-    #[cfg(target_os = "macos")]
-    fn process_start() -> Option<SystemTime> {
-        // struct kinfo_proc begins with kp_proc, whose first member, the
-        // union p_un, holds __p_starttime (a timeval) at offset 0.
-        const CTL_KERN: i32 = 1;
-        const KERN_PROC: i32 = 14;
-        const KERN_PROC_PID: i32 = 1;
-        const KINFO_PROC_SIZE: usize = 648;
-        const STARTTIME_OFFSET: usize = 0;
-        unsafe extern "C" {
-            fn sysctl(name: *const i32, namelen: u32, oldp: *mut u8, oldlenp: *mut usize, newp: *const u8, newlen: usize) -> i32;
-        }
-        let mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, std::process::id() as i32];
-        let mut buf = [0u8; KINFO_PROC_SIZE];
-        let mut len = buf.len();
-        // SAFETY: the buffer and its length are valid for the call; the
-        // kernel writes at most `len` bytes.
-        let ok = unsafe { sysctl(mib.as_ptr(), mib.len() as u32, buf.as_mut_ptr(), &mut len, std::ptr::null(), 0) } == 0;
-        if !ok || len < STARTTIME_OFFSET + 16 {
-            return None;
-        }
-        let secs = i64::from_ne_bytes(buf[STARTTIME_OFFSET..STARTTIME_OFFSET + 8].try_into().ok()?);
-        let usecs = i32::from_ne_bytes(buf[STARTTIME_OFFSET + 8..STARTTIME_OFFSET + 12].try_into().ok()?);
-        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(secs.max(0) as u64) + Duration::from_micros(usecs.max(0) as u64);
-        // Sanity: within the last minute.
-        crate::clock::system_now().duration_since(start).ok().filter(|d| *d < Duration::from_secs(60)).map(|_| start)
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn process_start() -> Option<SystemTime> {
-        None
-    }
-}
 
 /// Native entry point; see [`Args`] for the command line.
 #[cfg(not(target_family = "wasm"))]
 pub fn run_native() {
+    register_hooks();
     // TODAY, NOW and a date typed without its year read the local time.
     ibis_calc::eval::convert::set_clock(clock::calc_clock);
     let args = match parse_args() {
@@ -1093,6 +646,8 @@ pub fn run_native() {
             // Look for a newer version in the background (not in the timing runs).
             if !quit_after_first_frame {
                 crate::shell::update::start(cx);
+                // The fonts that can be downloaded, asked about at the first start of a version (セットアップ).
+                crate::shell::font_setup_dialog::start(cx);
                 // Offer to put the AppImage in the desktop's list of apps (Linux).
                 linux_desktop::start(cx);
             }
@@ -1146,7 +701,7 @@ mod web {
     /// `file` is a .pptx, .xlsx or .docx to open, named `file_name`; without it (or if it
     /// cannot be read) the editor shows the start view.
     #[wasm_bindgen]
-    pub fn run(asset_base: Option<String>, file_name: Option<String>, file: Option<Vec<u8>>) -> Result<(), JsValue> {
+    pub async fn run(asset_base: Option<String>, file_name: Option<String>, file: Option<Vec<u8>>) -> Result<(), JsValue> {
         let document = file.and_then(|data| match ibis_pptx::read(&data) {
             Ok(presentation) => Some((presentation, file_name.unwrap_or_default().into())),
             Err(err) => {
@@ -1154,6 +709,10 @@ mod web {
                 None
             }
         });
+        // The fonts downloaded with セットアップ are kept in the browser's IndexedDB; they are given to the text system when the
+        // first document is drawn (render::shape_view), so they are read before the editor starts.
+        crate::render::shape_view::set_web_fonts(crate::shell::web::load_downloaded_fonts().await);
+        crate::register_hooks();
         gpui_kit::platform::web_init();
 
         // Single-threaded: needs no SharedArrayBuffer, so no COOP/COEP headers.
@@ -1186,46 +745,16 @@ mod web {
                 .expect("failed to load the UI font");
             super::init(cx);
             Theme::global_mut(cx).font_family = "IBM Plex Sans".into();
+            let blank = document.is_none().then(crate::shell::web::new_kind_of_address).flatten();
             super::open_editor(document, None, cx);
+            if let Some(kind) = blank {
+                crate::shell::app::new_file_in_page(kind, cx);
+            }
+            // The fonts that can be downloaded, asked about at the first start of a version (セットアップ).
+            crate::shell::font_setup_dialog::start(cx);
         });
         APPLICATION.with(|app| *app.borrow_mut() = Some(handle));
         Ok(())
-    }
-
-    /// Whether the browser runs on a Mac (or an iPad, which reports itself as
-    /// one), where shortcuts use Command. Same test as gpui-pre-web's.
-    pub(crate) fn is_mac() -> bool {
-        let navigator = js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("navigator")).ok();
-        let field = |name: &str| {
-            navigator
-                .as_ref()
-                .and_then(|navigator| js_sys::Reflect::get(navigator, &JsValue::from_str(name)).ok())
-                .and_then(|value| value.as_string())
-                .unwrap_or_default()
-        };
-        field("platform").contains("Mac") || field("userAgent").contains("Mac")
-    }
-
-    #[wasm_bindgen]
-    extern "C" {
-        /// Defined by `www/main.ts`: shows the browser's file picker and
-        /// resolves to `{ name, bytes }`, or to `null` when cancelled.
-        #[wasm_bindgen(catch, js_name = ibisOfficePickFile)]
-        fn pick_file_js() -> Result<js_sys::Promise, JsValue>;
-    }
-
-    /// Let the user choose a file; its name and contents, or `None` if cancelled.
-    pub(crate) async fn pick_file() -> Result<Option<(String, Vec<u8>)>, String> {
-        let describe = |err: JsValue| err.as_string().unwrap_or_else(|| format!("{err:?}"));
-        let promise = pick_file_js().map_err(describe)?;
-        let value = wasm_bindgen_futures::JsFuture::from(promise).await.map_err(describe)?;
-        if value.is_null() || value.is_undefined() {
-            return Ok(None);
-        }
-        let field = |name: &str| js_sys::Reflect::get(&value, &JsValue::from_str(name)).map_err(describe);
-        let name = field("name")?.as_string().unwrap_or_default();
-        let bytes = js_sys::Uint8Array::new(&field("bytes")?).to_vec();
-        Ok(Some((name, bytes)))
     }
 }
 
@@ -1234,6 +763,7 @@ mod read_guard_tests {
     /// C1 (review 0.8.5): a reader that panics closes that file with an error; the process, and the next read, go on.
     #[test]
     fn a_panicking_reader_becomes_an_open_error() {
+        crate::register_hooks();
         let path = std::path::Path::new("panics.xlsx");
         let failed: Result<u8, String> = super::catch_read_panic(path, || panic!("a reader's mistake"));
         assert_eq!(failed.unwrap_err(), crate::shell::i18n::text("file.read-crashed").to_string());

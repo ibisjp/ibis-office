@@ -69,7 +69,18 @@ fn behavior_xml(p: &str, b: &ibis_doc_model::AnimBehavior, target: &str, n: u32)
         if v.parse::<f64>().is_ok() { format!("<{p}fltVal val=\"{}\"/>", esc(v)) } else { format!("<{p}strVal val=\"{}\"/>", esc(v)) }
     };
     let dur = b.dur.max(1);
+    // Its own smooth start and end and auto-reverse (`cTn@accel`, `@decel`, `@autoRev`), as read.
+    let own = format!(
+        "{}{}{}",
+        if b.time.accel > 0 { format!(" accel=\"{}\"", b.time.accel) } else { String::new() },
+        if b.time.decel > 0 { format!(" decel=\"{}\"", b.time.decel) } else { String::new() },
+        if b.time.auto_rev { " autoRev=\"1\"" } else { "" }
+    );
+    let own = if b.time.filter.is_empty() { own } else { format!("{own} tmFilter=\"{}\"", b.time.filter_text()) };
     let time = |fill: &str| {
+        // (A behaviour that goes when it ends says so: one that says nothing takes its effect's `fill="hold"`.)
+        let fill = format!("{own}{}", if b.time.remove { " fill=\"remove\"" } else { fill });
+        let fill = fill.as_str();
         if b.begin > 0 {
             format!("<{p}cTn id=\"{n}\" dur=\"{dur}\"{fill}><{p}stCondLst><{p}cond delay=\"{}\"/></{p}stCondLst></{p}cTn>", b.begin)
         } else {
@@ -96,7 +107,8 @@ fn behavior_xml(p: &str, b: &ibis_doc_model::AnimBehavior, target: &str, n: u32)
                 })
                 .collect();
             let calc = if *discrete { "discrete" } else { "lin" };
-            format!("<{p}anim calcmode=\"{calc}\" valueType=\"num\"><{p}cBhvr additive=\"base\">{}{target}{}</{p}cBhvr><{p}tavLst>{tavs}</{p}tavLst></{p}anim>", time(" fill=\"hold\""), attr(name))
+            let additive = if b.time.sum { "sum" } else { "base" };
+            format!("<{p}anim calcmode=\"{calc}\" valueType=\"num\"><{p}cBhvr additive=\"{additive}\">{}{target}{}</{p}cBhvr><{p}tavLst>{tavs}</{p}tavLst></{p}anim>", time(" fill=\"hold\""), attr(name))
         }
         BehaviorKind::Effect { filter, enter } => {
             let transition = if *enter { "in" } else { "out" };

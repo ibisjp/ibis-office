@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ibis-calc", "crates/ibis-doc-model", "crates/ibis-ooxml", "crates/ibis-emf", "crates/ibis-eot", "crates/ibis-imgdiff", "crates/ibis-pptx", "crates/ibis-office-updater", "crates/ibis-appimage", "crates/ibis-office-app", "tools/ibis-bench"]
+members = ["crates/ibis-calc", "crates/ibis-office-base", "crates/ibis-office-macros", "crates/ibis-office-render", "crates/ibis-office-shell", "crates/ibis-office-docx", "crates/ibis-office-pptx", "crates/ibis-office-xlsx", "crates/ibis-doc-model", "crates/ibis-ooxml", "crates/ibis-emf", "crates/ibis-eot", "crates/ibis-imgdiff", "crates/ibis-pptx", "crates/ibis-office-updater", "crates/ibis-appimage", "crates/ibis-office-app", "tools/ibis-bench"]
 # The GPUI forks under forks/ are separate packages patched in below, not members.
 exclude = ["forks"]
 
@@ -11,6 +11,13 @@ publish = false
 
 [workspace.dependencies]
 ibis-calc = { path = "crates/ibis-calc" }
+ibis-office-base = { path = "crates/ibis-office-base" }
+ibis-office-macros = { path = "crates/ibis-office-macros" }
+ibis-office-render = { path = "crates/ibis-office-render" }
+ibis-office-shell = { path = "crates/ibis-office-shell" }
+ibis-office-docx = { path = "crates/ibis-office-docx" }
+ibis-office-xlsx = { path = "crates/ibis-office-xlsx" }
+ibis-office-pptx = { path = "crates/ibis-office-pptx" }
 ibis-doc-model = { path = "crates/ibis-doc-model" }
 ibis-pptx = { path = "crates/ibis-pptx" }
 ibis-ooxml = { path = "crates/ibis-ooxml" }
@@ -24,10 +31,21 @@ gpui-kit = "=0.6.6"
 # gpui-pre-web fix text on macOS and in the browser (full-width Japanese
 # symbols); gpui-pre-linux and gpui-pre-wgpu (the text system and renderer
 # of Linux and the web) serve the Linux build. They are git submodules under forks/; see AGENTS.md.
+# The development setting of `--release` (opt-level 3 and Cargo's default LTO as always): incremental compilation on makes a
+# rebuild after a change about 40 percent faster (tasks/doc/reports/2026-11-09-mac-build-timing.md) and the binary is as fast
+# (tasks/doc/reports/2026-11-09-release-profile-speed.md). `lto = "off"` is faster to build too but makes the app slower (up to
+# 80 percent in the PDF export of the presentation), so LTO is left as it is. What is distributed is built by the bundle scripts with
+# CARGO_PROFILE_RELEASE_INCREMENTAL=false and CARGO_PROFILE_RELEASE_LTO=false (scripts/dist-profile.sh), which is how release was
+# before. Not a separate profile: it would double the target folder.
+[profile.release]
+incremental = true
+
 [patch.crates-io]
 gpui-component = { path = "forks/gpui-component" }
+gpui-base = { path = "forks/gpui-base" }
 gpui-pre = { path = "forks/gpui-pre" }
 gpui-pre-macos = { path = "forks/gpui-pre-macos" }
+gpui-pre-apple = { path = "forks/gpui-pre-apple" }
 gpui-pre-web = { path = "forks/gpui-pre-web" }
 gpui-pre-windows = { path = "forks/gpui-pre-windows" }
 gpui-pre-linux = { path = "forks/gpui-pre-linux" }

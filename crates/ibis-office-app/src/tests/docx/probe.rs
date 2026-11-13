@@ -6,7 +6,7 @@
 //! `IBIS_DUMP_ROOT` (the folder of the .docx files), `IBIS_DUMP_DOCS` (names without the extension, comma-separated; all when empty)
 //! and `IBIS_DUMP_OUT` (the folder to write `<name>.tsv` and `pages.tsv` to), and `IBIS_DUMP_PDF=1` (also write the export's PDF).
 
-use super::flow_layout::Item;
+use crate::docx::flow_layout::Item;
 
 #[test]
 #[ignore = "a tool: needs IBIS_DUMP_ROOT and IBIS_DUMP_OUT"]
@@ -29,9 +29,9 @@ fn dump_corpus_layout() {
             resources.preload.wait_all();
             resources
         });
-        super::flow_layout::update_fields_on_open(&mut presentation, &resources);
+        crate::docx::flow_layout::update_fields_on_open(&mut presentation, &resources);
         let Some(flow) = presentation.flow.as_ref() else { continue };
-        let pagination = super::flow_layout::pages(flow, &resources);
+        let pagination = crate::docx::flow_layout::pages(flow, &resources);
         summary.push_str(&format!("{name}\t{}\n", pagination.pages.len()));
         let mut tsv = String::new();
         // The vertical rules (thin rectangles) of each page: `<name>.rules.tsv`, the page, x and top, bottom of each (table column edges).

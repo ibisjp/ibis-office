@@ -85,7 +85,7 @@ Every release attaches the browser version as an archive, so you can pin the ver
 All three are on the release page: `https://github.com/ibisjp/ibis-office/releases/tag/v<version>`. Fetch them, check the archive, unzip it, and check each file:
 
 ```sh
-V=0.8.6
+V=0.8.7
 BASE=https://github.com/ibisjp/ibis-office/releases/download/v$V
 curl -LO $BASE/ibisOffice-$V-Web.zip
 curl -LO $BASE/ibisOffice-$V-Web.zip.sha256

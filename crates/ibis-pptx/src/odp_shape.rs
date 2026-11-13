@@ -382,7 +382,7 @@ fn preset_of(kind: &str) -> Option<String> {
         return crate::geometry::preset(name).is_some().then(|| name.to_string());
     }
     if let Some(n) = kind.strip_prefix("mso-spt").and_then(|n| n.parse::<u16>().ok()) {
-        return crate::ppt_write::preset(n).map(str::to_string);
+        return crate::officeart_xml::preset(n).map(str::to_string);
     }
     let name = match kind {
         "rectangle" | "quadrat" => "rect",

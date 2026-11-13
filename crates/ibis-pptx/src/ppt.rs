@@ -274,8 +274,8 @@ pub fn dump(data: &[u8]) -> Result<String, Error> {
     fn walk(out: &mut String, recs: &[Rec], depth: usize, timing: bool) {
         for r in recs {
             *out += &format!("{}{:04X} ver={} inst={:03X} len={}", "  ".repeat(depth), r.ty, r.ver, r.inst, r.data.len());
-            if timing && !r.is_container() {
-                let hex: String = r.data.iter().take(48).map(|b| format!("{b:02X}")).collect();
+            if (timing || matches!(r.ty, 0x0F9F | 0x0FA0 | 0x0FA1 | 0x0FA3 | 0x0FA6 | 0x0BC3)) && !r.is_container() {
+                let hex: String = r.data.iter().take(160).map(|b| format!("{b:02X}")).collect();
                 *out += &format!(" {hex}");
             }
             *out += "\n";
@@ -291,14 +291,37 @@ pub fn dump(data: &[u8]) -> Result<String, Error> {
         out += "document:\n";
         walk(&mut out, &[d], 1, false);
     }
+    if let Some(d) = persist_object(&doc, &map, document) {
+        // The charset and the pitch and family of each font (`FontEntityAtom`, MS-PPT 2.9.11, at 64 and 67).
+        for env in d.children().iter().filter(|r| r.ty == rt::ENVIRONMENT) {
+            for coll in env.children().iter().filter(|r| r.ty == rt::FONT_COLLECTION) {
+                for (i, f) in coll.children().iter().filter(|f| f.ty == rt::FONT_ENTITY_ATOM).enumerate() {
+                    out += &format!("font {i}: charset {:?} pitch_and_family {:?}\n", f.data.get(64), f.data.get(67));
+                }
+            }
+        }
+    }
     if let Ok(ir) = read_ppt(data) {
         out += &format!("fonts: {:?}\n", ir.fonts);
-        for (i, slide) in ir.slides.iter().enumerate() {
+        let mut defaults: Vec<_> = ir.default_props.values.iter().collect();
+        defaults.sort();
+        out += &format!("default props: {defaults:X?}\n");
+        for (label, styles) in std::iter::once(("document default".to_string(), &ir.defaults)).chain(ir.masters.iter().enumerate().map(|(i, m)| (format!("master {i}"), &m.styles))) {
+            let mut kinds: Vec<_> = styles.iter().collect();
+            kinds.sort_by_key(|(k, _)| **k);
+            for (kind, style) in kinds {
+                if let Some((pf, cf)) = style.levels.first() {
+                    out += &format!("{label} text style {kind} level 1: align {:?} left_margin {:?} indent {:?} font {:?} ea {:?} ansi {:?} size {:?} space_before per level {:?}\n", pf.align, pf.left_margin, pf.indent, cf.font, cf.east_asian_font, cf.ansi_font, cf.size, style.levels.iter().map(|(p, _)| p.space_before).collect::<Vec<_>>());
+                }
+            }
+        }
+        for (i, slide) in ir.slides.iter().chain(ir.masters.iter()).enumerate() {
             fn texts(out: &mut String, shapes: &[ShapeIr]) {
                 for s in shapes {
                     let mut props: Vec<_> = s.props.values.iter().collect();
                     props.sort();
-                    *out += &format!("  shape {} spt={} frame={:?} props={:X?}\n", s.id, s.spt, s.frame, props);
+                    *out += &format!("  shape {} spt={} ph={:?}/{:?} frame={:?} props={:X?}
+", s.id, s.spt, s.placeholder, s.unplaced_kind, s.frame, props);
                     for (id, data) in &s.props.complex {
                         if data.len() < 200 {
                             *out += &format!("    complex {:X}: {:02X?}\n", id, data);
@@ -310,7 +333,11 @@ pub fn dump(data: &[u8]) -> Result<String, Error> {
                     texts(out, &s.children);
                 }
             }
-            out += &format!("slide {}:\n", i + 1);
+            if i < ir.slides.len() {
+                out += &format!("slide {}:\n", i + 1);
+            } else {
+                out += &format!("master {}:\n", i - ir.slides.len());
+            }
             texts(&mut out, &slide.shapes);
         }
     }
@@ -403,11 +430,16 @@ pub(crate) struct Cf {
     pub(crate) shadow: Option<bool>,
     pub(crate) font: Option<u16>,
     pub(crate) east_asian_font: Option<u16>,
+    pub(crate) inherited_east_asian_font: Option<u16>,
     pub(crate) ansi_font: Option<u16>,
     pub(crate) symbol_font: Option<u16>,
     pub(crate) size: Option<u16>,
+    /// The size in hundredths of a point when the shape's DrawingML has a half point (13.5 pt: the binary format keeps whole points).
+    pub(crate) size_hundredths: Option<u16>,
     pub(crate) color: Option<TextColor>,
     pub(crate) position: Option<i16>,
+    /// The spacing between characters (`spc` of `a:rPr`, hundredths of a point), from the shape's DrawingML (`shape_xml_spacing`).
+    pub(crate) spacing: Option<i32>,
     /// The run grouping of the additional text properties (`StyleTextProp9Atom`).
     pub(crate) pp9rt: Option<u8>,
     /// A click on the characters does this.
@@ -424,11 +456,16 @@ impl Cf {
             font: self.font.or(base.font),
             // A typeface the formatting names is the font of all its characters: the base's other fonts do not stay.
             east_asian_font: if self.font.is_some() { self.east_asian_font } else { self.east_asian_font.or(base.east_asian_font) },
+            // The East Asian typeface the formatting would have inherited had it not named a typeface of its own; used when that typeface
+            // is a Latin one (see `ppt_write`).
+            inherited_east_asian_font: if self.font.is_some() { base.east_asian_font.or(base.inherited_east_asian_font) } else { self.inherited_east_asian_font.or(base.inherited_east_asian_font) },
             ansi_font: if self.font.is_some() { self.ansi_font } else { self.ansi_font.or(base.ansi_font) },
             symbol_font: if self.font.is_some() { self.symbol_font } else { self.symbol_font.or(base.symbol_font) },
             size: self.size.or(base.size),
+            size_hundredths: self.size_hundredths.or(if self.size.is_some() { None } else { base.size_hundredths }),
             color: self.color.or(base.color),
             position: self.position.or(base.position),
+            spacing: self.spacing.or(base.spacing),
             pp9rt: self.pp9rt.or(base.pp9rt),
             link: self.link.or(base.link),
         }
@@ -589,6 +626,8 @@ pub(crate) struct ParaIr {
     pub(crate) pf: Pf,
     /// An automatic numbering: the scheme (`TextAutoNumberSchemeEnum`) and the first number.
     pub(crate) auto_number: Option<(u16, u16)>,
+    /// The character formatting of the paragraph mark (the style run that covers the paragraph break): what an empty paragraph is sized by.
+    pub(crate) end_cf: Cf,
     /// Runs: text and character formatting. A `\u{B}` is a line break.
     pub(crate) runs: Vec<(String, Cf, Option<Field>)>,
 }
@@ -618,6 +657,207 @@ struct TextAtoms<'a> {
     style9: Option<&'a [u8]>,
     /// Stretches of the text a click does something on: start, end, what.
     links: Vec<(usize, usize, Interactive)>,
+    /// The ruler of the text (`TextRulerAtom`): the left margin and the indent each of the five levels has, if it gives them.
+    ruler: [(Option<i16>, Option<i16>); 5],
+}
+
+/// A `TextRulerAtom` (MS-PPT 2.9.76 `TextRuler`): the flags say which of the following fields are there (the count of levels,
+/// the default tab size, the tab stops, then the left margin and the indent of each of the five levels, level by level).
+fn parse_ruler(d: &[u8]) -> [(Option<i16>, Option<i16>); 5] {
+    let mut out = [(None, None); 5];
+    let mut c = Cur { d, at: 0 };
+    let Some(flags) = c.u32() else { return out };
+    if flags & 0x2 != 0 && c.u16().is_none() {
+        return out;
+    }
+    if flags & 0x1 != 0 && c.u16().is_none() {
+        return out;
+    }
+    if flags & 0x4 != 0 {
+        let Some(count) = c.u16() else { return out };
+        for _ in 0..count {
+            if c.u32().is_none() {
+                return out;
+            }
+        }
+    }
+    // The margin and the indent of a level are written together, level after level.
+    for level in 0..5 {
+        if flags & (0x8 << level) != 0 {
+            out[level].0 = c.i16();
+        }
+        if flags & (0x100 << level) != 0 {
+            out[level].1 = c.i16();
+        }
+    }
+    out
+}
+
+/// The spacing between characters of each paragraph of the shape's DrawingML: per paragraph, per run (the characters it has, its `spc`).
+/// PowerPoint 2007 and later keeps the shape as DrawingML in the file (the `drs/shapexml.xml` of a zip in the shape's property 0x03A9,
+/// `metroBlob` of [MS-ODRAW] "Group Shape / Shape Properties" (a complex property; section number not looked up), in the OfficeArtTertiaryFOPT), because the binary format has no field for the spacing (031.ppt: `spc="300"` on a title in HG Maru Gothic).
+fn shape_xml_spacing(blob: &[u8]) -> Option<Vec<Vec<(usize, Option<i32>, Option<u16>)>>> {
+    let archive = crate::zip::Archive::new(blob).ok()?;
+    let xml = archive.read("drs/shapexml.xml").ok()??;
+    // The names in it are in the writer's code page, not UTF-8: only the markup and the numbers are used.
+    let xml = String::from_utf8_lossy(&xml).into_owned();
+    let doc = roxmltree::Document::parse(&xml).ok()?;
+    let mut paragraphs = Vec::new();
+    for p in doc.descendants().filter(|n| n.has_tag_name("p") && n.parent().is_some_and(|b| b.has_tag_name("txBody"))) {
+        let mut runs = Vec::new();
+        for r in p.children().filter(|n| n.has_tag_name("r") || n.has_tag_name("br") || n.has_tag_name("fld")) {
+            let rpr = r.children().find(|n| n.has_tag_name("rPr"));
+            let spacing = rpr.and_then(|n| n.attribute("spc")).and_then(|v| v.parse::<i32>().ok());
+            // The size in hundredths of a point (`sz`).
+            let size = rpr.and_then(|n| n.attribute("sz")).and_then(|v| v.parse::<u16>().ok());
+            let len = if r.has_tag_name("br") { 1 } else { r.children().find(|n| n.has_tag_name("t")).and_then(|t| t.text()).map_or(0, |t| t.chars().count()) };
+            runs.push((len, spacing, size));
+        }
+        paragraphs.push(runs);
+    }
+    Some(paragraphs)
+}
+
+/// The left margin and the indent (`marL`, `indent` of `a:pPr`, EMU) of each paragraph of the shape's DrawingML.
+fn shape_xml_margins(blob: &[u8]) -> Option<Vec<(Option<i64>, Option<i64>)>> {
+    let archive = crate::zip::Archive::new(blob).ok()?;
+    let xml = String::from_utf8_lossy(&archive.read("drs/shapexml.xml").ok()??).into_owned();
+    let doc = roxmltree::Document::parse(&xml).ok()?;
+    Some(
+        doc.descendants()
+            .filter(|n| n.has_tag_name("p") && n.parent().is_some_and(|b| b.has_tag_name("txBody")))
+            .map(|p| {
+                let ppr = p.children().find(|n| n.has_tag_name("pPr"));
+                let get = |a: &str| ppr.and_then(|n| n.attribute(a)).and_then(|v| v.parse::<i64>().ok());
+                (get("marL"), get("indent"))
+            })
+            .collect(),
+    )
+}
+
+/// One master unit (1/576 inch) in EMU, rounded up: the binary format keeps positions in master units, so a frame that is the DrawingML's
+/// differs from it by the rounding to a unit at most (measured on 031 and 147: 304 and 189 EMU).
+const MASTER_UNIT_EMU: i64 = 1588;
+
+/// Whether the shape's DrawingML is the shape as it is in the binary format: its frame is the same. The DrawingML is kept as the file was
+/// first written, so a shape moved or resized since has a stale one. (Not enough: 038.ppt's text boxes agree in frame, yet PowerPoint draws
+/// them without the DrawingML's negative spacing; what it checks beyond the frame is not known.)
+pub(crate) fn shape_xml_is_current(blob: &[u8], frame: Option<(i64, i64, i64, i64)>) -> bool {
+    let Some(frame) = frame else { return false };
+    let Some(xml) = crate::zip::Archive::new(blob).ok().and_then(|a| a.read("drs/shapexml.xml").ok().flatten()) else { return false };
+    let xml = String::from_utf8_lossy(&xml).into_owned();
+    let Ok(doc) = roxmltree::Document::parse(&xml) else { return false };
+    let num = |n: roxmltree::Node, a: &str| n.attribute(a).and_then(|v| v.parse::<i64>().ok());
+    let (Some(off), Some(ext)) = (doc.descendants().find(|n| n.has_tag_name("off")), doc.descendants().find(|n| n.has_tag_name("ext") && n.attribute("cx").is_some())) else { return false };
+    let (Some(x), Some(y), Some(w), Some(h)) = (num(off, "x"), num(off, "y"), num(ext, "cx"), num(ext, "cy")) else { return false };
+    [(x, frame.0), (y, frame.1), (w, frame.2), (h, frame.3)].iter().all(|(a, b)| (a - b).abs() <= MASTER_UNIT_EMU)
+}
+
+/// The text of a shape that has none in the binary format, from its DrawingML (`p:txBody` as written): a text in columns (`numCol`) has only
+/// this (147.ppt: the poster's four-column body). None when the DrawingML has no text with characters in it.
+pub(crate) fn shape_xml_text_body(blob: &[u8]) -> Option<String> {
+    let archive = crate::zip::Archive::new(blob).ok()?;
+    let bytes = archive.read("drs/shapexml.xml").ok()??;
+    // The XML says UTF-8; the names in it are in the writer's code page when they are not ASCII.
+    let xml = match String::from_utf8(bytes.clone()) {
+        Ok(x) => x,
+        Err(_) => encoding_rs::SHIFT_JIS.decode(&bytes).0.into_owned(),
+    };
+    let start = xml.find("<p:txBody>")?;
+    let end = xml.rfind("</p:txBody>")? + "</p:txBody>".len();
+    let body = &xml[start..end];
+    let wrapped = format!(r#"<r xmlns:p="p" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">{body}</r>"#);
+    let doc = roxmltree::Document::parse(&wrapped).ok()?;
+    doc.descendants().any(|n| n.has_tag_name("t") && n.text().is_some_and(|t| !t.trim().is_empty())).then(|| body.to_string())
+}
+
+/// Gives the runs of a text the spacing between characters its shape's DrawingML has. Only when the characters add up for every
+/// paragraph (the text in the DrawingML can not be used if it is in another code page).
+fn apply_shape_xml_spacing(text: &mut TextIr, blob: &[u8]) {
+    let Some(xml) = shape_xml_spacing(blob) else { return };
+    if xml.len() != text.paragraphs.len() {
+        return;
+    }
+    let has_spacing = xml.iter().flatten().any(|(_, s, _)| s.is_some_and(|s| s != 0));
+    let lengths_match = xml.iter().zip(&text.paragraphs).all(|(x, p)| x.iter().map(|(n, _, _)| n).sum::<usize>() == p.runs.iter().map(|(t, _, _)| t.chars().filter(|c| *c != '\r').count()).sum::<usize>());
+    if !lengths_match {
+        return;
+    }
+    // The DrawingML is kept as the file was first written: after the shape was edited in an older PowerPoint (038.ppt: 8.5 pt in the
+    // DrawingML, 13 pt in the binary, and PowerPoint draws the binary without the spacing) it is stale. Used only if every size the
+    // binary text has agrees with it.
+    let sizes_agree = xml.iter().zip(&text.paragraphs).all(|(x, para)| {
+        let per_char: Vec<Option<u16>> = x.iter().flat_map(|(n, _, z)| std::iter::repeat_n(*z, *n)).collect();
+        let mut at = 0;
+        para.runs.iter().all(|(t, cf, _)| {
+            let n = t.chars().count();
+            let ok = (at..at + n).all(|i| match (cf.size, per_char.get(i).copied().flatten()) {
+                (Some(a), Some(b)) => a == b / 100,
+                _ => true,
+            });
+            at += n;
+            ok
+        })
+    });
+    if !sizes_agree {
+        return;
+    }
+    // The paragraph's left margin and indent as the DrawingML has them (the binary format has only what the master and the ruler give, which
+    // misses the hanging indent of a bullet that the author set: 032's 342900 EMU, 057's 803693 and -198840). In master units; the indent
+    // of the binary format is where the first line starts, from the left edge.
+    if let Some(margins) = shape_xml_margins(blob) {
+        for (m, para) in margins.iter().zip(text.paragraphs.iter_mut()) {
+            let unit = |emu: i64| (emu as f64 / 1587.5).round() as i16;
+            if let Some(left) = m.0 {
+                para.pf.left_margin = Some(unit(left));
+                para.pf.indent = Some(unit(left + m.1.unwrap_or(0)));
+            }
+        }
+    }
+    // A half point (13.5 pt, 112's body): the binary format has whole points only, PowerPoint draws what the DrawingML says.
+    for (x, para) in xml.iter().zip(text.paragraphs.iter_mut()) {
+        let per_char: Vec<Option<u16>> = x.iter().flat_map(|(n, _, z)| std::iter::repeat_n(*z, *n)).collect();
+        let mut at = 0usize;
+        for (t, cf, _) in para.runs.iter_mut() {
+            let n = t.chars().filter(|c| *c != '\r').count();
+            let sizes: Vec<Option<u16>> = (at..at + n).map(|i| per_char.get(i).copied().flatten()).collect();
+            if let Some(Some(h)) = sizes.first().copied() {
+                if h % 100 != 0 && sizes.iter().all(|z| *z == Some(h)) {
+                    cf.size_hundredths = Some(h);
+                }
+            }
+            at += n;
+        }
+    }
+    if !has_spacing {
+        return;
+    }
+    for (x, para) in xml.iter().zip(text.paragraphs.iter_mut()) {
+        // The spacing at each character of the paragraph.
+        let per_char: Vec<Option<i32>> = x.iter().flat_map(|(n, s, _)| std::iter::repeat_n(*s, *n)).collect();
+        let mut at = 0usize;
+        let mut runs = Vec::new();
+        for (t, cf, field) in std::mem::take(&mut para.runs) {
+            let chars: Vec<char> = t.chars().collect();
+            let mut start = 0;
+            while start < chars.len() {
+                let spacing = per_char.get(at + start).copied().flatten();
+                let mut end = start + 1;
+                while end < chars.len() && per_char.get(at + end).copied().flatten() == spacing {
+                    end += 1;
+                }
+                let mut cf = cf.clone();
+                cf.spacing = spacing;
+                runs.push((chars[start..end].iter().collect::<String>(), cf, if start == 0 { field } else { None }));
+                start = end;
+            }
+            if chars.is_empty() {
+                runs.push((t, cf, field));
+            }
+            at += chars.len();
+        }
+        para.runs = runs;
+    }
 }
 
 fn decode_text(rec: &Rec) -> String {
@@ -710,8 +950,13 @@ fn build_text(atoms: &TextAtoms) -> Option<TextIr> {
     let mut i = 0;
     while i <= chars.len() {
         if i == chars.len() || chars[i] == '\r' {
-            let (level, pf) = at_pf(start);
-            let mut para = ParaIr { level, pf, auto_number: auto_at(start), runs: Vec::new() };
+            let (level, mut pf) = at_pf(start);
+            // The ruler gives the margin and the indent a paragraph does not give itself.
+            if let Some((margin, indent)) = atoms.ruler.get(level as usize) {
+                pf.left_margin = pf.left_margin.or(*margin);
+                pf.indent = pf.indent.or(*indent);
+            }
+            let mut para = ParaIr { level, pf, auto_number: auto_at(start), end_cf: at_cf(i), runs: Vec::new() };
             // Runs: stretches with the same formatting (and a field is a run of its own).
             let mut run_start = start;
             let mut j = start;
@@ -791,6 +1036,7 @@ fn read_textbox<'a>(textbox: &Rec<'a>, style9: Option<&'a [u8]>) -> Result<Optio
             }
             rt::TEXT_CHARS_ATOM | rt::TEXT_BYTES_ATOM => atoms.chars = Some(decode_text(&r)),
             rt::STYLE_TEXT_PROP_ATOM => atoms.style = Some(r),
+            0x0FA6 => atoms.ruler = parse_ruler(r.data),
             0x0FD8 => {
                 if let Some(p) = u32_at(r.data, 0) {
                     atoms.fields.push((p as usize, Field::SlideNumber));
@@ -828,7 +1074,7 @@ pub(crate) struct Props {
 }
 
 impl Props {
-    fn parse(rec: &Rec, props: &mut Props) {
+    pub(crate) fn parse(rec: &Rec, props: &mut Props) {
         let count = rec.inst as usize;
         let mut entries: Vec<(u16, bool, u32)> = Vec::new();
         for i in 0..count {
@@ -862,6 +1108,30 @@ impl Props {
         }
     }
 
+    /// These properties, and the ones of `base` that pass `take` where these have none.
+    pub(crate) fn with_missing_from(&self, base: &Props, take: impl Fn(u16) -> bool) -> Props {
+        let mut p = self.clone();
+        for (id, v) in &base.values {
+            if take(*id) && !p.values.contains_key(id) {
+                p.values.insert(*id, *v);
+                if let Some(c) = base.complex.get(id) {
+                    p.complex.insert(*id, c.clone());
+                }
+            }
+        }
+        p
+    }
+
+    /// These properties with `ids` left out.
+    pub(crate) fn without(&self, ids: &[u16]) -> Props {
+        let mut p = self.clone();
+        for id in ids {
+            p.values.remove(id);
+            p.complex.remove(id);
+        }
+        p
+    }
+
     /// The data of a complex property.
     pub(crate) fn complex(&self, id: u16) -> Option<&[u8]> {
         self.complex.get(&id).map(Vec::as_slice)
@@ -876,10 +1146,88 @@ impl Props {
     }
 
     /// A boolean property group (the low half the values, the high half which of them are given): the flag at `bit`.
+    /// These properties with the Boolean `bit` of `id` set to `on` (and marked as given).
+    pub(crate) fn with_flag(&self, id: u16, bit: u32, on: bool) -> Props {
+        let mut p = self.clone();
+        let v = (p.get(id).unwrap_or(0) | 1 << (bit + 16)) & !(1 << bit) | u32::from(on) << bit;
+        p.values.insert(id, v);
+        p
+    }
+
     pub(crate) fn flag(&self, id: u16, bit: u32) -> Option<bool> {
         let v = self.get(id)?;
         (v & (1 << (bit + 16)) != 0).then_some(v & (1 << bit) != 0)
     }
+}
+
+/// The default values of the Windows `COLOR_*` system colors (`GetSysColor`, Windows 11 defaults, the same on every OS),
+/// by the `COLOR_*` number.
+const WINDOWS_COLORS: [u32; 0x1C] = [
+    0xC8C8C8, // 0x00 COLOR_SCROLLBAR
+    0x000000, // 0x01 COLOR_BACKGROUND
+    0x99B4D1, // 0x02 COLOR_ACTIVECAPTION
+    0xBFCDDB, // 0x03 COLOR_INACTIVECAPTION
+    0xF0F0F0, // 0x04 COLOR_MENU
+    0xFFFFFF, // 0x05 COLOR_WINDOW
+    0x646464, // 0x06 COLOR_WINDOWFRAME
+    0x000000, // 0x07 COLOR_MENUTEXT
+    0x000000, // 0x08 COLOR_WINDOWTEXT
+    0x000000, // 0x09 COLOR_CAPTIONTEXT
+    0xB4B4B4, // 0x0A COLOR_ACTIVEBORDER
+    0xF4F7FC, // 0x0B COLOR_INACTIVEBORDER
+    0xABABAB, // 0x0C COLOR_APPWORKSPACE
+    0x0078D7, // 0x0D COLOR_HIGHLIGHT
+    0xFFFFFF, // 0x0E COLOR_HIGHLIGHTTEXT
+    0xF0F0F0, // 0x0F COLOR_BTNFACE
+    0xA0A0A0, // 0x10 COLOR_BTNSHADOW
+    0x6D6D6D, // 0x11 COLOR_GRAYTEXT
+    0x000000, // 0x12 COLOR_BTNTEXT
+    0x000000, // 0x13 COLOR_INACTIVECAPTIONTEXT
+    0xFFFFFF, // 0x14 COLOR_BTNHIGHLIGHT
+    0x696969, // 0x15 COLOR_3DDKSHADOW
+    0xE3E3E3, // 0x16 COLOR_3DLIGHT
+    0x000000, // 0x17 COLOR_INFOTEXT
+    0xFFFFE1, // 0x18 COLOR_INFOBK
+    0x000000, // 0x19 (COLOR_HOTLIGHT is 0x1A; 0x19 is unused)
+    0x0066CC, // 0x1A COLOR_HOTLIGHT
+    0xB9D1EA, // 0x1B COLOR_GRADIENTACTIVECAPTION
+];
+
+/// The system color an `OfficeArtCOLORREF` with fSysIndex names ([MS-ODRAW] 2.2.2: `green:red` is the number).
+///
+/// PowerPoint's numbers are not the Windows `COLOR_*` numbers: PowerPoint (Microsoft 365, Windows) was asked to draw 28
+/// fills (`fillColor` 0x00 to 0x1B) and 20 lines (`lineColor`) of one presentation, and each number drew the color of
+/// one `COLOR_*` (every color measured is a `GetSysColor` value of the PC; fills and lines agree, 2026-11-10,
+/// `PowerPoint -> PDF`). The numbers whose color only one `COLOR_*` has are named here; the others are left to their
+/// color alone, because the color does not say which `COLOR_*` it is.
+///
+/// TODO: 0x00F0 to 0x00F7 (the shape's fill, line, shadow, ... color) and the operations in the high bits of green
+/// (0x0100 darken, 0x0200 lighten, 0x0300 to 0x0600, 0x2000, 0x4000, 0x8000; blue is the amount) are in the specification
+/// ([MS-ODRAW] 2.2.2) but no file here has them.
+fn office_system_color(number: u16) -> Option<u32> {
+    let windows = |i: usize| WINDOWS_COLORS[i];
+    Some(match number {
+        0x03 => windows(0x0D), // COLOR_HIGHLIGHT
+        0x06 => windows(0x02), // COLOR_ACTIVECAPTION
+        0x08 => windows(0x10), // COLOR_BTNSHADOW
+        0x0A => windows(0x11), // COLOR_GRAYTEXT
+        0x0B => windows(0x03), // COLOR_INACTIVECAPTION
+        0x0D => windows(0x18), // COLOR_INFOBK
+        0x10 => windows(0x00), // COLOR_SCROLLBAR
+        0x12 => windows(0x06), // COLOR_WINDOWFRAME
+        0x13 => windows(0x16), // COLOR_3DLIGHT
+        0x14 => windows(0x15), // COLOR_3DDKSHADOW
+        0x15 => windows(0x0A), // COLOR_ACTIVEBORDER
+        0x16 => windows(0x0B), // COLOR_INACTIVEBORDER
+        0x18 => windows(0x0C), // COLOR_APPWORKSPACE
+        // The color alone: more than one COLOR_* has it.
+        0x02 => 0xF0F0F0, // COLOR_MENU or COLOR_BTNFACE
+        0x04 | 0x07 | 0x11 | 0x19..=0x1B => 0xFFFFFF, // COLOR_WINDOW, COLOR_HIGHLIGHTTEXT or COLOR_BTNHIGHLIGHT (0x04 and 0x07 drawn white as fills)
+        0x05 | 0x09 | 0x0C | 0x0E | 0x0F | 0x17 => 0x000000, // COLOR_WINDOWTEXT, COLOR_MENUTEXT, ... (black)
+        // Drawn black as a line (a shape's outline and shadow), white as a fill (the cause is not known).
+        0x01 => 0x000000,
+        _ => return None,
+    })
 }
 
 /// An `OfficeArtCOLORREF`: an index in the color scheme, or sRGB.
@@ -887,6 +1235,9 @@ fn art_color(v: u32) -> TextColor {
     let [r, g, b, flags] = v.to_le_bytes();
     if flags & 0x08 != 0 {
         TextColor::Scheme(r)
+    } else if let (true, Some(rgb)) = (flags & 0x10 != 0, office_system_color(u16::from(g) << 8 | u16::from(r))) {
+        // fSysIndex ([MS-ODRAW] 2.2.2): `green:red` is a number in a system color table.
+        TextColor::Rgb(rgb)
     } else {
         TextColor::Rgb(u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b))
     }
@@ -908,6 +1259,11 @@ pub(crate) struct ShapeIr {
     pub(crate) frame: Option<(i64, i64, i64, i64)>,
     pub(crate) props: Props,
     pub(crate) placeholder: Option<u8>,
+    /// A placeholder of no place on the master (`PlaceholderAtom` position -1, MS-PPT 2.13.20): PowerPoint 2007 and later
+    /// write a slide's content placeholders so. Its look is the master's placeholder's, not the document's default shape's.
+    pub(crate) unplaced_placeholder: bool,
+    /// The `PlaceholderEnum` of an unplaced placeholder.
+    pub(crate) unplaced_kind: Option<u8>,
     /// A click on the shape does this.
     pub(crate) interactive: Option<Interactive>,
     /// The animation of PowerPoint 97 to 2000 (`AnimationInfoAtom`).
@@ -921,7 +1277,7 @@ pub(crate) struct ShapeIr {
 }
 
 /// The shape `rec` (an `OfficeArtSpContainer`) is, with the anchor it was given.
-fn read_shape(rec: &Rec, in_group: bool, group_space: Option<(i64, i64, i64, i64)>) -> ShapeIr {
+pub(crate) fn read_shape(rec: &Rec, in_group: bool, group_space: Option<(i64, i64, i64, i64)>) -> ShapeIr {
     let mut shape = ShapeIr::default();
     let mut space = None;
     let mut anchor_child = None;
@@ -963,8 +1319,13 @@ fn read_shape(rec: &Rec, in_group: bool, group_space: Option<(i64, i64, i64, i64
             }
             rt::CLIENT_DATA => {
                 for d in r.children() {
-                    if d.ty == rt::PLACEHOLDER_ATOM && u32_at(d.data, 0) != Some(0xFFFF_FFFF) {
-                        shape.placeholder = d.data.get(4).copied();
+                    if d.ty == rt::PLACEHOLDER_ATOM {
+                        if u32_at(d.data, 0) != Some(0xFFFF_FFFF) {
+                            shape.placeholder = d.data.get(4).copied();
+                        } else {
+                            shape.unplaced_placeholder = d.data.get(4).is_some_and(|t| *t != 0);
+                            shape.unplaced_kind = d.data.get(4).copied().filter(|t| *t != 0);
+                        }
                     }
                     if d.ty == 0x0FF2 && d.inst == 0 {
                         shape.interactive = interactive_of(&d);
@@ -990,7 +1351,14 @@ fn read_shape(rec: &Rec, in_group: bool, group_space: Option<(i64, i64, i64, i64
     }
     if let Some(r) = textbox {
         match read_textbox(&r, style9) {
-            Ok(text) => shape.text = text,
+            Ok(mut text) => {
+                if let (Some(text), Some(blob)) = (text.as_mut(), shape.props.complex.get(&0x03A9)) {
+                    if shape_xml_is_current(blob, shape.frame) {
+                        apply_shape_xml_spacing(text, blob);
+                    }
+                }
+                shape.text = text;
+            }
             Err(index) => shape.outline_ref = Some(index),
         }
     }
@@ -1012,7 +1380,7 @@ fn utf16_string(d: &[u8]) -> String {
 
 /// The shapes of a group container (`OfficeArtSpgrContainer`), its first shape being the group itself. For the
 /// patriarch (the whole drawing) the group's own shape is dropped.
-fn read_group(rec: &Rec, patriarch: bool) -> Vec<ShapeIr> {
+pub(crate) fn read_group(rec: &Rec, patriarch: bool) -> Vec<ShapeIr> {
     let children = rec.children();
     let mut out = Vec::new();
     let mut it = children.iter();
@@ -1120,7 +1488,11 @@ pub(crate) struct SlideShow {
 pub(crate) struct PptIr {
     /// The slide size, in EMU.
     pub(crate) size: (i64, i64),
+    /// The number the first slide shows (`DocumentAtom.firstSlideNumber`).
+    pub(crate) first_slide_number: i64,
     pub(crate) fonts: Vec<String>,
+    /// The character set of each font (`FontEntityAtom.lfCharSet`, MS-PPT 2.9.11, at 64), parallel to `fonts`.
+    pub(crate) font_charsets: Vec<u8>,
     pub(crate) defaults: HashMap<u16, MasterStyle>,
     pub(crate) masters: Vec<PageIr>,
     pub(crate) slides: Vec<PageIr>,
@@ -1319,11 +1691,13 @@ pub(crate) fn read_ppt_streams(doc: &[u8], current: &[u8], pictures: &[u8]) -> R
     let (doc, current, pictures) = (doc, current, pictures);
     let (map, document_id) = persist_directory(doc, current)?;
     let document = persist_object(&doc, &map, document_id).filter(|r| r.ty == rt::DOCUMENT).ok_or_else(|| bad("DocumentContainer が見つかりません"))?;
-    let mut ir = PptIr::default();
+    let mut ir = PptIr { first_slide_number: 1, ..PptIr::default() };
     let children = document.children();
     if let Some(atom) = children.iter().find(|r| r.ty == rt::DOCUMENT_ATOM) {
         let (x, y) = (u32_at(atom.data, 0).unwrap_or(5760) as i64, u32_at(atom.data, 4).unwrap_or(4320) as i64);
         ir.size = (emu(x), emu(y));
+        // DocumentAtom.firstSlideNumber (MS-PPT 2.4.2, at 32): the number the first slide shows.
+        ir.first_slide_number = u16_at(atom.data, 32).map_or(1, i64::from);
     }
     if let Some(env) = children.iter().find(|r| r.ty == rt::ENVIRONMENT) {
         for r in env.children() {
@@ -1331,6 +1705,7 @@ pub(crate) fn read_ppt_streams(doc: &[u8], current: &[u8], pictures: &[u8]) -> R
                 rt::FONT_COLLECTION => {
                     for f in r.children().iter().filter(|f| f.ty == rt::FONT_ENTITY_ATOM) {
                         ir.fonts.push(utf16_string(f.data.get(..64).unwrap_or(f.data)));
+                        ir.font_charsets.push(f.data.get(64).copied().unwrap_or(1));
                     }
                 }
                 rt::TEXT_MASTER_STYLE_ATOM => {
@@ -1401,6 +1776,27 @@ mod tests {
         out
     }
 
+    /// `with_flag` gives a Boolean its own value over the drawing group's.
+    #[test]
+    fn a_flag_is_given_off_over_a_default_on() {
+        let mut defaults = Props::default();
+        defaults.values.insert(0x1FF, 0x0008_0008);
+        assert_eq!(defaults.flag(0x1FF, 3), Some(true));
+        assert_eq!(defaults.with_flag(0x1FF, 3, false).flag(0x1FF, 3), Some(false));
+        assert_eq!(Props::default().with_flag(0x1FF, 3, false).flag(0x1FF, 3), Some(false));
+    }
+
+    /// fSysIndex colors ([MS-ODRAW] 2.2.2) are the system colors PowerPoint's numbers name, not an RGB of the number.
+    #[test]
+    fn a_system_index_color_is_a_system_color() {
+        assert_eq!(art_color(0x1000_0011), TextColor::Rgb(0xFFFFFF));
+        assert_eq!(art_color(0x1000_0001), TextColor::Rgb(0));
+        assert_eq!(art_color(0x1000_000A), TextColor::Rgb(0x6D6D6D)); // COLOR_GRAYTEXT
+        assert_eq!(art_color(0x1000_0003), TextColor::Rgb(0x0078D7)); // COLOR_HIGHLIGHT
+        // The scheme index keeps its meaning.
+        assert_eq!(art_color(0x0800_0001), TextColor::Scheme(1));
+    }
+
     /// The text of a placeholder that is in the slide list (as PowerPoint writes titles and bodies), in one-byte
     /// characters, with a paragraph and a character formatting run.
     #[test]
@@ -1445,6 +1841,21 @@ mod tests {
         let textbox = rec(0xF, 0, rt::CLIENT_TEXTBOX, &rec(0, 0, rt::OUTLINE_TEXT_REF_ATOM, &1u32.to_le_bytes()));
         let parsed = records(&textbox);
         assert_eq!(read_textbox(&parsed[0], None).unwrap_err(), 1);
+    }
+
+    /// A `TextRulerAtom` writes the left margin and the indent of each level together, level after level (found in PowerPoint's
+    /// own files: the margins of levels 2 to 5 of a master are 468, 720, 1008 and 1296 units; and with the margins of five levels and
+    /// the indents of four, the bullet of a level is before its text).
+    #[test]
+    fn a_text_ruler_gives_margin_and_indent_level_by_level() {
+        let hex = |s: &str| -> Vec<u8> { (0..s.len() / 2).map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap()).collect() };
+        let r = parse_ruler(&hex("F0000000D401D002F0031005"));
+        assert_eq!(r, [(None, None), (Some(468), None), (Some(720), None), (Some(1008), None), (Some(1296), None)]);
+        let r = parse_ruler(&hex("F81E00000000200 16C004002B0016003D0028004F003".replace(' ', "").as_str()));
+        assert_eq!(r, [(Some(0), None), (Some(288), Some(108)), (Some(576), Some(432)), (Some(864), Some(720)), (Some(1152), Some(1008))]);
+        // A ruler that has the default tab size first (bit 0).
+        let r = parse_ruler(&hex("F10000003F02D401D002F0031005"));
+        assert_eq!(r[1], (Some(468), None));
     }
 
     #[test]

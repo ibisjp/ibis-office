@@ -12,14 +12,16 @@ use crate::shell::chrome::{
 use crate::shell::dialog::DialogMode;
 use crate::shell::editor::SlideEditor;
 use gpui_kit::component::input::InputState;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::v_flex;
 use gpui_kit::*;
 use std::{cell::{Cell, RefCell}, collections::BTreeMap, rc::Rc};
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("shell::text_field_caret_by_click_every_kind", text_field_caret_every_kind),
         ("shell::text_field_caret_toolbar_and_xlsx_bars", text_field_caret_xlsx_bars),
+        ("shell::text_field_ime_clauses_every_kind", text_field_ime_clauses),
         ("shell::panel_header_tabs_sidebar", header_tabs_sidebar),
         ("shell::panel_header_tabs_dialog", header_tabs_dialog),
         ("shell::adaptive_rows_one_or_two_lines", adaptive_rows),
@@ -153,6 +155,56 @@ fn text_field_caret_every_kind() {
     s.screenshot("text-field-caret-kinds");
 }
 
+/// GitHub issue #138: the TextField (gpui-base's input) underlines the composing text as the input method says (its clauses: thick, dotted,
+/// ...), as the page does (`render::ime_text`); with no clauses, one thin solid line. Every kind of TextField is gpui-base's, so each is
+/// given composing text and the clauses, drawn in the real window, and the lines the input draws are read back.
+fn text_field_ime_clauses() {
+    let _probe = buttons::Probe::new();
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    // Dropped before the scenario, so no entity is held when it is torn down.
+    let _reset = Reset;
+    s.size(1200., 900.);
+    s.update(|_, w, cx| {
+        for name in ["plain", "unit", "no-clear", "full-width"] {
+            let input = cx.new(|cx| InputState::new(w, cx).default_value("ab"));
+            FIELDS.with(|f| f.borrow_mut().push((name, input)));
+        }
+    });
+    force(&mut s, fields_panel, "ime-fields", DialogMode::Sidebar);
+    s.settle();
+    let fields = FIELDS.with(|f| f.borrow().clone());
+    // "ここでは" being converted: the converting clause thick, the part still typed dotted, the converted one thin (what Word shows).
+    let composing = "ここでは"; // i18n-ok（IME の変換中の文字列の試験データ、issue #138）
+    let clauses = vec![
+        ImeClause { range: 0..3, thick: true, line: ImeLine::Solid },
+        ImeClause { range: 3..4, thick: false, line: ImeLine::Dotted },
+    ];
+    for (name, input) in &fields {
+        // Nothing composed: no line.
+        assert!(s.with(|_, cx| input.read(cx).ime_underlines().is_empty()), "{name}: nothing composed");
+        s.update(|_, w, cx| input.update(cx, |st, cx| {
+            // Composed after "ab".
+            st.replace_and_mark_text_in_range(Some(2..2), composing, Some(4..4), w, cx);
+        }));
+        s.settle();
+        // The platform said nothing yet (Linux, the web): one thin solid line over all of it.
+        let n = composing.len();
+        assert_eq!(s.with(|_, cx| input.read(cx).ime_underlines()), vec![(2..2 + n, false, ImeLine::Solid)], "{name}: no clauses");
+        s.update(|_, w, cx| input.update(cx, |st, cx| st.set_ime_clauses(clauses.clone(), w, cx)));
+        s.settle();
+        assert_eq!(
+            s.with(|_, cx| input.read(cx).ime_underlines()),
+            vec![(2..11, true, ImeLine::Solid), (11..2 + n, false, ImeLine::Dotted)],
+            "{name}: the clauses decide the lines"
+        );
+        // Committed: the lines go away.
+        s.update(|_, w, cx| input.update(cx, |st, cx| st.replace_text_in_range(None, "\u{5b8c}\u{4e86}", w, cx)));
+        s.settle();
+        assert!(s.with(|_, cx| input.read(cx).ime_underlines()).is_empty(), "{name}: committed");
+    }
+    s.screenshot("text-field-ime-clauses");
+}
+
 fn text_field_caret_xlsx_bars() {
     let _probe = buttons::Probe::new();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
@@ -191,7 +243,10 @@ fn text_field_caret_xlsx_bars() {
     // Where each character begins, from the same font and size the bar draws with.
     let boundaries: Vec<(usize, Pixels)> = s.update(|_, window, _| {
         let style = window.text_style();
-        let run = TextRun { len: text.len(), font: style.font(), color: style.color, background_color: None, underline: None, strikethrough: None };
+        // The bar's own font (the window's, with the family of Settings > Spreadsheet > formula bar's alphanumeric font, #149).
+        let mut font = style.font();
+        if let Some(family) = crate::shell::settings_dialog::formula_bar_font() { font.family = family.into(); }
+        let run = TextRun { len: text.len(), font, color: style.color, background_color: None, underline: None, strikethrough: None };
         let shaped = window.text_system().shape_line(SharedString::from(text.clone()), window.rem_size() * 0.875, &[run], None);
         text.char_indices().map(|(i, _)| i).chain([text.len()]).map(|i| (i, shaped.x_for_index(i))).collect()
     });

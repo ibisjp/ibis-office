@@ -6,6 +6,8 @@ use gpui_kit::{Bounds, Pixels};
 use ibis_doc_model::{Block, FlowPos};
 use crate::docx::scenarios::DocSteps;
 use crate::shell::{dialog::DialogMode, scenario::Scenario};
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
@@ -287,7 +289,9 @@ fn live_ruler_menu() {
     let mut s = Scenario::open("test/editing/docx-report.docx");
     let doc = s.document();
     assert!(s.menu_state("docx.ruler").is_some());
-    for old in ["docx.vertical-ruler", "docx.ruler-unit.cm", "docx.gridlines"] {
+    // (表示 > グリッド線 is a line of the View menu next to ルーラー, as the design has it.)
+    assert!(s.menu_state("docx.gridlines").is_some());
+    for old in ["docx.vertical-ruler", "docx.ruler-unit.cm"] {
         assert!(s.menu_state(old).is_none(), "{old} is no longer a separate View menu item");
     }
     s.menu("docx.ruler");
@@ -299,8 +303,8 @@ fn live_ruler_menu() {
         s.settle();
     }
     for (id, read) in [
-        ("ruler-horizontal", (|e: &crate::shell::editor::SlideEditor| e.ruler_open) as fn(&crate::shell::editor::SlideEditor) -> bool),
-        ("ruler-vertical", (|e: &crate::shell::editor::SlideEditor| e.vertical_ruler_open) as fn(&crate::shell::editor::SlideEditor) -> bool),
+        ("ruler-horizontal", (|e: &crate::shell::editor::SlideEditor| e.doc_prefs().ruler_open) as fn(&crate::shell::editor::SlideEditor) -> bool),
+        ("ruler-vertical", (|e: &crate::shell::editor::SlideEditor| e.doc_prefs().vertical_ruler_open) as fn(&crate::shell::editor::SlideEditor) -> bool),
         ("ruler-gridlines", (|e: &crate::shell::editor::SlideEditor| e.gridlines_open) as fn(&crate::shell::editor::SlideEditor) -> bool),
     ] {
         let before = s.with(|e, _| read(e));
@@ -375,7 +379,7 @@ fn pptx_command_and_cleanup() {
     let workspace = s.with(|e, _| e.workspace_bounds.unwrap());
     let background = (f32::from(workspace.origin.x) + 24., f32::from(workspace.origin.y) + 72.);
     s.menu("file.page-setup");
-    assert!(s.with(|e, _| e.dialog_is_modal() && e.pptx().unwrap().size_panel.is_some()));
+    assert!(s.with(|e, _| e.dialog_is_modal() && e.shape_edit.size_panel.is_some()));
     s.update(|e, window, cx| {
         if let Some(b) = e.dialog.bounds.as_mut() { b.origin.x = gpui_kit::px(650.); }
         e.focus_handle.focus(window, cx);
@@ -404,7 +408,7 @@ fn pptx_command_and_cleanup() {
     assert!(s.with(|e, _| e.workspace_scroll.offset().y) < before_scroll.y, "PPTX viewport still scrolls");
     assert!(s.with(|e, _| e.presentation() == &presentation));
     close_via_cross(&mut s);
-    assert!(s.with(|e, _| e.pptx().unwrap().size_panel.is_none()), "cross discards the slide-size draft");
+    assert!(s.with(|e, _| e.shape_edit.size_panel.is_none()), "cross discards the slide-size draft");
     s.key("cmd-0");
     s.click_shape(0);
     // A click inside a text shape puts the caret in its text (as PowerPoint does); Esc returns to the
@@ -597,8 +601,8 @@ fn color_editor_interaction() {
     s.update(|e,w,cx|e.edit_color_picker(ColorAction::Sv(1.,1.),w,cx));
     assert_eq!(s.with(|e,cx|e.doc_state().unwrap().color_edit.as_ref().unwrap().field.read(cx).value().to_string()),"0000FF");
     let wheel=s.with(|e,_|e.doc_state().unwrap().color_edit.as_ref().unwrap().picker.wheel_bounds.get().unwrap());
-    // Click the top of the actual hue ring, keeping saturation and value at 100%.
-    s.click((f32::from(wheel.center().x),f32::from(wheel.center().y)-106.));
+    // Click the top of the actual hue ring (its middle: the radius less 3 px, less half of the ring's 22 px), keeping saturation and value at 100%.
+    s.click((f32::from(wheel.center().x),f32::from(wheel.center().y)-(f32::from(wheel.size.width)/2.-3.-11.)));
     assert!((s.with(|e,_|e.doc_state().unwrap().color_edit.as_ref().unwrap().picker.hsv[0])-90.).abs()<1.);
     assert!(s.document()==original,"wheel only changes the staged preview");
     s.update(|e,w,cx|e.edit_color_picker(ColorAction::Mode(true),w,cx));
@@ -673,10 +677,10 @@ fn merge_row_draft() {
 }
 
 fn destructive_hover() {
-    use gpui_kit::*;use gpui_kit::component::{h_flex,v_flex};
+    use gpui_kit::*;use gpui_kit::component::v_flex;
     use crate::shell::chrome::{SidebarPanel,FORCED_SIDEBAR};
     thread_local!{static BUTTON:std::cell::Cell<Option<Bounds<Pixels>>>=const{std::cell::Cell::new(None)};}
-    fn panel(_: &mut crate::shell::editor::SlideEditor,_:&mut Window,cx:&mut Context<crate::shell::editor::SlideEditor>)->Option<SidebarPanel>{
+    fn panel(_: &mut crate::shell::editor::SlideEditor,_:&mut Window,_cx:&mut Context<crate::shell::editor::SlideEditor>)->Option<SidebarPanel>{
         let footer=crate::shell::chrome::action_bar().action(crate::shell::chrome::ActionDefinition::new("hover-delete","Delete",crate::shell::chrome::ActionButtonKind::Destructive).on_click(|_,_,_|{}).on_bounds(|b,_,_|BUTTON.with(|v|v.set(Some(b)))));
         Some(SidebarPanel::with_footer("Button colors",v_flex().p_3().child("Hover sample").into_any_element(),footer))
     }

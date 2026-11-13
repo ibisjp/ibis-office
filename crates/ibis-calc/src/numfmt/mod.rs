@@ -435,6 +435,13 @@ impl Decimal {
 /// it: plain digits, rounded to fit, or the exponent form for numbers too
 /// large or small.
 pub fn general(v: f64, width: usize) -> String {
+    // A whole number of at most `width` digits is its digits, as the rounding below gives (a spill of a million rows is formatted here).
+    if v.fract() == 0.0 && v.abs() < 1e15 {
+        let digits = (v.abs() as u64).to_string();
+        if digits.len() <= width {
+            return if v < 0.0 { format!("-{digits}") } else { digits };
+        }
+    }
     let d = Decimal::of(v);
     if d.is_zero() {
         return "0".into();
@@ -556,10 +563,11 @@ fn layout(section: &Section) -> Layout {
 }
 
 fn number_section(value: f64, section: &Section, out: &mut Formatted) -> String {
-    let l = layout(section);
+    // General needs none of the layout of placeholders (a sheet of millions of numbers formats each cell).
     if section.tokens.iter().any(|t| matches!(t, Token::General)) {
         return general_section(value, section, out);
     }
+    let l = layout(section);
     if l.fraction.is_some() {
         return fraction_section(value, section, &l, out);
     }
@@ -1445,6 +1453,31 @@ mod tests {
         assert_eq!(f(-12345678.9, "0.00E-00"), "-1.23E07");
         assert_eq!(f(-1234.5678, "00.00E+00"), "-12.35E+02");
         assert_eq!(f(1.0, "##0.0E+0"), "1.0E+0");
+    }
+
+    #[test]
+    fn bang_escapes_the_next_character_like_a_backslash() {
+        // #181: `!x` shows x as is (Excel), in number, date/time and text sections.
+        assert_eq!(f(1234.0, "#!,##0"), "1,234");
+        assert_eq!(f(1234.0, "0!0"), "12340");
+        assert_eq!(f(5.0, "0!%"), "5%");
+        assert_eq!(f(5.0, "0!;0"), "0;5");
+        assert_eq!(f(1234.0, "0!0"), f(1234.0, "0\\0"));
+        assert_eq!(f(0.5, "!#0.0"), "#0.5");
+        // A date format: `!d` is a literal d, not the day.
+        let d = CellValue::Number(46308.0);
+        let show = |code: &str| format(&d, code, false).text;
+        assert_eq!(show("yyyy!d!m"), "2026dm");
+        assert_eq!(show("yyyy!d!m"), show("yyyy\\d\\m"));
+        // Inside quotes `!` is itself.
+        assert_eq!(f(7.0, "\"a!b\"0"), "a!b7");
+        assert_eq!(f(7.0, "\"!\"0"), "!7");
+        // Text section.
+        let t = CellValue::Text("x".into());
+        assert_eq!(format(&t, "@!@", false).text, "x@");
+        // `!` also hides `;` from the section split, and the code is kept as typed.
+        assert_eq!(parsed("0!;0;0").len(), 2);
+        assert!(!is_date_format("0!d"));
     }
 
     #[test]

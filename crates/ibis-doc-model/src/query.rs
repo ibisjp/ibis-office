@@ -18,11 +18,13 @@ use ibis_calc::{CellError, CellValue};
 mod book;
 mod codec;
 mod expr;
+mod m_parse;
 mod text_m;
 
 pub use book::{read_source, result_of, BookResolver};
 pub use codec::{decode_queries, encode_queries};
 pub use expr::Expr;
+pub use m_parse::{CodeError, m_to_query};
 pub use text_m::query_to_m;
 
 /// The type of a column (`Table.TransformColumnTypes`).

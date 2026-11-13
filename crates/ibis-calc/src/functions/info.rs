@@ -3,7 +3,7 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Information functions.
 
-use super::{Func, arg_num, err, number};
+use super::{Func, err, number};
 use crate::eval::{Array, Ctx, Value, to_number};
 use crate::formula::Expr;
 use crate::value::CellError;
@@ -37,25 +37,27 @@ pub(super) fn get(name: &str) -> Option<Func> {
             _ => err(CellError::Value),
         },
         "N" => |c, a| {
-            let v = match c.eval(&a[0]) {
-                // An array holding function values: each is #VALUE! (a function is no number).
-                Value::Array(a) if a.data.iter().any(|v| matches!(v, Value::Lambda(_))) => {
-                    return Value::Array(std::rc::Rc::new(crate::eval::Array::new(a.rows, a.columns, vec![Value::Error(CellError::Value); a.data.len()])));
+            // A number, as Excel's N makes it of one value: a number as it is, TRUE 1, FALSE 0, an error as it is, anything else (text,
+            // an empty cell) 0, and a function value #VALUE!.
+            fn one(v: Value) -> Value {
+                match v {
+                    Value::Number(n) => number(n),
+                    Value::Bool(b) => number(if b { 1.0 } else { 0.0 }),
+                    Value::Error(e) => err(e),
+                    Value::Lambda(_) => err(CellError::Value),
+                    _ => number(0.0),
                 }
+            }
+            match c.eval(&a[0]) {
+                // An array gives an array, each element made a number (Excel 365 and `=N({TRUE,FALSE,"a",5})` is {1,0,0,5}, measured on
+                // Excel 16.0.20527: #141); a range is its first cell.
+                Value::Array(arr) => Value::Array(std::rc::Rc::new(crate::eval::Array::new(arr.rows, arr.columns, arr.data.iter().cloned().map(one).collect()))),
                 Value::Ref(r) if !r.is_empty() => {
                     let area = r[0];
-                    c.cell_value(area.sheet, area.first_row, area.first_column)
+                    one(c.cell_value(area.sheet, area.first_row, area.first_column))
                 }
-                Value::Ref(_) => return err(CellError::Ref),
-                Value::Array(a) => a.data.first().cloned().unwrap_or(Value::Empty),
-                v => v,
-            };
-            match v {
-                Value::Number(n) => number(n),
-                Value::Bool(b) => number(if b { 1.0 } else { 0.0 }),
-                Value::Error(e) => err(e),
-                Value::Lambda(_) => err(CellError::Value),
-                _ => number(0.0),
+                Value::Ref(_) => err(CellError::Ref),
+                v => one(v),
             }
         },
         "TYPE" => |c, a| {

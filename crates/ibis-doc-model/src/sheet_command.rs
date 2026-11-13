@@ -124,6 +124,8 @@ pub enum StyleChange {
     PatternColor(Rgb),
     /// 塗りつぶしのグラデーション (gradientFill), or none.
     Gradient(Option<crate::sheet::CellGradient>),
+    /// チェック ボックス (Insert > Check Box): the cell shows its logical value as a check box.
+    Checkbox(bool),
 }
 
 impl StyleChange {
@@ -136,6 +138,7 @@ impl StyleChange {
             Self::Underline(v) => s.underline = if *v { CellUnderline::Single } else { CellUnderline::None },
             Self::UnderlineKind(v) => s.underline = *v,
             Self::Strike(v) => s.strike = *v,
+            Self::Checkbox(v) => s.checkbox = *v,
             Self::Color(c) => {
                 s.color = *c;
                 s.color_theme = None;
@@ -443,6 +446,9 @@ pub enum SheetCommand {
     /// Merge a range: the cells but the top-left one are emptied, and with
     /// `center` its text is centred.
     Merge { slide: SlideId, range: CellRange, center: bool },
+    /// A merge that a paste brings: as `Merge` but the covered cells' comments and inner borders stay as the paste made them
+    /// (Excel drops them only when the merge command is used).
+    PasteMerge { slide: SlideId, range: CellRange },
     /// Undo the merged ranges within `range`.
     Unmerge { slide: SlideId, range: CellRange },
     /// A new, empty worksheet at `index` of the workbook, on a new slide
@@ -466,6 +472,9 @@ pub enum SheetCommand {
     /// A column width fitted to its contents by the user ("fit to selection", a double-click on the header's edge): not a width
     /// fixed by hand (the column widens again), but a change the user made, so it is saved.
     SetColumnWidthFitted { slide: SlideId, first: u32, last: u32, size: Emu },
+    /// A row height the sheet fitted to the contents (a wrapping cell's lines, 行の高さの自動調整): not a height fixed by hand
+    /// (`customHeight`), so the row fits again when its cells change; saved as `ht` without `customHeight`, as Excel does.
+    SetRowHeightFitted { slide: SlideId, first: u32, last: u32, size: Emu },
     /// The sheet as built elsewhere, in place of the slide's (a pivot table
     /// built again from its source, in its style: ピボットテーブルの更新).
     ReplaceSheet { slide: SlideId, sheet: Box<Sheet> },
@@ -707,6 +716,7 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
         SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden, custom, widened } => restore_sizes(presentation, slide, axis, first, sizes, hidden, custom, widened),
         SheetCommand::SetColumnWidthAuto { slide, first, last, size } => set_size_marked(presentation, slide, Axis::Columns, first, last, size, WidthMark::SheetChose),
         SheetCommand::SetColumnWidthFitted { slide, first, last, size } => set_size_marked(presentation, slide, Axis::Columns, first, last, size, WidthMark::Fitted),
+        SheetCommand::SetRowHeightFitted { slide, first, last, size } => set_size_marked(presentation, slide, Axis::Rows, first, last, size, WidthMark::Fitted),
         SheetCommand::SetSize { slide, axis, first, last, size } => set_size_marked(presentation, slide, axis, first, last, size, WidthMark::Fixed),
         SheetCommand::Hide { slide, axis, first, last, hidden } => hide(presentation, slide, axis, first, last, hidden),
         SheetCommand::MoveCells { slide, from, row, column } => move_cells(presentation, slide, from, row, column),
@@ -1235,7 +1245,8 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
         SheetCommand::AddSheet { index, name, slide, shape } => add_sheet(presentation, index, name, slide, shape),
         SheetCommand::DeleteSheet { slide } => delete_sheet(presentation, slide),
         SheetCommand::RenameSheet { slide, name } => rename_sheet(presentation, slide, name),
-        SheetCommand::Merge { slide, range, center } => merge(presentation, slide, range, center),
+        SheetCommand::Merge { slide, range, center } => merge(presentation, slide, range, center, true),
+        SheetCommand::PasteMerge { slide, range } => merge(presentation, slide, range, false, false),
         SheetCommand::Unmerge { slide, range } => unmerge(presentation, slide, range),
         SheetCommand::AddCustomCellStyle { style } => {
             let inverse = snapshot(presentation);
@@ -1270,10 +1281,18 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
             let sheet = sheet_mut(presentation, slide)?;
             check_bounds(sheet, row, column)?;
             let cell = sheet.cell(row, column).cloned().ok_or(EditError::IndexOutOfRange)?;
+            let has_reading = phonetic.as_deref().is_some_and(|p| !p.is_empty());
+            sheet.phonetic_info.cells.remove(&(row, column));
             sheet.put_cell(row, column, Some(SheetCell {
                 phonetic: phonetic.map(Into::into),
                 ..cell
             }));
+            // 表示中のシートで読みを付けたセルは表示する（外したセルは表示から外す）。
+            if has_reading && sheet.show_phonetic {
+                sheet.phonetic_shown.insert((row, column));
+            } else if !has_reading {
+                sheet.phonetic_shown.remove(&(row, column));
+            }
             if let Some(idx) = sheet_index {
                 recalculate_cells(presentation, &[(idx, row, column)])?;
             }
@@ -1283,6 +1302,12 @@ fn apply_command(presentation: &mut Presentation, command: SheetCommand) -> Resu
             let inverse = snapshot(presentation);
             let sheet = sheet_mut(presentation, slide)?;
             sheet.show_phonetic = show;
+            // Excel の「ふりがなの表示」: ふりがなを持つセルすべての ph を立てる／降ろす。
+            sheet.phonetic_shown = if show {
+                sheet.cells.iter().filter(|c| c.phonetic.is_some()).map(|c| (c.row, c.column)).collect()
+            } else {
+                Default::default()
+            };
             Ok(inverse)
         }
         SheetCommand::SetPhoneticProperties { slide, properties } => {
@@ -1698,24 +1723,19 @@ fn spill(sheet: &mut Sheet, anchor: (u32, u32), value: CellValue, spill: Option<
         sheet.spills.insert(anchor, range);
         return (CellValue::Error(crate::sheet::CellError::Spill), changed);
     }
-    if range.last_row as usize >= sheet.rows.len() {
-        let def_h = if sheet.default_row > 0 { sheet.default_row } else { 20 * crate::EMU_PER_POINT };
-        sheet.rows.resize(range.last_row as usize + 1, def_h);
-    }
-    if range.last_column as usize >= sheet.columns.len() {
-        let def_w = if sheet.default_column > 0 { sheet.default_column } else { 54 * crate::EMU_PER_POINT };
-        sheet.columns.resize(range.last_column as usize + 1, def_w);
-    }
+    // The rows and columns the spill reaches are not added to `sheet.rows`/`columns` (issue #137): they have no size of their own,
+    // so they keep the default (`row_offsets` and `cell_bounds_emu` already measure past the end that way). Growing the list to a
+    // million entries made every frame (and every key press) walk it, and it stayed that long after the formula was deleted.
     for (i, v) in values.iter().enumerate() {
         let (row, column) = (anchor.0 + i as u32 / columns, anchor.1 + i as u32 % columns);
         if (row, column) == anchor {
             continue;
         }
-        let existing = sheet.cell(row, column).cloned();
-        if existing.as_ref().is_some_and(|c| c.value == *v) {
+        let existing = sheet.cell(row, column);
+        if existing.is_some_and(|c| c.value == *v) {
             continue;
         }
-        let style = existing.as_ref().map_or(0, |c| c.style);
+        let style = existing.map_or(0, |c| c.style);
         let text = display_text(v, &sheet.styles[style as usize], d1904);
         sheet.put_cell(row, column, Some(SheetCell { runs: None, phonetic: None, row, column, value: v.clone(), text, kind: CellKind::of(v), formula: None, style }));
         changed.push((row, column));
@@ -5525,6 +5545,15 @@ fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, fi
     }
     let (sizes, hidden_of) = sizes_now(sheet, axis, first, new_sizes.len());
     let (custom_of, widened_of) = marks_now(sheet, axis, first, new_sizes.len());
+    if axis == Axis::Rows && new_custom.len() == new_sizes.len() {
+        for (i, on) in new_custom.iter().enumerate() {
+            if *on {
+                sheet.custom_rows.insert(first + i as u32);
+            } else {
+                sheet.custom_rows.remove(&(first + i as u32));
+            }
+        }
+    }
     if axis == Axis::Columns {
         for (marks, set) in [(new_custom, &mut sheet.custom_columns), (new_widened, &mut sheet.widened_columns)] {
             if marks.len() != new_sizes.len() {
@@ -5559,10 +5588,10 @@ fn restore_sizes(presentation: &mut Presentation, slide: SlideId, axis: Axis, fi
     Ok(Command::Sheet(SheetCommand::RestoreSizes { slide, axis, first, sizes, hidden: hidden_of, custom: custom_of, widened: widened_of }))
 }
 
-/// Whether each of `count` columns from `first` is fixed by the user, and whether its width is one the sheet chose (false for rows).
+/// Whether each of `count` columns (rows) from `first` is fixed by the user, and whether its width is one the sheet chose (false for rows).
 fn marks_now(sheet: &Sheet, axis: Axis, first: u32, count: usize) -> (Vec<bool>, Vec<bool>) {
     match axis {
-        Axis::Rows => (vec![false; count], vec![false; count]),
+        Axis::Rows => ((first..first + count as u32).map(|r| sheet.custom_rows.contains(&r)).collect(), vec![false; count]),
         Axis::Columns => (
             (first..first + count as u32).map(|c| sheet.custom_columns.contains(&c)).collect(),
             (first..first + count as u32).map(|c| sheet.widened_columns.contains(&c)).collect(),
@@ -5624,6 +5653,16 @@ fn set_size_marked(presentation: &mut Presentation, slide: SlideId, axis: Axis, 
             }
         }
     }
+    // A row's height set by hand is the file's `customHeight` (a hidden row keeps the mark it had).
+    if axis == Axis::Rows && size > 0 {
+        for r in first..=last {
+            if mark == WidthMark::Fixed {
+                sheet.custom_rows.insert(r);
+            } else {
+                sheet.custom_rows.remove(&r);
+            }
+        }
+    }
     let hidden = match axis {
         Axis::Rows => &mut sheet.hidden_rows,
         Axis::Columns => &mut sheet.hidden_columns,
@@ -5669,6 +5708,18 @@ fn move_cells(presentation: &mut Presentation, slide: SlideId, from: CellRange, 
             sheet.spills.remove(&a);
             let m = |v: u32, d: i64| (v as i64 + d) as u32;
             sheet.spills.insert((m(a.0, dr), m(a.1, dc)), CellRange { first_row: m(r.first_row, dr), last_row: m(r.last_row, dr), first_column: m(r.first_column, dc), last_column: m(r.last_column, dc) });
+        }
+        // Merged ranges the cells land on are dissolved (those inside the moved range go with it, below).
+        let within_from = |m: &CellRange| m.first_row >= from.first_row && m.last_row <= from.last_row && m.first_column >= from.first_column && m.last_column <= from.last_column;
+        sheet.merges.retain(|m| within_from(m) || m.last_row < to.first_row || m.first_row > to.last_row || m.last_column < to.first_column || m.first_column > to.last_column);
+        // Comments go with their cells; those of the cells that are landed on go (Excel: the moved cells replace them whole).
+        let in_range = |r: &CellRange, c: &crate::sheet::SheetComment| (r.first_row..=r.last_row).contains(&c.row) && (r.first_column..=r.last_column).contains(&c.column);
+        let moved_comments: Vec<crate::sheet::SheetComment> = sheet.comments.iter().filter(|c| in_range(&from, c)).cloned().collect();
+        sheet.comments.retain(|c| !in_range(&from, c) && !in_range(&to, c));
+        for mut c in moved_comments {
+            c.row = (c.row as i64 + dr) as u32;
+            c.column = (c.column as i64 + dc) as u32;
+            sheet.comments.push(c);
         }
         // Merged ranges inside go with the cells.
         for m in sheet.merges.iter_mut() {
@@ -5742,6 +5793,16 @@ fn move_cells(presentation: &mut Presentation, slide: SlideId, from: CellRange, 
                 && a.start.row.max(a.end.row) <= from.last_row
                 && a.start.column.min(a.end.column) >= from.first_column
                 && a.start.column.max(a.end.column) <= from.last_column;
+            // A reference to cells that the moved ones land on (and that are not moved themselves) is lost: `#REF!`.
+            let landed_on = !a.whole_rows
+                && !a.whole_columns
+                && a.start.row.min(a.end.row) >= to.first_row
+                && a.start.row.max(a.end.row) <= to.last_row
+                && a.start.column.min(a.end.column) >= to.first_column
+                && a.start.column.max(a.end.column) <= to.last_column;
+            if here && !within && landed_on {
+                return None;
+            }
             if !(here && within) {
                 return Some(a.clone());
             }
@@ -5802,7 +5863,7 @@ fn hide(presentation: &mut Presentation, slide: SlideId, axis: Axis, first: u32,
     Ok(inverse)
 }
 
-fn merge(presentation: &mut Presentation, slide: SlideId, range: CellRange, center: bool) -> Result<Command, EditError> {
+fn merge(presentation: &mut Presentation, slide: SlideId, range: CellRange, center: bool, tidy: bool) -> Result<Command, EditError> {
     if range.first_row > range.last_row || range.first_column > range.last_column || (range.first_row == range.last_row && range.first_column == range.last_column) {
         return Err(EditError::IndexOutOfRange);
     }
@@ -5827,6 +5888,45 @@ fn merge(presentation: &mut Presentation, slide: SlideId, range: CellRange, cent
     }
     let sheet = sheet_mut(presentation, slide)?;
     let has_values = edits.iter().any(|e| sheet.cell(e.row, e.column).is_some_and(|c| !c.value.is_empty() || c.formula.is_some()));
+    if tidy {
+        // Excel drops what only the covered cells carry: their comments, and the borders between the cells of the range (the
+        // outline stays, as each outer cell drew it).
+        sheet.comments.retain(|c| !(range.first_row..=range.last_row).contains(&c.row) || !(range.first_column..=range.last_column).contains(&c.column) || (c.row, c.column) == (range.first_row, range.first_column));
+        let mut restyled: Vec<(usize, u32)> = Vec::new();
+        let mut cleared: std::collections::HashMap<(u32, [bool; 4]), u32> = std::collections::HashMap::new();
+        for (i, cell) in sheet.cells.iter().enumerate() {
+            if !(range.first_row..=range.last_row).contains(&cell.row) || !(range.first_column..=range.last_column).contains(&cell.column) {
+                continue;
+            }
+            let inner = [cell.column > range.first_column, cell.column < range.last_column, cell.row > range.first_row, cell.row < range.last_row];
+            let style = &sheet.styles[cell.style as usize];
+            if (inner[0] && style.left.is_some()) || (inner[1] && style.right.is_some()) || (inner[2] && style.top.is_some()) || (inner[3] && style.bottom.is_some()) {
+                restyled.push((i, cell.style));
+                cleared.entry((cell.style, inner)).or_insert(0);
+            }
+        }
+        for ((old, inner), index) in cleared.iter_mut() {
+            let mut style = sheet.styles[*old as usize].clone();
+            if inner[0] {
+                style.left = None;
+            }
+            if inner[1] {
+                style.right = None;
+            }
+            if inner[2] {
+                style.top = None;
+            }
+            if inner[3] {
+                style.bottom = None;
+            }
+            *index = sheet.style_index(style);
+        }
+        for (i, old) in restyled {
+            let (row, column) = (sheet.cells[i].row, sheet.cells[i].column);
+            let inner = [column > range.first_column, column < range.last_column, row > range.first_row, row < range.last_row];
+            sheet.cells[i].style = cleared[&(old, inner)];
+        }
+    }
     if has_values {
         set_cells(presentation, slide, edits)?;
     }
@@ -5932,6 +6032,19 @@ pub fn calculate_missing_values(presentation: &mut Presentation) -> Result<(), E
     res
 }
 
+/// Calculate again, as Excel does when it opens a book, the cells with a volatile function (TODAY, NOW, RAND, ...) and
+/// what depends on them, unless the book is in manual calculation mode. The book is not marked as changed.
+pub fn calculate_volatile_on_open(presentation: &mut Presentation) -> Result<(), EditError> {
+    if calc_mode(presentation) == CalcMode::Manual {
+        return Ok(());
+    }
+    sync_sheet_book_context(presentation);
+    let volatile = crate::sheet_calc::BookView::new(presentation).volatile_formula_cells();
+    let res = recalculate_cells_deep(presentation, &volatile, 0, false);
+    sync_sheet_book_context(presentation);
+    res
+}
+
 /// Calculate again the given formula cells and what depends on them.
 fn recalculate_cells(presentation: &mut Presentation, changed: &[(usize, u32, u32)]) -> Result<(), EditError> {
     if calc_mode(presentation) == CalcMode::Manual {
@@ -6021,6 +6134,42 @@ mod tests {
 
     fn set(d: &mut Document, slide: SlideId, row: u32, column: u32, input: CellInput) {
         d.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row, column, input }] })]).unwrap();
+    }
+
+    /// GitHub #109: editing a cell no formula refers to calculates again only the volatile formulas (NOW, as in Excel),
+    /// not the formulas that merely are heavy. The times are read through the crate's `clock`.
+    #[test]
+    fn editing_an_unrelated_cell_calculates_only_the_volatile_formulas() {
+        let issue = "LET(Xtime,LAMBDA(LET(n,NOW(),LAMBDA(ROUND((NOW()-n)*24*3600,2)))),_t,Xtime(),a,SEQUENCE(2^20),b,10,f,LAMBDA(LET(_1,a+1,_1)),g,LAMBDA(g,n,LET(h,f(),IF(n<1,h,g(g,n-1)))),i,g(g,b),_t())";
+        let heavy = "LET(a,SEQUENCE(2^20),SUM(a+1))";
+        let secs = |t0: u64| (ibis_calc::clock::monotonic_nanos().unwrap() - t0) as f64 / 1e9;
+        let (mut d, s) = workbook();
+        set(&mut d, s, 0, 0, CellInput::Value(CellValue::Number(1.0)));
+        set(&mut d, s, 0, 1, CellInput::Formula("A1+1".into()));
+        set(&mut d, s, 2, 0, CellInput::Formula(heavy.into()));
+        let heavy_value = cell(&d, s, 2, 0).unwrap().value;
+        assert!(matches!(heavy_value, CellValue::Number(_)), "{heavy_value:?}");
+        // The cells a change of A1 reaches: B1 only (the heavy formula is not volatile).
+        let reached = |d: &Document| {
+            let view = crate::sheet_calc::BookView::new(d.presentation());
+            let mut cells: Vec<_> = view.recalculate(&[(0, 0, 0)]).into_iter().map(|r| r.cell).collect();
+            cells.sort();
+            cells
+        };
+        assert_eq!(reached(&d), vec![(0, 0, 1)]);
+        let t0 = ibis_calc::clock::monotonic_nanos().unwrap();
+        set(&mut d, s, 0, 0, CellInput::Value(CellValue::Number(2.0)));
+        let edit_without_volatile = secs(t0);
+        // The issue's formula holds NOW(): it is volatile, so every edit calculates it again (Excel does the same).
+        let t0 = ibis_calc::clock::monotonic_nanos().unwrap();
+        set(&mut d, s, 1, 0, CellInput::Formula(issue.into()));
+        let entering = secs(t0);
+        assert_eq!(reached(&d), vec![(0, 0, 1), (0, 1, 0)]);
+        let t0 = ibis_calc::clock::monotonic_nanos().unwrap();
+        set(&mut d, s, 0, 0, CellInput::Value(CellValue::Number(3.0)));
+        let edit_with_volatile = secs(t0);
+        eprintln!("GitHub #109: edit of an unrelated cell {edit_without_volatile:.4} s without the issue's formula, {edit_with_volatile:.4} s with it (entering it: {entering:.4} s)");
+        assert!(edit_without_volatile < 0.5, "{edit_without_volatile}");
     }
 
     /// GitHub #104: the slide of a worksheet (the pages it prints, the page range of the page break preview) grows with
@@ -7130,6 +7279,88 @@ mod tests {
         assert!(*d.presentation() == start);
         while d.redo() {}
         assert_eq!(cell(&d, s, 7, 0).unwrap().value, CellValue::Number(100.0));
+    }
+
+    /// The trim operators `:.` `.:` `.:.` (TRIMRANGE's, Microsoft's examples) give a reference, and TRIMRANGE of a reference does too.
+    #[test]
+    fn trim_range_operators_give_references() {
+        let (mut d, s) = workbook();
+        // The island B3:C4 (0-based rows 2..=3, columns 1..=2).
+        set(&mut d, s, 2, 1, CellInput::Value(CellValue::Number(10.0)));
+        set(&mut d, s, 2, 2, CellInput::Value(CellValue::Number(20.0)));
+        set(&mut d, s, 3, 1, CellInput::Value(CellValue::Number(30.0)));
+        set(&mut d, s, 3, 2, CellInput::Value(CellValue::Number(40.0)));
+        let cases: &[(&str, f64)] = &[
+            ("SUM(A1:.D10)", 100.0),
+            ("ROWS(A1:.D10)", 4.0),
+            ("COLUMNS(A1:.D10)", 3.0),
+            ("ROWS(A1.:D10)", 8.0),
+            ("COLUMNS(A1.:D10)", 3.0),
+            ("ROWS(A1.:.D10)", 2.0),
+            ("COLUMNS(A1.:.D10)", 2.0),
+            ("ROWS(B:.B)", 4.0),
+            ("ROWS(B.:B)", 1048574.0),
+            ("ROWS(B.:.B)", 2.0),
+            ("ROWS(TRIMRANGE(A1:D10))", 2.0),
+            ("SUM(TRIMRANGE(A1:D10, 1, 0))", 100.0),
+            ("ROWS(TRIMRANGE(A1:D10, 1, 0))", 8.0),
+        ];
+        for (i, (formula, want)) in cases.iter().enumerate() {
+            set(&mut d, s, i as u32, 8, CellInput::Formula((*formula).into()));
+            assert_eq!(cell(&d, s, i as u32, 8).unwrap().value, CellValue::Number(*want), "{formula}");
+        }
+        // `:` is unchanged.
+        set(&mut d, s, 20, 8, CellInput::Formula("SUM(A1:D10)".into()));
+        assert_eq!(cell(&d, s, 20, 8).unwrap().value, CellValue::Number(100.0));
+        // An empty range is #REF! as TRIMRANGE says.
+        set(&mut d, s, 21, 8, CellInput::Formula("ROWS(F1:.G4)".into()));
+        assert_eq!(cell(&d, s, 21, 8).unwrap().value, CellValue::Error(CellError::Ref));
+    }
+
+    /// GitHub issue #154: a data validation list's source can be a formula: its values, as a list.
+    #[test]
+    fn a_formula_gives_the_items_of_a_validation_list() {
+        let (mut d, s) = workbook();
+        for (i, name) in ["red", "green", "blue"].into_iter().enumerate() {
+            set(&mut d, s, i as u32, 0, CellInput::Value(CellValue::Text(name.into())));
+        }
+        set(&mut d, s, 0, 1, CellInput::Value(CellValue::Number(5.0)));
+        let list = |formula: &str| {
+            let view = crate::sheet_calc::BookView::new(d.presentation());
+            ibis_calc::recalc::evaluate_list(&view, (0, 4, 4), formula)
+        };
+        let text = |names: &[&str]| Some(names.iter().map(|n| CellValue::Text((*n).into())).collect::<Vec<_>>());
+        assert_eq!(list("OFFSET(A1,0,0,2,1)"), text(&["red", "green"]));
+        assert_eq!(list("INDIRECT(\"A1:A3\")"), text(&["red", "green", "blue"]));
+        assert_eq!(list("SORT(A1:A3)"), text(&["blue", "green", "red"]));
+        assert_eq!(list("B1"), Some(vec![CellValue::Number(5.0)]));
+        assert_eq!(list("1/0"), None);
+    }
+
+    /// GitHub issue #151: TRIMRANGE gives a reference, so FORMULATEXT (which wants one) takes it.
+    #[test]
+    fn formulatext_of_trimrange() {
+        let (mut d, s) = workbook();
+        set(&mut d, s, 0, 0, CellInput::Formula("1+1".into()));
+        set(&mut d, s, 0, 2, CellInput::Formula("FORMULATEXT(TRIMRANGE(A1))".into()));
+        assert_eq!(cell(&d, s, 0, 2).unwrap().value, CellValue::Text("=1+1".into()));
+        // A range with blank rows around the formula: the trimmed reference is its cell.
+        set(&mut d, s, 3, 1, CellInput::Formula("2+2".into()));
+        set(&mut d, s, 0, 4, CellInput::Formula("FORMULATEXT(TRIMRANGE(B3:D6))".into()));
+        assert_eq!(cell(&d, s, 0, 4).unwrap().value, CellValue::Text("=2+2".into()));
+        set(&mut d, s, 1, 4, CellInput::Formula("FORMULATEXT(B4:.D6)".into()));
+        assert_eq!(cell(&d, s, 1, 4).unwrap().value, CellValue::Text("=2+2".into()));
+    }
+
+    /// GitHub issue #149: REGEXEXTRACT of an array spills one result per element, as REGEXREPLACE does.
+    #[test]
+    fn regexextract_of_an_array_spills() {
+        let (mut d, s) = workbook();
+        set(&mut d, s, 0, 0, CellInput::Formula("REGEXEXTRACT({\"ABC\",\"DEF\"},\".*\")".into()));
+        assert_eq!(cell(&d, s, 0, 0).unwrap().value, CellValue::Text("ABC".into()));
+        assert_eq!(cell(&d, s, 0, 1).unwrap().value, CellValue::Text("DEF".into()));
+        set(&mut d, s, 2, 0, CellInput::Formula("REGEXREPLACE({\"ABC\",\"DEF\"},\"B|E\",\"-\")".into()));
+        assert_eq!(cell(&d, s, 2, 1).unwrap().value, CellValue::Text("D-F".into()));
     }
 
     /// A one-column sheet: a heading, then these values (numbers or text)
@@ -8917,6 +9148,7 @@ mod tests {
         use crate::sheet::{PhoneticProperties, PhoneticType, PhoneticAlignment};
         let props = PhoneticProperties {
             font_id: 0,
+            font_size: None,
             phonetic_type: PhoneticType::Hiragana,
             alignment: PhoneticAlignment::Center,
         };

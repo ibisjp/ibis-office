@@ -7,3 +7,5 @@ crates/ibis-pptx/data/** -text
 *.pptx binary
 # version.txt は CRLF のまま（ユーザーの書式）
 version.txt -text
+# 所要時間の記録は追記だけ。両方の追記を残して自動で merge する（衝突の印が残った 2026-11-11 の再発防止）
+tasks/benchmark/*.tsv merge=union

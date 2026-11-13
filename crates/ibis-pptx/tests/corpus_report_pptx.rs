@@ -394,31 +394,6 @@ fn corpus_report_pptx_chart_pattern_fill_is_kept() {
     check_chart_pattern_fill("chart-pattfill.pptx");
 }
 
-fn check_bullet_labels_are_squares(file: &str) {
-    let p = read(file);
-    let labels: Vec<String> = p.slides[0].shapes.iter().filter_map(|s| s.text_body()).flat_map(bullets).filter(|b| !b.is_empty()).collect();
-    assert_eq!(labels.len(), 3, "the three items carry a bullet: {labels:?}");
-    let square = |t: &String| t.chars().count() == 1 && t.chars().all(|c| matches!(c as u32, 0x25a0..=0x25ff | 0x2750..=0x2752));
-    assert!(labels.iter().all(square), "Wingdings \"q\" is a square (U+25A0..25FF or U+2750..2752): {labels:?}");
-}
-
-fn check_cell_range_text(file: &str) {
-    let p = read(file);
-    let chart = chart_of(&p);
-    let texts: Vec<String> = chart
-        .groups
-        .iter()
-        .flat_map(|g| &g.series)
-        .filter_map(|s| s.labels.as_ref())
-        .flat_map(|l| &l.points)
-        .filter_map(|p| p.text.as_ref())
-        .map(|pieces| pieces.iter().map(|piece| if let ibis_doc_model::LabelPiece::Text(t) = piece { t.as_str() } else { "" }).collect::<String>())
-        .collect();
-    assert!(!texts.is_empty(), "the five labels carry their own text");
-    assert!(texts.iter().all(|t| !t.contains("[CELLRANGE]")), "no label's text is the placeholder \"[CELLRANGE]\": {texts:?}");
-    assert!(texts.iter().any(|t| t.contains("12,300 (4%)")), "the text \"12,300 (4%)\" is a label's text: {texts:?}");
-}
-
 /// The text of a shape that is not a placeholder takes its size from the presentation's `defaultTextStyle` only (no `sz`: 18 pt),
 /// not the master's `otherStyle` (12 pt in `shape-text-default-size.pptx`), which a table cell's text follows (PowerPoint's PDF of a
 /// slide of the corpus: a run with no `sz` in the title bar is 18 pt where the master's otherStyle says 12 pt).

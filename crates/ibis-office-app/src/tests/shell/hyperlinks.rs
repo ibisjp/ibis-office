@@ -6,6 +6,9 @@ use crate::docx::scenarios::DocSteps;
 use crate::shell::{chrome::MenuEntry, links::CAPTURE_URLS};
 use gpui_kit::*;
 use ibis_doc_model::{Block, FlowPos, Link};
+use crate::pptx::ext::*;
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("shell::hyperlink_docx_apply_and_follow", docx),

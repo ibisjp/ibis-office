@@ -28,7 +28,7 @@ struct Look {
     underline: bool,
     underline_kind: ibis_doc_model::Underline,
     highlight: Option<Rgb>,
-    outline: Option<(Rgb, i64)>,
+    outline: Option<(ibis_doc_model::Color, i64)>,
     baseline: i32,
     spacing: i32,
     field: Option<ibis_doc_model::TextField>,
@@ -37,12 +37,35 @@ struct Look {
     link: Option<ibis_doc_model::SlideLink>,
     link_tooltip: Option<String>,
     shadow: Option<ibis_doc_model::Shadow>,
+    glow: Option<(ibis_doc_model::Color, i64)>,
     lang: Option<String>,
+    alt_lang: Option<String>,
+}
+
+/// The run's `a:effectLst`: the glow (`a:glow`) and the shadow (`a:outerShdw`), in the schema's order; `None` when it has neither.
+fn effect_list_xml(x: &Prefixes, shadow: Option<ibis_doc_model::Shadow>, glow: Option<(ibis_doc_model::Color, i64)>) -> Option<String> {
+    if shadow.is_none() && glow.is_none() {
+        return None;
+    }
+    let a = &x.a;
+    let mut out = format!("<{a}effectLst>");
+    if let Some((color, radius)) = glow {
+        out.push_str(&format!("<{a}glow rad=\"{radius}\">{}</{a}glow>", new::color_xml(x, color)));
+    }
+    if let Some(sh) = shadow {
+        out.push_str(&format!(
+            "<{a}outerShdw blurRad=\"{}\" dist=\"{}\" dir=\"{}\" algn=\"{}\">{}</{a}outerShdw>",
+            sh.blur, sh.distance, sh.direction, sh.align.name(),
+            new::color_xml(x, sh.color)
+        ));
+    }
+    out.push_str(&format!("</{a}effectLst>"));
+    Some(out)
 }
 
 fn look(body: &TextStyle, run: &RunStyle) -> Look {
     let style = TextStyle { align: TextAlign::Left, ..body.with_run(run) };
-    Look { style, underline: run.underline, underline_kind: run.underline_kind, highlight: run.highlight, outline: run.outline, shadow: run.shadow, baseline: run.baseline, spacing: run.spacing, field: run.field, strike: run.strike, caps: run.caps, link: run.link.clone(), link_tooltip: run.link_tooltip.clone(), lang: run.lang.clone() }
+    Look { style, underline: run.underline, underline_kind: run.underline_kind, highlight: run.highlight, outline: run.outline, shadow: run.shadow, glow: run.glow, baseline: run.baseline, spacing: run.spacing, field: run.field, strike: run.strike, caps: run.caps, link: run.link.clone(), link_tooltip: run.link_tooltip.clone(), lang: run.lang.clone(), alt_lang: run.alt_lang.clone() }
 }
 
 /// A paragraph's format as it shows.
@@ -402,10 +425,15 @@ fn run_props(x: &Prefixes, look: &Look, text: &str) -> String {
     let a = &x.a;
     let s = &look.style;
     let lang_attr = match &look.lang {
-        Some(l) => format!(" lang=\"{l}\""),
+        Some(l) => format!(" lang=\"{}\"", new::escape(l)),
         None => String::new(),
     };
-    let mut out = format!("<{a}rPr{lang_attr} altLang=\"en-US\" sz=\"{}\" b=\"{}\" i=\"{}\"", s.font_size, s.bold as u8, s.italic as u8);
+    // `altLang` only where the model has one (like `lang`): a run without it must not read back with "en-US".
+    let alt_attr = match &look.alt_lang {
+        Some(l) => format!(" altLang=\"{}\"", new::escape(l)),
+        None => String::new(),
+    };
+    let mut out = format!("<{a}rPr{lang_attr}{alt_attr} sz=\"{}\" b=\"{}\" i=\"{}\"", s.font_size, s.bold as u8, s.italic as u8);
     if look.underline {
         out.push_str(&format!(" u=\"{}\"", look.underline_kind.value()));
     }
@@ -422,17 +450,12 @@ fn run_props(x: &Prefixes, look: &Look, text: &str) -> String {
         out.push_str(&format!(" cap=\"{}\"", caps_value(look.caps)));
     }
     out.push_str(" dirty=\"0\">");
-    if let Some((rgb, width)) = look.outline {
-        out.push_str(&format!("<{a}ln w=\"{width}\"><{a}solidFill>{}</{a}solidFill></{a}ln>", new::color_xml(x, ibis_doc_model::Color::opaque(rgb))));
+    if let Some((color, width)) = look.outline {
+        out.push_str(&format!("<{a}ln w=\"{width}\"><{a}solidFill>{}</{a}solidFill></{a}ln>", new::color_xml(x, color)));
     }
     out.push_str(&format!("<{a}solidFill>{}</{a}solidFill>", new::color_xml(x, ibis_doc_model::Color::opaque(s.color))));
-    if let Some(sh) = look.shadow {
-        out.push_str(&format!(
-            "<{a}effectLst><{a}outerShdw blurRad=\"{}\" dist=\"{}\" dir=\"{}\" algn=\"{}\">{}</{a}outerShdw></{a}effectLst>",
-            sh.blur, sh.distance, sh.direction, sh.align.name(),
-            new::color_xml(x, sh.color),
-            a = x.a
-        ));
+    if let Some(list) = effect_list_xml(x, look.shadow, look.glow) {
+        out.push_str(&list);
     }
     if let Some(rgb) = look.highlight {
         out.push_str(&format!("<{a}highlight>{}</{a}highlight>", new::color_xml(x, ibis_doc_model::Color::opaque(rgb))));
@@ -500,6 +523,9 @@ fn write_run_format(doc: &mut XmlDocument, node: NodeId, x: &Prefixes, have: &Lo
                 if let Some(l) = &want.lang {
                     doc.set_attr(r, "lang", l);
                 }
+                if let Some(l) = &want.alt_lang {
+                    doc.set_attr(r, "altLang", l);
+                }
                 r
             }
         }
@@ -510,6 +536,12 @@ fn write_run_format(doc: &mut XmlDocument, node: NodeId, x: &Prefixes, have: &Lo
         match &want.lang {
             Some(l) => doc.set_attr(rpr, "lang", l),
             None => doc.remove_attr(rpr, "lang"),
+        }
+    }
+    if have.alt_lang != want.alt_lang {
+        match &want.alt_lang {
+            Some(l) => doc.set_attr(rpr, "altLang", l),
+            None => doc.remove_attr(rpr, "altLang"),
         }
     }
     let (h, w) = (&have.style, &want.style);
@@ -538,7 +570,7 @@ fn write_run_format(doc: &mut XmlDocument, node: NodeId, x: &Prefixes, have: &Lo
         doc.set_attr(rpr, "cap", caps_value(want.caps));
     }
     if have.outline != want.outline {
-        if let Some((rgb, width)) = want.outline {
+        if let Some((color, width)) = want.outline {
             let ln = match doc.child(rpr, "ln") {
                 Some(ln) => ln,
                 None => {
@@ -548,7 +580,7 @@ fn write_run_format(doc: &mut XmlDocument, node: NodeId, x: &Prefixes, have: &Lo
             };
             doc.set_attr(ln, "w", &width.to_string());
             for child in doc.elements(ln).filter(|&n| rpr_rank(doc.local_name(n)) == 1).collect::<Vec<_>>() { doc.detach(child); }
-            let fill = x.import(doc, &format!("<{a}solidFill>{}</{a}solidFill>", new::color_xml(x, ibis_doc_model::Color::opaque(rgb)), a = x.a))?;
+            let fill = x.import(doc, &format!("<{a}solidFill>{}</{a}solidFill>", new::color_xml(x, color), a = x.a))?;
             doc.insert(ln, 0, fill);
         }
     }
@@ -568,18 +600,13 @@ fn write_run_format(doc: &mut XmlDocument, node: NodeId, x: &Prefixes, have: &Lo
             insert_ordered(doc, rpr, element);
         }
     }
-    // 文字の影 (`a:effectLst` / `a:outerShdw`).
-    if have.shadow != want.shadow {
+    // 文字の影・光彩 (`a:effectLst` / `a:glow` / `a:outerShdw`).
+    if have.shadow != want.shadow || have.glow != want.glow {
         for c in doc.elements(rpr).filter(|&c| matches!(doc.local_name(c), "effectLst" | "outerShdw")).collect::<Vec<_>>() {
             doc.detach(c);
         }
-        if let Some(sh) = want.shadow {
-            let element = x.import(doc, &format!(
-                "<{a}effectLst><{a}outerShdw blurRad=\"{}\" dist=\"{}\" dir=\"{}\" algn=\"{}\">{}</{a}outerShdw></{a}effectLst>",
-                sh.blur, sh.distance, sh.direction, sh.align.name(),
-                new::color_xml(x, sh.color),
-                a = x.a
-            ))?;
+        if let Some(list) = effect_list_xml(x, want.shadow, want.glow) {
+            let element = x.import(doc, &list)?;
             insert_ordered(doc, rpr, element);
         }
     }

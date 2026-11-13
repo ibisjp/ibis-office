@@ -34,7 +34,9 @@ fn every_transition_of_the_gallery_and_each_option_is_written_and_read_back() {
             let token = if effect.id == "morph" && token == Some("byObject") { None } else { token };
             let back = ibis_pptx::read(&saved).unwrap();
             let t = back.slides[0].transition.as_ref().unwrap_or_else(|| panic!("{} {token:?} lost", effect.id));
-            assert_eq!((t.effect.as_str(), t.direction.as_deref(), t.duration), (effect.id, token, 2000), "{} {token:?}", effect.id);
+            // An option that is the schema's default is left out of the element, as PowerPoint writes it: the same option.
+            let shown = |d: Option<&str>| ibis_doc_model::transition_catalog::effective_token(effect.id, d);
+            assert_eq!((t.effect.as_str(), shown(t.direction.as_deref()), t.duration), (effect.id, shown(token), 2000), "{} {token:?}", effect.id);
             // The element PowerPoint knows it by.
             let xml = slide_xml(&saved);
             assert!(xml.contains(&format!(":{}", effect.element)), "{} {token:?}: {xml}", effect.id);
@@ -123,9 +125,9 @@ fn an_unknown_fly_in_is_kept_as_its_behaviours() {
     let mut a = ibis_doc_model::Animation { shape, class: AnimationClass::Entrance, start: ibis_doc_model::AnimationStart::OnClick, look: AnimationLook::Preset, delay: 0, duration: 500, preset: (2, 12), repeat_count: ibis_doc_model::AnimationRepeat::None, auto_reverse: false, rewind: false, accel: 0, decel: 0, after_effect: ibis_doc_model::AnimationAfterEffect::Hold, trigger: ibis_doc_model::AnimationTrigger::None, paragraph: None, chars: None, text_unit: None, path: Vec::new(), chart_element: None, chart_build: None, dgm_element: None, dgm_build: None, behaviors: Vec::new() };
     use ibis_doc_model::{AnimBehavior, BehaviorKind};
     a.behaviors = vec![
-        AnimBehavior { kind: BehaviorKind::Set { attr: "style.visibility".into(), value: "visible".into() }, begin: 0, dur: 1 },
-        AnimBehavior { kind: BehaviorKind::Anim { attr: "ppt_x".into(), keys: vec![(0, "0-#ppt_w/2".into()), (100_000, "#ppt_x".into())], formula: None, discrete: false }, begin: 0, dur: 500 },
-        AnimBehavior { kind: BehaviorKind::Anim { attr: "ppt_y".into(), keys: vec![(0, "1+#ppt_h/2".into()), (100_000, "#ppt_y".into())], formula: None, discrete: false }, begin: 0, dur: 500 },
+        AnimBehavior { kind: BehaviorKind::Set { attr: "style.visibility".into(), value: "visible".into() }, begin: 0, dur: 1, time: Default::default() },
+        AnimBehavior { kind: BehaviorKind::Anim { attr: "ppt_x".into(), keys: vec![(0, "0-#ppt_w/2".into()), (100_000, "#ppt_x".into())], formula: None, discrete: false }, begin: 0, dur: 500, time: Default::default() },
+        AnimBehavior { kind: BehaviorKind::Anim { attr: "ppt_y".into(), keys: vec![(0, "1+#ppt_h/2".into()), (100_000, "#ppt_y".into())], formula: None, discrete: false }, begin: 0, dur: 500, time: Default::default() },
     ];
     edited.slides[0].animations = vec![a.clone()];
     let saved = opened.source.save(&edited, SaveOptions::default()).unwrap();

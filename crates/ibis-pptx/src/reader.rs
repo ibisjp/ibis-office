@@ -204,6 +204,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
         slide_names: HashMap::new(),
         slide_alt_texts: HashMap::new(),
         slide_decorative: Default::default(),
+        slide_ibis: Vec::new(),
         slide_return_to_zoom: Default::default(),
         slide_zoom_show_bg: HashMap::new(),
         slide_zoom_durations: HashMap::new(),
@@ -276,7 +277,18 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
             }).collect();
         }
     }
-    reader.presentation.guides = read_guides(root);
+    // The normal view's guides are in both `viewProps.xml` and the extension of `presentation.xml` (PowerPoint 365 writes
+    // both). `viewProps.xml` is read first (it is what the view itself uses, so it wins when they differ); a file with only
+    // the extension (another writer's) is read from that, which also has the guides' colours.
+    let view_props = main_rels
+        .values()
+        .find(|r| !r.external && r.kind.ends_with("/relationships/viewProps"))
+        .and_then(|r| package.read_xml(&r.target).ok());
+    reader.presentation.notes_pane = view_props.as_deref().map(crate::save::pptx_guides::read_notes_pane).unwrap_or_default();
+    let view_guides = view_props.as_deref().map(crate::save::pptx_guides::read_view).unwrap_or_default();
+    let ext_guides = read_guides(root);
+    let places = |g: &[ibis_doc_model::SlideGuide]| g.iter().map(|g| (g.horizontal, g.pos)).collect::<Vec<_>>();
+    reader.presentation.guides = if view_guides.is_empty() || places(&view_guides) == places(&ext_guides) { if ext_guides.is_empty() { view_guides } else { ext_guides } } else { view_guides };
     // Layouts are read after the slides, so the ids of what is on the
     // slides do not depend on them.
     let first = attr_i64(root, "firstSlideNum").unwrap_or(1).max(0) as usize;
@@ -310,7 +322,7 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
         reader.tree(&ctx, ctx.layout.root, &ctx.layout.rels, Level::Layout, &mut backdrop);
         let placeholders = layout_placeholders(ctx.layout.root);
         let master_placeholders = layout_placeholders(ctx.master.root);
-        reader.presentation.layouts.push(ibis_doc_model::Layout { id, name, background, backdrop, placeholders, master_placeholders, copy_of: None, master: Some(master_id) });
+        reader.presentation.layouts.push(ibis_doc_model::Layout { id, name, background, backdrop, placeholders, master_placeholders, copy_of: None, master: Some(master_id), guides: read_guides(ctx.layout.root), master_guides: read_guides(ctx.master.root) });
         reader.sources.layouts.insert(id, layout.clone());
         layout_ids.insert(layout.clone(), id);
     }
@@ -409,6 +421,9 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
     if let Some(ext_lst) = namespace_child(root, P, "extLst") {
         for ext in elements(ext_lst).filter(|n| n.has_tag_name((P, "ext"))) {
             for child_node in elements(ext) {
+                if child_node.tag_name().name() == "features" && child_node.tag_name().namespace() == Some(crate::save::pptx_ibis::NS_IBIS) {
+                    reader.presentation.ibis_extensions = true;
+                }
                 if child_node.tag_name().name() == "readonlyRecommended" {
                     let val = unqualified_attribute(child_node, "val").unwrap_or("1");
                     if val == "1" || val.eq_ignore_ascii_case("true") {
@@ -417,6 +432,10 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, crate::sav
                 }
             }
         }
+    }
+    reader.presentation.cmyk = crate::save::pptx_cmyk::read_cmyk(root);
+    for text in xml.values() {
+        crate::style::read_east_asian_charsets(text, &mut reader.presentation.typeface_traits);
     }
     Ok((reader.presentation, reader.sources))
 }
@@ -779,6 +798,8 @@ struct Reader<'p, 'd, 'i> {
     slide_names: HashMap<ibis_doc_model::ShapeId, String>,
     slide_alt_texts: HashMap<ibis_doc_model::ShapeId, ibis_doc_model::AltText>,
     slide_decorative: std::collections::HashSet<ibis_doc_model::ShapeId>,
+    /// The shapes' ibisOffice extensions (`pptx_ibis`).
+    slide_ibis: Vec<(ibis_doc_model::ShapeId, ibis_doc_model::IbisShapeExt)>,
     slide_return_to_zoom: std::collections::HashSet<ibis_doc_model::ShapeId>,
     slide_zoom_show_bg: HashMap<ibis_doc_model::ShapeId, bool>,
     slide_zoom_durations: HashMap<ibis_doc_model::ShapeId, u32>,
@@ -1309,7 +1330,10 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                     let properties=namespace_child(node,P,"nvGrpSpPr").and_then(|nv|namespace_child(nv,P,"cNvPr"));
                     let native_id=properties.and_then(|n|unqualified_attribute(n,"id")).unwrap_or("").to_owned();let name=properties.and_then(|n|unqualified_attribute(n,"name")).unwrap_or("").to_owned();
                     let has_unmodelled_children=elements(node).any(|n|n.has_tag_name((MC,"AlternateContent")) || (n.tag_name().namespace()==Some(P)&&matches!(n.tag_name().name(),"sp"|"cxnSp"|"pic"|"graphicFrame"|"contentPart")&&!paths.contains_key(&crate::xml::element_path(n))));
-                    out.push(ibis_doc_model::GroupMember::Group(Box::new(ibis_doc_model::ShapeGroup {native_id,name,has_unmodelled_children,children:groups(node,paths)})));
+                    // The group's own soft edge: its children are faded as one picture (#153).
+                    const A:&str="http://schemas.openxmlformats.org/drawingml/2006/main";
+                    let soft_edge=namespace_child(node,P,"grpSpPr").and_then(|p|namespace_child(p,A,"effectLst")).and_then(|l|namespace_child(l,A,"softEdge")).and_then(|e|unqualified_attribute(e,"rad")).and_then(|v|v.parse::<i64>().ok()).filter(|&r|r>0);
+                    out.push(ibis_doc_model::GroupMember::Group(Box::new(ibis_doc_model::ShapeGroup {native_id,name,has_unmodelled_children,soft_edge,children:groups(node,paths)})));
                 } else if let Some(&id)=paths.get(&crate::xml::element_path(node)) {out.push(ibis_doc_model::GroupMember::Shape(id));}
                 else if node.has_tag_name((MC,"AlternateContent")) {if let Some(branch)=elements(node).find(|n|n.has_tag_name((MC,"Choice"))).or_else(||elements(node).find(|n|n.has_tag_name((MC,"Fallback")))) {out.extend(groups(branch,paths));}}
             }
@@ -1322,6 +1346,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         slide.shape_names = std::mem::take(&mut self.slide_names);
         slide.shape_alt_texts = std::mem::take(&mut self.slide_alt_texts);
         slide.decorative_shapes = std::mem::take(&mut self.slide_decorative);
+        slide.apply_ibis_exts(&std::mem::take(&mut self.slide_ibis));
         slide.shape_return_to_zoom = std::mem::take(&mut self.slide_return_to_zoom);
         slide.shape_zoom_show_bg = std::mem::take(&mut self.slide_zoom_show_bg);
         slide.shape_zoom_durations = std::mem::take(&mut self.slide_zoom_durations);
@@ -1542,6 +1567,9 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         });
         if is_decorative {
             self.slide_decorative.insert(shape.id);
+        }
+        if let Some(ext) = c_nv_pr.and_then(|n| child(n, "extLst")).and_then(|l| elements(l).find(|e| e.tag_name().name() == "ext" && attr(*e, "uri") == Some(crate::save::pptx_ibis::URI_SHAPE))).and_then(|e| elements(e).find(|n| n.tag_name().name() == "shape" && n.tag_name().namespace() == Some(crate::save::pptx_ibis::NS_IBIS))) {
+            self.slide_ibis.push((shape.id, crate::save::pptx_ibis::shape_ext_from(|name| attr(ext, name))));
         }
         let ext_zoom = c_nv_pr.and_then(|n| child(n, "extLst")).and_then(|ext_lst| {
             elements(ext_lst).find(|ext| {
@@ -2389,7 +2417,7 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
                 italic: Some(run.italic.unwrap_or(false)),
                 underline: run.underline.unwrap_or(false),
                 highlight: run.highlight.map(|c| c.rgb),
-                outline: run.outline.flatten().map(|(c, w)| (c.rgb, w)),
+                outline: run.outline.flatten(),
                 fill: run.fill.clone().flatten(),
                 invisible: false,
                 baseline: run.baseline.unwrap_or(0),
@@ -2407,6 +2435,7 @@ fn parse_artistic_effect(blip: Node) -> Option<ibis_doc_model::ArtisticEffect> {
                 shadow: run.shadow.flatten(),
                 glow: run.glow.flatten(),
                 lang: run.lang,
+                alt_lang: run.alt_lang,
                 math: None,
                 math_inline: false,
                 border: None,
@@ -2985,6 +3014,14 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
     let theme = theme_doc.as_ref().map(|d| Theme::read(d.root_element())).unwrap_or_default();
     let sheet_colors = xlsx::SheetColors::new(&theme, styles_doc.as_ref().map(|d| d.root_element()));
     let mut styles = xlsx::read_styles(styles_doc.as_ref().map(|d| d.root_element()), &sheet_colors);
+    // Cell check boxes (Excel's Insert > Check Box): formats whose `xfComplement` is a `Checkbox` feature property bag.
+    if let (Some(bag_xml), Some(styles_doc)) = (
+        main_rels.values().find(|r| !r.external && r.kind.ends_with("/FeaturePropertyBag")).and_then(|r| package.read_xml(&r.target).ok()),
+        styles_doc.as_ref(),
+    ) && let Ok(bag_doc) = roxmltree::Document::parse(&bag_xml)
+    {
+        xlsx::mark_checkboxes(&mut styles, styles_doc.root_element(), &xlsx::read_checkbox_complements(bag_doc.root_element()));
+    }
     styles.date1904 = child(root, "workbookPr").and_then(|p| attr_bool(p, "date1904")).unwrap_or(false);
     let strings = xlsx::read_shared_strings(strings_doc.as_ref().map(|d| d.root_element()));
     let phonetics = xlsx::read_shared_extras(strings_doc.as_ref().map(|d| d.root_element()), &sheet_colors);
@@ -3434,6 +3471,7 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
         slide_names: HashMap::new(),
         slide_alt_texts: HashMap::new(),
         slide_decorative: Default::default(),
+        slide_ibis: Vec::new(),
         slide_return_to_zoom: Default::default(),
         slide_zoom_show_bg: HashMap::new(),
         slide_zoom_durations: HashMap::new(),
@@ -3829,6 +3867,15 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
     let versions: Vec<_> = lists.iter().copied().flat_map(elements)
         .filter(|n| n.has_tag_name((MAIN, "ext")) && xlsx::unqualified_attr(*n, "uri") == Some(VERSION_URI))
         .flat_map(elements).filter(|n| n.has_tag_name((VERSION_NS, "version"))).collect();
+    // ibisOffice's own features turned on for the file (`write_ibis_features` in save/xlsx.rs).
+    if root.has_tag_name((MAIN, "workbook"))
+        && lists.iter().copied().flat_map(elements).any(|e| {
+            e.has_tag_name((MAIN, "ext")) && xlsx::unqualified_attr(e, "uri") == Some(crate::save::pptx_ibis::URI_FEATURES)
+                && elements(e).any(|f| f.has_tag_name((crate::save::pptx_ibis::NS_IBIS, "features")))
+        })
+    {
+        presentation.ibis_extensions = true;
+    }
     let compatibility_version = if root.has_tag_name((MAIN, "workbook")) && lists.len() == 1 && versions.len() == 1 {
         let node = versions[0];
         xlsx::unqualified_attr(node, "setVersion").and_then(xlsx::metadata_index).filter(|&v| v >= 1).filter(|&version| {
@@ -3928,6 +3975,8 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
     ibis_doc_model::form_control::refresh_controls(&mut presentation);
     // Formulas the file has no value for (written by a program that does not calculate).
     let _ = ibis_doc_model::calculate_missing_values(&mut presentation);
+    // Excel calculates the volatile ones (TODAY, NOW, RAND, ...) again whenever it opens a book.
+    let _ = ibis_doc_model::calculate_volatile_on_open(&mut presentation);
     {
         let evaluated: Vec<(ibis_doc_model::SlideId, ibis_doc_model::CellRange)> = {
             let view = ibis_doc_model::BookView::new(&presentation);
@@ -3977,6 +4026,7 @@ pub(crate) fn read_xlsx_with_records(data: &[u8], records: Option<&[Vec<String>]
     }
     ibis_doc_model::chart_refresh::fill_charts_without_data(&mut presentation);
     build_pivots_on_load(&mut presentation, date1904, styles_doc.as_ref().map(|d| d.root_element()), &sheet_colors);
+    presentation.typeface_traits = xlsx::read_typeface_traits(styles_doc.as_ref().map(|d| d.root_element()), &sheet_colors);
 
     let map = crate::save::xlsx::SourceMap {
         workbook: main.clone(),
@@ -4334,7 +4384,7 @@ fn lower_priority() {
     unsafe { pthread_set_qos_class_self_np(0x11, 0) };
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_family = "wasm")))]
 fn lower_priority() {}
 
 /// `f` of each of `items`, in order, on up to 8 threads (one on the web,
@@ -4511,7 +4561,10 @@ pub(crate) fn read_guides(root: Node) -> Vec<ibis_doc_model::SlideGuide> {
     for ext in elements(ext_list) {
         for list in elements(ext).filter(|n| n.tag_name().name() == "sldGuideLst") {
             for g in elements(list).filter(|n| n.tag_name().name() == "guide") {
-                let color = elements(g).find(|n| n.tag_name().name() == "clr").and_then(|c| elements(c).find(|n| n.tag_name().name() == "srgbClr")).and_then(|c| attr(c, "val")).and_then(|v| u32::from_str_radix(v, 16).ok());
+                let color = elements(g).find(|n| n.tag_name().name() == "clr").and_then(|c| elements(c).find(|n| n.tag_name().name() == "srgbClr")).and_then(|c| attr(c, "val")).and_then(|v| u32::from_str_radix(v, 16).ok())
+                    // PowerPoint's gray for the guides a user draws is no colour of the guide's own (the save writes it for one
+                    // without a colour, as PowerPoint needs a p15:clr: #M132).
+                    .filter(|&c| c != 0xA4A3A4);
                 out.push(ibis_doc_model::SlideGuide {
                     id: attr(g, "id").and_then(|v| v.parse().ok()).unwrap_or(0),
                     horizontal: attr(g, "orient") == Some("horz"),

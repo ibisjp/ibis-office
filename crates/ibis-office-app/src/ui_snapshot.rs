@@ -25,7 +25,8 @@
 //! the window; later pictures are that size), `zoom-menu` (open the status
 //! bar's list of zooms), `zoom-wheel:<pixels>[:<x>:<y>]` (a trackpad scroll
 //! with the wheel's zoom modifier held, zooming in if positive),
-//! `slideshow` (start the slide show), `goto:<reference>` (select a
+//! `slideshow` (start the slide show), `transition-at:<ms>` (draw the slide show's transition at that time since the slide came in, whatever
+//! the clock says: the same moment of an effect on any machine; give it after the `right` that starts the transition), `goto:<reference>` (select a
 //! worksheet's cells as the name box does, such as `goto:A201` or
 //! `goto:'Sheet 2'!B3:C4`), `type:<text>` (type the text into what has
 //! the keys, such as the name box after a `click` on it) and `open:<path>`
@@ -39,6 +40,8 @@ use gpui_kit::component::Root;
 use gpui_kit::*;
 
 use crate::SlideEditor;
+use crate::pptx::ext::*;
+use crate::xlsx::ext::*;
 
 /// Open `document` (a presentation and the name of its file) in the editor,
 /// or the start view without one, and
@@ -140,6 +143,15 @@ pub(crate) fn run(
                 editor.update(app, |e, cx| e.open_path(path.into(), None, window, cx));
             } else if step == "slideshow" {
                 editor.update(app, |e, cx| e.start_slideshow(window, cx));
+            } else if let Some(ms) = step.strip_prefix("transition-at:") {
+                let at = ms.parse::<f32>().ok();
+                editor.update(app, |e, cx| {
+                    if let Some(show) = e.slideshow_mut() {
+                        show.transition_at = at;
+                    }
+                    cx.notify();
+                });
+                window.refresh();
             } else if let Some(ms) = step.strip_prefix("wait:") {
                 std::thread::sleep(std::time::Duration::from_millis(ms.parse().unwrap_or(0)));
                 window.refresh();

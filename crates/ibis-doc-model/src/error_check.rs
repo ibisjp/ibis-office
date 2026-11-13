@@ -374,10 +374,17 @@ fn inconsistent_calculated_column(sheet: &Sheet, cell: &SheetCell) -> bool {
     false
 }
 
+/// Whether the cell holds a value of a dynamic array formula's spill (not the formula's own cell): like any formula result,
+/// Excel marks no error on it (not "number stored as text", nor the others of the constants), and an action on it
+/// (数値に変換) would write over the spill (`#SPILL!`).
+pub fn spilled_into(sheet: &Sheet, row: u32, column: u32) -> bool {
+    sheet.spills.iter().any(|(&anchor, r)| anchor != (row, column) && r.first_row <= row && row <= r.last_row && r.first_column <= column && column <= r.last_column)
+}
+
 fn errors_of(sheet: &Sheet, cell: &SheetCell) -> Vec<ErrorKind> {
     let mut out = Vec::new();
     let rules = rules();
-    if !rules.background {
+    if !rules.background || spilled_into(sheet, cell.row, cell.column) {
         return out;
     }
     let mut add = |kind: ErrorKind, found: bool| {

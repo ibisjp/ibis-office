@@ -57,8 +57,19 @@ pub enum Op {
     Ge,
     Percent,
     Range,
+    /// `:.` (trailing blanks trimmed), `.:` (leading) and `.:.` (both): TRIMRANGE's operators.
+    RangeTrimEnd,
+    RangeTrimStart,
+    RangeTrimBoth,
     /// A space between two references.
     Intersect,
+}
+
+impl Op {
+    /// `:` and the trim operators (`:.` `.:` `.:.`), which join two references.
+    pub fn is_range(self) -> bool {
+        matches!(self, Op::Range | Op::RangeTrimEnd | Op::RangeTrimStart | Op::RangeTrimBoth)
+    }
 }
 
 /// A token and where it is in the formula (byte offsets).
@@ -305,7 +316,14 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
                     j += 1;
                 }
                 let word: String = chars[i..j].iter().map(|c| c.1).collect();
-                if at(j) == Some('!') {
+                if at(j) == Some(':') && word.len() > 1 && word.ends_with('.') && !word.ends_with("..") {
+                    // `D.:D` and `D.:.D`: the dot before the colon is the trim operator's, not the name's.
+                    let both = at(j + 1) == Some('.') && !at(j + 2).is_some_and(|d| d.is_ascii_digit());
+                    out.push(Spanned { token: Token::Word(word[..word.len() - 1].to_string()), start, end: pos(j - 1) });
+                    let (op, next) = if both { (Op::RangeTrimBoth, j + 2) } else { (Op::RangeTrimStart, j + 1) };
+                    out.push(Spanned { token: Token::Op(op), start: pos(j - 1), end: pos(next) });
+                    i = next;
+                } else if at(j) == Some('!') {
                     push(&mut out, Token::Sheet { first: word, last: None, book: None, path: None }, j + 1);
                     i = j + 1;
                 } else if at(j) == Some(':') && let Some((last, k)) = sheet_after_colon(&chars, j) {
@@ -352,8 +370,14 @@ pub fn tokenize(text: &str) -> Result<Vec<Spanned>, LexError> {
                 i += 1;
             }
             ':' => {
-                push(&mut out, Token::Op(Op::Range), i + 1);
-                i += 1;
+                // `:.` trims the trailing blanks; not `:.5` (a number).
+                if at(i + 1) == Some('.') && !at(i + 2).is_some_and(|d| d.is_ascii_digit()) {
+                    push(&mut out, Token::Op(Op::RangeTrimEnd), i + 2);
+                    i += 2;
+                } else {
+                    push(&mut out, Token::Op(Op::Range), i + 1);
+                    i += 1;
+                }
             }
             '=' => {
                 push(&mut out, Token::Op(Op::Eq), i + 1);

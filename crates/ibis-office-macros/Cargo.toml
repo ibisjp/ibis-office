@@ -1,0 +1,16 @@
+[package]
+name = "ibis-office-macros"
+description = "The attribute macro of ibisOffice that turns the methods a format writes for the editor (`impl SlideEditor`) into extension traits."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# All three are in the dependency tree already (MIT OR Apache-2.0); `full` is what reads the signature of a method.
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"

@@ -210,6 +210,9 @@ pub(crate) fn write_changes(package: &mut Package, map: &SourceMap, baseline: &P
         let version = compatibility(current).filter(|&v| matches!(v, 1 | 2)).ok_or_else(|| unsupported("計算の互換バージョン"))?;
         write_compatibility_version(package, &map.workbook, version)?;
     }
+    if baseline.ibis_extensions != current.ibis_extensions {
+        write_ibis_features(package, &map.workbook, current.ibis_extensions)?;
+    }
     let calc_mode = |p: &Presentation| p.workbook.as_deref().map(|w| (w.calc_mode, w.calc_on_save, w.full_precision, w.iterate, w.max_iterations, w.max_change));
     if calc_mode(baseline) != calc_mode(current) {
         if let Some((mode, on_save, full_precision, iterate, max_iterations, max_change)) = calc_mode(current) {
@@ -463,6 +466,34 @@ fn write_names(package: &mut Package, workbook: &str, old: &[ibis_doc_model::Def
     if doc.elements(list).next().is_none() {
         doc.detach(list);
     }
+    Ok(())
+}
+
+/// The file's ibisOffice features made on (`true`) or off: `<ibis:features/>` in an `ext` of the workbook's `extLst`
+/// (Excel ignores an `ext` with an unknown `uri`, as PowerPoint does for `presentation.xml`; see `pptx_ibis.rs`).
+fn write_ibis_features(package: &mut Package, workbook: &str, enabled: bool) -> Result<(), Error> {
+    use super::pptx_ibis::{NS_IBIS, URI_FEATURES};
+    let doc = package.xml_mut(workbook)?;
+    let root = doc.root_element().ok_or_else(|| Error::new("ブックの XML が空です"))?;
+    if doc.local_name(root) != "workbook" || doc.namespace(root) != Some(MAIN_NS) { return Err(unsupported("ibisOffice の拡張のブック名前空間")); }
+    let lists: Vec<_> = doc.elements(root).filter(|&n| doc.local_name(n) == "extLst" && doc.namespace(n) == Some(MAIN_NS)).collect();
+    for &list in &lists {
+        let old: Vec<_> = doc.elements(list).filter(|&e| doc.local_name(e) == "ext" && doc.attr(e, "uri") == Some(URI_FEATURES)).collect();
+        for e in old { doc.detach(e); }
+    }
+    if !enabled {
+        for list in lists { if doc.elements(list).next().is_none() { doc.detach(list); } }
+        return Ok(());
+    }
+    let list = match lists.first().copied() {
+        Some(list) => list,
+        None => doc.append_element(root, &format!("{}extLst", prefix_of(doc, root))),
+    };
+    let ext = doc.append_element(list, &format!("{}ext", prefix_of(doc, list)));
+    doc.set_attr(ext, "uri", URI_FEATURES);
+    let node = doc.append_element(ext, "ibis:features");
+    doc.set_attr(node, "xmlns:ibis", NS_IBIS);
+    doc.set_attr(node, "version", "1");
     Ok(())
 }
 
@@ -860,6 +891,8 @@ impl Writer<'_> {
             default_row: 0,
             measured_rows: Default::default(),
             fitted_rows: Default::default(),
+            default_row_rule: Default::default(),
+            rows_as_saved: Default::default(),
             printed_rows: Default::default(),
             printed: Default::default(),
             column_chars: Default::default(),
@@ -904,6 +937,8 @@ impl Writer<'_> {
             threads: Vec::new(),
             custom_views: Vec::new(),
             show_phonetic: false,
+            phonetic_shown: Default::default(),
+            phonetic_info: Default::default(),
             phonetic_pr: None,
             ignored_errors: Vec::new(),
             cell_images: Vec::new(),
@@ -911,6 +946,7 @@ impl Writer<'_> {
             show_formulas: false,
             show_zeros: true,
             hide_ink: false,
+            view: Default::default(),
             ..s.clone()
         };
         if bare(old) != bare(new) {
@@ -1023,13 +1059,17 @@ impl Writer<'_> {
             let doc = self.package.xml_mut(part)?;
             sizes::write_panes(doc, new.frozen, new.split)?;
         }
+        if old.view != new.view {
+            let doc = self.package.xml_mut(part)?;
+            sizes::write_view_position(doc, &new.view)?;
+        }
         if old.custom_views != new.custom_views {
             let doc = self.package.xml_mut(part)?;
             sizes::write_custom_sheet_views(doc, &new.custom_views)?;
         }
-        if old.show_phonetic != new.show_phonetic || old.phonetic_pr != new.phonetic_pr {
+        if old.phonetic_shown != new.phonetic_shown || old.phonetic_pr != new.phonetic_pr {
             let doc = self.package.xml_mut(part)?;
-            sizes::write_phonetic(doc, new.show_phonetic, new.phonetic_pr.as_ref())?;
+            sizes::write_phonetic(doc, &new.phonetic_shown, new.phonetic_pr.as_ref())?;
         } else {
             let doc = self.package.xml_mut(part)?;
             if let Some(root) = doc.root_element() && let Some(p) = doc.child(root, "phoneticPr") {
@@ -1166,6 +1206,9 @@ impl Writer<'_> {
                         }
                     }
                     sheet.write_value(c, cell, string_ids.get(&(row, column)).copied());
+                    if new.phonetic_shown.contains(&(row, column)) {
+                        sheet.doc.set_attr(c, "ph", "1");
+                    }
                     if sheet.doc.attr(c, "t") == Some("s") {
                         string_delta += 1;
                     }
@@ -1456,13 +1499,55 @@ impl Writer<'_> {
 
     /// The cellXfs entry for a style of the current model.
     fn xf_for(&mut self, style: &CellStyle) -> Result<u32, Error> {
+        // A check box format names a check box feature property bag (the part is made when the workbook has none).
+        let complement = if style.checkbox && !self.checkbox_formats_read(style) { Some(self.checkbox_complement()?) } else { None };
         let styles = self.styles.get_or_insert_with(|| StylesWriter::new(self.baseline));
-        styles.xf_for(self.package, self.map.styles.as_deref(), style)
+        styles.xf_for(self.package, self.map.styles.as_deref(), style, complement)
+    }
+
+    /// Whether the style is a format the workbook had as a check box, still unchanged in that (nothing to name).
+    fn checkbox_formats_read(&mut self, style: &CellStyle) -> bool {
+        let styles = self.styles.get_or_insert_with(|| StylesWriter::new(self.baseline));
+        styles.read.get(&style.xf.unwrap_or(0)).is_some_and(|b| b.checkbox)
+    }
+
+    /// The `xfComplement` index of a check box in the workbook's feature property bags (`xl/featurePropertyBag`): the one it has, or
+    /// the part made as Excel writes it for its first check box (four bags: `Checkbox`, `XFControls`, `XFComplement`, `XFComplements`).
+    fn checkbox_complement(&mut self) -> Result<usize, Error> {
+        const REL: &str = "http://schemas.microsoft.com/office/2022/11/relationships/FeaturePropertyBag";
+        const BAGS: &str = concat!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+            r#"<FeaturePropertyBags xmlns="http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag"><bag type="Checkbox"/>"#,
+            r#"<bag type="XFControls"><bagId k="CellControl">0</bagId></bag><bag type="XFComplement"><bagId k="XFControls">1</bagId></bag>"#,
+            r#"<bag type="XFComplements" extRef="XFComplementsMapperExtRef"><a k="MappedFeaturePropertyBags"><bagId>2</bagId></a></bag></FeaturePropertyBags>"#
+        );
+        let workbook = self.map.workbook.clone();
+        let dir = workbook.rsplit_once('/').map_or("", |(d, _)| d).to_string();
+        let existing = self.package.relationships(&workbook)?.into_iter().find(|r| r.kind == REL && !r.external);
+        if let Some(r) = existing {
+            let part = ibis_ooxml::package::resolve(&dir, &r.target);
+            let text = String::from_utf8(self.package.xml(&part)?.to_bytes()).map_err(|e| Error::new(format!("featurePropertyBag XML: {e}")))?;
+            let parsed = roxmltree::Document::parse(&text).map_err(|e| Error::new(format!("featurePropertyBag XML: {e}")))?;
+            return crate::xlsx::read_checkbox_complements(parsed.root_element()).into_iter().min().ok_or_else(|| unsupported("チェック ボックスを持たない featurePropertyBag へのチェック ボックスの追加"));
+        }
+        let part = if dir.is_empty() { "featurePropertyBag/featurePropertyBag.xml".to_string() } else { format!("{dir}/featurePropertyBag/featurePropertyBag.xml") };
+        let doc = ibis_ooxml::XmlDocument::parse(BAGS.as_bytes()).map_err(|e| Error::new(format!("featurePropertyBag.xml: {e}")))?;
+        self.package.set_xml(&part, doc);
+        self.package.set_override(&part, "application/vnd.ms-excel.featurepropertybag+xml")?;
+        self.package.add_relationship(&workbook, REL, "featurePropertyBag/featurePropertyBag.xml", false)?;
+        Ok(0)
     }
 
     fn finish(mut self) -> Result<(), Error> {
         if let Some(strings) = self.strings.take() {
             strings.finish(self.package, &self.map.workbook)?;
+        }
+        // A sheet written by ibisOffice before 2026-11-12 may have <drawing> after <legacyDrawing> (Excel cannot read the
+        // sheet): a changed sheet is put in order again, so saving such a book once more mends it.
+        for part in self.map.sheet_parts.iter().flatten() {
+            if self.package.is_changed(part) {
+                drawing_before_legacy_drawing(self.package.xml_mut(part)?);
+            }
         }
         if !self.calc.added.is_empty() || !self.calc.removed.is_empty() {
             self.write_calc_chain()?;
@@ -2127,6 +2212,7 @@ fn write_sheet_shape_labels(
             _ => false,
         }
     });
+    let has_visual_change = new_slide.shapes.iter().any(|n| old_slide.shapes.iter().find(|o| o.id == n.id).is_some_and(|o| super::pptx_shapes::visuals_differ(o, n)));
     let has_formula_change = old_slide.shape_formulas != new_slide.shape_formulas;
     let has_warp_change = old_slide.shapes.iter().zip(&new_slide.shapes).any(|(o, n)| {
         o.text_body().and_then(|b| b.warp.as_deref()) != n.text_body().and_then(|b| b.warp.as_deref())
@@ -2151,6 +2237,7 @@ fn write_sheet_shape_labels(
         && !has_formula_change
         && !has_warp_change
         && !has_picture_effects_change
+        && !has_visual_change
     {
         return Ok(());
     }
@@ -2165,6 +2252,8 @@ fn write_sheet_shape_labels(
         formula: Option<Option<String>>,
         warp: Option<Option<String>>,
         picture_effects: Option<(Option<Rgb>, Option<(Rgb, Rgb)>, Option<(i32, i32)>)>,
+        /// The shape before and after, when its fill, outline or effects changed.
+        visual: Option<(ibis_doc_model::Shape, ibis_doc_model::Shape)>,
     }
 
     let mut changes_by_drawing: HashMap<String, Vec<ShapeMetaChange>> = HashMap::new();
@@ -2224,7 +2313,10 @@ fn write_sheet_shape_labels(
             _ => None,
         };
 
+        let visual_change = old_slide.shapes.iter().find(|s| s.id == shape.id).filter(|old| super::pptx_shapes::visuals_differ(old, shape)).map(|old| (old.clone(), shape.clone()));
+
         if name_change.is_none()
+            && visual_change.is_none()
             && alt_change.is_none()
             && placement_change.is_none()
             && print_change.is_none()
@@ -2257,6 +2349,7 @@ fn write_sheet_shape_labels(
                 formula: formula_change,
                 warp: warp_change,
                 picture_effects: picture_effects_change,
+                visual: visual_change,
             });
         }
     }
@@ -2326,17 +2419,20 @@ fn write_sheet_shape_labels(
                     }
                 }
             }
-            if item.geometry_preset.is_some() || item.formula.is_some() || item.warp.is_some() || item.picture_effects.is_some() {
+            if item.geometry_preset.is_some() || item.formula.is_some() || item.warp.is_some() || item.picture_effects.is_some() || item.visual.is_some() {
                 let mut curr = doc.parent(node);
                 let mut sp_node = None;
                 while let Some(p) = curr {
-                    if matches!(doc.local_name(p), "sp" | "pic") {
+                    if matches!(doc.local_name(p), "sp" | "pic" | "cxnSp") {
                         sp_node = Some(p);
                         break;
                     }
                     curr = doc.parent(p);
                 }
                 if let Some(sp) = sp_node {
+                    if let Some((old, new)) = &item.visual {
+                        super::pptx_shapes::write_visuals(doc, sp, old, new)?;
+                    }
                     if let Some(ref preset) = item.geometry_preset {
                         let sp_pr = doc.children(sp).into_iter().copied().find(|&c| doc.local_name(c) == "spPr");
                         if let Some(sp_pr) = sp_pr {
@@ -2479,6 +2575,21 @@ fn write_sheet_shape_labels(
 
 /// A new, empty drawing part for the sheet part `sheet_part`, related to it
 /// and named in its `drawing` element.
+/// CT_Worksheet's order: `<drawing>` comes before `<legacyDrawing>`; move it there when it is after it.
+fn drawing_before_legacy_drawing(doc: &mut XmlDocument) {
+    let Some(root) = doc.root_element() else { return };
+    let children: Vec<_> = doc.elements(root).collect();
+    let legacy = children.iter().position(|&c| doc.local_name(c) == "legacyDrawing");
+    let drawing = children.iter().position(|&c| doc.local_name(c) == "drawing");
+    if let (Some(l), Some(d)) = (legacy, drawing)
+        && d > l
+    {
+        let node = children[d];
+        doc.detach(node);
+        doc.insert_before(children[l], node);
+    }
+}
+
 fn create_drawing(package: &mut Package, sheet_part: &str) -> Result<String, Error> {
     let mut n = 1;
     let part = loop {
@@ -2504,7 +2615,9 @@ fn create_drawing(package: &mut Package, sheet_part: &str) -> Result<String, Err
         sheet_doc.set_attr(root, "xmlns:r", REL_NS);
     }
     let r = sheet_doc.lookup_prefix(root, REL_NS).unwrap_or_else(|| "r".into());
-    let before_drawing = ["drawingHF", "picture", "oleObjects", "controls", "webPublishItems", "tableParts", "extLst"];
+    // CT_Worksheet: drawing comes before legacyDrawing (the comments' VML) and legacyDrawingHF; a sheet with comments put
+    // <drawing> after <legacyDrawing>, and Excel asked to repair the book (2026-11-12, the issue sheet).
+    let before_drawing = ["legacyDrawing", "legacyDrawingHF", "drawingHF", "picture", "oleObjects", "controls", "webPublishItems", "tableParts", "extLst"];
     let at = sheet_doc.elements(root).find(|&c| before_drawing.contains(&sheet_doc.local_name(c)));
     let drawing_el = detached(sheet_doc, "drawing");
     match at {
@@ -2660,7 +2773,7 @@ fn move_chart_drawings(
                 } else {
                 match edit {
                     Some(data) if ca.groups != cb.groups || ca.cell_refs != cb.cell_refs => {
-                        super::pptx_chart_data::write_sheet_chart_series(package, &map.charts[source_idx].chart, cb, &data.series)?;
+                        super::pptx_chart_data::write_sheet_chart_series(package, &map.charts[source_idx].chart, Some(&**ca), cb, &data.series)?;
                         let base = ibis_doc_model::Chart { groups: cb.groups.clone(), cell_refs: cb.cell_refs.clone(), ..(**ca).clone() };
                         if base != **cb {
                             write_chart_settings(package, &map.charts[source_idx].chart, &base, cb)?;
@@ -2669,7 +2782,7 @@ fn move_chart_drawings(
                     // The cells it reads changed (or it reads others): its series' caches written from them.
                     _ if super::pptx_chart_data::data_differs(ca, cb) || ca.cell_refs != cb.cell_refs => {
                         let refs = chart_refs_of(package, &map.charts[source_idx].chart, cb)?;
-                        super::pptx_chart_data::write_sheet_chart_series(package, &map.charts[source_idx].chart, cb, &refs)?;
+                        super::pptx_chart_data::write_sheet_chart_series(package, &map.charts[source_idx].chart, Some(&**ca), cb, &refs)?;
                         let base = ibis_doc_model::Chart { groups: cb.groups.clone(), cell_refs: cb.cell_refs.clone(), ..(**ca).clone() };
                         if base != **cb {
                             write_chart_settings(package, &map.charts[source_idx].chart, &base, cb)?;
@@ -2743,6 +2856,13 @@ fn write_charts(package: &mut Package, sources: &[ChartSource], sheet: &Sheet, o
             let mut expected_a = aa.clone();
             expected_a.geometry = ab.geometry.clone();
             expected_a.text = ab.text.clone();
+            // Fill, outline and effects: written apart in `write_sheet_shape_labels`.
+            expected_a.fill = ab.fill.clone();
+            expected_a.stroke = ab.stroke.clone();
+            expected_a.glow = ab.glow;
+            expected_a.shadow = ab.shadow;
+            expected_a.reflection = ab.reflection;
+            expected_a.soft_edge = ab.soft_edge;
             if &expected_a == ab && (a.rotation, a.flip_h, a.flip_v, &a.floating, a.frame) == (b.rotation, b.flip_h, b.flip_v, &b.floating, b.frame) {
                 continue;
             }
@@ -2762,7 +2882,17 @@ fn write_charts(package: &mut Package, sources: &[ChartSource], sheet: &Sheet, o
             expected_a.clear = pb.clear;
             expected_a.duotone = pb.duotone;
             expected_a.luminance = pb.luminance;
+            expected_a.stroke = pb.stroke.clone();
+            expected_a.shadow = pb.shadow.clone();
+            expected_a.reflection = pb.reflection.clone();
+            expected_a.soft_edge = pb.soft_edge;
             if &expected_a == pb && (a.rotation, a.flip_h, a.flip_v, &a.floating, a.frame) == (b.rotation, b.flip_h, b.flip_v, &b.floating, b.frame) {
+                continue;
+            }
+        }
+        // A line's colour, width and dash: written apart in `write_sheet_shape_labels`.
+        if let (ShapeKind::Line(_), ShapeKind::Line(_)) = (&a.kind, &b.kind) {
+            if (a.rotation, a.flip_h, a.flip_v, &a.floating, a.frame) == (b.rotation, b.flip_h, b.flip_v, &b.floating, b.frame) {
                 continue;
             }
         }
@@ -2815,7 +2945,7 @@ fn write_charts(package: &mut Package, sources: &[ChartSource], sheet: &Sheet, o
             } else {
             match edit {
                 Some(data) if ca.groups != cb.groups || ca.cell_refs != cb.cell_refs => {
-                    super::pptx_chart_data::write_sheet_chart_series(package, &source.chart, cb, &data.series)?;
+                    super::pptx_chart_data::write_sheet_chart_series(package, &source.chart, Some(&**ca), cb, &data.series)?;
                     let base = ibis_doc_model::Chart { groups: cb.groups.clone(), cell_refs: cb.cell_refs.clone(), ..(**ca).clone() };
                     if base != **cb {
                         write_chart_settings(package, &source.chart, &base, cb)?;
@@ -2824,7 +2954,7 @@ fn write_charts(package: &mut Package, sources: &[ChartSource], sheet: &Sheet, o
                 // The cells it reads changed (or it reads others): its series' caches written from them.
                 _ if super::pptx_chart_data::data_differs(ca, cb) || ca.cell_refs != cb.cell_refs => {
                     let refs = chart_refs_of(package, &source.chart, cb)?;
-                    super::pptx_chart_data::write_sheet_chart_series(package, &source.chart, cb, &refs)?;
+                    super::pptx_chart_data::write_sheet_chart_series(package, &source.chart, Some(&**ca), cb, &refs)?;
                     let base = ibis_doc_model::Chart { groups: cb.groups.clone(), cell_refs: cb.cell_refs.clone(), ..(**ca).clone() };
                     if base != **cb {
                         write_chart_settings(package, &source.chart, &base, cb)?;
@@ -5411,7 +5541,7 @@ impl StylesWriter {
         Self { read, made: HashMap::new() }
     }
 
-    fn xf_for(&mut self, package: &mut Package, part: Option<&str>, style: &CellStyle) -> Result<u32, Error> {
+    fn xf_for(&mut self, package: &mut Package, part: Option<&str>, style: &CellStyle, complement: Option<usize>) -> Result<u32, Error> {
         let base_xf = style.xf.unwrap_or(0);
         let base = self.read.get(&base_xf).cloned();
         if base.as_ref() == Some(style) {
@@ -5423,7 +5553,7 @@ impl StylesWriter {
         let part = part.ok_or_else(|| unsupported("書式のないブックの書式の変更"))?;
         let base = base.unwrap_or_else(|| CellStyle { xf: Some(base_xf), ..CellStyle::default() });
         let doc = package.xml_mut(part)?;
-        let xf = new_xf(doc, base_xf, &base, style)?;
+        let xf = new_xf(doc, base_xf, &base, style, complement)?;
         self.made.insert(style.clone(), xf);
         Ok(xf)
     }
@@ -5541,7 +5671,7 @@ fn write_gradient_fill(doc: &mut XmlDocument, fills: NodeId, gradient: &CellGrad
 }
 
 /// Make a cellXfs entry for `style` from entry `base_xf` (read as `base`).
-fn new_xf(doc: &mut XmlDocument, base_xf: u32, base: &CellStyle, style: &CellStyle) -> Result<u32, Error> {
+fn new_xf(doc: &mut XmlDocument, base_xf: u32, base: &CellStyle, style: &CellStyle, complement: Option<usize>) -> Result<u32, Error> {
     let root = doc.root_element().ok_or_else(|| Error::new("styles.xml が空です"))?;
     let prefix = prefix_of(doc, root);
     let cell_xfs = styles_list(doc, root, "cellXfs", &["cellStyles", "dxfs", "tableStyles", "colors", "extLst"]);
@@ -5688,6 +5818,32 @@ fn new_xf(doc: &mut XmlDocument, base_xf: u32, base: &CellStyle, style: &CellSty
         let id = number_format_id(doc, root, &style.number_format, &prefix);
         doc.set_attr(xf, "numFmtId", &id.to_string());
         doc.set_attr(xf, "applyNumberFormat", "1");
+    }
+
+    if style.checkbox != base.checkbox {
+        const URI: &str = crate::xlsx::XF_COMPLEMENT_URI;
+        let is_ours = |doc: &XmlDocument, e: NodeId| doc.attr(e, "uri") == Some(URI);
+        if style.checkbox {
+            // The format names the check box bag (an `extLst` after the alignment and protection).
+            let list = match doc.child(xf, "extLst") {
+                Some(l) => l,
+                None => doc.append_element(xf, &format!("{prefix}extLst")),
+            };
+            if !doc.children_named(list, "ext").any(|e| is_ours(doc, e)) {
+                let ext = doc.append_element(list, &format!("{prefix}ext"));
+                doc.set_attr(ext, "uri", URI);
+                doc.set_attr(ext, "xmlns:xfpb", "http://schemas.microsoft.com/office/spreadsheetml/2022/featurepropertybag");
+                let c = doc.append_element(ext, "xfpb:xfComplement");
+                doc.set_attr(c, "i", &complement.unwrap_or(0).to_string());
+            }
+        } else if let Some(list) = doc.child(xf, "extLst") {
+            for e in doc.children_named(list, "ext").filter(|&e| is_ours(doc, e)).collect::<Vec<_>>() {
+                doc.detach(e);
+            }
+            if doc.children(list).is_empty() {
+                doc.detach(list);
+            }
+        }
     }
 
     Ok(append_item(doc, cell_xfs, xf, "xf"))

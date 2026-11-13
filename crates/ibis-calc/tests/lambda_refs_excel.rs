@@ -227,3 +227,10 @@ fn arrays_of_functions_given_to_helpers_match_excel() {
 fn arrays_as_numeric_arguments_match_excel() {
     check("tests/data/array_args_excel.tsv");
 }
+
+/// #141 (2026-11-09, Excel 16.0.20527 on Windows via COM, `Formula2` and the spill range): N and T of an array give an array, each element
+/// made a number or text (`=N({TRUE,FALSE,"a",5})` spills 1, 0, 0, 5; errors stay in their place); a range (`N(A1:A6)`) is its first cell.
+#[test]
+fn n_and_t_of_arrays_spill_like_excel() {
+    check("tests/data/n_t_arrays_excel.tsv");
+}

@@ -190,6 +190,11 @@ fn link(nodes: &mut [Node], ids: &[usize]) -> u32 {
 
 /// A compound file holding `items` (storages must come before what is in them, as `a`, `a/b`).
 pub fn write(items: &[Item]) -> Vec<u8> {
+    write_with_clsid(items, [0; 16])
+}
+
+/// A compound file whose root storage has the class `clsid` (16 bytes as stored: an OLE object's file names its class there).
+pub fn write_with_clsid(items: &[Item], clsid: [u8; 16]) -> Vec<u8> {
     // The tree of entries: node 0 is the root storage.
     let mut nodes = vec![Node { name: "Root Entry".into(), kind: 5, data: Vec::new(), children: Vec::new(), left: NOSTREAM, right: NOSTREAM, child: NOSTREAM, red: false, start: END }];
     let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -295,6 +300,9 @@ pub fn write(items: &[Item]) -> Vec<u8> {
         e[64..66].copy_from_slice(&(((units.len() + 1) * 2) as u16).to_le_bytes());
         e[66] = node.kind;
         e[67] = if node.red { 0 } else { 1 };
+        if node.kind == 5 {
+            e[80..96].copy_from_slice(&clsid);
+        }
         e[68..72].copy_from_slice(&node.left.to_le_bytes());
         e[72..76].copy_from_slice(&node.right.to_le_bytes());
         e[76..80].copy_from_slice(&node.child.to_le_bytes());

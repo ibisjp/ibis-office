@@ -10,13 +10,16 @@ use crate::shell::chrome::{MenuEntry, MenuId, MENU_SEARCH_COMMANDS_HEADING, MENU
 use crate::shell::menu_search_history as history;
 use crate::shell::scenario::{Scenario, button_probe as buttons};
 use gpui_kit::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("shell::menu_search_history_lru_per_kind_and_restart", menu_search_history_lru_per_kind_and_restart),
         ("shell::menu_search_history_rows_and_choice", menu_search_history_rows_and_choice),
         ("shell::menu_scrollbar_same_in_menu_and_submenu", menu_scrollbar_same_in_menu_and_submenu),
+        ("shell::menu_scrollbar_over_highlighted_row", menu_scrollbar_over_highlighted_row),
         ("shell::menu_chart_submenu_grid", menu_chart_submenu_grid),
+        ("shell::menu_search_lists_each_command_once", menu_search_lists_each_command_once),
     ]
 }
 
@@ -173,7 +176,7 @@ fn bar_geometry(track: Bounds<Pixels>, thumb: Bounds<Pixels>) -> (f32, f32, f32)
 }
 
 fn open_insert_menu(s: &mut Scenario) -> usize {
-    let index = s.with(|e, _| e.menus().menus.iter().position(|(id, _)| *id == MenuId::Insert).unwrap());
+    let index = s.with(|e, _| e.menu_bar_menus().menus.iter().position(|(id, _)| *id == MenuId::Insert).unwrap());
     s.hover((0., 0.));
     s.update(move |e, w, cx| e.open_menu_at(index, w, cx));
     index
@@ -182,7 +185,7 @@ fn open_insert_menu(s: &mut Scenario) -> usize {
 /// Down to the submenu `id` of the open Insert menu and open it with the right arrow.
 fn open_submenu(s: &mut Scenario, id: &str) {
     let down = s.with(|e, _| {
-        let menus = e.menus();
+        let menus = e.menu_bar_menus();
         let (_, (_, entries)) = menus.menus.iter().enumerate().find(|(_, (m, _))| *m == MenuId::Insert).unwrap();
         let target = entries.iter().position(|v| matches!(v, MenuEntry::Submenu(sub) if sub.id == id)).unwrap();
         entries[..=target].iter().filter(|v| match v { MenuEntry::Item(item) => item.enabled(), MenuEntry::Submenu(_) => true, _ => false }).count()
@@ -217,13 +220,38 @@ fn menu_scrollbar_same_in_menu_and_submenu() {
     assert_eq!(f32::from(thumb.right() - popup.right()).abs(), root_bar.2, "the thumb is {} px from the edge", root_bar.2);
 }
 
+/// GitHub issue #175: the scroll bar is drawn over the highlighted row, also when the menu is scrolled (the row's
+/// background used to cover the thumb once the menu was scrolled off the top).
+fn menu_scrollbar_over_highlighted_row() {
+    let _probe = buttons::Probe::new();
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.size(1200., 420.);
+    open_insert_menu(&mut s);
+    s.settle();
+    s.update(|e, w, cx| { e.scroll_menu_to(3, w, cx); });
+    s.settle();
+    let thumb = buttons::bounds("menu-scrollbar-thumb").expect("a thumb");
+    let track = buttons::bounds("menu-scrollbar-track").expect("a track");
+    assert!(thumb.origin.y > track.origin.y + px(1.), "the thumb is off the top of the track: {thumb:?} {track:?}");
+    // The pointer on the row under the thumb's middle (left of the track), so that row is highlighted.
+    let y = f32::from(thumb.center().y);
+    s.hover((f32::from(track.left()) - 60., y));
+    let shot = s.screenshot("menu-scrollbar-highlighted-row");
+    let image = image::open(shot).unwrap().to_rgba8();
+    let viewport = s.update(|_, w, _| f32::from(w.viewport_size().width));
+    let scale = image.width() as f32 / viewport;
+    let at = |x: f32, y: f32| image.get_pixel((x * scale) as u32, (y * scale) as u32).0;
+    let (on_thumb, on_row) = (at(f32::from(thumb.center().x), y), at(f32::from(track.left()) - 6., y));
+    assert_ne!(on_thumb, on_row, "the thumb shows over the highlighted row: {on_thumb:?} vs the row {on_row:?}");
+}
+
 fn menu_chart_submenu_grid() {
     let _probe = buttons::Probe::new();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     s.size(1200., 900.);
     // The submenu's entries: 「おすすめグラフ...」 first, then charts only.
     let first = s.with(|e, _| {
-        let menus = e.menus();
+        let menus = e.menu_bar_menus();
         let (_, entries) = menus.menus.iter().find(|(id, _)| *id == MenuId::Insert).unwrap();
         let Some(MenuEntry::Submenu(sub)) = entries.iter().find(|v| matches!(v, MenuEntry::Submenu(sub) if sub.id == "insert.chart")) else { panic!("no chart submenu") };
         match &sub.items[0] {
@@ -291,4 +319,44 @@ fn menu_chart_submenu_grid() {
     open_submenu(&mut s, "insert.chart");
     s.key("enter");
     assert!(s.with(|e, _| e.sidebar_open && e.sheet_state().is_some_and(|st| st.panels.recommended_charts.is_some())), "the first line opens the recommended charts");
+}
+
+/// The menu search lists a command once: for a few words, on each screen, no two rows share a command id, or the same words and place.
+fn menu_search_lists_each_command_once() {
+    let queries = ["\u{56f3}\u{5f62}", "\u{30b0}\u{30e9}\u{30d5}", "\u{8868}", "\u{30c6}\u{30ad}\u{30b9}\u{30c8}\u{30dc}\u{30c3}\u{30af}\u{30b9}", "\u{30d8}\u{30c3}\u{30c0}\u{30fc}", "shape", "chart", "table", "text box", "header"];
+    for path in ["test/editing/docx-report.docx", "test/editing/xlsx-sales.xlsx", "test/editing/pptx-plan.pptx"] {
+        let mut s = Scenario::open(path);
+        let all = s.with(|e, _| e.searchable_menu_items_for("menu-search"));
+        for query in queries {
+            let rows = menu_search_rows(&all, query, &[]);
+            let mut seen_id = std::collections::HashMap::new();
+            let mut seen_text = std::collections::HashSet::new();
+            for row in rows.iter().filter(|r| !r.id.starts_with("menu-search.section.")) {
+                let place = row.note.as_ref().map(|n| n.to_string()).unwrap_or_default();
+                let text = (row.label.to_string(), place.clone());
+                println!("{path} {query:?}: {} | {} | {place}", row.id, row.label);
+                if let Some(prev) = seen_id.insert(row.id, text.clone()) {
+                    panic!("{path} {query:?}: command {} listed twice: {prev:?} and {text:?}", row.id);
+                }
+                assert!(seen_text.insert(text.clone()), "{path} {query:?}: {text:?} listed twice");
+                // (A menu and its submenu may share a name: "A \u{25b8} A". The row's text itself must not be the whole place twice.)
+                let chars: Vec<char> = place.chars().collect();
+                let half = chars.len() / 2;
+                let doubled = chars.len() >= 2 && chars[..half].iter().collect::<String>().trim() == chars[half..].iter().collect::<String>().trim();
+                assert!(!doubled, "{path} {query:?}: place {place:?} repeats itself");
+            }
+        }
+        // A row that shows the menu's words is also found by the command's own words, still as one row.
+        let aliased: Vec<_> = all.iter().filter_map(|r| r.search_alt.as_ref().map(|alt| (r.id, r.label.to_string(), alt.to_string()))).collect();
+        for (id, shown, own) in aliased.iter().take(40) {
+            for query in [shown, own] {
+                let rows: Vec<_> = menu_search_rows(&all, query, &[]).into_iter().filter(|r| r.id == *id).collect();
+                assert_eq!(rows.len(), 1, "{path}: {id} found by {query:?} is one row");
+                assert_eq!(rows[0].label.as_ref(), shown.as_str(), "{path}: {id} shows the menu's words");
+            }
+        }
+        if path.ends_with(".xlsx") {
+            assert!(aliased.iter().any(|(id, _, _)| *id == "xlsx.hide-columns"), "xlsx.hide-columns has its own words as the alternative text");
+        }
+    }
 }

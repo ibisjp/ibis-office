@@ -6,7 +6,10 @@ use super::{Scenario,button_probe as buttons};
 use gpui_kit::*;
 use gpui_kit::component::input::{InputEvent,InputState};
 use crate::xlsx::scenarios::SheetSteps;
-use crate::xlsx::ink::PenKind;
+use crate::shell::ink::PenKind;
+use crate::pptx::ext::*;
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
     ("shell::solver_constraint_editor_commit_cancel_close",solver_constraint),
@@ -15,6 +18,7 @@ pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
     ("shell::subtotal_solver_watch_common_tables",common_tables),
     ("shell::csv_path_enter_preserves_first_record",csv_path),
     ("shell::shared_ink_docx_pointer_controls",ink_docx),
+    ("shell::docx_ink_off_places_the_caret_and_selects_text",docx_ink_off),
     ("shell::shared_ink_xlsx_pointer_controls",ink_xlsx),
     ("shell::shared_ink_pptx_pointer_controls",ink_pptx),
 ]}
@@ -108,6 +112,32 @@ fn csv_path(){
     assert!(s.with(|e,_|e.toolbar_search_open.is_none()),"Escape dismissed only the nested popup");
     s.with(|e,_|{let p=e.wb().panels.import_text.as_ref().unwrap();let parsed=ibis_pptx::csv::import(p.data.as_ref().unwrap(),&ibis_pptx::csv::ImportOptions::default()).unwrap();assert_eq!(parsed.rows.len(),6);assert_eq!(parsed.rows[0],vec!["first-record","001"]);});
 }
+/// K0021 F: with オフ selected the ink pane stays open, but a click in the body places the caret and a drag selects text.
+fn docx_ink_off(){
+    let _probe=buttons::Probe::new();
+    let mut s=Scenario::open("test/editing/docx-report.docx");s.size(1200.,1000.);
+    s.update(|e,_,cx|e.open_docx_ink_panel(cx));
+    // The pen is the default: the lasso comes last, オフ first.
+    let (off,lasso,eraser)=(buttons::bounds("docx-ink-off").expect("Off"),buttons::bounds("docx-ink-lasso").expect("lasso"),buttons::bounds("docx-ink-eraser").expect("eraser"));
+    assert!(off.origin.x<buttons::bounds("docx-ink-pen").unwrap().origin.x&&eraser.origin.x<lasso.origin.x,"Off first, lasso after the eraser");
+    buttons::click(&mut s,"docx-ink-lasso");
+    assert!(s.with(|e,_|e.doc_state().unwrap().docx_ink.as_ref().unwrap().lasso_mode),"the lasso is on");
+    buttons::click(&mut s,"docx-ink-off");
+    s.with(|e,_|{let i=e.doc_state().unwrap().docx_ink.as_ref().unwrap();assert_eq!(i.pen,PenKind::Select);assert!(!i.lasso_mode,"Off is not the lasso");assert!(e.sidebar_open,"the pane stays open");});
+    let (origin,k)=s.with(|e,_|{let (o,k)=e.page_origin(0).expect("page 0");((f32::from(o.x),f32::from(o.y)),k)});
+    let at=|x:f32,y:f32|(origin.0+x*k,origin.1+y*k);
+    let shapes=|s:&mut Scenario|s.with(|e,_|e.flow().unwrap().new_shape_id());
+    let before=shapes(&mut s);
+    s.click(at(120.,100.));s.settle();
+    let caret=s.with(|e,_|e.doc_state().unwrap().caret);
+    assert!(caret.is_some(),"a click in the body places the caret");
+    assert_eq!(s.with(|e,_|e.doc_state().unwrap().anchor.is_none()||e.doc_state().unwrap().anchor==e.doc_state().unwrap().caret),true);
+    s.drag(at(100.,100.),at(300.,100.));s.settle();
+    let (c,a)=s.with(|e,_|{let d=e.doc_state().unwrap();(d.caret,d.anchor)});
+    assert!(c.is_some()&&a.is_some()&&c!=a,"a drag selects text ({a:?} to {c:?})");
+    assert_eq!(shapes(&mut s),before,"nothing was drawn");
+    s.screenshot("docx-ink-off");
+}
 fn ink_docx(){ink(0);}fn ink_xlsx(){ink(1);}fn ink_pptx(){ink(2);}
 fn ink(format:usize){
     let _probe=buttons::Probe::new();let path=["test/editing/docx-report.docx","test/editing/xlsx-sales.xlsx","test/editing/pptx-plan.pptx"][format];
@@ -115,12 +145,18 @@ fn ink(format:usize){
     let tool=if format==0{"docx-ink-highlighter"}else{"ink-highlighter"};buttons::click(&mut s,tool);
     assert_eq!(s.with(|e,_|match format{0=>e.doc_state().unwrap().docx_ink.as_ref().unwrap().pen,1=>e.wb().panels.ink.as_ref().unwrap().pen,_=>e.pptx().unwrap().ink.as_ref().unwrap().pen}),PenKind::Highlighter);
     // The width is a dropdown (its items draw the line): choose the first item the way its handler does.
-    let expected=match format{0=>crate::xlsx::ink::WIDTHS[0],1=>crate::xlsx::ink::WIDTHS[0],_=>crate::pptx::ink::PPTX_INK_WIDTHS[0]};
+    let expected=match format{0=>crate::shell::ink::WIDTHS[0],1=>crate::shell::ink::WIDTHS[0],_=>crate::pptx::ink::PPTX_INK_WIDTHS[0]};
     s.update(|e,_,cx|match format{0=>e.set_docx_ink_width(expected,cx),1=>{if let Some(p)=e.wb_mut().panels.ink.as_mut(){p.width=expected;}cx.notify();},_=>e.set_pptx_ink_width(expected,cx)});
     let actual=s.with(|e,_|match format{0=>e.doc_state().unwrap().docx_ink.as_ref().unwrap().width,1=>e.wb().panels.ink.as_ref().unwrap().width,_=>e.pptx().unwrap().ink.as_ref().unwrap().width});assert_eq!(actual,expected);
     buttons::click(&mut s,if format==0{"docx-ink-pen"}else{"ink-pen"});
     assert_eq!(s.with(|e,_|match format{0=>e.doc_state().unwrap().docx_ink.as_ref().unwrap().pen,1=>e.wb().panels.ink.as_ref().unwrap().pen,_=>e.pptx().unwrap().ink.as_ref().unwrap().pen}),PenKind::Pen);
     assert!(!s.with(|e,_|e.dialog.active),"ink remains a pane for every format");
+    // The tool that stops drawing comes first; on the sheet and the slide it reads オフ (K0021 F).
+    let select=if format==0{"docx-ink-off"}else{"ink-select"};let pen=if format==0{"docx-ink-pen"}else{"ink-pen"};
+    let (sb,pb)=(buttons::bounds(select).expect("the Select tool"),buttons::bounds(pen).expect("the pen tool"));
+    assert!(sb.origin.x<pb.origin.x,"format {format}: Select comes before the pen");
+    buttons::click(&mut s,select);
+    assert_eq!(s.with(|e,_|match format{0=>e.doc_state().unwrap().docx_ink.as_ref().unwrap().pen,1=>e.wb().panels.ink.as_ref().unwrap().pen,_=>e.pptx().unwrap().ink.as_ref().unwrap().pen}),PenKind::Select);
 }
 
 /// Subtotal columns, solver constraints and watch cells are rows of the shared virtualized table.

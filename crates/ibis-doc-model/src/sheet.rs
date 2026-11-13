@@ -176,6 +176,9 @@ pub struct CellStyle {
     pub unlocked: bool,
     /// The formula hidden while the sheet is protected (`protection/@hidden`).
     pub formula_hidden: bool,
+    /// A check box in the cell (Excel's Insert > Check Box: the format's `xfComplement` names a `Checkbox` feature
+    /// property bag). A cell with it and a logical value shows a check box, ticked for TRUE, in place of the text.
+    pub checkbox: bool,
 }
 
 impl Default for CellStyle {
@@ -212,6 +215,7 @@ impl Default for CellStyle {
             pattern: None,
             unlocked: false,
             formula_hidden: false,
+            checkbox: false,
         }
     }
 }
@@ -778,6 +782,21 @@ impl PartialEq for SheetBookContext {
 
 impl Eq for SheetBookContext {}
 
+/// The height of a row with nothing in it, by where the sheet comes from (Microsoft Excel for Windows' COM measurement of 27 workbooks,
+/// 2026-11-09, `tasks/doc/row-height-rowprobe.txt`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DefaultRowRule {
+    /// The height the file has: `customHeight` on `<sheetFormatPr>` (the default row is its `defaultRowHeight`), or a sheet converted from an
+    /// .xls or .ods (a ROW record's height, DEFAULTROWHEIGHT's where there is none: Excel measured no font for them).
+    #[default]
+    AsSaved,
+    /// The Normal font's row (ＭＳ Ｐゴシック 11 13.5 pt, 游ゴシック 11 18.75, Calibri 11 15): `<sheetFormatPr>` is there with no
+    /// `customHeight`, so its `defaultRowHeight` is ignored (a reference value of the program that saved the file).
+    ByFont,
+    /// No `<sheetFormatPr>`: the rows without a `<row>` are 18.75 pt (Excel's standard height on that PC), the rows with cells the fonts'.
+    NoFormat,
+}
+
 /// A value the app works out when it opens a file and that is not part of the file: two sheets are equal whatever it holds
 /// (reading a file again gives the sheet without it), and it is not saved. Compare its contents through `.0`.
 #[derive(Clone, Debug, Default)]
@@ -802,6 +821,48 @@ impl<T> std::ops::DerefMut for Unsaved<T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.0
     }
+}
+
+/// A part of a reading (`rPh`): its text and the first character of the cell's text it stands over (`sb`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PhoneticPart {
+    pub text: String,
+    pub start: usize,
+}
+
+/// How the reading of one cell's string is drawn (ECMA-376 18.4.3 `rPh`, 18.4.6 `phoneticPr` of the `si`): each part from the
+/// character it stands over, in the font `phoneticPr/@fontId` of the string names (a string with no `phoneticPr` has font 0 and
+/// no alignment: it does not fall back to the sheet's).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PhoneticDetail {
+    pub parts: Vec<PhoneticPart>,
+    /// Typeface and size (hundredths of a point) of the font; `None`: not named in the file.
+    pub font: Option<String>,
+    pub size: Option<u32>,
+}
+
+/// What the reader works out about the furigana of a sheet (not part of the file).
+#[derive(Clone, Debug, Default)]
+pub struct PhoneticInfo {
+    pub cells: std::collections::HashMap<(u32, u32), std::sync::Arc<PhoneticDetail>>,
+    /// The rows that take a line for furigana (a cell shows it, or `row/@ph`): the font of the line (typeface, size in hundredths
+    /// of a point) and the height the reader estimated for it, in hundredths of a point.
+    pub rows: std::collections::BTreeMap<u32, (Option<String>, u32, u32)>,
+}
+
+/// Where a worksheet was left, as the file keeps it in its `sheetView` (Excel writes it at each save): the cell at the top left of
+/// what scrolls, and the selected cell and range. Cells are `(column, row)`, 0-based. The editor reads it when the file is opened
+/// and hands the present positions back when it saves (`ibis_pptx::SaveOptions` gets the sheet as it is, with these set).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SheetViewPosition {
+    /// `sheetView/@topLeftCell`: the first cell of the (top-left) pane's view.
+    pub top_left: Option<(u32, u32)>,
+    /// `sheetView/pane/@topLeftCell`: the first cell of the bottom-right pane's view, when the panes are frozen or split.
+    pub pane_top_left: Option<(u32, u32)>,
+    /// `selection/@activeCell` (of the active pane).
+    pub active_cell: Option<(u32, u32)>,
+    /// `selection/@sqref` (of the active pane): the selected range (a single cell is the cell itself).
+    pub selection: Option<CellRange>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -867,6 +928,11 @@ pub struct Sheet {
     /// The height each of the `measured_rows` was given when the sheet was opened (what the fonts in it measure, which is not
     /// what the file stored). A row still at that height is not a height the person chose: saving does not write it.
     pub fitted_rows: Unsaved<std::collections::BTreeMap<u32, Emu>>,
+    /// How the rows with nothing in them (and the sheet's default row) are as high as: see [`DefaultRowRule`]. Not saved.
+    pub default_row_rule: Unsaved<DefaultRowRule>,
+    /// A sheet converted from an .xls: the rows with a ROW record stay at the height saved when the file opens (Excel lays them out so),
+    /// the app does not measure them by their text either. Not saved.
+    pub rows_as_saved: Unsaved<bool>,
     /// How many rows the file prints (0: all of `rows`). Rows past it hold only a height (`<row ht customHeight/>` with no cell):
     /// Excel keeps them but prints no page for them, so printing lays the sheet out without them. Not saved.
     pub printed_rows: Unsaved<u32>,
@@ -884,8 +950,8 @@ pub struct Sheet {
     /// The font of the style of each row that has one of its own (`<row s customFormat="1">`; `None` and 0 for the Normal style):
     /// the cells of the row no one wrote take it, not their column's. Not saved.
     pub row_fonts: Unsaved<std::collections::BTreeMap<u32, (Option<String>, u32)>>,
-    /// The fonts (typeface, size in hundredths of a point) of the cells written in each row of the file, empty ones too, but not the
-    /// ones in merged ranges. Excel measures a row by them and by the cells no one wrote. Not saved.
+    /// The fonts (typeface, size in hundredths of a point) of the cells written in each row of the file, empty ones too, and the ones in
+    /// merged ranges of one row, but not the ones in ranges over several rows. Excel measures a row by them and by the cells no one wrote. Not saved.
     pub written_fonts: Unsaved<std::collections::BTreeMap<u32, Vec<(Option<String>, u32)>>>,
     /// The height of each hidden row and the width of each hidden column
     /// (their size in `rows` and `columns` is 0), to show them at again.
@@ -933,8 +999,14 @@ pub struct Sheet {
     pub scenarios: Option<SheetScenarios>,
     /// ユーザー設定のシート ビュー (`<customSheetViews>`).
     pub custom_views: Vec<CustomSheetView>,
-    /// ふりがなの表示 (`showPhonetic`).
+    /// ふりがなを表示しているか（`phonetic_shown` が空でない、または表示に切り替えた状態）。
     pub show_phonetic: bool,
+    /// ふりがなを表示するセル (行, 列)。Excel の仕組みどおり、セルの `c/@ph`、行の `row/@ph`、
+    /// 列の `col/@phonetic`（ECMA-376 18.3.1.4・18.3.1.73・18.3.1.13）が立っているセルのうち、
+    /// ふりがな（`rPh`）を持つもの。ここに無いセルは、ふりがなを持っていても表示しない。
+    pub phonetic_shown: std::collections::HashSet<(u32, u32)>,
+    /// How each reading is drawn and what it adds to its row (read from the file, not saved: see [`PhoneticInfo`]).
+    pub phonetic_info: Unsaved<PhoneticInfo>,
     /// ふりがなの設定 (`<phoneticPr>`).
     pub phonetic_pr: Option<PhoneticProperties>,
     /// エラー チェックで無視するエラー (`ignoredErrors`).
@@ -953,6 +1025,8 @@ pub struct Sheet {
     pub show_zeros: bool,
     /// インクの非表示.
     pub hide_ink: bool,
+    /// Where the sheet was left (`sheetView`: top-left cell, selection).
+    pub view: SheetViewPosition,
     /// Cached workbook context for single-sheet evaluation (conditional formatting, etc.).
     pub book_context: SheetBookContext,
 }
@@ -982,6 +1056,8 @@ impl Default for Sheet {
             default_column: 0,
             measured_rows: Unsaved::default(),
             fitted_rows: Unsaved::default(),
+            default_row_rule: Unsaved::default(),
+            rows_as_saved: Unsaved::default(),
             printed_rows: Unsaved::default(),
             printed: Unsaved::default(),
             column_chars: Unsaved::default(),
@@ -1013,6 +1089,8 @@ impl Default for Sheet {
             scenarios: None,
             custom_views: Vec::new(),
             show_phonetic: false,
+            phonetic_shown: Default::default(),
+            phonetic_info: Default::default(),
             phonetic_pr: None,
             ignored_errors: Vec::new(),
             cell_images: Vec::new(),
@@ -1020,6 +1098,7 @@ impl Default for Sheet {
             show_formulas: false,
             show_zeros: true,
             hide_ink: false,
+            view: SheetViewPosition::default(),
             book_context: SheetBookContext::default(),
         }
     }
@@ -1100,6 +1179,8 @@ impl PhoneticAlignment {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PhoneticProperties {
     pub font_id: u32,
+    /// `font_id` の字の大きさ（`fonts/font/sz`。1/100 pt）。読み込みで求める（書き出しは `font_id` だけを使う）。
+    pub font_size: Option<u32>,
     pub phonetic_type: PhoneticType,
     pub alignment: PhoneticAlignment,
 }
@@ -1991,6 +2072,14 @@ impl Sheet {
     /// The cell at a row and column, if it holds a value or a format.
     pub fn cell(&self, row: u32, column: u32) -> Option<&SheetCell> {
         self.cells.binary_search_by_key(&(row, column), |c| (c.row, c.column)).ok().map(|i| &self.cells[i])
+    }
+
+    /// The cells (in row-major order) of rows `first_row..=last_row`: found by bisection, so the cost follows the rows asked for
+    /// and not the number of cells in the sheet.
+    pub fn cells_in_rows(&self, first_row: u32, last_row: u32) -> &[SheetCell] {
+        let start = self.cells.partition_point(|c| c.row < first_row);
+        let end = self.cells.partition_point(|c| c.row <= last_row);
+        &self.cells[start..end.max(start)]
     }
 
     /// The comment at a row and column, if one exists.

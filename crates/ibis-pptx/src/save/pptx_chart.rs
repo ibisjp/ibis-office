@@ -371,11 +371,49 @@ pub(crate) fn write_solid_fill(doc: &mut XmlDocument, parent: NodeId, color: ibi
     let clr = detached(doc, &format!("{a}:srgbClr"));
     doc.set_attr(clr, "val", &format!("{:06X}", color.rgb.0 & 0xFFFFFF));
     doc.insert(solid, 0, clr);
-    let ln = doc.elements(parent).find(|&x| doc.local_name(x) == "ln");
-    match ln {
-        Some(before) => doc.insert_before(before, solid),
-        None => doc.insert(parent, 0, solid),
+    place_in_sp_pr(doc, parent, solid, AFTER_FILL);
+}
+
+/// What follows the fill in `a:spPr` (ECMA-376 dml-main.xsd, CT_ShapeProperties:
+/// xfrm, the geometry, the fill, `ln`, the effects, scene3d, sp3d, extLst).
+const AFTER_FILL: &[&str] = &["ln", "effectLst", "effectDag", "scene3d", "sp3d", "extLst"];
+/// What follows `ln` in `a:spPr`.
+const AFTER_LN: &[&str] = &["effectLst", "effectDag", "scene3d", "sp3d", "extLst"];
+
+/// Put `node` into `sp_pr` before the first child named in `after`, or last.
+fn place_in_sp_pr(doc: &mut XmlDocument, sp_pr: NodeId, node: NodeId, after: &[&str]) {
+    let at = doc.elements(sp_pr).find(|&x| after.contains(&doc.local_name(x)));
+    match at {
+        Some(before) => doc.insert_before(before, node),
+        None => {
+            let n = doc.children(sp_pr).len();
+            doc.insert(sp_pr, n, node);
+        }
     }
+}
+
+/// A series' `spPr`, made if missing: it follows `idx`, `order` and `tx` and comes
+/// before everything else of the series (ECMA-376 dml-chart.xsd, CT_BarSer and the others).
+fn series_sp_pr(doc: &mut XmlDocument, ser: NodeId, c: &str) -> NodeId {
+    if let Some(p) = doc.child(ser, "spPr") {
+        return p;
+    }
+    let p = detached(doc, &format!("{c}spPr"));
+    // Other parents (a chart space, a plot area through `chart_format::area`) keep the
+    // place they had: before the first of these names found there.
+    let at = if doc.local_name(ser) == "ser" {
+        doc.elements(ser).find(|&x| !matches!(doc.local_name(x), "idx" | "order" | "tx"))
+    } else {
+        doc.elements(ser).find(|&x| ["marker", "dPt", "dLbls", "trendline", "errBars", "cat", "val", "smooth", "extLst"].contains(&doc.local_name(x)))
+    };
+    match at {
+        Some(before) => doc.insert_before(before, p),
+        None => {
+            let n = doc.children(ser).len();
+            doc.insert(ser, n, p);
+        }
+    }
+    p
 }
 
 pub(crate) fn write_series_marker(doc: &mut XmlDocument, ser: NodeId, marker: Option<&ibis_doc_model::chart::Marker>, c: &str, a: &str) -> Result<(), Error> {
@@ -451,21 +489,7 @@ pub(crate) fn write_series_marker(doc: &mut XmlDocument, ser: NodeId, marker: Op
 }
 
 pub(crate) fn write_series_stroke(doc: &mut XmlDocument, ser: NodeId, stroke: Option<&ibis_doc_model::Stroke>, c: &str, a: &str) -> Result<(), Error> {
-    let sp_pr = match doc.child(ser, "spPr") {
-        Some(p) => p,
-        None => {
-            let p = detached(doc, &format!("{c}spPr"));
-            let at = doc.elements(ser).find(|&x| ["marker", "dPt", "dLbls", "trendline", "errBars", "cat", "val", "smooth", "extLst"].contains(&doc.local_name(x)));
-            match at {
-                Some(before) => doc.insert_before(before, p),
-                None => {
-                    let n = doc.children(ser).len();
-                    doc.insert(ser, n, p);
-                }
-            }
-            p
-        }
-    };
+    let sp_pr = series_sp_pr(doc, ser, c);
     match stroke {
         None => {
             if let Some(ln) = doc.child(sp_pr, "ln") {
@@ -474,14 +498,14 @@ pub(crate) fn write_series_stroke(doc: &mut XmlDocument, ser: NodeId, stroke: Op
             let ln_new = detached(doc, &format!("{a}:ln"));
             let no_fill = detached(doc, &format!("{a}:noFill"));
             doc.insert(ln_new, 0, no_fill);
-            doc.insert(sp_pr, 0, ln_new);
+            place_in_sp_pr(doc, sp_pr, ln_new, AFTER_LN);
         }
         Some(s) => {
             let ln = match doc.child(sp_pr, "ln") {
                 Some(l) => l,
                 None => {
                     let l = detached(doc, &format!("{a}:ln"));
-                    doc.insert(sp_pr, 0, l);
+                    place_in_sp_pr(doc, sp_pr, l, AFTER_LN);
                     l
                 }
             };
@@ -493,21 +517,7 @@ pub(crate) fn write_series_stroke(doc: &mut XmlDocument, ser: NodeId, stroke: Op
 }
 
 pub(crate) fn write_series_fill(doc: &mut XmlDocument, ser: NodeId, fill: &ibis_doc_model::Fill, c: &str, a: &str) -> Result<(), Error> {
-    let sp_pr = match doc.child(ser, "spPr") {
-        Some(p) => p,
-        None => {
-            let p = detached(doc, &format!("{c}spPr"));
-            let at = doc.elements(ser).find(|&x| ["marker", "dPt", "dLbls", "trendline", "errBars", "cat", "val", "smooth", "extLst"].contains(&doc.local_name(x)));
-            match at {
-                Some(before) => doc.insert_before(before, p),
-                None => {
-                    let n = doc.children(ser).len();
-                    doc.insert(ser, n, p);
-                }
-            }
-            p
-        }
-    };
+    let sp_pr = series_sp_pr(doc, ser, c);
     match fill {
         ibis_doc_model::Fill::Solid(color) => {
             write_solid_fill(doc, sp_pr, *color, a);
@@ -520,11 +530,7 @@ pub(crate) fn write_series_fill(doc: &mut XmlDocument, ser: NodeId, fill: &ibis_
                 }
             }
             let no_fill = detached(doc, &format!("{a}:noFill"));
-            let ln = doc.elements(sp_pr).find(|&x| doc.local_name(x) == "ln");
-            match ln {
-                Some(before) => doc.insert_before(before, no_fill),
-                None => doc.insert(sp_pr, 0, no_fill),
-            }
+            place_in_sp_pr(doc, sp_pr, no_fill, AFTER_FILL);
         }
         _ => {}
     }
@@ -1220,6 +1226,27 @@ pub(crate) fn write_embedded_cells(package: &mut Package, chart_part: &str, cell
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A series given a fill and no line gets its `c:spPr` after `c:tx` (before
+    /// `c:invertIfNegative`), with the fill before `a:ln` (ECMA-376 dml-chart.xsd
+    /// CT_BarSer, dml-main.xsd CT_ShapeProperties).
+    #[test]
+    fn series_sp_pr_and_its_children_in_schema_order() {
+        let xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>S</c:v></c:tx><c:invertIfNegative val="0"/><c:cat/><c:val/></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let mut doc = XmlDocument::parse(xml.as_bytes()).unwrap();
+        let ser = doc.descendants(doc.root_element().unwrap()).into_iter().find(|&n| doc.local_name(n) == "ser").unwrap();
+        write_series_fill(&mut doc, ser, &ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x156082))), "c:", "a").unwrap();
+        write_series_stroke(&mut doc, ser, None, "c:", "a").unwrap();
+        let out = String::from_utf8(doc.to_bytes()).unwrap();
+        assert!(out.contains(r#"<c:tx><c:v>S</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val="156082"/></a:solidFill><a:ln><a:noFill/></a:ln></c:spPr><c:invertIfNegative val="0"/>"#), "{out}");
+        // The line first, then the fill: the fill still goes before the line.
+        let mut doc = XmlDocument::parse(xml.as_bytes()).unwrap();
+        let ser = doc.descendants(doc.root_element().unwrap()).into_iter().find(|&n| doc.local_name(n) == "ser").unwrap();
+        write_series_stroke(&mut doc, ser, None, "c:", "a").unwrap();
+        write_series_fill(&mut doc, ser, &ibis_doc_model::Fill::None, "c:", "a").unwrap();
+        let out = String::from_utf8(doc.to_bytes()).unwrap();
+        assert!(out.contains(r#"</c:tx><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr><c:invertIfNegative val="0"/>"#), "{out}");
+    }
 
     #[test]
     fn references_name_their_points_cells() {

@@ -29,24 +29,25 @@ pub(super) fn get(name: &str) -> Option<Func> {
         "TRIM" => |c, a| texts(c, a, |t, _| Value::Text(trim(&t))),
         "CLEAN" => |c, a| texts(c, a, |t, _| Value::Text(t.chars().filter(|&ch| ch as u32 >= 32).collect())),
         "T" => |c, a| {
-            let v = match c.eval(&a[0]) {
+            // The text of one value: text as it is, an error as it is, anything else the empty text, and a function value #VALUE!.
+            fn one(v: Value) -> Value {
+                match v {
+                    Value::Lambda(_) => err(CellError::Value),
+                    Value::Text(t) => Value::Text(t),
+                    Value::Error(e) => err(e),
+                    _ => Value::Text(String::new()),
+                }
+            }
+            match c.eval(&a[0]) {
+                // An array gives an array, each element made text (`=T({"a",1,TRUE})` is {"a","",""}: Excel 16.0.20527, #141); a range
+                // is its first cell.
+                Value::Array(arr) => Value::Array(Rc::new(Array::new(arr.rows, arr.columns, arr.data.iter().cloned().map(one).collect()))),
                 Value::Ref(r) if !r.is_empty() => {
                     let area = r[0];
-                    c.cell_value(area.sheet, area.first_row, area.first_column)
+                    one(c.cell_value(area.sheet, area.first_row, area.first_column))
                 }
-                Value::Ref(_) => return err(CellError::Ref),
-                // A function value is #VALUE!, each one of an array of them (Excel, #106).
-                Value::Array(a) if a.data.iter().any(|v| matches!(v, Value::Lambda(_))) => {
-                    return Value::Array(Rc::new(Array::new(a.rows, a.columns, vec![Value::Error(CellError::Value); a.data.len()])));
-                }
-                Value::Array(a) => a.data.first().cloned().unwrap_or(Value::Empty),
-                v => v,
-            };
-            match v {
-                Value::Lambda(_) => err(CellError::Value),
-                Value::Text(t) => Value::Text(t),
-                Value::Error(e) => err(e),
-                _ => Value::Text(String::new()),
+                Value::Ref(_) => err(CellError::Ref),
+                v => one(v),
             }
         },
         "EXACT" => |c, a| {

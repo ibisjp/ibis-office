@@ -136,6 +136,7 @@ fn change_sheet(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
         sizes.extend(std::iter::repeat_n(default, n));
     }
     if axis == Axis::Rows {
+        sheet.custom_rows = std::mem::take(&mut sheet.custom_rows).into_iter().filter_map(|r| move_index(r, at, count)).collect();
         // The rows the app measured follow their rows (the ones deleted are gone).
         sheet.measured_rows.0 = sheet.measured_rows.iter().filter_map(|&r| move_index(r, at, count)).collect();
         sheet.fitted_rows.0 = std::mem::take(&mut sheet.fitted_rows.0).into_iter().filter_map(|(r, h)| Some((move_index(r, at, count)?, h))).collect();

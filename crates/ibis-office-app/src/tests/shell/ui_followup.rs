@@ -4,8 +4,11 @@
 use super::{Scenario,button_probe as buttons};
 use crate::docx::scenarios::DocSteps;
 use gpui_kit::{*,component::input::InputEvent};
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
  ("shell::shape_decoration_live_and_save",effects),
+ ("shell::docx_text_box_text_tab_effects_live_and_save",text_tab),
  ("shell::generic_cell_picker_commit_cancel",cell_picker),
  ("shell::sort_level_editor_cancel",sort_level),
  ("shell::shared_tab_modes_and_wheel",tab_modes),
@@ -23,22 +26,63 @@ fn sidebar_shot(s:&mut Scenario,name:&str){
 fn effects(){
  let _probe=buttons::Probe::new();let mut s=Scenario::open("test/editing/docx-report.docx");s.size(1200.,900.);
  let(id,_)=s.paragraph(0);s.click_text(ibis_doc_model::FlowPos::new(id,0));s.menu("insert.text-box");
- let tab=buttons::all().into_iter().find(|k|k.contains("text-box-tabs")&&k.ends_with(", 1)")).expect("decoration tab");buttons::click(&mut s,&tab);
+ let tab=buttons::all().into_iter().find(|k|k.contains("docx-shape-format-tabs")&&k.ends_with(", 1)")).expect("decoration tab");buttons::click(&mut s,&tab);
  assert!(s.with(|e,_|e.doc_state().unwrap().text_box.as_ref().unwrap().effects.open.iter().all(|b|!*b)));
  sidebar_shot(&mut s,"shape-decoration-collapsed");
  for index in 0..5{
-  s.update(|e,_,cx|{let x=e.doc_state_mut().unwrap().text_box.as_mut().unwrap();x.effects.open=[false;5];x.effects.open[index]=true;cx.notify();});
+  s.update(|e,_,cx|{let x=e.doc_state_mut().unwrap().text_box.as_mut().unwrap();x.effects.open=[false;8];x.effects.open[index]=true;cx.notify();});
   let key=buttons::all().into_iter().find(|k|k.contains("shape-effect-enable")&&k.ends_with(&format!(", {index})"))).expect("enabled checkbox");buttons::click(&mut s,&key);
   if index==0 {sidebar_shot(&mut s,"shape-decoration-gradient");}
  }
  s.update(|e,w,cx|{let field=e.doc_state().unwrap().text_box.as_ref().unwrap().effects.fields["shadow-distance"].clone();field.update(cx,|i,cx|{i.set_value("12",w,cx);cx.emit(InputEvent::Change);});});
  let info=s.with(|e,_|e.text_box_at_caret().unwrap());assert!(matches!(info.effects.fill,ibis_doc_model::Fill::Linear{..}));assert_eq!(info.effects.shadow.as_ref().unwrap().distance,12*12700);assert!(info.effects.glow.is_some()&&info.effects.soft.is_some()&&info.effects.reflection.is_some());
- s.update(|e,_,cx|{let x=e.doc_state_mut().unwrap().text_box.as_mut().unwrap();x.effects.open=[false;5];x.effects.open[1]=true;cx.notify();});
+ s.update(|e,_,cx|{let x=e.doc_state_mut().unwrap().text_box.as_mut().unwrap();x.effects.open=[false;8];x.effects.open[1]=true;cx.notify();});
  sidebar_shot(&mut s,"shape-decoration-shadow-live");
  s.save_as("decoration-live.docx");let reloaded=s.reopen();
  let at=info.at;let effects=reloaded.flow.as_ref().unwrap().body.iter().find_map(|b|if let ibis_doc_model::Block::Paragraph(p)=b{if p.id==at.para{p.runs.iter().find_map(|r|if let ibis_doc_model::FlowRunKind::Shape(shape)=&r.kind{if let ibis_doc_model::ShapeKind::Auto(a)=&shape.kind{Some(a)}else{None}}else{None})}else{None}}else{None});
  assert!(effects.is_some(),"saved shape survives reopen");
  let saved=effects.unwrap();assert_eq!(saved.fill,info.effects.fill);assert_eq!(saved.shadow,info.effects.shadow);assert_eq!(saved.glow,info.effects.glow);assert_eq!(saved.soft_edge,info.effects.soft);assert_eq!(saved.reflection,info.effects.reflection);
+}
+fn text_tab(){
+ let _probe=buttons::Probe::new();let mut s=Scenario::open("test/editing/docx-report.docx");s.size(1200.,900.);
+ let(id,_)=s.paragraph(0);s.click_text(ibis_doc_model::FlowPos::new(id,0));s.menu("insert.text-box");
+ s.update(|e,w,cx|{let t=e.doc_state().unwrap().text_box.as_ref().unwrap().text.clone();t.update(cx,|i,cx|i.replace_all("Sample text",w,cx));});
+ let tab=buttons::all().into_iter().find(|k|k.contains("docx-shape-format-tabs")&&k.ends_with(", 2)")).expect("text tab");buttons::click(&mut s,&tab);
+ sidebar_shot(&mut s,"docx-text-tab-collapsed");
+ for index in 5..8{
+  s.update(|e,_,cx|{let x=e.doc_state_mut().unwrap().text_box.as_mut().unwrap();x.effects.open=[false;8];x.effects.open[index]=true;cx.notify();});
+  let key=buttons::all().into_iter().find(|k|k.contains("shape-effect-enable")&&k.ends_with(&format!(", {index})"))).expect("enable checkbox");buttons::click(&mut s,&key);
+ }
+ s.update(|e,w,cx|{
+  let x=e.doc_state().unwrap().text_box.as_ref().unwrap().effects.fields.clone();
+  for (key,value) in [("text-outline-color","FF0000"),("text-outline-width","2"),("text-glow-color","00B050"),("text-glow-size","8"),("text-shadow-distance","6")]{
+   x[key].update(cx,|i,cx|{i.set_value(value,w,cx);cx.emit(InputEvent::Change);});
+  }
+  let c=e.doc_state().unwrap().text_box.as_ref().unwrap().color.clone();c.update(cx,|i,cx|{i.set_value("0070C0",w,cx);cx.emit(InputEvent::Change);});
+ });
+ let info=s.with(|e,_|e.text_box_at_caret().unwrap());
+ let outline=info.effects.text_outline.expect("outline");assert_eq!((outline.0.rgb,outline.1),(ibis_doc_model::Rgb(0xFF0000),2*12700));
+ let glow=info.effects.text_glow.expect("glow");assert_eq!((glow.0.rgb,glow.1),(ibis_doc_model::Rgb(0x00B050),8*12700));
+ assert_eq!(info.effects.text_shadow.as_ref().expect("shadow").distance,6*12700);
+ assert_eq!(info.color,"0070C0");
+ let on=|s:&mut Scenario|s.with(|e,_|e.doc_state().unwrap().text_box.as_ref().unwrap().text_enabled);assert_eq!(on(&mut s),[true;3]);
+ for index in 5..8{
+  s.update(|e,_,cx|{let x=e.doc_state_mut().unwrap().text_box.as_mut().unwrap();x.effects.open=[false;8];x.effects.open[index]=true;cx.notify();});
+  sidebar_shot(&mut s,&format!("docx-text-tab-live-{index}"));
+ }
+ // The effects reach the characters of the text box on the page.
+ s.screenshot("docx-text-tab-page");
+ s.save_as("text-tab-live.docx");let reloaded=s.reopen();
+ let shape=reloaded.flow.as_ref().unwrap().body.iter().find_map(|b|if let ibis_doc_model::Block::Paragraph(p)=b{if p.id==info.at.para{p.runs.iter().find_map(|r|if let ibis_doc_model::FlowRunKind::Shape(shape)=&r.kind{Some((**shape).clone())}else{None})}else{None}}else{None}).expect("the saved box");
+ let ibis_doc_model::ShapeKind::Auto(a)=&shape.kind else{panic!("an auto shape")};
+ let run=&a.text.as_ref().unwrap().paragraphs[0].runs[0];
+ assert_eq!(run.style.outline,info.effects.text_outline);assert_eq!(run.style.glow,info.effects.text_glow);
+ assert_eq!(run.style.shadow.as_ref().map(|x|(x.blur,x.distance,x.direction)),info.effects.text_shadow.as_ref().map(|x|(x.blur,x.distance,x.direction)));
+ assert_eq!(run.style.color,Some(ibis_doc_model::Rgb(0x0070C0)));
+ // Switching the outline off clears it.
+ s.update(|e,_,cx|{let x=e.doc_state_mut().unwrap().text_box.as_mut().unwrap();x.effects.open=[false;8];x.effects.open[5]=true;cx.notify();});
+ let key=buttons::all().into_iter().find(|k|k.contains("shape-effect-enable")&&k.ends_with(", 5)")).unwrap();buttons::click(&mut s,&key);
+ assert!(s.with(|e,_|e.text_box_at_caret().unwrap()).effects.text_outline.is_none());
 }
 fn cell_picker(){
  let _probe=buttons::Probe::new();let mut s=Scenario::open("test/editing/xlsx-sales.xlsx");s.size(1200.,800.);
@@ -59,7 +103,7 @@ fn sort_level(){
  let original=s.with(|e,cx|e.wb().sort_edit.as_ref().unwrap().levels.iter().map(|(f,a)|(f.read(cx).value().to_string(),*a)).collect::<Vec<_>>());
  buttons::click(&mut s,"sort-add");assert!(s.with(|e,_|e.wb().sort_edit.as_ref().unwrap().editor.is_some()));
  buttons::click(&mut s,"sort-level-cancel");assert_eq!(s.with(|e,cx|e.wb().sort_edit.as_ref().unwrap().levels.iter().map(|(f,a)|(f.read(cx).value().to_string(),*a)).collect::<Vec<_>>()),original);
- let key=buttons::all().into_iter().find(|k|k.contains("sort-edit")&&k.ends_with(", 0)")).unwrap();buttons::click(&mut s,&key);
+ let key=buttons::all().into_iter().find(|k|k.contains("sort-edit")&&k.ends_with("-0")).unwrap();buttons::click(&mut s,&key);
  s.key("escape");assert!(s.with(|e,_|e.wb().sort_edit.as_ref().unwrap().editor.is_none()));
  s.screenshot("sort-levels-table");
 }
@@ -136,7 +180,7 @@ fn theme_palette(){
   buttons::click(&mut s,"theme-custom-cancel");assert!(!s.with(|e,_|e.theme_colors_ui.editing));
   assert!(buttons::bounds("theme-add").is_some(),"Cancel returns to the palette list");
   buttons::click(&mut s,"theme-add");
-  let field=s.with(|e,_|if e.is_document(){e.doc_state().unwrap().theme_panel.as_ref().unwrap().colors[0].2.clone()}else if e.presentation().workbook.is_some(){e.wb().panels.theme.as_ref().unwrap().colors[0].2.clone()}else{e.pptx().unwrap().theme_panel.as_ref().unwrap().colors[0].2.clone()});
+  let field=s.with(|e,_|if e.is_document(){e.doc_state().unwrap().theme_panel.as_ref().unwrap().colors[0].2.clone()}else if e.presentation().workbook.is_some(){e.wb().panels.theme.as_ref().unwrap().colors[0].2.clone()}else{e.shape_edit.theme_panel.as_ref().unwrap().colors[0].2.clone()});
   s.update(|_,w,cx|field.update(cx,|i,cx|i.set_value("001122",w,cx)));
   buttons::click(&mut s,"theme-custom-apply");
   assert!(!s.with(|e,_|e.theme_colors_ui.editing));

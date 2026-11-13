@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::Error;
+use crate::officeart_xml::{ArtContext, fill_xml, geometry_xml, line_xml, shadow_xml};
 use crate::ppt::{Cf, Field, Interactive, MasterStyle, PageIr, Pf, PptIr, Props, ShapeIr, SlideShow, TextColor, TextIr, read_ppt};
 
 const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -68,6 +69,8 @@ struct Ctx<'a> {
     /// Whether the page being written is a master.
     #[allow(dead_code)]
     master: bool,
+    /// The page's background when it is one flat color (see `ArtContext::flat_background`).
+    background: Option<u32>,
 }
 
 impl Ctx<'_> {
@@ -125,6 +128,18 @@ impl Ctx<'_> {
         format!(r#"<a:solidFill><a:srgbClr val="{:06X}"/></a:solidFill>"#, self.rgb(c))
     }
 
+    /// Whether the typeface has Japanese characters. The font's character set (`lfCharSet`, MS-PPT 2.9.11) says: SHIFTJIS 128, HANGUL 129,
+    /// GB2312 134 and CHINESEBIG5 136 are East Asian; any other set but DEFAULT_CHARSET (1) is a Latin (or symbol) typeface. DEFAULT_CHARSET
+    /// does not say; then the name does: one with East Asian characters (the PC's Japanese typefaces carry their Japanese names), the last resort
+    /// since the PC the file came from is not here to look at the typeface's cmap.
+    fn has_east_asian_glyphs(&self, index: u16) -> bool {
+        match self.ir.font_charsets.get(index as usize).copied() {
+            Some(128 | 129 | 134 | 136) => true,
+            Some(1) | None => self.ir.fonts.get(index as usize).is_some_and(|n| n.chars().any(|c| c as u32 >= 0x2e80)),
+            Some(_) => false,
+        }
+    }
+
     fn font(&self, index: Option<u16>) -> Option<&str> {
         let name = self.ir.fonts.get(index? as usize)?.as_str();
         (!name.is_empty()).then_some(name)
@@ -139,13 +154,37 @@ impl Ctx<'_> {
             k => k as u16,
         };
         let pick = |map: &HashMap<u16, MasterStyle>| map.get(&family).and_then(|s| s.levels.get(level as usize).cloned());
-        let from_master = pick(self.styles);
+        // The text of a text box (the "other" kind) on a slide takes the document's default style, not the master's (the master's
+        // "other" style is for the text of the master's own shapes): 030's text boxes are centered by the default over a master that says left.
+        let from_master = if kind == 4 && !self.master { None } else { pick(self.styles) };
         let from_default = pick(&self.ir.default_props_styles());
-        match (from_master, from_default) {
+        let (mut pf, cf) = match (from_master, from_default) {
             (Some((pf, cf)), Some((dpf, dcf))) => (pf.over(&dpf), cf.over(&dcf)),
             (Some(x), None) | (None, Some(x)) => x,
             (None, None) => (Pf::default(), Cf::default()),
+        };
+        // The spacing of a level the style leaves out is the one of the level above (PowerPoint's own pptx of 032.ppt: the second level of the
+        // body style, which the file gives no space before, has the first level's).
+        // [MS-PPT] (TextMasterStyleAtom, TextMasterStyleLevel) states no such rule (looked for 2026-11-10); the old-file description of
+        // PowerPoint 97-2003 (old-file-viewer.bobpritchett.com/docs/powerpoint-format) says each level is stored as the differences from the level above.
+        // The bullet of a level that does not say whether it has one is the one of the level above too (046.ppt: the body style's second
+        // level gives no bullet flag, and PowerPoint's pptx of it has the check marks of the paragraphs' bullet character).
+        if level > 0
+            && (pf.space_before.is_none() || pf.space_after.is_none() || pf.line_spacing.is_none() || pf.has_bullet.is_none())
+        {
+            let (above, _) = self.level_style(kind, level - 1);
+            pf.space_before = pf.space_before.or(above.space_before);
+            pf.space_after = pf.space_after.or(above.space_after);
+            pf.line_spacing = pf.line_spacing.or(above.line_spacing);
+            if pf.has_bullet.is_none() {
+                pf.has_bullet = above.has_bullet;
+                pf.bullet_char = pf.bullet_char.or(above.bullet_char);
+                pf.bullet_font = pf.bullet_font.or(above.bullet_font);
+                pf.bullet_size = pf.bullet_size.or(above.bullet_size);
+                pf.bullet_color = pf.bullet_color.or(above.bullet_color);
+            }
         }
+        (pf, cf)
     }
 }
 
@@ -211,22 +250,7 @@ fn ppr_xml(ctx: &Ctx, tag: &str, pf: &Pf, cf: Option<&Cf>, auto: Option<(u16, u1
             let _ = write!(kids, r#"<a:buFont typeface="{}"/>"#, esc(font));
         }
         if let Some((scheme, start)) = auto {
-            let kind = match scheme {
-                0 => "alphaLcPeriod",
-                1 => "alphaUcPeriod",
-                2 => "arabicParenR",
-                4 => "romanLcParenBoth",
-                5 => "romanLcParenR",
-                6 => "romanLcPeriod",
-                7 => "romanUcPeriod",
-                8 => "alphaLcParenBoth",
-                9 => "alphaLcParenR",
-                10 => "alphaUcParenBoth",
-                11 => "alphaUcParenR",
-                12 => "arabicParenBoth",
-                13 => "arabicPlain",
-                _ => "arabicPeriod",
-            };
+            let kind = auto_number_type(scheme);
             let at = if start > 1 { format!(r#" startAt="{start}""#) } else { String::new() };
             let _ = write!(kids, r#"<a:buFont typeface="+mj-lt"/><a:buAutoNum type="{kind}"{at}/>"#);
         } else {
@@ -259,7 +283,8 @@ fn ppr_xml(ctx: &Ctx, tag: &str, pf: &Pf, cf: Option<&Cf>, auto: Option<(u16, u1
 fn rpr_xml(ctx: &Ctx, tag: &str, cf: &Cf, extra_attrs: &str) -> String {
     let mut attrs = String::from(r#" lang="ja-JP" altLang="en-US""#);
     if let Some(size) = cf.size {
-        let _ = write!(attrs, r#" sz="{}""#, u32::from(size) * 100);
+        let hundredths = cf.size_hundredths.filter(|h| h / 100 == size).map_or(u32::from(size) * 100, u32::from);
+        let _ = write!(attrs, r#" sz="{hundredths}""#);
     }
     if let Some(b) = cf.bold {
         let _ = write!(attrs, r#" b="{}""#, u8::from(b));
@@ -275,6 +300,9 @@ fn rpr_xml(ctx: &Ctx, tag: &str, cf: &Cf, extra_attrs: &str) -> String {
             let _ = write!(attrs, r#" baseline="{}""#, i32::from(p) * 1000);
         }
     }
+    if let Some(spc) = cf.spacing {
+        let _ = write!(attrs, r#" spc="{spc}""#);
+    }
     attrs += extra_attrs;
     let mut kids = String::new();
     if let Some(color) = cf.color {
@@ -283,8 +311,20 @@ fn rpr_xml(ctx: &Ctx, tag: &str, cf: &Cf, extra_attrs: &str) -> String {
     if let Some(font) = ctx.font(cf.ansi_font.or(cf.font)) {
         let _ = write!(kids, r#"<a:latin typeface="{}"/>"#, esc(font));
     }
-    if let Some(font) = ctx.font(cf.east_asian_font.or(cf.font)) {
-        let _ = write!(kids, r#"<a:ea typeface="{}"/>"#, esc(font));
+    // A run that names a Latin typeface only (Times New Roman) and no East Asian one is drawn with the East Asian typeface of the
+    // text style it would have inherited: PowerPoint's PDF of such a run (107.ppt, 4th slide, Times New Roman and the default
+    // MS PGothic) uses MS PGothic. A run that names a typeface with Japanese characters (Meiryo) keeps it for all its characters.
+    let ea = match (cf.east_asian_font, cf.font) {
+        (Some(e), _) => Some(e),
+        (None, Some(f)) if ctx.font(Some(f)).is_some() && !ctx.has_east_asian_glyphs(f) => cf.inherited_east_asian_font.or(cf.font),
+        _ => cf.font,
+    };
+    if let Some(font) = ctx.font(ea) {
+        // Shift-JIS (`lfCharSet` 128) is `charset="-128"`: PowerPoint draws such a typeface it lacks in Yu Gothic (m56-missing-font-standins.md).
+        // A typeface of DEFAULT_CHARSET (1) with Japanese characters in its name is drawn the same way (082's "AR P丸ゴシック体E", lfCharSet 1:
+        // PowerPoint's own pptx writes charset="-128" for it and its PDF draws Yu Gothic), as `has_east_asian_glyphs` decides for it.
+        let charset = if ea.is_some_and(|i| ctx.ir.font_charsets.get(i as usize) == Some(&128) || (ctx.ir.font_charsets.get(i as usize) == Some(&1) && ctx.has_east_asian_glyphs(i))) { r#" charset="-128""# } else { "" };
+        let _ = write!(kids, r#"<a:ea typeface="{}"{charset}/>"#, esc(font));
     }
     if let Some(font) = ctx.font(cf.symbol_font) {
         let _ = write!(kids, r#"<a:sym typeface="{}"/>"#, esc(font));
@@ -359,142 +399,14 @@ fn text_body(ctx: &Ctx, shape: &ShapeIr, text: &TextIr) -> String {
                 }
             }
         }
+        // The paragraph mark has its own formatting; an empty paragraph is as high as that says.
+        if para.runs.is_empty() {
+            last_cf = para.end_cf.over(&mcf);
+        }
         out += &rpr_xml(ctx, "endParaRPr", &last_cf, "");
         out += "</a:p>";
     }
     out
-}
-
-/// The preset geometry of a shape type (`MSOSPT`).
-pub(crate) fn preset(spt: u16) -> Option<&'static str> {
-    Some(match spt {
-        1 | 202 => "rect",
-        2 => "roundRect",
-        3 => "ellipse",
-        4 => "diamond",
-        5 => "triangle",
-        6 => "rtTriangle",
-        7 => "parallelogram",
-        8 => "trapezoid",
-        9 => "hexagon",
-        10 => "octagon",
-        11 => "plus",
-        12 => "star5",
-        13 | 14 => "rightArrow",
-        15 => "homePlate",
-        16 => "cube",
-        17 => "wedgeRoundRectCallout",
-        18 => "star16",
-        19 => "arc",
-        20 => "line",
-        21 => "plaque",
-        22 => "can",
-        23 => "donut",
-        32 => "straightConnector1",
-        33 => "bentConnector2",
-        34 => "bentConnector3",
-        35 => "bentConnector4",
-        36 => "bentConnector5",
-        37 => "curvedConnector2",
-        38 => "curvedConnector3",
-        39 => "curvedConnector4",
-        40 => "curvedConnector5",
-        41 => "callout1",
-        42 => "callout2",
-        43 => "callout3",
-        44 => "accentCallout1",
-        45 => "accentCallout2",
-        46 => "accentCallout3",
-        47 => "borderCallout1",
-        48 => "borderCallout2",
-        49 => "borderCallout3",
-        50 => "accentBorderCallout1",
-        51 => "accentBorderCallout2",
-        52 => "accentBorderCallout3",
-        53 => "ribbon2",
-        54 => "ribbon",
-        55 => "chevron",
-        56 => "pentagon",
-        57 => "noSmoking",
-        58 => "star8",
-        59 => "star16",
-        60 => "star32",
-        61 => "wedgeRectCallout",
-        62 => "wedgeRoundRectCallout",
-        63 => "wedgeEllipseCallout",
-        64 => "wave",
-        65 => "foldedCorner",
-        66 => "leftArrow",
-        67 => "downArrow",
-        68 => "upArrow",
-        69 => "leftRightArrow",
-        70 => "upDownArrow",
-        71 => "irregularSeal1",
-        72 => "irregularSeal2",
-        73 => "lightningBolt",
-        74 => "heart",
-        75 => "rect",
-        76 => "quadArrow",
-        77 => "leftArrowCallout",
-        78 => "rightArrowCallout",
-        79 => "upArrowCallout",
-        80 => "downArrowCallout",
-        81 => "leftRightArrowCallout",
-        82 => "upDownArrowCallout",
-        83 => "quadArrowCallout",
-        84 => "bevel",
-        85 => "leftBracket",
-        86 => "rightBracket",
-        87 => "leftBrace",
-        88 => "rightBrace",
-        89 => "leftUpArrow",
-        90 => "bentUpArrow",
-        91 => "bentArrow",
-        92 => "star24",
-        93 => "stripedRightArrow",
-        94 => "notchedRightArrow",
-        95 => "blockArc",
-        96 => "smileyFace",
-        97 => "verticalScroll",
-        98 => "horizontalScroll",
-        99 | 100 => "circularArrow",
-        101 => "uturnArrow",
-        102 => "curvedRightArrow",
-        103 => "curvedLeftArrow",
-        104 => "curvedUpArrow",
-        105 => "curvedDownArrow",
-        106 => "cloudCallout",
-        107 => "ellipseRibbon2",
-        108 => "ellipseRibbon",
-        109 => "flowChartProcess",
-        110 => "flowChartDecision",
-        111 => "flowChartInputOutput",
-        112 => "flowChartPredefinedProcess",
-        113 => "flowChartInternalStorage",
-        114 => "flowChartDocument",
-        115 => "flowChartMultidocument",
-        116 => "flowChartTerminator",
-        117 => "flowChartPreparation",
-        118 => "flowChartManualInput",
-        119 => "flowChartManualOperation",
-        120 => "flowChartConnector",
-        121 => "flowChartPunchedCard",
-        122 => "flowChartPunchedTape",
-        123 => "flowChartSummingJunction",
-        124 => "flowChartOr",
-        125 => "flowChartCollate",
-        126 => "flowChartSort",
-        127 => "flowChartExtract",
-        128 => "flowChartMerge",
-        129 => "flowChartOfflineStorage",
-        130 => "flowChartOnlineStorage",
-        131 => "flowChartMagneticTape",
-        132 => "flowChartMagneticDisk",
-        133 => "flowChartMagneticDrum",
-        134 => "flowChartDisplay",
-        135 => "flowChartDelay",
-        _ => return None,
-    })
 }
 
 /// The placeholder `type` (and `idx`) a placement id (`PlaceholderEnum`) is.
@@ -514,212 +426,67 @@ fn placeholder_kind(id: u8) -> Option<(&'static str, Option<u32>)> {
     })
 }
 
-/// An `IMsoArray` of the property `id` as its elements (each `cb` bytes), or `None`.
-fn ms_array(props: &Props, id: u16) -> Option<(usize, Vec<&[u8]>)> {
-    let d = props.complex(id)?;
-    let n = u16::from_le_bytes([*d.first()?, *d.get(1)?]) as usize;
-    let cb = u16::from_le_bytes([*d.get(4)?, *d.get(5)?]);
-    let size = if cb == 0xFFF0 { 4 } else { cb as usize };
-    if size == 0 {
-        return None;
-    }
-    let items: Vec<&[u8]> = (0..n).filter_map(|i| d.get(6 + i * size..6 + (i + 1) * size)).collect();
-    Some((size, items))
-}
-
-/// A freeform's geometry (`a:custGeom`) from the vertices and segments of its properties (MS-ODRAW 2.3.6).
-fn custom_geometry(shape: &ShapeIr) -> Option<String> {
-    let p = &shape.props;
-    let (size, items) = ms_array(p, 0x145)?;
-    let points: Vec<(i64, i64)> = items
-        .iter()
-        .map(|b| {
-            if size >= 8 {
-                let v = |at: usize| i64::from(i32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]));
-                (v(0), v(4))
-            } else {
-                (i64::from(i16::from_le_bytes([b[0], b[1]])), i64::from(i16::from_le_bytes([b[2], b[3]])))
-            }
-        })
-        .map(|(x, y)| (if (0x8000_0000u32 as i64..=0x8000_007Fu32 as i64).contains(&(x & 0xFFFF_FFFF)) { 0 } else { x }, if (0x8000_0000u32 as i64..=0x8000_007Fu32 as i64).contains(&(y & 0xFFFF_FFFF)) { 0 } else { y }))
-        .collect();
-    if points.is_empty() {
-        return None;
-    }
-    // The space of the points: the geometry rectangle, else 21600 square as the file's default.
-    let mut left = p.int(0x140).map_or(0, i64::from);
-    let mut top = p.int(0x141).map_or(0, i64::from);
-    let mut right = p.int(0x142).map_or(21600, i64::from);
-    let mut bottom = p.int(0x143).map_or(21600, i64::from);
-    if right <= left || bottom <= top {
-        // (A geometry rectangle that is empty: the vertices' own.)
-        left = points.iter().map(|q| q.0).min().unwrap_or(0);
-        right = points.iter().map(|q| q.0).max().unwrap_or(1);
-        top = points.iter().map(|q| q.1).min().unwrap_or(0);
-        bottom = points.iter().map(|q| q.1).max().unwrap_or(1);
-    }
-    let (w, h) = ((right - left).max(1), (bottom - top).max(1));
-    let pt = |(x, y): (i64, i64)| format!(r#"<a:pt x="{}" y="{}"/>"#, x - left, y - top);
-    let mut path = String::new();
-    let mut at = 0usize;
-    let take = |at: &mut usize, n: usize| -> Vec<(i64, i64)> {
-        let out = points.get(*at..(*at + n).min(points.len())).unwrap_or(&[]).to_vec();
-        *at += n;
-        out
+/// The properties of the placeholder of a master that a slide's unplaced placeholder (`PlaceholderEnum` `kind`) takes after.
+fn master_placeholder_props<'a>(ir: &'a PptIr, page: &PageIr, kind: u8) -> Option<&'a Props> {
+    // The placeholder kinds of the master to look for, the closest first (a title master that has no center title has the title).
+    let master_kinds: &[u8] = match kind {
+        0x0D | 0x11 => &[0x01],
+        0x0E | 0x12 => &[0x02],
+        0x0F => &[0x03, 0x01],
+        0x10 => &[0x04, 0x02],
+        _ => return None,
     };
-    match ms_array(p, 0x146) {
-        Some((_, segments)) if !segments.is_empty() => {
-            for seg in segments {
-                let v = u16::from_le_bytes([seg[0], *seg.get(1).unwrap_or(&0)]);
-                let (kind, count) = (v >> 13, (v & 0x1FFF) as usize);
-                match kind {
-                    0 => {
-                        for q in take(&mut at, count) {
-                            let _ = write!(path, "<a:lnTo>{}</a:lnTo>", pt(q));
-                        }
-                    }
-                    1 => {
-                        for _ in 0..count {
-                            let c = take(&mut at, 3);
-                            if c.len() == 3 {
-                                let _ = write!(path, "<a:cubicBezTo>{}{}{}</a:cubicBezTo>", pt(c[0]), pt(c[1]), pt(c[2]));
-                            }
-                        }
-                    }
-                    2 => {
-                        if let Some(q) = take(&mut at, 1).first() {
-                            let _ = write!(path, "<a:moveTo>{}</a:moveTo>", pt(*q));
-                        }
-                    }
-                    3 => path += "<a:close/>",
-                    5 | 6 => {
-                        // An escape: its points are skipped (the arcs and ellipses are not drawn).
-                        at += (v & 0xFF) as usize;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        _ => {
-            let shape_path = p.get(0x144).unwrap_or(1);
-            let all = take(&mut at, points.len());
-            if let Some(first) = all.first() {
-                let _ = write!(path, "<a:moveTo>{}</a:moveTo>", pt(*first));
-                if shape_path == 2 || shape_path == 3 {
-                    for c in all[1..].chunks_exact(3) {
-                        let _ = write!(path, "<a:cubicBezTo>{}{}{}</a:cubicBezTo>", pt(c[0]), pt(c[1]), pt(c[2]));
-                    }
-                } else {
-                    for q in &all[1..] {
-                        let _ = write!(path, "<a:lnTo>{}</a:lnTo>", pt(*q));
-                    }
-                }
-                if shape_path == 1 || shape_path == 3 {
-                    path += "<a:close/>";
-                }
-            }
-        }
-    }
-    Some(format!(r#"<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="{w}" h="{h}">{path}</a:path></a:pathLst></a:custGeom>"#))
+    let master = ir.masters.iter().find(|m| m.id == page.master_ref)?;
+    master_kinds.iter().find_map(|k| master.shapes.iter().find(|s| s.placeholder == Some(*k)).map(|s| &s.props))
 }
 
-/// The fill of a shape as `spPr` content.
-fn fill_xml(ctx: &mut Ctx, shape: &ShapeIr, has_text_or_placeholder: bool) -> String {
-    let d = &ctx.ir.default_props;
-    let p = &shape.props;
-    let get = |id: u16| p.get(id).or_else(|| d.get(id));
-    let filled = p.flag(0x1BF, 4).or_else(|| d.flag(0x1BF, 4)).unwrap_or(!has_text_or_placeholder);
-    if !filled {
-        return "<a:noFill/>".into();
+/// A page's context for a shape that takes no document defaults: only its own properties count.
+struct OwnOnly<'a, 'b>(&'a mut Ctx<'b>, Props);
+
+impl ArtContext for OwnOnly<'_, '_> {
+    fn defaults(&self) -> &Props {
+        &self.1
     }
-    let color = |v: u32| -> u32 { ctx.rgb(crate::ppt::art_color_of(v)) };
-    let fill_type = get(0x180).unwrap_or(0);
-    let alpha = get(0x182).map(|v| (f64::from(v) / 65536.0 * 100_000.0).round() as u32).filter(|a| *a < 100_000);
-    let alpha_xml = alpha.map(|a| format!(r#"<a:alpha val="{a}"/>"#)).unwrap_or_default();
-    match fill_type {
-        // A picture fill.
-        2 | 3 => {
-            if let Some(index) = p.get(0x186).map(|v| v as usize).filter(|i| *i > 0) {
-                if let Some(rid) = ctx.picture(index) {
-                    return format!(r#"<a:blipFill rotWithShape="1"><a:blip r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>"#);
-                }
-            }
-            "<a:noFill/>".into()
-        }
-        // A gradient.
-        4..=8 => {
-            let first = color(get(0x181).unwrap_or(0xFFFFFF));
-            let second = color(get(0x183).unwrap_or(0xFFFFFF));
-            let angle = get(0x18B).map_or(0.0, |v| f64::from(v as i32) / 65536.0);
-            // The file's angle is of the gradient on the page: with the shape turned it is the preset's angle (clockwise from the
-            // right) taken from a right angle, less the shape's turn.
-            let turn = shape.props.get(0x04).map_or(0.0, |v| f64::from(v as i32) / 65536.0);
-            let ooxml = ((90.0 - angle - turn).rem_euclid(360.0) * 60000.0).round() as i64;
-            format!(
-                r#"<a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:srgbClr val="{first:06X}">{alpha_xml}</a:srgbClr></a:gs><a:gs pos="100000"><a:srgbClr val="{second:06X}">{alpha_xml}</a:srgbClr></a:gs></a:gsLst><a:lin ang="{ooxml}" scaled="0"/></a:gradFill>"#
-            )
-        }
-        _ => {
-            let c = color(get(0x181).unwrap_or(0xFFFFFF));
-            format!(r#"<a:solidFill><a:srgbClr val="{c:06X}">{alpha_xml}</a:srgbClr></a:solidFill>"#)
-        }
+
+    fn color(&self, colorref: u32) -> u32 {
+        self.0.color(colorref)
+    }
+
+    fn picture(&mut self, index: usize) -> Option<String> {
+        Ctx::picture(self.0, index)
+    }
+
+    fn flat_background(&self) -> Option<u32> {
+        self.0.background
     }
 }
 
-/// The shadow of a shape (`a:effectLst`), when it has one (MS-ODRAW 2.3.13).
-fn shadow_xml(ctx: &Ctx, shape: &ShapeIr) -> String {
-    let d = &ctx.ir.default_props;
-    let p = &shape.props;
-    let get = |id: u16| p.get(id).or_else(|| d.get(id));
-    if !p.flag(0x23F, 1).or_else(|| d.flag(0x23F, 1)).unwrap_or(false) {
-        return String::new();
+impl ArtContext for Ctx<'_> {
+    fn defaults(&self) -> &Props {
+        &self.ir.default_props
     }
-    let (dx, dy) = (get(0x205).map_or(25400.0, |v| f64::from(v as i32)), get(0x206).map_or(25400.0, |v| f64::from(v as i32)));
-    let dist = (dx * dx + dy * dy).sqrt().round() as i64;
-    let dir = (dy.atan2(dx).to_degrees().rem_euclid(360.0) * 60000.0).round() as i64;
-    let color = ctx.rgb(crate::ppt::art_color_of(get(0x201).unwrap_or(0x808080)));
-    let alpha = get(0x204).map_or(100_000, |v| (f64::from(v) / 65536.0 * 100_000.0).round() as i64).clamp(0, 100_000);
-    format!(r#"<a:effectLst><a:outerShdw blurRad="0" dist="{dist}" dir="{dir}" algn="tl" rotWithShape="0"><a:srgbClr val="{color:06X}"><a:alpha val="{alpha}"/></a:srgbClr></a:outerShdw></a:effectLst>"#)
+
+    fn color(&self, colorref: u32) -> u32 {
+        self.rgb(crate::ppt::art_color_of(colorref))
+    }
+
+    fn picture(&mut self, index: usize) -> Option<String> {
+        Ctx::picture(self, index)
+    }
+
+    fn flat_background(&self) -> Option<u32> {
+        self.background
+    }
 }
 
-/// The outline of a shape.
-fn line_xml(ctx: &Ctx, shape: &ShapeIr, default_on: bool) -> String {
-    let d = &ctx.ir.default_props;
-    let p = &shape.props;
-    let get = |id: u16| p.get(id).or_else(|| d.get(id));
-    let on = p.flag(0x1FF, 3).or_else(|| d.flag(0x1FF, 3)).unwrap_or(default_on);
-    if !on {
-        return "<a:ln><a:noFill/></a:ln>".into();
+/// The color of a page's background when it is a plain fill (a gradient or picture fill: None). A page that has no background of its own
+/// is white.
+fn flat_background(ctx: &Ctx, page: &PageIr) -> Option<u32> {
+    let Some(bg) = &page.background else { return Some(0xFFFFFF) };
+    match bg.props.get(0x180).unwrap_or(0) {
+        0 => Some(ctx.color(bg.props.get(0x181).or_else(|| ctx.ir.default_props.get(0x181)).unwrap_or(0xFFFFFF))),
+        _ => None,
     }
-    let width = get(0x1CB).map_or(9525, |v| i64::from(v as i32));
-    let color = ctx.rgb(crate::ppt::art_color_of(get(0x1C0).unwrap_or(0)));
-    let dash = match get(0x1CE).unwrap_or(0) {
-        1 => "sysDash",
-        2 => "sysDot",
-        3 => "dashDot",
-        4 => "lgDashDotDot",
-        5 => "dash",
-        6 => "lgDash",
-        7 => "lgDashDot",
-        8 => "lgDashDotDot",
-        _ => "solid",
-    };
-    let arrow = |id: u16, tag: &str| -> String {
-        let kind = match get(id).unwrap_or(0) {
-            1 => "triangle",
-            2 => "stealth",
-            3 => "diamond",
-            4 => "oval",
-            5 => "arrow",
-            _ => return String::new(),
-        };
-        format!(r#"<a:{tag} type="{kind}"/>"#)
-    };
-    format!(
-        r#"<a:ln w="{width}"><a:solidFill><a:srgbClr val="{color:06X}"/></a:solidFill><a:prstDash val="{dash}"/>{}{}</a:ln>"#,
-        arrow(0x1D0, "headEnd"),
-        arrow(0x1D1, "tailEnd")
-    )
 }
 
 impl Ctx<'_> {
@@ -744,6 +511,16 @@ fn shape_xml(ctx: &mut Ctx, shape: &ShapeIr, page: &PageIr, outline: &[TextIr], 
         return String::new();
     };
     let rotation = shape.props.get(0x04).map_or(0, |v| ((f64::from(v as i32) / 65536.0) * 60000.0).round() as i64);
+    // The rectangle a .ppt gives a shape turned by a quarter (45 to 135 or 225 to 315 degrees) is the one it covers turned; DrawingML's
+    // is the one before the turn: the same center, width and height swapped.
+    // (Measured on PowerPoint's PDFs of the master top bands of one presentation; Apache POI's HSLF swaps the same. No statement found in [MS-ODRAW]
+    // for the rotation property (0x0004) or OfficeArtClientAnchor.)
+    let turned = rotation.rem_euclid(21_600_000);
+    let (x, y, w, h) = if !shape.is_group && ((2_700_000..8_100_000).contains(&turned) || (13_500_000..18_900_000).contains(&turned)) {
+        (x + (w - h) / 2, y + (h - w) / 2, h, w)
+    } else {
+        (x, y, w, h)
+    };
     let mut xfrm_attrs = String::new();
     if rotation != 0 {
         let _ = write!(xfrm_attrs, r#" rot="{}""#, rotation.rem_euclid(21_600_000));
@@ -767,7 +544,9 @@ fn shape_xml(ctx: &mut Ctx, shape: &ShapeIr, page: &PageIr, outline: &[TextIr], 
     if let (Some(index), true) = (picture_index, shape.spt == 75 || shape.props.get(0x180).is_none()) {
         if shape.text.is_none() && shape.placeholder.is_none() {
             if let Some(rid) = ctx.picture(index) {
-                let line = line_xml(ctx, shape, false);
+                // A picture that gives neither a line color nor a line flag has no line (as for a shape below).
+                let no_line = shape.props.get(0x1C0).is_none() && shape.props.flag(0x1FF, 3).is_none();
+                let line = if no_line { line_xml(ctx, &shape.props.with_flag(0x1FF, 3, false), false) } else { line_xml(ctx, &shape.props, false) };
                 // Cropped: the fractions of the picture left out at each side (16.16 fixed point).
                 let crop = |id: u16| shape.props.int(id).map_or(0, |v| (f64::from(v) / 65536.0 * 100_000.0).round() as i64);
                 let src_rect = if (0x100..=0x103).any(|id| crop(id) != 0) { format!(r#"<a:srcRect l="{}" t="{}" r="{}" b="{}"/>"#, crop(0x102), crop(0x100), crop(0x103), crop(0x101)) } else { String::new() };
@@ -785,19 +564,34 @@ fn shape_xml(ctx: &mut Ctx, shape: &ShapeIr, page: &PageIr, outline: &[TextIr], 
     };
     let ph = shape.placeholder.and_then(placeholder_kind);
     let is_line = matches!(shape.spt, 20) || shape.is_connector || (32..=40).contains(&shape.spt);
-    let prst = preset(shape.spt).unwrap_or("rect");
-    let mut av = String::new();
-    if shape.spt == 2 {
-        if let Some(adj) = shape.props.int(0x147) {
-            // The corner radius: the file's 21600ths of the shorter side, as the preset's 100000ths.
-            let _ = write!(av, r#"<a:gd name="adj" fmla="val {}"/>"#, (i64::from(adj) * 100_000 * 2 / 3 / 21_600 * 3 / 2).clamp(0, 50_000) * 2 / 3 * 3 / 2);
-        }
-    }
-    let geometry = custom_geometry(shape).unwrap_or_else(|| format!(r#"<a:prstGeom prst="{prst}"><a:avLst>{av}</a:avLst></a:prstGeom>"#));
-    let textual = text.is_some() || ph.is_some();
-    let fill = if is_line { String::new() } else { fill_xml(ctx, shape, textual) };
-    let line = line_xml(ctx, shape, !textual || is_line);
-    let sp_pr = format!("<p:spPr>{xfrm}{geometry}{fill}{line}{}</p:spPr>", shadow_xml(ctx, shape));
+    let geometry = geometry_xml(shape.spt, &shape.props);
+    // A shape with no text in the binary format may have it in its DrawingML (text in columns).
+    let raw_body = if text.is_none() { shape.props.complex(0x03A9).filter(|b| crate::ppt::shape_xml_is_current(b, shape.frame)).and_then(crate::ppt::shape_xml_text_body) } else { None };
+    let textual = text.is_some() || ph.is_some() || raw_body.is_some();
+    // A placeholder of no place takes what it does not set from the master's placeholder (no fill, no line), not from the
+    // document's default shape.
+    let (fill, line) = if shape.unplaced_placeholder {
+        // What it does not say is the master placeholder's (076's centered title: the master's blue fill, not none).
+        let props = match shape.unplaced_kind.and_then(|k| master_placeholder_props(ctx.ir, page, k)) {
+            Some(base) => shape.props.with_missing_from(base, |id| (0x180..=0x1A0).contains(&id) || (0x1C0..=0x1E0).contains(&id) || id == 0x1BF || id == 0x1FF),
+            None => shape.props.clone(),
+        };
+        let mut own = OwnOnly(ctx, Props::default());
+        (if is_line { String::new() } else { fill_xml(&mut own, &props, true) }, line_xml(&own, &props, is_line))
+    } else {
+        // A shape that gives no fill color is white (MS-ODRAW fillColor), not the drawing group's default fill color (the scheme's
+        // fill): PowerPoint leaves the color out of a file when the shape is white, and draws it white (corpus 150's full-slide rectangle).
+        let defaults = ctx.ir.default_props.without(&[0x181, 0x183]);
+        let mut own = OwnOnly(ctx, defaults);
+        let fill = if is_line { String::new() } else { fill_xml(&mut own, &shape.props, textual) };
+        // A shape that gives neither a line color nor whether it has a line has none (030's rounded rectangle: the drawing
+        // group's default line is on, PowerPoint draws none). [MS-ODRAW] "Line Style Boolean Properties" gives the property block the
+        // default 0x0 (fLine off) and says an omitted property has its default; that the drawing group's own default is left out here
+        // is only measured (no statement found in MS-PPT or MS-ODRAW).
+        let line_props = if !is_line && shape.props.get(0x1C0).is_none() && shape.props.flag(0x1FF, 3).is_none() { shape.props.with_flag(0x1FF, 3, false) } else { shape.props.clone() };
+        (fill, line_xml(ctx, &line_props, !textual || is_line))
+    };
+    let sp_pr = format!("<p:spPr>{xfrm}{geometry}{fill}{line}{}</p:spPr>", shadow_xml(ctx, &shape.props));
     if is_line {
         return format!(r#"<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="{id}" name="{name}"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>{sp_pr}</p:cxnSp>"#);
     }
@@ -815,7 +609,7 @@ fn shape_xml(ctx: &mut Ctx, shape: &ShapeIr, page: &PageIr, outline: &[TextIr], 
     };
     let body = match &text {
         Some(t) => format!("<p:txBody>{}</p:txBody>", text_body(ctx, shape, t)),
-        None => String::new(),
+        None => raw_body.unwrap_or_default(),
     };
     let link = shape.interactive.and_then(|i| ctx.link_xml(i)).unwrap_or_default();
     let c_nv_pr = if link.is_empty() { format!(r#"<p:cNvPr id="{id}" name="{name}"/>"#) } else { format!(r#"<p:cNvPr id="{id}" name="{name}">{link}</p:cNvPr>"#) };
@@ -869,7 +663,8 @@ fn transition_xml(show: &SlideShow) -> String {
 /// A page's background as `p:bg`.
 fn background_xml(ctx: &mut Ctx, page: &PageIr) -> String {
     let Some(bg) = &page.background else { return String::new() };
-    let fill = fill_xml(ctx, bg, false);
+    let defaults = ctx.ir.default_props.without(&[0x181, 0x183]);
+    let fill = fill_xml(&mut OwnOnly(ctx, defaults), &bg.props, false);
     format!("<p:bg><p:bgPr>{fill}<a:effectLst/></p:bgPr></p:bg>")
 }
 
@@ -957,7 +752,8 @@ pub(crate) fn to_pptx_of(ir: crate::ppt::PptIr) -> Result<Vec<u8>, Error> {
         let n = i + 1;
         master_index_of.insert(m.id, i);
         let scheme = m.scheme.unwrap_or(DEFAULT_SCHEME);
-        let mut ctx = Ctx { ir: &ir, scheme, styles: &m.styles, pictures: HashMap::new(), next_rel: Cell::new(3), extra_rels: RefCell::new(Vec::new()), slide_places: &slide_places, master: true };
+        let mut ctx = Ctx { ir: &ir, scheme, styles: &m.styles, pictures: HashMap::new(), next_rel: Cell::new(3), extra_rels: RefCell::new(Vec::new()), slide_places: &slide_places, master: true, background: None };
+        ctx.background = flat_background(&ctx, m);
         // The master's shapes: placeholders (as the master's) and the others.
         let mut shapes = String::new();
         let mut layout_shapes = String::new();
@@ -1029,7 +825,8 @@ pub(crate) fn to_pptx_of(ir: crate::ppt::PptIr) -> Result<Vec<u8>, Error> {
         let master = masters[master_i];
         let own_scheme = if slide.follow_master_scheme { None } else { slide.scheme };
         let scheme = own_scheme.or(master.scheme).unwrap_or(DEFAULT_SCHEME);
-        let mut ctx = Ctx { ir: &ir, scheme, styles: &master.styles, pictures: HashMap::new(), next_rel: Cell::new(2), extra_rels: RefCell::new(Vec::new()), slide_places: &slide_places, master: false };
+        let mut ctx = Ctx { ir: &ir, scheme, styles: &master.styles, pictures: HashMap::new(), next_rel: Cell::new(2), extra_rels: RefCell::new(Vec::new()), slide_places: &slide_places, master: false, background: None };
+        ctx.background = flat_background(&ctx, if slide.follow_master_background { master } else { slide });
         let shapes: String = slide.shapes.iter().map(|s| shape_xml(&mut ctx, s, slide, &slide.outline, 0)).collect();
         let bg = if slide.follow_master_background { String::new() } else { background_xml(&mut ctx, slide) };
         let mut show = String::new();
@@ -1067,7 +864,7 @@ pub(crate) fn to_pptx_of(ir: crate::ppt::PptIr) -> Result<Vec<u8>, Error> {
         slide_rels.extend(ctx.extra_rels.borrow().iter().cloned());
         // The notes page, when it has text.
         if let Some(np) = ir.notes.get(&slide.notes_ref).filter(|np| np.shapes.iter().any(|s| s.placeholder == Some(0x0C) && (s.text.as_ref().is_some_and(|t| t.paragraphs.iter().any(|p| p.runs.iter().any(|r| !r.0.trim().is_empty()))) || s.outline_ref.is_some()))) {
-            let mut nctx = Ctx { ir: &ir, scheme: np.scheme.unwrap_or(DEFAULT_SCHEME), styles: &np.styles, pictures: HashMap::new(), next_rel: Cell::new(3), extra_rels: RefCell::new(Vec::new()), slide_places: &slide_places, master: false };
+            let mut nctx = Ctx { ir: &ir, scheme: np.scheme.unwrap_or(DEFAULT_SCHEME), styles: &np.styles, pictures: HashMap::new(), next_rel: Cell::new(3), extra_rels: RefCell::new(Vec::new()), slide_places: &slide_places, master: false, background: None };
             let nshapes: String = np.shapes.iter().filter(|s| matches!(s.placeholder, Some(0x0B | 0x0C))).map(|s| shape_xml(&mut nctx, s, np, &np.outline, 0)).collect();
             let notes_xml = format!(
                 r#"{HEAD}<p:notes xmlns:a="{A}" xmlns:r="{R}" xmlns:p="{P}"><p:cSld>{}</p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>"#,
@@ -1122,8 +919,9 @@ pub(crate) fn to_pptx_of(ir: crate::ppt::PptIr) -> Result<Vec<u8>, Error> {
         pres_rels.push(rel(&format!("rId{}", extra + 4), "notesMaster", "notesMasters/notesMaster1.xml"));
         notes_master_list = format!(r#"<p:notesMasterIdLst><p:notesMasterId r:id="rId{}"/></p:notesMasterIdLst>"#, extra + 4);
     }
+    let first_num = if ir.first_slide_number == 1 { String::new() } else { format!(r#" firstSlideNum="{}""#, ir.first_slide_number) };
     let presentation = format!(
-        r#"{HEAD}<p:presentation xmlns:a="{A}" xmlns:r="{R}" xmlns:p="{P}" saveSubsetFonts="1"><p:sldMasterIdLst>{master_ids}</p:sldMasterIdLst>{notes_master_list}<p:sldIdLst>{slide_ids}</p:sldIdLst><p:sldSz cx="{width}" cy="{height}"/><p:notesSz cx="6858000" cy="9144000"/><p:defaultTextStyle><a:defPPr><a:defRPr lang="ja-JP"/></a:defPPr></p:defaultTextStyle></p:presentation>"#
+        r#"{HEAD}<p:presentation xmlns:a="{A}" xmlns:r="{R}" xmlns:p="{P}" saveSubsetFonts="1"{first_num}><p:sldMasterIdLst>{master_ids}</p:sldMasterIdLst>{notes_master_list}<p:sldIdLst>{slide_ids}</p:sldIdLst><p:sldSz cx="{width}" cy="{height}"/><p:notesSz cx="6858000" cy="9144000"/><p:defaultTextStyle><a:defPPr><a:defRPr lang="ja-JP"/></a:defPPr></p:defaultTextStyle></p:presentation>"#
     );
     let mut defaults = String::from(r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>"#);
     for ext in &extensions {
@@ -1158,3 +956,53 @@ pub(crate) fn to_pptx_of(ir: crate::ppt::PptIr) -> Result<Vec<u8>, Error> {
 
 #[allow(dead_code)]
 fn unused(_: &Props) {}
+
+/// The DrawingML `ST_TextAutonumberScheme` of a `TextAutoNumberScheme` ([MS-PPT] TextAutoNumberSchemeEnum, 2.13.28): the enumeration's names
+/// match the DrawingML ones one to one (ANM_CircleNumWDBWhitePlain is circleNumWdWhitePlain, the Chinese and Japanese/Korean ones are
+/// the `ea1…` names); no value is without one. A value the table does not have is an Arabic numeral and period.
+fn auto_number_type(scheme: u16) -> &'static str {
+    match scheme {
+        0x00 => "alphaLcPeriod",
+        0x01 => "alphaUcPeriod",
+        0x02 => "arabicParenR",
+        0x03 => "arabicPeriod",
+        0x04 => "romanLcParenBoth",
+        0x05 => "romanLcParenR",
+        0x06 => "romanLcPeriod",
+        0x07 => "romanUcPeriod",
+        0x08 => "alphaLcParenBoth",
+        0x09 => "alphaLcParenR",
+        0x0A => "alphaUcParenBoth",
+        0x0B => "alphaUcParenR",
+        0x0C => "arabicParenBoth",
+        0x0D => "arabicPlain",
+        0x0E => "romanUcParenBoth",
+        0x0F => "romanUcParenR",
+        0x10 => "ea1ChsPlain",
+        0x11 => "ea1ChsPeriod",
+        0x12 => "circleNumDbPlain",
+        0x13 => "circleNumWdWhitePlain",
+        0x14 => "circleNumWdBlackPlain",
+        0x15 => "ea1ChtPlain",
+        0x16 => "ea1ChtPeriod",
+        0x17 => "arabic1Minus",
+        0x18 => "arabic2Minus",
+        0x19 => "hebrew2Minus",
+        0x1A => "ea1JpnKorPlain",
+        0x1B => "ea1JpnKorPeriod",
+        0x1C => "arabicDbPlain",
+        0x1D => "arabicDbPeriod",
+        0x1E => "thaiAlphaPeriod",
+        0x1F => "thaiAlphaParenR",
+        0x20 => "thaiAlphaParenBoth",
+        0x21 => "thaiNumPeriod",
+        0x22 => "thaiNumParenR",
+        0x23 => "thaiNumParenBoth",
+        0x24 => "hindiAlphaPeriod",
+        0x25 => "hindiNumPeriod",
+        0x26 => "ea1JpnChsDbPeriod",
+        0x27 => "hindiNumParenR",
+        0x28 => "hindiAlpha1Period",
+        _ => "arabicPeriod",
+    }
+}

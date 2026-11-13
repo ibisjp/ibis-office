@@ -110,7 +110,7 @@ fn read(name: &str) -> ibis_doc_model::Presentation {
 fn shown(s: &mut Scenario) -> std::collections::HashMap<(u32, u32), String> {
     s.update(|e, window, _| {
         let sheet = sheet_of_slide(e.slide()).expect("a worksheet").clone();
-        super::sheet_view::shown_texts(&sheet, &e.resources, window).into_iter().map(|(r, c, t)| ((r, c), t)).collect()
+        crate::xlsx::sheet_view::shown_texts(&sheet, &e.resources, window).into_iter().map(|(r, c, t)| ((r, c), t)).collect()
     })
 }
 
@@ -146,7 +146,7 @@ fn texts(chart: &LaidOut) -> Vec<&str> {
 pub(crate) fn corpus_report_xlsx_x1b_cf_anchor_crash() {
     let p = read("cf-anchor-crash.xlsx");
     let sheet = sheet_of_slide(&p.slides[0]).unwrap();
-    let (applied, _) = super::conditional::apply(sheet).expect("the rule applies");
+    let (applied, _) = crate::xlsx::conditional::apply(sheet).expect("the rule applies");
     let colored: Vec<bool> = (0..4).map(|c| applied.styles[applied.cell(0, c).unwrap().style as usize].fill == Some(Rgb(0xFF6666))).collect();
     assert_eq!(colored, vec![true, false, true, false], "A1:D1（土・月・土・火）のうち色が付くのは A1 と C1");
 }
@@ -156,7 +156,7 @@ pub(crate) fn corpus_report_xlsx_x1b_cf_anchor_crash() {
 pub(crate) fn corpus_report_xlsx_x1b_cf_anchor_color() {
     let p = read("cf-anchor-color.xlsx");
     let sheet = sheet_of_slide(&p.slides[0]).unwrap();
-    let (applied, _) = super::conditional::apply(sheet).expect("the rule applies");
+    let (applied, _) = crate::xlsx::conditional::apply(sheet).expect("the rule applies");
     let colored: Vec<bool> = (0..4).map(|c| applied.styles[applied.cell(0, c).unwrap().style as usize].fill == Some(Rgb(0xFF6666))).collect();
     assert_eq!(colored, vec![true, false, false, true], "A1:D1（1,0,0,1）のうち色が付くのは A1 と D1");
 }
@@ -168,7 +168,7 @@ pub(crate) fn corpus_report_xlsx_x2b_header_footer_line_breaks() {
     let marks = s.with(|e, _| {
         let sheet = sheet_of_slide(e.slide()).unwrap();
         let default_style = e.presentation().workbook.as_ref().and_then(|w| w.default_style.clone()).unwrap_or_default();
-        super::header_footer::page_marks(&sheet.print, &default_style, 1.0, 1, 1, "Sheet1", "multiline.xlsx", &e.resources)
+        crate::xlsx::header_footer::page_marks(&sheet.print, &default_style, 1.0, 1, 1, "Sheet1", "multiline.xlsx", &e.resources)
     });
     let runs: Vec<(String, f32)> = marks.iter().map(|m| (m.run.text.clone(), m.baseline)).collect();
     let baseline = |text: &str| {
@@ -370,7 +370,7 @@ pub(crate) fn corpus_report_xlsx_x6b_overflow_text_print_area() {
     let mut s = open("X6b-overflow-text-past-used-range.xlsx");
     let (area, widest) = s.with(|e, app| {
         let sheet = sheet_of_slide(e.slide()).unwrap();
-        let widest = sheet.cells.iter().map(|c| super::sheet_view::text_width_pt(&c.text, &sheet.styles[c.style as usize], &e.resources, app.text_system())).fold(0.0, f32::max);
+        let widest = sheet.cells.iter().map(|c| crate::xlsx::sheet_view::text_width_pt(&c.text, &sheet.styles[c.style as usize], &e.resources, app.text_system())).fold(0.0, f32::max);
         (crate::export::export_area(e.presentation(), e.slide()), widest)
     });
     let width = area.width as f32 / EMU_PER_POINT as f32;

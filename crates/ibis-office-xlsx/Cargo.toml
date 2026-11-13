@@ -1,0 +1,34 @@
+[package]
+name = "ibis-office-xlsx"
+description = "The workbook screen (XLSX) of ibisOffice: the sheet's cells, charts, pivot tables and their editing, on the shared editor window (ibis-office-shell)."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-calc.workspace = true
+ibis-office-base.workspace = true
+ibis-office-render.workspace = true
+ibis-office-shell.workspace = true
+# `#[editor_ext]`: the methods this crate writes for the editor become extension traits (tasks/doc/crate-split-plan.md, 10).
+ibis-office-macros.workspace = true
+ibis-doc-model.workspace = true
+ibis-pptx.workspace = true
+gpui-kit.workspace = true
+log = "0.4"
+
+# The pictures the checks make and read (src/tests/): the same declaration as ibis-office-app's.
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg", "tiff"], optional = true }
+
+[features]
+# As ibis-office-shell's (the code that reads and writes pictures through the export's libraries; build.rs sets
+# `cfg(headless_export)` with it, and the page break lines are asked of the app's exporter with it).
+default = ["export"]
+export = ["ibis-office-shell/export", "ibis-office-render/export"]
+# The scenario tests (src/tests/) and the driver they run on (ibis-office-shell's `scenario.rs`); ibis-office-app's `scenarios` turns it on.
+scenarios = ["dep:image", "ibis-office-shell/scenarios", "ibis-office-base/scenarios", "ibis-office-render/scenarios"]
+
+[dev-dependencies]
+ibis-office-base = { workspace = true, features = ["test-user-data"] }

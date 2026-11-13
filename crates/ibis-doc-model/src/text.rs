@@ -240,7 +240,7 @@ pub struct RunStyle {
     /// Background colour behind the text (`a:highlight`).
     pub highlight: Option<Rgb>,
     /// Outline around the characters (`a:ln`): colour and width in EMU.
-    pub outline: Option<(Rgb, i64)>,
+    pub outline: Option<(crate::drawing::Color, i64)>,
     /// The characters painted with a gradient or a pattern (`a:gradFill`,
     /// `a:pattFill`) instead of `color` (which keeps its first colour, for
     /// what draws in one colour).
@@ -284,6 +284,8 @@ pub struct RunStyle {
     pub glow: Option<(crate::drawing::Color, i64)>,
     /// Proofing language code (`a:rPr/@lang`, e.g. "ja-JP", "en-US").
     pub lang: Option<String>,
+    /// The alternate language (`a:rPr/@altLang`): the language of the text's East Asian side when `lang` is not one (see [`east_asian_language`]).
+    pub alt_lang: Option<String>,
     /// The run is a math formula (`a14:m`), drawn typeset; its text is the
     /// formula in one line.
     pub math: Option<Box<crate::math::Math>>,
@@ -563,7 +565,7 @@ impl Paragraph {
     /// Cut the paragraph at character `offset`; the part after it is
     /// returned as a paragraph with the same format (bullet included, as a
     /// new paragraph gets in PowerPoint and Word).
-    fn split_off(&mut self, offset: usize) -> Paragraph {
+    pub fn split_off(&mut self, offset: usize) -> Paragraph {
         let mut tail_runs = Vec::new();
         let mut at = 0;
         let mut keep = Vec::new();
@@ -608,7 +610,7 @@ pub struct CharacterFormat {
     pub script_fonts: Option<(Option<String>, Option<String>)>,
     pub highlight: Option<Option<Rgb>>,
     /// Some(None) clears the outline; the inner value is colour and width in EMU.
-    pub outline: Option<Option<(Rgb, i64)>>,
+    pub outline: Option<Option<(crate::drawing::Color, i64)>>,
     pub baseline: Option<i32>,
     pub spacing: Option<i32>,
     pub strike: Option<Strike>,
@@ -623,6 +625,8 @@ pub struct CharacterFormat {
     pub link_tooltip: Option<Option<String>>,
     /// Some(None) clears the shadow effect; inner value is the shadow.
     pub shadow: Option<Option<crate::drawing::Shadow>>,
+    /// Some(None) clears the glow around the characters; inner value is colour and radius in EMU.
+    pub glow: Option<Option<(crate::drawing::Color, i64)>>,
     /// `Some(None)` clears the proofing language.
     pub lang: Option<Option<String>>,
 }
@@ -663,6 +667,9 @@ impl CharacterFormat {
         }
         if let Some(v) = self.shadow {
             run.shadow = v;
+        }
+        if let Some(v) = self.glow {
+            run.glow = v;
         }
         if let Some(v) = self.baseline {
             run.baseline = v;
@@ -827,6 +834,33 @@ pub struct ParagraphFormat {
     pub tabs: Option<Vec<TextTabStop>>,
     /// Numbered list starting number (1..=32767).
     pub start_at: Option<u32>,
+}
+
+/// The East Asian language a run is set in, for the rules of line breaking (the line-start list, the hanging of 、。 and the font).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum EastAsianLang {
+    Japanese,
+    Chinese,
+    Korean,
+    #[default]
+    Other,
+}
+
+/// The East Asian language of a run with `lang` and `altLang` (`a:rPr`; `lang` inherited as the file says). Measured in PowerPoint 365
+/// (test/editing/pptx-text-turn-matrix5.pptx): `lang` ja-JP, zh-* or ko-KR sets the language; en-US with `altLang` ja-JP is Japanese (line-start list,
+/// the Japanese font) and ja-JP with `altLang` en-US is Japanese. Not measured: `altLang` naming another East Asian language than `lang` (zh with
+/// altLang ja, ko with altLang ja ...: `lang` is taken), and `altLang` zh or ko with `lang` en-US (taken as that language).
+pub fn east_asian_language(lang: Option<&str>, alt_lang: Option<&str>) -> EastAsianLang {
+    let of = |l: &str| match l.get(..2) {
+        Some("ja") => EastAsianLang::Japanese,
+        Some("zh") => EastAsianLang::Chinese,
+        Some("ko") => EastAsianLang::Korean,
+        _ => EastAsianLang::Other,
+    };
+    match lang.map(of) {
+        Some(EastAsianLang::Other) | None => alt_lang.map_or(EastAsianLang::Other, of),
+        Some(l) => l,
+    }
 }
 
 /// A kind of vertical writing (`a:bodyPr/@vert`).

@@ -6,6 +6,9 @@
 use crate::docx::scenarios::DocSteps;
 use crate::xlsx::scenarios::SheetSteps;
 use crate::shell::scenario::Scenario;
+use crate::pptx::ext::*;
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
@@ -21,6 +24,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::issue27_save_answer_writes_then_closes", issue27_save_answer_writes_then_closes),
         ("shell::issue27_quit_asks_to_save", issue27_quit_asks_to_save),
         ("shell::right_pane_button_follows_the_pane", right_pane_button_follows_the_pane),
+        ("shell::close_file_drops_recovery_state", close_file_drops_recovery_state),
         ("shell::fix_textbox_01_docx_second_line_selection_and_caret_alignment", fix_textbox_01_docx_second_line_selection_and_caret_alignment),
         ("shell::fix_textbox_02_docx_second_line_large_font_third_line_alignment", fix_textbox_02_docx_second_line_large_font_third_line_alignment),
         ("shell::fix_textbox_03_docx_arrow_up_down_vertical_navigation", fix_textbox_03_docx_arrow_up_down_vertical_navigation),
@@ -48,6 +52,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix_textbox_25_xlsx_partial_selection_formatting_and_toolbar_sync", fix_textbox_25_xlsx_partial_selection_formatting_and_toolbar_sync),
         ("shell::fix_textbox_26_xlsx_eight_handles_and_border_drag_while_editing", fix_textbox_26_xlsx_eight_handles_and_border_drag_while_editing),
         ("shell::fix_textbox_27_xlsx_empty_new_textbox_retracted_on_escape_and_undo_coalesced", fix_textbox_27_xlsx_empty_new_textbox_retracted_on_escape_and_undo_coalesced),
+        ("shell::k0026_xlsx_new_textbox_is_11pt", k0026_xlsx_new_textbox_is_11pt),
         ("shell::fix_textbox_28_pptx_new_slide_inserted_textbox_edit_and_ime", fix_textbox_28_pptx_new_slide_inserted_textbox_edit_and_ime),
         ("shell::fix_textbox_29_pptx_five_lines_fixed_rectangle_size_and_up_down", fix_textbox_29_pptx_five_lines_fixed_rectangle_size_and_up_down),
         ("shell::fix_textbox_30_pptx_second_line_large_font_and_selection_alignment", fix_textbox_30_pptx_second_line_large_font_and_selection_alignment),
@@ -77,12 +82,15 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::about_shows_powered_by", about_shows_powered_by),
         ("shell::about_update_available_button", about_update_available_button),
         ("shell::about_closes_with_escape_and_enter", about_closes_with_escape_and_enter),
-        ("shell::about_dialog_in_window_for_the_browser", about_dialog_in_window_for_the_browser),
+        ("shell::about_from_the_app_menu_and_the_start_window", about_from_the_app_menu_and_the_start_window),
         ("shell::help_check_update_item", help_check_update_item),
+        ("shell::update_manual_alert", update_manual_alert),
+        ("shell::update_manual_kinds", update_manual_kinds),
+        ("shell::start_view_version_line", start_view_version_line),
         ("shell::start_view_new_and_select", start_view_new_and_select),
         ("shell::fix_docx_image_look", fix_docx_image_look),
         ("shell::fix17_print_is_bound", fix17_print_is_bound),
-        ("shell::fix10_settings_window_centered_and_app_menu", fix10_settings_window_centered_and_app_menu),
+        ("shell::fix10_settings_dialog_centered_and_app_menu", fix10_settings_dialog_centered_and_app_menu),
         ("shell::fix_xlsx_new_menu_and_first_right_pane", fix_xlsx_new_menu_and_first_right_pane),
         ("shell::fix_xlsx_headings_and_formula_bar", fix_xlsx_headings_and_formula_bar),
         ("shell::fix_xlsx_zoom", fix_xlsx_zoom),
@@ -169,6 +177,11 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix124_no_mini_toolbar_on_body_text_selection", fix124_no_mini_toolbar_on_body_text_selection),
         ("shell::fix_embed_view_mode_and_bars", fix_embed_view_mode_and_bars),
         ("shell::fix72_infobar_hidden_under_view_only", fix72_infobar_hidden_under_view_only),
+        ("shell::fix139_compat_infobar_hidden_under_view_only", fix139_compat_infobar_hidden_under_view_only),
+        ("shell::compat_bar_old_files_on_three_screens", compat_bar_old_files_on_three_screens),
+        ("shell::compat_bar_docx_modes_11_12_14_show_15_does_not", compat_bar_docx_modes_11_12_14_show_15_does_not),
+        ("shell::compat_bar_hidden_under_view_only_on_three_screens", compat_bar_hidden_under_view_only_on_three_screens),
+        ("shell::compat_bar_convert_button_asks_where_to_save_and_the_bar_goes", compat_bar_convert_button_asks_where_to_save_and_the_bar_goes),
         ("shell::fix152_156_xlsx_shape_underline_and_multi_shape_text_format", fix152_156_xlsx_shape_underline_and_multi_shape_text_format),
         ("shell::fix135_xlsx_split_view_comprehensive", fix135_xlsx_split_view_comprehensive),
         ("shell::fix157_xlsx_fill_border_gridline_pixel_alignment_across_zooms", fix157_xlsx_fill_border_gridline_pixel_alignment_across_zooms),
@@ -197,7 +210,7 @@ fn fix12_menu_bar_hover_switches_menu() {
         let b = buttons::bounds(&format!("menu-button-menu.{name}")).unwrap_or_else(|| panic!("{name}: {:?}", buttons::all()));
         (f32::from(b.center().x), f32::from(b.center().y))
     };
-    let (file, edit, view) = (at("file"), at("edit"), at("view"));
+    let (file, edit, view) = (at("file"), at("edit"), at("insert"));
     assert_eq!(open_index(&mut s), None);
     // Hovering with no menu open opens nothing.
     s.hover(edit);
@@ -240,13 +253,15 @@ fn menu_start(s: &mut Scenario) -> usize {
 fn fix15_long_menu_scrolls() {
     let _probe = crate::shell::scenario::button_probe::Probe::new();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    // The redesigned Edit menu is shorter than the window: a short window makes it scroll.
+    s.size(1200., 420.);
     let edit = menu_button_at(&mut s, "edit");
     s.click(edit);
     assert_eq!(open_index(&mut s), Some(1));
     assert_eq!(menu_start(&mut s), 0);
     s.screenshot("top");
     // ▼ is the menu's last row: at the window's bottom edge (menu 64..~672).
-    s.hover((300.0, 648.0));
+    s.hover((300.0, 348.0));
     s.wait(400);
     let after_hover = menu_start(&mut s);
     assert!(after_hover > 0, "hovering ▼ scrolled: {after_hover}");
@@ -277,18 +292,19 @@ fn fix15_long_menu_scrolls() {
     s.screenshot("tall");
 }
 
-/// #10: ツール > 設定… opens the settings window in the middle of the window
-/// the user is in, its categories at the top of the left column; the app's
-/// own menu ("ibisOffice") has 設定… (⌘,).
-fn fix10_settings_window_centered_and_app_menu() {
+/// #10: ツール > 設定… opens the settings as a modal dialog in the middle of the window the user is in (no window of its
+/// own); the app's own menu ("ibisOffice") has 設定… (⌘,).
+fn fix10_settings_dialog_centered_and_app_menu() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    let parent = s.update(|_, window, _| window.bounds());
+    let windows = s.window_count();
     s.menu("tools.settings");
-    let handle = crate::shell::settings_window::handle().expect("the settings window is open");
-    let bounds = s.update(|_, _, cx| handle.update(cx, |_, window, _| window.bounds()).expect("its bounds"));
-    let (pc, bc) = (parent.center(), bounds.center());
-    assert!((f32::from(pc.x) - f32::from(bc.x)).abs() < 1.0 && (f32::from(pc.y) - f32::from(bc.y)).abs() < 1.0, "centred on its parent: {parent:?} {bounds:?}");
-    s.screenshot_of(handle.into(), "settings");
+    s.settle();
+    assert!(s.with(|e, _| e.settings.is_some() && e.dialog_is_modal()), "the settings dialog is open and modal");
+    assert_eq!(s.window_count(), windows, "no window of its own");
+    let (bounds, viewport) = s.update(|e, window, _| (e.dialog.bounds.expect("its place"), window.viewport_size()));
+    let (pc, bc) = (gpui_kit::point(viewport.width / 2., viewport.height / 2.), bounds.center());
+    assert!((f32::from(pc.x) - f32::from(bc.x)).abs() < 2.0 && (f32::from(pc.y) - f32::from(bc.y)).abs() < 2.0, "centred in its window: {viewport:?} {bounds:?}");
+    s.screenshot("settings");
     // The app menu: 設定… then 終了, as macOS apps have them.
     let labels = s.update(|_, _, cx| {
         let menus = cx.get_menus().unwrap_or_default();
@@ -513,11 +529,11 @@ fn fix_docx_edit014_symbols() {
         cx.notify();
     });
     s.menu("insert.symbol");
-    assert!(s.with(|e, _| e.doc_state().is_some_and(|d| d.symbol.is_some())));
+    assert!(s.with(|e, _| e.symbol.is_some()));
     s.screenshot("symbols");
-    s.update(|e, _, cx| e.insert_symbol('→', cx));
+    s.update(|e, window, cx| e.insert_symbol_with_window('→', window, cx));
     assert_eq!(text_of(&mut s, id), format!("→{before}"));
-    s.update(|e, _, cx| e.insert_symbol('€', cx));
+    s.update(|e, window, cx| e.insert_symbol_with_window('€', window, cx));
     assert_eq!(text_of(&mut s, id), format!("→€{before}"));
     close_modal_panel(&mut s);
     s.key("cmd-z");
@@ -529,7 +545,7 @@ fn fix_docx_edit014_symbols() {
 /// empty file of their kind (the xlsx one here).
 fn start_view_new_and_select() {
     let mut s = Scenario::start_view();
-    assert_eq!(crate::shell::start_view::start_title(), format!("ibisOffice {}", env!("IBIS_VERSION")));
+    assert_eq!(crate::shell::start_view::start_title(), format!("ibisOffice {}", crate::shell::VERSION));
     s.screenshot("start");
     // 新規作成's second page (xlsx), below the section's title.
     s.click((150.0, 140.0));
@@ -538,130 +554,113 @@ fn start_view_new_and_select() {
     s.screenshot("new-workbook");
 }
 
-/// ヘルプ > ibisOffice について: the About window shows the version and
-/// "Powered by ibisOffice" with the project's link (NOTICE: a derivative keeps
-/// them), centred on the window.
+/// ヘルプ > ibisOffice について: a dialog inside the window (the shared dialog layer, the same on every OS, no second
+/// window) that shows the version and "Powered by ibisOffice" with the project's link (NOTICE: a derivative keeps them),
+/// centred on the window.
 fn about_shows_powered_by() {
-    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    let parent = s.update(|_, window, _| window.bounds());
-    s.menu("help.about");
-    let handle = crate::shell::about_window::handle().expect("the About window is open");
-    let bounds = s.update(|_, _, cx| handle.update(cx, |_, window, _| window.bounds()).expect("its bounds"));
-    let (pc, bc) = (parent.center(), bounds.center());
-    assert!((f32::from(pc.x) - f32::from(bc.x)).abs() < 1.0 && (f32::from(pc.y) - f32::from(bc.y)).abs() < 1.0);
-    assert_eq!(crate::shell::about_window::POWERED_BY, "Powered by ibisOffice");
-    assert_eq!(crate::shell::about_window::PROJECT_URL, "https://github.com/ibisjp/ibis-office");
-    assert_eq!(crate::shell::about_window::version_line(), format!("バージョン {}", env!("IBIS_VERSION")));
-    s.screenshot_of(handle.into(), "about");
-}
-
-/// The About window ends with a centred 閉じる button, and Esc or Enter closes that window (the main window stays).
-fn about_closes_with_escape_and_enter() {
-    use crate::shell::about_window;
-    use gpui_kit::Keystroke;
-    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    let main_windows = s.window_count();
-    for key in ["escape", "enter"] {
-        s.menu("help.about");
-        let handle = about_window::handle().expect("the About window is open");
-        assert_eq!(s.window_count(), main_windows + 1);
-        s.screenshot_of(handle.into(), &format!("about-close-{key}"));
-        let keystroke = Keystroke::parse(key).unwrap();
-        s.update_window(handle.into(), |w, app| w.dispatch_keystroke(keystroke, app));
-        s.settle();
-        assert_eq!(s.window_count(), main_windows, "{key} closes the About window");
-    }
-}
-
-/// The browser (wasm) has one window only, so there ヘルプ > ibisOffice について is a modal dialog inside the window
-/// (`InteractionLayer::About`), not a second window. It shows the same content ("Powered by ibisOffice" and its link
-/// are NOTICE's term), no window is opened, and the 閉じる button, Esc and Enter close it. (The menu item itself
-/// chooses this path only when `cfg!(target_family = "wasm")`; here the dialog is shown directly.)
-fn about_dialog_in_window_for_the_browser() {
     use crate::shell::dialog::InteractionLayer;
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
     let windows = s.window_count();
-    for key in ["escape", "enter"] {
-        s.update(|e, _, cx| e.show_about(cx));
-        s.settle();
-        assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::About);
-        assert_eq!(s.window_count(), windows, "the dialog opens no window");
-        s.screenshot(&format!("about-dialog-{key}"));
-        s.key(key);
-        assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::Document, "{key} closes the dialog");
-    }
-    // The close button.
-    s.update(|e, _, cx| e.show_about(cx));
+    s.menu("help.about");
     s.settle();
-    s.update(|e, _, cx| e.dismiss_about(cx));
-    assert!(!s.with(|e, _| e.about_open));
-    assert_eq!(s.window_count(), windows);
+    assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::About);
+    assert_eq!(s.window_count(), windows, "the dialog opens no window");
+    assert_eq!(crate::shell::about::POWERED_BY, "Powered by ibisOffice");
+    assert_eq!(crate::shell::about::PROJECT_URL, "https://github.com/ibisjp/ibis-office");
+    assert_eq!(crate::shell::about::version_line(), format!("バージョン {}", crate::shell::VERSION));
+    s.screenshot("about");
 }
 
-/// Issue #92: when the start-up check found a newer version, the About window shows 「新しいバージョンがあります。」 under the
+/// The About dialog ends with a centred 閉じる button, and Esc, Enter or the button close it (the window stays).
+fn about_closes_with_escape_and_enter() {
+    use crate::shell::dialog::InteractionLayer;
+    let _probe = crate::shell::scenario::button_probe::Probe::new();
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let windows = s.window_count();
+    for key in ["escape", "enter"] {
+        s.menu("help.about");
+        s.settle();
+        assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::About);
+        s.screenshot(&format!("about-close-{key}"));
+        s.key(key);
+        assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::Document, "{key} closes the dialog");
+        assert_eq!(s.window_count(), windows);
+    }
+    // The 閉じる button.
+    s.menu("help.about");
+    s.settle();
+    let button = crate::shell::scenario::button_probe::bounds("about-close").expect("the 閉じる button is drawn");
+    s.click((f32::from(button.center().x), f32::from(button.center().y)));
+    assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::Document, "the button closes the dialog");
+}
+
+/// The app menu's ibisOffice について (the `OpenAbout` action) and the start window (no document, no editor yet)
+/// open the same dialog in the window; with no window at all, a start window is opened for it.
+fn about_from_the_app_menu_and_the_start_window() {
+    use crate::shell::dialog::InteractionLayer;
+    let mut s = Scenario::start_view();
+    let windows = s.window_count();
+    s.with_app(|cx| crate::shell::about::open(cx));
+    s.settle();
+    assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::About);
+    assert_eq!(s.window_count(), windows, "the dialog opens no window");
+    s.screenshot("about-start-window");
+    s.key("escape");
+    assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::Document);
+    // The start window's own menu.
+    s.menu("help.about");
+    s.settle();
+    assert_eq!(s.with(|e, _| e.interaction_layer()), InteractionLayer::About);
+}
+
+/// Issue #92: when the start-up check found a newer version, the About dialog shows 「新しいバージョンがあります。」 under the
 /// version (a link-coloured button with no frame and no underline); a click asks the start-up question again, even with the
 /// setting 起動時に更新を確かめる off and after it was refused. No newer version: no button. The check is replaced by a
 /// version put in (no network).
 fn about_update_available_button() {
-    use crate::shell::{about_window, update};
-    use gpui_kit::{MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point, px};
+    use crate::shell::{about, update};
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    // Nothing found: the window has no such button, and a click anywhere asks nothing.
-    update::set_available_for_test(None);
-    assert!(!about_window::update_available());
-    s.menu("help.about");
-    let handle = about_window::handle().expect("the About window is open");
-    let size = s.update_window(handle.into(), |w, _| w.bounds().size);
-    s.screenshot_of(handle.into(), "about-no-update");
+    let size = s.update(|_, w, _| w.bounds().size);
     let click_column = |s: &mut Scenario, y: f32| {
-        let position = point(size.width / 2.0, px(y));
-        s.update_window(handle.into(), |w, app| {
-            for event in [
-                PlatformInput::MouseMove(MouseMoveEvent { position, ..Default::default() }),
-                PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
-                PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
-            ] {
-                w.dispatch_event(event, app);
-            }
-        });
+        s.click((f32::from(size.width) / 2.0, y));
         s.settle();
     };
-    for y in (40..160).step_by(6) {
-        click_column(&mut s, y as f32);
+    // The dialog is centred in the window; its content lies between these heights (the 閉じる bar is below).
+    let (top, bottom) = (f32::from(size.height) / 2.0 - 140.0, f32::from(size.height) / 2.0 + 60.0);
+    // Nothing found: the dialog has no such button, and a click anywhere in the content asks nothing.
+    update::set_available_for_test(None);
+    assert!(!about::update_available());
+    s.menu("help.about");
+    s.settle();
+    s.screenshot("about-no-update");
+    let mut y = top;
+    while y < bottom {
+        click_column(&mut s, y);
+        y += 6.0;
     }
     assert!(update::asked_again_for_test().is_empty(), "no update found: nothing asks");
-    s.close_window(handle.into());
+    s.key("escape");
     // A newer version found at start-up (the setting off does not matter: the click is the user's own).
     crate::shell::settings::set("check-updates", "0");
     update::set_available_for_test(Some("99.0.0"));
-    assert!(about_window::update_available());
+    assert!(about::update_available());
     s.menu("help.about");
-    let handle = about_window::handle().expect("the About window is open");
-    let size = s.update_window(handle.into(), |w, _| w.bounds().size);
-    s.screenshot_of(handle.into(), "about-update-available");
-    let mut asked = 0;
-    for y in (40..200).step_by(4) {
+    s.settle();
+    s.screenshot("about-update-available");
+    // The button is above "Powered by ibisOffice" and below the version line, in link colour, without an underline.
+    let mut asked = false;
+    let mut y = top;
+    while y < bottom {
         let before = update::asked_again_for_test().len();
-        let position = point(size.width / 2.0, px(y as f32));
-        s.update_window(handle.into(), |w, app| {
-            for event in [
-                PlatformInput::MouseMove(MouseMoveEvent { position, ..Default::default() }),
-                PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
-                PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
-            ] {
-                w.dispatch_event(event, app);
-            }
-        });
-        s.settle();
+        click_column(&mut s, y);
         if update::asked_again_for_test().len() > before {
-            asked = y;
+            asked = true;
             break;
         }
+        y += 4.0;
     }
-    assert!(asked > 0, "the button was clicked");
+    assert!(asked, "the button was clicked");
     assert_eq!(update::asked_again_for_test(), vec!["99.0.0".to_string()]);
-    // The button is above "Powered by ibisOffice" and below the version line, in link colour, without an underline.
-    s.close_window(handle.into());
     update::set_available_for_test(None);
 }
 
@@ -676,6 +675,87 @@ fn help_check_update_item() {
         s.menu("help.check-update");
         assert_eq!(update::checked_now_for_test(), before + 1, "更新を確認 checks");
     }
+}
+
+/// A copy that cannot update itself (macOS App Translocation, a folder it cannot write to): the alert with the download button
+/// is shown at every start, once in a process, and it is not counted as an attempt (so it is never given up); the start
+/// window's 「ibisOffice を更新する」 button shows it at every click.
+fn update_manual_alert() {
+    use crate::shell::update::{self, ManualKind};
+    use gpui_kit::{MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point, px};
+    // (a) The start-up check: one alert in this process, none the second time; a new process (reset) shows it again.
+    update::set_available_for_test(None);
+    update::startup_manual_for_test(ManualKind::Translocated, true);
+    assert_eq!(update::alerts_for_test(), vec![ManualKind::Translocated], "the first start-up check alerts (App Translocation wording)");
+    update::startup_manual_for_test(ManualKind::Translocated, false);
+    update::startup_manual_for_test(ManualKind::Other, false);
+    assert_eq!(update::alerts_for_test(), vec![ManualKind::Translocated], "not twice in one process");
+    // (b) Not an attempt, however many starts.
+    let alerts = update::alerts_for_test().len();
+    for _ in 0..5 {
+        assert!(update::unusable_copy_for_test("99.0.0", "running from macOS's App Translocation (move ibisOffice.app to Applications and open it from there)"));
+        update::startup_manual_for_test(ManualKind::Translocated, true);
+    }
+    assert_eq!(update::attempts_for_test("99.0.0"), 0, "an unusable copy is not counted as an attempt");
+    assert_eq!(update::alerts_for_test().len(), alerts + 5, "every start (a new process each) alerts");
+    // (c) The start window's button: an alert at every click, even after the start-up one.
+    let mut s = Scenario::start_view();
+    update::set_manual_for_test("99.0.0", ManualKind::Translocated);
+    s.update(|_, _, cx| cx.notify());
+    s.settle();
+    s.screenshot("start-update-button");
+    let window = s.update(|_, window, _| window.window_handle());
+    let size = s.update(|_, window, _| window.bounds().size);
+    let mut clicked = 0;
+    let before = update::alerts_for_test().len();
+    'scan: for y in (20..400).step_by(6) {
+        for x in (200..(f32::from(size.width) as i32)).step_by(12) {
+            let position = point(px(x as f32), px(y as f32));
+            let at = update::alerts_for_test().len();
+            s.update_window(window, |w, app| {
+                for event in [
+                    PlatformInput::MouseMove(MouseMoveEvent { position, ..Default::default() }),
+                    PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
+                    PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
+                ] {
+                    w.dispatch_event(event, app);
+                }
+            });
+            s.settle();
+            if update::alerts_for_test().len() > at {
+                clicked = (x, y).0 + (x, y).1;
+                // A second click at the same place alerts again.
+                s.update_window(window, |w, app| {
+                    for event in [
+                        PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
+                        PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
+                    ] {
+                        w.dispatch_event(event, app);
+                    }
+                });
+                break 'scan;
+            }
+        }
+    }
+    assert!(clicked > 0, "the start window's update button was clicked");
+    assert_eq!(update::alerts_for_test().len(), before + 2, "every click alerts");
+    update::set_available_for_test(None);
+}
+
+/// The start window shows 「ver.<version>」 under the logo (right-aligned, small), with and without the update button above it.
+fn start_view_version_line() {
+    use crate::shell::update;
+    assert_eq!(crate::shell::i18n::format("start.version", &[("version", &crate::shell::VERSION)]), format!("ver.{}", crate::shell::VERSION));
+    let mut s = Scenario::start_view();
+    update::set_available_for_test(None);
+    s.update(|_, _, cx| cx.notify());
+    s.settle();
+    s.screenshot("start-version");
+    update::set_manual_for_test("99.0.0", crate::shell::update::ManualKind::Other);
+    s.update(|_, _, cx| cx.notify());
+    s.settle();
+    s.screenshot("start-version-with-update");
+    update::set_available_for_test(None);
 }
 
 /// DOCX-IMAGE-003/004: the picture at the caret is turned, flipped and cut from
@@ -759,7 +839,7 @@ fn fix_xlsx_symbols() {
     s.menu("insert.symbol");
     assert!(s.with(|e, _| e.symbol.is_some() && e.sidebar_open));
     s.screenshot("xlsx-symbols");
-    s.update(|e, _, cx| e.insert_symbol('✓', cx));
+    s.update(|e, window, cx| e.insert_symbol_with_window('✓', window, cx));
     let edit_text = s.with(|e, _| e.cell_edit().map(|c| c.text.clone()));
     assert!(edit_text.as_ref().is_some_and(|t| t.ends_with('✓')), "symbol '✓' was inserted into the cell");
 }
@@ -1244,18 +1324,18 @@ fn fix_docx_ruler() {
     let mut s = Scenario::open("test/editing/docx-report.docx");
 
     // The ruler is a setting of the right pane now (表示 > ルーラー opens it), not a toggle in the menu.
-    assert!(s.with(|e, _| e.ruler_open), "ruler should be visible initially");
+    assert!(s.with(|e, _| e.doc_prefs().ruler_open), "ruler should be visible initially");
     assert_eq!(s.menu_state("docx.ruler"), Some((true, false)), "docx.ruler opens the pane, so the item is enabled and has no check");
     s.menu("docx.ruler");
     assert!(s.with(|e, _| e.ruler_settings_open && e.sidebar_open));
     s.screenshot("docx-ruler-visible");
 
     docx_click_ruler_setting(&mut s, "ruler-horizontal");
-    assert!(!s.with(|e, _| e.ruler_open), "ruler should be hidden after unchecking it");
+    assert!(!s.with(|e, _| e.doc_prefs().ruler_open), "ruler should be hidden after unchecking it");
     s.screenshot("docx-ruler-hidden");
 
     docx_click_ruler_setting(&mut s, "ruler-horizontal");
-    assert!(s.with(|e, _| e.ruler_open), "ruler should be visible again after checking it");
+    assert!(s.with(|e, _| e.doc_prefs().ruler_open), "ruler should be visible again after checking it");
 }
 
 /// Clicks the control `id` of the ruler settings pane (the center of where it was drawn).
@@ -1437,18 +1517,27 @@ fn fix_xlsx_save_copy_and_recent() {
 fn fix_docx_gridlines() {
     let mut s = Scenario::open("test/editing/docx-report.docx");
 
-    // Grid lines are a setting of the ruler pane now (not a separate menu item).
+    // 表示 > グリッド線 is a line of the View menu next to ルーラー (the design's View menu), unchecked at first.
     assert!(!s.with(|e, _| e.gridlines_open), "gridlines should be hidden initially");
-    assert!(s.menu_state("docx.gridlines").is_none(), "docx.gridlines is no longer a menu item");
-    s.menu("docx.ruler");
+    assert_eq!(s.menu_state("docx.gridlines"), Some((true, false)), "the menu line is there, enabled and unchecked");
     s.screenshot("docx-gridlines-hidden");
 
-    docx_click_ruler_setting(&mut s, "ruler-gridlines");
-    assert!(s.with(|e, _| e.gridlines_open), "gridlines should be visible after checking it");
+    s.menu("docx.gridlines");
+    assert!(s.with(|e, _| e.gridlines_open), "gridlines should be visible after the menu is clicked");
+    assert_eq!(s.menu_state("docx.gridlines"), Some((true, true)), "the menu line is checked");
     s.screenshot("docx-gridlines-visible");
 
+    // The ruler pane's own setting says the same.
+    s.menu("docx.ruler");
     docx_click_ruler_setting(&mut s, "ruler-gridlines");
-    assert!(!s.with(|e, _| e.gridlines_open), "gridlines should be hidden again after unchecking it");
+    assert!(!s.with(|e, _| e.gridlines_open), "unchecking it in the ruler pane hides the gridlines");
+    assert_eq!(s.menu_state("docx.gridlines"), Some((true, false)), "and the menu line is unchecked");
+
+    s.menu("docx.gridlines");
+    assert!(s.with(|e, _| e.gridlines_open));
+    s.menu("docx.gridlines");
+    assert!(!s.with(|e, _| e.gridlines_open), "gridlines should be hidden again after the menu is clicked again");
+    assert_eq!(s.menu_state("docx.gridlines"), Some((true, false)), "the menu line is unchecked again");
 }
 
 /// XLSX-VIEW-005: 選択範囲に合わせたズーム（表示 > 選択範囲に合わせて拡大/縮小）
@@ -4488,7 +4577,7 @@ fn fix_xlsx_object008_selection_pane_align_and_frame() {
     // rect を選択して左揃え
     s.update(|e, _, cx| {
         e.selection = Some(rect_id);
-        e.align_sheet_shape(crate::pptx::editing::Align::Left, cx);
+        e.align_sheet_shape(crate::shell::shape_items::Align::Left, cx);
     });
     let rect_frame = s.with(|e, _| e.slide().shape(rect_id).unwrap().frame);
     let min_x = s.with(|e, _| e.slide().shapes.iter().skip(1).map(|s| s.frame.x).min().unwrap());
@@ -6284,17 +6373,17 @@ fn fix76_scrollbars_always() {
     unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
     let mut s = Scenario::open("test/editing/docx-report.docx");
     let mode = |s: &mut Scenario| s.update(|_, _, cx| Theme::global(cx).scrollbar_mode);
-    assert!(crate::shell::settings_window::scrollbars_always(), "on by default");
+    assert!(crate::shell::settings_dialog::scrollbars_always(), "on by default");
     assert_eq!(mode(&mut s), ScrollbarMode::Always);
     s.menu("tools.settings");
     s.screenshot("settings");
-    crate::shell::settings::set(crate::shell::settings_window::SCROLLBARS_ALWAYS_KEY, "1");
-    s.update(|_, _, cx| crate::shell::settings_window::apply_scrollbar_mode(cx));
+    crate::shell::settings::set(crate::shell::settings_dialog::SCROLLBARS_ALWAYS_KEY, "1");
+    s.update(|_, _, cx| crate::shell::settings_dialog::apply_scrollbar_mode(cx));
     assert_eq!(mode(&mut s), ScrollbarMode::Always);
     assert!(std::fs::read_to_string(dir.join("settings.txt")).unwrap_or_default().contains("view.scrollbars-always=1"));
     s.screenshot("always");
-    crate::shell::settings::set(crate::shell::settings_window::SCROLLBARS_ALWAYS_KEY, "0");
-    s.update(|_, _, cx| crate::shell::settings_window::apply_scrollbar_mode(cx));
+    crate::shell::settings::set(crate::shell::settings_dialog::SCROLLBARS_ALWAYS_KEY, "0");
+    s.update(|_, _, cx| crate::shell::settings_dialog::apply_scrollbar_mode(cx));
     assert_eq!(mode(&mut s), ScrollbarMode::Hover);
     unsafe { std::env::remove_var("IBIS_SETTINGS_DIR") };
 }
@@ -6344,8 +6433,8 @@ fn fix78_dark_chrome() {
     s.screenshot("start-dark");
     s.menu("tools.settings");
     s.settle();
-    let handle = crate::shell::settings_window::handle().expect("the settings window is open");
-    s.screenshot_of(handle.into(), "settings-dark");
+    assert!(s.with(|e, _| e.settings.is_some()), "the settings dialog is open");
+    s.screenshot("settings-dark");
     s.update(|_, _, cx| crate::shell::palette::release(cx));
 }
 
@@ -6618,13 +6707,39 @@ fn issue27_quit_asks_to_save() {
     }
 }
 
+/// Closing a file takes its AutoRecover snapshot away, and the window is no longer one of a recovered or a repaired file: on
+/// every screen (until 2026-11-11 `force_close_file` did this for a workbook and a presentation only, and a document kept both).
+fn close_file_drops_recovery_state() {
+    let dir = crate::shell::scenario::repo_root().join("target/scenario-input/close-recovery");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+        let mut s = issue27_new(kind);
+        let snapshot = dir.join(format!("{kind:?}_autorecover_1.tmp"));
+        std::fs::write(&snapshot, b"snapshot").unwrap();
+        let file = snapshot.clone();
+        s.update(move |e, _, _| {
+            e.active_autorecover_file = Some(file);
+            e.is_recovered = true;
+            e.is_repaired = true;
+            e.repair_summary = Some(String::new());
+        });
+        s.update(|e, window, cx| e.force_close_file(window, cx));
+        s.settle();
+        assert!(!snapshot.exists(), "{kind:?}: the snapshot of the closed file is left on the disk");
+        let left = s.with(|e, _| (e.is_recovered, e.is_repaired, e.repair_summary.is_some(), e.active_autorecover_file.is_some()));
+        assert_eq!(left, (false, false, false, false), "{kind:?}: recovered, repaired, the repair's summary, the snapshot's path");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The title row's right-pane button (and 表示 > サイドバー) says what is on screen: on only when the pane is shown,
 /// enabled only when it can show something. A docx shows the pane only for a panel opened for it (none in a new
 /// document: the button is off and greyed); xlsx and pptx show it on request.
 fn right_pane_button_follows_the_pane() {
     let pane = |s: &mut Scenario| s.with(|e, _| e.right_pane);
     let menu = |s: &mut Scenario| s.with(|e, _| {
-        let entries = crate::shell::chrome_defaults::view_menu(e, e.kind());
+        let entries = crate::shell::chrome_defaults::view_menu(e);
         entries
             .into_iter()
             .find_map(|entry| match entry {
@@ -6668,7 +6783,7 @@ fn docx_open_box_edit(s: &mut Scenario) -> (f32, f32, f32, f32) {
     docx_box_win_rect(s)
 }
 
-fn docx_box_win_rect(s: &mut Scenario) -> (f32, f32, f32, f32) {
+pub(crate) fn docx_box_win_rect(s: &mut Scenario) -> (f32, f32, f32, f32) {
     let (page, frame) = s.with(|e, _| {
         if let Some(edit) = e.doc_state().and_then(|d| d.box_edit.as_ref()) {
             let f = e.floating_text_box_frame_of(edit.at).map(|(_, f, _)| f).unwrap_or(edit.frame);
@@ -7643,7 +7758,7 @@ fn fix_textbox_30_pptx_second_line_large_font_and_selection_alignment() {
 
     let (sr, p2_y, p2_h) = s.with(|e, _| {
         let sr = e.caret_marks().unwrap().rects(true).unwrap().1[0];
-        let list = e.pptx().unwrap().positions.paragraphs.borrow();
+        let list = e.shape_edit.positions.paragraphs.borrow();
         let p2 = list[2].borrow();
         let p2_y = p2.lines[0].top;
         let p2_h = p2.lines[0].height;
@@ -7774,6 +7889,8 @@ fn fix_textbox_32_copy_cut_paste_and_select_all_across_docx_xlsx_pptx() {
 fn fix97_menu_scrollbar_visible_and_flush_to_edges() {
     let _probe = crate::shell::scenario::button_probe::Probe::new();
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    // The redesigned Edit menu is shorter than the window: a short window makes it scroll.
+    s.size(1200., 420.);
     let edit = menu_button_at(&mut s, "edit");
     s.click(edit);
     assert_eq!(open_index(&mut s), Some(1));
@@ -7781,7 +7898,7 @@ fn fix97_menu_scrollbar_visible_and_flush_to_edges() {
     s.screenshot("fix97-menu-top");
 
     // Hover ▼ to scroll into the middle (both ▲ and ▼ shown).
-    s.hover((300.0, 648.0));
+    s.hover((300.0, 348.0));
     s.wait(400);
     let mid_start = menu_start(&mut s);
     assert!(mid_start > 0, "scrolled down into middle: {mid_start}");
@@ -7870,18 +7987,18 @@ fn fix99_100_101_102_docx_textbox_panel_and_inline_picture_resize() {
     // #101: Open graphical line-dash dropdown, hover DashDot, and select Dash.
     s.update(|e, _, cx| {
         if let Some(st) = e.doc_state_mut().and_then(|d| d.text_box.as_mut()) {
-            st.line_dash_open = true;
-            st.hovered_dash = Some(LineDash::DashDot);
+            st.dash_ui.open = true;
+            st.dash_ui.hovered = Some(LineDash::DashDot);
         }
         cx.notify();
     });
     s.settle();
-    assert!(s.with(|e, _| e.doc_state().unwrap().text_box.as_ref().unwrap().line_dash_open));
+    assert!(s.with(|e, _| e.doc_state().unwrap().text_box.as_ref().unwrap().dash_ui.open));
     s.update(|e, _, cx| {
         if let Some(st) = e.doc_state_mut().and_then(|d| d.text_box.as_mut()) {
-            st.dash = LineDash::Dash;
-            st.line_dash_open = false;
-            st.hovered_dash = None;
+            st.dash_ui.dash = LineDash::Dash;
+            st.dash_ui.open = false;
+            st.dash_ui.hovered = None;
         }
         e.apply_text_box(cx);
     });
@@ -8908,6 +9025,113 @@ fn fix72_infobar_hidden_under_view_only() {
         assert!(s.with(|e, _| e.is_read_only() && e.infobar_kind().is_none()), "{path}: no information bar under view=1");
         assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "{path}: no information bar drawn under view=1");
     }
+}
+
+/// #139: the compatibility-mode bar (.doc is always 11; .docx with compatibilityMode <= 14) is not drawn under `view=1`,
+/// and is still drawn without it.
+fn fix139_compat_infobar_hidden_under_view_only() {
+    use crate::shell::embed::resolve_embed_query_options;
+    use ibis_doc_model::flow_command::FlowCommand;
+    for mode in [11u32, 12, 14] {
+        let mut s = Scenario::open("test/editing/docx-report.docx");
+        s.update(|e, _, cx| {
+            e.run_flow(vec![FlowCommand::SetCompatibilityOptions { compatibility_mode: Some(mode), use_fe_layout: true, do_not_expand_shift_return: false }], cx);
+        });
+        s.settle();
+        assert_eq!(s.with(|e, _| e.infobar_kind()), Some(crate::shell::infobar::InfoBarKind::Compatibility), "mode {mode}: the bar is shown without view=1");
+        assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "mode {mode}: the bar is drawn without view=1");
+        s.update(|e, _, cx| {
+            e.read_only = resolve_embed_query_options("?view=1").2;
+            cx.notify();
+        });
+        s.settle();
+        assert!(s.with(|e, _| e.is_docx_compatibility_mode() && e.infobar_kind().is_none()), "mode {mode}: no bar under view=1");
+        assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "mode {mode}: no bar drawn under view=1");
+    }
+}
+
+/// The three screens' compatibility bars (Backlog 互換・旧形式のバー): an old .doc / .xls / .ppt (made by Word, Excel and
+/// PowerPoint on Windows, test/editing/legacy-compat.*) opens with the bar; a file in a current format does not.
+fn compat_bar_old_files_on_three_screens() {
+    use crate::shell::infobar::InfoBarKind;
+    for (path, expected, id) in [
+        ("test/editing/legacy-compat.doc", InfoBarKind::Compatibility, "docx-infobar-compat"),
+        ("test/editing/legacy-compat.xls", InfoBarKind::LegacyFormat, "xlsx-infobar-legacy"),
+        ("test/editing/legacy-compat.ppt", InfoBarKind::LegacyFormat, "pptx-infobar-legacy"),
+    ] {
+        let mut s = Scenario::open(path);
+        assert_eq!(s.with(|e, _| e.infobar_kind()), Some(expected), "{path}: the old format's bar");
+        assert!(s.with(|e, _| e.opened_from_legacy), "{path}: read as an old binary file");
+        assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_some(), "{path}: the bar ({id}) is drawn");
+    }
+    for path in ["test/editing/xlsx-sales.xlsx", "test/editing/pptx-plan.pptx", "test/editing/docx-report.docx"] {
+        let mut s = Scenario::open(path);
+        assert!(!s.with(|e, _| e.opened_from_legacy) && s.with(|e, _| e.infobar_kind().is_none()), "{path}: no compatibility bar for a current format");
+    }
+}
+
+/// Word 2003 / 2007 / 2010 compatibility modes (saved by Word through COM) show the bar; the current mode (15) does not.
+fn compat_bar_docx_modes_11_12_14_show_15_does_not() {
+    use crate::shell::infobar::InfoBarKind;
+    use ibis_doc_model::flow_command::FlowCommand;
+    for (path, name) in [("test/editing/legacy-compat-11.docx", "Word 2003"), ("test/editing/legacy-compat-12.docx", "Word 2007"), ("test/editing/legacy-compat-14.docx", "Word 2010")] {
+        let mut s = Scenario::open(path);
+        assert_eq!(s.with(|e, _| e.infobar_kind()), Some(InfoBarKind::Compatibility), "{path}: the bar");
+        assert_eq!(s.with(|e, _| e.docx_compatibility_mode_name()), name, "{path}: the version in the bar");
+    }
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    s.update(|e, _, cx| {
+        e.run_flow(vec![FlowCommand::SetCompatibilityOptions { compatibility_mode: Some(15), use_fe_layout: true, do_not_expand_shift_return: false }], cx);
+    });
+    s.settle();
+    assert_eq!(s.with(|e, _| e.infobar_kind()), None, "Word 2013 and later (15): no bar");
+}
+
+/// `view=1` / `--read-only`: none of the three screens draws the compatibility bar.
+fn compat_bar_hidden_under_view_only_on_three_screens() {
+    use crate::shell::embed::resolve_embed_query_options;
+    for path in ["test/editing/legacy-compat.doc", "test/editing/legacy-compat.xls", "test/editing/legacy-compat.ppt", "test/editing/legacy-compat-12.docx"] {
+        let mut s = Scenario::open(path);
+        assert!(s.with(|e, _| e.infobar_kind().is_some()), "{path}: the bar without view=1");
+        s.update(|e, _, cx| {
+            e.read_only = resolve_embed_query_options("?view=1").2;
+            cx.notify();
+        });
+        s.settle();
+        assert!(s.with(|e, _| e.infobar_kind().is_none()), "{path}: no bar under view=1");
+        assert!(s.update(|e, _, cx| e.render_infobar(cx)).is_none(), "{path}: no bar drawn under view=1");
+    }
+}
+
+/// 最新の形式に変換: on .xls / .ppt the button opens 名前を付けて保存 (the dialog itself is caught, not opened); once the file
+/// is saved as .xlsx / .pptx the bar goes. On a .docx in an old mode the button sets the current mode.
+fn compat_bar_convert_button_asks_where_to_save_and_the_bar_goes() {
+    use crate::shell::scenario::button_probe;
+    for (path, button, saved) in [("test/editing/legacy-compat.xls", "infobar-btn-convert-legacy", "converted.xlsx"), ("test/editing/legacy-compat.ppt", "infobar-btn-convert-legacy", "converted.pptx")] {
+        let mut s = Scenario::open(path);
+        button_probe::catch_save_as(true);
+        {
+            let _probe = button_probe::Probe::new();
+            s.update(|_, _, cx| cx.notify());
+            button_probe::click(&mut s, button);
+            s.settle();
+        }
+        let asks = button_probe::save_as_asks();
+        button_probe::catch_save_as(false);
+        assert_eq!(asks, 1, "{path}: the button asks where to save once");
+        assert!(s.with(|e, _| e.infobar_kind().is_some()), "{path}: the bar stays until the file is saved");
+        s.save_as(saved);
+        s.settle();
+        assert!(s.with(|e, _| e.infobar_kind().is_none() && !e.opened_from_legacy), "{path}: saved as {saved}: no bar");
+    }
+    let mut s = Scenario::open("test/editing/legacy-compat-12.docx");
+    {
+        let _probe = button_probe::Probe::new();
+        s.update(|_, _, cx| cx.notify());
+        button_probe::click(&mut s, "infobar-btn-convert-compat");
+        s.settle();
+    }
+    assert!(s.with(|e, _| e.infobar_kind().is_none() && !e.is_docx_compatibility_mode()), "the .docx is in the current mode after the button");
 }
 
 /// #135: Comprehensive test for Excel (.xlsx) Split View:
@@ -10475,4 +10699,95 @@ fn issue111_write_password_docx() {
     s.click_text(ibis_doc_model::FlowPos::new(id, 0));
     s.type_text("XYZ");
     assert_eq!(s.paragraph(0).1, format!("XYZ{before}"), "typing once unlocked");
+}
+
+/// Click the start window's update button (found by scanning the window); how many alerts it made (0: the button was not found).
+fn click_update_button(s: &mut Scenario) -> usize {
+    use crate::shell::update;
+    use gpui_kit::{MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point, px};
+    let window = s.update(|_, window, _| window.window_handle());
+    let size = s.update(|_, window, _| window.bounds().size);
+    let before = update::alerts_for_test().len();
+    for y in (20..400).step_by(6) {
+        for x in (200..(f32::from(size.width) as i32)).step_by(12) {
+            let position = point(px(x as f32), px(y as f32));
+            s.update_window(window, |w, app| {
+                for event in [
+                    PlatformInput::MouseMove(MouseMoveEvent { position, ..Default::default() }),
+                    PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
+                    PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position, click_count: 1, ..Default::default() }),
+                ] {
+                    w.dispatch_event(event, app);
+                }
+            });
+            s.settle();
+            let now = update::alerts_for_test().len();
+            if now > before {
+                return now - before;
+            }
+        }
+    }
+    0
+}
+
+/// A Flatpak and a copy built from the source cannot update themselves either: how each is told apart, the alert once per process at
+/// start-up (a new process again), the words (the Flatpak's command names this machine's architecture and the bundle's file name),
+/// the start window's update button, and the same alert at every click.
+fn update_manual_kinds() {
+    use crate::shell::update::{self, ManualKind};
+    // How the copy is told apart.
+    assert_eq!(update::unusable_kind_for_test("99.0.0", "a Flatpak (it is updated by installing the new bundle: flatpak install --user --bundle)"), Some(ManualKind::Flatpak));
+    assert_eq!(update::unusable_kind_for_test("99.0.0", "a build run from the source tree"), Some(ManualKind::Source));
+    assert_eq!(update::unusable_kind_for_test("99.0.0", "a build run without its AppImage (APPIMAGE is not set)"), Some(ManualKind::Source));
+    assert_eq!(update::unusable_kind_for_test("99.0.0", "running from macOS's App Translocation (move ibisOffice.app to Applications and open it from there)"), Some(ManualKind::Translocated));
+    assert_eq!(update::unusable_kind_for_test("99.0.0", "/Applications is not writable"), Some(ManualKind::Other));
+    // The Flatpak detection can be replaced from the environment.
+    unsafe { std::env::set_var("IBIS_FLATPAK", "1") };
+    assert!(update::is_flatpak_for_test());
+    unsafe { std::env::set_var("IBIS_FLATPAK", "0") };
+    assert!(!update::is_flatpak_for_test());
+    unsafe { std::env::remove_var("IBIS_FLATPAK") };
+    // The words.
+    let (title, detail, command) = update::alert_words_for_test(ManualKind::Flatpak, "9.9.9");
+    let command = command.expect("the Flatpak alert has a command to copy");
+    assert!(title.contains("9.9.9"), "{title}");
+    assert_eq!(command, format!("flatpak install --user --bundle ibisOffice-9.9.9-Linux-{}.flatpak", std::env::consts::ARCH));
+    assert!(detail.contains(&command), "the detail names the command: {detail}");
+    let (title, detail, none) = update::alert_words_for_test(ManualKind::Source, "9.9.9");
+    assert!(title.contains("9.9.9") && detail.contains("https://") && none.is_none(), "{title} / {detail}");
+    for kind in [ManualKind::Flatpak, ManualKind::Source] {
+        // Start-up: once in a process, again in a new one; not an attempt.
+        update::set_available_for_test(None);
+        let before = update::alerts_for_test().len();
+        update::startup_manual_for_test(kind, true);
+        update::startup_manual_for_test(kind, false);
+        assert_eq!(update::alerts_for_test().len(), before + 1, "{kind:?}: one alert in a process");
+        update::startup_manual_for_test(kind, true);
+        assert_eq!(update::alerts_for_test().len(), before + 2, "{kind:?}: a new process alerts again");
+        assert_eq!(update::attempts_for_test("99.0.0"), 0);
+        // The start window's button shows, and a click shows the same alert.
+        let mut s = Scenario::start_view();
+        update::set_manual_for_test("99.0.0", kind);
+        assert_eq!(update::available_version().as_deref(), Some("99.0.0"), "{kind:?}: the update button shows");
+        s.update(|_, _, cx| cx.notify());
+        s.settle();
+        let at = update::alerts_for_test().len();
+        assert_eq!(click_update_button(&mut s), 1, "{kind:?}: a click shows an alert");
+        assert_eq!(update::alerts_for_test()[at], kind, "{kind:?}: the same kind of alert");
+        update::set_available_for_test(None);
+    }
+}
+
+/// K0026: a text box inserted on the sheet screen has 11 pt text (Excel's drawing default), not the presentation's 18 pt.
+fn k0026_xlsx_new_textbox_is_11pt() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    let id = s.update(|e, window, cx| e.insert_sheet_textbox(window, cx));
+    s.type_text("sample");
+    s.update(|e, window, cx| e.commit_edit(window, cx));
+    s.with(|e, _| {
+        let body = e.slide().shape(id).and_then(|sh| sh.text_body()).expect("text body");
+        assert_eq!(body.style.font_size, 1100, "body style is 11 pt");
+        let sizes: Vec<_> = body.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| r.style.font_size)).collect();
+        assert!(!sizes.is_empty() && sizes.iter().all(|z| z.unwrap_or(1100) == 1100), "runs are 11 pt: {sizes:?}");
+    });
 }

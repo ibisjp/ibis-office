@@ -1,0 +1,126 @@
+# Word 365 (Windows) draws a character, set apart from its neighbours, in these typefaces when the typeface of its font slot has no glyph for it (#M98, measured 2026-11-11).
+# Made by scripts/gen-word-fallback-typefaces.py from tasks/doc/m98-fallback-isolated.tsv: do not edit by hand. Columns: first, last (hex), typeface.
+2010	2011	Cambria Math
+2012	2012	Courier New
+2016	2016	Cambria Math
+201F	201F	Courier New
+2023	2023	Segoe UI Symbol
+2024	2025	ＭＳ 明朝
+2027	2027	ＭＳ 明朝
+2031	2031	Segoe UI Symbol
+2034	2034	Courier New
+2035	2037	ＭＳ 明朝
+2038	2038	Segoe UI Symbol
+203B	203B	ＭＳ 明朝
+203D	203D	Courier New
+203F	2043	Segoe UI Symbol
+2045	2046	Cambria Math
+2047	2049	Malgun Gothic
+204A	2056	Segoe UI Symbol
+2057	2057	Cambria Math
+2058	205D	Segoe UI Symbol
+205E	205E	Courier New
+2100	2104	Cambria Math
+2106	2112	Cambria Math
+2114	2115	Cambria Math
+2117	2121	Cambria Math
+2123	2125	Cambria Math
+2127	212D	Cambria Math
+212F	214F	Cambria Math
+2153	215A	Cambria Math
+2160	2182	ＭＳ 明朝
+2183	2188	Microsoft JhengHei
+2189	2189	Yu Gothic
+2196	21A7	Cambria Math
+21A9	2201	Cambria Math
+2203	2205	Cambria Math
+2207	220E	Cambria Math
+2210	2210	Cambria Math
+2213	2214	Cambria Math
+2216	2218	Cambria Math
+221B	221D	Cambria Math
+2220	2228	Cambria Math
+222A	222A	Cambria Math
+222C	2247	Cambria Math
+2249	225F	Cambria Math
+2262	2263	Cambria Math
+2266	22FF	Cambria Math
+2460	2473	Cambria Math
+2474	24B5	ＭＳ 明朝
+24B6	24CF	Segoe UI Symbol
+24D0	24E9	ＭＳ 明朝
+24EA	24F4	Cambria Math
+24F5	24FF	Segoe UI Symbol
+25A0	25A0	Courier New
+25A2	25A9	Cambria Math
+25AC	25AC	Courier New
+25AD	25B1	Cambria Math
+25B2	25B2	Courier New
+25B3	25B9	Cambria Math
+25BA	25BA	Courier New
+25BB	25BB	Cambria Math
+25BC	25BC	Courier New
+25BD	25C3	Cambria Math
+25C4	25C4	Courier New
+25C5	25C9	Cambria Math
+25CC	25CC	Courier New
+25CD	25CE	Cambria Math
+25D0	25D7	Cambria Math
+25D8	25D9	Courier New
+25DA	25E5	Cambria Math
+25E7	25FC	Cambria Math
+25FD	25FE	Segoe UI Emoji
+25FF	25FF	Cambria Math
+2600	2613	Segoe UI Symbol
+2614	2615	Segoe UI Emoji
+2616	2647	Segoe UI Symbol
+2648	2653	Segoe UI Emoji
+2654	267E	Segoe UI Symbol
+267F	267F	Segoe UI Emoji
+2680	2692	Segoe UI Symbol
+2693	2693	Segoe UI Emoji
+2694	26A0	Segoe UI Symbol
+26A1	26A1	Segoe UI Emoji
+26A2	26A9	Segoe UI Symbol
+26AA	26AB	Segoe UI Emoji
+26AC	26BC	Segoe UI Symbol
+26BD	26BE	Segoe UI Emoji
+26BF	26C3	Segoe UI Symbol
+26C4	26C5	Segoe UI Emoji
+26C6	26CD	Segoe UI Symbol
+26CE	26CE	Segoe UI Emoji
+26CF	26D3	Segoe UI Symbol
+26D4	26D4	Segoe UI Emoji
+26D5	26E9	Segoe UI Symbol
+26EA	26EA	Segoe UI Emoji
+26EB	26F1	Segoe UI Symbol
+26F2	26F3	Segoe UI Emoji
+26F4	26F4	Segoe UI Symbol
+26F5	26F5	Segoe UI Emoji
+26F6	26F9	Segoe UI Symbol
+26FA	26FA	Segoe UI Emoji
+26FB	26FC	Segoe UI Symbol
+26FD	26FD	Segoe UI Emoji
+26FE	26FF	Segoe UI Symbol
+2701	2704	Segoe UI Symbol
+2705	2705	Segoe UI Emoji
+2706	2709	Segoe UI Symbol
+270A	270B	Segoe UI Emoji
+270C	2727	Segoe UI Symbol
+2728	2728	Segoe UI Emoji
+2729	274B	Segoe UI Symbol
+274C	274C	Segoe UI Emoji
+274D	274D	Segoe UI Symbol
+274E	274E	Segoe UI Emoji
+274F	2752	Segoe UI Symbol
+2753	2755	Segoe UI Emoji
+2756	2756	Segoe UI Symbol
+2757	2757	Segoe UI Emoji
+2758	2775	Segoe UI Symbol
+2776	277F	Cambria Math
+2780	2794	Segoe UI Symbol
+2795	2797	Segoe UI Emoji
+2798	27AF	Segoe UI Symbol
+27B0	27B0	Segoe UI Emoji
+27B1	27BE	Segoe UI Symbol
+27BF	27BF	Segoe UI Emoji

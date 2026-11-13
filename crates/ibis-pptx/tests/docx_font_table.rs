@@ -10,8 +10,10 @@ use ibis_pptx::SaveOptions;
 
 const KEY: &str = "{0A1B2C3D-4E5F-6071-8293-A4B5C6D7E8F9}";
 
+/// The bytes of an embedded font. The file is saved as it was and the obfuscation is undone, which does not look at what the bytes
+/// are, so a few thousand bytes of a fixed pattern stand for a font.
 fn font_file() -> Vec<u8> {
-    std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ibis-office-app/fonts/IBMPlexSans-Regular.ttf")).unwrap()
+    (0..6000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect()
 }
 
 /// What Word writes: the first 32 bytes XORed with the GUID's bytes taken from the last to the first.

@@ -1,0 +1,29 @@
+[package]
+name = "ibis-office-pptx"
+description = "The presentation screen (PPTX) of ibisOffice: the slide list, the slide view, the slide show, the master view, the animations, the notes and the presentation's own menus, panels and editing, on top of ibis-office-shell."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-office-base.workspace = true
+ibis-office-render.workspace = true
+# The editor window and what every format shares (tasks/doc/crate-split-plan.md, 12).
+ibis-office-shell.workspace = true
+# `#[editor_ext]`: the methods this crate writes for the editor are extension traits (tasks/doc/crate-split-plan.md, 10).
+ibis-office-macros.workspace = true
+ibis-doc-model.workspace = true
+ibis-pptx.workspace = true
+gpui-kit.workspace = true
+log = "0.4"
+
+# The PNG writer of the zoom cards (zoom_cards.rs); the same crate as ibis-office-app's, already in the tree.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[features]
+default = ["export"]
+# The scenario tests' accessors and the scenarios of the presentation screen (src/tests/); ibis-office-app's `scenarios` turns it on.
+scenarios = ["export", "ibis-office-shell/scenarios", "ibis-office-base/scenarios", "ibis-office-render/scenarios"]
+# As ibis-office-app's: the code that draws or reads pictures without a window (turns the shell's export on).
+export = ["ibis-office-shell/export", "ibis-office-render/export"]

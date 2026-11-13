@@ -6,7 +6,10 @@
 
 use std::sync::Arc;
 
-use super::flow_layout::{Item, Pagination};
+use crate::docx::flow_layout::{Item, Pagination};
+// The scenarios' driver below calls the document's methods (Windows runs these as plain tests, without it).
+#[cfg(not(windows))]
+use crate::docx::ext::*;
 
 /// The checks, run by the scenario runner (`--test scenarios -- docx::layout_grid`): macOS and Linux have no other way to run them (GPUI's macOS platform
 /// can be created only on the main thread, and `cargo test` runs a test on another one). On Windows they are `#[test]`s of `cargo test --lib`.
@@ -26,6 +29,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::layout_grid::spaces_before_a_closing_character_squeeze_to_a_quarter_of_an_em_each", spaces_before_a_closing_character_squeeze_to_a_quarter_of_an_em_each),
         ("docx::layout_grid::lines_in_a_cell_off_the_grid_are_1_3_times_the_size_apart", lines_in_a_cell_off_the_grid_are_1_3_times_the_size_apart),
         ("docx::layout_grid::ivs_selector_takes_no_room", ivs_selector_takes_no_room),
+        ("docx::layout_grid::a_yu_line_on_a_grid_is_1_673_em_high_and_takes_the_grids_that_hold_it", a_yu_line_on_a_grid_is_1_673_em_high_and_takes_the_grids_that_hold_it),
+        ("docx::layout_grid::a_multiple_on_a_grid_is_the_larger_of_the_grids_the_line_takes_and_the_grid_times_it", a_multiple_on_a_grid_is_the_larger_of_the_grids_the_line_takes_and_the_grid_times_it),
     ]
 }
 
@@ -48,7 +53,7 @@ pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
 #[cfg(not(windows))]
 fn laid_out(file: &str) -> Arc<Pagination> {
     let mut s = crate::shell::scenario::Scenario::open(&format!("test/corpus-report/docx/{file}"));
-    s.with(|e, _| super::flow_layout::pages(e.flow().expect("a document"), &e.resources))
+    s.with(|e, _| crate::docx::flow_layout::pages(e.flow().expect("a document"), &e.resources))
 }
 
 #[cfg(windows)]
@@ -64,8 +69,8 @@ fn laid_out(file: &str) -> Arc<Pagination> {
         resources.preload.wait_all();
         resources
     });
-    super::flow_layout::update_fields_on_open(&mut presentation, &resources);
-    super::flow_layout::pages(presentation.flow.as_ref().expect("a flowing document"), &resources)
+    crate::docx::flow_layout::update_fields_on_open(&mut presentation, &resources);
+    crate::docx::flow_layout::pages(presentation.flow.as_ref().expect("a flowing document"), &resources)
 }
 
 /// P1: a line of the line grid at the foot of the page stays on it when its text fits, though the room the grid adds under the text
@@ -556,4 +561,119 @@ fn emoji_selector_and_joiner_take_no_room() {
     assert!((person_y - a[3].0).abs() < 0.01, "the second 🧑 is in the fourth paragraph");
     assert!(joiner - person > 1.0, "🧑 has a width: {person} to {joiner}");
     assert!((laptop - joiner).abs() < 0.01 && (a[3].1 - joiner).abs() < 0.01, "the joiner or the joined character takes room: ZWJ at {joiner}, 💻 at {laptop}, あ at {}", a[3].1); // i18n-ok: test data
+}
+
+/// The distance of each `label` line to the line under it (the paragraph's second line), by the label's text, in the lines of the pages.
+fn label_pitches(file: &str) -> Vec<(String, f32)> {
+    let pages = laid_out(file);
+    let mut out = Vec::new();
+    for page in &pages.pages {
+        let mut lines: Vec<(f32, String)> = page
+            .items
+            .iter()
+            .filter_map(|item| if let Item::Text { y, text, .. } = item { Some((*y, text.to_string())) } else { None })
+            .collect();
+        lines.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for pair in lines.windows(2) {
+            if pair[0].1.chars().next().is_some_and(|c| c.is_ascii_digit()) && pair[1].1.starts_with("行間") { // i18n-ok (Japanese text under test or a name table that matches labels)
+                out.push((pair[0].1.clone(), pair[1].0 - pair[0].0));
+            }
+        }
+    }
+    out
+}
+
+/// GitHub issue 54 (gakusyosi's test.docx: 24 pt 游明朝 at `w:line="259"` on an 18 pt grid, 54 pt in Word, 36 pt here): a line of 游明朝 or 游ゴシック
+/// on the line grid is 1.673 em high (1.3 times its Windows ascent plus descent, 1.2871 em, as off the grid), and takes the grids that hold that
+/// (a grid tied with the line's height, to the 0.05 pt of a `w:linePitch`, takes one more). Word's PDFs of `grid-ratio-yumincho-326-340.docx`,
+/// `grid-ratio-yugothic-326-340.docx` and `grid-ratio-yumincho-398-402.docx` (Microsoft 365 16.0.20527; 游明朝 and 游ゴシック alike): the lines of
+/// 20, 40 and 60 pt on grids of 16.3 to 17.0 pt take one grid fewer from 16.75 pt up (20 pt: 3 to 2 grids, 40 pt: 5 to 4, 60 pt: 7 to 6); 12 pt
+/// takes 2 grids and 36 pt 4 on grids of 19.9 to 20.05 pt, and 1 and 3 on 20.1 pt; 54 pt takes 6 on all of them.
+#[cfg_attr(windows, test)]
+fn a_yu_line_on_a_grid_is_1_673_em_high_and_takes_the_grids_that_hold_it() {
+    // (size, pitch in twips) -> grids, section by section: the labels are `<twips>_<size>`.
+    let grids = |file: &str| -> Vec<(u32, String, f32)> {
+        label_pitches(file)
+            .into_iter()
+            .map(|(label, pitch)| {
+                let (twips, size) = label.split_once('_').expect("a label");
+                let twips: u32 = twips.parse().expect("twips");
+                (twips, size.to_string(), pitch / (twips as f32 / 20.0))
+            })
+            .collect()
+    };
+    for file in ["grid-ratio-yumincho-326-340.docx", "grid-ratio-yugothic-326-340.docx"] {
+        let found = grids(file);
+        assert_eq!(found.len(), 15 * 6, "{file}: {} paragraphs", found.len());
+        for (twips, size, n) in found {
+            let want = match (size.as_str(), twips <= 334) {
+                ("12", _) => 2.0,
+                ("20", true) => 3.0,
+                ("20", false) => 2.0,
+                ("36", _) => 4.0,
+                ("40", true) => 5.0,
+                ("40", false) => 4.0,
+                ("54", _) => 6.0,
+                ("60", true) => 7.0,
+                ("60", false) => 6.0,
+                _ => unreachable!("{size}"),
+            };
+            assert!((n - want).abs() < 0.05, "{file}: {size} pt on {twips} twips takes {n} grids; Word {want}");
+        }
+    }
+    for (twips, size, n) in grids("grid-ratio-yumincho-398-402.docx") {
+        let want = match (size.as_str(), twips <= 401) {
+            ("12", true) => 2.0,
+            ("12", false) => 1.0,
+            ("36", true) => 4.0,
+            ("36", false) => 3.0,
+            _ => unreachable!("{size}"),
+        };
+        assert!((n - want).abs() < 0.05, "{size} pt on {twips} twips takes {n} grids; Word {want}");
+    }
+}
+
+/// A multiple of lines (`w:lineRule="auto"`) on a line grid: the larger of the grids the single line takes and the grid times the multiple (Word's
+/// PDFs of `line-multiple-grid-sweep-*.docx`, 8 to 60 pt, multiples 1 / 259 / 360 / 480 twentieths; the same in 游明朝 and 游ゴシック). On a grid
+/// of 18 pt: up to 10.5 pt the line is 18 / 19.44 / 27 / 36 pt, 11 to 20 pt 36 pt, 22 to 32 pt 54, 36 and 40 pt 72, 44 and 48 pt 90, 54 and 60 pt
+/// 108, whatever the multiple (up to 2); on 14.5 pt: 8 pt 14.52 / 15.72 / 21.72 / 29.04, 9 to 16 pt 29, 18 to 26 pt 43.5, 28 to 32 pt 58.
+#[cfg_attr(windows, test)]
+fn a_multiple_on_a_grid_is_the_larger_of_the_grids_the_line_takes_and_the_grid_times_it() {
+    let want_360 = |size: f32, m: u32| -> f32 {
+        let grids = match size {
+            s if s <= 10.5 => return 18.0 * m as f32 / 240.0,
+            s if s <= 20.0 => 2.0,
+            s if s <= 32.0 => 3.0,
+            s if s <= 40.0 => 4.0,
+            s if s <= 48.0 => 5.0,
+            _ => 6.0,
+        };
+        grids * 18.0
+    };
+    let want_290 = |size: f32, m: u32| -> f32 {
+        let grids = match size {
+            s if s <= 8.0 => return 14.5 * m as f32 / 240.0,
+            s if s <= 16.0 => 2.0,
+            s if s <= 26.0 => 3.0,
+            s if s <= 32.0 => 4.0,
+            s if s <= 40.0 => 5.0,
+            s if s <= 48.0 => 6.0,
+            _ => 7.0,
+        };
+        grids * 14.5
+    };
+    for (file, want) in [
+        ("line-multiple-grid-sweep-yumincho-g360.docx", &want_360 as &dyn Fn(f32, u32) -> f32),
+        ("line-multiple-grid-sweep-yugothic-g360.docx", &want_360),
+        ("line-multiple-grid-sweep-yumincho-g290.docx", &want_290),
+    ] {
+        let found = label_pitches(file);
+        assert!(found.len() >= 80, "{file}: {} of 88 paragraphs found", found.len());
+        for (label, pitch) in found {
+            let (size, m) = label.split_once("pt ").expect("a label");
+            let (size, m): (f32, u32) = (size.parse().expect("size"), m.parse().expect("multiple"));
+            let expected = want(size, m);
+            assert!((pitch - expected).abs() < 0.15, "{file}: {size} pt at {m}/240 lines is {pitch} pt apart; Word {expected}");
+        }
+    }
 }

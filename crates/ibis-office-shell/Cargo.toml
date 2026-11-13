@@ -1,0 +1,77 @@
+[package]
+name = "ibis-office-shell"
+description = "What every format of ibisOffice shares: the editor window (SlideEditor), its menus, toolbars, sidebars and dialogs, the shape, chart and text editing common to the formats, and the format drivers' interface."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-calc.workspace = true
+ibis-office-base.workspace = true
+ibis-office-render.workspace = true
+ibis-doc-model.workspace = true
+ibis-pptx.workspace = true
+ibis-emf.workspace = true
+gpui-kit.workspace = true
+log = "0.4"
+# ICC profiles for CMYK colours (pure Rust; BSD-3-Clause OR Apache-2.0; also in the tree through `image`).
+moxcms = "0.8"
+# The glyphs of a font embedded in a pasted PDF (pdf_picture.rs). Already in the tree (MIT OR Apache-2.0).
+ttf-parser = "0.25"
+
+# The same declarations as ibis-office-app's (the app's `export` feature turns this one's on): the headless renderer
+# (headless.rs), the pictures put on and read from the clipboard (native_shape_clipboard.rs, svg_pdf.rs, svg_emf.rs,
+# pdf_picture.rs).
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+gpui-pre-platform = { version = "=0.3.6", features = ["test-support"], optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg", "tiff"], optional = true }
+miniz_oxide = { version = "0.8", optional = true }
+krilla = { version = "=0.8.2", default-features = false, features = ["raster-images", "rayon"], optional = true }
+usvg = { version = "=0.46.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts"], optional = true }
+
+# Automatic update (update.rs) and another app changing an open file (file_watch.rs): as ibis-office-app's.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+# The random bytes of a password-protected save (the OS generator on every OS: /dev/urandom is not on Windows).
+getrandom = "0.3"
+ibis-office-updater = { path = "../ibis-office-updater" }
+notify = "7"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui-pre-macos = { version = "=0.3.6", optional = true }
+objc = "0.2.7"
+core-foundation = "0.10.1"
+core-text = "21"
+core-graphics = "0.24"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = ["Foundation", "Graphics_DirectX_Direct3D11", "Media_Core", "Media_Playback", "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_Com", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_UI_Shell"] }
+gpui-pre-windows = { version = "=0.3.6", features = ["test-support"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui-pre-wgpu = { version = "=0.3.6", features = ["test-support"], optional = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+futures = { version = "0.3", default-features = false, features = ["std"] }
+wasm-bindgen = "0.2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+
+[features]
+# As ibis-office-app's: the shell is built with the export (some of its code reads pictures through `image` without asking
+# for the feature, as the app's did).
+default = ["export"]
+# The scenario tests' driver (scenario.rs) and the probes the chrome records for them; ibis-office-app's `scenarios`
+# turns it on.
+scenarios = ["export", "ibis-office-base/scenarios", "ibis-office-render/scenarios"]
+# The headless drawing (cfg(headless_export), set by build.rs); ibis-office-app's `export` turns it on.
+export = ["dep:gpui-pre-platform", "dep:gpui-pre-windows", "dep:gpui-pre-wgpu", "dep:image", "dep:miniz_oxide", "dep:krilla", "dep:usvg", "dep:gpui-pre-macos", "ibis-office-render/export"]
+
+[dev-dependencies]
+ibis-office-base = { workspace = true, features = ["test-user-data"] }
+
+# The `objc` crate's msg_send!/class! macros test `cfg(feature = "cargo-clippy")`, which is not a feature of this crate.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

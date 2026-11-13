@@ -175,6 +175,11 @@ pub(crate) struct Styles {
     pub(crate) date1904: bool,
     /// The default font: its typeface and size (hundredths of a point).
     pub(crate) default_font: (Option<String>, u32),
+    /// The size of each font (`fonts/font/sz`, hundredths of a point), by font id: the furigana's size is that of the font
+    /// `phoneticPr/@fontId` names.
+    pub(crate) font_sizes: Vec<u32>,
+    /// The typeface of each font, by font id (the furigana's typeface is that of the font a string's `phoneticPr/@fontId` names).
+    pub(crate) font_names: Vec<Option<String>>,
     /// The conditional formats' formats (`dxfs`).
     pub(crate) dxfs: Vec<ibis_doc_model::CfStyle>,
     /// The errors a cell's rich value (`c/@vm`) holds, by value metadata
@@ -318,9 +323,70 @@ fn parse_dxf(d: Node, colors: &SheetColors) -> ibis_doc_model::CfStyle {
     }
 }
 
+/// The `xfComplement` indices that stand for a cell check box, from the workbook's feature property bags
+/// (`xl/featurePropertyBag/featurePropertyBag.xml`). `XFComplements` lists, by position, the bags the cell formats'
+/// `xfComplement i` name; such a bag (`XFComplement`) holds an `XFControls` bag whose `CellControl` is a `Checkbox` bag.
+pub(crate) fn read_checkbox_complements(root: Node) -> HashSet<usize> {
+    let bags: Vec<Node> = children(root, "bag").collect();
+    let by_id = |id: Option<usize>| id.and_then(|i| bags.get(i).copied());
+    let bag_ref = |bag: Node, key: &str| children(bag, "bagId").find(|b| attr(*b, "k") == Some(key)).and_then(|b| b.text()?.trim().parse::<usize>().ok());
+    let mut out = HashSet::new();
+    for list in bags.iter().filter(|b| attr(**b, "type") == Some("XFComplements")) {
+        let Some(mapped) = children(*list, "a").find(|a| attr(*a, "k") == Some("MappedFeaturePropertyBags")) else { continue };
+        for (i, id) in children(mapped, "bagId").enumerate() {
+            let complement = by_id(id.text().and_then(|t| t.trim().parse().ok())).filter(|b| attr(*b, "type") == Some("XFComplement"));
+            let controls = complement.and_then(|b| by_id(bag_ref(b, "XFControls"))).filter(|b| attr(*b, "type") == Some("XFControls"));
+            let control = controls.and_then(|b| by_id(bag_ref(b, "CellControl")));
+            if control.is_some_and(|b| attr(b, "type") == Some("Checkbox")) {
+                out.insert(i);
+            }
+        }
+    }
+    out
+}
+
+/// Marks the cell formats (`cellXfs`) whose `xfComplement` is in `complements` as check boxes.
+pub(crate) fn mark_checkboxes(styles: &mut Styles, styles_root: Node, complements: &HashSet<usize>) {
+    if complements.is_empty() {
+        return;
+    }
+    let Some(xfs) = child(styles_root, "cellXfs") else { return };
+    for (index, xf) in children(xfs, "xf").enumerate() {
+        let Some(ext_list) = child(xf, "extLst") else { continue };
+        let named = children(ext_list, "ext").filter(|e| attr(*e, "uri") == Some(XF_COMPLEMENT_URI)).flat_map(|e| elements(e)).filter(|n| n.tag_name().name() == "xfComplement");
+        if named.filter_map(|n| attr_i64(n, "i")).any(|i| i >= 0 && complements.contains(&(i as usize)))
+            && let Some(f) = styles.formats.get_mut(index)
+        {
+            f.style.checkbox = true;
+        }
+    }
+}
+
+/// The extension of a cell format (`xf/extLst/ext`) that names its feature property bag.
+pub(crate) const XF_COMPLEMENT_URI: &str = "{C7286773-470A-42A8-94C5-96B5CB345126}";
+
+/// The family of each typeface the workbook's fonts name (`fonts/font/family`), the first font of a name deciding (Excel draws a typeface the
+/// PC lacks by that font's family: 1 and 3 in MS Mincho, none and 2 in MS Gothic; `tasks/doc/m56-missing-font-standins.md`).
+pub(crate) fn read_typeface_traits(root: Option<Node>, colors: &SheetColors) -> std::collections::BTreeMap<String, ibis_doc_model::TypefaceTraits> {
+    let mut traits = std::collections::BTreeMap::new();
+    let Some(root) = root else { return traits };
+    for f in child(root, "fonts").into_iter().flat_map(|n| children(n, "font")) {
+        let name = child(f, "scheme")
+            .and_then(|n| attr(n, "val"))
+            .and_then(|scheme| colors.scheme_font(scheme))
+            .map(str::to_string)
+            .or_else(|| child(f, "name").and_then(|n| attr(n, "val")).map(str::to_string));
+        let Some(name) = name else { continue };
+        let family = child(f, "family").and_then(|n| attr(n, "val")).and_then(|v| v.parse::<u8>().ok());
+        let charset = child(f, "charset").and_then(|n| attr(n, "val")).and_then(|v| v.parse::<i16>().ok());
+        traits.entry(name).or_insert(ibis_doc_model::TypefaceTraits { family, charset });
+    }
+    traits
+}
+
 pub(crate) fn read_styles(root: Option<Node>, colors: &SheetColors) -> Styles {
     let Some(root) = root else {
-        return Styles { formats: vec![CellFormat { number_format: "General".into(), ..Default::default() }], date1904: false, default_font: (None, 1100), dxfs: Vec::new(), rich_errors: HashMap::new(), rich_images: HashMap::new(), custom_cell_styles: Vec::new() };
+        return Styles { formats: vec![CellFormat { number_format: "General".into(), ..Default::default() }], date1904: false, default_font: (None, 1100), font_sizes: Vec::new(), font_names: Vec::new(), dxfs: Vec::new(), rich_errors: HashMap::new(), rich_images: HashMap::new(), custom_cell_styles: Vec::new() };
     };
     let number_formats: HashMap<i64, String> = child(root, "numFmts")
         .into_iter()
@@ -564,7 +630,9 @@ pub(crate) fn read_styles(root: Option<Node>, colors: &SheetColors) -> Styles {
         .flat_map(|d| children(d, "dxf"))
         .map(|d| parse_dxf(d, colors))
         .collect();
-    Styles { formats, date1904: false, default_font, dxfs, rich_errors: HashMap::new(), rich_images: HashMap::new(), custom_cell_styles }
+    let font_sizes = fonts.iter().map(|f| f.size).collect();
+    let font_names = fonts.iter().map(|f| f.name.clone()).collect();
+    Styles { formats, date1904: false, default_font, font_sizes, font_names, dxfs, rich_errors: HashMap::new(), rich_images: HashMap::new(), custom_cell_styles }
 }
 
 fn read_data_consolidate(root: Node) -> Option<ibis_doc_model::DataConsolidate> {
@@ -1155,16 +1223,41 @@ pub(crate) fn read_shared_phonetics(root: Option<Node>) -> Vec<Option<std::sync:
         .collect()
 }
 
+/// A shared string's reading as the file lays it out: each `rPh` with the character it stands over (`sb`), and the font id of the
+/// string's own `phoneticPr` (0 where it has none: it does not fall back to the sheet's, as Excel does not).
+pub(crate) struct RawPhonetic {
+    pub(crate) parts: Vec<ibis_doc_model::PhoneticPart>,
+    pub(crate) font_id: usize,
+}
+
+pub(crate) fn read_shared_phonetic_parts(root: Option<Node>) -> Vec<Option<RawPhonetic>> {
+    root.into_iter()
+        .flat_map(|r| children(r, "si"))
+        .map(|si| {
+            let parts: Vec<ibis_doc_model::PhoneticPart> = children(si, "rPh")
+                .filter_map(|p| {
+                    let text = child(p, "t")?.text().unwrap_or("").to_string();
+                    (!text.is_empty()).then(|| ibis_doc_model::PhoneticPart { text, start: attr_i64(p, "sb").unwrap_or(0).max(0) as usize })
+                })
+                .collect();
+            let font_id = child(si, "phoneticPr").and_then(|p| attr(p, "fontId")?.parse::<usize>().ok()).unwrap_or(0);
+            (!parts.is_empty()).then_some(RawPhonetic { parts, font_id })
+        })
+        .collect()
+}
+
 /// What the shared strings carry besides their text, by index: readings
 /// and the parts in their own fonts.
 pub(crate) struct SharedExtras {
     pub(crate) phonetics: Vec<Option<std::sync::Arc<str>>>,
+    pub(crate) phonetic_parts: Vec<Option<RawPhonetic>>,
     pub(crate) runs: Vec<Option<std::sync::Arc<Vec<ibis_doc_model::CellRun>>>>,
 }
 
 pub(crate) fn read_shared_extras(root: Option<Node>, colors: &SheetColors) -> SharedExtras {
     SharedExtras {
         phonetics: read_shared_phonetics(root),
+        phonetic_parts: read_shared_phonetic_parts(root),
         runs: root.into_iter().flat_map(|r| children(r, "si")).map(|si| read_runs(si, colors)).collect(),
     }
 }
@@ -1644,7 +1737,33 @@ impl ExcelMetrics {
     }
 }
 
+/// The height of a row with no `<row>` in a sheet with no `<sheetFormatPr>`, in points: Microsoft Excel 365 for Windows' standard height on
+/// the Japanese Windows PC of the COM measurement (2026-11-09: 27 workbooks, `tasks/doc/row-height-rowprobe.txt`): 18.75 pt, Yu Gothic 11's
+/// row (25 pixels), whatever the Normal font (ＭＳ Ｐゴシック 11, 游ゴシック 11, Calibri 11). With a `<sheetFormatPr>`: its `defaultRowHeight`
+/// where `customHeight` is on, else the Normal font's row, which only the app can measure (`DefaultRowRule`). Excel for Mac and the
+/// English-language versions may differ.
+pub const APP_DEFAULT_ROW_PT: f64 = 18.75;
+
+/// How the rows with nothing in them are as high as (see `DefaultRowRule`).
+pub(crate) fn default_row_rule(format: Option<Node>) -> ibis_doc_model::DefaultRowRule {
+    use ibis_doc_model::DefaultRowRule;
+    match format {
+        None => DefaultRowRule::NoFormat,
+        Some(f) if attr_bool(f, "ibisEmptyRowsAsSaved").unwrap_or(false) || attr_bool(f, "customHeight").unwrap_or(false) => DefaultRowRule::AsSaved,
+        Some(_) => DefaultRowRule::ByFont,
+    }
+}
+
 pub(crate) fn default_row_height_in(metrics: ExcelMetrics, format: Option<Node>, default_font: (&Option<String>, u32)) -> f64 {
+    // Windows: no `<sheetFormatPr>` is Excel's standard height; the rest is the file's value until the app measures the Normal font's row
+    // (`default_row_rule`). Mac: as it was.
+    if metrics == ExcelMetrics::Windows && format.is_none() {
+        return APP_DEFAULT_ROW_PT;
+    }
+    default_row_height_stored_in(metrics, format, default_font)
+}
+
+pub(crate) fn default_row_height_stored_in(metrics: ExcelMetrics, format: Option<Node>, default_font: (&Option<String>, u32)) -> f64 {
     let (font_name, default_font_size) = default_font;
     // The declared `defaultRowHeight` is what Excel for Windows lays the rows
     // without a height out by; Excel for Mac keeps it only for the MS fonts and
@@ -1659,6 +1778,11 @@ pub(crate) fn default_row_height_in(metrics: ExcelMetrics, format: Option<Node>,
         let font_pt = (default_font_size as f64 / 100.0).max(1.0);
         (font_pt * (18.0 / 11.0)).round().max(18.0)
     }
+}
+
+/// The reference height of the file (what the program that saved it measured; the estimates of rows read from the file are made against it).
+fn default_row_height_stored(format: Option<Node>, default_font: (&Option<String>, u32)) -> f64 {
+    default_row_height_stored_in(EXCEL_METRICS, format, default_font)
 }
 
 /// Single-line row height in points for a given font size, calibrated against Excel for Mac (Calibri).
@@ -1801,16 +1925,21 @@ fn cell_needed_height_uncapped(text: &str, col_chars: f64, font: Option<&str>, f
 pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras: &SharedExtras, digit: f64, colors: &SheetColors, dynamic_metadata: &HashSet<u32>) -> Sheet {
     let format = child(root, "sheetFormatPr");
     let default_row_pt = default_row_height(format, (&styles.default_font.0, styles.default_font.1));
+    // What the estimates of the rows read from the file are made against: the height the file declares.
+    let stored_row_pt = default_row_height_stored(format, (&styles.default_font.0, styles.default_font.1));
     // The line heights below are Excel for Mac's (18 pt for an 11 pt font).
     // A file that declares its own default row height lays its text rows out
     // by that height: the lines are scaled by the declared one over the Mac one.
     let row_scale = if EXCEL_METRICS == ExcelMetrics::Windows && format.and_then(|f| attr(f, "defaultRowHeight")).is_some() {
         let mac = ((styles.default_font.1 as f64 / 100.0).max(1.0) * (18.0 / 11.0)).round().max(18.0);
-        default_row_pt / mac
+        stored_row_pt / mac
     } else {
         1.0
     };
     let scaled = |font: Option<&str>, height: f64| if font.is_some_and(|f| f.contains("Meiryo") || f.starts_with("ＭＳ") || f.starts_with("MS ")) { height } else { height * row_scale };
+    // A sheet converted from an .xls: Excel for Windows lays out a row with a ROW record at the height saved, with or without cells
+    // and whether or not fUnsynced is set (`ibisRowsAsSaved`, internal; see `xls.rs`).
+    let rows_as_saved = format.and_then(|f| attr_bool(f, "ibisRowsAsSaved")).unwrap_or(false);
     let declared_default = EXCEL_METRICS == ExcelMetrics::Windows && format.and_then(|f| attr(f, "defaultRowHeight")).is_some();
     let default_width = default_column_width(format, digit);
     let px = |v: f64| (v * EMU_PER_POINT as f64).round() as Emu;
@@ -1833,6 +1962,12 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     let mut row_fonts: std::collections::BTreeMap<u32, (Option<String>, u32)> = std::collections::BTreeMap::new();
     // The styles (xf) of the cells written in each row, each once (see `Sheet::written_fonts`).
     let mut written_xfs: std::collections::BTreeMap<u32, Vec<usize>> = std::collections::BTreeMap::new();
+    // The sheet's furigana font (typeface, hundredths of a point): what a row with `row/@ph` takes a line for.
+    let sheet_phonetic_font: (Option<String>, Option<u32>) = child(root, "phoneticPr")
+        .and_then(|p| attr(p, "fontId")?.parse::<usize>().ok())
+        .map_or((None, None), |i| (styles.font_names.get(i).cloned().flatten(), styles.font_sizes.get(i).copied()));
+    let mut phonetic_info = ibis_doc_model::PhoneticInfo::default();
+    let mut phonetic_details: HashMap<usize, std::sync::Arc<ibis_doc_model::PhoneticDetail>> = HashMap::new();
     for col in child(root, "cols").into_iter().flat_map(|c| children(c, "col")) {
         let (Some(min), Some(max)) = (attr_i64(col, "min"), attr_i64(col, "max")) else { continue };
         let hidden = attr_bool(col, "hidden").unwrap_or(false);
@@ -1858,6 +1993,7 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     }
 
     let mut cells = Vec::new();
+    let mut phonetic_shown: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
     let mut cell_images: Vec<ibis_doc_model::CellImage> = Vec::new();
     let mut heights: HashMap<u32, Emu> = HashMap::new();
     // Rows Excel measures by their fonts (no `customHeight`, no wrapping text): see `Sheet::measured_rows`.
@@ -1893,13 +2029,17 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         if let Some(level) = attr_i64(row, "outlineLevel").filter(|&l| l > 0) {
             outline_rows.insert(r, level.min(7) as u8);
         }
+        // `row/@ph` (and `col/@phonetic`) only set what a cell entered later in the row gets: the cell's own `c/@ph` decides whether its
+        // furigana shows (Excel). A row with `row/@ph` still takes a line of the sheet's furigana font in its height.
+        let row_phonetic = attr_bool(row, "ph").unwrap_or(false);
+        let mut row_ruby: Option<(Option<String>, u32, f64)> = None;
         let hidden = attr_bool(row, "hidden").unwrap_or(false);
         let custom_height = attr_bool(row, "customHeight").unwrap_or(false);
         let declared_ht = attr(row, "ht").and_then(|v| v.parse::<f64>().ok());
         // Excel for Windows fits a row that has no height to what is in it (the
         // default height only for a row with nothing in it).
         let fits_content = EXCEL_METRICS == ExcelMetrics::Windows && declared_default;
-        let mut auto_ht = if fits_content { 0.0 } else { default_row_pt };
+        let mut auto_ht = if fits_content { 0.0 } else { stored_row_pt };
         let win_step = |h: f64| if fits_content { (h / 0.75 - 1e-6).ceil() * 0.75 } else { h };
         if attr_bool(row, "customFormat").unwrap_or(false) {
             let format = attr_i64(row, "s").filter(|&s| s > 0).and_then(|s| styles.formats.get(s as usize));
@@ -1955,12 +2095,22 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                 value = CellValue::Error(error);
                 text = display_with_width(&value, format.map_or("General", |f| f.number_format.as_str()), styles.date1904, col_width);
             }
+            // The furigana shown over the text (the line it takes above it is part of the row's fit).
+            let shared_index = (attr(c, "t") == Some("s")).then(|| raw.trim().parse::<usize>().ok()).flatten();
+            let ruby_raw = shared_index.and_then(|i| extras.phonetic_parts.get(i)).and_then(|p| p.as_ref());
+            let phonetic_shown_here = ruby_raw.is_some() && attr_bool(c, "ph").unwrap_or(false);
+            // The line's font: the one the string's own `phoneticPr/@fontId` names (font 0 where it has none).
+            let ruby_font = ruby_raw.map(|r| (styles.font_names.get(r.font_id).cloned().flatten(), styles.font_sizes.get(r.font_id).copied()));
             let in_merge = merged_cells.iter().any(|m| m.first_row <= row_index && row_index <= m.last_row && m.first_column <= column && column <= m.last_column);
-            // A row with a wrapping cell (a merged one too) is left at the height the file has: this is a limit of ibisOffice, not a
-            // rule of Microsoft Excel, which fits such a row to the lines of the text (a merged cell is not fitted); ibisOffice does not
-            // measure the lines of wrapped text with the formula of `ibis-office-app`'s `xlsx::row_fit` yet.
+            // A row with a wrapping cell (a merged one too) is not one of the `measured_rows`: its lines cost a layout of the text, which
+            // is not done for every row of a big file when it opens. Excel for Windows measures such a row again like any other (COM
+            // measurement: `ht="90"` and `ht="20"` with no customHeight both open at the 6 lines of the text, 112.5 pt); the app
+            // (`ibis-office-app`'s `xlsx::row_fit::fit_measured_rows`) measures the ones in the first screens when it opens the file.
             any_wrap |= format.is_some_and(|f| f.style.wrap);
-            if !in_merge {
+            // A cell of a merged range of one row counts by its font like any other (Microsoft Excel 365 COM, tasks/doc/m72-xlsx-sales-row-heights.md:
+            // A1:E1 merged, 14 pt: row 1 is 24 pt merged and unmerged, AutoFit or not); the ranges over several rows were not measured and stay out.
+            let in_tall_merge = merged_cells.iter().any(|m| m.first_row != m.last_row && m.first_row <= row_index && row_index <= m.last_row && m.first_column <= column && column <= m.last_column);
+            if !in_tall_merge {
                 let list = written_xfs.entry(row_index).or_default();
                 if !list.contains(&xf) {
                     list.push(xf);
@@ -1986,7 +2136,19 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                     // Excel for Windows leaves the declared default height to a row of
                     // one line of the default font's size (it fits a row again only
                     // when it is edited).
-                    auto_ht = auto_ht.max(win_step(scaled(font_name, cell_needed_height(&text, col_width, font_name, font_pt, wrap, format.is_some_and(|f| f.style.bold)))));
+                    // The furigana's line is in its own font (`phoneticPr/@fontId`: its size; the typeface is the cell's) above the text's.
+                    let ruby_line = match (&ruby_font, phonetic_shown_here) {
+                        (Some((name, size)), true) => {
+                            let ruby_pt = size.map_or(font_pt / 2.0, |h| h as f64 / 100.0);
+                            let line = line_height(name.as_deref().or(font_name), ruby_pt);
+                            if row_ruby.as_ref().is_none_or(|r| r.2 < line) {
+                                row_ruby = Some((name.clone(), (ruby_pt * 100.0).round() as u32, line));
+                            }
+                            line
+                        }
+                        _ => 0.0,
+                    };
+                    auto_ht = auto_ht.max(win_step(scaled(font_name, cell_needed_height(&text, col_width, font_name, font_pt, wrap, format.is_some_and(|f| f.style.bold)) + ruby_line)));
                 }
             }
             // A picture in the cell (セルに配置): drawn over it, the cell's own `#VALUE!` not shown.
@@ -2081,11 +2243,35 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                 Some("inlineStr") => child(c, "is").and_then(|n| read_runs(n, colors)),
                 _ => None,
             };
+            // Excel shows a cell's furigana when the cell has `c/@ph` (a row's `row/@ph` and a column's `col/@phonetic` do not).
+            if phonetic.is_some() && attr_bool(c, "ph").unwrap_or(false) {
+                phonetic_shown.insert((row_index, column));
+            }
+            if let (Some(i), Some(raw)) = (shared_index, ruby_raw) {
+                let detail = phonetic_details.entry(i).or_insert_with(|| {
+                    std::sync::Arc::new(ibis_doc_model::PhoneticDetail {
+                        parts: raw.parts.clone(),
+                        font: styles.font_names.get(raw.font_id).cloned().flatten(),
+                        size: styles.font_sizes.get(raw.font_id).copied(),
+                    })
+                });
+                phonetic_info.cells.insert((row_index, column), detail.clone());
+            }
             cells.push(SheetCell { runs, phonetic, row: row_index, column, value, text, kind, formula, style: index });
+        }
+        if !hidden && !custom_height {
+            // A row of `row/@ph` takes the furigana line of the sheet's font whether or not a cell shows one (Excel).
+            if row_ruby.is_none() && row_phonetic {
+                let font_pt = sheet_phonetic_font.1.map_or(styles.default_font.1 as f64 / 200.0, |h| h as f64 / 100.0);
+                row_ruby = Some((sheet_phonetic_font.0.clone(), (font_pt * 100.0).round() as u32, line_height(sheet_phonetic_font.0.as_deref().or(styles.default_font.0.as_deref()), font_pt)));
+            }
+            if let Some((name, size, line)) = row_ruby.take() {
+                phonetic_info.rows.insert(r, (name, size, (line * 100.0).round() as u32));
+            }
         }
         if hidden {
             heights.insert(r, 0);
-            let ht = declared_ht.unwrap_or(default_row_pt);
+            let ht = declared_ht.unwrap_or(stored_row_pt);
             hidden_rows.insert(r, pt(ht));
         } else if custom_height {
             // A custom row is a whole number of device pixels in Excel for Windows (0.75 pt, cut down: 5.85 pt = 7.8 px is 7 px = 5.25 pt;
@@ -2093,9 +2279,15 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             // 118's rows 1..32 (stored 1029 pt) at 1029 pt, not the 1008 pt of whole points, and 058's 150 rows of 5.85 pt on 1 page.
             // Elsewhere OOXML ht is a height in points, fractions included, and printing cuts it to whole points (`export::print_layout`).
             // Saving writes only the rows the person changed, as they set them (40 pt is written 40 pt; read again it is 39.75 pt).
-            let ht = declared_ht.filter(|h| h.is_finite() && *h >= 0.0).map(|h| if EXCEL_METRICS == ExcelMetrics::Windows { (h / 0.75 + 0.01).floor() * 0.75 } else { h }).unwrap_or(default_row_pt);
+            let ht = declared_ht.filter(|h| h.is_finite() && *h >= 0.0).map(|h| if EXCEL_METRICS == ExcelMetrics::Windows { (h / 0.75 + 0.01).floor() * 0.75 } else { h }).unwrap_or(stored_row_pt);
             heights.insert(r, pt(ht));
             custom_rows.insert(r);
+        } else if rows_as_saved && declared_ht.is_some_and(|h| h.is_finite() && h > 0.0) {
+            // An .xls row without fUnsynced: Excel for Windows lays it out at its ROW height, in whole device pixels like any row
+            // (COM `Rows(i).Height` of the corpus's 156: 28.9 pt saved is 28.5 pt, 38 px; 102 and 103 equal to the ROW values). It is not
+            // fixed (no `customHeight`: editing its text fits it again), only not measured when the file opens.
+            let ht = declared_ht.unwrap_or(stored_row_pt);
+            heights.insert(r, pt(if EXCEL_METRICS == ExcelMetrics::Windows { (ht / 0.75 + 0.01).floor() * 0.75 } else { ht }));
         } else {
             // Excel for Mac fits again a row holding wrapping text of Meiryo UI
             // or ＭＳ ゴシック when it opens the file (one private workbook's
@@ -2107,11 +2299,15 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
             // estimate made the 84 pt row 104).
             // Excel for Windows keeps a stored height (the refitting below is what Excel
             // for Mac does on opening, to fonts whose metrics differ from its own).
-            if !any_wrap {
+            // A row that takes a furigana line and has the height Excel saved keeps it: Excel uses the saved `ht` as it is (no
+            // `customHeight` needed), and the furigana's line (not measurable for every typeface) is already in it. Fitting it again
+            // would draw it at another height than the page cut made from `ht` (`tasks/doc/m122-xlsx-phonetic-check.md`).
+            let ruby_saved = declared_ht.is_some_and(|h| h.is_finite() && h > 0.0) && phonetic_info.rows.contains_key(&r);
+            if !any_wrap && !ruby_saved {
                 measured.insert(r);
             }
             let keeps_stored = (!wraps_text || EXCEL_METRICS == ExcelMetrics::Windows) && declared_ht.is_some();
-            heights.insert(r, pt(if keeps_stored { declared_ht.unwrap_or(auto_ht) } else if auto_ht > 0.0 { auto_ht } else { default_row_pt }));
+            heights.insert(r, pt(if keeps_stored { declared_ht.unwrap_or(auto_ht) } else if auto_ht > 0.0 { auto_ht } else { stored_row_pt }));
         }
     }
 
@@ -2159,6 +2355,7 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     let page_layout = view.and_then(|v| attr(v, "view")) == Some("pageLayout");
     let show_formulas = view.and_then(|v| attr_bool(v, "showFormulas")).unwrap_or(false);
     let show_zeros = view.and_then(|v| attr_bool(v, "showZeros")).unwrap_or(true);
+    let view_position = read_view_position(view);
     // Page break preview and page layout view have a zoom of their own.
     let zoom_attr = if page_break_preview {
         "zoomScaleSheetLayoutView"
@@ -2237,24 +2434,28 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
     // only when the row has a cell: a `<row ht=.. customHeight/>` with no cell is not printed (Excel's PDF of a sheet whose
     // last rows, 647 and 648, are only a height has no page for them).
     let mut printed_rows = max_row;
-    if let Some(last) = heights.iter().filter(|(r, h)| **h != pt(default_row_pt) && rows_with_cells.contains(r)).map(|(r, _)| *r).max() {
+    if let Some(last) = heights.iter().filter(|(r, h)| **h != pt(stored_row_pt) && rows_with_cells.contains(r)).map(|(r, _)| *r).max() {
         max_row = max_row.max(last + 1);
         printed_rows = max_row;
     }
     // The rows of a height alone stay in the model (the person's edit of an empty row is kept), but print no page.
-    if let Some(last) = heights.iter().filter(|(_, h)| **h != pt(default_row_pt)).map(|(r, _)| *r).max() {
+    if let Some(last) = heights.iter().filter(|(_, h)| **h != pt(stored_row_pt)).map(|(r, _)| *r).max() {
         max_row = max_row.max(last + 1);
     }
     let rows = (0..max_row).map(|r| heights.get(&r).copied().unwrap_or(pt(default_row_pt))).collect();
     // The rows with no `row` element are measured too.
     let measured_rows: Vec<u32> = (0..max_row).filter(|r| measured.contains(r) || !heights.contains_key(r)).collect();
     cells.sort_by_key(|c| (c.row, c.column));
-    let show_phonetic = view.and_then(|v| attr_bool(v, "showPhonetic")).unwrap_or(false);
+    // Files this app wrote before had a sheet-wide `sheetView/@showPhonetic` (not in the schema): it shows every reading.
+    if view.and_then(|v| attr_bool(v, "showPhonetic")).unwrap_or(false) {
+        phonetic_shown.extend(cells.iter().filter(|c| c.phonetic.is_some()).map(|c| (c.row, c.column)));
+    }
+    let show_phonetic = !phonetic_shown.is_empty();
     let phonetic_pr = child(root, "phoneticPr").map(|p| {
         let font_id = attr(p, "fontId").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
         let phonetic_type = attr(p, "type").and_then(ibis_doc_model::PhoneticType::from_ooxml).unwrap_or_default();
         let alignment = attr(p, "alignment").and_then(ibis_doc_model::PhoneticAlignment::from_ooxml).unwrap_or_default();
-        ibis_doc_model::PhoneticProperties { font_id, phonetic_type, alignment }
+        ibis_doc_model::PhoneticProperties { font_id, font_size: styles.font_sizes.get(font_id as usize).copied(), phonetic_type, alignment }
     });
     let mut sheet = Sheet {
         columns,
@@ -2296,6 +2497,8 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
                 .collect(),
         ),
         fitted_rows: Default::default(),
+        default_row_rule: ibis_doc_model::Unsaved(default_row_rule(format)),
+        rows_as_saved: ibis_doc_model::Unsaved(rows_as_saved),
         printed_rows: ibis_doc_model::Unsaved(printed_rows),
         printed: Default::default(),
         column_chars: ibis_doc_model::Unsaved(col_chars.iter().filter(|(_, w)| **w > 0.0).map(|(c, w)| (*c, *w)).collect()),
@@ -2324,6 +2527,8 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         scenarios: read_scenarios(root),
         custom_views: read_custom_sheet_views(root),
         show_phonetic,
+        phonetic_shown,
+        phonetic_info: ibis_doc_model::Unsaved(phonetic_info),
         phonetic_pr,
         ignored_errors: read_ignored_errors(root),
         cell_images,
@@ -2331,6 +2536,7 @@ pub(crate) fn read_sheet(root: Node, styles: &Styles, strings: &[String], extras
         show_formulas,
         show_zeros,
         hide_ink: false,
+        view: view_position,
         book_context: Default::default(),
     };
     if let Some(f) = &sheet.auto_filter {
@@ -2705,6 +2911,26 @@ pub(crate) fn read_threads(root: Node, persons: &HashMap<String, String>) -> Vec
     threads.into_iter().map(|(_, t)| t).collect()
 }
 
+/// Where the sheet was left: the first `sheetView`'s `topLeftCell`, its `pane`'s `topLeftCell`, and the selection of the pane that
+/// has the focus (`pane/@activePane`; the sheet's only selection without panes).
+fn read_view_position(view: Option<Node>) -> ibis_doc_model::SheetViewPosition {
+    let Some(view) = view else { return Default::default() };
+    let pane = child(view, "pane");
+    let active_pane = pane.map(|p| attr(p, "activePane").unwrap_or("topLeft"));
+    let selection = children(view, "selection")
+        .find(|s| match active_pane {
+            Some(active) => attr(*s, "pane").unwrap_or("topLeft") == active,
+            None => attr(*s, "pane").is_none(),
+        })
+        .or_else(|| child(view, "selection"));
+    ibis_doc_model::SheetViewPosition {
+        top_left: attr(view, "topLeftCell").and_then(cell_ref),
+        pane_top_left: pane.and_then(|p| attr(p, "topLeftCell")).and_then(cell_ref),
+        active_cell: selection.and_then(|s| attr(s, "activeCell")).and_then(cell_ref),
+        selection: selection.and_then(|s| attr(s, "sqref")).and_then(|t| parse_range(t.split_whitespace().next().unwrap_or(t))),
+    }
+}
+
 /// A range such as `'Sheet 1'!$A$1:$BG$384` (the first of a list); whole
 /// columns (`$A:$CG`) or rows (`$1:$40`) reach to [`OPEN_END`].
 pub(crate) fn parse_range(text: &str) -> Option<CellRange> {
@@ -3040,7 +3266,7 @@ fn csv_chunk(first_row: usize, records: &[Vec<String>], base: &CellStyle, defaul
 pub(crate) fn fill_csv_sheet(sheet: &mut Sheet, root: Node, styles: &Styles, digit: f64, records: &[Vec<String>]) {
     const CHUNK_ROWS: usize = 10_000;
     let format = child(root, "sheetFormatPr");
-    let default_row_pt = default_row_height(format, (&styles.default_font.0, styles.default_font.1));
+    let default_row_pt = default_row_height_stored(format, (&styles.default_font.0, styles.default_font.1));
     let default_width = default_column_width(format, digit);
     let col_chars = format.and_then(|f| attr(f, "defaultColWidth")).and_then(|v| v.parse::<f64>().ok()).unwrap_or(8.43);
     let pt = |v: f64| (v * EMU_PER_POINT as f64).round() as Emu;
@@ -3101,6 +3327,7 @@ pub(crate) fn fill_csv_sheet(sheet: &mut Sheet, root: Node, styles: &Styles, dig
 
 /// Builds the cells and row heights for a slice of CSV records starting at `first_row`,
 /// adding new number formats to `sheet_styles` as needed.
+#[cfg(not(target_family = "wasm"))] // Only the thread that reads a big CSV in the background calls it (there is none on the web).
 pub fn process_csv_chunk(
     first_row: usize,
     records: &[Vec<String>],
@@ -3199,6 +3426,18 @@ mod csv_fast_path_tests {
 
 #[cfg(test)]
 mod tests {
+    /// The family of a font is read per typeface, the first font of a name deciding; a font without one has none.
+    #[test]
+    fn typeface_traits_take_the_family_of_the_first_font() {
+        let xml = r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="4"><font><name val="Calibri"/><family val="2"/></font><font><name val="X"/><family val="1"/></font><font><name val="X"/><family val="3"/></font><font><name val="Y"/></font></fonts></styleSheet>"#;
+        let doc = roxmltree::Document::parse(xml).unwrap();
+        let theme = Theme::default();
+        let colors = SheetColors::new(&theme, Some(doc.root_element()));
+        let traits = read_typeface_traits(Some(doc.root_element()), &colors);
+        assert_eq!(traits.get("X").and_then(|t| t.family), Some(1));
+        assert_eq!(traits.get("Calibri").and_then(|t| t.family), Some(2));
+        assert_eq!(traits.get("Y").and_then(|t| t.family), None);
+    }
 
     /// C1: a colour value with a multi-byte character is not a colour, and must not panic (it was sliced by byte position).
     #[test]
@@ -3353,9 +3592,12 @@ mod tests {
         // The web keeps the declared height; Mac fits an Arial sheet to the font
         // (18 pt) and keeps the declared one only for the MS fonts.
         assert_eq!(default_row_height_in(ExcelMetrics::Windows, format, (&arial, 1000)), 12.75);
+        assert_eq!(default_row_height_in(ExcelMetrics::Windows, None, (&arial, 1000)), APP_DEFAULT_ROW_PT);
+        assert_eq!(default_row_height_stored_in(ExcelMetrics::Windows, format, (&arial, 1000)), 12.75);
         assert_eq!(default_row_height_in(ExcelMetrics::Mac, format, (&arial, 1000)), 18.0);
         assert_eq!(default_row_height_in(ExcelMetrics::Mac, format, (&ms, 1100)), 12.75);
         assert_eq!(default_row_height_in(ExcelMetrics::Windows, format, (&ms, 1100)), 12.75);
+        assert_eq!(default_row_height_stored_in(ExcelMetrics::Windows, format, (&ms, 1100)), 12.75);
     }
 
     #[test]

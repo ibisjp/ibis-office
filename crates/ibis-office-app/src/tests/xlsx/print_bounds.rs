@@ -17,7 +17,7 @@ fn print_shaped_width_is_stable_in_sheet_points_at_different_print_scales() {
                     let font = gpui_kit::font(name);
                     let unit = ibis_pptx::EXCEL_METRICS.pixel_pt() as f32;
                     let widths: Vec<_> = [0.5, 1.0, 1.3].into_iter().map(|scale| {
-                        (super::printed_shaped_width(&text_system, text, &font, size, scale, false) / unit).round() as i64
+                        (crate::xlsx::sheet_view::printed_shaped_width(&text_system, text, &font, size, scale, false) / unit).round() as i64
                     }).collect();
                     assert_eq!(widths[0], widths[1], "{name} {size}pt, 50% and 100%: {text}");
                     assert_eq!(widths[1], widths[2], "{name} {size}pt, 100% and 130%: {text}");
@@ -36,7 +36,7 @@ fn print_regions_cache_reuses_and_invalidates_for_edits_fonts_scale_and_release(
     let (_platform, mut app) = crate::export::headless_app();
     app.allow_parking();
     app.update(|cx| {
-        super::release_layouts();
+        crate::xlsx::sheet_view::release_layouts();
         let presentation = ibis_doc_model::Presentation::new();
         let mut res = crate::render::shape_view::Resources::new(&presentation, cx);
         res.print = true;
@@ -47,36 +47,36 @@ fn print_regions_cache_reuses_and_invalidates_for_edits_fonts_scale_and_release(
             cells: vec![SheetCell { row: 0, column: 0, value: CellValue::Text(text.clone()), text, kind: CellKind::Text, formula: None, style: 0, phonetic: None, runs: None }].into(),
             ..Sheet::default()
         });
-        let cached = || super::PRINT_REGIONS.with(|cache| cache.borrow().len());
-        let before = super::printed_text_regions(&sheet, &res);
+        let cached = || crate::xlsx::sheet_view::PRINT_REGIONS.with(|cache| cache.borrow().len());
+        let before = crate::xlsx::sheet_view::printed_text_regions(&sheet, &res);
         assert!(!before.is_empty());
-        assert_eq!(super::printed_text_regions(&sheet, &res), before);
+        assert_eq!(crate::xlsx::sheet_view::printed_text_regions(&sheet, &res), before);
         assert_eq!(cached(), 1);
         assert_eq!(Arc::strong_count(&sheet), 1, "extent cache must not force full-sheet copy-on-write");
         Arc::make_mut(&mut sheet).styles[0].font_size = 2000;
-        let larger = super::printed_text_regions(&sheet, &res);
+        let larger = crate::xlsx::sheet_view::printed_text_regions(&sheet, &res);
         assert!(larger.iter().map(|r| r.right()).max() > before.iter().map(|r| r.right()).max());
         assert_eq!(cached(), 1, "the old sheet's Weak entry is evicted");
         Arc::make_mut(&mut sheet).columns[0] = 1000 * 12_700;
-        assert!(super::printed_text_regions(&sheet, &res).is_empty(), "geometry edits invalidate a cached overflow");
+        assert!(crate::xlsx::sheet_view::printed_text_regions(&sheet, &res).is_empty(), "geometry edits invalidate a cached overflow");
         Arc::make_mut(&mut sheet).columns[0] = 20 * 12_700;
         Arc::make_mut(&mut sheet).cells[0].text.push_str(" and additional edited text");
-        let edited = super::printed_text_regions(&sheet, &res);
+        let edited = crate::xlsx::sheet_view::printed_text_regions(&sheet, &res);
         assert!(edited.iter().map(|r| r.right()).max() > larger.iter().map(|r| r.right()).max());
         res.print_scale.set(0.5);
-        assert_eq!(super::printed_text_regions(&sheet, &res), edited);
+        assert_eq!(crate::xlsx::sheet_view::printed_text_regions(&sheet, &res), edited);
         assert_eq!(cached(), 2, "print scale participates in the key");
         let mut new_resources = crate::render::shape_view::Resources::new(&presentation, cx);
         new_resources.print = true;
         new_resources.print_scale.set(0.5);
-        super::printed_text_regions(&sheet, &new_resources);
+        crate::xlsx::sheet_view::printed_text_regions(&sheet, &new_resources);
         assert_eq!(cached(), 3, "new font/resources generation cannot reuse old layout entries");
-        let sheets: Vec<_> = (0..=super::CACHED_LAYOUTS).map(|_| Arc::new((*sheet).clone())).collect();
-        for s in &sheets { super::printed_text_regions(s, &res); }
-        assert_eq!(cached(), super::CACHED_LAYOUTS);
-        let first_key = super::layout_key(&sheets[0], 1.0 / 12_700.0, &res);
-        assert!(!super::PRINT_REGIONS.with(|cache| cache.borrow().iter().any(|(key, _, _)| *key == first_key)), "oldest live sheet is evicted at the LRU boundary");
-        super::release_layouts();
+        let sheets: Vec<_> = (0..=crate::xlsx::sheet_view::CACHED_LAYOUTS).map(|_| Arc::new((*sheet).clone())).collect();
+        for s in &sheets { crate::xlsx::sheet_view::printed_text_regions(s, &res); }
+        assert_eq!(cached(), crate::xlsx::sheet_view::CACHED_LAYOUTS);
+        let first_key = crate::xlsx::sheet_view::layout_key(&sheets[0], 1.0 / 12_700.0, &res);
+        assert!(!crate::xlsx::sheet_view::PRINT_REGIONS.with(|cache| cache.borrow().iter().any(|(key, _, _)| *key == first_key)), "oldest live sheet is evicted at the LRU boundary");
+        crate::xlsx::sheet_view::release_layouts();
         assert_eq!(cached(), 0);
     });
 }

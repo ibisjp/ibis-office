@@ -103,18 +103,33 @@ pub(crate) fn theme_colours() -> Vec<(String, ibis_doc_model::Rgb)> {
 }
 
 pub(crate) fn theme() -> String {
-    let colour = |name: &str, rgb: &str| format!(r#"<a:{name}><a:srgbClr val="{rgb}"/></a:{name}>"#);
-    let colours: String = THEME_COLOURS
-    .iter()
-    .map(|(n, c)| colour(n, c))
-    .collect();
     let fonts = |latin: &str, ea: &str| format!(r#"<a:latin typeface="{latin}" panose="020F0302020204030204"/><a:ea typeface="{ea}"/><a:cs typeface=""/>"#);
+    theme_of("Office テーマ", &THEME_COLOURS, &fonts("Calibri Light", "游ゴシック Light"), &fonts("Calibri", "游ゴシック"))
+}
+
+/// The colours of Office's theme of 2007 to 2010 ("Office 2007 - 2010"), beside dk1 and lt1.
+const THEME_2007_COLOURS: [(&str, &str); 10] = [
+    ("dk2", "1F497D"), ("lt2", "EEECE1"), ("accent1", "4F81BD"), ("accent2", "C0504D"), ("accent3", "9BBB59"),
+    ("accent4", "8064A2"), ("accent5", "4BACC6"), ("accent6", "F79646"), ("hlink", "0000FF"), ("folHlink", "800080"),
+];
+
+/// Office's theme of 2007 to 2010, the one an old workbook (.xls) means by the default theme (its `THEME` record's
+/// version 124226 with no theme of its own, MS-XLS 2.4.326): Excel 365 saves a workbook in this theme so (the corpus's
+/// workbooks in it; those in a later theme carry their theme). Cambria and Calibri, with ＭＳ Ｐゴシック for Japanese.
+pub(crate) fn theme_2007() -> String {
+    let fonts = |latin: &str| format!(r#"<a:latin typeface="{latin}"/><a:ea typeface=""/><a:cs typeface=""/><a:font script="Jpan" typeface="ＭＳ Ｐゴシック"/>"#);
+    theme_of("Office Theme 2007 - 2010", &THEME_2007_COLOURS, &fonts("Cambria"), &fonts("Calibri"))
+}
+
+fn theme_of(name: &str, scheme: &[(&str, &str)], major: &str, minor: &str) -> String {
+    let colour = |name: &str, rgb: &str| format!(r#"<a:{name}><a:srgbClr val="{rgb}"/></a:{name}>"#);
+    let colours: String = scheme.iter().map(|(n, c)| colour(n, c)).collect();
     let solid = r#"<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>"#;
     let line = |w: u32| format!(r#"<a:ln w="{w}" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>"#);
     format!(
-        r#"{HEAD}<a:theme xmlns:a="{A}" name="Office テーマ"><a:themeElements><a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>{colours}</a:clrScheme><a:fontScheme name="Office"><a:majorFont>{}</a:majorFont><a:minorFont>{}</a:minorFont></a:fontScheme><a:fmtScheme name="Office"><a:fillStyleLst>{solid}{solid}{solid}</a:fillStyleLst><a:lnStyleLst>{}{}{}</a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst>{solid}{solid}{solid}</a:bgFillStyleLst></a:fmtScheme></a:themeElements><a:objectDefaults/><a:extraClrSchemeLst/></a:theme>"#,
-        fonts("Calibri Light", "游ゴシック Light"),
-        fonts("Calibri", "游ゴシック"),
+        r#"{HEAD}<a:theme xmlns:a="{A}" name="{name}"><a:themeElements><a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>{colours}</a:clrScheme><a:fontScheme name="Office"><a:majorFont>{}</a:majorFont><a:minorFont>{}</a:minorFont></a:fontScheme><a:fmtScheme name="Office"><a:fillStyleLst>{solid}{solid}{solid}</a:fillStyleLst><a:lnStyleLst>{}{}{}</a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst>{solid}{solid}{solid}</a:bgFillStyleLst></a:fmtScheme></a:themeElements><a:objectDefaults/><a:extraClrSchemeLst/></a:theme>"#,
+        major,
+        minor,
         line(6350),
         line(12700),
         line(19050),

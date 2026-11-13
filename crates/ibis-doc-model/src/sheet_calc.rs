@@ -133,6 +133,25 @@ impl<'a> BookView<'a> {
         out
     }
 
+    /// The cells whose formula calls a volatile function (Excel calculates them again whenever a book is opened).
+    /// Read from the formula text, not from the dependency index: it is not built for a book without such cells.
+    pub fn volatile_formula_cells(&self) -> Vec<CellId> {
+        const NAMES: [&[u8]; 9] = [b"TODAY(", b"NOW(", b"RAND(", b"RANDBETWEEN(", b"RANDARRAY(", b"OFFSET(", b"INDIRECT(", b"CELL(", b"INFO("];
+        let mut out = Vec::new();
+        for (i, s) in self.sheets.iter().enumerate() {
+            if let Some(sheet) = s.sheet {
+                out.extend(
+                    sheet
+                        .cells
+                        .iter()
+                        .filter(|c| c.formula.as_deref().is_some_and(|f| NAMES.iter().any(|n| f.as_bytes().windows(n.len()).any(|w| w.eq_ignore_ascii_case(n)))))
+                        .map(|c| (i, c.row, c.column)),
+                );
+            }
+        }
+        out
+    }
+
     /// The formula cells with no value: a file written by a program that does
     /// not calculate (C#'s Open XML SDK, openpyxl) has none cached.
     pub fn formula_cells_without_value(&self) -> Vec<CellId> {

@@ -5,6 +5,7 @@ use super::{Scenario, button_probe as buttons};
 use crate::docx::scenarios::DocSteps;
 use gpui_kit::*;
 use gpui_kit::component::input::InputEvent;
+use crate::docx::ext::*;
 pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
     ("shell::dropdown_search_threshold_and_width",dropdown_threshold),
     ("shell::autocorrect_dictionary_fixed_header",dictionary),

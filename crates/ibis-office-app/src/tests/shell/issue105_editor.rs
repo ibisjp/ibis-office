@@ -7,6 +7,7 @@
 use super::Scenario;
 use crate::xlsx::scenarios::SheetSteps;
 use gpui_kit::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![

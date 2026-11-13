@@ -1,0 +1,567 @@
+# ibisOffice の UI の文字（日本語）：fix 担当。キー<TAB>文字（shell/i18n.rs）。
+dedupe.done	{gone} 個の重複する値が見つかり、削除されました。{left} 個の一意の値が残っています。
+dedupe.column-heading	列 {column}（{heading}）
+dedupe.column	列 {column}
+text-columns.done	{rows} 行を区切りました。
+text-columns.source	区切るセル：{cells}
+text-columns.quote	文字列の引用符：{quote}
+text-columns.format	列のデータ形式：{format}
+goto-special.done	{count} 個のセルを選択しました。
+edit.refused	この操作はできません（{error}）
+flash-fill.done	フラッシュ フィル: {count} 個のセルに入力しました。
+xlsx.protect-sheet	シートの保護…
+xlsx.unprotect-sheet	シート保護の解除…
+xlsx.lock-cells	セルのロック
+xlsx.hide-formulas	数式を表示しない
+xlsx.series	連続データの作成…
+xlsx.table-to-range	範囲に変換
+xlsx.conditional-menu	条件付き書式
+xlsx.cf-highlight	セルの強調表示ルール
+xlsx.cf-top-bottom	上位/下位ルール
+xlsx.cf-bars	データ バー
+xlsx.cf-scales	カラー スケール
+xlsx.cf-icon-sets	アイコン セット
+docx.page.setup	ページ設定…
+page-setup.bad	{field} には 0 以上の数値（mm）を入力してください。
+docx.notes.settings	脚注と文末脚注の設定…
+docx.list.format	番号の書式
+docx.list.suffix	番号の後
+docx.list.suffix-tab	タブ
+docx.list.suffix-space	スペース
+docx.list.suffix-none	なし
+docx.bookmark	ブックマーク…
+docx.watermark	透かし…
+docx.style.new	新しいスタイル…
+docx.cstyle	文字スタイル
+docx.cstyle.clear	文字スタイルの解除
+app.settings	設定…
+app.file.print	印刷…
+about.version	バージョン {version}
+about.license	AGPL-3.0-only または商用ライセンスで提供しています。
+about.update-available	新しいバージョンがあります。
+xlsx.print-options	印刷オプション
+xlsx.print.gridlines	枠線
+xlsx.print.headings	行列見出し
+xlsx.print.black-white	白黒
+xlsx.print.draft	簡易印刷
+fix.print.columns-repeat-left	タイトル列
+fix.print.use-selected-columns	選択した列にする
+fix.print.columns-repeat-left-cols-printed	タイトル列：{cols}（各ページの左に印刷）
+fix.print.columns-repeat-left-none	タイトル列：なし
+fix.print.postcard	はがき
+fix.print.center-page	ページ中央
+fix.print.vertical	垂直
+pptx.insert-chart.pie-of-pie	補助円グラフ付き円
+pptx.insert-chart.bar-of-pie	補助縦棒付き円
+fix.chart-edit.pie-chart-type	補助グラフの種類
+fix.chart-edit.pie-pie	補助円
+fix.chart-edit.bar-pie	補助棒
+fix.chart-edit.split-series	分割の基準
+fix.chart-edit.percent	％
+fix.chart-edit.split-position-value	分割位置 / 値
+fix.chart-edit.second-plot-size	補助プロットのサイズ
+fix.chart-edit.enter-number-split-position-value	分割位置 / 値には数を入れてください。
+fix.chart-edit.enter-integer-between-5-200	補助プロットのサイズには 5 から 200 の整数を入れてください。
+pptx.insert-chart.stock-hlc	株価 (高値-安値-終値)
+pptx.insert-chart.stock-ohlc	株価 (始値-高値-安値-終値)
+pptx.insert-chart.stock-vhlc	株価 (出来高-高値-安値-終値)
+pptx.insert-chart.stock-vohlc	株価 (出来高-始値-高値-安値-終値)
+fix.chart-edit.stock-chart-options	株価チャートのオプション
+fix.chart-edit.high-low-lines	高値安値線
+fix.chart-edit.up-down-bars	陽線・陰線
+fix.chart-edit.drop-lines	降下線
+xlsx.chart-series	系列
+xlsx.chart-series-add	＋ 系列を追加
+xlsx.chart-series-last-error	最後の系列は削除できません。
+xlsx.chart-series-reorder-error	このグラフの系列は並べ替えられません。
+xlsx.chart-series-add-error	このグラフの系列は追加できません。
+xlsx.chart-series-delete-error	このグラフの系列は削除できません。
+xlsx.arrange-all	整列…
+xlsx.arrange-windows	ウィンドウの整列
+xlsx.arrange-tiled	並べて表示
+xlsx.arrange-horizontal	上下に並べて表示
+xlsx.arrange-vertical	左右に並べて表示
+xlsx.arrange-cascade	重ねて表示
+xlsx.arrange-active-only	作業中のブックのウィンドウを整列
+fix.arrange-windows.arrange-windows	ウィンドウの整列
+fix.arrange-windows.arrange	整列
+fix.arrange-windows.tiled	並べて表示
+fix.arrange-windows.horizontal	上下に並べて表示
+fix.arrange-windows.vertical	左右に並べて表示
+fix.arrange-windows.cascade	重ねて表示
+fix.arrange-windows.windows-active-workbook	作業中のブックのウィンドウを整列
+xlsx.new-window	新しいウィンドウを開く
+fix.misc.new-window	新しいウィンドウを開く
+fix.editor.do-you-want-save-changes	変更を保存しますか？
+fix.editor.don-t-save	保存しない
+xlsx.view-side-by-side	並べて比較
+xlsx.sync-scrolling	同期スクロール
+xlsx.reset-window-position	ウィンドウの位置をリセット
+fix.misc.view-side-side	並べて比較
+fix.misc.synchronous-scrolling	同期スクロール
+fix.misc.reset-window-position	ウィンドウの位置をリセット
+xlsx.compatibility-check	互換性チェック…
+xlsx.compatibility.title	互換性チェック
+xlsx.compatibility.desc	このブックが旧バージョンの Excel (97-2003) と互換性があるかをスキャンし、問題点を一覧表示します。
+xlsx.compatibility.passed	互換性の問題は見つかりませんでした
+xlsx.compatibility.passed-sub	このブックには、Excel 97-2003 でサポートされていない機能や重大な機能低下は見つかりませんでした。
+xlsx.compatibility.significant	重大な機能低下
+xlsx.compatibility.minor	軽微な精度の低下
+xlsx.compatibility.recheck	再チェック
+xlsx.compatibility.recheck-done	互換性チェックを再実行しました。
+fix.misc.check-compatibility	互換性チェック…
+fix.misc.compatibility-checker	互換性チェック
+fix.misc.significant-loss-functionality	重大な機能低下
+fix.misc.minor-loss-fidelity	軽微な精度の低下
+fix.misc.recheck	再チェック
+xlsx.autorecover-settings	自動回復の設定…
+xlsx.autorecover.settings-title	自動回復の設定
+xlsx.autorecover.section-general	全般設定
+xlsx.autorecover.enabled-label	次の間隔で自動回復用データを保存する
+xlsx.autorecover.interval-label	保存間隔
+xlsx.autorecover.interval-minutes-unit	分
+xlsx.autorecover.keep-unsaved-label	保存しないで終了する場合、最後に自動回復されたバージョンを残す
+xlsx.autorecover.section-location	保存先の場所
+xlsx.autorecover.location-label	自動回復用ファイルの場所
+xlsx.autorecover.reset-location	既定の場所に戻す
+xlsx.autorecover.section-workbook	現在のブック
+xlsx.autorecover.disable-workbook-label	このブックの自動回復を行わない
+xlsx.autorecover.save-now-btn	今すぐ自動回復データを保存
+xlsx.autorecover.save-btn	設定を保存
+xlsx.autorecover.saved-msg	設定を保存しました。
+xlsx.autorecover.error-interval	保存間隔は 1〜120 の数値を指定してください。
+xlsx.autorecover.error-path	保存先フォルダーを作成できませんでした
+xlsx.autorecover.now-done	自動回復データを保存しました
+xlsx.autorecover.now-failed	自動回復データの保存に失敗しました
+xlsx.autorecover.banner-text	［自動回復］ このブックは予期せぬ終了の後に回復されました。変更内容を保持するには名前を付けて保存してください。
+xlsx.autorecover.save-as	名前を付けて保存
+xlsx.autorecover.discard	破棄
+xlsx.autorecover.wasm-save-unsupported	ブラウザー版では自動回復スナップショット保存に対応していません
+xlsx.recover-unsaved	未保存のブックの回復…
+xlsx.recover.title	未保存のブックの回復
+xlsx.recover.panel-desc	保存されずに終了したブックの自動バックアップ一覧です。
+xlsx.recover.empty-title	回復可能な未保存のブックはありません
+xlsx.recover.empty-desc	予期せぬ終了時や保存せずに閉じたファイルがここに自動保存されます。
+xlsx.recover.date-label	日時
+xlsx.recover.size-label	サイズ
+xlsx.recover.opened-status	回復されたブックを開きました
+xlsx.recover.open-failed	ファイルを開けませんでした
+xlsx.recover.deleted-msg	回復ファイルを削除しました。
+xlsx.recover.all-deleted-msg	すべての回復ファイルを削除しました。
+xlsx.recover.clear-all	すべて削除
+xlsx.recover.rescan	再スキャン
+xlsx.recover.wasm-unsupported	ブラウザー版では未保存ブックの回復に対応していません
+xlsx.backup-save-settings	バックアップと保存先の設定…
+xlsx.backupsave.panel-title	バックアップと保存先の設定
+xlsx.backupsave.section-default-loc	既定の保存場所
+xlsx.backupsave.default-loc-desc	新規ブックを保存する際の既定のフォルダーを指定します。
+xlsx.backupsave.reset-default-loc	既定値に戻す
+xlsx.backupsave.section-backup	バックアップ ファイルの作成
+xlsx.backupsave.always-backup-label	上書き保存時に常にバックアップ ファイルを作成する
+xlsx.backupsave.backup-format-label	バックアップ形式
+xlsx.backupsave.format-xlk	Excel 互換 (.xlk)
+xlsx.backupsave.format-xlsx	Excel ブック (.xlsx)
+xlsx.backupsave.backup-location-label	保存場所
+xlsx.backupsave.loc-same-folder	元のファイルと同じ場所
+xlsx.backupsave.loc-custom-folder	専用フォルダー
+xlsx.backupsave.custom-folder-label	バックアップ先フォルダー
+xlsx.backupsave.section-workbook	現在のブックの設定
+xlsx.backupsave.wb-backup-label	このブックで常にバックアップを作成する
+xlsx.backupsave.backup-now-btn	今すぐバックアップを作成
+xlsx.backupsave.error-default-path	既定の保存先フォルダーを作成できませんでした
+xlsx.backupsave.error-backup-path	バックアップ先フォルダーを作成できませんでした
+xlsx.backupsave.save-failed	設定の保存に失敗しました
+xlsx.backupsave.saved-msg	設定を保存しました。
+xlsx.backupsave.wasm-unsupported	ブラウザー版ではバックアップ設定に対応していません
+xlsx.backupsave.backup-now-done	バックアップを作成しました
+xlsx.backupsave.backup-now-failed	バックアップの作成に失敗しました
+xlsx.backupsave.need-save-first	ブックがまだ保存されていません。先に名前を付けて保存してください。
+xlsx.backupsave.save-settings-btn	設定を保存
+xlsx.open-and-repair	破損ブックの修復…
+xlsx.repair.title	破損ブックの修復
+xlsx.repair.desc	破損して正常に開けない Excel ブックの修復、または数式・値のデータ抽出を行います。
+xlsx.repair.file-label	修復対象のファイル
+xlsx.repair.browse-btn	参照…
+xlsx.repair.prompt-file	修復するブックを選択
+xlsx.repair.mode-label	修復方法の選択
+xlsx.repair.mode-repair	修復（推奨）
+xlsx.repair.mode-repair-desc	できる限りのデータ、書式、数式を修復して開きます。
+xlsx.repair.mode-formulas	データの抽出: 数式を回復
+xlsx.repair.mode-formulas-desc	書式やオブジェクトを除去し、数式と値を抽出します。
+xlsx.repair.mode-values	データの抽出: 値に変換
+xlsx.repair.mode-values-desc	数式を計算済みの値に変換し、安全にデータを抽出します。
+xlsx.repair.execute-btn	修復して開く
+xlsx.repair.close-btn	閉じる
+xlsx.repair.error-no-file	ファイルが指定されていません。
+xlsx.repair.error-not-found	指定されたファイルが見つかりません。
+xlsx.repair.error-read	ファイルの読み込みに失敗しました
+xlsx.repair.error-failed	修復処理に失敗しました
+xlsx.repair.success-msg	ブックの修復が完了しました。
+xlsx.repair.banner-default	［修復完了］ このブックは破損から修復されました。修復結果を確認し、名前を付けて保存してください。
+xlsx.repair.banner-tag	修復完了
+xlsx.repair.banner-advice	修復結果を確認し、名前を付けて保存してください。
+xlsx.repair.show-report-btn	レポートを表示
+xlsx.repair.banner-close	閉じる
+xlsx.insert.wordart	ワードアート
+xlsx.insert.wordart-styles	ワードアートのスタイル
+xlsx.text.warp	文字の変形
+xlsx.text.wordart-styles	ワードアートのスタイル
+xlsx.wordart.style1	塗りつぶし: 黒、テキスト 1
+xlsx.wordart.style2	塗りつぶし: 青、アクセント 1、影
+xlsx.wordart.style3	塗りつぶし: オレンジ、アクセント 2、輪郭
+xlsx.wordart.style4	塗りつぶし: 白、輪郭: 黒
+xlsx.wordart.style5	塗りつぶし: ゴールド、影
+xlsx.wordart.style6	塗りつぶし: 青、輪郭: 白、影
+xlsx.text.warp.none	変形なし
+xlsx.text.warp.arch-up	上アーチ
+xlsx.text.warp.arch-down	下アーチ
+xlsx.text.warp.circle	円
+xlsx.text.warp.button	ボタン
+xlsx.text.warp.curve-up	上カーブ
+xlsx.text.warp.curve-down	下カーブ
+xlsx.text.warp.wave1	波 1
+xlsx.text.warp.wave2	波 2
+xlsx.text.warp.double-wave1	二重波 1
+xlsx.text.warp.inflate	膨張
+xlsx.text.warp.deflate	収縮
+xlsx.text.warp.stop	停止標識
+xlsx.text.warp.triangle	三角形
+xlsx.text.warp.triangle-inverted	逆三角形
+xlsx.text.warp.chevron	山形
+xlsx.text.warp.chevron-inverted	逆山形
+xlsx.text.warp.fade-right	右フェード
+xlsx.text.warp.fade-left	左フェード
+xlsx.text.warp.fade-up	上フェード
+xlsx.text.warp.fade-down	下フェード
+xlsx.chart.save-template	テンプレートとして保存…
+xlsx.chart-save-template	テンプレートとして保存…
+xlsx.chart.apply-template	テンプレートの適用…
+xlsx.chart-apply-template	テンプレートの適用…
+fix.chart-template.chart-template	グラフ テンプレート
+fix.chart-template.apply-template	テンプレートの適用
+fix.chart-template.save-template	テンプレートとして保存
+fix.chart-template.template-name	テンプレート名
+fix.chart-template.saved-templates	保存済みテンプレート
+fix.chart-template.no-saved-templates-found	保存されたテンプレートはありません。
+fix.chart-template.apply-file	ファイルから適用…
+fix.chart-template.select-chart-template	グラフ テンプレートの選択
+fix.chart-template.invalid-template-name	テンプレート名が無効です。
+fix.chart-template.please-select-template-apply	適用するテンプレートを選択してください。
+fix.chart-edit.surface-type	表面の種類
+fix.chart-edit.3-d-surface	3D 表面
+fix.chart-edit.3-d-wireframe	3D ワイヤー
+fix.chart-edit.contour	等高線
+fix.chart-edit.wireframe-contour	ワイヤー等高線
+pptx.insert-chart.surface-3d	3-D 表面
+pptx.insert-chart.surface-3d-wireframe	3-D ワイヤーフレーム表面
+pptx.insert-chart.contour	等高線
+pptx.insert-chart.contour-wireframe	ワイヤーフレーム等高線
+xlsx.pivot-chart-insert	ピボットグラフ…
+xlsx.pivot-chart	ピボットグラフ
+xlsx.pivot-chart-source	連動ピボットテーブル
+xlsx.pivot-chart-open-fields	ピボットテーブルのフィールド…
+xlsx.pivot-chart-inserted	ピボットグラフを挿入しました
+xlsx.phonetic-toggle	ふりがなの表示/非表示
+xlsx.phonetic-edit	ふりがなの編集…
+fix.phonetic.edit-furigana	ふりがなの編集
+fix.phonetic.furigana	ふりがな
+fix.phonetic.cell	セル
+
+fix.dedupe-edit.my-data-has-headers	先頭行を見出しとして使用：オン
+fix.dedupe-edit.my-data-has-headers-off	先頭行を見出しとして使用：オフ
+fix.dedupe-edit.columns-compare	比べる列
+fix.dedupe-edit.unselect-all	選択をすべて解除
+fix.dedupe-edit.remove-duplicates	重複の削除
+fix.goto-special.select	選択
+fix.goto-special.constants	定数
+fix.goto-special.blanks	空白セル
+fix.goto-special.current-region	アクティブ セル領域
+fix.goto-special.last-cell	最後のセル
+fix.goto-special.visible-cells-only	可視セル
+fix.goto-special.text	文字
+fix.goto-special.logicals	論理値
+fix.goto-special.errors	エラー値
+fix.goto-special.go-special	条件を選択してジャンプ
+fix.text-columns.enter-break-positions-character	区切る位置は、1 以上の文字数をカンマで区切って入力してください（例：3, 8）。
+fix.text-columns.enter-break-positions-e-g	区切る位置を入力してください（例：3, 8）。
+fix.text-columns.select-least-one-delimiter	区切り文字を 1 つ以上選んでください。
+fix.text-columns.other-1-character	その他（1 文字）
+fix.text-columns.only-one-column-can-converted	一度に変換できるのは 1 列だけです。
+fix.text-columns.enter-destination-cell-e-g	表示先のセルを入力してください（例：B1）。
+fix.text-columns.there-no-data-split	区切るデータがありません。
+fix.text-columns.there-already-data-here-replace	ここには既にデータがあります。置き換えるには、もう一度「区切る」を押してください。
+fix.text-columns.delimiters	区切り文字
+fix.text-columns.fixed-width	固定長
+fix.text-columns.break-positions-characters-start	区切る位置（先頭からの文字数）
+fix.text-columns.tab	タブ
+fix.text-columns.semicolon	セミコロン
+fix.text-columns.comma	カンマ
+fix.text-columns.space	スペース
+fix.text-columns.treat-consecutive-delimiters-one	連続する区切り文字を 1 つに
+fix.text-columns.destination	表示先
+fix.text-columns.preview	プレビュー
+fix.text-columns.replace	置き換える
+fix.text-columns.split	区切る
+fix.text-columns.text-columns	区切り位置
+fix.validation.value-does-not-match-data	この値は、このセルに定義されているデータの入力規則の制限を満たしていません。
+fix.validation.input-message-optional	入力時のメッセージ（任意）
+fix.pivot-options.data	データ
+fix.goto.footnote	脚注
+fix.goto.endnote	文末脚注
+fix.help-panels.start	開始番号
+fix.dedupe-edit.select-all	すべて選択
+fix.validation.clear-all	すべてクリア
+fix.pivot.settings	設定
+fix.misc.flash-fill-couldn-t-recognize	フラッシュ フィルで値を判断できませんでした。列に例を入力してから、もう一度実行してください。
+fix.validation.any-value	すべての値
+fix.validation.whole-number	整数
+fix.validation.decimal	小数点数
+fix.validation.list	リスト
+fix.validation.text-length	文字列（長さ指定）
+fix.validation.between	次の値の間
+fix.validation.not-between	次の値の間以外
+fix.validation.equal	次の値に等しい
+fix.validation.not-equal	次の値に等しくない
+fix.validation.greater-than	次の値より大きい
+fix.validation.less-than	次の値より小さい
+fix.validation.greater-than-equal	次の値以上
+fix.validation.less-than-equal	次の値以下
+fix.validation.stop	停止
+fix.validation.warning	注意
+fix.validation.information	情報
+fix.validation.allow	入力値の種類
+fix.validation.source	元の値
+fix.validation.ignore-blank	空白を無視する
+fix.validation.cell-dropdown	ドロップダウン リストから選択する
+fix.validation.input-message	入力時メッセージ
+fix.validation.error-alert	エラー メッセージ
+fix.validation.show-input-message-when-cell	セルを選択したときに入力時メッセージを表示する
+fix.validation.show-error-alert-after-invalid	無効なデータが入力されたらエラー メッセージを表示する
+fix.validation.value-range-formula-list-comma	値・範囲・数式（リストはカンマ区切り）
+fix.validation.second-value-between	次の値（間のとき）
+fix.validation.enter-source	元の値を入力してください。
+fix.validation.enter-formula	数式を入力してください。
+fix.validation.validation-rule-set	入力規則を設定しました。
+fix.validation.validation-rules-cleared	入力規則を削除しました。
+fix.protection.cell-chart-you-re-trying	変更しようとしているセルやグラフは保護されているシート上にあります。変更するには、シートの保護を解除してください。パスワードの入力が必要な場合もあります。
+fix.protection.select-locked-cells	ロックされたセル範囲の選択
+fix.protection.select-unlocked-cells	ロックされていないセル範囲の選択
+fix.protection.format-cells	セルの書式設定
+fix.protection.format-columns	列の書式設定
+fix.protection.format-rows	行の書式設定
+fix.protection.insert-columns	列の挿入
+fix.protection.insert-rows	行の挿入
+fix.protection.insert-hyperlinks	ハイパーリンクの挿入
+fix.protection.delete-columns	列の削除
+fix.protection.delete-rows	行の削除
+fix.protection.use-autofilter	オートフィルターの使用
+fix.protection.use-pivottable-pivotchart	ピボットテーブルとピボットグラフを使う
+fix.protection.edit-objects	オブジェクトの編集
+fix.protection.edit-scenarios	シナリオの編集
+fix.protection.password-optional	パスワード（省略可）
+fix.protection.reenter-password	パスワードをもう一度入力
+fix.protection.protect-worksheet-contents-locked	シートとロックされたセルの内容を保護する
+fix.protection.allow-all-users-worksheet	このシートのすべてのユーザーに許可する操作
+fix.protection.unprotect-sheet	シート保護の解除
+fix.protection.protect-sheet	シートを保護
+fix.protection.unprotect	保護を解除
+fix.protection.protect-sheet-2	シートの保護
+fix.protection.confirmation-password-not	確認用パスワードが一致しません。
+fix.protection.password-you-supplied-not-correct	パスワードが正しくありません。
+fix.series.series	連続データの作成
+fix.series.type	種類
+fix.series.date-unit	増加単位
+fix.series.day	日
+fix.series.weekday	週日
+fix.series.month	月
+fix.series.year	年
+fix.series.step-value	増分値
+fix.series.stop-value	停止値
+fix.series.enter-step-value	増分値を入力してください。
+fix.series.enter-number-date-stop-value	停止値には数値か日付を入力してください。
+fix.series.enter-stop-value-fill-one	1 つのセルから作るときは停止値を入力してください。
+fix.series.enter-number-date-first-cell	最初のセルに数値か日付を入力してください。
+fix.help-panels.left-inside	左（内側）
+fix.help-panels.right-outside	右（外側）
+fix.help-panels.gutter	とじしろ
+fix.help-panels.gutter-position	とじしろの位置
+fix.help-panels.mirror-margins	見開きページ
+fix.help-panels.header-footer-edge	ヘッダーとフッター（端からの距離）
+fix.help-panels.top	上寄せ
+fix.help-panels.center	中央寄せ
+fix.help-panels.bottom	下寄せ
+fix.help-panels.margins-too-large-paper	余白が用紙に対して大きすぎます。
+fix.help-panels.page-setup-changed	ページ設定を変えました。
+fix.help-panels.footnote-endnote	脚注と文末脚注
+fix.help-panels.location	場所
+fix.help-panels.bottom-page	ページの最後
+fix.help-panels.below-text	本文の直後
+fix.help-panels.end-section	セクションの最後
+fix.help-panels.end-document	文書の最後
+fix.help-panels.number-format	番号書式
+fix.help-panels.numbering	番号の付け方
+fix.help-panels.continuous	連続
+fix.help-panels.restart-each-section	セクションごとに振り直し
+fix.help-panels.restart-each-page	ページごとに振り直し
+fix.help-panels.enter-whole-number-1-more	開始番号には 1 以上の整数を入力してください。
+fix.help-panels.footnote-endnote-settings-changed	脚注と文末脚注の設定を変えました。
+fix.help-panels.bookmark	ブックマーク
+fix.help-panels.bookmark-name	ブックマーク名
+fix.common.add	追加
+fix.help-panels.hidden-bookmarks	表示されないブックマーク
+fix.help-panels.bookmark-name-must-begin-letter	ブックマーク名は文字で始め、文字・数字・_ だけで 40 文字までにしてください。
+fix.help-panels.bookmark-added	ブックマークを追加しました。
+fix.help-panels.bookmark-deleted	ブックマークを削除しました。
+fix.list-formats.japanese-counting	一、二、三、
+fix.list-formats.iroha	イ. ロ. ハ.
+fix.help-panels.watermark	透かし
+fix.help-panels.remove-watermark	透かしの削除
+fix.help-panels.semitransparent	半透明にする
+fix.help-panels.diagonal	対角線上
+fix.print.horizontal	水平
+fix.help-panels.confidential	社外秘
+fix.help-panels.do-not-copy	複製を禁ず
+fix.help-panels.asap	至急
+fix.help-panels.draft	下書き
+fix.help-panels.sample	見本
+fix.help-panels.urgent	緊急
+fix.help-panels.silver	シルバー
+fix.style-new.new-style	新しいスタイル
+fix.style-new.paragraph	段落
+fix.style-new.style-based	基準にするスタイル
+fix.style-new.style-following-paragraph	次の段落のスタイル
+fix.style-new.change-base	基準を変更
+fix.style-new.style-name-based	「{name}」の基準にするスタイル
+fix.style-new.enter-name-style	スタイルの名前を入れてください。
+fix.style-new.style-name-already-exists	その名前のスタイルはもうあります。
+fix.style-new.there-no-style-named-name	「{name}」というスタイルはありません。
+fix.misc.style-name-created	スタイル「{name}」を作りました。
+fix.style-new.style-can-t-base-based	そのスタイルを基準にはできません（循環します）。
+fix.style-new.base-style-changed	基準にするスタイルを変えました。
+fix.right-tabs.chart-editor	グラフ エディター
+fix.right-tabs.format	書式設定
+fix.file-actions.opened-preview-press-p-print	プレビューで開きました。⌘P で印刷してください
+fix.symbols.punctuation-symbols	句読点・記号
+fix.symbols.mathematical-operators	数学記号
+fix.symbols.greek	ギリシャ文字
+fix.symbols.box-drawing-shapes	罫線・図形
+fix.symbols.circled-numbers-units	丸数字・単位
+fix.symbols.symbols-special-characters	記号と特殊文字
+fix.picture-panel.rotate-flip	回転と反転
+fix.picture-panel.rotate-left-90	左へ 90°
+fix.picture-panel.rotate-right-90	右へ 90°
+fix.picture-panel.flip-horizontal	左右反転
+fix.picture-panel.flip-vertical	上下反転
+fix.picture-panel.crop	切り抜き
+fix.picture-panel.apply-crop	切り抜きを適用
+fix.picture-panel.enter-crop-number-0-up	切り抜きは 0 以上 100 未満の数値（％）で入力してください。
+fix.picture-panel.top-plus-bottom-left-plus	上下、左右それぞれの合計は 100％ 未満にしてください。
+fix.toolbar.don-t-add-space-between	同じスタイルの段落間にスペースを追加しない
+fix.toolbar.none-0-pt	行わない（0 pt）
+fix.toolbar.1-pt-above	1 pt 以上
+fix.toolbar.10-pt-above	10 pt 以上
+fix.toolbar.12-pt-above-default	12 pt 以上（標準）
+fix.toolbar.14-pt-above	14 pt 以上
+fix.toolbar.16-pt-above	16 pt 以上
+fix.toolbar.18-pt-above	18 pt 以上
+fix.toolbar.clear-setting	設定を解除
+fix.font-name.yu-mincho	游明朝
+fix.font-name.yu-gothic	游ゴシック
+fix.font-name.ms-mincho	ＭＳ 明朝
+fix.font-name.ms-gothic	ＭＳ ゴシック
+fix.font-name.biz-udp-mincho	BIZ UDP明朝
+fix.font-name.biz-udp-gothic	BIZ UDPゴシック
+help.update-log	更新ログを表示
+fix.update.found	ibisOffice の新しいバージョンが見つかりました。更新しますか？
+fix.update.found.detail	バージョン {version}（今は {current}）。更新すると ibisOffice を閉じて開き直します。
+fix.update.yes	はい
+fix.update.open-site	ダウンロードのページを開く
+fix.update.no	いいえ
+fix.update.failed	更新できませんでした。
+fix.update.failed.detail	ダウンロードのページから入れ直してください。{url}
+fix.update.translocated.detail	ibisOffice.appをアプリケーションフォルダへ移して開き直すと自動で更新できます。
+fix.update.setting	起動時に更新を確かめる
+fix.update.setting.note	新しいバージョンがあれば、ダウンロードして更新するかどうかを聞きます。
+fix.update.log-path	更新のログ：{log}
+fix.formula-bar.expand	数式バーを展開
+fix.formula-bar.collapse	数式バーを折りたたむ
+xlsx.chart-type	グラフの種類
+fix.validation.continue	続けますか？
+fix.validation.cancel	キャンセル
+fix.move.overwrite	目的のセルに既にデータがあります。置き換えますか?
+fix.move.ok	OK
+fix.menu.search-placeholder	検索
+fix.menu.not-found	みつかりません
+help.check-update	更新の確認…
+fix.update.latest	ibisOffice は最新です。
+fix.update.latest.detail	今のバージョンは {current} です。
+fix.update.check-failed	更新を確かめられませんでした。
+fix.update.check-failed.detail	インターネットに接続できているか確かめてから、もう一度試してください。
+
+# Access keys of the menu lines (Windows and Linux): the letter Alt-less menu keys use, for the line whose id is the key's tail. A single ASCII letter or digit; in English it is a letter of the label. Lines without one get an automatic letter (shell/access_key.rs).
+access.file.new	n
+access.file.open	o
+access.file.recent	r
+access.file.save	s
+access.file.save-as	a
+access.file.copy	y
+access.file.export	e
+access.file.print	p
+access.file.info	i
+access.tools.settings	t
+access.file.close	c
+access.file.page-setup	u
+access.edit.undo	u
+access.edit.redo	r
+access.edit.cut	t
+access.edit.copy	c
+access.edit.paste	p
+access.docx.paste-special	s
+access.edit.copy-format	o
+access.edit.paste-format	m
+access.edit.select-all	a
+access.edit.delete	d
+access.edit.duplicate	i
+access.edit.find-replace	f
+access.docx.find.next	n
+access.docx.find.previous	v
+access.docx.go-to	g
+access.insert.table	t
+access.insert.image	p
+access.insert.shape	s
+access.insert.chart	c
+access.insert.link	l
+access.insert.comment	m
+access.review.comments	c
+access.insert.text-box	x
+access.insert.equation	q
+access.insert.symbol	y
+access.docx.bookmark	k
+access.docx.xref	r
+access.docx.header-footer	h
+access.docx.page-break	b
+access.pptx.insert.wordart	w
+access.view.zoom	z
+access.view.fullscreen	f
+access.window.new-window	n
+access.window.arrange-all	a
+access.window.cascade	c
+access.window.tile-side-by-side	s
+access.window.tile-stacked	t
+access.help.help	h
+access.help.search	s
+access.help.shortcuts	k
+access.help.check-update	u
+access.help.about	a
+access.tools.spelling	s
+access.tools.word-count	w
+access.tools.dictionary	d
+access.tools.accessibility	a
+fix.update.user-files	このフォルダに、ibisOffice のものではないファイルが {count} 個あります。更新しても消しません。念のため、別のフォルダへ移しておくことをおすすめします。
+fix.update.manual	新しいバージョン {version} があります。
+fix.update.flatpak.detail	ダウンロードのページから、お使いの環境（x86_64 または aarch64）の .flatpak を取り、次のコマンドで入れ直してください：{command}
+fix.update.source.detail	ソースを更新して、ビルドし直してください。ダウンロードのページ：{url}
+fix.update.copy-command	コマンドをコピー
+menu.group.wrap-text	文字列の折り返し
+help.register-desktop	アプリの一覧に登録
+help.setup	セットアップ

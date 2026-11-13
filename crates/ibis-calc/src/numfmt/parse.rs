@@ -146,7 +146,7 @@ fn split_sections(code: &str) -> Vec<&str> {
             continue;
         }
         match c {
-            '\\' | '_' | '*' if !quoted && !bracket => escaped = true,
+            '\\' | '!' | '_' | '*' if !quoted && !bracket => escaped = true,
             '"' if !bracket => quoted = !quoted,
             '[' if !quoted => bracket = true,
             ']' if !quoted => bracket = false,
@@ -198,7 +198,8 @@ fn parse_section(s: &str) -> Section {
                 push_literal(&mut section.tokens, &lit);
                 i = j + 1;
             }
-            '\\' => {
+            // `!` shows the next character as is, exactly like a backslash (#181).
+            '\\' | '!' => {
                 if let Some(n) = chars.get(i + 1) {
                     push_literal(&mut section.tokens, &n.to_string());
                 }

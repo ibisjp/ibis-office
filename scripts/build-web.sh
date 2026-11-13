@@ -14,6 +14,8 @@
 # missing); RUSTUP_TOOLCHAIN set by the caller wins.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# The distribution keeps the release defaults (no incremental, default LTO); Cargo.toml's release profile is for development.
+source scripts/dist-profile.sh
 
 WEB_TOOLCHAIN=nightly-2026-09-17
 export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-$WEB_TOOLCHAIN}"
@@ -69,7 +71,7 @@ cp -R "$ASSETS_DIR/icons" www/assets/icons
 # unmodified (fetched one by one when a document uses them), with the notice.
 rm -rf www/assets/artborders
 mkdir -p www/assets/artborders
-unzip -q -o crates/ibis-office-app/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip -d www/assets/artborders
-cp crates/ibis-office-app/data/artborders/ECMA-NOTICE.txt www/assets/artborders/
+unzip -q -o crates/ibis-pptx/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip -d www/assets/artborders
+cp crates/ibis-pptx/data/artborders/ECMA-NOTICE.txt www/assets/artborders/
 
 echo "Built www/ ($PROFILE). Serve it, e.g.: python3 -m http.server -d www 8080"

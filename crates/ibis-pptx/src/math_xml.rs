@@ -44,7 +44,14 @@ fn node(n: Node) -> Option<Math> {
     }
     let boxed = |m: Math| Box::new(m);
     Some(match n.tag_name().name() {
-        "r" => Math::Text(n.children().filter(|c| c.is_element() && c.tag_name().name() == "t").filter_map(|t| t.text()).collect()),
+        "r" => {
+            let text = Math::Text(n.children().filter(|c| c.is_element() && c.tag_name().name() == "t").filter_map(|t| t.text()).collect());
+            // The run's own colour (`w:rPr/w:color`; `auto` and the like: the formula's).
+            match run_color(n) {
+                Some(color) => Math::Colored { color, body: Box::new(text) },
+                None => text,
+            }
+        }
         "oMath" | "e" | "box" | "phant" | "borderBox" => row(n),
         "oMathPara" => row(n),
         "f" => Math::Frac {
@@ -101,16 +108,30 @@ fn node(n: Node) -> Option<Math> {
     })
 }
 
+const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+/// The colour a run (`m:r`) is given (`w:rPr/w:color/@w:val`): Word writes the colour of a formula's text on its runs, each its own (#171).
+/// `None`: none (or `auto`).
+fn run_color(r: Node) -> Option<ibis_doc_model::drawing::Rgb> {
+    let value = r
+        .children()
+        .filter(|c| c.is_element() && c.tag_name().namespace() == Some(W) && c.tag_name().name() == "rPr")
+        .flat_map(|rpr| rpr.children().filter(|c| c.is_element() && c.tag_name().namespace() == Some(W) && c.tag_name().name() == "color"))
+        .find_map(|c| c.attribute((W, "val")))?;
+    (value.len() == 6).then(|| u32::from_str_radix(value, 16).ok()).flatten().map(ibis_doc_model::drawing::Rgb)
+}
+
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-fn run(text: &str, upright: bool) -> String {
+fn run(text: &str, upright: bool, color: Option<ibis_doc_model::drawing::Rgb>) -> String {
     if text.is_empty() {
         return String::new();
     }
     let props = if upright { "<m:rPr><m:sty m:val=\"p\"/></m:rPr>" } else { "" };
-    format!("<m:r>{props}<m:t xml:space=\"preserve\">{}</m:t></m:r>", esc(text))
+    let color = color.map_or(String::new(), |c| format!("<w:rPr><w:color w:val=\"{:06X}\"/></w:rPr>", c.0));
+    format!("<m:r>{props}{color}<m:t xml:space=\"preserve\">{}</m:t></m:r>", esc(text))
 }
 
 fn wrap(tag: &str, inner: String) -> String {
@@ -120,7 +141,11 @@ fn wrap(tag: &str, inner: String) -> String {
 /// The content of a part (`m:e`, `m:num`, ...) as markup.
 fn content(m: &Math, upright: bool) -> String {
     match m {
-        Math::Text(t) => run(t, upright),
+        Math::Text(t) => run(t, upright, None),
+        Math::Colored { color, body } => match &**body {
+            Math::Text(t) => run(t, upright, Some(*color)),
+            other => content(other, upright),
+        },
         Math::Row(items) => items.iter().map(|i| content(i, upright)).collect(),
         Math::Frac { num, den, kind } => {
             let props = match kind {
@@ -173,7 +198,7 @@ fn content(m: &Math, upright: bool) -> String {
                 wrap("bar", format!("<m:barPr><m:pos m:val=\"{pos}\"/></m:barPr>{}", wrap("e", content(base, upright))))
             } else {
                 let tag = if *over { "limUpp" } else { "limLow" };
-                wrap(tag, format!("{}{}", wrap("e", content(base, upright)), wrap("lim", run(mark, true))))
+                wrap(tag, format!("{}{}", wrap("e", content(base, upright)), wrap("lim", run(mark, true, None))))
             }
         }
         Math::EqArray(rows) => wrap("eqArr", rows.iter().map(|r| wrap("e", content(r, upright))).collect::<String>()),
@@ -183,19 +208,21 @@ fn content(m: &Math, upright: bool) -> String {
 
 /// The markup of a display formula: `m:oMathPara` holding an `m:oMath` (its `m` namespace declared on it).
 pub fn write_math(math: &Math) -> String {
-    format!("<m:oMathPara xmlns:m=\"{M}\"><m:oMath>{}</m:oMath></m:oMathPara>", content(math, false))
+    format!("<m:oMathPara xmlns:m=\"{M}\" xmlns:w=\"{W}\"><m:oMath>{}</m:oMath></m:oMathPara>", content(math, false))
 }
 
 /// The markup of an inline formula: `m:oMath` (its `m` namespace declared on it).
 pub fn write_math_inline(math: &Math) -> String {
-    format!("<m:oMath xmlns:m=\"{M}\">{}</m:oMath>", content(math, false))
+    format!("<m:oMath xmlns:m=\"{M}\" xmlns:w=\"{W}\">{}</m:oMath>", content(math, false))
 }
 
 /// The paragraph content that holds a formula the way PowerPoint writes it: `a14:m` in the `Choice` of a
 /// markup-compatibility wrapper, the formula's line of text as its fallback.
 pub fn write_math_content(math: &Math, a: &str, inline: bool) -> String {
     // A formula in a line of text is an `m:oMath`; one of its own, an `m:oMathPara` holding it.
-    let markup = if inline { format!("<m:oMath xmlns:m=\"{M}\">{}</m:oMath>", content(math, false)) } else { write_math(math) };
+    // A run's own colour is Word's (`w:rPr`); PowerPoint's formulas have the colour of the text run.
+    let math = &math.without_colors();
+    let markup = if inline { format!("<m:oMath xmlns:m=\"{M}\">{}</m:oMath>", content(math, false)) } else { format!("<m:oMathPara xmlns:m=\"{M}\"><m:oMath>{}</m:oMath></m:oMathPara>", content(math, false)) };
     format!(
         "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\" Requires=\"a14\"><a14:m>{markup}</a14:m></mc:Choice><mc:Fallback><{a}r><{a}t>{}</{a}t></{a}r></mc:Fallback></mc:AlternateContent>",
         esc(&math.linear())

@@ -5,6 +5,197 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-11-13
+
+The two large changes of this version:
+
+- **The menu bar is redesigned** in the three screens, Document, Spreadsheet and Presentation: commands that left a menu are reached by the command search, the toolbar, the right-click menus or the side bars, and the Window menu, the Start window line, access keys and keyboard-ready message boxes come with it.
+- **The source is split into crates**: a shared layer (`ibis-office-shell`) and one crate per format (`ibis-office-docx`, `ibis-office-xlsx`, `ibis-office-pptx`) on top of it, so the formats build and change apart (see "For developers and forks" below).
+
+### Added
+
+#### All apps
+
+- Setup dialog (Help > Setup) that downloads fonts: it lists the fonts that are not installed with their size and license (a link to each font's license file), with Select All, Install, Don't Install and Cancel; it shows the progress and checks each download's size and SHA-256. The first font offered is IPAmj Mincho (for kanji with variation selectors, #158), downloaded from GitHub Pages unmodified and kept apart from the app. The dialog opens at the first start and after an update unless you chose Don't Install. Installed fonts appear in the font lists and in open documents at once, without a restart; the Web version keeps them in the browser.
+- One shared Format Shape pane in the three screens, with tabs for the basic settings, decoration (shadow, glow, soft edge, reflection) and the text's own fill, outline, shadow and glow. Format Shape... is the first line of the right-click menu of a shape, picture or text box in the three screens, also on the band just outside a selected shape's frame where the cursor is a hand.
+- File > Quit in the three screens on macOS, Windows and Linux (the app menu's Quit and ⌘Q stay on macOS; the Web version has none).
+- Window menu in the three screens: Window List (a quick switcher in most-recently-used order, Ctrl+Tab), Next Window, Previous Window, the arrange commands, the list of open documents, and Sidebars (every pane; a pane that is not available is grey with the reason). Each window is marked with its screen's icon. The Web version, which has one window, keeps Sidebars and Full Screen in the View menu.
+- The Start window is the first line of the File menu in the three screens; a recent file that cannot be opened shows an alert, a missing file's name is grey, and the version is shown.
+- The menu bar folds the menus that do not fit into a down-triangle button after the last visible menu. Colored contextual menus appear for the selection.
+- Menu lines have access keys on Windows and Linux: the letter is underlined, and pressing it in an open menu runs the line or opens its submenu (Alt, Alt+J and F10 reach the menu bar). Alt+letter presses the button of a message box or a dialog's action bar (#118).
+- Every message box can be used from the keyboard: Tab and Shift+Tab move the blue focus ring over the buttons, Enter and Space press the focused button, and Esc presses Cancel (or No). The focus starts on the main button, never on a destructive one. When another app changed the open file, Enter reloads it and Esc answers No.
+- Click the down-triangle after the file name in the title bar for Copy File Name, Copy File Path and Rename File... (the file is renamed on disk at once).
+- A new file's Save As dialog opens in the OS documents folder, then in the last folder saved to (#143). Save As on Windows offers the file types (.docx, .dotx, .odt; .xlsx, .xltx, .xls, .ods, .csv, .tsv; .pptx, .ppsx, .potx, .odp), as on macOS and Linux.
+- Compatibility Mode information bar for old .xls and .ppt files, as for .doc (hidden in reading view).
+- Files protected with Office 2007's Standard Encryption (AES-128, AES-192 or AES-256 with SHA-1) open after the password is given, in .docx, .xlsx and .pptx and on the Web; a wrong password, a damaged file and an unsupported method are told apart. Saving keeps the password and writes the stronger Agile Encryption (#190).
+- An update that this copy cannot install (a Flatpak, a build from the source, a copy that macOS moved to a temporary place) says why on every start and from the start window's button (for a Flatpak, with the install command and a copy button). On Windows a warning appears when the install folder holds your own files (#136).
+- Help > Add to List of Apps on Linux (AppImage) asks again about the list of apps; the first question says that without it the dock may show no icon (#147).
+- Settings is a modal dialog with a splitter whose position is kept, and a reorderable quick access table with an add menu and command icons. Settings > CMYK Profile lists the profiles found in the OS folders, lets you choose one or a file, shows where to download one, and resets to the default (#133).
+- The title row's Draw button opens the Ink panel in the three screens (the button stays filled while the panel is open). The Ink panel starts with an Off tool (the pointer then behaves as without ink: a click places the caret, a drag selects), and the lasso follows the eraser.
+- The title row's comments button is filled while the comments pane is open, and its add-comment button is gone (Review > New Comment and the right-click menu add a comment).
+- A selected shape can be dragged from the band just outside its frame, where the cursor is a hand (before, a press 1 px outside the frame did nothing).
+- The input method's clause being converted is underlined thick, converted clauses thin and unconverted text dotted, in every self-drawn text input (#138).
+- Find panel buttons have tooltips with their keys; the theme color menu shows six accent chips and the theme effect menu shows three samples. Segmented controls take the arrow keys, Home and End, and skip disabled segments.
+
+#### Documents (.docx)
+
+- Insert > Header and Footer enters header and footer editing on the page: the body is shown faint; a close button, Esc or a double click in the body leaves it; thin grey marks show the text boundary at the four corners of the body, and blue lines show the header and footer areas.
+- Insert > Shapes is a grid of small pictures of the shapes, and Insert > Chart shows a picture of each chart kind drawn from sample data (the same pictures as the sheet screen's). Insert > Text Box sits above the pictures and inserts a horizontal text box.
+- Edit > Asian Layout (first in the Edit menu) offers tate-chu-yoko, combined characters and fit text.
+- The Format Shape pane of a text box has a Text tab (text fill, outline, shadow and glow) that acts on the selected characters or on the whole text of the box; the effects are saved and read as Microsoft Word writes them.
+- Review > Changes > Reject All Changes.
+- A right-click menu in the text (#156), and line numbers that apply to every section with interval and distance options (#140).
+- Bullet menus offer Microsoft Word's gallery symbols (□ ◇ ★ ☆ ✔ ❖ ✧ ➔ ■ ◆ ➢ ✓), in .docx and .pptx (#142). A new bullet list has the default bullets of Japanese Microsoft Word 365 (Wingdings ●, ➢ and ✧ in turn over the nine levels), so the second level is the arrowhead (#142).
+- Tracked deletion of a paragraph mark: it is read and saved, the paragraph is shown joined where deleted text is hidden, joined on Accept and kept on Reject; Backspace and Delete across a paragraph boundary with recording on mark the deletion (#123).
+- Editing marks follow Microsoft Word: a Japanese UI shows ↵ for the end of a paragraph and ↓ for a line break, page and column breaks are drawn as a dashed line with a name, the tab after a bullet shows →, and Ctrl+Enter inserts a page break (#116, #117). In vertical writing the marks are drawn turned with the line (#116).
+- Inside a tate-chu-yoko run in vertical text the caret is a vertical bar between the digits; Down goes to the next digit and Up goes back.
+- The caret, Backspace and Delete move over a kanji and its variation selector (an IVS) as one character, in the three screens (#158).
+
+#### Spreadsheets (.xlsx)
+
+- The check box of Microsoft 365 is read, drawn as Microsoft Excel draws it, toggled by click and Space, inserted from Insert > Checkbox and saved (#32).
+- Copy and paste in Microsoft Excel's own clipboard forms: on macOS a one-sheet workbook in Microsoft Excel's native form is read first and written next to the HTML; on Windows cells are copied as an XML Spreadsheet that Microsoft Excel pastes with formulas and formats, and Microsoft Excel's native form is read when pasting. Cells are also copied and pasted as formatted HTML.
+- Paste Special takes the cells another program put on the clipboard (a Microsoft Excel worksheet or an HTML table), not only the last copy made here (#134).
+- Copying cells outlines them with the dashed line, as a cut does, until Esc or typing into a cell.
+- Copying a whole dynamic array's spill range pastes the formula only, and it spills again; spilled cells copied without their formula paste nothing (except Paste Values); cutting the formula cell takes the whole array and cutting spilled cells alone is refused, as in Microsoft Excel (#176).
+- Phonetic guides (furigana) are shown as Microsoft Excel shows them: only for cells that have a guide, in the guide's typeface and size, aligned as the cell is, with the guide's line added to the row height; the View menu has Show and Edit Phonetic Guide (#170, #40).
+- Cells with a volatile function (TODAY, NOW, RAND and so on) and the cells that depend on them are calculated again when a workbook is opened, except in manual calculation mode (#177).
+- Typing `@` and a function name followed by `(`, such as `@sum(a1:a2)`, enters the formula `=sum(a1:a2)` as Microsoft Excel does, also with the full-width mark; any other entry that starts with `@` stays text (#148).
+- Settings > Spreadsheet has a font for the half-width letters and digits of the formula bar (#149).
+- The trim references (`A:.B`, `A.:B`, `A.:.B`) are read as TRIMRANGE's, and TRIMRANGE of a reference gives a reference, so functions such as FORMULATEXT can take it (#146, #151).
+- The source of a list validation can be a formula (OFFSET, INDIRECT, SORT and others). A source Microsoft Excel does not accept there (such as TRANSPOSE) asks first, once per file, saying Microsoft Excel will not apply the rule (#154).
+- The query editor's advanced editor edits the query's M code; Apply reads it back as the steps, and code it cannot read is refused with the reason and the step. The steps pane and the side panes resize by their splitters (#173).
+- N and T of an array give an array, and the base-conversion, complex-number, ROMAN, ARABIC and ERROR.TYPE functions, ADDRESS, COMPLEX, DECIMAL, REGEXEXTRACT, WORKDAY, NETWORKDAYS, PERCENTILE, QUARTILE, PERCENTRANK, FVSCHEDULE, NPV, TEXTBEFORE, TEXTAFTER, VALUETOTEXT and ARRAYTOTEXT run for each element of an array given for a scalar argument, as Microsoft Excel does (#141).
+- View > Freeze Panes > Freeze Panes at Selection. A green 2 px line in the headers marks hidden rows and columns.
+- Each worksheet keeps its scroll position when you show another sheet and come back, whatever command changes the sheet (#145); the scroll position and selection of each sheet are saved in the file and restored when it is opened.
+- Page Setup: segment rows, a wider dialog, a custom header editor that returns to the dialog, and a Margins menu with Microsoft Excel's presets.
+- Fill, outline (color, width, dash) and effects changed in the Format Shape pane on a shape, line, connector or picture are saved into the file; shapes you did not touch stay byte for byte as they were.
+- Deleting a sheet asks first with Yes and No. A text box on a sheet starts at 11 pt, Microsoft Excel's default for drawings.
+- Design Mode shows a check on its menu line while it is on, and a red Close Design Mode pill in the title row, like the slide master's Close Master View. Insert > Checkbox has a check box icon.
+- Dragging a selection past the edge of the grid scrolls the sheet while the button is held, faster the farther the pointer is, also when the pointer stops: cells, row and column headers, the fill handle and moving a range, with frozen panes kept (#186).
+- A formula is entered with its references, function names, TRUE and FALSE in upper case and sheet names as the workbook spells them (`=sum(a1:b2)` becomes `=SUM(A1:B2)`); text in quotes, defined names and table names keep their case (#185).
+
+#### Presentations (.pptx)
+
+- Slide transitions (#88): the options of every transition are settable and named by the side the slide comes from; transitions are read and written as Microsoft PowerPoint does; wheel, clock and dissolve are drawn; the 3D transitions (cube, box, rotate, orbit, flip, gallery, conveyor, switch, ferris wheel, fall over, page curls, peel off, curtains, wind, drape, airplane, origami and the other 2013 effects) are drawn as 3D motion fitted to Microsoft PowerPoint's own video frames.
+- Animations (#89): colors, fill and outline, font changes, the lean of Light Speed and effects by letters or words are drawn as Microsoft PowerPoint draws them; the More Effects lists hold every effect Microsoft PowerPoint has (291 effects).
+- Text in columns (#77): vertical text takes columns too; the text box panel has a columns spinner (1 to 16) and a column spacing spinner.
+- Guides of the slide master and of each layout are read, shown on the slide, snapped to by moving and resizing, and shown with their distance from the middle while dragged (Alt for 0.01 cm); the normal view's guides are read and written as Microsoft PowerPoint 365 does, and a guide's color survives saving and opening again (#84).
+- CMYK color mode: colors given as CMYK are kept, the color picker has C/M/Y/K inputs and shows colors as the press prints them, the file keeps the flag and the profile name, and PDF export writes DeviceCMYK. CMYK and YCCK JPEG pictures in .pptx, .docx and .xlsx are shown with the chosen CMYK profile (#133).
+- ibisOffice's own features that Microsoft PowerPoint lacks, each asked about once per file: text wrap around pictures and videos, with four distances in the Size and Position panel (#132); linked text boxes whose text flows from box to box while you type (also while an input method composes), with link and unlink, an overflow mark, arrow keys that cross from box to box, Select All over the whole chain, a dashed link line, and a solid blue frame on the box with the caret and dashed frames on the other boxes of the chain (#131).
+- The notes pane opens the way the file says (Microsoft PowerPoint's normal view settings), and moving, hiding or showing it is saved; dragging the border to the bottom hides the notes pane or the slide pane.
+
+#### Web version
+
+- The media player plays embedded video and audio through the browser, shows the length when known, offers QuickTime movies as MP4, and says what the browser says when a format cannot be played (#125).
+- Settings > CMYK Profile works with an ICC file picker and keeps the profile in the browser (#133).
+- File > New of an open document and the menu bar's logo open another browser tab with a new file of that kind.
+
+#### Command line
+
+- `--export row-heights <file> [out.tsv]` writes each sheet's row heights in points as the app lays them out when it opens the file (.xlsx, .xls).
+
+### Changed
+
+#### All apps
+
+- The menu bar is reorganized in the three screens, Document, Spreadsheet and Presentation. Commands that left a menu are found by the command search, the toolbar, the right-click menus or the side bars; commands mentioned in issues are back in the menus (phonetic guides #40 #170, apply a slide layout #84 #85 #62, insert an equation #171, text columns of a text box #77, Format Cells #39, text box settings #14; fit text is in the toolbar's alignment drop-down and Edit > Asian Layout, #53). Menu lines of the design that are not made yet are hidden. The Help menu stands with the other menus, with Check for Updates and Show Update Log.
+- The mail merge commands live in the mail merge pane: the Mailings menu opens it, with Envelopes, Labels, Select Recipients, Insert Merge Field and Preview Results as menu lines.
+- The save prompt's buttons are Save, Cancel and Don't Save in that order; Don't Save is red and Enter presses Save.
+- When a typeface is missing on the PC, the stand-in follows what the file says about the typeface, not its name: in .xlsx files by the font's family, in .docx files by the font table's character set, in .pptx files by the run's East Asian character set. A Japanese PC that lists Yu Gothic or MS Mincho only by their Japanese names finds them too.
+- About ibisOffice is one shared dialog on every OS. All eight table screens use one table that lifts a row at the press and reorders by dragging. Drop-downs, spinners, segmented controls, sliders, radio buttons and check boxes show a disabled and a mixed state.
+- A recent file's icon is the icon of the screen that opens its extension. Opening a template from a window that already shows a document opens it in a new window.
+- Saving into a sync folder such as OneDrive: when the new file beside the target cannot be made or moved over it, the file is written in place, after a copy that is put back if the writing fails (#144).
+- After an update on Windows, the backup of the old version is removed the first time the new version starts.
+- In a .docx with no settings part, punctuation is not compressed (Microsoft Word's default), and a document with no styles part kerns at every size (#54).
+
+#### Documents (.docx)
+
+- The body of a page ends above the footer that page has (default, even-page or first-page) and not above the section's tallest footer.
+
+#### Spreadsheets (.xlsx)
+
+- A row's height for its content is one calculation used by opening, AutoFit, editing, pasting and changing a column width; empty rows are 18.75 pt as Microsoft Excel for Windows measures, a row is measured in the face its cells are in, and a row without a hand-set height grows to fit wrapped text on entry, on turning wrap on or off, on paste and on a column width change. A medium, dashed medium, thick or double line under a row makes it one pixel taller, as in Microsoft Excel.
+- Paste follows Microsoft Excel in every combination of paste type, operation, skip blanks, transpose and source (400 combinations and 198 situations of an ordinary paste checked against Microsoft Excel 365): comments, merges and validation come along as in Microsoft Excel, transposed formulas swap their reference offsets, a destination with merged ranges refuses or dissolves them, and a destination bigger than the copy is tiled by whole copies.
+
+#### Presentations (.pptx)
+
+- The soft edge of pictures and shapes follows Microsoft PowerPoint's measured fade: the edge is faded inward by the radius and blurred, instead of blurring the whole picture (#153).
+- Apply Theme Colors to Selected Slides applies to every slide selected in the thumbnails.
+- Export, copy and print are refused while the slide master view or the notes formatting is open (.ppsx and .odp no longer write a broken file), with a message that says so. The toolbar leaves Character Spacing, Change Case, Language, Format Painter and Text Effects to the menus; Insert > Text Box sits above the pictures.
+
+#### Web version
+
+- The Japanese text of the interface is drawn in a gothic face of the system; a font downloaded for documents is used only where a document names it or for a face of the same kind (gothic or mincho).
+
+#### For developers and forks
+
+- The source is split into crates: the shared layer is `crates/ibis-office-shell`, each format is its own crate (`crates/ibis-office-docx`, `crates/ibis-office-xlsx`, `crates/ibis-office-pptx`) on top of it, and `crates/ibis-office-app` keeps the start-up, the export and the tests that use several formats. The formats do not refer to each other or to the app.
+  - Moved files: `crates/ibis-office-app/src/shell/` → `crates/ibis-office-shell/src/`; `src/docx/`, `src/xlsx/`, `src/pptx/` → `crates/ibis-office-<format>/src/` (each format's tests that use only that format and the shell moved with it).
+  - Moved resources: the i18n tables to `crates/ibis-office-base/i18n/`; icons, logos and the Windows PNGs to `crates/ibis-office-shell/`; each format's "Open in Office" logo to its crate's `logo/`; Carlito and the bevel data to `crates/ibis-office-render/`; the art border pictures to `crates/ibis-pptx/data/`. `macos/`, `linux/`, the Windows icons and IBM Plex stay in the app.
+  - A format's `impl SlideEditor` blocks are extension traits made by the attribute `#[ibis_office_macros::editor_ext(Name)]`; after adding such a block or a method, run `python3 scripts/gen-editor-ext.py` (the test `editor_ext_rule` fails otherwise), and a file that calls a format's methods from another file has `use crate::ext::*;` (in the format's crate) or `use crate::<format>::ext::*;` (in the app).
+  - The shared layer cannot call a format: it asks through a hook of the format's `FormatEditor`.
+  - The crates are wired at start-up by the app's `register_hooks()` (no symbols resolved by name at link time any more); a new entry point (another `main`, a test runner) calls it first, or the first use panics saying so.
+  - Changes made against the old paths in a fork need to be moved to the new files; git follows the renames when merging.
+- New submodules of the GPUI fork: `forks/gpui-pre-apple` (the macOS Metal layer, with offscreen rendering and textured meshes for the 3D transitions) and `forks/gpui-base`.
+- The release profile has incremental compilation on for development; the distribution scripts turn incremental and LTO off.
+
+### Fixed
+
+- All apps: on Linux and Windows, shortcut texts show Ctrl, Alt and Shift instead of the Mac's key marks (#150).
+- All apps: Save, Save As, Save a Copy, the exports and Print first enter what is being typed in a cell; before, the open entry was missing from the saved file.
+- All apps: saving while a slide master is open is refused with a message before any dialog asks where to save.
+- All apps: in the chart data pane, a value typed into the grid is entered with Enter and the chart changes.
+- All apps: a search field of a pop-up list takes a typed space as a character (#149); the menu list's scroll bar is no longer hidden after scrolling (#175); closing a document drops its AutoRecover snapshot.
+- All apps: the shadow of a picture-filled shape no longer darkens the picture; a blurred picture shadow spreads past the picture instead of leaving a hairline.
+- .docx: a line on a character grid with a Yu typeface is 1.673 em high; East Asian Ambiguous characters in vertical text turn or stand as Microsoft Word draws them; a run of symbols is not broken at ※ (#54).
+- .docx: a stop or closing bracket before another one is squeezed half an em as Microsoft Word does, and ＝ and the other full-width forms kept upright take the font's vertical glyph (#54, #120).
+- .docx: vertical text lays out like Microsoft Word for symbols and combining marks (#54): fractions and U+23BE to U+23CD are turned, © and ® are turned half cells, combining marks of MS Mincho take a cell of their own, marks without a base at a line's start before an upright symbol share one em cell, U+302A to U+302D take no width, a soft hyphen typed as a character is drawn as a hyphen (an optional hyphen stays optional and is saved as such), and Hiragino's narrow quotation marks are centered on the column.
+- .docx: a character is drawn in the font slot Microsoft Word uses for it, by its Unicode range and the run's hint (Greek and Cyrillic letters are full width and dashes, arrows and symbols half width in MS Mincho and MS Gothic) (#167); a character a typeface lacks is drawn in the typeface Microsoft Word falls back to, character by character.
+- .docx: changing the font writes the Latin typeface for both `ascii` and `hAnsi`, so a font change no longer keeps the old typeface for some characters.
+- .docx: the automatic space between Japanese and Latin text goes beside é, α, а and half-width katakana and no longer beside ー (#166).
+- .docx: PDF export no longer runs forever on a justified paragraph whose line ends with a soft hyphen (#161).
+- .docx: line-breaking rules look past spaces (#162).
+- .docx: the underline of vertical text is on the right of the characters (#160).
+- .docx: kana with a combining semi-voiced mark (か゚ and others) are copied from the exported PDF as their characters (#163).
+- .docx: the color of an equation's text is kept when the file is saved and opened again (#171).
+- .docx: 縦中横 draws every digit of a run, not only the first (#124).
+- .docx: text being composed by the input method is drawn on the line's baseline and laid out as typed, the page scrolls to it, and the candidate window opens under its last line (#121, #122); the composition's underline is on the right of vertical text (#138).
+- .docx: the Compatibility Mode bar is not shown in reading view (#139); a line-number setting with countBy 0 no longer numbers every line (#140).
+- .docx: bullets in Wingdings and Symbol are drawn and written as Microsoft Word writes them, and ■ ◆ ➢ ✓ of the bullet menu are no longer a box on Windows or other characters in Microsoft Word (#142).
+- .docx: a paragraph with a deleted paragraph mark no longer shows as an empty line that cannot be deleted (#123).
+- .docx: Enter on an empty list item of a lower level takes it one level up; only an empty item of the first level stops being a list item (#117).
+- .xlsx: `=TYPE(+A1)` gives the type of the cell's value, not 64 (#169).
+- .xlsx: `!` in a number format (TEXT and cell formats) shows the next character as is, as a backslash does, as in Microsoft Excel (#181).
+- .xlsx: the error button (!) of a cell in the first visible column (column A, or the first column beside frozen columns) is drawn on the right of the cell, as Microsoft Excel does, instead of under the headers where it could not be reached (#183).
+- .xlsx: the cells a formula spills into are formula results: a spilled text such as `=TEXT(SEQUENCE(5),"000")` no longer shows the number-stored-as-text mark, and Convert to Number is not offered there (#184).
+- .xlsx: `LAMBDA` with an optional parameter (`[b]`) opens from Microsoft Excel's files and is saved as Microsoft Excel writes it, so Microsoft Excel no longer repairs the file (#168).
+- .xlsx: the query editor's Applied Steps pane scrolls with the wheel and has a scroll bar (#172).
+- .xlsx: Rename Sheet... from the menu gives the keys to the name field (#174).
+- .xlsx: saving after changing a cell that a chart uses no longer rewrites the look of every series (since 0.8.5 a series' line could disappear in Microsoft Excel); only the chart's cached values change.
+- .xlsx: a sheet with both a form control or picture and notes is saved in the order Microsoft Excel needs (Microsoft Excel replaced the sheet as unreadable); a book saved by an earlier version is mended when saved again.
+- .xlsx: a million-row spill no longer slows the cursor keys (#137); editing an unrelated cell recalculates only the volatile formulas (#109).
+- .xlsx: objects anchored to cells follow the rows measured on opening, and saving no longer anchors them to other cells.
+- .xlsx: pressing F2 or Enter in a cell no longer shrinks a row where the Normal font cannot be measured.
+- .xlsx: the ink pen ends when the ink pane cannot be seen, and Erase All removes reopened ink.
+- .xlsx: .xls files open and print closer to Microsoft Excel: shared strings no longer panic or lose text, files with Microsoft Excel's default password for a locked structure open, print settings, drawings (autoshapes, text boxes, lines, groups), pictures' crops, rich text fonts, conditional format colors and saved row heights are read; charts in .xls files show data labels, fills and lines, markers, axis number formats, secondary axes, display units and the axis titles.
+- .pptx: .ppt files open and draw closer to Microsoft PowerPoint: placeholders, fills, lines, paragraph spacing, rulers, system colors, number styles, bullets, callout tips, gradients and the backgrounds follow the file.
+- .pptx: text in columns that does not fit is shared over the columns as Microsoft PowerPoint does (#77).
+- .pptx: the outline of text is stroked on the centre line of the glyph outlines over the fill, also in turned shapes (#129); the glow of text keeps its color (red glows were brown) (#91).
+- .pptx: vertical text in a turned shape and line breaking by the run's language follow Microsoft PowerPoint (#155).
+- .pptx: soft edge is drawn as Microsoft PowerPoint draws it for every kind of shape, line, fill, picture and group (#153).
+- .pptx: a file with no theme colors uses Office's default theme, so a chart's automatic series colors are not black.
+- .pptx: a shape that animates by letters or words keeps its fill, outline and text color (#89).
+- .pptx: the last line of a justified paragraph is spread only before a line break; trailing spaces at the end of a paragraph are not underlined; a hanging indent makes the margin a tab stop on the first line; a missing Japanese typeface is drawn in Yu Gothic.
+- .pptx: the format pane's Format Shape... opens the pane at the right, not the gradient dialog.
+- macOS: the input method's candidate window opens under the last line of wrapped composing text, and unconverted text has a broken underline (#138).
+- Windows: updating from the zip no longer deletes the files you keep beside the app (#136); opening a file in several threads at once no longer reads other column counts.
+- Windows: a document protected with a password can be saved again, and a password to modify can be set (both failed on Windows).
+- Web: a .docx font the Web build does not have falls to the browser's fonts, bold and italic reach the browser's drawing, and browser-drawn text is no longer heavier (#126).
+- Web: playing a video or audio no longer freezes the page (#125).
+- Web: the input method's candidate window opens under the composing text from the first key, and the clause underlines follow the browser's selection (#127).
+- Web: glow, gradient and pattern text fills and text outlines are drawn (#129); vertical text takes the browser's vertical glyphs (#130); the slide show plays animations smoother (#128).
+
 ## [0.8.6] - 2026-11-06
 
 ### Added

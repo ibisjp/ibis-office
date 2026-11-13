@@ -267,7 +267,7 @@ impl PdfWriter {
                         for (i, (id, x)) in run.iter().enumerate() {
                             let start = text.len();
                             if let Some(c) = characters.get(&id.0) {
-                                text.push(*c);
+                                text.push_str(c);
                             }
                             let advance = run.get(i + 1).map_or(0.0, |(_, next_x)| f32::from(*next_x - *x) / size.max(0.001));
                             glyphs.push(KrillaGlyph::new(GlyphId::new(id.0), advance, 0.0, 0.0, 0.0, start..text.len(), None));
@@ -393,7 +393,7 @@ impl PdfWriter {
 /// data (for trying the subset), and the glyphs drawn with it.
 struct PdfFont {
     font: Font,
-    characters: Arc<HashMap<u32, char>>,
+    characters: Arc<HashMap<u32, String>>,
     data: Arc<Vec<u8>>,
     index: u32,
     glyph_count: u32,
@@ -698,11 +698,26 @@ fn triangles_path(triangles: &[[gpui_kit::Point<Pixels>; 3]]) -> Option<Path> {
     pb.finish()
 }
 
-/// An sRGB color and its opacity.
-fn color(c: Hsla) -> (rgb::Color, NormalizedF32) {
+/// Whether the PDF writes colours as DeviceCMYK (the file has the CMYK mode on): each sRGB colour is turned to CMYK with the
+/// converter in use (the black ink's share is the converter's own); pictures stay RGB.
+static CMYK_EXPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_cmyk_export(on: bool) {
+    CMYK_EXPORT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A colour and its opacity: DeviceCMYK in a file with the CMYK mode on, else sRGB.
+fn color(c: Hsla) -> (krilla::color::Color, NormalizedF32) {
     let Rgba { r, g, b, a } = Rgba::from(c);
     let u = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-    (rgb::Color::new(u(r), u(g), u(b)), NormalizedF32::new(a.clamp(0.0, 1.0)).unwrap_or(NormalizedF32::ONE))
+    let opacity = NormalizedF32::new(a.clamp(0.0, 1.0)).unwrap_or(NormalizedF32::ONE);
+    if CMYK_EXPORT.load(std::sync::atomic::Ordering::Relaxed) {
+        let k = crate::shell::cmyk::cmyk_of(ibis_doc_model::Rgb::from_rgb(u(r), u(g), u(b)));
+        // Percent to the 8 bits DeviceCMYK takes here.
+        let byte = |p: u8| ((p as f32) * 255.0 / 100.0).round() as u8;
+        return (krilla::color::cmyk::Color::new(byte(k.c), byte(k.m), byte(k.y), byte(k.k)).into(), opacity);
+    }
+    (rgb::Color::new(u(r), u(g), u(b)).into(), opacity)
 }
 
 /// The fill for a background over `bounds`: a color, or a linear gradient
@@ -789,7 +804,7 @@ fn font_name(data: &[u8], index: u32) -> String {
 /// one, so combining marks, private use, odd spaces and the figure dash
 /// lose to the rest, and the lowest code wins among equals. (Found by
 /// pdftotext on the exported coverage files docx-DREF-04 and 05.)
-fn glyph_characters(data: &[u8], index: u32) -> HashMap<u32, char> {
+fn glyph_characters(data: &[u8], index: u32) -> HashMap<u32, String> {
     use skrifa::MetadataProvider as _;
     let mut out: HashMap<u32, (u32, char)> = HashMap::new();
     let Ok(font) = skrifa::FontRef::from_index(data, index) else { return HashMap::new() };
@@ -849,13 +864,60 @@ fn glyph_characters(data: &[u8], index: u32) -> HashMap<u32, char> {
             }
         }
     }
-    out.into_iter().map(|(g, (_, c))| (g, c)).collect()
+    let mut out: HashMap<u32, String> = out.into_iter().map(|(g, (_, c))| (g, c.to_string())).collect();
+    // A glyph the font's GSUB makes of several (a ligature, or か + U+309A as か゚: no character of the font's cmap is that glyph) is copied as
+    // the characters of the glyphs it replaces, in order (GitHub issue #163: the PDF's text for か゚ and the like was empty).
+    if let Ok(gsub) = font.gsub()
+        && let Ok(lookups) = gsub.lookup_list()
+    {
+        for lookup in lookups.lookups().iter().flatten() {
+            if let Ok(SubstitutionSubtables::Ligature(subs)) = lookup.subtables() {
+                for sub in subs.iter().flatten() {
+                    let Ok(cov) = sub.coverage() else { continue };
+                    for (first, set) in cov.iter().zip(sub.ligature_sets().iter()) {
+                        let Ok(set) = set else { continue };
+                        for lig in set.ligatures().iter().flatten() {
+                            let target = lig.ligature_glyph().to_u32();
+                            if out.contains_key(&target) {
+                                continue;
+                            }
+                            let mut text = String::new();
+                            let known = std::iter::once(first.to_u32()).chain(lig.component_glyph_ids().iter().map(|g| g.get().to_u32())).all(|g| match out.get(&g) {
+                                Some(c) => {
+                                    text.push_str(c);
+                                    true
+                                }
+                                None => false,
+                            });
+                            if known {
+                                out.insert(target, text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui_kit::{point, px, size};
+
+    /// A glyph that the font's GSUB ligature lookup makes of several characters is copied as all of them, not as nothing (GitHub issue #163, か゚
+    /// as Yu Gothic makes it of か and U+309A): Carlito's `ch` and `ffb` ligatures, which no cmap entry reaches.
+    #[test]
+    fn a_glyph_made_of_several_characters_is_copied_as_them() {
+        let path = ["fonts/carlito/Carlito-Regular.ttf", "../ibis-office-render/fonts/carlito/Carlito-Regular.ttf"].into_iter().map(|p| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).find(|p| p.exists()).expect("Carlito");
+        let data = std::fs::read(path).unwrap();
+        let characters = glyph_characters(&data, 0);
+        let copied: std::collections::HashSet<&str> = characters.values().map(|s| s.as_str()).collect();
+        assert!(copied.contains("ch") && copied.contains("ffb"), "ligatures that no cmap entry reaches (Carlito's lookups 36 and 37) are copied as their letters");
+        assert!(characters.values().any(|s| s.chars().count() > 1), "some glyph is copied as several characters");
+        assert!(copied.contains("a") && copied.contains("A"), "single glyphs stay as they were");
+    }
 
     fn bounds(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
         Bounds::new(point(px(x), px(y)), size(px(w), px(h)))

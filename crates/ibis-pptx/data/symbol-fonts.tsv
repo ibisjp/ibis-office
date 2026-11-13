@@ -1,0 +1,239 @@
+# Symbol typeface code -> Unicode character (the character that stands in for the glyph where the typeface is not installed).
+# Columns: typeface, code (hex, 0x20..0xFF; Word writes it as U+F000 + code in the private use area), Unicode (hex), the glyph's name.
+# The Symbol typeface is not here: it is Adobe's Symbol encoding, adobe-symbol.txt (Unicode, Inc.).
+# Written by ibisOffice for the glyphs of Wingdings, Wingdings 2 and Wingdings 3 whose shape has a Unicode character (the glyph names
+# are those of the typeface; the shapes were compared by eye). Glyphs with no such character (faces, hands, clocks...) are not listed.
+Wingdings	21	270F	pencil
+Wingdings	22	2702	scissors
+Wingdings	28	260E	telephone
+Wingdings	29	2706	handset
+Wingdings	2A	2709	envelope
+Wingdings	36	231B	hourglass
+Wingdings	37	2328	keyboard
+Wingdings	3F	270D	handwrite
+Wingdings	41	270C	victory hand
+Wingdings	4A	263A	smile
+Wingdings	4C	2639	frown
+Wingdings	4E	2620	skull
+Wingdings	4F	2690	flag
+Wingdings	51	2708	airplane
+Wingdings	52	263C	sun
+Wingdings	54	2744	snowflake
+Wingdings	55	271D	cross
+Wingdings	56	271E	shadowed cross
+Wingdings	58	2720	maltese
+Wingdings	59	2721	star of david
+Wingdings	5A	262A	crescent
+Wingdings	5B	262F	yin yang
+Wingdings	5C	0950	om
+Wingdings	5D	2638	wheel of dharma
+Wingdings	5E	2648	zodiac
+Wingdings	5F	2649	zodiac
+Wingdings	60	264A	zodiac
+Wingdings	61	264B	zodiac
+Wingdings	62	264C	zodiac
+Wingdings	63	264D	zodiac
+Wingdings	64	264E	zodiac
+Wingdings	65	264F	zodiac
+Wingdings	66	2650	zodiac
+Wingdings	67	2651	zodiac
+Wingdings	68	2652	zodiac
+Wingdings	69	2653	zodiac
+Wingdings	6C	25CF	circle6
+Wingdings	6D	274D	shadowed circle
+Wingdings	6E	25A0	square6
+Wingdings	6F	25A1	box3
+Wingdings	71	2751	box shadow down
+Wingdings	72	2752	box shadow up
+Wingdings	74	29EB	lozenge6
+Wingdings	75	25C6	rhombus6
+Wingdings	76	2756	xrhombus
+Wingdings	78	2327	clear
+Wingdings	7A	2318	command
+Wingdings	7B	2740	rosette
+Wingdings	7C	273F	rosette solid
+Wingdings	7D	275D	quote
+Wingdings	7E	275E	quote
+Wingdings	80	24EA	zero circled
+Wingdings	81	2460	circled digit
+Wingdings	82	2461	circled digit
+Wingdings	83	2462	circled digit
+Wingdings	84	2463	circled digit
+Wingdings	85	2464	circled digit
+Wingdings	86	2465	circled digit
+Wingdings	87	2466	circled digit
+Wingdings	88	2467	circled digit
+Wingdings	89	2468	circled digit
+Wingdings	8A	2469	circled digit
+Wingdings	8B	24FF	zero negative circled
+Wingdings	8C	2776	negative circled digit
+Wingdings	8D	2777	negative circled digit
+Wingdings	8E	2778	negative circled digit
+Wingdings	8F	2779	negative circled digit
+Wingdings	90	277A	negative circled digit
+Wingdings	91	277B	negative circled digit
+Wingdings	92	277C	negative circled digit
+Wingdings	93	277D	negative circled digit
+Wingdings	94	277E	negative circled digit
+Wingdings	95	277F	negative circled digit
+Wingdings	9E	00B7	middle dot
+Wingdings	9F	2022	bullet
+Wingdings	A0	25AA	square2
+Wingdings	A1	25CB	ring2
+Wingdings	A3	29BF	ring6
+Wingdings	A4	25C9	ringbutton
+Wingdings	A5	25CE	target
+Wingdings	A7	25AA	square4
+Wingdings	A8	25FB	box2
+Wingdings	AA	2726	crosstar2
+Wingdings	AB	2605	pentastar2
+Wingdings	AC	2736	hexstar2
+Wingdings	AD	2738	octastar2
+Wingdings	AE	2739	dodecastar3
+Wingdings	B2	2727	cuspopen
+Wingdings	B5	272A	circlestar
+Wingdings	B6	2729	starshadow
+Wingdings	D8	27A2	head2right
+Wingdings	DF	2190	barb2left
+Wingdings	E0	2192	barb2right
+Wingdings	E1	2191	up
+Wingdings	E2	2193	down
+Wingdings	E3	2196	nw
+Wingdings	E4	2197	ne
+Wingdings	E5	2199	sw
+Wingdings	E6	2198	se
+Wingdings	E7	2B05	heavy left
+Wingdings	E8	27A1	heavy right
+Wingdings	E9	2B06	heavy up
+Wingdings	EA	2B07	heavy down
+Wingdings	EB	2B09	heavy nw
+Wingdings	EC	2B08	heavy ne
+Wingdings	ED	2B0B	heavy sw
+Wingdings	EE	2B0A	heavy se
+Wingdings	EF	21E6	white left
+Wingdings	F0	21E8	white right
+Wingdings	F1	21E7	white up
+Wingdings	F2	21E9	white down
+Wingdings	F3	2B04	left right
+Wingdings	F4	21F3	up down
+Wingdings	F5	2B01	white nw
+Wingdings	F6	2B00	white ne
+Wingdings	F7	2B03	white sw
+Wingdings	F8	2B02	white se
+Wingdings	FB	2717	xmark
+Wingdings	FC	2713	check
+Wingdings	FD	2612	box x
+Wingdings	FE	2611	box check
+Wingdings 2	50	2713	check
+Wingdings 2	51	2612	box x
+Wingdings 2	52	2611	box check
+Wingdings 2	53	2612	box x
+Wingdings 2	54	2612	box x bold
+Wingdings 2	55	2297	circle x
+Wingdings 2	56	2297	circle x bold
+Wingdings 2	57	2298	prohibit
+Wingdings 2	58	2298	prohibit bold
+Wingdings 2	69	24EA	circled digit
+Wingdings 2	6A	2460	circled digit
+Wingdings 2	6B	2461	circled digit
+Wingdings 2	6C	2462	circled digit
+Wingdings 2	6D	2463	circled digit
+Wingdings 2	6E	2464	circled digit
+Wingdings 2	6F	2465	circled digit
+Wingdings 2	70	2466	circled digit
+Wingdings 2	71	2467	circled digit
+Wingdings 2	72	2468	circled digit
+Wingdings 2	74	24FF	negative circled zero
+Wingdings 2	75	2776	negative circled digit
+Wingdings 2	76	2777	negative circled digit
+Wingdings 2	77	2778	negative circled digit
+Wingdings 2	78	2779	negative circled digit
+Wingdings 2	79	277A	negative circled digit
+Wingdings 2	7A	277B	negative circled digit
+Wingdings 2	7B	277C	negative circled digit
+Wingdings 2	7C	277D	negative circled digit
+Wingdings 2	7D	277E	negative circled digit
+Wingdings 2	7E	277F	negative circled digit
+Wingdings 2	85	271D	cross
+Wingdings 2	86	271E	cross bold
+Wingdings 2	96	2022	circle3
+Wingdings 2	97	25CF	circle5
+Wingdings 2	98	25CF	circle7
+Wingdings 2	99	25CB	ring1
+Wingdings 2	9A	25CB	ring3
+Wingdings 2	9F	25AA	square1
+Wingdings 2	A0	25AA	square3
+Wingdings 2	A1	25A0	square5
+Wingdings 2	A2	25A0	square7
+Wingdings 2	A3	25A1	box1
+Wingdings 2	AE	25C6	rhombus5
+Wingdings 2	AF	25C7	rhombopen
+Wingdings 2	B7	25C6	lozenge5
+Wingdings 2	B8	25C7	lozengeopen
+Wingdings 2	BE	25A0	squarecent
+Wingdings 2	BF	25C6	rhombuscent
+Wingdings 2	C9	271A	cross4
+Wingdings 2	CD	2715	x1
+Wingdings 2	CE	2715	x2
+Wingdings 2	CF	2716	x3
+Wingdings 2	D0	2716	x4
+Wingdings 2	E7	2726	crosstar1
+Wingdings 2	E8	2726	crosstar3
+Wingdings 2	E9	2605	pentastar1
+Wingdings 2	EA	2605	pentastar3
+Wingdings 2	F2	2727	crosstar4
+Wingdings 2	F3	2729	pentastar4
+Wingdings 2	F6	2726	cusp
+Wingdings 3	21	2190	left
+Wingdings 3	22	2192	right
+Wingdings 3	23	2191	up
+Wingdings 3	24	2193	down
+Wingdings 3	25	2196	nw
+Wingdings 3	26	2197	ne
+Wingdings 3	27	2199	sw
+Wingdings 3	28	2198	se
+Wingdings 3	31	2194	left right
+Wingdings 3	32	2195	up down
+Wingdings 3	66	2190	left
+Wingdings 3	67	2192	right
+Wingdings 3	68	2191	up
+Wingdings 3	69	2193	down
+Wingdings 3	6A	2196	nw
+Wingdings 3	6B	2197	ne
+Wingdings 3	6C	2199	sw
+Wingdings 3	6D	2198	se
+Wingdings 3	6E	2194	left right
+Wingdings 3	6F	2195	up down
+Wingdings 3	70	25B2	triangleup
+Wingdings 3	71	25BC	triangledown
+Wingdings 3	72	25B3	triangleup open
+Wingdings 3	73	25BD	triangledown open
+Wingdings 3	74	25C0	triangleleft
+Wingdings 3	75	25B6	triangleright
+Wingdings 3	76	25C1	triangleleft open
+Wingdings 3	77	25B7	triangleright open
+Wingdings 3	89	2190	c1left
+Wingdings 3	8A	2192	c1right
+Wingdings 3	8B	2191	c1up
+Wingdings 3	8C	2193	c1down
+Wingdings 3	95	2B05	c4left
+Wingdings 3	96	27A1	c4right
+Wingdings 3	97	2B06	c4up
+Wingdings 3	98	2B07	c4down
+Wingdings 3	A1	2B05	a4left
+Wingdings 3	A2	27A1	a4right
+Wingdings 3	A3	2B06	a4up
+Wingdings 3	A4	2B07	a4down
+Wingdings 3	D1	2190	barb1left
+Wingdings 3	D2	2192	barb1right
+Wingdings 3	D3	2191	barb1up
+Wingdings 3	D4	2193	barb1down
+Wingdings 3	D9	2B05	barb3left
+Wingdings 3	DA	27A1	barb3right
+Wingdings 3	DB	2B06	barb3up
+Wingdings 3	DC	2B07	barb3down
+Wingdings 3	E1	2B05	barb5left
+Wingdings 3	E2	27A1	barb5right
+Wingdings 3	E3	2B06	barb5up
+Wingdings 3	E4	2B07	barb5down
+Wingdings 2	73	2469	ten circled

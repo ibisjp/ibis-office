@@ -91,6 +91,10 @@ pub struct Layout {
     pub copy_of: Option<LayoutId>,
     /// The master it follows (`None` for a layout brought in by a paste).
     pub master: Option<MasterId>,
+    /// The layout's own guides (`p15:sldGuideLst` of the layout), and its master's:
+    /// shown on the slides that follow it, not moved there.
+    pub guides: Vec<SlideGuide>,
+    pub master_guides: Vec<SlideGuide>,
 }
 
 /// Which placeholder a shape is (`p:nvPr/p:ph`): its type and index as
@@ -1343,6 +1347,9 @@ pub struct ShapeGroup {
     pub has_unmodelled_children:bool,
     pub native_id:String,
     pub name:String,
+    /// The group's own soft edge (`p:grpSpPr/a:effectLst/a:softEdge`), EMU: its children are faded as one picture. Read only: the file's
+    /// `effectLst` stays as it is in a saved group; a group made here has none.
+    pub soft_edge:Option<i64>,
     pub children:Vec<GroupMember>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1352,6 +1359,7 @@ impl ShapeGroup {
     pub fn from_shape_ids(native_id: impl Into<String>, name: impl Into<String>, ids: &[ShapeId]) -> Self {
         Self {
             has_unmodelled_children: false,
+            soft_edge: None,
             native_id: native_id.into(),
             name: name.into(),
             children: ids.iter().copied().map(GroupMember::Shape).collect(),
@@ -1472,6 +1480,12 @@ pub struct Slide {
     pub zoom_objects: std::collections::HashMap<ShapeId, ZoomObject>,
     /// Glue of connectors on the slide (`a:stCxn` / `a:endCxn`).
     pub shape_glues: std::collections::HashMap<ShapeId, Glue>,
+    /// How text wraps round the pictures and videos (ibisOffice's own, `ibis_text`).
+    pub ibis_wrap: std::collections::HashMap<ShapeId, crate::ObjectWrap>,
+    /// The text boxes whose text ignores that wrap (回り込みを無視する).
+    pub ibis_wrap_ignore: std::collections::HashSet<ShapeId>,
+    /// The chains of text boxes (テキスト ボックスの連結).
+    pub text_chains: Vec<crate::TextChain>,
 }
 
 /// オブジェクト（図形・画像・グラフ等）のセルに対する配置方式 (`editAs`).
@@ -1537,7 +1551,7 @@ impl Transition {
 
 impl Slide {
     pub fn new(id: SlideId) -> Self {
-        Self { id, shapes: Vec::new(), groups: Vec::new(), background: Fill::Solid(Color::WHITE), backdrop: Vec::new(), size: None, name: None, layout: None, attached: Default::default(), placeholders: Default::default(), hidden: false, notes: String::new(), notes_shapes: Vec::new(), transition: None, animations: Vec::new(), comments: Vec::new(), shape_names: Default::default(), hidden_shapes: Default::default(), hide_backdrop: false, guides: Vec::new(), shape_links: Default::default(), shape_link_tooltips: Default::default(), aspect_locked: Default::default(), shape_alt_texts: Default::default(), decorative_shapes: Default::default(), shape_placements: Default::default(), shape_prints: Default::default(), shape_formulas: Default::default(), shape_return_to_zoom: Default::default(), shape_zoom_show_bg: Default::default(), shape_zoom_durations: Default::default(), zoom_objects: Default::default(), shape_glues: Default::default() }
+        Self { id, shapes: Vec::new(), groups: Vec::new(), background: Fill::Solid(Color::WHITE), backdrop: Vec::new(), size: None, name: None, layout: None, attached: Default::default(), placeholders: Default::default(), hidden: false, notes: String::new(), notes_shapes: Vec::new(), transition: None, animations: Vec::new(), comments: Vec::new(), shape_names: Default::default(), hidden_shapes: Default::default(), hide_backdrop: false, guides: Vec::new(), shape_links: Default::default(), shape_link_tooltips: Default::default(), aspect_locked: Default::default(), shape_alt_texts: Default::default(), decorative_shapes: Default::default(), shape_placements: Default::default(), shape_prints: Default::default(), shape_formulas: Default::default(), shape_return_to_zoom: Default::default(), shape_zoom_show_bg: Default::default(), shape_zoom_durations: Default::default(), zoom_objects: Default::default(), shape_glues: Default::default(), ibis_wrap: Default::default(), ibis_wrap_ignore: Default::default(), text_chains: Vec::new() }
     }
 
     /// A new empty slide following `layout`, as PowerPoint's "New Slide"
@@ -1627,6 +1641,17 @@ impl ModifyVerifier {
     pub const LEGACY_SID: u32 = 0;
 }
 
+/// What a file says about a typeface that decides what Word, Excel and PowerPoint draw it with when the PC does not have it. They do not look
+/// at the typeface's name (a Mincho or a Gothic in it) but at these (`tasks/doc/m56-missing-font-standins.md`): Excel at the `family` of the
+/// font, PowerPoint at the `charset` of its `a:ea`, Word at the `w:charset` of its font table (`FontTableEntry`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TypefaceTraits {
+    /// Excel's font family (`font/family`, BIFF `bFamily`): 1 Roman, 2 Swiss, 3 Modern, 4 Script, 5 Decorative; `None`: the font has none.
+    pub family: Option<u8>,
+    /// The character set (`a:ea/@charset`: -128 is Shift-JIS; BIFF `bCharSet`: 128).
+    pub charset: Option<i16>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Presentation {
     pub slide_size: EmuSize,
@@ -1636,6 +1661,9 @@ pub struct Presentation {
     pub fonts: Vec<EmbeddedFont>,
     /// フォントの代替（フォント代替マップ: 要求フォント名 -> 代替フォント名）。
     pub font_substitutions: std::collections::BTreeMap<String, String>,
+    /// What the file says about each typeface it names that decides what draws it when the PC does not have it (`TypefaceTraits`):
+    /// read, not written (the file keeps its own).
+    pub typeface_traits: std::collections::BTreeMap<String, TypefaceTraits>,
     /// A flowing document (Word), laid out into the slides as pages by the
     /// viewer.
     pub flow: Option<std::sync::Arc<crate::flow::FlowDocument>>,
@@ -1670,6 +1698,10 @@ pub struct Presentation {
     pub layout_scale: LayoutScale,
     /// The guides of the normal view (`p15:sldGuideLst` of `presentation.xml`).
     pub guides: Vec<SlideGuide>,
+    /// How the notes pane stands when the file is opened (`normalViewPr` of `viewProps.xml`): read, not written (the file keeps its own).
+    pub notes_pane: NotesPaneOpening,
+    /// What the user did to the notes pane (moved its border, hid or showed it), written to `normalViewPr`; None: not touched, the file keeps its own.
+    pub notes_pane_save: Option<NotesPaneSave>,
     /// スライド ショーの設定 (`p:showPr`).
     pub show_properties: ShowProperties,
     /// 目的別スライド ショーのリスト (`p:custShowLst`).
@@ -1678,6 +1710,14 @@ pub struct Presentation {
     pub mark_as_final: bool,
     /// 読み取り専用を推奨（PowerPoint の「読み取り専用を推奨」: `p1710:readonlyRecommended`）。
     pub read_only_recommended: bool,
+    /// The file was read from an old binary format (.xls, .ppt, .pps, .pot, .doc, .dot): set by the reader, not written. The
+    /// window shows the compatibility bar (and asks for a new .xlsx / .pptx on saving) while it is true.
+    pub opened_from_legacy: bool,
+    /// The CMYK mode of the file (ibisOffice's own; `cmyk`): on or off, the profile's name and the colours given as CMYK.
+    pub cmyk: crate::cmyk::CmykMode,
+    /// ibisOffice's own features PowerPoint does not have (text wrap round pictures and videos, linked text boxes) are on for
+    /// this file (the user answered the question once; saved in `presentation.xml`'s `p:extLst`, PowerPoint ignores it).
+    pub ibis_extensions: bool,
     /// 書き込みパスワード（`p:modifyVerifier`）: the hash of the password to modify the file.
     pub modify_verifier: Option<ModifyVerifier>,
     /// ドキュメント プロパティ（タイトル・作成者・カスタムプロパティ等: `docProps/core.xml`, `docProps/app.xml`, `docProps/custom.xml`）.
@@ -1687,6 +1727,57 @@ pub struct Presentation {
     /// フォトアルバムの設定 (`p:photoAlbum`)。
     pub photo_album: Option<PhotoAlbum>,
     next_id: u64,
+}
+
+/// How the notes pane stands when a presentation is opened, as PowerPoint's normal view keeps it (`p:normalViewPr` of
+/// `viewProps.xml`: `restoredTop@sz`, the slide pane's share in 1/1000 %, and `horzBarState`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NotesPaneOpening {
+    /// A thin strip (about 5%): no `viewProps.xml`, no `normalViewPr`, or a slide pane of 95% or more. PowerPoint's own default.
+    #[default]
+    Folded,
+    /// Open, this many percent of the slide and notes panes together (100 less the slide pane's share); the screen keeps it within its least
+    /// heights of the two panes.
+    Open(u8),
+    /// No notes pane (`horzBarState="maximized"`: the slide pane takes all).
+    Hidden,
+}
+
+/// What the saving writes into `p:normalViewPr` of `viewProps.xml` after the user touched the notes pane, as PowerPoint 365 writes it
+/// (tasks/doc/m101-softedge-1b-notes-pane.md, (3)).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotesPaneSave {
+    /// The border was moved: `restoredTop@sz` is the slide pane's share in 1/1000 % (rounded to a pixel of the pane), `autoAdjust="0"`,
+    /// and `horzBarState` goes.
+    Moved(u32),
+    /// The border was taken to the top (the notes pane the largest): `horzBarState="minimized"`. `restoredTop` is the border as it stood before
+    /// (PowerPoint: the last position that was neither minimized nor hidden; tasks/doc/m114-pptx-notes-pane-save.md): `Some(share)` (1/1000 %)
+    /// when the border had been moved (written with `autoAdjust="0"`), None: the file's own.
+    Minimized(Option<u32>),
+    /// The notes pane was hidden (or the border taken down until the notes pane would be under half its least height): `horzBarState="maximized"`, `restoredTop` as
+    /// for `Minimized`.
+    Maximized(Option<u32>),
+    /// The notes pane was shown again without moving the border: no `horzBarState`, `restoredTop` as it was.
+    Shown,
+}
+
+impl NotesPaneOpening {
+    /// The opening state `normalViewPr`'s `restoredTop@sz` (1/1000 %) and `horzBarState` say (tasks/doc/m96-pptx-m74-fixes-check.md, (4)):
+    /// `minimized` asks for the largest notes pane (`Open(100)`), `maximized` hides it; otherwise the slide pane is `restoredTop` and the
+    /// notes pane open unless that is 95% or more (PowerPoint's thin strip). How small the slide pane may go is the screen's own rule
+    /// (the application's least heights of the panes), not the file's: the share is not limited here.
+    pub fn from_view(restored_top: Option<i64>, horz_bar_state: Option<&str>) -> Self {
+        match horz_bar_state {
+            Some("maximized") => return Self::Hidden,
+            Some("minimized") => return Self::Open(100),
+            _ => {}
+        }
+        match restored_top {
+            // The share is rounded to a whole percent first (PowerPoint's own 94606 is 95).
+            Some(sz) if (sz.max(0) + 500) / 1000 < 95 => Self::Open((100 - ((sz.max(0) + 500) / 1000).min(100)) as u8),
+            _ => Self::Folded,
+        }
+    }
 }
 
 impl Presentation {
@@ -1711,10 +1802,13 @@ impl Presentation {
             notes_marks,
             layout_scale,
             guides,
+            notes_pane_save,
             show_properties,
             custom_shows,
             mark_as_final,
             read_only_recommended,
+            cmyk,
+            ibis_extensions,
             modify_verifier,
             properties,
             object_defaults,
@@ -1724,11 +1818,15 @@ impl Presentation {
             masters: _,
             flow: _,
             workbook: _,
-            // Not written: the media are the slides' (compared through them); the notes master's size and frames; a counter.
+            // Not written: what the file says about its typefaces; where the file was read from; the media are the slides' (compared through them); the notes master's size and frames; a counter.
             media: _,
+            typeface_traits: _,
             notes_size: _,
             notes_frames: _,
             next_id: _,
+            opened_from_legacy: _,
+            // Not written: how the notes pane stood when the file was opened (the saving leaves `viewProps.xml`'s `normalViewPr` as it is).
+            notes_pane: _,
         } = self;
         *slide_size == other.slide_size
             && *slides == other.slides
@@ -1743,10 +1841,13 @@ impl Presentation {
             && *notes_marks == other.notes_marks
             && *layout_scale == other.layout_scale
             && *guides == other.guides
+            && *notes_pane_save == other.notes_pane_save
             && *show_properties == other.show_properties
             && *custom_shows == other.custom_shows
             && *mark_as_final == other.mark_as_final
             && *read_only_recommended == other.read_only_recommended
+            && *cmyk == other.cmyk
+            && *ibis_extensions == other.ibis_extensions
             && *modify_verifier == other.modify_verifier
             && *properties == other.properties
             && *object_defaults == other.object_defaults
@@ -2131,7 +2232,7 @@ impl Presentation {
     /// A presentation with no slides yet, for a reader to fill. It must end up
     /// with at least one slide.
     pub fn empty(slide_size: EmuSize) -> Self {
-        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), fonts: Vec::new(), font_substitutions: std::collections::BTreeMap::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), theme_effects: None, first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), guides: Vec::new(), show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), photo_album: None, next_id: 1 }
+        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), fonts: Vec::new(), font_substitutions: std::collections::BTreeMap::new(), typeface_traits: std::collections::BTreeMap::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), theme_effects: None, first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), guides: Vec::new(), notes_pane: NotesPaneOpening::default(), notes_pane_save: None, show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, opened_from_legacy: false, ibis_extensions: false, cmyk: Default::default(), modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), photo_album: None, next_id: 1 }
     }
 
     /// Look up a custom show by its numeric identifier.

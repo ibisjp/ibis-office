@@ -28,32 +28,32 @@ ibisOffice 是一款用于查看、编辑和保存 Word、Excel 和 PowerPoint �
 <table>
   <tr>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.6/ibisOffice-0.8.6-Windows.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-Windows.zip">
         <img src="asset/download-windows.svg" alt="Download for Windows" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.6/ibisOffice-0.8.6-Windows.zip"><code>ibisOffice-0.8.6-Windows.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-Windows.zip"><code>ibisOffice-0.8.7-Windows.zip</code></a><br>
       <small>Windows 10 / 11（64 位）</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.6/ibisOffice-0.8.6-macOS.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-macOS.zip">
         <img src="asset/download-mac.svg" alt="Download for Mac" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.6/ibisOffice-0.8.6-macOS.zip"><code>ibisOffice-0.8.6-macOS.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-macOS.zip"><code>ibisOffice-0.8.7-macOS.zip</code></a><br>
       <small>macOS 11 或更高版本（Apple 芯片）</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.6/ibisOffice-0.8.6-Linux.AppImage">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-Linux.AppImage">
         <img src="asset/download-linux.svg" alt="Download for Linux" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.6/ibisOffice-0.8.6-Linux.AppImage"><code>ibisOffice-0.8.6-Linux.AppImage</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-Linux.AppImage"><code>ibisOffice-0.8.7-Linux.AppImage</code></a><br>
       <small>Linux x86_64</small>
     </td>
   </tr>
 </table>
 
-- **Windows**：下载并解压 `ibisOffice-0.8.6-Windows.zip`，然后运行 `ibisOffice` 文件夹中的 `ibisOffice.exe`。
-- **macOS**：下载并解压 `ibisOffice-0.8.6-macOS.zip`，然后将 `ibisOffice.app` 移动到“应用程序”文件夹。
-- **Linux**：下载 `ibisOffice-0.8.6-Linux.AppImage`，赋予其可执行权限（`chmod +x`），然后双击运行。可在主流桌面 Linux 发行版上运行（glibc 2.31 或更高版本：Ubuntu、Debian、Fedora、Arch Linux 等）。无需安装，也不需要 FUSE。
+- **Windows**：下载并解压 `ibisOffice-0.8.7-Windows.zip`，然后运行 `ibisOffice` 文件夹中的 `ibisOffice.exe`。
+- **macOS**：下载并解压 `ibisOffice-0.8.7-macOS.zip`，然后将 `ibisOffice.app` 移动到“应用程序”文件夹。
+- **Linux**：下载 `ibisOffice-0.8.7-Linux.AppImage`，赋予其可执行权限（`chmod +x`），然后双击运行。可在主流桌面 Linux 发行版上运行（glibc 2.31 或更高版本：Ubuntu、Debian、Fedora、Arch Linux 等）。无需安装，也不需要 FUSE。
 - **试用网页版**：在浏览器中打开 [playground](https://ibisjp.github.io/ibis-office/)——无需安装（需要支持 WebGPU 的浏览器）。可以直接打开示例 Word、Excel 和 PowerPoint 文档立即试用。
 - **更新日志**：发行说明和近期更新请见 [CHANGELOG.md](CHANGELOG.md)。
 - **观看视频**：ibisOffice 的介绍视频（YouTube）。

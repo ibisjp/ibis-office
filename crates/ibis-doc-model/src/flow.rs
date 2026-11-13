@@ -1285,6 +1285,8 @@ pub struct FlowRunStyle {
     pub font: Option<String>,
     /// Typeface for East Asian text.
     pub east_asian_font: Option<String>,
+    /// Typeface for the non-ASCII characters Word takes as Latin (`w:rFonts/@w:hAnsi`), where the file gives one that is not the ASCII one.
+    pub h_ansi_font: Option<String>,
     /// Typeface for Complex Script text (Arabic, Hebrew, Thai, Indic, etc.).
     pub cs_font: Option<String>,
     /// Whether `w:rFonts/@w:hint="eastAsia"` selects the East Asian font for ambiguous characters.
@@ -1361,6 +1363,7 @@ impl Default for FlowRunStyle {
         Self {
             font: None,
             east_asian_font: None,
+            h_ansi_font: None,
             cs_font: None,
             east_asia_hint: false,
             size: 1050,
@@ -1432,35 +1435,179 @@ impl FlowRunStyle {
         self.size
     }
 
-    /// The typeface for a character.
+    /// The typeface for a character: the one of its font slot (`font_slot`), where the run's `w:rFonts` has it, else the first the run has of the
+    /// Latin, East Asian and Complex Script ones. A slot's typeface that lacks the character is not looked at here (the text system's fallback
+    /// draws it; Word's per-character fallback typefaces, ※ in ＭＳ 明朝 or ① in Cambria Math, are not modelled).
     pub fn font_for(&self, c: char) -> Option<&str> {
-        self.font_for_in(c, true)
+        self.font_for_with_hint(c, self.east_asia_hint)
     }
 
-    /// `font_for`, where `paragraph_has_east_asian` says whether the paragraph has East Asian text. The punctuation
-    /// from U+2010 up (dashes, curly quotes) is drawn in the East Asian font only in such a paragraph; among Latin
-    /// text only (even in a document whose language is Japanese) Word draws it in the Latin font (DHDR: "Header — 1"
-    /// is Calibri's em dash, 0.91 em wide, not the full-width one of 游ゴシック).
-    pub fn font_for_in(&self, c: char, paragraph_has_east_asian: bool) -> Option<&str> {
+    /// `font_for` for a given `w:hint="eastAsia"` (a list's mark has none, whatever the paragraph mark it is drawn from has).
+    pub fn font_for_with_hint(&self, c: char, east_asia_hint: bool) -> Option<&str> {
         if is_complex_script(c) {
             if let Some(f) = self.cs_font.as_deref() {
                 return Some(f);
             }
         }
-        // Punctuation and symbols from U+2010 up take the East Asian font
-        // in a Japanese document, as Word draws them ("―" full-width, half-width katakana half-width).
-        // (not "…" U+2026: Word draws it in the Latin font, as three dots on the baseline: DIDX).
-        // The narrow no-break space U+202F, U+205F and the currency signs (€, U+20A0 to U+20CF) are drawn in the Latin font among Latin text
-        // too (Word's PDFs of `kinsoku-latin-*-probe.docx`: French with U+202F before ; ! ? and a €, in Times New Roman, the space about 2 pt,
-        // GitHub issue #68 D13).
-        let latin_among_latin = matches!(c as u32, 0x2010..=0x2027 | 0x202f | 0x205f | 0x20a0..=0x20cf);
-        let east_asian = (c as u32 >= 0x2010 && c != '\u{2026}' && (paragraph_has_east_asian || self.east_asia_hint || !latin_among_latin))
-            || (self.east_asia_hint && matches!(c as u32, 0x00a0..=0x00ff));
-        if east_asian {
-            self.east_asian_font.as_deref().or(self.font.as_deref()).or(self.cs_font.as_deref())
-        } else {
-            self.font.as_deref().or(self.east_asian_font.as_deref()).or(self.cs_font.as_deref())
+        let latin = self.font.as_deref();
+        match font_slot(c, east_asia_hint) {
+            FontSlot::Ascii => latin.or(self.east_asian_font.as_deref()).or(self.cs_font.as_deref()),
+            FontSlot::HAnsi => self.h_ansi_font.as_deref().or(latin).or(self.east_asian_font.as_deref()).or(self.cs_font.as_deref()),
+            FontSlot::EastAsia => {
+                // [MS-OI29500] 2.1.88: with `eastAsia` Times New Roman and `ascii` equal to `hAnsi`, the `ascii` typeface is used.
+                if self.east_asian_font.as_deref() == Some("Times New Roman") && latin.is_some() && self.h_ansi_font.as_deref().is_none_or(|h| Some(h) == latin) {
+                    return latin;
+                }
+                self.east_asian_font.as_deref().or(latin).or(self.cs_font.as_deref())
+            }
         }
+    }
+}
+
+/// The typeface Word draws a character in when the typeface of its font slot has no glyph for it and the character stands apart from the others (no character
+/// before it in the line that was drawn in a typeface of this kind: `FallbackCarry` is the rule for those): one for each character, whatever the `hAnsi` or the
+/// `eastAsia` typeface, the language is. The table is the data file `fallback_typefaces.tsv` (ranges `first last typeface`, one range per row so that a measured
+/// range can be widened by a row), made by `scripts/gen-word-fallback-typefaces.py` from Word 365's PDFs on Windows of 2026-11-11
+/// (`tasks/doc/m98-fallback-isolated.tsv`: 1283 characters of nine blocks, 2000 - 206F, 2100 - 218F, 2190 - 22FF, 2460 - 24FF, 25A0 - 27BF, each set apart by
+/// spaces, in `hAnsi` Century and Calibri with `eastAsia` Yu Mincho and MS Mincho; the drawn typeface read from the PDF's BaseFont). Measured and not derived from a
+/// rule (user decision 2026-11-11, doc/rule/implimentationRule.md "測った係数を使ってよい例外"); only the characters measured are in it. Not measured: the table for
+/// `hAnsi` typefaces other than Century and Calibri (expected to be this one, as the two agree character for character), `w:hint="eastAsia"`, Complex Script, vertical text.
+const FALLBACK_TYPEFACES_TSV: &str = include_str!("fallback_typefaces.tsv");
+
+/// A character the carrying over of Word's fallback typeface looks at: see `FallbackCarry::next`.
+#[derive(Clone, Copy, Debug)]
+pub struct CarryInput<'a> {
+    pub c: char,
+    pub slot: FontSlot,
+    /// The `ascii` / `hAnsi` typeface of the character's run (the typeface of its slot).
+    pub typeface: &'a str,
+    pub bold: bool,
+    pub italic: bool,
+    /// Whether the character begins a line that is wrapped (not the paragraph's first, nor one after `w:br`: those are cut by the text before them being no text).
+    pub line_start: bool,
+    /// Whether `typeface` has a glyph for the character.
+    pub has_glyph: bool,
+}
+
+/// What `FallbackCarry::next` decided for a character.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CarryChoice {
+    /// The typeface Word draws the character in when `typeface` has no glyph for it (`None`: `typeface` itself, or what the table does not know).
+    pub fallback: Option<&'static str>,
+    /// The previous character's typeface was taken, and the character set apart would have another: a line that begins with the character draws it in the other.
+    pub carried: bool,
+}
+
+/// Word's carrying over of a fallback typeface from the character before (#M98, `tasks/doc/m98-word-fallback-carry.md`, Word 365 on Windows).
+///
+/// For a character of the `hAnsi` slot (no `w:hint`) whose run's typeface `H` has no glyph for it: if the character before it, seen past a zero width space, is a
+/// character of the `hAnsi` slot that was drawn in a fallback typeface `F` (set apart or carried over), on the same line, in a run with the same `hAnsi` typeface,
+/// bold and italic, and `F` has a glyph for the character, it is drawn in `F`; else in the typeface the table (`fallback_typeface`) gives it. What cuts the
+/// carrying over: a space, a no-break space, a tab, a character `H` has (so one drawn in `H`), a character of another slot, `w:br` or a paragraph's end
+/// (`reset`), the first character of a wrapped line (`CarryInput::line_start`), a change of the run's `hAnsi` typeface, bold or italic. What does not: a run
+/// boundary where only colour, size, underline, language or the `eastAsia` typeface differ. It goes on for any number of characters, and does not act backwards.
+#[derive(Clone, Debug, Default)]
+pub struct FallbackCarry {
+    /// The previous character's Word typeface, and the typeface, bold and italic of its run.
+    previous: Option<(&'static str, String, bool, bool)>,
+}
+
+impl FallbackCarry {
+    /// Nothing before the next character: a tab, a line break, a picture, the start of a paragraph.
+    pub fn reset(&mut self) {
+        self.previous = None;
+    }
+
+    /// Decide for the next character of the line. `has_glyph(typeface, c)` is whether Word's typeface has a glyph (`None`: not known, taken as none).
+    pub fn next(&mut self, input: CarryInput, has_glyph: impl Fn(&str, char) -> Option<bool>) -> CarryChoice {
+        let CarryInput { c, slot, typeface, bold, italic, line_start, has_glyph: own } = input;
+        // A zero width space is seen through: it neither cuts nor carries.
+        if c == '\u{200b}' {
+            return CarryChoice { fallback: fallback_typeface(c), carried: false };
+        }
+        if slot != FontSlot::HAnsi || own || c == ' ' || c == '\u{a0}' || c == '\t' {
+            self.previous = None;
+            return CarryChoice { fallback: None, carried: false };
+        }
+        let apart = fallback_typeface(c);
+        let carried_from = self
+            .previous
+            .as_ref()
+            .filter(|(_, h, b, i)| !line_start && h == typeface && *b == bold && *i == italic)
+            .map(|(f, ..)| *f)
+            .filter(|f| has_glyph(f, c) == Some(true));
+        let chosen = carried_from.or(apart);
+        let carried = carried_from.is_some() && carried_from != apart;
+        self.previous = chosen.map(|f| (f, typeface.to_string(), bold, italic));
+        CarryChoice { fallback: chosen, carried }
+    }
+
+    /// Whether a fallback typeface is waiting to be carried to the next character.
+    pub fn is_carrying(&self) -> bool {
+        self.previous.is_some()
+    }
+}
+
+/// The typeface Word draws `c` in when its slot's typeface has no glyph for it (`fallback_typefaces.tsv`), if that is known.
+pub fn fallback_typeface(c: char) -> Option<&'static str> {
+    static TABLE: std::sync::OnceLock<Vec<(u32, u32, &'static str)>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        FALLBACK_TYPEFACES_TSV
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+            .filter_map(|l| {
+                let mut f = l.split('\t');
+                Some((u32::from_str_radix(f.next()?, 16).ok()?, u32::from_str_radix(f.next()?, 16).ok()?, f.next()?))
+            })
+            .collect()
+    });
+    let u = c as u32;
+    let at = table.partition_point(|(_, last, _)| *last < u);
+    table.get(at).filter(|(first, _, _)| *first <= u).map(|(_, _, name)| *name)
+}
+
+/// The `w:rFonts` attribute whose typeface draws a character.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontSlot {
+    Ascii,
+    HAnsi,
+    EastAsia,
+}
+
+/// The font slot of a character, by its Unicode range and `w:hint="eastAsia"` (`east_asia_hint`): [MS-OI29500] 2.1.88 (Part 1 17.3.2.26, rFonts), the
+/// table of Unicode blocks, in its ranges; what it does not list is `hAnsi`. Word 365 on Windows draws the characters of Word's PDFs (tasks/doc/m76-word-font-slots.md,
+/// m78-word-fallback-fonts.md: letters, é, ■ □ … ‘ ’ “ ” — → × ÷ ° ± α Я ‰ § † ※ ① ♪ ☆ in the `hAnsi` typeface, and with the hint all of them but é in the
+/// `eastAsia` one; ㈱ 〒 ㎡ in `eastAsia` without it) in these slots; neither the language, the neighbours nor the paragraph's text change it.
+/// Not here: the exceptions of the table that depend on the run's language being Chinese or on the `eastAsia` typeface's character set (E0 – FC, 0100 – 02AF, 1E00 – 1EFF
+/// with the hint), which nothing measured.
+pub fn font_slot(c: char, east_asia_hint: bool) -> FontSlot {
+    let u = c as u32;
+    let by_hint = if east_asia_hint { FontSlot::EastAsia } else { FontSlot::HAnsi };
+    match u {
+        0x0000..=0x007f => FontSlot::Ascii,
+        0x00a1 | 0x00a4 | 0x00a7 | 0x00a8 | 0x00aa | 0x00ad | 0x00af | 0x00b0..=0x00b4 | 0x00b6..=0x00ba | 0x00bc..=0x00bf | 0x00d7 | 0x00f7 => by_hint,
+        0x00a0..=0x02af => FontSlot::HAnsi,
+        // Spacing Modifier Letters, Combining Diacritical Marks, Greek, Cyrillic.
+        0x02b0..=0x03cf | 0x0400..=0x04ff => by_hint,
+        // Hebrew to Thaana.
+        0x0590..=0x07bf => FontSlot::Ascii,
+        0x1100..=0x11ff => FontSlot::EastAsia,
+        0x1e00..=0x1eff => FontSlot::HAnsi,
+        // General Punctuation to Dingbats (2000 – 27BF, every block of them).
+        0x2000..=0x27bf => by_hint,
+        0x2e80..=0x2eff => by_hint,
+        // Kangxi Radicals, Ideographic Description, CJK Symbols and Punctuation to CJK Compatibility, Extension A, Unified Ideographs, Yi.
+        0x2f00..=0x2fdf | 0x2ff0..=0x33ff | 0x3400..=0x4dbf | 0x4e00..=0x9faf | 0xa000..=0xa4cf => FontSlot::EastAsia,
+        // Hangul Syllables to the surrogates (so a character outside the BMP too).
+        0xac00..=0xd7af | 0xd800..=0xdfff | 0x10000.. => FontSlot::EastAsia,
+        0xe000..=0xf8ff => by_hint,
+        0xf900..=0xfaff => FontSlot::EastAsia,
+        0xfb00..=0xfb1c => by_hint,
+        0xfb1d..=0xfdff => FontSlot::Ascii,
+        0xfe30..=0xfe6f => FontSlot::EastAsia,
+        0xfe70..=0xfefe => FontSlot::Ascii,
+        0xff00..=0xffef => FontSlot::EastAsia,
+        _ => FontSlot::HAnsi,
     }
 }
 
@@ -2433,6 +2580,10 @@ impl Default for DropCap {
     }
 }
 
+/// What the model holds for a `w:softHyphen` (an optional hyphen) in a run's text, a private-use character, so that a U+00AD written in `w:t` (which Word draws
+/// as a hyphen, #M136) stays U+00AD and the two can be told apart. [`FlowParagraph::text`] has it as U+00AD; the layout takes it as the optional hyphen.
+pub const OPTIONAL_HYPHEN: char = '\u{F8AD}';
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FlowParagraph {
     /// Names the paragraph in the document (unique; see
@@ -2453,6 +2604,9 @@ pub struct FlowParagraph {
     pub direct: ParaFormat,
     /// Direct formatting of the paragraph mark (`w:pPr/w:rPr`).
     pub mark_format: RunFormat,
+    /// The paragraph mark is a tracked change: deleted (`w:pPr/w:rPr/w:del`), so that the paragraph joins the next one when it is
+    /// accepted (only `Delete` is read and written).
+    pub mark_revision: Option<Revision>,
     pub runs: Vec<FlowRun>,
     pub align: FlowAlign,
     pub text_alignment: FontAlign,
@@ -3174,6 +3328,10 @@ pub struct RunFormat {
     pub font: Option<String>,
     /// East Asian typeface (`w:rFonts/@w:eastAsia`).
     pub east_asian_font: Option<String>,
+    /// The typeface of the characters Word takes as Latin that are not ASCII (`w:rFonts/@w:hAnsi`; read, not written: the file's `hAnsi` is the Latin typeface
+    /// when this is not set). A list's bullet in the geometric shapes is drawn in it (Word's PDF of a document with `ascii` ＭＳ 明朝 and `hAnsi`
+    /// Courier New in its Normal style: ■ □ in Courier New, GitHub issue #142).
+    pub h_ansi_font: Option<String>,
     /// Complex Script typeface (`w:rFonts/@w:cs`).
     pub cs_font: Option<String>,
     /// Whether `w:rFonts/@w:hint="eastAsia"` selects the East Asian font for ambiguous characters.
@@ -3257,6 +3415,7 @@ impl RunFormat {
         }
         set(&mut self.font, &other.font);
         set(&mut self.east_asian_font, &other.east_asian_font);
+        set(&mut self.h_ansi_font, &other.h_ansi_font);
         set(&mut self.cs_font, &other.cs_font);
         set(&mut self.east_asia_hint, &other.east_asia_hint);
         set(&mut self.size, &other.size);
@@ -3312,6 +3471,7 @@ impl RunFormat {
         let mut f = self.clone();
         clear(&mut f.font, &other.font);
         clear(&mut f.east_asian_font, &other.east_asian_font);
+        clear(&mut f.h_ansi_font, &other.h_ansi_font);
         clear(&mut f.cs_font, &other.cs_font);
         clear(&mut f.east_asia_hint, &other.east_asia_hint);
         clear(&mut f.size, &other.size);
@@ -3363,6 +3523,7 @@ impl RunFormat {
         FlowRunStyle {
             font: self.font.clone(),
             east_asian_font: self.east_asian_font.clone(),
+            h_ansi_font: self.h_ansi_font.clone(),
             cs_font: self.cs_font.clone(),
             east_asia_hint: self.east_asia_hint.unwrap_or(false),
             size: self.size.unwrap_or(d.size),
@@ -4164,8 +4325,12 @@ impl Numbering {
         let num_id = out.nums.keys().max().map_or(1, |m| m + 1);
         let levels = (0..9u32)
             .map(|l| {
+                // Japanese Word 365's default bullets (#M140, tasks/doc/m140/numbering.xml, #142): Wingdings F06C ●, F0D8 ➢,
+                // F0B2 ✧ in turn over the 9 levels. Saved with the Wingdings code (`symbol`); `text` is the Unicode stand-in
+                // drawn where Wingdings is missing.
+                const WORD_BULLETS: [(&str, char); 3] = [("●", '\u{f06c}'), ("➢", '\u{f0d8}'), ("✧", '\u{f0b2}')];
                 let (format, text) = if bullet {
-                    ("bullet", ["●", "○", "■"][l as usize % 3].to_string())
+                    ("bullet", WORD_BULLETS[l as usize % 3].0.to_string())
                 } else {
                     let n = l + 1;
                     match l % 3 {
@@ -4183,7 +4348,7 @@ impl Numbering {
                     para: ParaFormat { left: Some(440 * 635 * (l as i64 + 1)), first_line: Some(-440 * 635), ..ParaFormat::default() },
                     run: RunFormat::default(),
                     pic_bullet: None,
-                    symbol: None,
+                    symbol: bullet.then(|| ("Wingdings".to_string(), WORD_BULLETS[l as usize % 3].1)),
                 }
             })
             .collect();
@@ -4216,6 +4381,7 @@ impl Numbering {
             for level in &mut list.levels {
                 level.pic_bullet = Some(picture_id);
                 level.text = "\u{2022}".to_string();
+                level.symbol = None;
             }
         }
         (out, num_id)

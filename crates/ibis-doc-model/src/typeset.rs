@@ -68,7 +68,7 @@ pub fn is_inseparable_pair(before: char, after: char) -> bool {
 pub fn breaks_after_latin(c: char, hyphen: bool) -> bool {
     match c {
         '-' => hyphen,
-        ' ' | '\u{2010}' | '\u{2013}' | '\u{2014}' | '\u{00ad}' => true,
+        ' ' | '\u{2010}' | '\u{2013}' | '\u{2014}' | '\u{00ad}' | crate::flow::OPTIONAL_HYPHEN => true,
         _ => false,
     }
 }

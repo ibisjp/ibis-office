@@ -1,0 +1,13 @@
+# The files ibisOffice's Windows zip has ever put in the install folder (relative to it, one per line, `/` between folders).
+# ibisOfficeUpdater embeds this list: an update replaces every file of the new version, removes the files of this list that the new
+# version no longer has, and never touches a file that is not here (a user's own file next to ibisOffice.exe: GitHub issue #136).
+# When a version adds or renames a file in scripts/bundle-windows.ps1, add the path here under that version (bundle-windows.ps1 fails
+# if the zip has a file this list lacks). Never remove a line: an older version may still be installed.
+
+# 0.8.0 to 0.8.6 (checked against the Windows zips of 0.8.1, 0.8.3, 0.8.4, 0.8.5 and 0.8.6)
+ibisOffice.exe
+ibisOfficeUpdater.exe
+Resources/artborders/ECMA-NOTICE.txt
+Resources/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip
+Resources/Licenses/Carlito-OFL.txt
+Resources/Licenses/license.md

@@ -73,17 +73,31 @@ const DIR_DLRU: &[TransitionOption] = &[
     opt("r", &[("dir", "r")], "transition.dir.right"),
     opt("u", &[("dir", "u")], "transition.dir.up"),
 ];
-const DIR_8: &[TransitionOption] = &[
-    opt("d", &[("dir", "d")], "transition.dir.down"),
-    opt("l", &[("dir", "l")], "transition.dir.left"),
-    opt("r", &[("dir", "r")], "transition.dir.right"),
-    opt("u", &[("dir", "u")], "transition.dir.up"),
-    opt("ld", &[("dir", "ld")], "transition.dir.left-down"),
-    opt("lu", &[("dir", "lu")], "transition.dir.left-up"),
-    opt("rd", &[("dir", "rd")], "transition.dir.right-down"),
-    opt("ru", &[("dir", "ru")], "transition.dir.right-up"),
-];
 const DIR_LR: &[TransitionOption] = &[opt("l", &[("dir", "l")], "transition.dir.left"), opt("r", &[("dir", "r")], "transition.dir.right")];
+
+// `dir` of push, wipe, cover, uncover, pan, gallery, conveyor, ferris, switch and the prism effects is the direction the picture
+// moves, so the option PowerPoint shows is the opposite side (`dir="l"` is "From Right": the new slide comes in from the right).
+// Measured on PowerPoint for Windows (Microsoft 365 16.0.20527; 1 s transitions of a red slide to a blue one exported with
+// `Presentation.CreateVideo`, 30 frames a second; where the new colour first showed): push/cover/uncover/wipe/gallery/cube/box
+// `l` at the right edge, `u` at the bottom, `r` at the left, `d` at the top; the diagonals of cover and uncover the same
+// (`lu` from the bottom right). Vortex and glitter are the other way (`dir` is the side it starts at; the labels above).
+const FROM_DLRU: &[TransitionOption] = &[
+    opt("d", &[("dir", "d")], "transition.dir.from-top"),
+    opt("l", &[("dir", "l")], "transition.dir.from-right"),
+    opt("r", &[("dir", "r")], "transition.dir.from-left"),
+    opt("u", &[("dir", "u")], "transition.dir.from-bottom"),
+];
+const FROM_8: &[TransitionOption] = &[
+    opt("d", &[("dir", "d")], "transition.dir.from-top"),
+    opt("l", &[("dir", "l")], "transition.dir.from-right"),
+    opt("r", &[("dir", "r")], "transition.dir.from-left"),
+    opt("u", &[("dir", "u")], "transition.dir.from-bottom"),
+    opt("ld", &[("dir", "ld")], "transition.dir.from-right-up"),
+    opt("lu", &[("dir", "lu")], "transition.dir.from-right-down"),
+    opt("rd", &[("dir", "rd")], "transition.dir.from-left-up"),
+    opt("ru", &[("dir", "ru")], "transition.dir.from-left-down"),
+];
+const FROM_LR: &[TransitionOption] = &[opt("l", &[("dir", "l")], "transition.dir.from-right"), opt("r", &[("dir", "r")], "transition.dir.from-left")];
 const DIR_HV: &[TransitionOption] = &[opt("horz", &[("dir", "horz")], "transition.dir.horz"), opt("vert", &[("dir", "vert")], "transition.dir.vert")];
 const DIR_IN_OUT: &[TransitionOption] = &[opt("in", &[("dir", "in")], "transition.dir.in"), opt("out", &[("dir", "out")], "transition.dir.out")];
 const THRU_BLACK: &[TransitionOption] = &[opt("", &[], "transition.dir.smoothly"), opt("thruBlk", &[("thruBlk", "1")], "transition.dir.through-black")];
@@ -94,8 +108,8 @@ pub const EFFECTS: &[TransitionEffect] = &[
     fx!("cut", "cut", P, &[], THRU_BLACK),
     fx!("morph", "morph", P159, &[], &[opt("byObject", &[("option", "byObject")], "transition.dir.by-object"), opt("byWord", &[("option", "byWord")], "transition.dir.by-word"), opt("byChar", &[("option", "byChar")], "transition.dir.by-char")]),
     fx!("fade", "fade", P, &[], THRU_BLACK),
-    fx!("push", "push", P, &[], DIR_DLRU),
-    fx!("wipe", "wipe", P, &[], DIR_DLRU),
+    fx!("push", "push", P, &[], FROM_DLRU),
+    fx!("wipe", "wipe", P, &[], FROM_DLRU),
     fx!(
         "split",
         "split",
@@ -108,14 +122,25 @@ pub const EFFECTS: &[TransitionEffect] = &[
             opt("horzOut", &[("orient", "horz"), ("dir", "out")], "transition.dir.horz-out"),
         ],
     ),
-    fx!("reveal", "reveal", P14, &[], &[opt("l", &[("dir", "l")], "transition.dir.left"), opt("r", &[("dir", "r")], "transition.dir.right")]),
+    fx!(
+        "reveal",
+        "reveal",
+        P14,
+        &[],
+        &[
+            opt("l", &[("dir", "l")], "transition.dir.smoothly-left"),
+            opt("r", &[("dir", "r")], "transition.dir.smoothly-right"),
+            opt("blk-l", &[("thruBlk", "1"), ("dir", "l")], "transition.dir.through-black-left"),
+            opt("blk-r", &[("thruBlk", "1"), ("dir", "r")], "transition.dir.through-black-right"),
+        ],
+    ),
     fx!("randomBar", "randomBar", P, &[], DIR_HV),
     fx!("circle", "circle", P, &[], &[]),
     fx!("diamond", "diamond", P, &[], &[]),
     fx!("plus", "plus", P, &[], &[]),
     fx!("wedge", "wedge", P, &[], &[]),
-    fx!("cover", "cover", P, &[], DIR_8),
-    fx!("pull", "pull", P, &[], DIR_8),
+    fx!("cover", "cover", P, &[], FROM_8),
+    fx!("pull", "pull", P, &[], FROM_8),
     fx!("flash", "flash", P14, &[], &[]),
     fx!("dissolve", "dissolve", P, &[], &[]),
     fx!("checker", "checker", P, &[], DIR_HV),
@@ -148,13 +173,29 @@ pub const EFFECTS: &[TransitionEffect] = &[
     ),
     fx!("ripple", "ripple", P14, &[], &[
         opt("center", &[("dir", "center")], "transition.dir.center"),
-        opt("lu", &[("dir", "lu")], "transition.dir.left-up"),
-        opt("ru", &[("dir", "ru")], "transition.dir.right-up"),
-        opt("ld", &[("dir", "ld")], "transition.dir.left-down"),
-        opt("rd", &[("dir", "rd")], "transition.dir.right-down"),
+        // Ripple's diagonal `dir` is the way it spreads: `ru` starts at the bottom left (measured as above).
+        opt("lu", &[("dir", "lu")], "transition.dir.from-right-down"),
+        opt("ru", &[("dir", "ru")], "transition.dir.from-left-down"),
+        opt("ld", &[("dir", "ld")], "transition.dir.from-right-up"),
+        opt("rd", &[("dir", "rd")], "transition.dir.from-left-up"),
     ]),
     fx!("honeycomb", "honeycomb", P14, &[], &[]),
-    fx!("glitter", "glitter", P14, &[], DIR_DLRU),
+    fx!(
+        "glitter",
+        "glitter",
+        P14,
+        &[],
+        &[
+            opt("r", &[("pattern", "diamond"), ("dir", "r")], "transition.dir.diamonds-right"),
+            opt("d", &[("pattern", "diamond"), ("dir", "d")], "transition.dir.diamonds-down"),
+            opt("l", &[("pattern", "diamond"), ("dir", "l")], "transition.dir.diamonds-left"),
+            opt("u", &[("pattern", "diamond"), ("dir", "u")], "transition.dir.diamonds-up"),
+            opt("hex-r", &[("pattern", "hexagon"), ("dir", "r")], "transition.dir.hexagons-right"),
+            opt("hex-d", &[("pattern", "hexagon"), ("dir", "d")], "transition.dir.hexagons-down"),
+            opt("hex-l", &[("pattern", "hexagon"), ("dir", "l")], "transition.dir.hexagons-left"),
+            opt("hex-u", &[("pattern", "hexagon"), ("dir", "u")], "transition.dir.hexagons-up"),
+        ],
+    ),
     fx!("vortex", "vortex", P14, &[], DIR_DLRU),
     fx!(
         "shred",
@@ -168,28 +209,40 @@ pub const EFFECTS: &[TransitionEffect] = &[
             opt("rect-out", &[("pattern", "rectangle"), ("dir", "out")], "transition.dir.rects-out"),
         ],
     ),
-    fx!("switch", "switch", P14, &[], DIR_LR),
+    fx!("switch", "switch", P14, &[], FROM_LR),
     fx!("flip", "flip", P14, &[], DIR_LR),
-    fx!("gallery", "gallery", P14, &[], DIR_LR),
-    fx!("cube", "prism", P14, &[("isContent", "0"), ("isInverted", "0")], DIR_DLRU),
+    fx!("gallery", "gallery", P14, &[], FROM_LR),
+    fx!("cube", "prism", P14, &[("isContent", "0"), ("isInverted", "0")], FROM_DLRU),
     fx!("doors", "doors", P14, &[], DIR_HV),
-    fx!("box", "prism", P14, &[("isContent", "0"), ("isInverted", "1")], DIR_DLRU),
+    fx!("box", "prism", P14, &[("isContent", "0"), ("isInverted", "1")], FROM_DLRU),
     fx!("zoom", "zoom", P, &[], DIR_IN_OUT),
     fx!("random", "random", P, &[], &[]),
-    fx!("pan", "pan", P14, &[], DIR_DLRU),
-    fx!("ferris", "ferris", P14, &[], DIR_LR),
-    fx!("conveyor", "conveyor", P14, &[], DIR_LR),
-    fx!("rotate", "prism", P14, &[("isContent", "1"), ("isInverted", "0")], DIR_DLRU),
+    fx!("pan", "pan", P14, &[], FROM_DLRU),
+    fx!("ferris", "ferris", P14, &[], FROM_LR),
+    fx!("conveyor", "conveyor", P14, &[], FROM_LR),
+    fx!("rotate", "prism", P14, &[("isContent", "1"), ("isInverted", "0")], FROM_DLRU),
     fx!("window", "window", P14, &[], DIR_HV),
-    fx!("orbit", "prism", P14, &[("isContent", "1"), ("isInverted", "1")], DIR_DLRU),
-    fx!("flythrough", "flythrough", P14, &[], DIR_IN_OUT),
+    fx!("orbit", "prism", P14, &[("isContent", "1"), ("isInverted", "1")], FROM_DLRU),
+    fx!(
+        "flythrough",
+        "flythrough",
+        P14,
+        &[],
+        &[
+            opt("in", &[("dir", "in")], "transition.dir.in"),
+            opt("out", &[("dir", "out")], "transition.dir.out"),
+            opt("in-bounce", &[("dir", "in"), ("hasBounce", "1")], "transition.dir.in-bounce"),
+            opt("out-bounce", &[("dir", "out"), ("hasBounce", "1")], "transition.dir.out-bounce"),
+        ],
+    ),
     fx!("warp", "warp", P14, &[], DIR_IN_OUT),
     fx!("comb", "comb", P, &[], DIR_HV),
     fx!("strips", "strips", P, &[], &[
-        opt("ld", &[("dir", "ld")], "transition.dir.left-down"),
-        opt("lu", &[("dir", "lu")], "transition.dir.left-up"),
-        opt("rd", &[("dir", "rd")], "transition.dir.right-down"),
-        opt("ru", &[("dir", "ru")], "transition.dir.right-up"),
+        // Strips run toward `dir` (`lu` starts at the bottom right: measured as above): "Left Up".
+        opt("ld", &[("dir", "ld")], "transition.dir.toward-left-down"),
+        opt("lu", &[("dir", "lu")], "transition.dir.toward-left-up"),
+        opt("rd", &[("dir", "rd")], "transition.dir.toward-right-down"),
+        opt("ru", &[("dir", "ru")], "transition.dir.toward-right-up"),
     ]),
     fx!("newsflash", "newsflash", P, &[], &[]),
     fx!("fallOver", "prstTrans", P15, &[("prst", "fallOver")], LEFT_RIGHT_INV),
@@ -217,15 +270,15 @@ fn is_flag(name: &str) -> bool {
 }
 
 /// What attribute `name` of `element` is when the file omits it (the schema's default; PowerPoint leaves a default out).
+/// (スイッチ, 反転, ギャラリー, 観覧車 and コンベヤー have only 左から and 右から, and PowerPoint writes `dir` for both: no default.)
 fn default_of(element: &str, name: &str) -> Option<&'static str> {
     match (element, name) {
-        ("push" | "wipe" | "cover" | "pull" | "vortex" | "switch" | "flip" | "gallery" | "conveyor" | "ferris" | "pan" | "reveal" | "prism", "dir") => Some("l"),
+        ("push" | "wipe" | "cover" | "pull" | "vortex" | "pan" | "reveal" | "prism" | "glitter", "dir") => Some("l"),
         ("blinds" | "checker" | "comb" | "randomBar" | "doors" | "window", "dir") => Some("horz"),
         ("strips", "dir") => Some("lu"),
         ("zoom" | "split" | "warp", "dir") => Some("out"),
         ("flythrough" | "shred", "dir") => Some("in"),
         ("ripple", "dir") => Some("center"),
-        ("glitter", "dir") => Some("r"),
         ("split", "orient") => Some("horz"),
         ("shred", "pattern") => Some("strip"),
         ("glitter", "pattern") => Some("diamond"),
@@ -278,6 +331,8 @@ pub fn attributes(id: &str, token: Option<&str>) -> Vec<(&'static str, &'static 
     if let Some(option) = token.and_then(|t| effect.options.iter().find(|o| o.token == t)) {
         out.extend(option.attrs.iter().copied());
     }
+    // PowerPoint leaves an attribute at the schema's default out (`<p:push/>` is 左から, `<p14:glitter/>` ダイアモンド・左から).
+    out.retain(|(n, v)| default_of(effect.element, n) != Some(*v));
     out
 }
 
@@ -311,10 +366,18 @@ mod tests {
 
     #[test]
     fn an_option_is_written_back_as_the_attributes_it_was_read_from() {
-        assert_eq!(attributes("split", Some("horzOut")), vec![("orient", "horz"), ("dir", "out")]);
+        // Defaults are left out, as PowerPoint writes: `<p:split/>` is 水平方向（外側へ）.
+        assert_eq!(attributes("split", Some("horzOut")), vec![]);
+        assert_eq!(attributes("split", Some("horzIn")), vec![("dir", "in")]);
+        assert_eq!(attributes("split", Some("out")), vec![("orient", "vert")]);
+        assert_eq!(attributes("glitter", Some("hex-l")), vec![("pattern", "hexagon")]);
+        assert_eq!(attributes("flythrough", Some("out-bounce")), vec![("dir", "out"), ("hasBounce", "1")]);
+        assert_eq!(attributes("reveal", Some("blk-r")), vec![("thruBlk", "1"), ("dir", "r")]);
         assert_eq!(attributes("crush", None), vec![("prst", "crush")]);
-        assert_eq!(attributes("orbit", Some("l")), vec![("isContent", "1"), ("isInverted", "1"), ("dir", "l")]);
+        assert_eq!(attributes("orbit", Some("l")), vec![("isContent", "1"), ("isInverted", "1")]);
+        assert_eq!(attributes("orbit", Some("r")), vec![("isContent", "1"), ("isInverted", "1"), ("dir", "r")]);
         assert_eq!(attributes("cube", Some("d")), vec![("dir", "d")]);
+        assert_eq!(attributes("push", Some("l")), vec![]);
         assert_eq!(attributes("fade", Some("thruBlk")), vec![("thruBlk", "1")]);
         // Reading what is written gives the same effect and option, for every one of the gallery.
         for e in EFFECTS {

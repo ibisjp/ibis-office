@@ -245,7 +245,7 @@ pub(crate) fn decompile(rgce: &[u8], base: (u32, u32), cx: &Context) -> Option<S
                 0x25 => {
                     let (r1, r2, c1, c2) = (u16_at(rgce, i)?, u16_at(rgce, i + 2)?, u16_at(rgce, i + 4)?, u16_at(rgce, i + 6)?);
                     // The columns' flags are in each corner's column field; the rows' too.
-                    stack.push(format!("{}:{}", area_corner(r1, c1, false, base), area_corner(r2, c2, false, base)));
+                    stack.push(area_text(r1, r2, c1, c2, base));
                     i += 8;
                 }
                 // ptgMemFunc: the size of the sub-expression whose tokens follow (they carry the text).
@@ -276,22 +276,35 @@ pub(crate) fn decompile(rgce: &[u8], base: (u32, u32), cx: &Context) -> Option<S
                 0x3B => {
                     let prefix = sheets_of(u16_at(rgce, i)?)?;
                     let (r1, r2, c1, c2) = (u16_at(rgce, i + 2)?, u16_at(rgce, i + 4)?, u16_at(rgce, i + 6)?, u16_at(rgce, i + 8)?);
-                    stack.push(format!("{prefix}{}:{}", area_corner(r1, c1, false, base), area_corner(r2, c2, false, base)));
+                    stack.push(format!("{prefix}{}", area_text(r1, r2, c1, c2, base)));
                     i += 10;
                 }
-                0x3C => {
-                    stack.push("#REF!".to_string());
-                    i += 6;
-                }
-                0x3D => {
-                    stack.push("#REF!".to_string());
-                    i += 10;
+                // ptgRefErr3d, ptgAreaErr3d: a reference of a sheet that was deleted, still of that sheet ('Sheet'!#REF!, as
+                // Excel writes it: a print area so is of its sheet, corpus 076).
+                0x3C | 0x3D => {
+                    let prefix = u16_at(rgce, i).and_then(sheets_of).unwrap_or_default();
+                    stack.push(format!("{prefix}#REF!"));
+                    i += if base_t == 0x3C { 6 } else { 10 };
                 }
                 _ => return None,
             },
         }
     }
     if stack.len() == 1 { stack.pop() } else { None }
+}
+
+/// An area token's text. An area of every row of the sheet (1 to 65536, all a BIFF8 sheet has) is whole columns
+/// (`$A:$X`), and one of every column (A to IV) whole rows (`$4:$4`), as Excel reads them: a workbook has more
+/// rows and columns than an old one, and the area is the whole of them (a print area of whole columns, corpus 161).
+fn area_text(r1: u16, r2: u16, c1: u16, c2: u16, base: (u32, u32)) -> String {
+    let abs = |field: u16, bit: u16| if field & bit == 0 { "$" } else { "" };
+    if r1 == 0 && r2 == 0xFFFF {
+        return format!("{}{}:{}{}", abs(c1, 0x4000), column_letters((c1 & 0x3FFF) as u32), abs(c2, 0x4000), column_letters((c2 & 0x3FFF) as u32));
+    }
+    if c1 & 0x3FFF == 0 && c2 & 0x3FFF == 0xFF {
+        return format!("{}{}:{}{}", abs(c1, 0x8000), r1 as u32 + 1, abs(c2, 0x8000), r2 as u32 + 1);
+    }
+    format!("{}:{}", area_corner(r1, c1, false, base), area_corner(r2, c2, false, base))
 }
 
 /// One corner of an area token: its row and its column field.
@@ -347,5 +360,18 @@ mod tests {
         // A shared formula's relative reference: one row up, same column, from (4, 2).
         let f = vec![0x2C, 0xFF, 0xFF, 0x00, 0xC0];
         assert_eq!(decompile(&f, (4, 2), &cx).as_deref(), Some("C4"));
+    }
+
+    #[test]
+    fn an_area_of_every_row_or_column_is_whole_columns_or_rows() {
+        let cx = Context { sheets: vec!["SL".into()], xti: vec![(0, 0, 0)], internal_book: vec![true], names: vec![] };
+        // 'SL'!$A$1:$X$65536 (a print area) is 'SL'!$A:$X (SL1 is a cell, so the name is quoted); $A$4:$IV$4 (print titles) is $4:$4.
+        let f = vec![0x3B, 0, 0, 0, 0, 0xFF, 0xFF, 0, 0, 23, 0];
+        assert_eq!(decompile(&f, (0, 0), &cx).as_deref(), Some("'SL'!$A:$X"));
+        let f = vec![0x25, 3, 0, 3, 0, 0, 0, 0xFF, 0];
+        assert_eq!(decompile(&f, (0, 0), &cx).as_deref(), Some("$4:$4"));
+        // ptgAreaErr3d of the sheet: 'SL'!#REF!.
+        let f = vec![0x3D, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(decompile(&f, (0, 0), &cx).as_deref(), Some("'SL'!#REF!"));
     }
 }

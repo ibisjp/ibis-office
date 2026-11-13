@@ -1,0 +1,559 @@
+# ibisOffice UI text (English): fix 担当。キー<TAB>文字（shell/i18n.rs）。
+fix.dedupe-edit.my-data-has-headers	My data has headers: On
+fix.dedupe-edit.my-data-has-headers-off	My data has headers: Off
+fix.dedupe-edit.columns-compare	Columns to Compare
+fix.dedupe-edit.unselect-all	Unselect All
+fix.dedupe-edit.remove-duplicates	Remove Duplicates
+fix.goto-special.select	Select
+fix.goto-special.constants	Constants
+fix.goto-special.blanks	Blanks
+fix.goto-special.current-region	Current Region
+fix.goto-special.last-cell	Last Cell
+fix.goto-special.visible-cells-only	Visible Cells Only
+fix.goto-special.text	Text
+fix.goto-special.logicals	Logicals
+fix.goto-special.errors	Errors
+fix.goto-special.go-special	Go To Special
+fix.text-columns.enter-break-positions-character	Enter break positions as character counts of 1 or more, separated by commas (e.g. 3, 8).
+fix.text-columns.enter-break-positions-e-g	Enter break positions (e.g. 3, 8).
+fix.text-columns.select-least-one-delimiter	Select at least one delimiter.
+fix.text-columns.other-1-character	Other (1 character)
+fix.text-columns.only-one-column-can-converted	Only one column can be converted at a time.
+fix.text-columns.enter-destination-cell-e-g	Enter the destination cell (e.g. B1).
+fix.text-columns.there-no-data-split	There is no data to split.
+fix.text-columns.there-already-data-here-replace	There is already data here. To replace it, click Split again.
+fix.text-columns.delimiters	Delimiters
+fix.text-columns.fixed-width	Fixed Width
+fix.text-columns.break-positions-characters-start	Break Positions (characters from start)
+fix.text-columns.tab	Tab
+fix.text-columns.semicolon	Semicolon
+fix.text-columns.comma	Comma
+fix.text-columns.space	Space
+fix.text-columns.treat-consecutive-delimiters-one	Treat consecutive delimiters as one
+fix.text-columns.destination	Destination
+fix.text-columns.preview	Preview
+fix.text-columns.replace	Replace
+fix.text-columns.split	Split
+fix.text-columns.text-columns	Text to Columns
+fix.validation.value-does-not-match-data	This value does not match the data validation restrictions defined for this cell.
+fix.validation.input-message-optional	Input message (optional)
+fix.pivot-options.data	Data
+fix.goto.footnote	Footnote
+fix.goto.endnote	Endnote
+fix.help-panels.start	Start At
+fix.dedupe-edit.select-all	Select All
+fix.validation.clear-all	Clear All
+fix.pivot.settings	Settings
+dedupe.done	{gone} duplicate values found and removed; {left} unique values remain.
+dedupe.column-heading	Column {column} ({heading})
+dedupe.column	Column {column}
+text-columns.done	Split {rows} rows.
+text-columns.source	Cells to split: {cells}
+text-columns.quote	Text qualifier: {quote}
+text-columns.format	Column data format: {format}
+goto-special.done	{count} cells selected.
+edit.refused	This can't be done ({error}).
+flash-fill.done	Flash Fill: filled {count} cells.
+fix.misc.flash-fill-couldn-t-recognize	Flash Fill couldn't recognize a pattern. Type an example in the column and try again.
+fix.validation.any-value	Any value
+fix.validation.whole-number	Whole number
+fix.validation.decimal	Decimal
+fix.validation.list	List
+fix.validation.text-length	Text length
+fix.validation.between	between
+fix.validation.not-between	not between
+fix.validation.equal	equal to
+fix.validation.not-equal	not equal to
+fix.validation.greater-than	greater than
+fix.validation.less-than	less than
+fix.validation.greater-than-equal	greater than or equal to
+fix.validation.less-than-equal	less than or equal to
+fix.validation.stop	Stop
+fix.validation.warning	Warning
+fix.validation.information	Information
+fix.validation.allow	Allow
+fix.validation.source	Source
+fix.validation.ignore-blank	Ignore blank
+fix.validation.cell-dropdown	In-cell dropdown
+fix.validation.input-message	Input Message
+fix.validation.error-alert	Error Alert
+fix.validation.show-input-message-when-cell	Show input message when cell is selected
+fix.validation.show-error-alert-after-invalid	Show error alert after invalid data is entered
+fix.validation.value-range-formula-list-comma	Value, range or formula (a list: comma-separated)
+fix.validation.second-value-between	Second value (for between)
+fix.validation.enter-source	Enter the source.
+fix.validation.enter-formula	Enter a formula.
+fix.validation.validation-rule-set	The validation rule is set.
+fix.validation.validation-rules-cleared	The validation rules are cleared.
+xlsx.protect-sheet	Protect Sheet…
+xlsx.unprotect-sheet	Unprotect Sheet…
+xlsx.lock-cells	Lock Cell
+xlsx.hide-formulas	Hide Formulas
+fix.protection.cell-chart-you-re-trying	The cell or chart you're trying to change is on a protected sheet. To make a change, unprotect the sheet. You might be requested to enter a password.
+fix.protection.select-locked-cells	Select locked cells
+fix.protection.select-unlocked-cells	Select unlocked cells
+fix.protection.format-cells	Format cells
+fix.protection.format-columns	Format columns
+fix.protection.format-rows	Format rows
+fix.protection.insert-columns	Insert columns
+fix.protection.insert-rows	Insert rows
+fix.protection.insert-hyperlinks	Insert hyperlinks
+fix.protection.delete-columns	Delete columns
+fix.protection.delete-rows	Delete rows
+fix.protection.use-autofilter	Use AutoFilter
+fix.protection.use-pivottable-pivotchart	Use PivotTable & PivotChart
+fix.protection.edit-objects	Edit objects
+fix.protection.edit-scenarios	Edit scenarios
+fix.protection.password-optional	Password (optional)
+fix.protection.reenter-password	Reenter password
+fix.protection.protect-worksheet-contents-locked	Protect worksheet and contents of locked cells
+fix.protection.allow-all-users-worksheet	Allow all users of this worksheet to
+fix.protection.unprotect-sheet	Unprotect Sheet
+fix.protection.protect-sheet	Protect Sheet
+fix.protection.unprotect	Unprotect
+fix.protection.protect-sheet-2	Protect Sheet
+fix.protection.confirmation-password-not	The confirmation password is not identical.
+fix.protection.password-you-supplied-not-correct	The password you supplied is not correct.
+xlsx.series	Series…
+fix.series.series	Series
+fix.series.type	Type
+fix.series.date-unit	Date unit
+fix.series.day	Day
+fix.series.weekday	Weekday
+fix.series.month	Month
+fix.series.year	Year
+fix.series.step-value	Step value
+fix.series.stop-value	Stop value
+fix.series.enter-step-value	Enter a step value.
+fix.series.enter-number-date-stop-value	Enter a number or date as the stop value.
+fix.series.enter-stop-value-fill-one	Enter a stop value to fill from one cell.
+fix.series.enter-number-date-first-cell	Enter a number or date in the first cell.
+page-setup.bad	Enter a number of 0 or more (mm) for {field}.
+fix.help-panels.left-inside	Left (Inside)
+fix.help-panels.right-outside	Right (Outside)
+fix.help-panels.gutter	Gutter
+fix.help-panels.gutter-position	Gutter position
+fix.help-panels.mirror-margins	Mirror margins
+fix.help-panels.header-footer-edge	Header and footer (from edge)
+fix.help-panels.top	Top
+fix.help-panels.center	Center
+fix.help-panels.bottom	Bottom
+fix.help-panels.margins-too-large-paper	The margins are too large for the paper.
+fix.help-panels.page-setup-changed	The page setup is changed.
+fix.help-panels.footnote-endnote	Footnote and Endnote
+fix.help-panels.location	Location
+fix.help-panels.bottom-page	Bottom of page
+fix.help-panels.below-text	Below text
+fix.help-panels.end-section	End of section
+fix.help-panels.end-document	End of document
+fix.help-panels.number-format	Number format
+fix.help-panels.numbering	Numbering
+fix.help-panels.continuous	Continuous
+fix.help-panels.restart-each-section	Restart each section
+fix.help-panels.restart-each-page	Restart each page
+fix.help-panels.enter-whole-number-1-more	Enter a whole number of 1 or more for Start at.
+fix.help-panels.footnote-endnote-settings-changed	The footnote and endnote settings are changed.
+docx.list.format	Number Format
+docx.list.suffix	Follow Number With
+docx.list.suffix-tab	Tab Character
+docx.list.suffix-space	Space
+docx.list.suffix-none	Nothing
+docx.bookmark	Bookmark…
+fix.help-panels.bookmark	Bookmark
+fix.help-panels.bookmark-name	Bookmark name
+fix.common.add	Add
+fix.help-panels.hidden-bookmarks	Hidden bookmarks
+fix.help-panels.bookmark-name-must-begin-letter	A bookmark name must begin with a letter and contain only letters, numbers and _ (up to 40 characters).
+fix.help-panels.bookmark-added	The bookmark is added.
+fix.help-panels.bookmark-deleted	The bookmark is deleted.
+fix.list-formats.japanese-counting	Japanese Counting
+fix.list-formats.iroha	Iroha
+docx.watermark	Watermark…
+fix.help-panels.watermark	Watermark
+fix.help-panels.remove-watermark	Remove Watermark
+fix.help-panels.semitransparent	Semitransparent
+fix.help-panels.diagonal	Diagonal
+fix.print.horizontal	Horizontal
+fix.help-panels.confidential	CONFIDENTIAL
+fix.help-panels.do-not-copy	DO NOT COPY
+fix.help-panels.asap	ASAP
+fix.help-panels.draft	DRAFT
+fix.help-panels.sample	SAMPLE
+fix.help-panels.urgent	URGENT
+fix.help-panels.silver	Silver
+docx.style.new	New Style…
+fix.style-new.new-style	New Style
+fix.style-new.paragraph	Paragraph
+fix.style-new.style-based	Style based on
+fix.style-new.style-following-paragraph	Style for following paragraph
+fix.style-new.change-base	Change Base
+fix.style-new.style-name-based	Style “{name}” is based on
+fix.style-new.enter-name-style	Enter a name for the style.
+fix.style-new.style-name-already-exists	A style with that name already exists.
+fix.style-new.there-no-style-named-name	There is no style named “{name}”.
+fix.misc.style-name-created	The style “{name}” is created.
+fix.style-new.style-can-t-base-based	That style can't be the base (it is based on this one).
+fix.style-new.base-style-changed	The base style is changed.
+docx.cstyle	Character Styles
+docx.cstyle.clear	Clear Character Style
+app.settings	Settings…
+fix.right-tabs.chart-editor	Chart Editor
+fix.right-tabs.format	Format
+fix.file-actions.opened-preview-press-p-print	Opened in Preview. Press ⌘P to print.
+app.file.print	Print…
+fix.symbols.punctuation-symbols	Punctuation and Symbols
+fix.symbols.mathematical-operators	Mathematical Operators
+fix.symbols.greek	Greek
+fix.symbols.box-drawing-shapes	Box Drawing and Shapes
+fix.symbols.circled-numbers-units	Circled Numbers and Units
+fix.symbols.symbols-special-characters	Symbols and Special Characters
+about.version	Version {version}
+about.license	Provided under AGPL-3.0-only or a commercial license.
+about.update-available	A new version is available.
+fix.picture-panel.rotate-flip	Rotate and Flip
+fix.picture-panel.rotate-left-90	Rotate Left 90°
+fix.picture-panel.rotate-right-90	Rotate Right 90°
+fix.picture-panel.flip-horizontal	Flip Horizontal
+fix.picture-panel.flip-vertical	Flip Vertical
+fix.picture-panel.crop	Crop
+fix.picture-panel.apply-crop	Apply Crop
+fix.picture-panel.enter-crop-number-0-up	Enter the crop as a number from 0 up to under 100 (%).
+fix.picture-panel.top-plus-bottom-left-plus	Top plus bottom, and left plus right, must each be under 100%.
+fix.toolbar.don-t-add-space-between	Don't add space between paragraphs of the same style
+fix.toolbar.none-0-pt	None (0 pt)
+fix.toolbar.1-pt-above	1 pt and above
+fix.toolbar.10-pt-above	10 pt and above
+fix.toolbar.12-pt-above-default	12 pt and above (default)
+fix.toolbar.14-pt-above	14 pt and above
+fix.toolbar.16-pt-above	16 pt and above
+fix.toolbar.18-pt-above	18 pt and above
+fix.toolbar.clear-setting	Clear Setting
+xlsx.print-options	Print Options
+xlsx.print.gridlines	Gridlines
+xlsx.print.headings	Headings
+xlsx.print.black-white	Black & White
+xlsx.print.draft	Draft
+fix.print.columns-repeat-left	Columns to Repeat at Left
+fix.print.use-selected-columns	Use Selected Columns
+fix.print.columns-repeat-left-cols-printed	Columns to repeat at left: {cols} (printed on left of every page)
+fix.print.columns-repeat-left-none	Columns to repeat at left: none
+fix.print.postcard	Postcard
+fix.print.center-page	Center on Page
+fix.print.vertical	Vertical
+pptx.insert-chart.pie-of-pie	Pie of Pie
+pptx.insert-chart.bar-of-pie	Bar of Pie
+fix.chart-edit.pie-chart-type	Of-Pie Chart Type
+fix.chart-edit.pie-pie	Pie of Pie
+fix.chart-edit.bar-pie	Bar of Pie
+fix.chart-edit.split-series	Split Series By
+fix.chart-edit.percent	%
+fix.chart-edit.split-position-value	Split Position / Value
+fix.chart-edit.second-plot-size	Second Plot Size
+fix.chart-edit.enter-number-split-position-value	Enter a number for the split position / value.
+fix.chart-edit.enter-integer-between-5-200	Enter an integer between 5 and 200 for the second plot size.
+pptx.insert-chart.stock-hlc	Stock (High-Low-Close)
+pptx.insert-chart.stock-ohlc	Stock (Open-High-Low-Close)
+pptx.insert-chart.stock-vhlc	Stock (Volume-High-Low-Close)
+pptx.insert-chart.stock-vohlc	Stock (Volume-Open-High-Low-Close)
+fix.chart-edit.stock-chart-options	Stock Chart Options
+fix.chart-edit.high-low-lines	High-Low Lines
+fix.chart-edit.up-down-bars	Up/Down Bars
+fix.chart-edit.drop-lines	Drop Lines
+xlsx.chart-series	Series
+xlsx.chart-series-add	+ Add Series
+xlsx.chart-series-last-error	Cannot delete the last series.
+xlsx.chart-series-reorder-error	Cannot reorder series for this chart.
+xlsx.chart-series-add-error	Cannot add series to this chart.
+xlsx.chart-series-delete-error	Cannot delete series for this chart.
+xlsx.arrange-all	Arrange All...
+xlsx.arrange-windows	Arrange Windows
+xlsx.arrange-tiled	Tiled
+xlsx.arrange-horizontal	Horizontal
+xlsx.arrange-vertical	Vertical
+xlsx.arrange-cascade	Cascade
+xlsx.arrange-active-only	Windows of active workbook
+fix.arrange-windows.arrange-windows	Arrange Windows
+fix.arrange-windows.arrange	Arrange
+fix.arrange-windows.tiled	Tiled
+fix.arrange-windows.horizontal	Horizontal
+fix.arrange-windows.vertical	Vertical
+fix.arrange-windows.cascade	Cascade
+fix.arrange-windows.windows-active-workbook	Windows of active workbook
+xlsx.new-window	New Window
+fix.misc.new-window	New Window
+fix.editor.do-you-want-save-changes	Do you want to save changes?
+fix.editor.don-t-save	Don't Save
+xlsx.view-side-by-side	View Side by Side
+xlsx.sync-scrolling	Synchronous Scrolling
+xlsx.reset-window-position	Reset Window Position
+fix.misc.view-side-side	View Side by Side
+fix.misc.synchronous-scrolling	Synchronous Scrolling
+fix.misc.reset-window-position	Reset Window Position
+xlsx.compatibility-check	Check Compatibility…
+xlsx.compatibility.title	Compatibility Checker
+xlsx.compatibility.desc	Scans the workbook for features not supported by earlier versions of Excel (97-2003) and summarizes issues.
+xlsx.compatibility.passed	No compatibility issues found
+xlsx.compatibility.passed-sub	This workbook does not contain features that cause significant loss of functionality in Excel 97-2003.
+xlsx.compatibility.significant	Significant loss of functionality
+xlsx.compatibility.minor	Minor loss of fidelity
+xlsx.compatibility.recheck	Recheck
+xlsx.compatibility.recheck-done	Compatibility check re-evaluated.
+fix.misc.check-compatibility	Check Compatibility…
+fix.misc.compatibility-checker	Compatibility Checker
+fix.misc.significant-loss-functionality	Significant loss of functionality
+fix.misc.minor-loss-fidelity	Minor loss of fidelity
+fix.misc.recheck	Recheck
+xlsx.autorecover-settings	AutoRecover Settings…
+xlsx.autorecover.settings-title	AutoRecover Settings
+xlsx.autorecover.section-general	General Settings
+xlsx.autorecover.enabled-label	Save AutoRecover information every
+xlsx.autorecover.interval-label	Interval
+xlsx.autorecover.interval-minutes-unit	minutes
+xlsx.autorecover.keep-unsaved-label	Keep the last AutoRecovered version if I close without saving
+xlsx.autorecover.section-location	File Location
+xlsx.autorecover.location-label	AutoRecover file location
+xlsx.autorecover.reset-location	Reset to Default
+xlsx.autorecover.section-workbook	Current Workbook
+xlsx.autorecover.disable-workbook-label	Disable AutoRecover for this workbook only
+xlsx.autorecover.save-now-btn	Save AutoRecover Data Now
+xlsx.autorecover.save-btn	Save Settings
+xlsx.autorecover.saved-msg	Settings saved.
+xlsx.autorecover.error-interval	Please specify an interval between 1 and 120 minutes.
+xlsx.autorecover.error-path	Could not create destination folder
+xlsx.autorecover.now-done	AutoRecover snapshot saved
+xlsx.autorecover.now-failed	Failed to save AutoRecover snapshot
+xlsx.autorecover.banner-text	[AutoRecover] This workbook was recovered after an unexpected close. Save it to keep your changes.
+xlsx.autorecover.save-as	Save As
+xlsx.autorecover.discard	Discard
+xlsx.autorecover.wasm-save-unsupported	AutoRecover snapshots are not supported in the browser version
+xlsx.recover-unsaved	Recover Unsaved Workbooks…
+xlsx.recover.title	Recover Unsaved Workbooks
+xlsx.recover.panel-desc	List of automated backups of workbooks closed without saving.
+xlsx.recover.empty-title	No unsaved workbooks to recover
+xlsx.recover.empty-desc	Files closed without saving or after unexpected termination will appear here.
+xlsx.recover.date-label	Date
+xlsx.recover.size-label	Size
+xlsx.recover.opened-status	Recovered workbook opened
+xlsx.recover.open-failed	Failed to open file
+xlsx.recover.deleted-msg	Recovered file deleted.
+xlsx.recover.all-deleted-msg	All recovered files deleted.
+xlsx.recover.clear-all	Clear All
+xlsx.recover.rescan	Rescan
+xlsx.recover.wasm-unsupported	Recovering unsaved workbooks is not supported in the browser version
+xlsx.backup-save-settings	Backup and Save Settings…
+xlsx.backupsave.panel-title	Backup & Save Settings
+xlsx.backupsave.section-default-loc	Default Save Location
+xlsx.backupsave.default-loc-desc	Specify the default folder when saving new workbooks.
+xlsx.backupsave.reset-default-loc	Reset to Default
+xlsx.backupsave.section-backup	Create Backup Copy
+xlsx.backupsave.always-backup-label	Always create backup copy when saving
+xlsx.backupsave.backup-format-label	Backup format
+xlsx.backupsave.format-xlk	Excel Compatible (.xlk)
+xlsx.backupsave.format-xlsx	Excel Workbook (.xlsx)
+xlsx.backupsave.backup-location-label	Location
+xlsx.backupsave.loc-same-folder	Same as original file
+xlsx.backupsave.loc-custom-folder	Dedicated folder
+xlsx.backupsave.custom-folder-label	Backup destination folder
+xlsx.backupsave.section-workbook	Current Workbook Settings
+xlsx.backupsave.wb-backup-label	Always create backup for this workbook
+xlsx.backupsave.backup-now-btn	Create Backup Now
+xlsx.backupsave.error-default-path	Could not create default save folder
+xlsx.backupsave.error-backup-path	Could not create backup destination folder
+xlsx.backupsave.save-failed	Failed to save settings
+xlsx.backupsave.saved-msg	Settings saved.
+xlsx.backupsave.wasm-unsupported	Backup settings are not supported in the browser version
+xlsx.backupsave.backup-now-done	Backup created
+xlsx.backupsave.backup-now-failed	Failed to create backup
+xlsx.backupsave.need-save-first	Workbook is not saved yet. Please save the workbook first.
+xlsx.backupsave.save-settings-btn	Save Settings
+xlsx.open-and-repair	Repair Damaged Workbook…
+xlsx.repair.title	Repair Damaged Workbook
+xlsx.repair.desc	Repair corrupted Excel workbooks or extract formulas and values.
+xlsx.repair.file-label	Workbook to repair
+xlsx.repair.browse-btn	Browse…
+xlsx.repair.prompt-file	Select workbook to repair
+xlsx.repair.mode-label	Repair options
+xlsx.repair.mode-repair	Repair (Recommended)
+xlsx.repair.mode-repair-desc	Recover as much data, formatting, and formulas as possible.
+xlsx.repair.mode-formulas	Extract Data: Recover Formulas
+xlsx.repair.mode-formulas-desc	Extract formulas and values, removing styles and objects.
+xlsx.repair.mode-values	Extract Data: Convert to Values
+xlsx.repair.mode-values-desc	Convert formulas to static calculated values and extract safely.
+xlsx.repair.execute-btn	Repair and Open
+xlsx.repair.close-btn	Close
+xlsx.repair.error-no-file	No file specified.
+xlsx.repair.error-not-found	Specified file not found.
+xlsx.repair.error-read	Failed to read file
+xlsx.repair.error-failed	Failed to repair workbook
+xlsx.repair.success-msg	Workbook repaired successfully.
+xlsx.repair.banner-default	[Repaired] This workbook was repaired from corruption. Please review the result and save as a new file.
+xlsx.repair.banner-tag	Repaired
+xlsx.repair.banner-advice	Please review the result and save as a new file.
+xlsx.repair.show-report-btn	Show Report
+xlsx.repair.banner-close	Dismiss
+xlsx.insert.wordart	WordArt
+xlsx.insert.wordart-styles	WordArt Styles
+xlsx.text.warp	Transform
+xlsx.text.wordart-styles	WordArt Styles
+xlsx.wordart.style1	Fill: Black, Text 1
+xlsx.wordart.style2	Fill: Blue, Accent 1, Shadow
+xlsx.wordart.style3	Fill: Orange, Accent 2, Outline
+xlsx.wordart.style4	Fill: White, Outline: Black
+xlsx.wordart.style5	Fill: Gold, Shadow
+xlsx.wordart.style6	Fill: Blue, Outline: White, Shadow
+xlsx.text.warp.none	No Transform
+xlsx.text.warp.arch-up	Arch Up
+xlsx.text.warp.arch-down	Arch Down
+xlsx.text.warp.circle	Circle
+xlsx.text.warp.button	Button
+xlsx.text.warp.curve-up	Curve Up
+xlsx.text.warp.curve-down	Curve Down
+xlsx.text.warp.wave1	Wave 1
+xlsx.text.warp.wave2	Wave 2
+xlsx.text.warp.double-wave1	Double Wave 1
+xlsx.text.warp.inflate	Inflate
+xlsx.text.warp.deflate	Deflate
+xlsx.text.warp.stop	Stop
+xlsx.text.warp.triangle	Triangle
+xlsx.text.warp.triangle-inverted	Inverted Triangle
+xlsx.text.warp.chevron	Chevron
+xlsx.text.warp.chevron-inverted	Inverted Chevron
+xlsx.text.warp.fade-right	Fade Right
+xlsx.text.warp.fade-left	Fade Left
+xlsx.text.warp.fade-up	Fade Up
+xlsx.text.warp.fade-down	Fade Down
+xlsx.chart.save-template	Save as Template…
+xlsx.chart-save-template	Save as Template…
+xlsx.chart.apply-template	Apply Template…
+xlsx.chart-apply-template	Apply Template…
+fix.chart-template.chart-template	Chart Template
+fix.chart-template.apply-template	Apply Template
+fix.chart-template.save-template	Save as Template
+fix.chart-template.template-name	Template Name
+fix.chart-template.saved-templates	Saved Templates
+fix.chart-template.no-saved-templates-found	No saved templates found.
+fix.chart-template.apply-file	Apply from File…
+fix.chart-template.select-chart-template	Select Chart Template
+fix.chart-template.invalid-template-name	Invalid template name.
+fix.chart-template.please-select-template-apply	Please select a template to apply.
+fix.chart-edit.surface-type	Surface Type
+fix.chart-edit.3-d-surface	3-D Surface
+fix.chart-edit.3-d-wireframe	3-D Wireframe
+fix.chart-edit.contour	Contour
+fix.chart-edit.wireframe-contour	Wireframe Contour
+pptx.insert-chart.surface-3d	3-D Surface
+pptx.insert-chart.surface-3d-wireframe	3-D Wireframe Surface
+pptx.insert-chart.contour	Contour
+pptx.insert-chart.contour-wireframe	Wireframe Contour
+xlsx.pivot-chart-insert	PivotChart…
+xlsx.pivot-chart	PivotChart
+xlsx.pivot-chart-source	Connected PivotTable
+xlsx.pivot-chart-open-fields	PivotTable Fields…
+xlsx.pivot-chart-inserted	PivotChart inserted
+xlsx.phonetic-toggle	Show/Hide Furigana
+xlsx.phonetic-edit	Edit Furigana…
+fix.phonetic.edit-furigana	Edit Furigana
+fix.phonetic.furigana	Furigana
+fix.phonetic.cell	Cell
+
+
+fix.font-name.yu-mincho	Yu Mincho
+fix.font-name.yu-gothic	Yu Gothic
+fix.font-name.ms-mincho	MS Mincho
+fix.font-name.ms-gothic	MS Gothic
+fix.font-name.biz-udp-mincho	BIZ UDPMincho
+fix.font-name.biz-udp-gothic	BIZ UDPGothic
+help.update-log	Show Update Log
+fix.update.found	A new version of ibisOffice is available. Do you want to update?
+fix.update.found.detail	Version {version} (you have {current}). ibisOffice will quit and open again to update.
+fix.update.yes	Yes
+fix.update.open-site	Open the download page
+fix.update.no	No
+fix.update.failed	ibisOffice could not be updated.
+fix.update.failed.detail	Please download and install it again from the download page: {url}
+fix.update.translocated.detail	Move ibisOffice.app to the Applications folder and open it again, and it can update itself automatically.
+fix.update.setting	Check for updates at startup
+fix.update.setting.note	If there is a newer version, ibisOffice downloads it and asks whether to update.
+fix.update.log-path	Update log: {log}
+fix.formula-bar.expand	Expand Formula Bar
+fix.formula-bar.collapse	Collapse Formula Bar
+xlsx.chart-type	Chart Type
+fix.validation.continue	Continue?
+fix.validation.cancel	Cancel
+fix.move.overwrite	Do you want to replace the contents of the destination cells?
+fix.move.ok	OK
+fix.menu.search-placeholder	Search
+fix.menu.not-found	Not found
+help.check-update	Check for Updates
+fix.update.latest	ibisOffice is up to date.
+fix.update.latest.detail	You have version {current}.
+fix.update.check-failed	Could not check for updates.
+fix.update.check-failed.detail	Make sure you are connected to the internet and try again.
+
+# Access keys of the menu lines (Windows and Linux): the letter Alt-less menu keys use, for the line whose id is the key's tail. A single ASCII letter or digit; in English it is a letter of the label. Lines without one get an automatic letter (shell/access_key.rs).
+access.file.new	n
+access.file.open	o
+access.file.recent	r
+access.file.save	s
+access.file.save-as	a
+access.file.copy	y
+access.file.export	e
+access.file.print	p
+access.file.info	i
+access.tools.settings	t
+access.file.close	c
+access.file.page-setup	u
+access.edit.undo	u
+access.edit.redo	r
+access.edit.cut	t
+access.edit.copy	c
+access.edit.paste	p
+access.docx.paste-special	s
+access.edit.copy-format	o
+access.edit.paste-format	m
+access.edit.select-all	a
+access.edit.delete	d
+access.edit.duplicate	i
+access.edit.find-replace	f
+access.docx.find.next	n
+access.docx.find.previous	v
+access.docx.go-to	g
+access.insert.table	t
+access.insert.image	p
+access.insert.shape	s
+access.insert.chart	c
+access.insert.link	l
+access.insert.comment	m
+access.review.comments	c
+access.insert.text-box	x
+access.insert.equation	q
+access.insert.symbol	y
+access.docx.bookmark	k
+access.docx.xref	r
+access.docx.header-footer	h
+access.docx.page-break	b
+access.pptx.insert.wordart	w
+access.view.zoom	z
+access.view.fullscreen	f
+access.window.new-window	n
+access.window.arrange-all	a
+access.window.cascade	c
+access.window.tile-side-by-side	s
+access.window.tile-stacked	t
+access.help.help	h
+access.help.search	s
+access.help.shortcuts	k
+access.help.check-update	u
+access.help.about	a
+access.tools.spelling	s
+access.tools.word-count	w
+access.tools.dictionary	d
+access.tools.accessibility	a
+fix.update.user-files	This folder holds {count} file(s) that are not part of ibisOffice. The update will not delete them. To be safe, we recommend moving them to another folder.
+fix.update.manual	A new version {version} is available.
+fix.update.flatpak.detail	From the download page, get the .flatpak for your system (x86_64 or aarch64) and install it again with this command: {command}
+fix.update.source.detail	Update the source and build it again. Download page: {url}
+fix.update.copy-command	Copy the command
+menu.group.wrap-text	Text Wrapping
+help.register-desktop	Add to List of Apps
+help.setup	Setup

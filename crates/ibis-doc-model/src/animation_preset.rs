@@ -19,6 +19,90 @@ pub struct AnimBehavior {
     pub begin: u32,
     /// How long it takes (`cTn@dur`), milliseconds.
     pub dur: u32,
+    /// How its own time runs (`cTn@accel`, `@decel`, `@autoRev`; `cBhvr@additive`).
+    pub time: BehaviorTime,
+}
+
+/// The time options of one behaviour, as the file writes them on its `p:cTn` and `p:cBhvr`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BehaviorTime {
+    /// Smooth start and end (`accel`, `decel`), in 1/1000 % of its time.
+    pub accel: u32,
+    pub decel: u32,
+    /// It runs forward and then back (`autoRev="1"`): it takes twice `dur`, and ends where it began.
+    pub auto_rev: bool,
+    /// Its value is added to what the behaviours before it left (`additive="sum"`), not set.
+    pub sum: bool,
+    /// What it did goes when it ends (`fill` is not `hold`, and it does not run until the end of the effect): a ブラインド filter
+    /// then leaves the whole shape, a 1 s `set` of フラッシュ (1 回) leaves it hidden again.
+    pub remove: bool,
+    /// A remapping of its time (`tmFilter="0,0; 0.14,0.31; …"`): points (time, progress) in millionths, the progress between two
+    /// of them straight. Empty: none.
+    pub filter: Vec<(i64, i64)>,
+}
+
+impl BehaviorTime {
+    /// `progress` (0 to 1) of the behaviour's time as its `tmFilter` remaps it.
+    pub fn filtered(&self, progress: f64) -> f64 {
+        let f = &self.filter;
+        if f.len() < 2 {
+            return progress;
+        }
+        let p = |v: i64| v as f64 / 1_000_000.0;
+        let x = progress.clamp(0.0, 1.0);
+        for w in f.windows(2) {
+            let (t0, t1) = (p(w[0].0), p(w[1].0));
+            if x <= t1 || std::ptr::eq(&w[1], f.last().expect("a point")) {
+                let k = if t1 > t0 { ((x - t0) / (t1 - t0)).clamp(0.0, 1.0) } else { 1.0 };
+                return p(w[0].1) + (p(w[1].1) - p(w[0].1)) * k;
+            }
+        }
+        progress
+    }
+
+    /// The points of a `tmFilter` attribute (`"0,0; .2,.5; 1,1"`).
+    pub fn parse_filter(text: &str) -> Vec<(i64, i64)> {
+        text.split(';')
+            .filter_map(|pair| {
+                let (a, b) = pair.split_once(',')?;
+                Some(((a.trim().parse::<f64>().ok()? * 1_000_000.0).round() as i64, (b.trim().parse::<f64>().ok()? * 1_000_000.0).round() as i64))
+            })
+            .collect()
+    }
+
+    /// The `tmFilter` attribute's text for the points.
+    pub fn filter_text(&self) -> String {
+        self.filter.iter().map(|(a, b)| format!("{},{}", *a as f64 / 1_000_000.0, *b as f64 / 1_000_000.0)).collect::<Vec<_>>().join("; ")
+    }
+
+    /// The time the behaviour runs, given its `dur`.
+    pub fn active(&self, dur: u32) -> u32 {
+        if self.auto_rev { dur.saturating_mul(2) } else { dur }
+    }
+}
+
+/// Smooth start and end (`accel`, `decel`, 1/1000 % of the time each; SMIL 3.0 / ECMA-376 19.5.3): the speed rises over the first
+/// `accel` and falls over the last `decel` of the time, the share of the way `p` (0 to 1) being the distance covered.
+pub fn ease(p: f64, accel: u32, decel: u32) -> f64 {
+    let p = p.clamp(0.0, 1.0);
+    if accel == 0 && decel == 0 {
+        return p;
+    }
+    let (mut a, mut d) = (f64::from(accel) / 100_000.0, f64::from(decel) / 100_000.0);
+    let total = a + d;
+    if total > 1.0 {
+        a /= total;
+        d /= total;
+    }
+    let v_max = 2.0 / (2.0 - a - d);
+    if a > 0.0 && p <= a {
+        0.5 * (v_max / a) * p * p
+    } else if d > 0.0 && p >= 1.0 - d {
+        let remain = 1.0 - p;
+        1.0 - 0.5 * (v_max / d) * remain * remain
+    } else {
+        0.5 * a * v_max + v_max * (p - a)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,6 +148,23 @@ pub struct PresetState {
     pub reveal: Option<Reveal>,
     /// Scale factors (1 is the shape's size) of `p:animScale`.
     pub scale: Option<(f64, f64)>,
+    /// How far (in fractions of the slide) a motion path (`p:animMotion`) has taken the shape from where it is.
+    pub motion: Option<(f64, f64)>,
+    /// Horizontal shear (`xshear`, ライト スピード): a point moves sideways by this much for each unit it is below the shape's middle
+    /// (measured on PowerPoint for Windows: -1 leans the top edge a full height to the right, +1 the other way).
+    pub shear: Option<f64>,
+    /// Colours of the fill, the outline and the text (`p:animClr`, a `p:set` of a colour), in the order the behaviours come.
+    pub colors: Vec<crate::animation_color::ColorChange>,
+    /// `fill.on`, `stroke.on`: the fill or the outline is drawn.
+    pub fill_on: Option<bool>,
+    pub line_on: Option<bool>,
+    /// `style.fontSize`: the text's size as a multiple of its own.
+    pub font_scale: Option<f64>,
+    /// `style.fontWeight`, `style.fontStyle`, `style.textDecorationUnderline`, `style.fontFamily`.
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underline: Option<bool>,
+    pub font: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -150,6 +251,17 @@ impl Parser<'_> {
                 if self.peek() == Some(b'(') {
                     self.i += 1;
                     let arg = self.expr()?;
+                    // Two arguments (`min(a, b)`, `max(a, b)`).
+                    if self.peek() == Some(b',') {
+                        self.i += 1;
+                        let second = self.expr()?;
+                        (self.peek()? == b')').then(|| self.i += 1)?;
+                        return match name {
+                            "min" => Some(arg.min(second)),
+                            "max" => Some(arg.max(second)),
+                            _ => None,
+                        };
+                    }
                     (self.peek()? == b')').then(|| self.i += 1)?;
                     return match name {
                         "sin" => Some(arg.sin()),
@@ -188,21 +300,28 @@ pub fn eval_expr(text: &str, vars: &dyn Fn(&str) -> Option<f64>) -> Option<f64> 
     (p.i == p.s.len()).then_some(v)
 }
 
-fn box_var(b: PptBox, extra: Option<f64>) -> impl Fn(&str) -> Option<f64> {
+/// `#ppt_x` is the shape's own place; `ppt_x` (no `#`) is where it is now: what the behaviours before this one have left (PowerPoint's
+/// exit 43 ends one behaviour at `ppt_y+0.31` and the next says `ppt_y` to stay there).
+fn box_var(b: PptBox, cur: PptBox, extra: Option<f64>) -> impl Fn(&str) -> Option<f64> {
     move |name| match name {
-        // PowerPoint writes the exit zoom's start as `ppt_w` (without the `#`) too.
-        "#ppt_x" | "ppt_x" => Some(b.x),
-        "#ppt_y" | "ppt_y" => Some(b.y),
-        "#ppt_w" | "ppt_w" => Some(b.w),
-        "#ppt_h" | "ppt_h" => Some(b.h),
+        "#ppt_x" => Some(b.x),
+        "#ppt_y" => Some(b.y),
+        "#ppt_w" => Some(b.w),
+        "#ppt_h" => Some(b.h),
+        "ppt_x" => Some(cur.x),
+        "ppt_y" => Some(cur.y),
+        "ppt_w" => Some(cur.w),
+        "ppt_h" => Some(cur.h),
+        // The text's own size, as the 1 its multiples (`style.fontSize` goes to 1.5) start from.
+        "#style.fontSize" => Some(1.0),
         "$" => extra,
         _ => None,
     }
 }
 
 /// Where behaviour `anim` is (value of its attribute) at `q` (0 to 1) of its time.
-fn anim_value(keys: &[(u32, String)], formula: Option<&str>, discrete: bool, q: f64, b: PptBox) -> Option<f64> {
-    let num = |s: &str, extra: Option<f64>| eval_expr(s, &box_var(b, extra));
+fn anim_value(keys: &[(u32, String)], formula: Option<&str>, discrete: bool, q: f64, b: PptBox, cur: PptBox) -> Option<f64> {
+    let num = |s: &str, extra: Option<f64>| eval_expr(s, &box_var(b, cur, extra));
     let t = q.clamp(0.0, 1.0) * 100_000.0;
     let mut sorted: Vec<&(u32, String)> = keys.iter().collect();
     sorted.sort_by_key(|(tm, _)| *tm);
@@ -233,6 +352,107 @@ fn anim_value(keys: &[(u32, String)], formula: Option<&str>, discrete: bool, q: 
     }
 }
 
+/// The points a motion path (`M x y L x y C … Q … Z E`, in fractions of the slide; lower case commands are relative to where the
+/// path is) goes through, curves cut into short lines.
+fn path_polyline(path: &str) -> Vec<(f64, f64)> {
+    let tokens: Vec<&str> = path.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty()).collect();
+    let num = |i: usize| -> Option<f64> { tokens.get(i)?.parse().ok() };
+    let mut points: Vec<(f64, f64)> = Vec::new();
+    let (mut start, mut here) = ((0.0, 0.0), (0.0, 0.0));
+    let (mut command, mut relative) = ('E', false);
+    let mut i = 0;
+    while i < tokens.len() {
+        let t = tokens[i];
+        if t.len() == 1 && t.chars().all(|c| c.is_ascii_alphabetic()) {
+            relative = t.chars().all(|c| c.is_ascii_lowercase());
+            command = t.chars().next().unwrap().to_ascii_uppercase();
+            i += 1;
+            if command == 'Z' {
+                here = start;
+                points.push(here);
+            }
+            continue;
+        }
+        let o = if relative { here } else { (0.0, 0.0) };
+        match command {
+            'M' | 'L' => {
+                let (Some(x), Some(y)) = (num(i), num(i + 1)) else { break };
+                let p = (o.0 + x, o.1 + y);
+                i += 2;
+                if command == 'M' && points.is_empty() {
+                    start = p;
+                }
+                points.push(p);
+                here = p;
+                command = 'L';
+            }
+            'C' => {
+                let v: Vec<Option<f64>> = (0..6).map(|k| num(i + k)).collect();
+                if v.iter().any(Option::is_none) {
+                    break;
+                }
+                let v: Vec<f64> = v.into_iter().flatten().collect();
+                let (c1, c2, p) = ((o.0 + v[0], o.1 + v[1]), (o.0 + v[2], o.1 + v[3]), (o.0 + v[4], o.1 + v[5]));
+                i += 6;
+                for k in 1..=16 {
+                    let t = f64::from(k) / 16.0;
+                    let m = 1.0 - t;
+                    let f = |a: f64, b: f64, c: f64, d: f64| m * m * m * a + 3.0 * m * m * t * b + 3.0 * m * t * t * c + t * t * t * d;
+                    points.push((f(here.0, c1.0, c2.0, p.0), f(here.1, c1.1, c2.1, p.1)));
+                }
+                here = p;
+            }
+            'Q' => {
+                let v: Vec<Option<f64>> = (0..4).map(|k| num(i + k)).collect();
+                if v.iter().any(Option::is_none) {
+                    break;
+                }
+                let v: Vec<f64> = v.into_iter().flatten().collect();
+                let (c, p) = ((o.0 + v[0], o.1 + v[1]), (o.0 + v[2], o.1 + v[3]));
+                i += 4;
+                for k in 1..=16 {
+                    let t = f64::from(k) / 16.0;
+                    let m = 1.0 - t;
+                    points.push((m * m * here.0 + 2.0 * m * t * c.0 + t * t * p.0, m * m * here.1 + 2.0 * m * t * c.1 + t * t * p.1));
+                }
+                here = p;
+            }
+            _ => break,
+        }
+    }
+    points
+}
+
+/// Where `q` (0 to 1) of the way along motion `path` is (by the length, the same speed along every line), in fractions of the slide
+/// from where the shape is: the path's own coordinates (`p:animMotion` with `origin="layout"`, `pathEditMode="relative"`).
+pub fn motion_point(path: &str, q: f64) -> Option<(f64, f64)> {
+    let points = path_polyline(path);
+    let first = *points.first()?;
+    let length = |a: (f64, f64), b: (f64, f64)| (b.0 - a.0).hypot(b.1 - a.1);
+    let total: f64 = points.windows(2).map(|w| length(w[0], w[1])).sum();
+    if total <= 0.0 {
+        return Some(first);
+    }
+    let mut left = q.clamp(0.0, 1.0) * total;
+    for w in points.windows(2) {
+        let l = length(w[0], w[1]);
+        if left <= l && l > 0.0 {
+            let t = left / l;
+            return Some((w[0].0 + (w[1].0 - w[0].0) * t, w[0].1 + (w[1].1 - w[0].1) * t));
+        }
+        left -= l;
+    }
+    points.last().copied()
+}
+
+/// The `path` of an opaque `p:animMotion`.
+fn opaque_motion_path(raw: &str) -> Option<&str> {
+    let tag = raw.strip_prefix("<p:animMotion")?;
+    let at = tag.find(" path=\"")? + " path=\"".len();
+    let end = tag[at..].find('"')?;
+    Some(&tag[at..at + end])
+}
+
 /// The state the `behaviours` of an effect leave the shape in `ms` after the effect begins; `b` is the shape's own box.
 pub fn sample(behaviours: &[AnimBehavior], ms: f64, b: PptBox) -> PresetState {
     let mut s = PresetState::default();
@@ -240,24 +460,87 @@ pub fn sample(behaviours: &[AnimBehavior], ms: f64, b: PptBox) -> PresetState {
         if ms < f64::from(bh.begin) {
             continue;
         }
-        let q = if bh.dur == 0 { 1.0 } else { ((ms - f64::from(bh.begin)) / f64::from(bh.dur)).clamp(0.0, 1.0) };
+        // The behaviour's own time: forward (and back, `autoRev`), smooth start and end applied.
+        if bh.time.remove && ms >= f64::from(bh.begin) + f64::from(bh.time.active(bh.dur)) {
+            continue;
+        }
+        let q = if bh.dur == 0 {
+            1.0
+        } else {
+            let x = (ms - f64::from(bh.begin)) / f64::from(bh.dur);
+            let x = if bh.time.auto_rev {
+                if x >= 2.0 { 0.0 } else if x > 1.0 { 2.0 - x } else { x }
+            } else {
+                x.min(1.0)
+            };
+            bh.time.filtered(ease(x, bh.time.accel, bh.time.decel))
+        };
+        // Where the shape is now (`ppt_x` without the `#`): what the behaviours before this one have left.
+        let cur = PptBox { x: s.x.unwrap_or(b.x), y: s.y.unwrap_or(b.y), w: s.w.unwrap_or(b.w), h: s.h.unwrap_or(b.h) };
         match &bh.kind {
             BehaviorKind::Set { attr, value } => {
                 if attr == "style.visibility" {
                     s.visible = Some(value == "visible");
                 } else if attr == "style.opacity" {
                     s.opacity = value.parse().ok();
+                } else if attr == "style.rotation" {
+                    s.rotation = value.parse().ok();
+                } else if matches!(attr.as_str(), "ppt_x" | "ppt_y" | "ppt_w" | "ppt_h") {
+                    // A place or a size as an expression (`(#ppt_y+0.4)`): アーチ アップ puts the shape somewhere for the whole of its run.
+                    let v = eval_expr(value, &box_var(b, cur, None));
+                    match attr.as_str() {
+                        "ppt_x" => s.x = v,
+                        "ppt_y" => s.y = v,
+                        "ppt_w" => s.w = v,
+                        _ => s.h = v,
+                    }
+                } else if attr == "xshear" {
+                    s.shear = value.parse().ok();
+                } else if attr == "fill.on" {
+                    s.fill_on = Some(value == "true");
+                } else if attr == "stroke.on" {
+                    s.line_on = Some(value == "true");
+                } else if attr == "style.fontWeight" {
+                    s.bold = Some(value == "bold");
+                } else if attr == "style.fontStyle" {
+                    s.italic = Some(value == "italic");
+                } else if attr == "style.textDecorationUnderline" {
+                    s.underline = Some(value == "true");
+                } else if attr == "style.fontFamily" {
+                    s.font = Some(value.clone());
+                }
+            }
+            // Text values that step (`discrete`): 太字（フラッシュ） goes normal, bold, normal.
+            BehaviorKind::Anim { attr, keys, .. } if matches!(attr.as_str(), "style.fontWeight" | "style.fontStyle" | "style.textDecorationUnderline") => {
+                let t = q * 100_000.0;
+                if let Some((_, v)) = keys.iter().filter(|(tm, _)| f64::from(*tm) <= t).max_by_key(|(tm, _)| *tm) {
+                    match attr.as_str() {
+                        "style.fontWeight" => s.bold = Some(v == "bold"),
+                        "style.fontStyle" => s.italic = Some(v == "italic"),
+                        _ => s.underline = Some(v == "true"),
+                    }
+                }
+            }
+            BehaviorKind::Anim { attr, keys, .. } if attr == "style.visibility" => {
+                // The text values step: the last key whose time has come (フラッシュ: hidden, then visible at half the time).
+                let t = q * 100_000.0;
+                if let Some((_, v)) = keys.iter().filter(|(tm, _)| f64::from(*tm) <= t).max_by_key(|(tm, _)| *tm) {
+                    s.visible = Some(v == "visible");
                 }
             }
             BehaviorKind::Anim { attr, keys, formula, discrete } => {
-                let Some(v) = anim_value(keys, formula.as_deref(), *discrete, q, b) else { continue };
+                let Some(v) = anim_value(keys, formula.as_deref(), *discrete, q, b, cur) else { continue };
+                // `additive="sum"`: added to what the behaviours before it left (the shape's own where none did).
+                let add = |now: Option<f64>, own: f64| if bh.time.sum { now.unwrap_or(own) + v } else { v };
                 match attr.as_str() {
-                    "ppt_x" => s.x = Some(v),
-                    "ppt_y" => s.y = Some(v),
-                    "ppt_w" => s.w = Some(v),
-                    "ppt_h" => s.h = Some(v),
-                    "style.rotation" | "r" => s.rotation = Some(v),
-                    "style.opacity" => s.opacity = Some(v),
+                    "ppt_x" => s.x = Some(add(s.x, b.x)),
+                    "ppt_y" => s.y = Some(add(s.y, b.y)),
+                    "ppt_w" => s.w = Some(add(s.w, b.w)),
+                    "ppt_h" => s.h = Some(add(s.h, b.h)),
+                    "style.rotation" | "r" => s.rotation = Some(add(s.rotation, 0.0)),
+                    "style.opacity" => s.opacity = Some(add(s.opacity, 1.0)),
+                    "xshear" => s.shear = Some(add(s.shear, 0.0)),
+                    "style.fontSize" => s.font_scale = Some(add(s.font_scale, 1.0)),
                     "style.visibility" => s.visible = Some(v >= 0.5),
                     _ => {}
                 }
@@ -267,19 +550,36 @@ pub fn sample(behaviours: &[AnimBehavior], ms: f64, b: PptBox) -> PresetState {
             }
             BehaviorKind::Scale { from, to, by } => {
                 let f = |v: (i32, i32)| (f64::from(v.0) / 100_000.0, f64::from(v.1) / 100_000.0);
+                // Without a `from` it starts from the size the behaviours before it left.
+                let now = s.scale.unwrap_or((1.0, 1.0));
                 let (a, z) = match (from, to, by) {
                     (Some(a), Some(z), _) => (f(*a), f(*z)),
-                    (None, None, Some(by)) => ((1.0, 1.0), f(*by)),
+                    (None, None, Some(by)) => (now, (now.0 * f(*by).0, now.1 * f(*by).1)),
                     (Some(a), None, Some(by)) => (f(*a), (f(*a).0 * f(*by).0, f(*a).1 * f(*by).1)),
-                    (None, Some(z), _) => ((1.0, 1.0), f(*z)),
+                    (None, Some(z), _) => (now, f(*z)),
                     (Some(a), None, None) => (f(*a), (1.0, 1.0)),
                     (None, None, None) => continue,
                 };
                 s.scale = Some((a.0 + (z.0 - a.0) * q, a.1 + (z.1 - a.1) * q));
             }
-            BehaviorKind::Opaque(_) => {}
+            BehaviorKind::Opaque(raw) => {
+                if let Some(spec) = crate::animation_color::color_spec(raw) {
+                    let mut change = spec.change;
+                    change.q = if spec.is_set { 1.0 } else { q };
+                    s.colors.push(change);
+                } else if let Some(path) = opaque_motion_path(raw) {
+                    if let Some((x, y)) = motion_point(path, q) {
+                        s.motion = Some((x, y));
+                    }
+                }
+            }
             BehaviorKind::Rotate { from, to, by } => {
                 let d = |v: i32| f64::from(v) / 60_000.0;
+                // `by` alone turns the shape this much more than the behaviours before it (the wave's four short turns add up).
+                if let (None, None, Some(by)) = (from, to, by) {
+                    s.rotation = Some(s.rotation.unwrap_or(0.0) + d(*by) * q);
+                    continue;
+                }
                 let (a, z) = match (from, to, by) {
                     (Some(a), Some(z), _) => (d(*a), d(*z)),
                     (None, None, Some(by)) => (0.0, d(*by)),
@@ -356,6 +656,9 @@ const BARS: usize = 12;
 /// The bands and columns a sector is drawn in.
 const SECTOR_ROWS: usize = 24;
 const SECTOR_COLS: usize = 96;
+/// The squares ディゾルブ is drawn in.
+const DISSOLVE_ROWS: usize = 18;
+const DISSOLVE_COLS: usize = 32;
 
 /// The pattern of filter `name(arg)` at `q` of its way in, as cells; `None` for a filter that is not drawn as rectangles.
 /// `aspect` is the frame's width over its height.
@@ -542,22 +845,19 @@ pub fn reveal_rects(filter: &str, enter: bool, progress: f64, aspect: f64) -> Op
     let (name, arg) = split_filter(filter);
     let q = progress.clamp(0.0, 1.0);
     if name == "plus" {
-        // A cross grows from the centre; the corners are what goes last (and first, going out).
+        // プラス: `plus(out)` brings the shape in as a cross growing from the middle, `plus(in)` as four corner squares growing to meet;
+        // going out, what is left is what coming in would not have shown (measured on PowerPoint for Windows: exit `plus(in)` takes the corner
+        // squares away from the outside, the cross shrinking to a thin line).
         let k = q;
-        let cross = [[0.5 - k / 2.0, 0.0, 0.5 + k / 2.0, 1.0], [0.0, 0.5 - k / 2.0, 1.0, 0.5 + k / 2.0]];
         let inward = arg == "in";
         let mut v = Vec::new();
-        // plus(out): the cross grows to the whole; plus(in): the corners close in on the centre.
-        let show_cross = enter != inward;
-        if show_cross {
-            v.extend(cross);
-        } else {
-            let c = 0.5 - (1.0 - k) / 2.0;
-            for corner in [[0.0, 0.0, c, c], [1.0 - c, 0.0, 1.0, c], [0.0, 1.0 - c, c, 1.0], [1.0 - c, 1.0 - c, 1.0, 1.0]] {
-                if corner[2] > corner[0] {
-                    v.push(corner);
-                }
-            }
+        let cross = |t: f64| [[0.5 - t / 2.0, 0.0, 0.5 + t / 2.0, 1.0], [0.0, 0.5 - t / 2.0, 1.0, 0.5 + t / 2.0]];
+        let corners = |c: f64| [[0.0, 0.0, c, c], [1.0 - c, 0.0, 1.0, c], [0.0, 1.0 - c, c, 1.0], [1.0 - c, 1.0 - c, 1.0, 1.0]];
+        match (enter, inward) {
+            (true, false) => v.extend(cross(k)),
+            (true, true) => v.extend(corners(k / 2.0).into_iter().filter(|r| r[2] > r[0])),
+            (false, true) => v.extend(cross(1.0 - k)),
+            (false, false) => v.extend(corners((1.0 - k) / 2.0).into_iter().filter(|r| r[2] > r[0])),
         }
         return Some(v);
     }
@@ -577,6 +877,25 @@ pub fn reveal_rects(filter: &str, enter: bool, progress: f64, aspect: f64) -> Op
                 a.rem_euclid(width) > width * q
             }
         }));
+    }
+    if name == "dissolve" {
+        // ディゾルブ: the frame cut into small squares, each taking its turn (by its own share, `scatter`) to appear (or to go).
+        let mut v = Vec::new();
+        for r in 0..DISSOLVE_ROWS {
+            let mut run: Option<usize> = None;
+            for c in 0..=DISSOLVE_COLS {
+                let shown = c < DISSOLVE_COLS && (scatter(r * DISSOLVE_COLS + c) < q) == enter;
+                match (shown, run) {
+                    (true, None) => run = Some(c),
+                    (false, Some(start)) => {
+                        v.push([start as f64 / DISSOLVE_COLS as f64, r as f64 / DISSOLVE_ROWS as f64, c as f64 / DISSOLVE_COLS as f64, (r + 1) as f64 / DISSOLVE_ROWS as f64]);
+                        run = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        return Some(v);
     }
     let cells = cells(name, arg, q, aspect)?;
     let mut out = Vec::new();
@@ -599,6 +918,12 @@ pub fn reveal_rects(filter: &str, enter: bool, progress: f64, aspect: f64) -> Op
 /// the opacity a filter without rectangles (fade, wheel, wedge, dissolve…) leaves.
 pub fn reveal_opacity(enter: bool, progress: f64) -> f64 {
     if enter { progress } else { 1.0 - progress }
+}
+
+/// The opacity filter `filter` leaves when it is not drawn as rectangles: `fade` (and any filter the player does not know) fades;
+/// `image` is PowerPoint's way to write a picture's own properties (`prLst="opacity: 0.5"`, 透明度), no change over time.
+pub fn filter_opacity(filter: &str, enter: bool, progress: f64) -> f64 {
+    if split_filter(filter).0 == "image" { 1.0 } else { reveal_opacity(enter, progress) }
 }
 
 // ---- 新しい効果の定義（追加できる開始・終了の効果） ----
@@ -643,15 +968,15 @@ pub fn build_filter_preset(class: AnimationClass, id: u32, subtype: u32, dur: u3
     let def = preset_def(id)?;
     let (_, _, filter) = def.options.iter().find(|(s, _, _)| *s == subtype).or(def.options.first())?;
     let dur = dur.max(1);
-    let effect = |enter| AnimBehavior { kind: BehaviorKind::Effect { filter: (*filter).to_string(), enter }, begin: 0, dur };
+    let effect = |enter| AnimBehavior { kind: BehaviorKind::Effect { filter: (*filter).to_string(), enter }, begin: 0, dur, time: BehaviorTime { remove: true, ..BehaviorTime::default() } };
     match class {
         AnimationClass::Entrance => Some(vec![
-            AnimBehavior { kind: BehaviorKind::Set { attr: "style.visibility".into(), value: "visible".into() }, begin: 0, dur: 1 },
+            AnimBehavior { kind: BehaviorKind::Set { attr: "style.visibility".into(), value: "visible".into() }, begin: 0, dur: 1, time: BehaviorTime::default() },
             effect(true),
         ]),
         AnimationClass::Exit => Some(vec![
             effect(false),
-            AnimBehavior { kind: BehaviorKind::Set { attr: "style.visibility".into(), value: "hidden".into() }, begin: dur.saturating_sub(1), dur: 1 },
+            AnimBehavior { kind: BehaviorKind::Set { attr: "style.visibility".into(), value: "hidden".into() }, begin: dur.saturating_sub(1), dur: 1, time: BehaviorTime::default() },
         ]),
         _ => None,
     }
@@ -664,7 +989,7 @@ mod tests {
     const B: PptBox = PptBox { x: 0.5, y: 0.25, w: 0.2, h: 0.1 };
 
     fn num(text: &str) -> Option<f64> {
-        eval_expr(text, &box_var(B, Some(0.5)))
+        eval_expr(text, &box_var(B, B, Some(0.5)))
     }
 
     #[test]
@@ -675,6 +1000,8 @@ mod tests {
         assert_eq!(num("#ppt_y+(1-$)*2"), Some(1.25));
         assert!((num("sin(pi*$)").unwrap() - 1.0).abs() < 1e-9);
         assert_eq!(num("1+"), None);
+        // PowerPoint's 'Basic Zoom' from the bottom: `min`/`max` and a number without its leading zero.
+        assert!((num("(6*min(max(#ppt_w*#ppt_h,.3),1)-7.4)/-.7*#ppt_w").unwrap() - 0.2 * (6.0 * 0.3 - 7.4) / -0.7).abs() < 1e-9);
         assert_eq!(num("#nope"), None);
     }
 
@@ -685,6 +1012,7 @@ mod tests {
             kind: BehaviorKind::Anim { attr: "ppt_x".into(), keys: vec![(0, "0-#ppt_w/2".into()), (100_000, "#ppt_x".into())], formula: None, discrete: false },
             begin: 0,
             dur: 500,
+            time: BehaviorTime::default(),
         };
         let at = |ms| sample(std::slice::from_ref(&x), ms, B).x.unwrap();
         assert!((at(0.0) - -0.1).abs() < 1e-9);
@@ -699,6 +1027,7 @@ mod tests {
             kind: BehaviorKind::Anim { attr: "ppt_y".into(), keys: vec![(0, "0".into()), (100_000, "1".into())], formula: Some("#ppt_y-sin(pi*$)*0.1".into()), discrete: false },
             begin: 0,
             dur: 1000,
+            time: BehaviorTime::default(),
         };
         let v = sample(&[y], 500.0, B).y.unwrap();
         assert!((v - 0.15).abs() < 1e-9);
@@ -722,7 +1051,11 @@ mod tests {
         let wedge = reveal_rects("wedge", true, 0.5, 1.0).unwrap();
         assert!((area(&wedge) - 0.5).abs() < 0.03 && wedge.iter().all(|r| r[3] <= 0.51 + 1.0 / SECTOR_ROWS as f64), "{}", area(&wedge));
         assert!(reveal_rects("wheel(4)", true, 1.0, 1.0).unwrap().len() >= SECTOR_ROWS);
-        assert!(reveal_rects("dissolve", true, 0.5, 1.0).is_none());
+        // ディゾルブ: the squares shown grow with time, and what an exit leaves is what an entrance has not yet shown.
+        let squares = |q: f64, enter: bool| reveal_rects("dissolve", enter, q, 1.0).unwrap().iter().map(|r| (r[2] - r[0]) * (r[3] - r[1])).sum::<f64>();
+        assert!(squares(0.0, true) < 0.01 && (squares(1.0, true) - 1.0).abs() < 0.01 && (squares(0.5, true) - 0.5).abs() < 0.08);
+        assert!((squares(0.5, true) + squares(0.5, false) - 1.0).abs() < 1e-9);
+        assert!(reveal_rects("fade", true, 0.5, 1.0).is_none());
     }
 
     #[test]
@@ -740,6 +1073,76 @@ mod tests {
         assert_eq!(reveal_rects("plus(out)", true, 1.0, 1.0).unwrap().len(), 2);
     }
 
+    /// A behaviour that runs forward and back (`autoRev`) takes twice its `dur` and ends where it began; `additive="sum"` adds to
+    /// what the behaviours before it left (PowerPoint's ppt_x by).
+    #[test]
+    fn a_behaviour_runs_back_and_adds() {
+        let slide_in = AnimBehavior {
+            kind: BehaviorKind::Anim { attr: "ppt_x".into(), keys: vec![(0, "0".into()), (100_000, "#ppt_x".into())], formula: None, discrete: false },
+            begin: 0,
+            dur: 600,
+            time: BehaviorTime::default(),
+        };
+        let bump = AnimBehavior {
+            kind: BehaviorKind::Anim { attr: "ppt_x".into(), keys: vec![(0, "0".into()), (100_000, "0.1".into())], formula: None, discrete: false },
+            begin: 600,
+            dur: 200,
+            time: BehaviorTime { auto_rev: true, sum: true, ..Default::default() },
+        };
+        let both = [slide_in, bump];
+        let x = |ms| sample(&both, ms, B).x.unwrap();
+        assert!((x(500.0) - 0.5 * 500.0 / 600.0).abs() < 1e-9);
+        assert!((x(700.0) - 0.55).abs() < 1e-9, "{}", x(700.0));
+        assert!((x(800.0) - 0.6).abs() < 1e-9);
+        assert!((x(900.0) - 0.55).abs() < 1e-9);
+        assert!((x(1000.0) - 0.5).abs() < 1e-9 && (x(5000.0) - 0.5).abs() < 1e-9);
+        assert_eq!(BehaviorTime { auto_rev: true, ..Default::default() }.active(200), 400);
+    }
+
+    #[test]
+    fn smooth_start_and_end_cover_the_whole_way() {
+        assert_eq!(ease(0.0, 50_000, 50_000), 0.0);
+        assert!((ease(1.0, 50_000, 50_000) - 1.0).abs() < 1e-12);
+        assert!((ease(0.5, 50_000, 50_000) - 0.5).abs() < 1e-12);
+        // Slower than constant speed at the start, faster in the middle.
+        assert!(ease(0.1, 50_000, 0) < 0.1);
+        assert!(ease(0.9, 0, 50_000) > 0.9);
+    }
+
+    /// 軌跡 inside an effect (PowerPoint's presetID 52 spiral: `M -0.4 0.9 C … 0 0`): at the start the shape is at the path's start,
+    /// at the end where it is.
+    #[test]
+    fn a_motion_path_takes_the_shape_to_its_place() {
+        let path = "M -0.5 0.5  C -0.4 0.4  -0.1 0.1  0.0 0.0  ";
+        let (x0, y0) = motion_point(path, 0.0).unwrap();
+        assert!((x0 + 0.5).abs() < 1e-9 && (y0 - 0.5).abs() < 1e-9);
+        let (x1, y1) = motion_point(path, 1.0).unwrap();
+        assert!(x1.abs() < 1e-9 && y1.abs() < 1e-9);
+        let (xm, ym) = motion_point("M 0 0 L 0.2 0 L 0.2 0.2 E", 0.5).unwrap();
+        assert!((xm - 0.2).abs() < 1e-9 && ym.abs() < 1e-9);
+        let raw = "<p:animMotion origin=\"layout\" path=\"M -0.5 0.5 L 0 0\" pathEditMode=\"relative\">".to_string();
+        let m = AnimBehavior { kind: BehaviorKind::Opaque(raw), begin: 0, dur: 1000, time: BehaviorTime::default() };
+        let at = sample(&[m], 0.0, B).motion.unwrap();
+        assert!((at.0 + 0.5).abs() < 1e-9);
+    }
+
+    /// フラッシュ (1 回): a `set visible` of 1 s with no `fill="hold"` shows the shape for that second and no longer; the exit's
+    /// `anim` of text values (hidden, then visible at half the time) steps.
+    #[test]
+    fn a_behaviour_without_fill_hold_goes_when_it_ends() {
+        let shown = AnimBehavior { kind: BehaviorKind::Set { attr: "style.visibility".into(), value: "visible".into() }, begin: 0, dur: 1000, time: BehaviorTime { remove: true, ..Default::default() } };
+        let at = |ms| sample(std::slice::from_ref(&shown), ms, B).visible;
+        assert_eq!((at(500.0), at(1500.0)), (Some(true), None));
+        let steps = AnimBehavior {
+            kind: BehaviorKind::Anim { attr: "style.visibility".into(), keys: vec![(0, "hidden".into()), (50_000, "visible".into())], formula: None, discrete: true },
+            begin: 0,
+            dur: 1000,
+            time: BehaviorTime { remove: true, ..Default::default() },
+        };
+        let v = |ms| sample(std::slice::from_ref(&steps), ms, B).visible;
+        assert_eq!((v(100.0), v(600.0)), (Some(false), Some(true)));
+    }
+
     #[test]
     fn the_catalogue_builds_an_entrance_and_an_exit() {
         let entrance = build_filter_preset(AnimationClass::Entrance, 3, 5, 500).unwrap();
@@ -749,4 +1152,39 @@ mod tests {
         assert_eq!(exit[1].begin, 499);
         assert!(build_filter_preset(AnimationClass::Emphasis, 3, 5, 500).is_none());
     }
+
+    #[test]
+    fn a_time_filter_remaps_the_progress() {
+        let t = BehaviorTime { filter: BehaviorTime::parse_filter("0,0; .5,.2; 1,1"), ..Default::default() };
+        assert!((t.filtered(0.25) - 0.1).abs() < 1e-9 && (t.filtered(0.5) - 0.2).abs() < 1e-9 && (t.filtered(0.75) - 0.6).abs() < 1e-9);
+        assert_eq!(t.filtered(1.0), 1.0);
+        assert_eq!(BehaviorTime::default().filtered(0.3), 0.3);
+        assert_eq!(BehaviorTime::parse_filter(&t.filter_text()), t.filter);
+    }
+
+    #[test]
+    fn a_name_without_the_hash_is_where_the_shape_is_now() {
+        // PowerPoint's exit 43 moves the shape 0.31 down and then says `ppt_y` for the rest: it stays there.
+        let anim = |from: &str, to: &str, begin: u32, dur: u32| AnimBehavior {
+            kind: BehaviorKind::Anim { attr: "ppt_y".into(), keys: vec![(0, from.into()), (100_000, to.into())], formula: None, discrete: false },
+            begin,
+            dur,
+            time: BehaviorTime::default(),
+        };
+        let behaviours = [anim("ppt_y", "ppt_y+0.31", 0, 600), anim("ppt_y", "ppt_y", 600, 400)];
+        let b = PptBox { x: 0.5, y: 0.4, w: 0.2, h: 0.2 };
+        assert!((sample(&behaviours, 300.0, b).y.unwrap() - 0.555).abs() < 1e-9);
+        assert!((sample(&behaviours, 800.0, b).y.unwrap() - 0.71).abs() < 1e-9);
+    }
+
+    #[test]
+    fn plus_going_out_takes_away_what_coming_in_would_show() {
+        let area = |filter: &str, enter: bool, p: f64| reveal_rects(filter, enter, p, 1.0).unwrap().iter().map(|r| (r[2] - r[0]) * (r[3] - r[1])).sum::<f64>();
+        // In: the corner squares grow (0.25 of the frame when each is half way across), out: the cross is what is left.
+        assert!((area("plus(in)", true, 1.0) - 1.0).abs() < 1e-9);
+        assert!((area("plus(in)", false, 0.0) - 2.0).abs() < 1e-9, "the arms of the cross, overlapping at the middle");
+        assert!(area("plus(in)", false, 1.0).abs() < 1e-9);
+        assert!((area("plus(out)", false, 0.0) - 4.0 * 0.25).abs() < 1e-9);
+    }
 }
+

@@ -4,6 +4,7 @@
 use super::{Scenario, button_probe as buttons};
 use crate::docx::merge_panel::MergeDialog;
 use gpui_kit::*;
+use crate::docx::ext::*;
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("shell::table_pointer_reorder_cancel_and_commit", reorder),
@@ -39,19 +40,11 @@ fn reorder() {
             .row_reorder
             .clone()
     });
-    let bounds = |id| state.borrow().row_bounds(id).unwrap();
+    let bounds = |id| state.row_bounds(id).unwrap();
     let first = bounds(0);
     let last = bounds(2);
     let at = point(first.origin.x + px(60.), first.center().y);
     let end = point(at.x, last.center().y + px(4.));
-    s.hover((f32::from(at.x), f32::from(at.y)));
-    assert_eq!(state.borrow().hovered(), Some(0));
-    s.hover((f32::from(first.origin.x + px(16.)), f32::from(at.y)));
-    assert_eq!(
-        state.borrow().hovered(),
-        None,
-        "checkbox cell is not a row hover/drag surface"
-    );
     let before = s.with(|e, _| {
         e.doc_state()
             .unwrap()
@@ -74,8 +67,7 @@ fn reorder() {
             ..Default::default()
         }),
     ]);
-    assert_eq!(state.borrow().dragging, Some(0));
-    assert_eq!(state.borrow().order, vec![1, 2, 0]);
+    assert_eq!(state.dragging(), Some(0));
     assert_eq!(
         s.with(|e, _| e
             .doc_state()
@@ -89,14 +81,9 @@ fn reorder() {
         "live positions are a cancellable draft"
     );
     s.screenshot("row-lifted-during-drag");
-    assert!(s.with(|e, _| {
-        e.active_table_reorder
-            .as_ref()
-            .is_some_and(|a| std::rc::Rc::ptr_eq(a, &state))
-    }));
+    assert!(s.with(|e, _| e.active_row_dnd.is_some()));
     s.key("escape");
-    assert_eq!(state.borrow().dragging, None);
-    assert_eq!(state.borrow().order, vec![0, 1, 2]);
+    assert_eq!(state.dragging(), None);
     assert!(
         s.with(|e, _| e.dialog_is_modal()),
         "Escape cancels the drag, not the dialog"

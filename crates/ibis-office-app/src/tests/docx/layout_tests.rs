@@ -7,7 +7,10 @@
 
 use std::sync::Arc;
 
-use super::flow_layout::{Item, Page, Pagination};
+use crate::docx::flow_layout::{Item, Page, Pagination};
+// The scenarios' driver below calls the document's methods (Windows runs these as plain tests, without it).
+#[cfg(not(windows))]
+use crate::docx::ext::*;
 
 /// The checks, run by the scenario runner (`--test scenarios -- docx::layout`): macOS and Linux have no other way to run them (GPUI's macOS platform
 /// can be created only on the main thread, and `cargo test` runs a test on another one). On Windows they are `#[test]`s of `cargo test --lib`.
@@ -34,6 +37,17 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::layout::a_closing_bracket_does_not_hang_past_the_edge_of_a_cell", a_closing_bracket_does_not_hang_past_the_edge_of_a_cell),
         ("docx::layout::an_empty_paragraph_that_carries_a_continuous_section_break_takes_no_room", an_empty_paragraph_that_carries_a_continuous_section_break_takes_no_room),
         ("docx::layout::a_bold_ms_line_of_vertical_writing_is_turned_down_the_page", a_bold_ms_line_of_vertical_writing_is_turned_down_the_page),
+        ("docx::layout::a_run_of_symbols_is_broken_where_the_line_ends_not_at_the_reference_mark", a_run_of_symbols_is_broken_where_the_line_ends_not_at_the_reference_mark),
+        ("docx::layout::a_horizontal_section_before_a_vertical_one_sets_its_characters_by_their_own_widths", a_horizontal_section_before_a_vertical_one_sets_its_characters_by_their_own_widths),
+        ("docx::layout::a_stop_or_a_closing_bracket_before_the_middle_dot_is_squeezed", a_stop_or_a_closing_bracket_before_the_middle_dot_is_squeezed),
+        ("docx::layout::a_line_does_not_break_next_to_the_reference_mark_between_latin_letters", a_line_does_not_break_next_to_the_reference_mark_between_latin_letters),
+        ("docx::layout::every_bullet_of_the_menu_has_a_typeface_that_fits_its_character", every_bullet_of_the_menu_has_a_typeface_that_fits_its_character),
+        ("docx::layout::a_reference_mark_between_latin_letters_breaks_in_excel_only", a_reference_mark_between_latin_letters_breaks_in_excel_only),
+        ("docx::layout::a_full_width_form_takes_the_vertical_glyph", a_full_width_form_takes_the_vertical_glyph),
+        ("docx::layout::every_bullet_menu_line_has_its_symbol_as_a_glyph_mark", every_bullet_menu_line_has_its_symbol_as_a_glyph_mark),
+        ("docx::layout::a_bullet_of_the_menu_is_saved_as_words_wingdings_code", a_bullet_of_the_menu_is_saved_as_words_wingdings_code),
+        ("docx::layout::the_second_level_arrow_bullet_is_an_arrowhead_with_or_without_wingdings", the_second_level_arrow_bullet_is_an_arrowhead_with_or_without_wingdings),
+        ("docx::layout::closing_brackets_are_squeezed_in_a_document_with_no_styles_part_only", closing_brackets_are_squeezed_in_a_document_with_no_styles_part_only),
         ("docx::layout::a_footer_takes_its_height_off_the_body_with_its_empty_paragraphs", a_footer_takes_its_height_off_the_body_with_its_empty_paragraphs),
         ("docx::layout::a_multiple_below_one_shortens_the_line", a_multiple_below_one_shortens_the_line),
         ("docx::layout::an_autofit_text_box_keeps_the_text_off_only_as_high_as_its_text", an_autofit_text_box_keeps_the_text_off_only_as_high_as_its_text),
@@ -50,6 +64,9 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::layout::spacing_counts_twice_on_double_byte_characters_with_balance_single_byte_double_byte_width", spacing_counts_twice_on_double_byte_characters_with_balance_single_byte_double_byte_width),
         ("docx::layout::spacing_is_not_rounded_to_pixels_on_double_byte_characters", spacing_is_not_rounded_to_pixels_on_double_byte_characters),
         ("docx::layout::a_whitespace_run_does_not_raise_the_line_of_other_text", a_whitespace_run_does_not_raise_the_line_of_other_text),
+        ("docx::layout::an_even_page_with_a_framed_page_number_has_a_one_line_footer", an_even_page_with_a_framed_page_number_has_a_one_line_footer),
+        ("docx::layout::a_line_of_whitespace_only_is_as_high_as_the_paragraph_mark", a_line_of_whitespace_only_is_as_high_as_the_paragraph_mark),
+        ("docx::layout::a_header_of_a_whitespace_only_line_is_as_high_as_its_paragraph_mark", a_header_of_a_whitespace_only_line_is_as_high_as_its_paragraph_mark),
         ("docx::layout::the_baseline_of_a_single_ms_line_sits_a_whole_em_down", the_baseline_of_a_single_ms_line_sits_a_whole_em_down),
         ("docx::layout::the_automatic_spaces_are_squeezed_to_take_one_more_character", the_automatic_spaces_are_squeezed_to_take_one_more_character),
         ("docx::layout::a_justified_paragraph_that_ends_in_hanging_spaces_has_its_last_line_as_one_without_them", a_justified_paragraph_that_ends_in_hanging_spaces_has_its_last_line_as_one_without_them),
@@ -94,7 +111,7 @@ pub(crate) fn ignored() -> Vec<(&'static str, fn())> {
 #[cfg(not(windows))]
 fn laid_out(file: &str) -> Arc<Pagination> {
     let mut s = crate::shell::scenario::Scenario::open(&format!("test/corpus-report/docx/{file}"));
-    s.with(|e, _| super::flow_layout::pages(e.flow().expect("a document"), &e.resources))
+    s.with(|e, _| crate::docx::flow_layout::pages(e.flow().expect("a document"), &e.resources))
 }
 
 #[cfg(windows)]
@@ -110,8 +127,8 @@ fn laid_out(file: &str) -> Arc<Pagination> {
         resources.preload.wait_all();
         resources
     });
-    super::flow_layout::update_fields_on_open(&mut presentation, &resources);
-    super::flow_layout::pages(presentation.flow.as_ref().expect("a flowing document"), &resources)
+    crate::docx::flow_layout::update_fields_on_open(&mut presentation, &resources);
+    crate::docx::flow_layout::pages(presentation.flow.as_ref().expect("a flowing document"), &resources)
 }
 
 /// A character drawn on a page: its baseline and the glyph.
@@ -641,6 +658,135 @@ fn a_bold_ms_line_of_vertical_writing_is_turned_down_the_page() {
     assert_eq!(gs.iter().filter(|g| g.c == '見').count(), 2, "both headings are drawn");
 }
 
+/// A run of symbols (‘’“”♂♀℃§☆★○●◎◇◆□■△▲▽▼※⇒⇔①…⑳) is not broken at ※: the line takes them to its edge and the run goes on in the next line (Word's PDF of
+/// `issue54-symbols.docx`, ＭＳ 明朝 14 pt: the second line is ‘ to ⑩, 34 characters, and the third starts with ⑪; ibisOffice broke before ⇒ and left 175 pt empty).
+#[cfg_attr(windows, test)]
+fn a_run_of_symbols_is_broken_where_the_line_ends_not_at_the_reference_mark() {
+    let pages = laid_out("issue54-symbols.docx");
+    let gs = glyphs(&pages.pages[0]);
+    let at = |c: char| gs.iter().find(|g| g.c == c).unwrap_or_else(|| panic!("{c} is drawn"));
+    let (first, last, next, mark) = (at('‘'), at('⑩'), at('⑪'), at('※'));
+    assert!(near(first.y, last.y, 1.0) && near(first.y, mark.y, 1.0), "‘ ※ ⑩ are on one line: y {} {} {}", first.y, mark.y, last.y);
+    assert!(next.y > last.y + 10.0, "⑪ starts the next line");
+    assert!(near(last.x + 14.04, 532.5, 1.5), "⑩ ends the line where Word's does, 532.5 pt (the margin is 538.5): {}", last.x + 14.04);
+}
+
+/// An upright character takes a cell of the font size only in a section whose text runs down the page, not in the document's other sections (GitHub issue #54:
+/// the heading of the horizontal first page of the document was set four ems wide, every kana a whole em, because the document's last section is vertical).
+/// `horizontal-section-before-vertical-section.docx`: あ、い in ＭＳ Ｐ明朝 12 pt in a horizontal section, then a `tbRl` one; the stop is 0.664 em there.
+#[cfg_attr(windows, test)]
+fn a_horizontal_section_before_a_vertical_one_sets_its_characters_by_their_own_widths() {
+    let pages = laid_out("horizontal-section-before-vertical-section.docx");
+    let gs = glyphs(&pages.pages[0]);
+    let x = |c: char| gs.iter().find(|g| g.c == c).unwrap_or_else(|| panic!("{c} is drawn")).x;
+    assert!(near(x('\u{3044}') - x('\u{3001}'), 12.0 * 0.664, 0.1), "the stop is {:.2} pt wide; \u{ff2d}\u{ff33} \u{ff30}\u{660e}\u{671d} sets it 0.664 em (7.97 pt)", x('\u{3044}') - x('\u{3001}'));
+}
+
+/// A line does not break before or after ※ between Latin letters (Word's PDF of `star-break-probe.docx`: 'abcdefghij' x7, 0 to 15 letters, ※ and 32 letters in a
+/// left aligned paragraph each: ※ is on the line of the letter before it and of the one after it in all 16; the Latin word is cut at the edge). PowerPoint
+/// is the same (`star-break-probe.pptx`), Excel breaks after ※ (`line_break::tests`).
+#[cfg_attr(windows, test)]
+fn a_line_does_not_break_next_to_the_reference_mark_between_latin_letters() {
+    let pages = laid_out("star-break-probe.docx");
+    let gs: Vec<Glyph> = pages.pages.iter().flat_map(|p| glyphs(p)).collect();
+    let marks: Vec<usize> = (1..gs.len() - 1).filter(|&i| gs[i].c == '※' && gs[i - 1].c.is_ascii_lowercase() && gs[i + 1].c.is_ascii_lowercase()).collect();
+    assert_eq!(marks.len(), 16, "the 16 Latin cases");
+    for i in marks {
+        assert!(near(gs[i - 1].y, gs[i].y, 0.5), "a line breaks before ※ (y {} and {})", gs[i - 1].y, gs[i].y);
+        assert!(near(gs[i + 1].y, gs[i].y, 0.5) || gs[i + 1].x < gs[i].x, "a line breaks after ※ with room left");
+    }
+}
+
+/// GitHub issue #142: the 15 bullets of the menu are written with a typeface that fits the character (Unicode with none or an ordinary typeface, a private use
+/// code point only in a symbol typeface); a Unicode character in Wingdings was a box on Windows and another character in Word. (Also a `#[test]` in `list_formats`.)
+fn every_bullet_of_the_menu_has_a_typeface_that_fits_its_character() {
+    use crate::docx::list_formats::{BULLET_LIBRARY, bullet_font_fits};
+    assert_eq!(BULLET_LIBRARY.len(), 15);
+    for (id, _, text, font) in BULLET_LIBRARY {
+        assert!(bullet_font_fits(text, font), "{id}: {text:?} with {font:?}");
+    }
+    assert!(!bullet_font_fits("■", Some("Wingdings")) && bullet_font_fits("\u{f0a7}", Some("Wingdings")));
+}
+
+/// ※ between Latin letters: no break in Word and PowerPoint, a break next to it in Excel (their PDFs of `star-break-probe`). (Also a `#[test]` of `line_break`.)
+fn a_reference_mark_between_latin_letters_breaks_in_excel_only() {
+    use crate::render::line_break::{Kinsoku, LatinBreaks, may_break};
+    let plain = LatinBreaks::default();
+    let excel = LatinBreaks { ambiguous_wide: true, ..LatinBreaks::default() };
+    assert!(!may_break('j', '※', Some(Kinsoku::POWERPOINT), plain) && !may_break('※', 'k', Some(Kinsoku::POWERPOINT), plain));
+    assert!(may_break('j', '※', Some(Kinsoku::EXCEL), excel) && may_break('※', 'k', Some(Kinsoku::EXCEL), excel));
+    assert!(may_break('あ', '※', Some(Kinsoku::POWERPOINT), plain) && may_break('※', 'ア', Some(Kinsoku::POWERPOINT), plain));
+}
+
+/// ＝ (U+FF1D) is drawn with the font's vertical glyph in vertical writing, as Word's PDF of test-gakusyosi.docx does (the turned form); § and ○ keep theirs.
+fn a_full_width_form_takes_the_vertical_glyph() {
+    use crate::render::vertical_text::vertical_glyph;
+    assert!(vertical_glyph('＝') && vertical_glyph('＜') && vertical_glyph('、'));
+    assert!(!vertical_glyph('§') && !vertical_glyph('○') && !vertical_glyph('⇒'));
+}
+
+/// The 15 lines of the bullet menu show their symbol as a `LeadMark::Glyph` (drawn in the symbol typeface, GitHub issue #142: the heavy check mark in the line's text was a
+/// purple emoji on Windows, where the variation selector U+FE0E is not honoured), and the line's own text names it without the symbol.
+fn every_bullet_menu_line_has_its_symbol_as_a_glyph_mark() {
+    use crate::docx::list_formats::BULLET_LIBRARY;
+    use crate::shell::chrome::lead_marks::{LeadMark, bullet_glyph};
+    for (id, symbol, text, _) in BULLET_LIBRARY {
+        assert_eq!(bullet_glyph(symbol), vec![LeadMark::Glyph(text.chars().next().unwrap())], "{id}");
+        assert!(!crate::shell::i18n::text(id).contains(text), "{id}: the line's text has no symbol in it");
+    }
+}
+
+/// #142 (the user, 2026-11-12): a bullet chosen from the menu is the one Word writes, Wingdings' code (✧ is U+F0B2 in Wingdings, #M133), saved so
+/// and read back as the same bullet.
+#[cfg(not(windows))]
+fn a_bullet_of_the_menu_is_saved_as_words_wingdings_code() {
+    use crate::docx::list_formats::BULLET_LIBRARY;
+    let index = BULLET_LIBRARY.iter().position(|(id, ..)| *id == "docx.bullet.sparkle").expect("the sparkle");
+    let mut s = crate::shell::scenario::Scenario::open("test/editing/docx-report.docx");
+    let _ = index;
+    s.menu("docx.bullet.sparkle");
+    let path = s.save_as("bullet-142.docx");
+    let numbering = String::from_utf8(ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap().read("word/numbering.xml").unwrap()).unwrap();
+    assert!(numbering.contains("w:val=\"\u{f0b2}\"") && numbering.contains("w:ascii=\"Wingdings\""), "Wingdings' code in numbering.xml");
+    let again = ibis_pptx::open(std::fs::read(&path).unwrap()).unwrap();
+    let flow = again.presentation.flow.expect("a document");
+    assert!(flow.styles.numbering.abstracts.values().flat_map(|a| a.levels.iter()).any(|l| l.symbol == Some(("Wingdings".to_string(), '\u{f0b2}'))), "read back as Wingdings' ✧");
+}
+
+/// A stop or a closing bracket gives up its half em before ・, and ・ ； ： before an opening bracket (Word's PDF of `pair-middle-dot-probe.docx`, ＭＳ 明朝 14 pt,
+/// `w:kern` 2 in the defaults: 漢．・漢 sets ． 7.1 pt wide, 漢・「漢 sets ・ 7.1 pt; 漢・」漢, 漢！・漢 and 漢・・漢 keep the full 14 pt).
+#[cfg_attr(windows, test)]
+fn a_stop_or_a_closing_bracket_before_the_middle_dot_is_squeezed() {
+    let pages = laid_out("pair-middle-dot-probe.docx");
+    let gs = glyphs(&pages.pages[0]);
+    let step = |a: char, b: char| -> f32 {
+        let i = (0..gs.len() - 1).find(|&i| gs[i].c == a && gs[i + 1].c == b && near(gs[i].y, gs[i + 1].y, 0.5)).unwrap_or_else(|| panic!("{a}{b} is drawn"));
+        gs[i + 1].x - gs[i].x
+    };
+    for (a, b) in [('．', '・'), ('。', '・'), ('、', '・'), ('）', '・'), ('・', '「'), ('；', '「'), ('、', '、')] {
+        assert!(near(step(a, b), 7.0, 0.3), "{a}{b}: {:.2} pt; Word 7.1", step(a, b));
+    }
+    for (a, b) in [('・', '」'), ('！', '・'), ('・', '・'), ('！', '「'), ('ー', '」')] {
+        assert!(near(step(a, b), 14.0, 0.3), "{a}{b}: {:.2} pt; Word 14.0", step(a, b));
+    }
+}
+
+/// A closing bracket or a stop before another one is squeezed by half an em where the kerning is on, which in a document with no styles part it is at
+/// every size, and not in one with a styles part and no `w:kern` (Word's PDFs of `bracket-pairs-nostyles.docx` and `bracket-pairs-styles-nokern.docx`,
+/// あ（い）（う）「え」「お」、「か」。『き』く in ＭＳ 明朝 10.5 pt: the line ends 194.4 and 231.3 pt from the margin, 7 pairs of 5.25 pt apart).
+#[cfg_attr(windows, test)]
+fn closing_brackets_are_squeezed_in_a_document_with_no_styles_part_only() {
+    let end = |name: &str| {
+        let pages = laid_out(name);
+        let gs = glyphs(&pages.pages[0]);
+        let steps: Vec<(char, f32)> = gs.windows(2).take(21).map(|w| (w[0].c, w[1].x - w[0].x)).collect();
+        eprintln!("{name}: {steps:?}");
+        gs.iter().find(|g| g.c == '\u{304f}').expect("\u{304f} is drawn").x
+    };
+    let (squeezed, full) = (end("bracket-pairs-nostyles.docx"), end("bracket-pairs-styles-nokern.docx"));
+    assert!(near(full - squeezed, 7.0 * 5.25, 0.5), "ends {squeezed:.2} and {full:.2}: 7 pairs of half an em (36.75 pt) apart");
+}
+
 /// The body of a page ends at the larger of the bottom margin and the footer's distance from the edge plus its height, the footer's last empty paragraph
 /// counted (Word's PDF of `footer-bottom-room-probe.docx`, 60 exact 18 pt lines in each of 8 sections: no footer 42 lines on the first page with a bottom
 /// margin of 851 twips and 43 with 300; a page number alone 42 with both; a page number and an empty paragraph, or two empty paragraphs, 41).
@@ -980,6 +1126,49 @@ fn a_whitespace_run_does_not_raise_the_line_of_other_text() {
         let d = y(n) - y(n - 1);
         assert!(near(d, 13.62, 0.25), "paragraph {n} after {}: {d:.2} pt; Word: 13.56 to 13.68 pt (a 10.5 pt letter counts)", n - 1);
     }
+}
+
+/// A page has the room its own footer leaves (Word's PDF of `even-footer-framed-number-probe.docx`, Microsoft 365: odd pages have a footer of the page number and an
+/// empty paragraph, even pages one whose page number is in a frame, so only the empty paragraph takes room: 61 lines of 12 pt on the first page, 63 on the second, 61 on the
+/// third; corpus 023 page 40 is such a page). Only the even page is asserted exactly: the two line footer of the odd pages is a line shorter in Word than here for this
+/// probe's default font (Word 61 lines, here 62; not understood yet), while the even page's 63 lines are Word's.
+#[cfg_attr(windows, test)]
+fn an_even_page_with_a_framed_page_number_has_a_one_line_footer() {
+    let pages = laid_out("even-footer-framed-number-probe.docx");
+    // Each line of the body is `L` and its number: the lines are counted by their `L` (the characters do not come as one `Item::Text` a line here).
+    let lines_on = |n: usize| -> usize { glyphs(&pages.pages[n]).iter().filter(|g| g.c == 'L').count() };
+    let (first, second, third) = (lines_on(0), lines_on(1), lines_on(2));
+    assert_eq!(second, 63, "lines on the even page; Word: 63 (61 on the pages before and after it)");
+    assert!(first < second && third < second, "the odd pages with their two line footer hold fewer lines than the even page: {first}, {second}, {third}");
+}
+
+/// A line of whitespace only is as high as an empty one: the paragraph mark's size sets it, not the size of the spaces (Word's PDF of
+/// `whitespace-only-line-probe.docx`, Microsoft 365: a paragraph of one 14 pt ideographic or ASCII space (or two, or a 14 pt one and an 18 pt one) with a 12 pt
+/// mark and an empty one with a 12 pt mark are all 29.16 to 29.28 pt before the next 10.5 pt line (T), one with a 14 pt mark and a 12 pt space 31.8, a
+/// 10.5 pt mark with a 20 pt or a 14 pt space 27.24, a 20 pt mark with a 10.5 pt space 39.51).
+#[cfg_attr(windows, test)]
+fn a_line_of_whitespace_only_is_as_high_as_the_paragraph_mark() {
+    let pages = laid_out("whitespace-only-line-probe.docx");
+    let gs = glyphs(&pages.pages[0]);
+    // (the case's number, Word's distance from the line of T before it to the line of T after the spaces-only paragraph)
+    let word = [(1, 29.18), (2, 31.8), (3, 31.8), (4, 27.24), (5, 27.24), (6, 39.51), (7, 29.28), (8, 29.16), (9, 29.16), (10, 29.16), (11, 27.24)];
+    for rep in 0..2 {
+        for (n, want) in word {
+            let d = find(&gs, &format!("T{rep}{n:02}")) - find(&gs, &format!("T{rep}{:02}", n - 1));
+            // (Word sets a 14 pt line 14.04 pt, a pixel of its 600 dpi grid, so a 14 pt mark is 0.3 pt more than ours.)
+            assert!(near(d, want, 0.4), "case {n} (repeat {rep}): {d:.2} pt; Word: {want:.2} pt");
+        }
+    }
+}
+
+/// A header of one paragraph of a 14 pt space with a 12 pt mark is 15.43 pt high, as a 12 pt line, and the body starts under it (Word's PDF of
+/// `whitespace-only-header-probe.docx`: the first line of the body, 10.5 pt, has its baseline 54.46 pt from the top of the page; corpus 023's page 40).
+#[cfg_attr(windows, test)]
+fn a_header_of_a_whitespace_only_line_is_as_high_as_its_paragraph_mark() {
+    let pages = laid_out("whitespace-only-header-probe.docx");
+    let gs = glyphs(&pages.pages[0]);
+    let y = find(&gs, "H00");
+    assert!(near(y, 54.46, 0.3), "the first line of the body: {y:.2} pt from the top; Word: 54.46 pt");
 }
 
 /// Where the baseline of a single ＭＳ 明朝 line is, off the grid and on it (Word's PDF of `ms-single-line-baseline-before-exact-probe.docx`, Microsoft 365
@@ -1425,4 +1614,24 @@ fn the_cell_of_a_word_with_an_indent_is_as_wide_as_the_word_and_indent_need() {
     for (g, w) in got.iter().zip(want) {
         assert!(near(*g, w, 1.2), "{got:.1?}, Word: {want:.1?}");
     }
+}
+
+/// #142 (the user, Mac): the arrowhead bullet at the second level. Chosen at level 2 it is Wingdings' U+F0D8 in the file; where Wingdings is absent the
+/// level's text is the arrowhead character itself (U+27A2), which is what is drawn.
+#[cfg(not(windows))]
+fn the_second_level_arrow_bullet_is_an_arrowhead_with_or_without_wingdings() {
+    let mut s = crate::shell::scenario::Scenario::open("test/editing/docx-report.docx");
+    s.size(1200., 900.);
+    s.menu("docx.bullet.arrow");
+    s.key("tab");
+    s.menu("docx.bullet.arrow");
+    s.settle();
+    s.screenshot("bullet-arrow-level2");
+    s.with(|e, _| {
+        let n = &e.flow().unwrap().styles.numbering;
+        let l = n.abstracts.values().last().unwrap().levels.get(1).unwrap();
+        assert_eq!(l.symbol, Some(("Wingdings".to_string(), '\u{f0d8}')), "Word's code");
+        assert_eq!(l.text, "\u{27a2}", "the arrowhead character is the stand-in without Wingdings");
+    });
+    assert_eq!(ibis_pptx::symbol_font::stand_in("Wingdings", '\u{f0d8}'), Some('\u{27a2}'));
 }

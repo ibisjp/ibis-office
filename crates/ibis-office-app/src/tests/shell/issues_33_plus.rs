@@ -5,6 +5,8 @@ use crate::shell::scenario::Scenario;
 use crate::xlsx::scenarios::SheetSteps;
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, CellValue, sheet_calc::sheet_of_slide};
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![

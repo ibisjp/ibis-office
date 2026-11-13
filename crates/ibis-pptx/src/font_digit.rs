@@ -17,6 +17,11 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+/// One GDI measure at a time in the process: measuring in several threads at once gave other widths now and then (a file
+/// opened in two threads read other column counts than one opened alone, only on Windows), so the measures take turns.
+#[cfg(windows)]
+static GDI: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The widest of the digits `0`..`9` of `font` at `pt` points, in pixels of a `dpi` device; `None`
 /// when it cannot be measured (no GDI).
 pub fn max_digit_px(font: &str, pt: f64, dpi: f64) -> Option<u32> {
@@ -27,13 +32,19 @@ pub fn max_digit_px(font: &str, pt: f64, dpi: f64) -> Option<u32> {
     if let Some(hit) = CACHE.with(|c| c.borrow().get(&key).copied()) {
         return hit;
     }
-    let measured = measure(font, pt, dpi);
-    CACHE.with(|c| c.borrow_mut().insert(key, measured));
+    // GDI can fail for a moment when other threads are using it at the same time (a device context or a font that cannot be
+    // made): a measure that failed is asked again, and only an answer is kept (a failure kept would make a file open with
+    // other column widths on one thread than on another).
+    let measured = (0..3).find_map(|_| measure(font, pt, dpi));
+    if measured.is_some() {
+        CACHE.with(|c| c.borrow_mut().insert(key, measured));
+    }
     measured
 }
 
 #[cfg(windows)]
 fn measure(font: &str, pt: f64, dpi: f64) -> Option<u32> {
+    let _turn = GDI.lock().unwrap_or_else(|e| e.into_inner());
     use std::ffi::c_void;
     #[link(name = "gdi32")]
     unsafe extern "system" {
@@ -79,11 +90,13 @@ fn measure(font: &str, pt: f64, dpi: f64) -> Option<u32> {
 /// The width of `text` in `font` at `pt` points, in points, as GDI sets it at the printer's resolution; `None`
 /// when it cannot be measured. (`bold` is the font's weight 700.)
 pub fn text_width_pt(font: &str, pt: f64, bold: bool, text: &str) -> Option<f64> {
-    measure_text(font, pt, bold, text)
+    // (A measure that failed is asked again: GDI can fail for a moment when threads use it together.)
+    (0..3).find_map(|_| measure_text(font, pt, bold, text))
 }
 
 #[cfg(windows)]
 fn measure_text(font: &str, pt: f64, bold: bool, text: &str) -> Option<f64> {
+    let _turn = GDI.lock().unwrap_or_else(|e| e.into_inner());
     use std::ffi::c_void;
     #[repr(C)]
     struct Size {
@@ -154,6 +167,7 @@ pub fn char_advance_pt(font: &str, pt: f64, bold: bool, italic: bool, c: char) -
 
 #[cfg(windows)]
 fn measure_char(font: &str, pt: f64, bold: bool, italic: bool, c: char) -> Option<f64> {
+    let _turn = GDI.lock().unwrap_or_else(|e| e.into_inner());
     use std::ffi::c_void;
     #[link(name = "gdi32")]
     unsafe extern "system" {

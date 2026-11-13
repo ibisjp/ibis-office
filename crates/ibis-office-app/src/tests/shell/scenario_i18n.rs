@@ -7,6 +7,8 @@
 use crate::shell::chrome::MenuId;
 use crate::shell::i18n::{self, Language, LanguageSetting};
 use crate::shell::scenario::Scenario;
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![("shell::i8_language_switch_and_kept", i8_language_switch_and_kept), ("shell::i8_panels_and_status_in_english", i8_panels_and_status_in_english), ("shell::fix16_font_names_in_english", fix16_font_names_in_english), ("shell::i8_docx_panels_in_english", i8_docx_panels_in_english), ("shell::fix34_start_view_in_english", fix34_start_view_in_english), ("shell::fix34_new_file_names_in_english", fix34_new_file_names_in_english), ("shell::fix36_font_lists_from_the_system", fix36_font_lists_from_the_system), ("shell::split_buttons_in_english", split_buttons_in_english), ("shell::fix_font_dialog_item_leads_the_list", fix_font_dialog_item_leads_the_list), ("shell::replace_fonts_document_and_workbook", replace_fonts_document_and_workbook)]
@@ -31,11 +33,11 @@ fn i8_language_switch_and_kept() {
     unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
     assert_eq!(labels(&mut s, "file.save"), ("保存".into(), "ファイル".into()));
     assert_eq!(labels(&mut s, "xlsx.remove-duplicates").0, "重複の削除…");
-    // ツール > 設定… opens the settings window.
+    // ツール > 設定… opens the settings dialog.
     s.menu("tools.settings");
-    assert!(crate::shell::settings_window::is_open());
+    assert!(s.with(|e, _| e.settings.is_some()));
     // English, at once.
-    s.update(|_, _, cx| crate::shell::settings_window::choose_language(LanguageSetting::Fixed(Language::English), cx));
+    s.update(|_, _, cx| crate::shell::settings_dialog::choose_language(LanguageSetting::Fixed(Language::English), cx));
     assert_eq!(labels(&mut s, "file.save"), ("Save".into(), "File".into()));
     assert_eq!(labels(&mut s, "tools.settings").0, "Settings…");
     assert_eq!(labels(&mut s, "xlsx.remove-duplicates").0, "Remove Duplicates…");
@@ -46,9 +48,9 @@ fn i8_language_switch_and_kept() {
     assert_eq!(i18n::language(), Language::English);
     assert!(std::fs::read_to_string(dir.join("settings.txt")).unwrap_or_default().contains("language=en"));
     // Back to Japanese; the system's language when chosen so.
-    s.update(|_, _, cx| crate::shell::settings_window::choose_language(LanguageSetting::Fixed(Language::Japanese), cx));
+    s.update(|_, _, cx| crate::shell::settings_dialog::choose_language(LanguageSetting::Fixed(Language::Japanese), cx));
     assert_eq!(labels(&mut s, "file.save").0, "保存");
-    s.update(|_, _, cx| crate::shell::settings_window::choose_language(LanguageSetting::System, cx));
+    s.update(|_, _, cx| crate::shell::settings_dialog::choose_language(LanguageSetting::System, cx));
     assert_eq!(i18n::language(), i18n::system_language());
     unsafe { std::env::remove_var("IBIS_SETTINGS_DIR") };
     i18n::show(Language::Japanese);

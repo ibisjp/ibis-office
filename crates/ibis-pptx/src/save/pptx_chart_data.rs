@@ -926,7 +926,11 @@ pub fn stock_refs_for_range(
 /// A sheet chart's series (xlsx) set to `refs`, as many in each group as
 /// `after` has: each one's references written, and its caches from the
 /// series of `after` (which holds what the cells give).
-pub(crate) fn write_sheet_chart_series(package: &mut Package, chart_part: &str, after: &Chart, refs: &[SeriesRefs]) -> Result<(), Error> {
+/// `before` is the chart as it was read (None for a new chart): a series whose
+/// appearance (fill, line, marker, labels, trendline, error bars) is the same as
+/// there keeps its XML as it is, so a changed cell does not turn the theme's
+/// colours of an untouched series into fixed ones (xsc37).
+pub(crate) fn write_sheet_chart_series(package: &mut Package, chart_part: &str, before: Option<&Chart>, after: &Chart, refs: &[SeriesRefs]) -> Result<(), Error> {
     let counts: Vec<usize> = after.groups.iter().map(|g| g.series.len()).collect();
     if counts.iter().sum::<usize>() != refs.len() {
         return Err(unsupported("系列の数の合わないグラフのデータ"));
@@ -940,16 +944,36 @@ pub(crate) fn write_sheet_chart_series(package: &mut Package, chart_part: &str, 
     let series: Vec<&ibis_doc_model::Series> = after.groups.iter().flat_map(|g| g.series.iter()).collect();
     let root=doc.root_element().ok_or_else(||unsupported("グラフのルート要素"))?;
     let drawing_prefix=doc.lookup_prefix(root,"http://schemas.openxmlformats.org/drawingml/2006/main").filter(|p|!p.is_empty()).unwrap_or_else(||{doc.set_attr(root,"xmlns:a","http://schemas.openxmlformats.org/drawingml/2006/main");"a".into()});
-    for ((ser, r), model) in all.into_iter().zip(refs).zip(series) {
+    // The series of `before`, one for one with the XML's, when the groups are the same
+    // (same kinds, same number of series in each): only then is a series' old appearance known.
+    let old_series: Vec<&ibis_doc_model::Series> = match before {
+        Some(b) if b.groups.len() == after.groups.len() && b.groups.iter().zip(&after.groups).all(|(x, y)| x.kind == y.kind && x.series.len() == y.series.len()) => b.groups.iter().flat_map(|g| g.series.iter()).collect(),
+        _ => Vec::new(),
+    };
+    for (i, ((ser, r), model)) in all.into_iter().zip(refs).zip(series).enumerate() {
         let p = prefix_of(doc, ser);
         // Rebuilding references and caches must also retain each series' model appearance.
         // The caller's settings baseline already has these groups, so no later delta writes them.
-        super::pptx_chart::write_series_fill(doc,ser,&model.fill,&p,&drawing_prefix)?;
-        super::pptx_chart::write_series_stroke(doc,ser,model.stroke.as_ref(),&p,&drawing_prefix)?;
-        super::pptx_chart::write_series_marker(doc,ser,model.marker.as_ref(),&p,&drawing_prefix)?;
-        super::pptx_chart::write_labels(doc,ser,None,model.labels.as_ref())?;
-        super::pptx_chart::write_trendline(doc,ser,model.trendline.as_ref())?;
-        super::pptx_chart::write_error_bars(doc,ser,model.error_bars.as_ref())?;
+        // What did not change from `before` is left as the file has it.
+        let old = old_series.get(i).copied();
+        if old.is_none_or(|o| o.fill != model.fill) {
+            super::pptx_chart::write_series_fill(doc,ser,&model.fill,&p,&drawing_prefix)?;
+        }
+        if old.is_none_or(|o| o.stroke != model.stroke) {
+            super::pptx_chart::write_series_stroke(doc,ser,model.stroke.as_ref(),&p,&drawing_prefix)?;
+        }
+        if old.is_none_or(|o| o.marker != model.marker) {
+            super::pptx_chart::write_series_marker(doc,ser,model.marker.as_ref(),&p,&drawing_prefix)?;
+        }
+        if old.is_none_or(|o| o.labels != model.labels) {
+            super::pptx_chart::write_labels(doc,ser,None,model.labels.as_ref())?;
+        }
+        if old.is_none_or(|o| o.trendline != model.trendline) {
+            super::pptx_chart::write_trendline(doc,ser,model.trendline.as_ref())?;
+        }
+        if old.is_none_or(|o| o.error_bars != model.error_bars) {
+            super::pptx_chart::write_error_bars(doc,ser,model.error_bars.as_ref())?;
+        }
         if let Some(f) = &r.name {
             let tx = series_child(doc, ser, "tx", AFTER_TX);
             clear(doc, tx);

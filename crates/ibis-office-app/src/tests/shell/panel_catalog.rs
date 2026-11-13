@@ -6,6 +6,9 @@ use crate::shell::scenario::Scenario;
 use crate::docx::scenarios::DocSteps;
 use crate::xlsx::scenarios::SheetSteps;
 use crate::shell::dialog::DialogMode;
+use crate::pptx::ext::*;
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 pub(crate) fn dump_all_right_panels() {
     use crate::shell::chrome::{FORCED_SIDEBAR, LAST_SIDEBAR_TITLE, SidebarPanel};
     use crate::shell::editor::SlideEditor;
@@ -21,7 +24,7 @@ pub(crate) fn dump_all_right_panels() {
         for line in text.lines().filter(|line| !line.contains("\tmerge_manual_editor\t")) {
             let mut parts = line.splitn(4, '\t');
             if let (Some(fmt), Some(idx_s), Some(name)) = (parts.next(), parts.next(), parts.next()) {
-                if let Ok(idx) = idx_s.parse::<usize>() {
+                if idx_s.parse::<usize>().is_ok() {
                     existing.insert((fmt.to_string(), name.to_string()), line.to_string());
                 }
             }
@@ -517,20 +520,20 @@ pub(crate) fn dump_all_right_panels() {
         p!("reading_order_pane", |e, _, cx| e.open_reading_order_pane(cx), reading_order_pane);
         p!("selection_pane", |e, _, cx| {
             seed_pptx_gallery_shapes(e,cx);
-            if e.pptx().is_none_or(|st| st.selection_pane.is_none()) { e.toggle_selection_pane(cx); }
+            if e.pptx().is_none_or(|_| e.shape_edit.selection_pane.is_none()) { e.toggle_selection_pane(cx); }
         }, selection_pane);
         p!("slide_link_panel", |e, w, cx| e.slide_open_link_panel(w, cx), slide_link_panel);
         p!("theme_panel", |e, w, cx| e.open_theme_panel(w, cx), theme_panel);
         p!("theme_palette_editor", |e,w,cx| {e.open_theme_panel(w,cx);e.theme_colors_ui.editing=true;}, theme_panel);
         p!("text_insets_panel", |e, w, cx| e.open_text_insets_panel(w, cx), text_insets_panel);
         p!("slide_size_panel", |e, w, cx| e.open_slide_size_panel(w, cx), slide_size_panel);
-        p!("pptx_find_panel", |e, w, cx| { e.open_pptx_find(w, cx); e.pptx_mut().unwrap().find.as_mut().unwrap().replace_mode=true; }, pptx_find_panel);
+        p!("pptx_find_panel", |e, w, cx| { e.open_pptx_find(w, cx); e.shape_edit.find.as_mut().unwrap().replace_mode=true; }, pptx_find_panel);
         p!("replace_fonts_panel", |e, w, cx| e.open_replace_fonts_panel(w, cx), replace_fonts_panel);
         p!("slide_comments_panel", |e, w, cx| e.open_slide_comments(w, cx), slide_comments_panel);
 
         // SmartArt text pane
         p!("smartart_text_pane", |e, _, cx| {
-            e.insert_smartart(crate::pptx::SmartArtKind::BasicBlockList, cx);
+            e.insert_smartart(crate::shell::smartart::SmartArtKind::BasicBlockList, cx);
             if e.pptx().is_none_or(|st| !st.smartart_text_pane) { e.toggle_smartart_text_pane(cx); }
         }, smartart_text_pane);
 
@@ -847,7 +850,7 @@ fn seed_recovery_gallery(e:&mut crate::shell::editor::SlideEditor) {
 }
 
 fn seed_autocorrect_entry(e:&mut crate::shell::editor::SlideEditor,w:&mut gpui_kit::Window,cx:&mut gpui_kit::Context<crate::shell::editor::SlideEditor>) {
-    let p=match e.format.kind(){ibis_pptx::Kind::Document=>e.doc_state_mut().unwrap().autocorrect.as_mut().unwrap(),ibis_pptx::Kind::Workbook=>e.wb_mut().panels.autocorrect.as_mut().unwrap(),_=>e.pptx_mut().unwrap().autocorrect.as_mut().unwrap()};
+    let p=match e.format.kind(){ibis_pptx::Kind::Document=>e.doc_state_mut().unwrap().autocorrect.as_mut().unwrap(),ibis_pptx::Kind::Workbook=>e.wb_mut().panels.autocorrect.as_mut().unwrap(),_=>e.shape_edit.autocorrect.as_mut().unwrap()};
     p.entry_open=true;p.editing=Some(0);let (a,b)=p.working.table[0].clone();p.replace.update(cx,|i,cx|i.set_value(a,w,cx));p.with.update(cx,|i,cx|i.set_value(b,w,cx));
 }
 

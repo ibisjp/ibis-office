@@ -2356,8 +2356,6 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.6.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9e904ee0d351f4e85b967e26ae986d3aa195a8d9d35fcd18184a2c40989694e"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2547,8 +2545,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-apple"
 version = "0.3.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3af534f0746eb9e014114bcc0ee00dc250c4b8d75df2e437180c403aa65649c1"
 dependencies = [
  "anyhow",
  "block",
@@ -3337,7 +3333,14 @@ dependencies = [
  "ibis-emf",
  "ibis-eot",
  "ibis-office-app",
+ "ibis-office-base",
+ "ibis-office-docx",
+ "ibis-office-macros",
+ "ibis-office-pptx",
+ "ibis-office-render",
+ "ibis-office-shell",
  "ibis-office-updater",
+ "ibis-office-xlsx",
  "ibis-pptx",
  "image",
  "js-sys",
@@ -3345,6 +3348,7 @@ dependencies = [
  "log",
  "lyon_tessellation",
  "miniz_oxide 0.8.9",
+ "moxcms",
  "notify",
  "objc",
  "skrifa 0.42.1",
@@ -3356,11 +3360,152 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "windows 0.61.3",
+ "zune-core 0.4.12",
+ "zune-jpeg 0.4.21",
+]
+
+[[package]]
+name = "ibis-office-base"
+version = "0.8.0"
+dependencies = [
+ "gpui-kit",
+ "ibis-doc-model",
+ "ibis-pptx",
+ "js-sys",
+ "log",
+ "objc",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "ibis-office-docx"
+version = "0.8.0"
+dependencies = [
+ "futures",
+ "gpui-kit",
+ "ibis-doc-model",
+ "ibis-emf",
+ "ibis-office-base",
+ "ibis-office-macros",
+ "ibis-office-render",
+ "ibis-office-shell",
+ "ibis-pptx",
+ "image",
+ "log",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "ibis-office-macros"
+version = "0.8.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "ibis-office-pptx"
+version = "0.8.0"
+dependencies = [
+ "gpui-kit",
+ "ibis-doc-model",
+ "ibis-office-base",
+ "ibis-office-macros",
+ "ibis-office-render",
+ "ibis-office-shell",
+ "ibis-pptx",
+ "image",
+ "log",
+]
+
+[[package]]
+name = "ibis-office-render"
+version = "0.8.0"
+dependencies = [
+ "core-foundation 0.10.1",
+ "core-video",
+ "futures",
+ "gpui-kit",
+ "harfrust",
+ "ibis-calc",
+ "ibis-doc-model",
+ "ibis-emf",
+ "ibis-eot",
+ "ibis-office-base",
+ "ibis-pptx",
+ "icu_normalizer",
+ "image",
+ "js-sys",
+ "log",
+ "lyon_tessellation",
+ "objc",
+ "skrifa 0.42.1",
+ "ttf-parser",
+ "unicode-vo",
+ "unicode-width",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "windows 0.61.3",
+ "zune-core 0.4.12",
+ "zune-jpeg 0.4.21",
+]
+
+[[package]]
+name = "ibis-office-shell"
+version = "0.8.0"
+dependencies = [
+ "core-foundation 0.10.1",
+ "core-graphics 0.24.0",
+ "core-text",
+ "futures",
+ "getrandom 0.3.4",
+ "gpui-kit",
+ "gpui-pre-macos",
+ "gpui-pre-platform",
+ "gpui-pre-wgpu",
+ "gpui-pre-windows",
+ "ibis-calc",
+ "ibis-doc-model",
+ "ibis-emf",
+ "ibis-office-base",
+ "ibis-office-render",
+ "ibis-office-updater",
+ "ibis-pptx",
+ "image",
+ "js-sys",
+ "krilla",
+ "log",
+ "miniz_oxide 0.8.9",
+ "moxcms",
+ "notify",
+ "objc",
+ "ttf-parser",
+ "usvg 0.46.0",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "windows 0.61.3",
 ]
 
 [[package]]
 name = "ibis-office-updater"
 version = "0.8.0"
+
+[[package]]
+name = "ibis-office-xlsx"
+version = "0.8.0"
+dependencies = [
+ "gpui-kit",
+ "ibis-calc",
+ "ibis-doc-model",
+ "ibis-office-base",
+ "ibis-office-macros",
+ "ibis-office-render",
+ "ibis-office-shell",
+ "ibis-pptx",
+ "image",
+ "log",
+]
 
 [[package]]
 name = "ibis-ooxml"
@@ -3425,6 +3570,9 @@ dependencies = [
  "icu_properties",
  "icu_provider",
  "smallvec",
+ "utf16_iter",
+ "utf8_iter",
+ "write16",
  "zerovec",
 ]
 
@@ -7654,10 +7802,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
+name = "utf16_iter"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c7de35d9d8757dbc1f5125dc8b51438c68b4430546a735c3a9b91aaaaf9a18a"
+dependencies = [
+ "utf_types",
+]
+
+[[package]]
 name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
+
+[[package]]
+name = "utf_types"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
 name = "uuid"
@@ -8869,6 +9032,12 @@ dependencies = [
  "log",
  "read-fonts 0.39.2",
 ]
+
+[[package]]
+name = "write16"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1890f4022759daae28ed4fe62859b1236caebfc61ede2f63ed4e695f3f6d936"
 
 [[package]]
 name = "writeable"

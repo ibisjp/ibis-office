@@ -23,6 +23,8 @@
 # built on Ubuntu 20.04 it needs glibc 2.30, so Ubuntu 20.04, Debian 11 and later.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# The distribution keeps the release defaults (no incremental, default LTO); Cargo.toml's release profile is for development.
+source scripts/dist-profile.sh
 
 PROFILE=debug
 FLAGS=()
@@ -45,7 +47,7 @@ ln -s usr/bin/ibisOffice "$APPDIR/AppRun"
 
 cp crates/ibis-office-app/linux/ibisoffice.desktop "$APPDIR/ibisoffice.desktop"
 cp crates/ibis-office-app/linux/ibisoffice.desktop "$APPDIR/usr/share/applications/ibisoffice.desktop"
-ICONS=crates/ibis-office-app/windows/png/ico
+ICONS=crates/ibis-office-shell/logo/png/ico
 for size in 16 24 32 48 256; do
 	mkdir -p "$APPDIR/usr/share/icons/hicolor/${size}x${size}/apps"
 	cp "$ICONS/ibisOffice_icon_win_${size}px_transparent.png" "$APPDIR/usr/share/icons/hicolor/${size}x${size}/apps/ibisoffice.png"
@@ -54,7 +56,7 @@ cp "$ICONS/ibisOffice_icon_win_256px_transparent.png" "$APPDIR/ibisoffice.png"
 ln -s ibisoffice.png "$APPDIR/.DirIcon"
 
 # The pictures of Word's art page borders, read when a document uses one.
-cp crates/ibis-office-app/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip crates/ibis-office-app/data/artborders/ECMA-NOTICE.txt "$APPDIR/usr/share/ibisOffice/artborders/"
+cp crates/ibis-pptx/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip crates/ibis-pptx/data/artborders/ECMA-NOTICE.txt "$APPDIR/usr/share/ibisOffice/artborders/"
 
 # ibisOffice's licences, and the third-party components in the AppImage (its
 # runtime's too) with the notices their licences ask for, made afresh from
@@ -67,7 +69,7 @@ cp "$LIC/LICENSE" "$DOC/LICENSE"
 cp "$LIC/COMMERCIAL-LICENSE.md" "$DOC/COMMERCIAL-LICENSE.md"
 [[ -f $LIC/NOTICE ]] && cp "$LIC/NOTICE" "$DOC/NOTICE"
 cp crates/ibis-office-app/linux/license.md "$DOC/third-party-licenses.md"
-cp crates/ibis-office-app/fonts/carlito/OFL.txt "$DOC/Carlito-OFL.txt"
+cp crates/ibis-office-render/fonts/carlito/OFL.txt "$DOC/Carlito-OFL.txt"
 
 OUT="target/dist/ibisOffice-$VERSION-Linux.AppImage"
 rm -f "$OUT"

@@ -178,11 +178,16 @@ impl RunChange {
                     f.caps = Some(false);
                 }
             }
-            RunChange::Font(v) => f.font = Some(v.clone()),
+            RunChange::Font(v) => {
+                // Both attributes are written: the typeface of the styles' `hAnsi` (inherited per attribute) must not stay under the new one.
+                f.font = Some(v.clone());
+                f.h_ansi_font = Some(v.clone());
+            }
             RunChange::EastAsianFont(v) => f.east_asian_font = Some(v.clone()),
             RunChange::ComplexScriptFont(v) => f.cs_font = Some(v.clone()),
             RunChange::AllFonts(v) => {
                 f.font = Some(v.clone());
+                f.h_ansi_font = Some(v.clone());
                 f.east_asian_font = Some(v.clone());
             }
             // Word sets the complex scripts' size (w:szCs) with the size.
@@ -552,6 +557,11 @@ impl ParaChange {
                 let from_style = base.num_id.is_some_and(|n| n != 0);
                 d.num_id = from_style.then_some(0);
                 d.level = None;
+                // The List Paragraph style is what a list gives its items (with its indent): without the list the paragraph is a standard one
+                // again, as in Word (the bullet off, or Enter on an empty item) (#117).
+                if p.list.is_some() && p.style.is_some() && p.style.as_deref() == styles.paragraph_style_named("List Paragraph") {
+                    p.style = None;
+                }
             }
             ParaChange::SectionBreak(kind) => p.section_break = *kind,
             ParaChange::AddBookmark(name) => {
@@ -2698,6 +2708,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             subdoc: None,
                             style: next_style.clone().or_else(|| old.style.clone()),
                             mark_format: format.clone(),
+                            mark_revision: None,
                             ..old.clone()
                         });
                         next_id += 1;
@@ -2921,22 +2932,21 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let revision = revision.clone();
             each_part(doc, from, to, &styles, move |p, a, b| p.set_revision(a, b, |_| Some(revision.clone()).flatten()))
         }
-        FlowCommand::TrackDelete { from, to, author, date } => each_part(doc, from, to, &styles, move |p, a, b| {
-            let a = p.boundary(a);
-            let b = p.boundary(b);
-            let mut kept = Vec::new();
-            for (i, mut run) in std::mem::take(&mut p.runs).into_iter().enumerate() {
-                if i >= a && i < b {
-                    match run.revision.as_ref().map(|r| &r.kind) {
-                        Some(crate::flow::RevisionKind::Insert | crate::flow::RevisionKind::MoveTo) => continue,
-                        Some(crate::flow::RevisionKind::Delete | crate::flow::RevisionKind::MoveFrom) => {}
-                        _ => run.revision = Some(crate::flow::Revision { kind: crate::flow::RevisionKind::Delete, author: author.clone(), date: date.clone() }),
+        FlowCommand::TrackDelete { from, to, author, date } => {
+            let inverse = track_delete_text(doc, from.clone(), to.clone(), &styles, author.clone(), date.clone())?;
+            // The marks of the paragraphs the range goes through (all but the last) are deleted too, as Word marks them: the paragraphs
+            // join when the changes are accepted.
+            if let Ok((container, first, last, _, _)) = ordered(doc, from, to)
+                && let Some(list) = blocks_mut(doc, container)
+            {
+                for block in &mut list[first..last] {
+                    if let Block::Paragraph(p) = block && p.mark_revision.is_none() {
+                        p.mark_revision = Some(crate::flow::Revision { kind: crate::flow::RevisionKind::Delete, author: author.clone(), date: date.clone() });
                     }
                 }
-                kept.push(run);
             }
-            p.runs = kept;
-        }),
+            Ok(inverse)
+        }
         FlowCommand::TrackFormat { from, to, author, date } => each_part(doc, from, to, &styles, move |p, a, b| {
             p.set_revision(a, b, |run| match &run.revision {
                 None => Some(crate::flow::Revision { kind: crate::flow::RevisionKind::Format(run.format.clone()), author: author.clone(), date: date.clone() }),
@@ -3839,6 +3849,26 @@ fn each_part(doc: &mut FlowDocument, from: FlowPos, to: FlowPos, styles: &Arc<Fl
     Ok(FlowCommand::ReplaceBlocks { container, index: first, remove: last - first + 1, blocks: old })
 }
 
+/// A tracked deletion of the text from `from` to `to`: inserted text is removed, the rest marked deleted.
+fn track_delete_text(doc: &mut FlowDocument, from: FlowPos, to: FlowPos, styles: &Arc<FlowStyles>, author: String, date: String) -> Result<FlowCommand, EditError> {
+    each_part(doc, from, to, styles, move |p, a, b| {
+        let a = p.boundary(a);
+        let b = p.boundary(b);
+        let mut kept = Vec::new();
+        for (i, mut run) in std::mem::take(&mut p.runs).into_iter().enumerate() {
+            if i >= a && i < b {
+                match run.revision.as_ref().map(|r| &r.kind) {
+                    Some(crate::flow::RevisionKind::Insert | crate::flow::RevisionKind::MoveTo) => continue,
+                    Some(crate::flow::RevisionKind::Delete | crate::flow::RevisionKind::MoveFrom) => {}
+                    _ => run.revision = Some(crate::flow::Revision { kind: crate::flow::RevisionKind::Delete, author: author.clone(), date: date.clone() }),
+                }
+            }
+            kept.push(run);
+        }
+        p.runs = kept;
+    })
+}
+
 /// Who made a tracked change and when.
 pub type RevisionBy = (String, String);
 
@@ -3894,9 +3924,21 @@ pub fn resolve_revisions_filter(
         }
     }
 
+    // Whether the paragraph's mark is a deletion this call resolves.
+    let mark_ok = |p: &FlowParagraph| -> bool {
+        let Some(r) = p.mark_revision.as_ref().filter(|r| r.kind.is_delete()) else { return false };
+        if let Some(filter) = author_filter && !filter.contains(&r.author) {
+            return false;
+        }
+        let i = index(p.id);
+        match range {
+            None => true,
+            Some((a, b)) => i >= index(a.para) && (i < index(b.para) || (i == index(b.para) && b.offset >= p.len())),
+        }
+    };
     let mut commands = Vec::new();
-    for p in ps {
-        if !p.runs.iter().any(|r| r.revision.is_some()) {
+    for p in ps.iter().copied() {
+        if !p.runs.iter().any(|r| r.revision.is_some()) && !mark_ok(p) {
             continue;
         }
         let i = index(p.id);
@@ -3971,6 +4013,10 @@ pub fn resolve_revisions_filter(
             runs.push(run);
         }
         q.runs = runs;
+        // Rejecting a deleted paragraph mark keeps the mark; accepting is done below, once the text is settled.
+        if !accept && mark_ok(p) {
+            q.mark_revision = None;
+        }
         q.resolve(&doc.styles);
         q.normalize();
         if q != *p
@@ -3979,7 +4025,66 @@ pub fn resolve_revisions_filter(
             commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
         }
     }
+    // Accepting a deleted paragraph mark joins the paragraph to the next one (a run of them into the paragraph whose mark stays), which has
+    // the formatting of the mark that stays. A paragraph with no next one in its list just loses the mark.
+    if accept && ps.iter().any(|p| mark_ok(p)) {
+        let mut settled = doc.clone();
+        for c in commands.clone() {
+            let _ = apply_to(&mut settled, c);
+        }
+        let marked: Vec<u32> = all_paragraphs(&settled).into_iter().filter(|p| mark_ok(p)).map(|p| p.id).collect();
+        let mut done: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut tail = Vec::new();
+        for id in marked {
+            if done.contains(&id) {
+                continue;
+            }
+            let Some((container, at)) = locate(&settled, id) else { continue };
+            let Some(list) = blocks_mut(&mut settled, container) else { continue };
+            let mut last = at;
+            let is_marked = |b: &Block| matches!(b, Block::Paragraph(p) if mark_ok(p));
+            while is_marked(&list[last]) && matches!(list.get(last + 1), Some(Block::Paragraph(_))) {
+                last += 1;
+            }
+            let chain: Vec<&FlowParagraph> = list[at..=last].iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p) } else { None }).collect();
+            done.extend(chain.iter().map(|p| p.id));
+            let mut joined = join_marked(&chain, true);
+            joined.mark_revision = None;
+            joined.resolve(&doc.styles);
+            joined.normalize();
+            tail.push(FlowCommand::ReplaceBlocks { container, index: at, remove: last - at + 1, blocks: vec![Block::Paragraph(joined)] });
+        }
+        // From the last up, so that each leaves the places of those before it.
+        tail.reverse();
+        commands.extend(tail);
+    }
     commands
+}
+
+/// The paragraph that `chain` becomes once the marks of all but the last are gone: the last one's formatting and mark, the text of all of
+/// them in order. It is named by the first (`first_id`: what a save finds the joined paragraph by) or by the last.
+pub fn join_marked(chain: &[&FlowParagraph], first_id: bool) -> FlowParagraph {
+    let Some(last) = chain.last() else { return FlowParagraph::default() };
+    let mut joined = (*last).clone();
+    if first_id {
+        joined.id = chain[0].id;
+    }
+    joined.runs = chain.iter().flat_map(|p| p.runs.iter().cloned()).collect();
+    joined.bookmarks = Vec::new();
+    joined.bookmark_ends = Vec::new();
+    for p in chain {
+        for b in &p.bookmarks {
+            if !joined.bookmarks.contains(b) {
+                joined.bookmarks.push(b.clone());
+            }
+        }
+        for b in &p.bookmark_ends {
+            if !joined.bookmark_ends.contains(b) {
+                joined.bookmark_ends.push(b.clone());
+            }
+        }
+    }
+    joined
 }
 
 /// The grid columns each cell of a row starts at.
@@ -4770,6 +4875,10 @@ impl FlowParagraph {
         let b = self.boundary(end);
         for run in &mut self.runs[a..b] {
             change.apply(&mut run.format);
+            // A colour given to the whole formula replaces those of its runs, as Word's does.
+            if let (RunChange::Color(_) | RunChange::ThemeColor { .. }, FlowRunKind::Math { math, .. }) = (change, &mut run.kind) {
+                *math = math.without_colors();
+            }
         }
     }
 
@@ -4838,7 +4947,7 @@ impl FlowParagraph {
         let mut s = String::new();
         for run in &self.runs {
             match &run.kind {
-                FlowRunKind::Text(t) => s.push_str(t),
+                FlowRunKind::Text(t) => s.extend(t.chars().map(|c| if c == crate::flow::OPTIONAL_HYPHEN { '\u{ad}' } else { c })),
                 FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => s.push('\t'),
                 FlowRunKind::LineBreak => s.push('\u{b}'),
                 FlowRunKind::PageBreak => s.push('\u{c}'),

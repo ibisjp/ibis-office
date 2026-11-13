@@ -17,7 +17,21 @@ path = "src/main.rs"
 unicode-vo = "0.1.0" # MIT: Unicode vertical orientation, already in the dependency graph.
 unicode-width = "0.2" # MIT OR Apache-2.0: East Asian Width, already in the dependency graph.
 ibis-calc.workspace = true
+ibis-office-base.workspace = true
+ibis-office-render.workspace = true
+# The editor window and what every format shares (tasks/doc/crate-split-plan.md, 12).
+ibis-office-shell.workspace = true
+# The presentation screen (PPTX), a crate of its own (tasks/doc/crate-split-plan.md, 14).
+ibis-office-pptx.workspace = true
+# The document screen (DOCX), a crate of its own (tasks/doc/crate-split-plan.md, 15).
+ibis-office-docx.workspace = true
+# The workbook screen (XLSX), a crate of its own (tasks/doc/crate-split-plan.md, 16).
+ibis-office-xlsx.workspace = true
+# `#[editor_ext]`: the methods a format writes for the editor become extension traits (tasks/doc/crate-split-plan.md, 10).
+ibis-office-macros.workspace = true
 ibis-doc-model.workspace = true
+# ICC profiles for CMYK colours (pure Rust; BSD-3-Clause OR Apache-2.0; also in the tree through `image`).
+moxcms = "0.8"
 ibis-pptx.workspace = true
 ibis-emf.workspace = true
 ibis-eot.workspace = true
@@ -38,6 +52,10 @@ ttf-parser = "0.25"
 gpui-pre-platform = { version = "=0.3.6", features = ["test-support"], optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg", "tiff"], optional = true }
 miniz_oxide = { version = "0.8", optional = true }
+# The raw four planes of a CMYK or YCCK JPEG (render/cmyk_jpeg.rs), converted with the CMYK converter in use. The versions the
+# `image` crate already uses (MIT OR Apache-2.0 OR Zlib); the `image` crate cannot give a four-component picture as it is.
+zune-jpeg = { version = "=0.4.21", optional = true }
+zune-core = { version = "=0.4.12", optional = true }
 # Vector PDF export: pages as text, paths and images (MIT OR Apache-2.0).
 # Without its text shaping (the export hands it positioned glyphs); its
 # images feature is what takes pixels, and rayon (already a dependency of
@@ -80,18 +98,18 @@ core-graphics = "0.24"
 # ibisOffice's fork of the Windows platform (GPUI has none for Windows).
 [target.'cfg(windows)'.dependencies]
 # MIT/Apache-2.0; use the native MediaPlayer and copy decoded frames through Direct3D.
-windows = { version = "0.61.3", features = ["Foundation", "Graphics_DirectX_Direct3D11", "Media_Core", "Media_Playback", "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11"] }
+windows = { version = "0.61.3", features = ["Foundation", "Graphics_DirectX_Direct3D11", "Media_Core", "Media_Playback", "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_Com", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_UI_Shell"] }
 
 gpui-pre-windows = { version = "=0.3.6", features = ["test-support"], optional = true }
 
 [features]
 default = ["export"]
-# The scenario tests' driver (`src/shell/scenario.rs`), for tests/scenarios.rs;
+# The scenario tests' driver (ibis-office-shell's `scenario.rs`) and their list (`src/scenario_list.rs`), for tests/scenarios.rs;
 # turned on for this crate's own tests by the dev-dependency below.
-scenarios = ["export"]
+scenarios = ["export", "ibis-office-docx/scenarios", "ibis-office-xlsx/scenarios", "ibis-office-pptx/scenarios", "ibis-office-shell/scenarios", "ibis-office-base/scenarios", "ibis-office-render/scenarios"]
 # `--export png|pdf|pdf-image|ui` on the command line (macOS, Windows and Linux;
 # build.rs sets `cfg(headless_export)` for it).
-export = ["dep:gpui-pre-platform", "dep:gpui-pre-windows", "dep:gpui-pre-wgpu", "dep:image", "dep:miniz_oxide", "dep:krilla", "dep:skrifa", "dep:subsetter", "dep:usvg", "dep:gpui-pre-macos"]
+export = ["dep:gpui-pre-platform", "dep:gpui-pre-windows", "dep:gpui-pre-wgpu", "dep:image", "dep:miniz_oxide", "dep:zune-jpeg", "dep:zune-core", "dep:krilla", "dep:skrifa", "dep:subsetter", "dep:usvg", "dep:gpui-pre-macos", "ibis-office-docx/export", "ibis-office-xlsx/export", "ibis-office-pptx/export", "ibis-office-shell/export", "ibis-office-render/export"]
 
 # For the `export` feature on Linux: the headless renderer of ibisOffice's
 # fork of GPUI's wgpu renderer (GPUI has none for Linux).
@@ -116,6 +134,7 @@ console_error_panic_hook = "0.1"
 # This crate's tests build it with the scenario driver.
 [dev-dependencies]
 ibis-office-app = { path = ".", features = ["scenarios"] }
+ibis-office-base = { workspace = true, features = ["test-user-data"] }
 
 # Scenario tests run their own main: GPUI's Mac platform must be made on the
 # main thread, where libtest's test functions do not run.
@@ -123,3 +142,7 @@ ibis-office-app = { path = ".", features = ["scenarios"] }
 name = "scenarios"
 harness = false
 
+
+# The `objc` crate's msg_send!/class! macros test `cfg(feature = "cargo-clippy")`, which is not a feature of this crate.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

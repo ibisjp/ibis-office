@@ -5,6 +5,7 @@
 use super::{Scenario, button_probe as buttons};
 use crate::xlsx::scenarios::SheetSteps;
 use gpui_kit::*;
+use crate::xlsx::ext::*;
 
 fn edges(id: &str) -> (f32, f32) {
     let b = buttons::bounds(id).unwrap_or_else(|| panic!("{id} was not drawn; drawn: {:?}", buttons::all()));

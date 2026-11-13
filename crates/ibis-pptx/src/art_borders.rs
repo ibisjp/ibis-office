@@ -365,7 +365,7 @@ mod tests {
     /// The shipped zip has every border's eight pictures, as 8-bit RGBA PNGs.
     #[test]
     fn shipped_zip_has_the_pictures() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../ibis-office-app/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip");
         let zip = std::fs::read(path).expect("the art borders' zip");
         let pictures = ArtBorderPictures::new(zip.into()).unwrap();
         let apples = pictures.picture(ArtBorder::Apples, ArtPart::Top).expect("apples_top.png");

@@ -65,7 +65,15 @@ fn assert_reads_back(saved: &[u8], edited: &Presentation) {
         let (Some(x), Some(y)) = (sheet_of_slide(a), sheet_of_slide(b)) else { continue };
         let cells = |s: &ibis_doc_model::Sheet| s.cells.iter().map(|c| (c.row, c.column, c.value.clone(), c.formula.clone(), c.text.clone(), { let mut st = s.styles[c.style as usize].clone(); st.xf = None; st })).collect::<Vec<_>>();
         let (cx, cy) = (cells(x), cells(y));
+        // A volatile function (RAND, RANDARRAY, NOW, ...) is calculated again when the book is opened, as in Excel (#177), and so
+        // is what depends on it: in a sheet that has one, the values and texts read back are not the saved ones.
+        let volatile = |f: &Option<String>| f.as_deref().is_some_and(|f| ["RAND", "NOW", "TODAY"].iter().any(|v| f.to_ascii_uppercase().contains(v)));
+        let recalculated = y.cells.iter().any(|c| volatile(&c.formula));
         for (p, q) in cx.iter().zip(&cy) {
+            if recalculated {
+                assert_eq!((p.0, p.1, &p.3, &p.5), (q.0, q.1, &q.3, &q.5), "sheet {:?}", a.name);
+                continue;
+            }
             assert_eq!(p, q, "sheet {:?}", a.name);
         }
         assert_eq!(cx.len(), cy.len(), "sheet {:?}", a.name);
@@ -7676,6 +7684,7 @@ fn test_cell_phonetic_and_roundtrip() {
     use ibis_doc_model::{PhoneticProperties, PhoneticType, PhoneticAlignment};
     let props = PhoneticProperties {
         font_id: 0,
+        font_size: None,
         phonetic_type: PhoneticType::Hiragana,
         alignment: PhoneticAlignment::Center,
     };
@@ -7697,7 +7706,62 @@ fn test_cell_phonetic_and_roundtrip() {
     assert_eq!(re_cell.value, CellValue::Text("東京".into()));
     assert_eq!(re_cell.phonetic.as_deref(), Some("トウキョウ"));
     assert!(re_sheet.show_phonetic);
-    assert_eq!(re_sheet.phonetic_pr, Some(props));
+    assert_eq!(re_sheet.phonetic_pr.map(|p| (p.font_id, p.phonetic_type, p.alignment)), Some((props.font_id, props.phonetic_type, props.alignment)));
+}
+
+/// The furigana shows where Excel shows it: a cell with `c/@ph` and nowhere else (`row/@ph` and `col/@phonetic` only set what a cell
+/// entered later gets; Microsoft Excel 365 shows nothing for C2 of a `row/@ph` row or D3 of a `col/@phonetic` column). The font is the one
+/// the string's own `phoneticPr/@fontId` names (E1: ＭＳ ゴシック 9; A2's string has none: font 0, Arial 11), not the sheet's (font 1: 6 pt),
+/// and the parts of a reading keep the character they stand over (`sb`).
+#[test]
+fn xlsx_phonetic_shown_by_cell_flag_only_and_in_the_strings_font() {
+    let (_, opened) = open("xlsx-phonetic.xlsx");
+    let sheet = sheet_of_slide(&opened.presentation.slides[0]).unwrap();
+    assert_eq!(sheet.cell(0, 0).unwrap().phonetic.as_deref(), Some("ニホン"));
+    assert_eq!(sheet.cell(0, 1).unwrap().phonetic.as_deref(), Some("ニホン"));
+    let mut shown: Vec<_> = sheet.phonetic_shown.iter().copied().collect();
+    shown.sort();
+    // A1, E1 and A2 have their own ph; B1 has none, C2 only its row's, D3 only its column's.
+    assert_eq!(shown, vec![(0, 0), (0, 4), (1, 0)]);
+    assert!(sheet.show_phonetic);
+    let pr = sheet.phonetic_pr.unwrap();
+    assert_eq!(pr.font_size, Some(600));
+    assert_eq!(pr.alignment, ibis_doc_model::PhoneticAlignment::Center);
+    let info = &sheet.phonetic_info.0;
+    let a1 = &info.cells[&(0, 0)];
+    assert_eq!((a1.font.as_deref(), a1.size), (Some("Arial"), Some(600)));
+    let e1 = &info.cells[&(0, 4)];
+    assert_eq!((e1.font.as_deref(), e1.size), (Some("ＭＳ ゴシック"), Some(900)));
+    assert_eq!(e1.parts.iter().map(|p| (p.text.as_str(), p.start)).collect::<Vec<_>>(), vec![("トウキョウ", 0), ("トチョウ", 2)]);
+    let a2 = &info.cells[&(1, 0)];
+    assert_eq!((a2.font.as_deref(), a2.size), (Some("Arial"), Some(1100)), "no phoneticPr in the string: font 0, not the sheet's");
+    // The rows that take a furigana line: row 1 (A1, E1 show it), row 2 (A2 shows it; `row/@ph` too); not row 3.
+    assert_eq!(info.rows.keys().copied().collect::<Vec<_>>(), vec![0, 1]);
+}
+
+/// Showing and hiding the furigana is written as the cells' `ph` (no `showPhonetic` in the sheet view, which the schema has not).
+#[test]
+fn xlsx_phonetic_toggle_is_saved_as_cell_ph() {
+    let (_, opened) = open("xlsx-phonetic.xlsx");
+    let mut d = Document::new(opened.presentation.clone());
+    let s = d.presentation().slides[0].id;
+    let ph_cells = |bytes: Vec<u8>| -> Vec<(u32, u32)> {
+        let again = ibis_pptx::open(bytes).unwrap();
+        let sheet = sheet_of_slide(again.presentation.slide(s).unwrap()).unwrap();
+        let mut v: Vec<_> = sheet.phonetic_shown.iter().copied().collect();
+        v.sort();
+        v
+    };
+    d.execute(vec![Command::Sheet(SheetCommand::SetShowPhonetic { slide: s, show: true })]).unwrap();
+    let on = save(&opened, d.presentation(), "phonetic-on.xlsx");
+    assert_eq!(ph_cells(on), vec![(0, 0), (0, 1), (0, 4), (1, 0), (1, 2), (2, 3)]);
+    d.execute(vec![Command::Sheet(SheetCommand::SetShowPhonetic { slide: s, show: false })]).unwrap();
+    let off = save(&opened, d.presentation(), "phonetic-off.xlsx");
+    assert_eq!(ph_cells(off.clone()), Vec::<(u32, u32)>::new());
+    let text = String::from_utf8_lossy(&ibis_ooxml::Package::open(off).unwrap().read("xl/worksheets/sheet1.xml").unwrap()).to_string();
+    assert!(!text.contains("showPhonetic") && !text.replace("<row r=\"2\" ph=\"1\"", "").contains(" ph=\"1\""), "{text}");
+    // The row's and the column's own flags stay as the file has them.
+    assert!(text.contains("<row r=\"2\" ph=\"1\"") && text.contains("phonetic=\"1\""), "{text}");
 }
 
 
@@ -9795,6 +9859,8 @@ fn rows_the_app_measured_on_opening_are_not_saved_as_custom_heights() {
             let sheet = std::sync::Arc::make_mut(sheet);
             if let Some(&r) = sheet.measured_rows.first() {
                 sheet.rows[r as usize] += ibis_doc_model::EMU_PER_POINT;
+                // A height set by hand is a fixed one (`SetSize` marks it).
+                sheet.custom_rows.insert(r);
                 resized += 1;
             }
         }
@@ -9845,7 +9911,7 @@ fn measured_rows_below_an_inserted_row_are_not_saved_as_custom_heights() {
             sheet.fitted_rows.insert(r, *h);
         }
     }
-    let (mut d, s) = insert(&p);
+    let (d, s) = insert(&p);
     let saved = opened.source.save(d.presentation(), SaveOptions::default()).unwrap();
     assert_eq!(custom_heights(&saved), expected, "a measured row below the inserted row was written as a custom height");
     // A measured row (now one lower) that the person resizes is written.
@@ -9853,6 +9919,171 @@ fn measured_rows_below_an_inserted_row_are_not_saved_as_custom_heights() {
     let sheet = sheet_mut(&mut p, s);
     let r = *sheet.measured_rows.iter().find(|&&r| sheet.rows.get(r as usize).is_some_and(|&h| h > 0)).unwrap();
     sheet.rows[r as usize] += ibis_doc_model::EMU_PER_POINT;
+    sheet.custom_rows.insert(r);
     let saved = opened.source.save(&p, SaveOptions::default()).unwrap();
     assert_eq!(custom_heights(&saved), expected + 1, "the resized row is written");
+}
+
+/// A row that takes a furigana line and has the `ht` Excel saved (no `customHeight`) keeps that height, as Excel does (Microsoft Excel 365,
+/// #M122): it is not one of the rows the app fits again, so the drawing and the page cut (made from `ht`) agree. A row with no furigana and
+/// an `ht` is fitted as before (row 3, `ht="30"`).
+#[test]
+fn xlsx_phonetic_row_with_a_saved_ht_keeps_it() {
+    let (_, opened) = open("xlsx-phonetic-ht.xlsx");
+    let sheet = sheet_of_slide(&opened.presentation.slides[0]).unwrap();
+    assert!(!sheet.measured_rows.contains(&0) && !sheet.measured_rows.contains(&1), "{:?}", sheet.measured_rows);
+    assert!(sheet.measured_rows.contains(&2));
+    assert_eq!(sheet.rows[0], sheet.rows[1]);
+    assert_eq!(sheet.rows[0], (27.75 * ibis_doc_model::EMU_PER_POINT as f64) as i64);
+}
+
+/// A fill, an outline (colour, dash) and a shadow set on a shape that is already in the sheet's drawing are written into its `xdr:sp`,
+/// in the schema's order (xfrm, geometry, fill, ln, effectLst), and read back.
+#[test]
+fn test_sheet_shape_fill_line_shadow_roundtrip() {
+    use ibis_doc_model::{Color, Fill, LineDash, Rgb, Shadow, ShapeKind, Stroke};
+
+    let (data, _) = open("xlsx-sales.xlsx");
+    let mut pkg = ibis_ooxml::Package::open(data).unwrap();
+    {
+        let doc = pkg.xml_mut("xl/drawings/drawing1.xml").unwrap();
+        let root = doc.root_element().unwrap();
+        let anchor = doc.append_element(root, "xdr:twoCellAnchor");
+        doc.set_attr(anchor, "editAs", "twoCell");
+        let from = doc.append_element(anchor, "xdr:from");
+        let fc = doc.append_element(from, "xdr:col"); doc.append_text(fc, "1");
+        let fco = doc.append_element(from, "xdr:colOff"); doc.append_text(fco, "0");
+        let fr = doc.append_element(from, "xdr:row"); doc.append_text(fr, "1");
+        let fro = doc.append_element(from, "xdr:rowOff"); doc.append_text(fro, "0");
+        let to = doc.append_element(anchor, "xdr:to");
+        let tc = doc.append_element(to, "xdr:col"); doc.append_text(tc, "3");
+        let tco = doc.append_element(to, "xdr:colOff"); doc.append_text(tco, "0");
+        let tr = doc.append_element(to, "xdr:row"); doc.append_text(tr, "5");
+        let tro = doc.append_element(to, "xdr:rowOff"); doc.append_text(tro, "0");
+        let sp = doc.append_element(anchor, "xdr:sp");
+        let nv = doc.append_element(sp, "xdr:nvSpPr");
+        let c_nv = doc.append_element(nv, "xdr:cNvPr");
+        doc.set_attr(c_nv, "id", "100");
+        doc.set_attr(c_nv, "name", "四角形 1");
+        let _c_nv_sp = doc.append_element(nv, "xdr:cNvSpPr");
+        let sp_pr = doc.append_element(sp, "xdr:spPr");
+        let xfrm = doc.append_element(sp_pr, "a:xfrm");
+        let off = doc.append_element(xfrm, "a:off");
+        doc.set_attr(off, "x", "0"); doc.set_attr(off, "y", "0");
+        let ext = doc.append_element(xfrm, "a:ext");
+        doc.set_attr(ext, "cx", "2000000"); doc.set_attr(ext, "cy", "1200000");
+        let geom = doc.append_element(sp_pr, "a:prstGeom");
+        doc.set_attr(geom, "prst", "rect");
+        let _ = doc.append_element(anchor, "xdr:clientData");
+    }
+    let input = pkg.save(ibis_pptx::SaveOptions::default()).unwrap();
+    let opened = ibis_pptx::open(input.clone()).unwrap();
+    let mut d = Document::new(opened.presentation.clone());
+    let s0 = d.presentation().slides[0].id;
+    let id = d.presentation().slide(s0).unwrap().shapes.iter().find(|sh| matches!(sh.kind, ShapeKind::Auto(_))).expect("auto shape").id;
+    let ShapeKind::Auto(auto) = &d.presentation().slide(s0).unwrap().shape(id).unwrap().kind else { panic!() };
+    let mut changed = auto.clone();
+    changed.fill = Fill::Solid(Color::opaque(Rgb(0xFF0000)));
+    changed.stroke = Some(Stroke::solid(Color::opaque(Rgb(0x00B050)), 25_400).with_dash(LineDash::Dash));
+    changed.shadow = Some(Shadow::simple(Color { rgb: Rgb(0), alpha: 102 }, 50_800, 38_100, 2_700_000));
+    d.execute(vec![Command::SetKind { slide: s0, shape: id, kind: Box::new(ShapeKind::Auto(changed.clone())) }]).unwrap();
+    let saved = opened.source.save(d.presentation(), ibis_pptx::SaveOptions::default()).unwrap();
+
+    let pkg_saved = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let xml = pkg_saved.xml("xl/drawings/drawing1.xml").unwrap();
+    let root = xml.root_element().unwrap();
+    let sp_pr = xml.descendants(root).into_iter().find(|&n| xml.is_element(n) && xml.local_name(n) == "spPr").expect("spPr");
+    let order: Vec<String> = xml.children(sp_pr).into_iter().copied().filter(|&c| xml.is_element(c)).map(|c| xml.local_name(c).to_string()).collect();
+    assert_eq!(order, ["xfrm", "prstGeom", "solidFill", "ln", "effectLst"], "spPr children in the schema's order");
+
+    let reopened = ibis_pptx::open(saved).unwrap().presentation;
+    let ShapeKind::Auto(re) = &reopened.slides[0].shape(id).unwrap().kind else { panic!() };
+    assert_eq!(re.fill, changed.fill);
+    let stroke = re.stroke.as_ref().expect("an outline");
+    assert_eq!((stroke.color.rgb, stroke.width, stroke.dash), (Rgb(0x00B050), 25_400, LineDash::Dash));
+    assert_eq!(re.shadow.map(|s| (s.blur, s.distance)), Some((50_800, 38_100)));
+
+    // Untouched: a save without a change leaves the drawing as it was.
+    let again = opened.source.save(&opened.presentation, ibis_pptx::SaveOptions::default()).unwrap();
+    let before = ibis_ooxml::Package::open(input).unwrap();
+    let after = ibis_ooxml::Package::open(again).unwrap();
+    assert_eq!(before.xml("xl/drawings/drawing1.xml").unwrap().to_bytes(), after.xml("xl/drawings/drawing1.xml").unwrap().to_bytes());
+}
+
+/// A connector (`xdr:cxnSp`) with an `xdr:style` (lnRef) like Excel writes: a new line colour, width and dash is written into its `spPr`'s `a:ln`
+/// (schema order kept) and the `xdr:style` stays as it was.
+#[test]
+fn test_sheet_connector_line_roundtrip() {
+    use ibis_doc_model::{Color, LineDash, Rgb, ShapeKind, Stroke};
+
+    let (data, _) = open("xlsx-sales.xlsx");
+    let mut pkg = ibis_ooxml::Package::open(data).unwrap();
+    {
+        let doc = pkg.xml_mut("xl/drawings/drawing1.xml").unwrap();
+        let root = doc.root_element().unwrap();
+        let anchor = doc.append_element(root, "xdr:twoCellAnchor");
+        let from = doc.append_element(anchor, "xdr:from");
+        for (n, v) in [("col", "1"), ("colOff", "0"), ("row", "1"), ("rowOff", "0")] {
+            let e = doc.append_element(from, &format!("xdr:{n}")); doc.append_text(e, v);
+        }
+        let to = doc.append_element(anchor, "xdr:to");
+        for (n, v) in [("col", "4"), ("colOff", "0"), ("row", "4"), ("rowOff", "0")] {
+            let e = doc.append_element(to, &format!("xdr:{n}")); doc.append_text(e, v);
+        }
+        let cxn = doc.append_element(anchor, "xdr:cxnSp");
+        doc.set_attr(cxn, "macro", "");
+        let nv = doc.append_element(cxn, "xdr:nvCxnSpPr");
+        let c_nv = doc.append_element(nv, "xdr:cNvPr");
+        doc.set_attr(c_nv, "id", "101");
+        doc.set_attr(c_nv, "name", "connector 2");
+        let _ = doc.append_element(nv, "xdr:cNvCxnSpPr");
+        let sp_pr = doc.append_element(cxn, "xdr:spPr");
+        let xfrm = doc.append_element(sp_pr, "a:xfrm");
+        let off = doc.append_element(xfrm, "a:off");
+        doc.set_attr(off, "x", "0"); doc.set_attr(off, "y", "0");
+        let ext = doc.append_element(xfrm, "a:ext");
+        doc.set_attr(ext, "cx", "2000000"); doc.set_attr(ext, "cy", "1200000");
+        let geom = doc.append_element(sp_pr, "a:prstGeom");
+        doc.set_attr(geom, "prst", "line");
+        let _ = doc.append_element(geom, "a:avLst");
+        let style = doc.append_element(cxn, "xdr:style");
+        let ln_ref = doc.append_element(style, "a:lnRef");
+        doc.set_attr(ln_ref, "idx", "1");
+        let clr = doc.append_element(ln_ref, "a:schemeClr");
+        doc.set_attr(clr, "val", "accent1");
+        let fill_ref = doc.append_element(style, "a:fillRef");
+        doc.set_attr(fill_ref, "idx", "0");
+        let c2 = doc.append_element(fill_ref, "a:schemeClr"); doc.set_attr(c2, "val", "accent1");
+        let eff_ref = doc.append_element(style, "a:effectRef");
+        doc.set_attr(eff_ref, "idx", "0");
+        let c3 = doc.append_element(eff_ref, "a:schemeClr"); doc.set_attr(c3, "val", "accent1");
+        let font_ref = doc.append_element(style, "a:fontRef");
+        doc.set_attr(font_ref, "idx", "minor");
+        let _ = doc.append_element(anchor, "xdr:clientData");
+    }
+    let input = pkg.save(ibis_pptx::SaveOptions::default()).unwrap();
+    let opened = ibis_pptx::open(input).unwrap();
+    let mut d = Document::new(opened.presentation.clone());
+    let s0 = d.presentation().slides[0].id;
+    let id = d.presentation().slide(s0).unwrap().shapes.iter().find(|sh| matches!(sh.kind, ShapeKind::Line(_))).expect("line shape").id;
+    let stroke = Stroke::solid(Color::opaque(Rgb(0xFF0000)), 38_100).with_dash(LineDash::DashDot);
+    d.execute(vec![Command::SetKind { slide: s0, shape: id, kind: Box::new(ShapeKind::Line(stroke.clone())) }]).unwrap();
+    let saved = opened.source.save(d.presentation(), ibis_pptx::SaveOptions::default()).unwrap();
+
+    let pkg_saved = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let xml = pkg_saved.xml("xl/drawings/drawing1.xml").unwrap();
+    let root = xml.root_element().unwrap();
+    let cxn = xml.descendants(root).into_iter().find(|&n| xml.is_element(n) && xml.local_name(n) == "cxnSp").expect("cxnSp");
+    let order: Vec<String> = xml.children(cxn).into_iter().copied().filter(|&c| xml.is_element(c)).map(|c| xml.local_name(c).to_string()).collect();
+    assert_eq!(order, ["nvCxnSpPr", "spPr", "style"], "xdr:style stays after spPr");
+    let sp_pr = xml.children(cxn).into_iter().copied().find(|&c| xml.is_element(c) && xml.local_name(c) == "spPr").unwrap();
+    let order: Vec<String> = xml.children(sp_pr).into_iter().copied().filter(|&c| xml.is_element(c)).map(|c| xml.local_name(c).to_string()).collect();
+    assert_eq!(order, ["xfrm", "prstGeom", "ln"]);
+    let style = xml.children(cxn).into_iter().copied().find(|&c| xml.is_element(c) && xml.local_name(c) == "style").unwrap();
+    let ln_ref = xml.children(style).into_iter().copied().find(|&c| xml.is_element(c) && xml.local_name(c) == "lnRef").unwrap();
+    assert_eq!(xml.attr(ln_ref, "idx"), Some("1"));
+
+    let reopened = ibis_pptx::open(saved).unwrap().presentation;
+    let ShapeKind::Line(re) = &reopened.slides[0].shape(id).unwrap().kind else { panic!() };
+    assert_eq!((re.color.rgb, re.width, re.dash), (Rgb(0xFF0000), 38_100, LineDash::DashDot));
 }

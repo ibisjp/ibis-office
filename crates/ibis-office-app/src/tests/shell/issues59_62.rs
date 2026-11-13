@@ -5,8 +5,10 @@ use super::{Scenario,button_probe as buttons};
 use gpui_kit::*;
 use crate::docx::scenarios::DocSteps;
 use ibis_doc_model::FlowPos;
+use crate::docx::ext::*;
 pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
     ("shell::issue61_recent_remove",recent_remove),
+    ("shell::recent_missing_file_alert",recent_missing_alert),
     ("shell::brand_logo_responsive",logos),
     ("docx::issue59_control_click_link",control_click),
     ("docx::issue60_vertical_symbols_and_ime",vertical),
@@ -27,6 +29,33 @@ fn recent_remove(){
     let option=buttons::all().into_iter().find(|id|id.contains("searchable-item-row-actions")).expect("history menu option");buttons::click(&mut s,&option);
     assert!(!s.with(|e,_|e.has_document),"overflow click must not open the file");assert!(remove.is_file());assert!(!crate::shell::recent_files::load().contains(&remove));assert!(crate::shell::recent_files::load().contains(&keep));
     s.update(|e,_,cx|{e.recent_files=crate::shell::recent_files::add(&missing);cx.notify();});let b=buttons::bounds("row-actions-0").unwrap();s.right_click((f32::from(b.origin.x)-80.,f32::from(b.center().y)));assert!(s.with(|e,_|e.link_popup.is_some()));buttons::click(&mut s,"menu-item-start.recent.remove");assert!(!crate::shell::recent_files::load().contains(&missing));assert!(keep.is_file());
+}
+/// A recent file that is gone is greyed (checked once off the UI thread, not at each paint) and its click, like the click on a
+/// file that cannot be read, tells it in a message box instead of doing nothing.
+fn recent_missing_alert(){
+    let _probe=buttons::Probe::new();let mut s=Scenario::start_view();
+    let good=s.screenshot_path("recent-good").with_extension("docx");let gone=s.screenshot_path("recent-gone").with_extension("docx");let broken=s.screenshot_path("recent-broken").with_extension("docx");
+    std::fs::write(&good,ibis_pptx::blank_file(ibis_pptx::Kind::Document).unwrap()).unwrap();std::fs::write(&broken,b"locked").unwrap();{use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&broken,std::fs::Permissions::from_mode(0)).unwrap();}let _=std::fs::remove_file(&gone);
+    s.update(|e,_,cx|{e.recent_files=vec![good.clone(),gone.clone(),broken.clone()];e.recent_exists.clear();cx.notify();});
+    s.wait(300);s.settle();
+    assert_eq!(s.with(|e,_|e.recent_exists.get(&gone).copied()),Some(false),"the missing file is found once");
+    assert_eq!(s.with(|e,_|e.recent_exists.get(&good).copied()),Some(true));
+    s.screenshot("recent-missing-greyed");
+    let row_click=|s:&mut Scenario,index:usize|{let b=buttons::bounds(&format!("row-actions-{index}")).unwrap();s.click((f32::from(b.origin.x)-80.,f32::from(b.center().y)));};
+    // A greyed row is still clickable: the alert (title, name, reason) opens and the start view stays.
+    row_click(&mut s,1);s.wait(300);s.settle();
+    let alert=s.with(|e,_|e.alert.clone()).expect("the click on a missing file shows the message box");
+    assert!(alert.1.contains("recent-gone.docx"),"the message names the file: {}",alert.1);assert!(!s.with(|e,_|e.has_document));
+    s.screenshot("recent-missing-alert");
+    buttons::click(&mut s,"alert-ok");assert!(s.with(|e,_|e.alert.is_none()));
+    // A file that exists but cannot be read (no permission) gives the message box as well.
+    row_click(&mut s,2);s.wait(500);s.settle();
+    let (a,d,l)=s.with(|e,_|(e.alert.clone(),e.has_document,e.loading));assert!(a.is_some(),"an unreadable file shows the message box (has_document {d}, loading {l})");assert!(!s.with(|e,_|e.has_document));
+    s.screenshot("recent-unreadable-alert");
+    buttons::click(&mut s,"alert-ok");{use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&broken,std::fs::Permissions::from_mode(0o644)).unwrap();}
+    // A good one still opens.
+    row_click(&mut s,0);s.wait(800);s.settle();
+    assert!(s.with(|e,_|e.has_document)&&s.with(|e,_|e.alert.is_none()),"a readable file opens");
 }
 fn logos(){
     let _probe=buttons::Probe::new();let mut s=Scenario::start_view();s.size(1200.,800.);let b=buttons::bounds("start-app-logo").unwrap();assert!(f32::from(b.size.height)>80.);s.screenshot("start-logo");
@@ -68,7 +97,7 @@ fn glow_outline(){
     let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Presentation,w,cx));
     let p=s.with(|e,_|e.presentation().clone());let mut right_edges=Vec::new();let mut pixels_per_point=0.;
     for width in [0,8*12700] {
-        let mut shape=Shape::text_box(ibis_doc_model::ShapeId(9999),EmuRect::new(0,0,4000000,2000000),"O");let body=shape.text_body_mut().unwrap();body.style.font_size=7200;body.style.font=Some("Arial".into());for run in body.paragraphs.iter_mut().flat_map(|p|&mut p.runs){run.style.font_size=Some(7200);run.style.outline=(width>0).then_some((Rgb(0),width));run.style.glow=Some((Color::opaque(Rgb(0xff0000)),4*12700));}
+        let mut shape=Shape::text_box(ibis_doc_model::ShapeId(9999),EmuRect::new(0,0,4000000,2000000),"O");let body=shape.text_body_mut().unwrap();body.style.font_size=7200;body.style.font=Some("Arial".into());for run in body.paragraphs.iter_mut().flat_map(|p|&mut p.runs){run.style.font_size=Some(7200);run.style.outline=(width>0).then_some((Color::opaque(Rgb(0)),width));run.style.glow=Some((Color::opaque(Rgb(0xff0000)),4*12700));}
         let rendered=crate::native_shape_clipboard::image_fallback(&p,&[shape]).unwrap();let pixels=image::load_from_memory(&rendered.bytes).unwrap().to_rgba8();pixels_per_point=pixels.width() as f32/(4000000. /12700.);let right=pixels.enumerate_pixels().filter(|(_,_,p)|p[0]>p[1].saturating_add(5)&&p[0]>p[2].saturating_add(5)).map(|(x,_,_)|x).max().expect("a red glow");right_edges.push(right);
     }
     let expansion=right_edges[1]as f32-right_edges[0]as f32;
@@ -86,7 +115,7 @@ fn glow_91(){
     let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Presentation,w,cx));
     let p=s.with(|e,_|e.presentation().clone());let mut gaps=Vec::new();
     for width in [0,8*12700]{
-        let mut shape=Shape::text_box(ibis_doc_model::ShapeId(9999),EmuRect::new(0,0,4000000,2000000),"O");let body=shape.text_body_mut().unwrap();body.style.font_size=7200;body.style.font=Some("Arial".into());for run in body.paragraphs.iter_mut().flat_map(|p|&mut p.runs){run.style.font_size=Some(7200);run.style.outline=Some((Rgb(0),width.max(1)));run.style.glow=Some((Color::opaque(Rgb(0xff0000)),4*12700));if width==0{run.style.outline=None;}}
+        let mut shape=Shape::text_box(ibis_doc_model::ShapeId(9999),EmuRect::new(0,0,4000000,2000000),"O");let body=shape.text_body_mut().unwrap();body.style.font_size=7200;body.style.font=Some("Arial".into());for run in body.paragraphs.iter_mut().flat_map(|p|&mut p.runs){run.style.font_size=Some(7200);run.style.outline=Some((Color::opaque(Rgb(0)),width.max(1)));run.style.glow=Some((Color::opaque(Rgb(0xff0000)),4*12700));if width==0{run.style.outline=None;}}
         let rendered=crate::native_shape_clipboard::image_fallback(&p,&[shape]).unwrap();let pixels=image::load_from_memory(&rendered.bytes).unwrap().to_rgba8();
         let ink=pixels.enumerate_pixels().filter(|(_,_,p)|p[3]>200&&p[0]<60&&p[1]<60&&p[2]<60).map(|(x,_,_)|x).max().expect("the text");
         let glow=pixels.enumerate_pixels().filter(|(_,_,p)|p[0]>p[1].saturating_add(5)&&p[0]>p[2].saturating_add(5)).map(|(x,_,_)|x).max().expect("a red glow");

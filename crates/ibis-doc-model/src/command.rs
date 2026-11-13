@@ -125,6 +125,10 @@ pub enum Command {
     SetMarkAsFinal { mark_as_final: bool },
     /// 読み取り専用を推奨（PowerPoint の「読み取り専用を推奨」: `p1710:readonlyRecommended`）。
     SetReadOnlyRecommended { read_only_recommended: bool },
+    /// The file's CMYK mode (on or off, the profile's name, the colours given as CMYK), replaced as a whole.
+    SetCmykMode { cmyk: crate::cmyk::CmykMode },
+    /// Turn on (or off) ibisOffice's own features PowerPoint does not have, for the whole file.
+    SetIbisExtensions { enabled: bool },
     /// 書き込みパスワード（`p:modifyVerifier`）を設定・解除する。
     SetModifyVerifier { verifier: Option<crate::model::ModifyVerifier> },
     /// ドキュメント プロパティ（タイトル・作成者・カスタムプロパティ等: `docProps/core.xml`, `docProps/app.xml`, `docProps/custom.xml`）.
@@ -157,6 +161,13 @@ pub enum Command {
     SetShapeAltText { slide: SlideId, shape: ShapeId, alt_text: crate::model::AltText },
     /// Mark a shape as decorative (装飾用オブジェクト: `a1611:decorative`).
     SetShapeDecorative { slide: SlideId, shape: ShapeId, decorative: bool },
+    /// How text wraps round a picture or video (ibisOffice's own; `ObjectWrapKind::None` takes it away).
+    SetObjectWrap { slide: SlideId, shape: ShapeId, wrap: crate::ObjectWrap },
+    /// Whether a text box's text ignores the wrap round pictures and videos.
+    SetWrapIgnore { slide: SlideId, shape: ShapeId, ignore: bool },
+    /// The slide's chains of text boxes made `chains`, and the paragraphs of the boxes in `bodies` made what it says (a link made
+    /// or broken, a text flowed again): one step, so that undo brings both back.
+    SetTextChains { slide: SlideId, chains: Vec<crate::TextChain>, bodies: Vec<(ShapeId, Vec<crate::text::Paragraph>)> },
     /// セルに対する配置方式 (editAs: twoCell, oneCell, absolute).
     SetShapePlacement { slide: SlideId, shape: ShapeId, placement: crate::model::ObjectPlacement },
     /// オブジェクトを印刷する (fPrintsWithSheet).
@@ -728,6 +739,14 @@ impl Presentation {
                 let old = std::mem::replace(&mut self.mark_as_final, mark_as_final);
                 Ok(Command::SetMarkAsFinal { mark_as_final: old })
             }
+            Command::SetCmykMode { cmyk } => {
+                let old = std::mem::replace(&mut self.cmyk, cmyk);
+                Ok(Command::SetCmykMode { cmyk: old })
+            }
+            Command::SetIbisExtensions { enabled } => {
+                let old = std::mem::replace(&mut self.ibis_extensions, enabled);
+                Ok(Command::SetIbisExtensions { enabled: old })
+            }
             Command::SetReadOnlyRecommended { read_only_recommended } => {
                 let old = std::mem::replace(&mut self.read_only_recommended, read_only_recommended);
                 Ok(Command::SetReadOnlyRecommended { read_only_recommended: old })
@@ -798,6 +817,38 @@ impl Presentation {
                     s.shape_alt_texts.insert(shape, alt_text)
                 };
                 Ok(Command::SetShapeAltText { slide, shape, alt_text: old.unwrap_or_default() })
+            }
+            Command::SetObjectWrap { slide, shape, wrap } => {
+                let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
+                if s.shape(shape).is_none() {
+                    return Err(EditError::NoSuchShape(shape));
+                }
+                let old = if wrap.is_none() { s.ibis_wrap.remove(&shape) } else { s.ibis_wrap.insert(shape, wrap) };
+                Ok(Command::SetObjectWrap { slide, shape, wrap: old.unwrap_or_default() })
+            }
+            Command::SetTextChains { slide, chains, bodies } => {
+                let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
+                for (shape, _) in &bodies {
+                    if s.shape(*shape).and_then(|sh| sh.text_body()).is_none() {
+                        return Err(EditError::NoSuchShape(*shape));
+                    }
+                }
+                let old_chains = std::mem::replace(&mut s.text_chains, chains);
+                let mut old_bodies = Vec::new();
+                for (shape, paragraphs) in bodies {
+                    if let Some(body) = s.shapes.iter_mut().find(|sh| sh.id == shape).and_then(|sh| sh.text_body_mut()) {
+                        old_bodies.push((shape, std::mem::replace(&mut body.paragraphs, paragraphs)));
+                    }
+                }
+                Ok(Command::SetTextChains { slide, chains: old_chains, bodies: old_bodies })
+            }
+            Command::SetWrapIgnore { slide, shape, ignore } => {
+                let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
+                if s.shape(shape).is_none() {
+                    return Err(EditError::NoSuchShape(shape));
+                }
+                let was = if ignore { !s.ibis_wrap_ignore.insert(shape) } else { s.ibis_wrap_ignore.remove(&shape) };
+                Ok(Command::SetWrapIgnore { slide, shape, ignore: was })
             }
             Command::SetShapeDecorative { slide, shape, decorative } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
@@ -1239,12 +1290,12 @@ mod tests {
     #[test]
     fn shape_group_hierarchy_undo_and_invalid_membership() {
         use crate::{ShapeGroup,GroupMember};let (mut doc,slide,shape)=doc_with_box();let id=doc.ids().new_shape_id();let mut second=doc.presentation().slides[0].shapes[0].clone();second.id=id;doc.execute(vec![Command::InsertShape {slide,index:1,shape:second}]).unwrap();
-        let before=doc.presentation().clone();let groups=vec![ShapeGroup {has_unmodelled_children:false,native_id:"99".into(),name:"outer".into(),children:vec![GroupMember::Group(Box::new(ShapeGroup {has_unmodelled_children:false,native_id:"100".into(),name:"inner".into(),children:vec![GroupMember::Shape(shape)]})),GroupMember::Shape(id)]}];doc.execute(vec![Command::SetShapeGroups {slide,groups:groups.clone()}]).unwrap();let grouped=doc.presentation().clone();assert!(grouped.slides[0].valid_groups(&groups));assert!(doc.undo());assert_eq!(doc.presentation(),&before);assert!(doc.redo());assert_eq!(doc.presentation(),&grouped);
+        let before=doc.presentation().clone();let groups=vec![ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id:"99".into(),name:"outer".into(),children:vec![GroupMember::Group(Box::new(ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id:"100".into(),name:"inner".into(),children:vec![GroupMember::Shape(shape)]})),GroupMember::Shape(id)]}];doc.execute(vec![Command::SetShapeGroups {slide,groups:groups.clone()}]).unwrap();let grouped=doc.presentation().clone();assert!(grouped.slides[0].valid_groups(&groups));assert!(doc.undo());assert_eq!(doc.presentation(),&before);assert!(doc.redo());assert_eq!(doc.presentation(),&grouped);
         for kind in 0..4 {let mut invalid=groups.clone();match kind {0=>invalid[0].native_id="invalid".into(),1=>invalid[0].children.push(GroupMember::Shape(shape)),2=>invalid[0].children.push(GroupMember::Shape(ShapeId(u64::MAX))),3=>invalid[0].name="bad\0name".into(),_=>unreachable!()}assert_eq!(doc.execute(vec![Command::SetShapeGroups {slide,groups:invalid}]),Err(EditError::InvalidShapeGroups));assert_eq!(doc.presentation(),&grouped);}
         for command in [Command::RemoveShape {slide,shape},Command::RemoveShapes {slide,shapes:vec![shape,id]}] {let before=doc.presentation().clone();doc.execute(vec![command]).unwrap();let after=doc.presentation().clone();assert!(after.slides[0].valid_groups(&after.slides[0].groups));assert!(doc.undo());assert_eq!(doc.presentation(),&before);assert!(doc.redo());assert_eq!(doc.presentation(),&after);assert!(doc.undo());assert_eq!(doc.presentation(),&before);}
         let mut duplicate=groups.clone();let GroupMember::Group(inner)=&mut duplicate[0].children[0] else {panic!("nested")};inner.native_id="99".into();assert_eq!(doc.execute(vec![Command::SetShapeGroups {slide,groups:duplicate}]),Err(EditError::InvalidShapeGroups));assert_eq!(doc.presentation(),&grouped);
         assert!(doc.execute(vec![Command::SetShapeGroups {slide,groups:vec![]},Command::RemoveShape {slide,shape:ShapeId(u64::MAX)}]).is_err());assert_eq!(doc.presentation(),&grouped,"partial command failure restores hierarchy");
-        let mut attached=grouped.clone();attached.slides[0].attached.insert(shape,vec![id]);attached.slides[0].groups=vec![ShapeGroup {has_unmodelled_children:false,native_id:"200".into(),name:"attached owner".into(),children:vec![GroupMember::Shape(shape)]}];let mut doc=Document::new(attached.clone());doc.execute(vec![Command::RemoveShape {slide,shape}]).unwrap();let removed=doc.presentation().clone();assert!(removed.slides[0].groups.is_empty());assert!(removed.slides[0].shapes.is_empty());assert!(doc.undo());assert_eq!(doc.presentation(),&attached);assert!(doc.redo());assert_eq!(doc.presentation(),&removed);
+        let mut attached=grouped.clone();attached.slides[0].attached.insert(shape,vec![id]);attached.slides[0].groups=vec![ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id:"200".into(),name:"attached owner".into(),children:vec![GroupMember::Shape(shape)]}];let mut doc=Document::new(attached.clone());doc.execute(vec![Command::RemoveShape {slide,shape}]).unwrap();let removed=doc.presentation().clone();assert!(removed.slides[0].groups.is_empty());assert!(removed.slides[0].shapes.is_empty());assert!(doc.undo());assert_eq!(doc.presentation(),&attached);assert!(doc.redo());assert_eq!(doc.presentation(),&removed);
 
     }
 

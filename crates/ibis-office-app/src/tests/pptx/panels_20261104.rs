@@ -7,6 +7,8 @@ use super::{png, press_panel_button};
 use crate::shell::scenario::Scenario;
 use gpui_kit::{MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point, px};
 use ibis_doc_model::{Crop, ShapeKind};
+use crate::pptx::ext::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
@@ -21,7 +23,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 
 fn font_replace_lists() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
-    let used = s.with(|e, _| crate::pptx::replace_fonts::presentation_used_fonts(e.presentation()));
+    let used = s.with(|e, _| crate::shell::replace_fonts::presentation_used_fonts(e.presentation()));
     // The "replace from" list: only the fonts the file uses, in a section of their own.
     let from = crate::shell::font_list::build_grouped_font_menu_entries("panel-font-test", &used, false, None, |_, _, _, _| {});
     let ids = |entries: &[crate::shell::chrome::MenuEntry]| -> Vec<&'static str> {
@@ -44,7 +46,7 @@ fn font_replace_lists() {
     s.update(|e, w, cx| e.open_replace_fonts_panel(w, cx));
     s.screenshot("font-replace");
     if let Some(first) = used.first().cloned() {
-        let before = s.with(|e, _| crate::pptx::replace_fonts::replace_presentation_fonts_commands(e.presentation(), &first, "Arial Black").len());
+        let before = s.with(|e, _| crate::shell::replace_fonts::replace_presentation_fonts_commands(e.presentation(), &first, "Arial Black").len());
         assert!(before > 0 || first.eq_ignore_ascii_case("Arial Black"));
     }
 }
@@ -54,7 +56,7 @@ fn crop_panel_unit() {
     s.update(|e, _, cx| e.insert_picture("custom.png", png(160, 120, [0x44, 0x88, 0xaa]), cx));
     let original = s.with(|e, _| e.selected_shapes()[0].clone());
     s.update(|e, w, cx| e.open_crop_panel(w, cx));
-    let fields = s.with(|e, _| e.pptx().unwrap().crop_panel.as_ref().unwrap().fields.clone());
+    let fields = s.with(|e, _| e.shape_edit.crop_panel.as_ref().unwrap().fields.clone());
     // In percent first; the unit switched to pixels: 10 % of a 160 px wide picture is 16 px, of a 120 px high one 12 px.
     s.update(|_, w, cx| { for (f, v) in fields.iter().zip(["10", "10", "0", "0"]) { f.update(cx, |f, cx| f.set_value(v, w, cx)); } });
     s.update(|e, w, cx| e.set_crop_unit(crate::shell::crop_units::CropUnit::Pixels, w, cx));
@@ -76,7 +78,7 @@ fn crop_panel_unit() {
     );
     // Reopened, the fields show the crop in percent again (the default unit): 20, 0, 0, 20.
     s.update(|e, w, cx| e.open_crop_panel(w, cx));
-    let fields = s.with(|e, _| e.pptx().unwrap().crop_panel.as_ref().unwrap().fields.clone());
+    let fields = s.with(|e, _| e.shape_edit.crop_panel.as_ref().unwrap().fields.clone());
     let shown = s.with(|_, cx| fields.iter().map(|f| f.read(cx).value().to_string()).collect::<Vec<_>>());
     assert_eq!(shown, ["20", "0", "0", "20"]);
     s.screenshot("crop-panel-percent");
@@ -136,14 +138,14 @@ fn chart_data_panel() {
     s.page(2);
     s.update(|e, w, cx| e.insert_slide_chart(w, cx));
     // The panel has no grid of its own: the workbook's grid (the spreadsheet screen's editor, grid only) is embedded in it.
-    let workbook = s.with(|e, _| e.pptx().unwrap().chart_panel.as_ref().and_then(|p| p.grid.clone())).expect("the embedded grid");
+    let workbook = s.with(|e, _| e.shape_edit.chart_panel.as_ref().and_then(|p| p.grid.clone())).expect("the embedded grid");
     assert!(s.with(|_, cx| workbook.read(cx).is_workbook() && workbook.read(cx).grid_only), "the spreadsheet screen's editor holds the data");
     // One sheet: the grid has no sheet tabs; a workbook read with several sheets shows them.
     assert!(!s.with(|_, cx| workbook.read(cx).shows_sheet_tabs()));
     s.screenshot("chart-data-panel");
     // Opening the data again shows the same grid (no second workbook, no window).
     s.update(|e, w, cx| e.open_chart_data(w, cx));
-    let again = s.with(|e, _| e.pptx().unwrap().chart_data.as_ref().map(|d| d.view.clone())).expect("the data grid");
+    let again = s.with(|e, _| e.shape_edit.chart_data.as_ref().map(|d| d.view.clone())).expect("the data grid");
     assert_eq!(again.entity_id(), workbook.entity_id());
     // Typing in the grid: the cell's text is put in the chart, and the chart's pane keeps the grid.
     s.update(|_, _, cx| workbook.update(cx, |d, cx| {
@@ -165,7 +167,7 @@ fn chart_without_workbook() {
     let shape = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).expect("a chart");
     s.click_shape(shape);
     s.update(|e, w, cx| e.open_chart_data(w, cx));
-    let grid = s.with(|e, _| e.pptx().unwrap().chart_panel.as_ref().and_then(|p| p.grid.clone())).expect("the grid, for a chart with no workbook too");
+    let grid = s.with(|e, _| e.shape_edit.chart_panel.as_ref().and_then(|p| p.grid.clone())).expect("the grid, for a chart with no workbook too");
     assert!(s.with(|_, cx| grid.read(cx).is_workbook() && grid.read(cx).grid_only));
     s.screenshot("chart-no-workbook-grid");
     s.chart_grid_set(0, Some(0), "77");

@@ -273,11 +273,41 @@ fn shape_body(shape: &Shape) -> Option<&ibis_doc_model::TextBody> {
 /// The text of a `w:txbxContent`, paragraphs joined by `\n`.
 /// What a text body's runs look like, paragraph by paragraph: the text of each run of the same look, with its look (bold, italic,
 /// underline, underline kind, size in half points, colour).
-fn run_looks(body: &ibis_doc_model::TextBody) -> Vec<Vec<(String, bool, bool, bool, ibis_doc_model::Underline, u32, u32)>> {
+type RunLook = (String, bool, bool, bool, ibis_doc_model::Underline, u32, u32, TextEffectsLook);
+/// A run's outline, shadow and glow (the `w14:` text effects a text box's run has).
+type TextEffectsLook = (Option<(ibis_doc_model::Color, i64)>, Option<ibis_doc_model::Shadow>, Option<(ibis_doc_model::Color, i64)>);
+fn text_effects_look(style: &ibis_doc_model::RunStyle) -> TextEffectsLook {
+    (style.outline, style.shadow.clone(), style.glow)
+}
+
+/// The `w14:` text effects of a run as the XML of a new text box's `w:rPr` (each element declares its namespace).
+fn w14_effects_xml(fx: &TextEffectsLook) -> String {
+    let ns = format!(r#"xmlns:w14="{W14_NS}""#);
+    let colour = |c: &ibis_doc_model::Color| {
+        let alpha = if c.alpha < 255 { format!(r#"<w14:alpha w14:val="{}"/>"#, c.alpha as i64 * 100_000 / 255) } else { String::new() };
+        format!(r#"<w14:srgbClr w14:val="{:06X}">{alpha}</w14:srgbClr>"#, c.rgb.0 & 0xffffff)
+    };
+    let mut out = String::new();
+    if let Some((c, radius)) = &fx.2 {
+        out += &format!(r#"<w14:glow {ns} w14:rad="{radius}">{}</w14:glow>"#, colour(c));
+    }
+    if let Some(sh) = &fx.1 {
+        out += &format!(
+            r#"<w14:shadow {ns} w14:blurRad="{}" w14:dist="{}" w14:dir="{}" w14:sx="{}" w14:sy="{}" w14:kx="{}" w14:ky="{}" w14:algn="tl">{}</w14:shadow>"#,
+            sh.blur, sh.distance, sh.direction, sh.sx, sh.sy, sh.kx, sh.ky, colour(&sh.color)
+        );
+    }
+    if let Some((c, width)) = &fx.0 {
+        out += &format!(r#"<w14:textOutline {ns} w14:w="{width}" w14:cap="flat" w14:cmpd="sng" w14:algn="ctr"><w14:solidFill>{}</w14:solidFill><w14:prstDash w14:val="solid"/><w14:round/></w14:textOutline>"#, colour(c));
+    }
+    out
+}
+
+fn run_looks(body: &ibis_doc_model::TextBody) -> Vec<Vec<RunLook>> {
     body.paragraphs
         .iter()
         .map(|p| {
-            let mut out: Vec<(String, bool, bool, bool, ibis_doc_model::Underline, u32, u32)> = Vec::new();
+            let mut out: Vec<RunLook> = Vec::new();
             for r in p.runs.iter().filter(|r| !r.text.is_empty()) {
                 let look = (
                     r.style.bold.unwrap_or(body.style.bold),
@@ -286,10 +316,11 @@ fn run_looks(body: &ibis_doc_model::TextBody) -> Vec<Vec<(String, bool, bool, bo
                     r.style.underline_kind,
                     (r.style.font_size.unwrap_or(body.style.font_size) + 25) / 50,
                     r.style.color.unwrap_or(body.style.color).0 & 0xffffff,
+                    text_effects_look(&r.style),
                 );
                 match out.last_mut() {
-                    Some(last) if (last.1, last.2, last.3, last.4, last.5, last.6) == look => last.0.push_str(&r.text),
-                    _ => out.push((r.text.clone(), look.0, look.1, look.2, look.3, look.4, look.5)),
+                    Some(last) if (last.1, last.2, last.3, last.4, last.5, last.6, &last.7) == (look.0, look.1, look.2, look.3, look.4, look.5, &look.6) => last.0.push_str(&r.text),
+                    _ => out.push((r.text.clone(), look.0, look.1, look.2, look.3, look.4, look.5, look.6)),
                 }
             }
             out
@@ -2588,18 +2619,16 @@ impl Writer<'_> {
             match b.line_numbers {
                 Some(ln) => {
                     let e = self.ensure(sect, "lnNumType", SECT_ORDER);
-                    if ln.count_by != 1 {
-                        self.doc.set_attr(e, "w:countBy", &ln.count_by.to_string());
-                    } else {
-                        self.doc.remove_attr(e, "w:countBy");
-                    }
+                    // Always written: a missing w:countBy is 0, no numbering at all (Word; #140), so one of 1 must say so.
+                    self.doc.set_attr(e, "w:countBy", &ln.count_by.max(1).to_string());
                     if ln.start != 1 {
                         self.doc.set_attr(e, "w:start", &(ln.start - 1).to_string());
                     } else {
                         self.doc.remove_attr(e, "w:start");
                     }
                     if ln.distance > 0 {
-                        self.doc.set_attr(e, "w:distance", &(ln.distance / 635).to_string());
+                        // Whole twips (1 twip = 635 EMU), to the nearest.
+                        self.doc.set_attr(e, "w:distance", &((ln.distance + 317) / 635).to_string());
                     } else {
                         self.doc.remove_attr(e, "w:distance");
                     }
@@ -3865,7 +3894,10 @@ impl Writer<'_> {
             if italic { "<w:i/><w:iCs/>" } else { "" },
             u_xml(underline, underline_kind),
             if color != ibis_doc_model::TextStyle::default().color { format!("<w:color w:val=\"{:06X}\"/>", color.0 & 0xffffff) } else { String::new() },
-        );
+        ) + &first.map(|r| w14_effects_xml(&text_effects_look(&r.style))).unwrap_or_default();
+        if body.paragraphs.iter().flat_map(|p| &p.runs).any(|r| text_effects_look(&r.style) != TextEffectsLook::default()) {
+            self.ensure_w14_ignorable();
+        }
         // Each run with its own look when the paragraphs have runs that differ (a part of the text bold…); else a run per line.
         let looks = run_looks(body);
         let paragraphs: String = if let Some(x) = tcy_paragraph_xml(body, &esc, &u_xml) {
@@ -3876,13 +3908,14 @@ impl Writer<'_> {
                 .map(|p| {
                     let runs: String = p
                         .iter()
-                        .map(|(t, b, i, u, uk, half, c)| {
+                        .map(|(t, b, i, u, uk, half, c, fx)| {
                             let rpr = format!(
-                                "{}{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
+                                "{}{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>{}",
                                 if *b { "<w:b/><w:bCs/>" } else { "" },
                                 if *i { "<w:i/><w:iCs/>" } else { "" },
                                 u_xml(*u, *uk),
                                 if *c != ibis_doc_model::TextStyle::default().color.0 & 0xffffff { format!("<w:color w:val=\"{c:06X}\"/>") } else { String::new() },
+                                w14_effects_xml(fx),
                             );
                             format!(r#"<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r>"#, esc(t))
                         })
@@ -3945,7 +3978,7 @@ impl Writer<'_> {
         node
     }
 
-    fn wsp_xml(&self, shape: &Shape, text: Option<&ibis_doc_model::TextBody>, id: u64, off_x: i64, off_y: i64, include_cnvpr: bool) -> String {
+    fn wsp_xml(&mut self, shape: &Shape, text: Option<&ibis_doc_model::TextBody>, id: u64, off_x: i64, off_y: i64, include_cnvpr: bool) -> String {
         let default_body = ibis_doc_model::TextBody::default();
         let body = text.unwrap_or(&default_body);
         let px = drawing_prefixes();
@@ -4000,7 +4033,10 @@ impl Writer<'_> {
             if italic { "<w:i/><w:iCs/>" } else { "" },
             u_xml(underline, underline_kind),
             if color != ibis_doc_model::TextStyle::default().color { format!("<w:color w:val=\"{:06X}\"/>", color.0 & 0xffffff) } else { String::new() },
-        );
+        ) + &first.map(|r| w14_effects_xml(&text_effects_look(&r.style))).unwrap_or_default();
+        if body.paragraphs.iter().flat_map(|p| &p.runs).any(|r| text_effects_look(&r.style) != TextEffectsLook::default()) {
+            self.ensure_w14_ignorable();
+        }
         let looks = run_looks(body);
         let paragraphs: String = if let Some(x) = tcy_paragraph_xml(body, &esc, &u_xml) {
             x
@@ -4010,13 +4046,14 @@ impl Writer<'_> {
                 .map(|p| {
                     let runs: String = p
                         .iter()
-                        .map(|(t, b, i, u, uk, half, c)| {
+                        .map(|(t, b, i, u, uk, half, c, fx)| {
                             let rpr = format!(
-                                "{}{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>",
+                                "{}{}{}{}<w:sz w:val=\"{half}\"/><w:szCs w:val=\"{half}\"/>{}",
                                 if *b { "<w:b/><w:bCs/>" } else { "" },
                                 if *i { "<w:i/><w:iCs/>" } else { "" },
                                 u_xml(*u, *uk),
                                 if *c != ibis_doc_model::TextStyle::default().color.0 & 0xffffff { format!("<w:color w:val=\"{c:06X}\"/>") } else { String::new() },
+                                w14_effects_xml(fx),
                             );
                             format!(r#"<w:r><w:rPr>{rpr}</w:rPr><w:t xml:space="preserve">{}</w:t></w:r>"#, esc(t))
                         })
@@ -4317,6 +4354,7 @@ impl Writer<'_> {
                         }
                     }
                 }
+                self.write_w14_text_effects(rpr, &run.style);
                 let t = self.doc.append_element(r, &self.w("t"));
                 if needs_space_preserve(&run.text) {
                     self.doc.set_attr(t, "xml:space", "preserve");
@@ -5467,6 +5505,11 @@ impl Writer<'_> {
         for &j in list {
             let original = kept[j].and_then(|i| node_of[i]);
             match &new_atoms[j].0 {
+                // The model's mark of an optional hyphen is the `w:softHyphen` element in the file, never a character of `w:t`.
+                AtomKey::Char(ibis_doc_model::OPTIONAL_HYPHEN) => {
+                    flush(self, run, &mut text);
+                    self.doc.append_element(run, &self.w("softHyphen"));
+                }
                 AtomKey::Char(c) => text.push(*c),
                 AtomKey::Tab => {
                     flush(self, run, &mut text);
@@ -6430,6 +6473,15 @@ impl Writer<'_> {
                     let node = if let Some(n) = original.filter(|&n| matches!(self.doc.local_name(n), "oMath" | "oMathPara")) {
                         self.doc.deep_clone(n)
                     } else {
+                        // The colour the run has (the whole formula's) goes on the runs that have none of their own.
+                        let coloured;
+                        let math = match new_atoms[j].1.color {
+                            Some(color) => {
+                                coloured = math.with_default_color(color);
+                                &coloured
+                            }
+                            None => math,
+                        };
                         let xml = if *display {
                             crate::math_xml::write_math(math)
                         } else {
@@ -6764,6 +6816,89 @@ impl Writer<'_> {
         self.doc.lookup_prefix(root, W14_NS).unwrap_or_else(|| "w14".into())
     }
 
+    /// Make `w14` an ignorable namespace of the part (`mc:Ignorable`), so a reader that does not know Word 2010's extensions skips them.
+    fn ensure_w14_ignorable(&mut self) {
+        const MC_NS: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+        let w14 = self.w14_prefix();
+        let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
+        if self.doc.lookup_prefix(root, MC_NS).is_none() {
+            self.doc.set_attr(root, "xmlns:mc", MC_NS);
+        }
+        let mc = self.doc.lookup_prefix(root, MC_NS).unwrap_or_else(|| "mc".into());
+        let name = format!("{mc}:Ignorable");
+        let current = self.doc.attr(root, &name).unwrap_or("").to_string();
+        if !current.split_whitespace().any(|p| p == w14) {
+            let value = if current.is_empty() { w14 } else { format!("{current} {w14}") };
+            self.doc.set_attr(root, &name, &value);
+        }
+    }
+
+    /// A run's outline, shadow and glow as Word 2010's text effects (`w14:textOutline`, `w14:shadow`, `w14:glow` of its `w:rPr`, after
+    /// the `w:` properties, in the schema's order of the `w14:` ones). The run's old ones are replaced; the others (`w14:textFill`,
+    /// ligatures…) stay.
+    fn write_w14_text_effects(&mut self, rpr: NodeId, style: &ibis_doc_model::RunStyle) {
+        const ORDER: &[&str] = &["glow", "shadow", "reflection", "textOutline", "textFill", "scene3d", "props3d", "ligatures", "numForm", "numSpacing", "stylisticSets", "cntxtAlts"];
+        for c in self.doc.children(rpr).to_vec() {
+            if self.doc.is_element(c) && self.doc.namespace(c) == Some(W14_NS) && matches!(self.doc.local_name(c), "glow" | "shadow" | "textOutline") {
+                self.doc.detach(c);
+            }
+        }
+        if style.outline.is_none() && style.shadow.is_none() && style.glow.is_none() {
+            return;
+        }
+        let w14 = self.w14_prefix();
+        self.ensure_w14_ignorable();
+        let colour = |w: &mut Self, parent: NodeId, c: ibis_doc_model::Color| {
+            let e = w.doc.append_element(parent, &format!("{w14}:srgbClr"));
+            w.doc.set_attr(e, &format!("{w14}:val"), &format!("{:06X}", c.rgb.0 & 0xffffff));
+            if c.alpha < 255 {
+                let a = w.doc.append_element(e, &format!("{w14}:alpha"));
+                w.doc.set_attr(a, &format!("{w14}:val"), &(c.alpha as i64 * 100_000 / 255).to_string());
+            }
+        };
+        let mut made: Vec<(&str, NodeId)> = Vec::new();
+        if let Some((c, radius)) = style.glow {
+            let e = self.doc.append_element(rpr, &format!("{w14}:glow"));
+            self.doc.set_attr(e, &format!("{w14}:rad"), &radius.to_string());
+            colour(self, e, c);
+            made.push(("glow", e));
+        }
+        if let Some(sh) = &style.shadow {
+            let e = self.doc.append_element(rpr, &format!("{w14}:shadow"));
+            for (k, v) in [("blurRad", sh.blur.to_string()), ("dist", sh.distance.to_string()), ("dir", sh.direction.to_string()), ("sx", sh.sx.to_string()), ("sy", sh.sy.to_string()), ("kx", sh.kx.to_string()), ("ky", sh.ky.to_string())] {
+                self.doc.set_attr(e, &format!("{w14}:{k}"), &v);
+            }
+            self.doc.set_attr(e, &format!("{w14}:algn"), "tl");
+            colour(self, e, sh.color);
+            made.push(("shadow", e));
+        }
+        if let Some((c, width)) = style.outline {
+            let e = self.doc.append_element(rpr, &format!("{w14}:textOutline"));
+            for (k, v) in [("w", width.to_string()), ("cap", "flat".into()), ("cmpd", "sng".into()), ("algn", "ctr".into())] {
+                self.doc.set_attr(e, &format!("{w14}:{k}"), &v);
+            }
+            let fill = self.doc.append_element(e, &format!("{w14}:solidFill"));
+            colour(self, fill, c);
+            let dash = self.doc.append_element(e, &format!("{w14}:prstDash"));
+            self.doc.set_attr(dash, &format!("{w14}:val"), "solid");
+            self.doc.append_element(e, &format!("{w14}:round"));
+            made.push(("textOutline", e));
+        }
+        for (local, e) in made {
+            let rank = ORDER.iter().position(|n| *n == local).unwrap_or(0);
+            self.doc.detach(e);
+            let children = self.doc.children(rpr).to_vec();
+            let index = children
+                .iter()
+                .position(|&c| {
+                    self.doc.is_element(c)
+                        && ((self.doc.namespace(c) == Some(W14_NS) && ORDER.iter().position(|n| *n == self.doc.local_name(c)).is_some_and(|r| r > rank)) || self.doc.local_name(c) == "rPrChange")
+                })
+                .unwrap_or(children.len());
+            self.doc.insert(rpr, index, e);
+        }
+    }
+
     fn w15_prefix(&mut self) -> String {
         let root = self.doc.root_element().unwrap_or(XmlDocument::ROOT);
         if self.doc.lookup_prefix(root, W15_NS).is_none() {
@@ -6790,7 +6925,7 @@ impl Writer<'_> {
         if c0 != c1 {
             self.val(rpr, "rStyle", c1.as_deref(), o);
         }
-        if f0.font != f1.font || f0.east_asian_font != f1.east_asian_font || f0.cs_font != f1.cs_font || f0.east_asia_hint != f1.east_asia_hint {
+        if f0.font != f1.font || f0.h_ansi_font != f1.h_ansi_font || f0.east_asian_font != f1.east_asian_font || f0.cs_font != f1.cs_font || f0.east_asia_hint != f1.east_asia_hint {
             let fonts = self.ensure(rpr, "rFonts", o);
             if f0.east_asia_hint != f1.east_asia_hint {
                 // `w:hint` is the run's own: a copy of another run's takes the model's (the reader reads `eastAsia` as true, else false).
@@ -6801,18 +6936,18 @@ impl Writer<'_> {
                 }
             }
             if f0.font != f1.font {
-                for a in ["w:asciiTheme", "w:hAnsiTheme"] {
-                    self.doc.remove_attr(fonts, a);
-                }
+                self.doc.remove_attr(fonts, "w:asciiTheme");
                 match &f1.font {
-                    Some(f) => {
-                        self.doc.set_attr(fonts, "w:ascii", f);
-                        self.doc.set_attr(fonts, "w:hAnsi", f);
-                    }
-                    None => {
-                        self.doc.remove_attr(fonts, "w:ascii");
-                        self.doc.remove_attr(fonts, "w:hAnsi");
-                    }
+                    Some(f) => self.doc.set_attr(fonts, "w:ascii", f),
+                    None => self.doc.remove_attr(fonts, "w:ascii"),
+                }
+            }
+            // `w:hAnsi` is written as the model has it: a run with a font and no hAnsi typeface leaves hAnsi to the styles (Word's inheritance, per attribute).
+            if f0.h_ansi_font != f1.h_ansi_font {
+                self.doc.remove_attr(fonts, "w:hAnsiTheme");
+                match &f1.h_ansi_font {
+                    Some(f) => self.doc.set_attr(fonts, "w:hAnsi", f),
+                    None => self.doc.remove_attr(fonts, "w:hAnsi"),
                 }
             }
             if f0.east_asian_font != f1.east_asian_font {
@@ -7152,7 +7287,7 @@ impl Writer<'_> {
                 }
             }
         }
-        if old.style == new.style && old.direct == new.direct && old.mark_format == new.mark_format && old.section_break == new.section_break {
+        if old.style == new.style && old.direct == new.direct && old.mark_format == new.mark_format && old.mark_revision == new.mark_revision && old.section_break == new.section_break {
             return Ok(());
         }
         let o = PPR_ORDER;
@@ -7408,6 +7543,22 @@ impl Writer<'_> {
         }
         if old.mark_format != new.mark_format {
             self.run_props(ppr, &old.mark_format, &None, &new.mark_format, &None, true);
+        }
+        // A deleted paragraph mark (`w:pPr/w:rPr/w:del`, the first child of the mark's properties).
+        if old.mark_revision != new.mark_revision {
+            let rpr = self.ensure(ppr, "rPr", PPR_ORDER);
+            self.remove_child(rpr, "del");
+            if let Some(r) = &new.mark_revision {
+                let name = self.w("del");
+                let del = self.doc.insert_element(rpr, 0, &name);
+                let id = self.next_revision_id();
+                self.doc.set_attr(del, "w:id", &id.to_string());
+                self.doc.set_attr(del, "w:author", &r.author);
+                self.doc.set_attr(del, "w:date", &r.date);
+            }
+            if self.doc.children(rpr).is_empty() {
+                self.doc.detach(rpr);
+            }
         }
         if old.section_break != new.section_break {
             use ibis_doc_model::SectionBreak;
@@ -7744,9 +7895,20 @@ fn write_numbering(package: &mut Package, map: &SourceMap, old: &ibis_doc_model:
                 };
                 set(doc, "suff", v, &["start", "numFmt", "lvlRestart", "pStyle", "isLgl"]);
             }
-            if x.text != y.text {
-                set(doc, "lvlText", Some(&y.text), &["start", "numFmt", "lvlRestart", "pStyle", "isLgl", "suff"]);
+            // A bullet of a symbol typeface (Word's bullets: Wingdings' code, U+F0A7 and the like) is written as the code in that typeface;
+            // the level's text is the Unicode character that stands in for it where the typeface is missing (#142).
+            let written = |l: &ibis_doc_model::ListLevel| -> (String, Option<String>) {
+                match &l.symbol {
+                    Some((face, code)) if l.format == "bullet" => (code.to_string(), Some(face.clone())),
+                    _ => (l.text.clone(), l.run.font.clone()),
+                }
+            };
+            let ((x_text, x_font), (y_text, y_font)) = (written(x), written(y));
+            if x_text != y_text {
+                set(doc, "lvlText", Some(&y_text), &["start", "numFmt", "lvlRestart", "pStyle", "isLgl", "suff"]);
             }
+            let y = &ibis_doc_model::ListLevel { run: ibis_doc_model::RunFormat { font: y_font.clone(), ..y.run.clone() }, ..y.clone() };
+            let x = &ibis_doc_model::ListLevel { run: ibis_doc_model::RunFormat { font: x_font, ..x.run.clone() }, ..x.clone() };
             if x.run.font != y.run.font {
                 let existing_rpr = doc.children_named(lvl, "rPr").next();
                 match (&y.run.font, existing_rpr) {
@@ -7811,7 +7973,11 @@ fn write_numbering(package: &mut Package, map: &SourceMap, old: &ibis_doc_model:
                 doc.set_attr(e, "w:val", if level.suffix == ibis_doc_model::ListSuffix::Space { "space" } else { "nothing" });
             }
             let text = doc.append_element(lvl, &w("lvlText"));
-            doc.set_attr(text, "w:val", &level.text);
+            // A symbol typeface's bullet: its code (see the changed levels above, #142).
+            match &level.symbol {
+                Some((_, code)) if level.format == "bullet" => doc.set_attr(text, "w:val", &code.to_string()),
+                _ => doc.set_attr(text, "w:val", &level.text),
+            }
             if let Some(picture) = level.pic_bullet {
                 let e = doc.append_element(lvl, &w("lvlPicBulletId"));
                 doc.set_attr(e, "w:val", &picture.to_string());
@@ -7828,7 +7994,8 @@ fn write_numbering(package: &mut Package, map: &SourceMap, old: &ibis_doc_model:
                 Some(v) => doc.set_attr(ind, "w:firstLine", &(v / 635).to_string()),
                 None => {}
             }
-            if let Some(font) = &level.run.font {
+            let symbol_face = level.symbol.as_ref().filter(|_| level.format == "bullet").map(|(face, _)| face);
+            if let Some(font) = symbol_face.or(level.run.font.as_ref()) {
                 let rpr = doc.append_element(lvl, &w("rPr"));
                 let rfonts = doc.append_element(rpr, &w("rFonts"));
                 doc.set_attr(rfonts, "w:ascii", font);

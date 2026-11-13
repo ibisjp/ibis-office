@@ -93,13 +93,13 @@ pub(super) fn get(name: &str) -> Option<Func> {
         "TRANSPOSE" => |c, a| {
             let val = c.eval(&a[0]);
             let x = match val {
-                Value::Ref(areas) => {
-                    let v = c.deref_implicit(&areas);
-                    match v {
-                        Value::Error(e) => return err(e),
-                        other => Rc::new(Array::new(1, 1, vec![other])),
-                    }
-                }
+                // TRANSPOSE's argument is an array parameter: a reference is taken whole, never intersected with the formula's cell
+                // (a cell that is not a dynamic array formula shows only the first element of the result; GitHub issue #154).
+                Value::Ref(areas) => match c.ref_to_array(&areas) {
+                    Value::Array(a) => a,
+                    Value::Error(e) => return err(e),
+                    other => Rc::new(Array::new(1, 1, vec![other])),
+                },
                 Value::Array(a) => a,
                 Value::Error(e) => return err(e),
                 other => Rc::new(Array::new(1, 1, vec![other])),
@@ -1580,10 +1580,27 @@ fn choose_lines(c: &mut Ctx, a: &[Expr], rows: bool) -> Value {
     from_rows(out)
 }
 
+/// TRIMRANGE: a reference stays a reference (`FORMULATEXT(TRIMRANGE(A1:B5))`, and `a:.b`, `a.:b`, `a.:.b`
+/// which are it), trimmed to the cells inside; an array is trimmed as an array.
 fn trimrange(c: &mut Ctx, a: &[Expr]) -> Value {
-    let x = match arg_array(c, &a[0]) {
-        Ok(t) => t,
-        Err(e) => return err(e),
+    let first = c.eval(&a[0]);
+    let area = match &first {
+        Value::Ref(r) if r.len() == 1 && r[0].sheet == r[0].last_sheet => Some(r[0]),
+        _ => None,
+    };
+    let x = match &area {
+        Some(_) => match c.ref_to_array(match &first {
+            Value::Ref(r) => r,
+            _ => unreachable!(),
+        }) {
+            Value::Array(t) => t,
+            Value::Error(e) => return err(e),
+            _ => return err(CellError::Value),
+        },
+        None => match arg_array(c, &a[0]) {
+            Ok(t) => t,
+            Err(e) => return err(e),
+        },
     };
     let mut get_mode = |idx: usize| -> Result<i32, CellError> {
         match a.get(idx) {
@@ -1650,6 +1667,18 @@ fn trimrange(c: &mut Ctx, a: &[Expr]) -> Value {
         return err(CellError::Ref);
     }
 
+    if let Some(area) = area {
+        // The side that is not trimmed keeps the reference's own edge (`D.:D` reaches the bottom of the column).
+        let last_row = if trim_rows == 2 || trim_rows == 3 { area.first_row + r_end as u32 - 1 } else { area.last_row };
+        let last_column = if trim_cols == 2 || trim_cols == 3 { area.first_column + c_end as u32 - 1 } else { area.last_column };
+        return Value::Ref(Rc::new(vec![Area {
+            first_row: area.first_row + r_start as u32,
+            first_column: area.first_column + c_start as u32,
+            last_row,
+            last_column,
+            ..area
+        }]));
+    }
     let rows = r_end - r_start;
     let cols = c_end - c_start;
     let mut data = Vec::with_capacity(rows * cols);

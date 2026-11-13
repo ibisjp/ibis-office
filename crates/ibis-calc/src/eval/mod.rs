@@ -761,6 +761,8 @@ impl<'a> Ctx<'a> {
                 // Unary plus gives the value, not a reference (Excel: `ISREF(+A1:A3)` is FALSE).
                 match self.eval(x) {
                     // In a formula without the dynamic flag the reference is intersected with the cell first (Excel shows `+@B2#*2`).
+                    // A reference to one cell is that cell's value, never an array (`TYPE(+A1)` is the cell's type, not 64; GitHub #169).
+                    Value::Ref(r) if r.len() == 1 && r[0].sheet == r[0].last_sheet && r[0].is_cell() => self.deref_implicit(&r),
                     Value::Ref(r) if r.len() == 1 && r[0].sheet == r[0].last_sheet && !self.book.dynamic(self.sheet, self.row, self.column) => self.deref_implicit(&r),
                     Value::Ref(r) if r.len() == 1 && r[0].sheet == r[0].last_sheet => self.ref_to_array(&r),
                     v => v,
@@ -1062,6 +1064,31 @@ impl<'a> Ctx<'a> {
         if let Some(info) = crate::functions::table::function_info(name) {
             if args.len() < info.min_args as usize || args.len() > info.max_args.max(info.min_args) as usize && info.max_args < 255 {
                 return Value::Error(CellError::Value);
+            }
+        }
+        // An array (or a range of several cells read as one) for an argument of a function that takes scalars: run for each element.
+        let scalar_args = crate::functions::scalar_args_lifted(name);
+        if scalar_args != 0 && crate::functions::lookup(name).is_some() && !args.iter().any(|a| matches!(a, Expr::Missing)) {
+            let values: Vec<Value> = args
+                .iter()
+                .enumerate()
+                .map(|(i, a)| if scalar_args & (1 << i.min(31)) != 0 { self.eval_scalar_or_array(a) } else { Value::Omitted })
+                .collect();
+            if values.iter().any(|v| matches!(v, Value::Array(_))) {
+                // The arguments that are arrays by nature are given as they are, each time.
+                let literal = |x: &Value| match x {
+                    Value::Number(n) => Expr::Number(*n),
+                    Value::Text(t) => Expr::Text(t.clone()),
+                    Value::Bool(b) => Expr::Bool(*b),
+                    Value::Error(e) => Expr::Error(*e),
+                    Value::Empty | Value::Omitted => Expr::Number(0.0),
+                    _ => Expr::Error(CellError::Value),
+                };
+                let kept: Vec<Option<Expr>> = args.iter().enumerate().map(|(i, a)| (scalar_args & (1 << i.min(31)) == 0).then(|| a.clone())).collect();
+                return self.map_values(values, &mut |c, v| {
+                    let exprs: Vec<Expr> = v.iter().zip(&kept).map(|(x, k)| k.clone().unwrap_or_else(|| literal(x))).collect();
+                    c.call(name, &exprs)
+                });
             }
         }
         match crate::functions::lookup(name) {

@@ -56,8 +56,16 @@ fn records(stream: &[u8]) -> Vec<Record<'_>> {
     out
 }
 
+/// Where a chart is: its cells (a ClientAnchor), or a place in a group (its ChildAnchor in the frame of the group's FSPGR, and
+/// the group's anchor).
+#[derive(Clone, Copy, Debug)]
+enum ChartAnchor {
+    Cells([u16; 8]),
+    InGroup { group: [u16; 8], frame: [i32; 4], child: [i32; 4] },
+}
+
 /// A string of the file (`XLUnicodeString`, with a 1- or 2-byte length): its text and the bytes it took.
-fn unicode_string(d: &[u8], at: usize, long: bool) -> Option<(String, usize)> {
+pub(crate) fn unicode_string(d: &[u8], at: usize, long: bool) -> Option<(String, usize)> {
     let (n, mut p) = if long { (u16_at(d, at)? as usize, at + 2) } else { (*d.get(at)? as usize, at + 1) };
     let flags = *d.get(p)?;
     p += 1;
@@ -78,9 +86,10 @@ fn unicode_string(d: &[u8], at: usize, long: bool) -> Option<(String, usize)> {
 
 /// The shared strings (`SST`), the record and its `CONTINUE`s: a string may run over the
 /// end of a record, where the next one begins with the flag byte of the rest.
-fn shared_strings(parts: &[&[u8]]) -> Vec<String> {
+fn shared_strings(parts: &[&[u8]]) -> (Vec<String>, Vec<Vec<(u16, u16)>>) {
     let mut out = Vec::new();
-    let Some(first) = parts.first() else { return out };
+    let mut all_runs: Vec<Vec<(u16, u16)>> = Vec::new();
+    let Some(first) = parts.first() else { return (out, all_runs) };
     let count = u32_at(first, 4).unwrap_or(0) as usize;
     let (mut part, mut at) = (0usize, 8usize);
     let next = |part: &mut usize, at: &mut usize| -> bool {
@@ -121,6 +130,7 @@ fn shared_strings(parts: &[&[u8]]) -> Vec<String> {
                 // The rest is in the next record, behind its own flag byte.
                 if !next(&mut part, &mut at) {
                     out.push(text);
+                    all_runs.push(Vec::new());
                     break 'strings;
                 }
                 let d = parts[part];
@@ -128,8 +138,31 @@ fn shared_strings(parts: &[&[u8]]) -> Vec<String> {
                 cur = 1;
             }
         }
-        // The runs and the extension: skipped, over a record boundary too.
-        let mut skip = runs * 4 + ext;
+        // The formatting runs (FormatRun: the first character, the font index; MS-XLS 2.5.129), over a record
+        // boundary too: a string of rich text.
+        let mut run_bytes: Vec<u8> = Vec::new();
+        let mut want = runs * 4;
+        while want > 0 {
+            let d = parts[part];
+            let have = d.len().saturating_sub(cur);
+            let take = have.min(want);
+            run_bytes.extend_from_slice(d.get(cur..cur + take).unwrap_or(&[]));
+            cur += take;
+            want -= take;
+            if want > 0 && !next(&mut part, &mut at) {
+                break;
+            }
+            if want > 0 {
+                cur = 0;
+            }
+        }
+        all_runs.push((0..run_bytes.len() / 4).filter_map(|k| Some((u16_at(&run_bytes, k * 4)?, u16_at(&run_bytes, k * 4 + 2)?))).collect());
+        if part >= parts.len() {
+            out.push(text);
+            break;
+        }
+        // The extension (phonetic text): skipped, over a record boundary too.
+        let mut skip = ext;
         loop {
             let d = parts[part];
             let have = d.len().saturating_sub(cur);
@@ -146,7 +179,7 @@ fn shared_strings(parts: &[&[u8]]) -> Vec<String> {
         at = cur;
         out.push(text);
     }
-    out
+    (out, all_runs)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -158,6 +191,8 @@ struct Font {
     bold: bool,
     script: u16,
     underline: u8,
+    /// `bFamily`: 0 none, 1 Roman, 2 Swiss, 3 Modern, 4 Script, 5 Decorative (Excel draws a typeface the PC lacks by it).
+    family: u8,
     name: String,
 }
 
@@ -210,13 +245,29 @@ struct Sheet {
     cols: Vec<(u16, u16, u16, u16, u16)>,
     merges: Vec<[u16; 4]>,
     default_row_twips: Option<u16>,
+    /// Whether the default row height was set (`DEFAULTROWHEIGHT` fUnsynced) rather than the Normal font's.
+    #[allow(dead_code)]
+    default_row_custom: bool,
     default_col_chars: Option<u16>,
+    /// The width of the columns without one of their own, in 1/256 of a character (`STANDARDWIDTH`, MS-XLS 2.4.288):
+    /// over `DEFCOLWIDTH`'s whole characters when it is there.
+    standard_width: Option<u16>,
     frozen: Option<(u16, u16)>,
     show_grid: bool,
     show_headings: bool,
     zoom: Option<(u16, u16)>,
     margins: [Option<f64>; 4],
     page: Option<[u16; 6]>,
+    /// The header's and the footer's distance from the paper's edge, in inches (`SETUP` numHdr, numFtr).
+    header_footer_margins: Option<(f64, f64)>,
+    /// Fit the printout to `fitToWidth` × `fitToHeight` pages instead of the scale (`WSBOOL` fFitToPage).
+    fit_to_page: bool,
+    /// Print options: centred across (`HCENTER`), centred down (`VCENTER`), with the gridlines
+    /// (`PRINTGRIDLINES`), with the row and column headings (`PRINTHEADERS`).
+    h_center: bool,
+    v_center: bool,
+    print_grid: bool,
+    print_headings: bool,
     header: Option<String>,
     footer: Option<String>,
     shared: HashMap<(u32, u32), ([u16; 4], Vec<u8>)>,
@@ -235,7 +286,11 @@ struct Sheet {
     /// The pictures of the sheet's drawing.
     pictures: Vec<crate::xls_drawing::Picture>,
     /// The charts of the sheet, each with its anchor (as a picture's).
-    charts: Vec<([u16; 8], crate::xls_chart::Chart)>,
+    charts: Vec<(ChartAnchor, crate::xls_chart::Chart, ChartDrawing)>,
+    /// The other shapes of the drawing (autoshapes, text boxes, lines, groups) with their anchors, and the sheet's
+    /// objects (`OBJ`: their kinds and texts) by shape id.
+    shapes: Vec<(crate::ppt::ShapeIr, [u16; 8])>,
+    objects: crate::xls_drawing::ObjReader,
 }
 
 pub(crate) const DEFAULT_PALETTE: [u32; 56] = [
@@ -252,6 +307,8 @@ struct Book {
     xfs: Vec<Xf>,
     palette: Vec<u32>,
     strings: Vec<String>,
+    /// The formatting runs of each shared string (rich text): its first character and the font index of each.
+    string_runs: Vec<Vec<(u16, u16)>>,
     sheets: Vec<Sheet>,
     sheet_offsets: Vec<usize>,
     cx: Context,
@@ -261,6 +318,8 @@ struct Book {
     theme: Option<Vec<u8>>,
     /// The images of the drawing group (`MSODRAWINGGROUP`), in the store's order.
     blips: Vec<Option<crate::xls_drawing::Image>>,
+    /// The drawing group's default shape properties.
+    shape_defaults: crate::ppt::Props,
 }
 
 impl Book {
@@ -273,6 +332,19 @@ impl Book {
         };
         Some(format!("FF{rgb:06X}"))
     }
+}
+
+/// The theme of a `THEME` record and its `CONTINUE`s (MS-XLS 2.4.326): the zip after the record's 16 bytes (header,
+/// reserved, version) holds it; version 124226 with no zip is the default theme, Office's of 2007 to 2010.
+fn theme_of(parts: &[&[u8]]) -> Option<Vec<u8>> {
+    let blob: Vec<u8> = parts.iter().enumerate().flat_map(|(n, p)| if n == 0 { p.get(16..).unwrap_or(&[]).to_vec() } else { p.to_vec() }).collect();
+    if blob.starts_with(b"PK")
+        && let Ok(archive) = ibis_ooxml::zip::Archive::new(std::sync::Arc::<[u8]>::from(blob))
+        && let Some(entry) = archive.entries().iter().find(|e| e.name.ends_with("theme1.xml"))
+    {
+        return archive.read(entry).ok();
+    }
+    (parts.first().and_then(|p| u32_at(p, 12)) == Some(124_226)).then(|| crate::new_file::theme_2007().into_bytes())
 }
 
 /// The `FilePass` record's data of a workbook stream (it follows the first `BOF`), and where the record ends.
@@ -300,8 +372,12 @@ fn workbook_stream(data: &[u8]) -> Result<Vec<u8>, Error> {
 
 /// Whether `data` is an old workbook protected with a password (its `FilePass` record).
 pub fn is_encrypted(data: &[u8]) -> bool {
-    cfb::is_cfb(data) && !crate::ppt::is_ppt(data) && workbook_stream(data).is_ok_and(|s| file_pass(&s).is_some())
+    cfb::is_cfb(data) && !crate::ppt::is_ppt(data) && workbook_stream(data).is_ok_and(|s| file_pass(&s).is_some()) && decrypt(data, DEFAULT_PASSWORD).is_err()
 }
+
+/// The password Excel encrypts a workbook with when it is protected without one to open it (its structure or a
+/// sheet locked with a password, or "read-only recommended"): MS-XLS 2.2.10. Excel opens such a file without asking.
+const DEFAULT_PASSWORD: &str = "VelvetSweatshop";
 
 /// Records whose data stays plain in an encrypted workbook ([MS-XLS] 2.2.10 and 2.1.7.20.5).
 fn plain_record(id: u16) -> bool {
@@ -360,14 +436,14 @@ pub fn decrypt(data: &[u8], password: &str) -> Result<Vec<u8>, ibis_ooxml::encry
 pub fn to_xlsx(data: &[u8]) -> Result<Vec<u8>, Error> {
     let stream = workbook_stream(data)?;
     if file_pass(&stream).is_some() {
-        return Err(Error::new("パスワードで保護された旧形式（.xls）のブックです（パスワードが必要です）".to_string()));
+        return decrypt(data, DEFAULT_PASSWORD).map_err(|_| Error::new("パスワードで保護された旧形式（.xls）のブックです（パスワードが必要です）".to_string()));
     }
     to_xlsx_stream(&stream)
 }
 
 fn to_xlsx_stream(stream: &[u8]) -> Result<Vec<u8>, Error> {
     let recs = records(stream);
-    let mut book = Book { date1904: false, fonts: Vec::new(), formats: BTreeMap::new(), xfs: Vec::new(), palette: DEFAULT_PALETTE.to_vec(), strings: Vec::new(), sheets: Vec::new(), sheet_offsets: Vec::new(), cx: Context::default(), names: Vec::new(), theme: None, blips: Vec::new() };
+    let mut book = Book { date1904: false, fonts: Vec::new(), formats: BTreeMap::new(), xfs: Vec::new(), palette: DEFAULT_PALETTE.to_vec(), strings: Vec::new(), string_runs: Vec::new(), sheets: Vec::new(), sheet_offsets: Vec::new(), cx: Context::default(), names: Vec::new(), theme: None, blips: Vec::new(), shape_defaults: Default::default() };
     // Offsets of each record, for finding the sheets' streams.
     let mut offsets = Vec::with_capacity(recs.len());
     let mut at = 0usize;
@@ -414,6 +490,7 @@ fn to_xlsx_stream(stream: &[u8]) -> Result<Vec<u8>, Error> {
                     bold: u16_at(d, 6).unwrap_or(400) >= 700,
                     script: u16_at(d, 8).unwrap_or(0),
                     underline: d.get(10).copied().unwrap_or(0),
+                    family: d.get(11).copied().unwrap_or(0),
                     name,
                 });
             }
@@ -494,15 +571,22 @@ fn to_xlsx_stream(stream: &[u8]) -> Result<Vec<u8>, Error> {
             0x0896 => {
                 // THEME: the file's theme part, zipped, after a 4-byte version.
                 theme_parts = vec![r.data];
-                last_was_theme = true;
+                // (Each of these records' CONTINUEs are its own: the one before has ended.)
+                (last_was_theme, last_was_group, last_was_sst) = (true, false, false);
                 i += 1;
                 continue;
             }
             0x003C if last_was_theme => theme_parts.push(r.data),
             0x00EB => {
                 // MSODRAWINGGROUP: the drawing group, with the images, and its continuations.
-                group_parts = vec![r.data];
-                last_was_group = true;
+                // A drawing group bigger than a record goes on in further MSODRAWINGGROUP records (MS-XLS 2.4.170), not
+                // only in CONTINUEs: corpus 163's pictures were in the second.
+                if last_was_group {
+                    group_parts.push(r.data);
+                } else {
+                    group_parts = vec![r.data];
+                }
+                (last_was_theme, last_was_group, last_was_sst) = (false, true, false);
                 i += 1;
                 continue;
             }
@@ -525,7 +609,7 @@ fn to_xlsx_stream(stream: &[u8]) -> Result<Vec<u8>, Error> {
             }
             0x00FC => {
                 sst = vec![r.data];
-                last_was_sst = true;
+                (last_was_theme, last_was_group, last_was_sst) = (false, false, true);
                 i += 1;
                 continue;
             }
@@ -561,8 +645,9 @@ fn to_xlsx_stream(stream: &[u8]) -> Result<Vec<u8>, Error> {
         }
         i += 1;
     }
-    book.strings = shared_strings(&sst);
+    (book.strings, book.string_runs) = shared_strings(&sst);
     book.blips = crate::xls_drawing::read_blips(&group_parts.concat());
+    book.shape_defaults = crate::xls_drawing::read_default_props(&group_parts.concat());
     for (ixfe, ext) in pending_ext {
         if let Some(xf) = book.xfs.get_mut(ixfe) {
             let [fore, back, top, bottom, left, right, text] = ext;
@@ -572,14 +657,7 @@ fn to_xlsx_stream(stream: &[u8]) -> Result<Vec<u8>, Error> {
             xf.ext_borders = [left, right, top, bottom];
         }
     }
-    // The theme: the zip after the record's 16 bytes (header, reserved, version).
-    let blob: Vec<u8> = theme_parts.iter().enumerate().flat_map(|(n, p)| if n == 0 { p.get(16..).unwrap_or(&[]).to_vec() } else { p.to_vec() }).collect();
-    if blob.starts_with(b"PK")
-        && let Ok(archive) = ibis_ooxml::zip::Archive::new(std::sync::Arc::<[u8]>::from(blob))
-        && let Some(entry) = archive.entries().iter().find(|e| e.name.ends_with("theme1.xml"))
-    {
-        book.theme = archive.read(entry).ok();
-    }
+    book.theme = theme_of(&theme_parts);
     // The names' texts for the formulas (a built-in name has none to refer to by).
     book.cx.sheets = book.sheets.iter().map(|s| s.name.clone()).collect();
     book.cx.names = book.names.iter().map(|(n, b, _, _)| if b.is_some() { String::new() } else { n.clone() }).collect();
@@ -602,6 +680,52 @@ pub(crate) fn rk_value(rk: u32) -> f64 {
     if rk & 1 != 0 { v / 100.0 } else { v }
 }
 
+/// The shapes drawn on a chart (the `MSODRAWING`, `OBJ` and `TXO` records of its stream, put together as a sheet's are), with
+/// the objects' kinds and texts.
+#[derive(Default)]
+struct ChartDrawing {
+    shapes: Vec<(crate::ppt::ShapeIr, [i32; 4])>,
+    objects: crate::xls_drawing::ObjReader,
+}
+
+fn read_chart_drawing(records: &[&Record<'_>]) -> ChartDrawing {
+    let mut out = ChartDrawing::default();
+    let mut drawing: Vec<u8> = Vec::new();
+    let mut shape: Vec<u8> = Vec::new();
+    let (mut last_was_drawing, mut last_id, mut in_drawing) = (false, 0u16, false);
+    for r in records {
+        let d = r.data;
+        // As in a sheet: a CONTINUE after the drawing's records carries the drawing on, unless a text box's text is still to come.
+        let drawing_piece = r.id == 0x003C && (last_was_drawing || matches!(last_id, 0x005D | 0x01B6 | 0x003C) && !out.objects.wants_more() && in_drawing);
+        last_was_drawing = r.id == 0x00EC || drawing_piece;
+        if r.id != 0x003C {
+            last_id = r.id;
+        }
+        if r.id == 0x00EC {
+            in_drawing = true;
+        }
+        match r.id {
+            0x00EC => {
+                drawing.extend_from_slice(d);
+                shape.extend_from_slice(d);
+            }
+            0x003C if drawing_piece => {
+                drawing.extend_from_slice(d);
+                shape.extend_from_slice(d);
+            }
+            0x005D => {
+                out.objects.object(d, &shape);
+                shape.clear();
+            }
+            0x01B6 => out.objects.text_box(d),
+            0x003C => out.objects.continued(d),
+            _ => {}
+        }
+    }
+    out.shapes = crate::xls_drawing::read_chart_shapes(&drawing);
+    out
+}
+
 fn read_sheet(recs: &[Record<'_>], sheet: &mut Sheet) {
     let mut depth = 0;
     let mut pending_string: Option<(u32, u32)> = None;
@@ -610,10 +734,14 @@ fn read_sheet(recs: &[Record<'_>], sheet: &mut Sheet) {
     let mut note_reader = NoteReader::default();
     let mut drawing: Vec<u8> = Vec::new();
     let mut last_was_drawing = false;
+    // The last record other than a CONTINUE, and whether the sheet's drawing has begun.
+    let (mut last_id, mut in_drawing) = (0u16, false);
     // The drawing since the last object (its shape's anchor), the anchor of the chart whose stream comes
     // next, and the records of the chart stream being read.
     let mut shape: Vec<u8> = Vec::new();
-    let mut chart_anchor: Option<[u16; 8]> = None;
+    let mut chart_anchor: Option<ChartAnchor> = None;
+    // The anchor and the frame (FSPGR) of the last group.
+    let mut group_frame: Option<([u16; 8], [i32; 4])> = None;
     let mut chart_records: Vec<&Record<'_>> = Vec::new();
     for r in recs {
         let d = r.data;
@@ -622,21 +750,46 @@ fn read_sheet(recs: &[Record<'_>], sheet: &mut Sheet) {
             chart_records.push(r);
             continue;
         }
-        let was_drawing = last_was_drawing;
-        last_was_drawing = r.id == 0x00EC || (r.id == 0x003C && was_drawing);
+        // A CONTINUE after the drawing's records carries the drawing on (MS-XLS 2.4.58), unless a text box's text
+        // (TXO) still has characters or runs to come: Excel writes the next shape's piece of the drawing in a
+        // CONTINUE right after the text's (and after an OBJ, its text box's piece), not in a MSODRAWING.
+        let drawing_piece = r.id == 0x003C && (last_was_drawing || matches!(last_id, 0x005D | 0x01B6 | 0x003C) && !sheet.objects.wants_more() && in_drawing);
+        last_was_drawing = r.id == 0x00EC || drawing_piece;
+        if r.id != 0x003C {
+            last_id = r.id;
+        }
+        if r.id == 0x00EC {
+            in_drawing = true;
+        }
         match r.id {
             // MSODRAWING (and its continuations): the sheet's drawing, in pieces.
             0x00EC => {
                 drawing.extend_from_slice(d);
                 shape.extend_from_slice(d);
             }
-            0x003C if was_drawing => {
+            0x003C if drawing_piece => {
                 drawing.extend_from_slice(d);
                 shape.extend_from_slice(d);
             }
-            // OBJ: the shape before it is a chart when its object type (`ftCmo`) is 5.
+            // OBJ: the shape before it is a chart when its object type (`ftCmo`) is 5. A chart in a group has only its place
+            // in the group's own units (a ChildAnchor, in the frame of the group's FSPGR): the group's anchor places it.
             0x005D => {
-                chart_anchor = if u16_at(d, 4) == Some(5) { crate::xls_drawing::last_anchor(&shape) } else { None };
+                let kind = u16_at(d, 4);
+                if kind == Some(0)
+                    && let (Some(anchor), Some(frame)) = (crate::xls_drawing::last_anchor(&shape), crate::xls_drawing::last_body(&shape, 0xF009).and_then(crate::xls_drawing::rect_of))
+                {
+                    group_frame = Some((anchor, frame));
+                }
+                chart_anchor = if kind == Some(5) {
+                    crate::xls_drawing::last_anchor(&shape).map(ChartAnchor::Cells).or_else(|| {
+                        let child = crate::xls_drawing::last_body(&shape, 0xF00F).and_then(crate::xls_drawing::rect_of)?;
+                        let (group, frame) = group_frame?;
+                        Some(ChartAnchor::InGroup { group, frame, child })
+                    })
+                } else {
+                    None
+                };
+                sheet.objects.object(d, &shape);
                 shape.clear();
                 note_reader.object(d);
             }
@@ -652,7 +805,7 @@ fn read_sheet(recs: &[Record<'_>], sheet: &mut Sheet) {
                     && let Some(anchor) = chart_anchor.take()
                     && let Some(chart) = crate::xls_chart::read_chart(&chart_records)
                 {
-                    sheet.charts.push((anchor, chart));
+                    sheet.charts.push((anchor, chart, read_chart_drawing(&chart_records)));
                 }
                 if depth <= 0 {
                     break;
@@ -761,7 +914,11 @@ fn read_sheet(recs: &[Record<'_>], sheet: &mut Sheet) {
                 }
             }
             0x0055 => sheet.default_col_chars = u16_at(d, 0),
-            0x0225 => sheet.default_row_twips = u16_at(d, 2),
+            0x0099 => sheet.standard_width = u16_at(d, 0),
+            0x0225 => {
+                sheet.default_row_twips = u16_at(d, 2);
+                sheet.default_row_custom = u16_at(d, 0).is_some_and(|f| f & 1 != 0);
+            }
             0x00E5 => {
                 let n = u16_at(d, 0).unwrap_or(0) as usize;
                 for k in 0..n {
@@ -791,15 +948,30 @@ fn read_sheet(recs: &[Record<'_>], sheet: &mut Sheet) {
             0x0028 => sheet.margins[2] = f64_at(d, 0),
             0x0029 => sheet.margins[3] = f64_at(d, 0),
             0x00A1 => {
-                // With fNoPls the printer's settings (paper, scale, orientation) are not valid.
-                if let (Some(paper), Some(scale), Some(w), Some(h), Some(g)) = (u16_at(d, 0), u16_at(d, 2), u16_at(d, 6), u16_at(d, 8), u16_at(d, 10))
-                    && g & 4 == 0
-                {
-                    sheet.page = Some([paper, scale, w, h, g, 0]);
+                // MS-XLS 2.4.257 Setup. With fNoPls the printer's fields (paper, scale, orientation)
+                // are undefined; the fit, the first page number and the header's and footer's
+                // margins are still the sheet's.
+                if let (Some(paper), Some(scale), Some(start), Some(w), Some(h), Some(g)) = (u16_at(d, 0), u16_at(d, 2), u16_at(d, 4), u16_at(d, 6), u16_at(d, 8), u16_at(d, 10)) {
+                    sheet.page = Some([paper, scale, w, h, g, start]);
+                }
+                if let (Some(hm), Some(fm)) = (f64_at(d, 16), f64_at(d, 24)) {
+                    sheet.header_footer_margins = Some((hm, fm));
                 }
             }
-            0x01B6 => note_reader.text_box(d),
-            0x003C => note_reader.continued(d),
+            // WsBool (MS-XLS 2.4.351): fFitToPage is bit 8.
+            0x0081 => sheet.fit_to_page = u16_at(d, 0).is_some_and(|g| g & 0x0100 != 0),
+            0x0083 => sheet.h_center = u16_at(d, 0) == Some(1),
+            0x0084 => sheet.v_center = u16_at(d, 0) == Some(1),
+            0x002B => sheet.print_grid = u16_at(d, 0) == Some(1),
+            0x002A => sheet.print_headings = u16_at(d, 0) == Some(1),
+            0x01B6 => {
+                note_reader.text_box(d);
+                sheet.objects.text_box(d);
+            }
+            0x003C => {
+                note_reader.continued(d);
+                sheet.objects.continued(d);
+            }
             0x001C => sheet.notes.extend(crate::xls_features::read_note(d)),
             0x01B0 => {
                 if let Some(g) = crate::xls_features::read_cf_header(d) {
@@ -824,8 +996,10 @@ fn read_sheet(recs: &[Record<'_>], sheet: &mut Sheet) {
             0x087B => crate::xls_features::read_cf_ex(d, &mut sheet.cf),
             0x001B | 0x001A => {
                 let n = u16_at(d, 0).unwrap_or(0) as usize;
-                let breaks = (0..n).filter_map(|k| u16_at(d, 2 + k * 6));
-                if r.id == 0x001B { sheet.row_breaks.extend(breaks) } else { sheet.col_breaks.extend(breaks) }
+                let breaks: Vec<u16> = (0..n).filter_map(|k| u16_at(d, 2 + k * 6)).collect();
+                // A sheet may have several such records: the last is the breaks (corpus 067's sheet: rows 47 and 80,
+                // then 46 twice; Excel breaks at 46 only).
+                if r.id == 0x001B { sheet.row_breaks = breaks } else { sheet.col_breaks = breaks }
             }
             0x009D => sheet.has_filter = true,
             0x009E => sheet.filters.extend(crate::xls_features::read_autofilter(d)),
@@ -843,6 +1017,86 @@ fn read_sheet(recs: &[Record<'_>], sheet: &mut Sheet) {
     sheet.frozen = pane.filter(|_| frozen_flag);
     sheet.note_texts = note_reader.texts;
     sheet.pictures = crate::xls_drawing::read_pictures(&drawing);
+    sheet.shapes = crate::xls_drawing::read_shapes(&drawing);
+}
+
+/// A string of rich text as the runs of an `is` element: the characters before the first run in the cell's font,
+/// then each run in its font (a `FontIndex`: 4 is not used).
+fn rich_runs_xml(book: &Book, text: &str, runs: &[(u16, u16)]) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut piece = |from: usize, to: usize, font: Option<u16>| {
+        if from >= to {
+            return;
+        }
+        let t: String = chars[from..to].iter().collect();
+        let rpr = font.and_then(|i| book.fonts.get(if i >= 5 { i as usize - 1 } else { i as usize })).map(|f| {
+            let mut x = format!("<rFont val=\"{}\"/>", esc(&f.name));
+            if f.bold {
+                x.push_str("<b/>");
+            }
+            if f.italic {
+                x.push_str("<i/>");
+            }
+            if f.strike {
+                x.push_str("<strike/>");
+            }
+            if let Some(c) = book.color(f.color) {
+                x.push_str(&format!("<color rgb=\"{c}\"/>"));
+            }
+            x.push_str(&format!("<sz val=\"{}\"/>", ibis_calc::number_to_xml(f.height as f64 / 20.0)));
+            match f.underline {
+                1 => x.push_str("<u/>"),
+                2 => x.push_str("<u val=\"double\"/>"),
+                0x21 => x.push_str("<u val=\"singleAccounting\"/>"),
+                0x22 => x.push_str("<u val=\"doubleAccounting\"/>"),
+                _ => {}
+            }
+            match f.script {
+                1 => x.push_str("<vertAlign val=\"superscript\"/>"),
+                2 => x.push_str("<vertAlign val=\"subscript\"/>"),
+                _ => {}
+            }
+            format!("<rPr>{x}</rPr>")
+        });
+        out.push_str(&format!("<r>{}<t xml:space=\"preserve\">{}</t></r>", rpr.unwrap_or_default(), esc(&t)));
+    };
+    let starts: Vec<(usize, u16)> = runs.iter().map(|&(i, f)| ((i as usize).min(chars.len()), f)).collect();
+    piece(0, starts.first().map_or(chars.len(), |r| r.0), None);
+    for (k, &(from, font)) in starts.iter().enumerate() {
+        let to = starts.get(k + 1).map_or(chars.len(), |r| r.0);
+        piece(from, to, Some(font));
+    }
+    out
+}
+
+/// A run of a shape's text (`a:rPr`) in the font `ifnt` (a `FontIndex`: 4 is not used).
+fn run_props_xml(book: &Book, ifnt: u16) -> String {
+    let at = if ifnt >= 5 { ifnt as usize - 1 } else { ifnt as usize };
+    let Some(f) = book.fonts.get(at) else { return String::new() };
+    let mut a = format!(" sz=\"{}\"", (f.height as u32 * 5).max(100));
+    if f.bold {
+        a.push_str(" b=\"1\"");
+    }
+    if f.italic {
+        a.push_str(" i=\"1\"");
+    }
+    match f.underline {
+        1 | 0x21 => a.push_str(" u=\"sng\""),
+        2 | 0x22 => a.push_str(" u=\"dbl\""),
+        _ => {}
+    }
+    if f.strike {
+        a.push_str(" strike=\"sngStrike\"");
+    }
+    match f.script {
+        1 => a.push_str(" baseline=\"30000\""),
+        2 => a.push_str(" baseline=\"-25000\""),
+        _ => {}
+    }
+    let fill = book.color(f.color).map(|c| format!("<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>", &c[2..])).unwrap_or_default();
+    let name = esc(&f.name);
+    format!("<a:rPr{a}>{fill}<a:latin typeface=\"{name}\"/><a:ea typeface=\"{name}\"/><a:cs typeface=\"{name}\"/></a:rPr>")
 }
 
 fn esc(s: &str) -> String {
@@ -945,7 +1199,11 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
         if let Some(c) = color {
             x.push_str(&format!("<color {c}/>"));
         }
-        x.push_str(&format!("<name val=\"{}\"/><family val=\"2\"/></font>", esc(&f.name)));
+        x.push_str(&format!("<name val=\"{}\"/>", esc(&f.name)));
+        if f.family != 0 {
+            x.push_str(&format!("<family val=\"{}\"/>", f.family));
+        }
+        x.push_str("</font>");
         x
     };
     let mut font_list: Vec<String> = book.fonts.iter().map(|f| font_xml(f, book.color(f.color).map(|c| format!("rgb=\"{c}\"")))).collect();
@@ -1095,6 +1353,10 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
             max_col = max_col.max(col);
             let at = format!("{}{}", column_letters(col), row + 1);
             let style = if cell.xf != 0 { format!(" s=\"{}\"", cell.xf) } else { String::new() };
+            let sst_index = match &cell.value {
+                Some(Value::Text(t)) if t.starts_with("\u{0}SST") => t["\u{0}SST".len()..].parse::<usize>().ok(),
+                _ => None,
+            };
             let value = cell.value.as_ref().map(|v| match v {
                 Value::Text(t) if t.starts_with("\u{0}SST") => Value::Text(t["\u{0}SST".len()..].parse::<usize>().ok().and_then(|i| book.strings.get(i).cloned()).unwrap_or_default()),
                 other => other.clone(),
@@ -1103,7 +1365,10 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
             let (t, v) = match &value {
                 Some(Value::Number(n)) => (String::new(), format!("<v>{}</v>", ibis_calc::number_to_xml(*n))),
                 Some(Value::Text(s)) if formula.is_some() => (" t=\"str\"".into(), format!("<v>{}</v>", esc(s))),
-                Some(Value::Text(s)) => (" t=\"inlineStr\"".into(), format!("<is><t xml:space=\"preserve\">{}</t></is>", esc(s))),
+                Some(Value::Text(s)) => match sst_index.and_then(|i| book.string_runs.get(i)).filter(|r| !r.is_empty()) {
+                    Some(runs) => (" t=\"inlineStr\"".into(), format!("<is>{}</is>", rich_runs_xml(&book, s, runs))),
+                    None => (" t=\"inlineStr\"".into(), format!("<is><t xml:space=\"preserve\">{}</t></is>", esc(s))),
+                },
                 Some(Value::Bool(b)) => (" t=\"b\"".into(), format!("<v>{}</v>", u8::from(*b))),
                 Some(Value::Error(e)) => (" t=\"e\"".into(), format!("<v>{}</v>", error_text(*e))),
                 None => (String::new(), String::new()),
@@ -1124,9 +1389,13 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
         for row in all_rows {
             let (height, flags) = sheet.rows.get(&row).copied().unwrap_or((0, 0));
             let mut attrs = String::new();
-            // The file's own height of a row (what Excel showed, of a row that grew with its text too).
+            // The file's own height of a row (what Excel showed, of a row that grew with its text too); a custom height only
+            // where it was set (fUnsynced, MS-XLS 2.4.221). Excel measures the others again by their fonts when it shows
+            // or prints them, as an .xlsx's rows without customHeight (`Sheet::measured_rows`): corpus 126's and 103's
+            // rows stored 12 and 15 pt print taller.
             if sheet.rows.contains_key(&row) && height & 0x8000 == 0 && height & 0x7FFF != 0 {
-                attrs.push_str(&format!(" ht=\"{}\" customHeight=\"1\"", ibis_calc::number_to_xml((height & 0x7FFF) as f64 / 20.0)));
+                let custom = if flags & 0x40 != 0 { " customHeight=\"1\"" } else { "" };
+                attrs.push_str(&format!(" ht=\"{}\"{custom}", ibis_calc::number_to_xml((height & 0x7FFF) as f64 / 20.0)));
             }
             if flags & 0x20 != 0 {
                 attrs.push_str(" hidden=\"1\"");
@@ -1152,16 +1421,64 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
         });
         let zoom = sheet.zoom.filter(|&(n, m)| m != 0 && n != m).map(|(n, m)| format!(" zoomScale=\"{}\"", (n as u32 * 100 / m as u32))).unwrap_or_default();
         let m = |i: usize, d: f64| ibis_calc::number_to_xml(sheet.margins[i].unwrap_or(d));
-        let setup = sheet.page.map(|[paper, scale, w, h, g, _]| {
-            let landscape = g & 2 == 0 && g & 0x40 == 0;
-            format!("<pageSetup paperSize=\"{paper}\"{}{}{}{}/>", if scale != 0 && scale != 100 { format!(" scale=\"{scale}\"") } else { String::new() }, if landscape { " orientation=\"landscape\"" } else { " orientation=\"portrait\"" }, if w != 1 { format!(" fitToWidth=\"{w}\"") } else { String::new() }, if h != 1 { format!(" fitToHeight=\"{h}\"") } else { String::new() })
+        let setup = sheet.page.map(|[paper, scale, w, h, g, start]| {
+            // fNoPls (4): the paper, the scale and the orientation are the printer's defaults.
+            let printer = g & 4 == 0;
+            let landscape = printer && g & 2 == 0 && g & 0x40 == 0;
+            let mut a = String::new();
+            if printer {
+                a.push_str(&format!(" paperSize=\"{paper}\""));
+                if scale != 0 && scale != 100 {
+                    a.push_str(&format!(" scale=\"{scale}\""));
+                }
+            } else {
+                // No printer's settings: Excel prints on the printer's default paper (A4 on a Japanese PC). An .xlsx's
+                // pageSetup without paperSize is Letter, laid out for it and set smaller on A4 (corpus 172: its pages
+                // started 44 pt lower), so the default paper is named.
+                a.push_str(&format!(" paperSize=\"{}\"", crate::locale_paper::default_paper_size()));
+            }
+            if g & 1 != 0 {
+                a.push_str(" pageOrder=\"overThenDown\"");
+            }
+            a.push_str(if landscape { " orientation=\"landscape\"" } else { " orientation=\"portrait\"" });
+            if w != 1 {
+                a.push_str(&format!(" fitToWidth=\"{w}\""));
+            }
+            if h != 1 {
+                a.push_str(&format!(" fitToHeight=\"{h}\""));
+            }
+            if g & 0x80 != 0 {
+                a.push_str(&format!(" firstPageNumber=\"{}\" useFirstPageNumber=\"1\"", start as i16));
+            }
+            if g & 8 != 0 {
+                a.push_str(" blackAndWhite=\"1\"");
+            }
+            if g & 0x10 != 0 {
+                a.push_str(" draft=\"1\"");
+            }
+            format!("<pageSetup{a}/>")
         });
+        let print_options = {
+            let mut a = String::new();
+            for (on, name) in [(sheet.h_center, "horizontalCentered"), (sheet.v_center, "verticalCentered"), (sheet.print_headings, "headings"), (sheet.print_grid, "gridLines")] {
+                if on {
+                    a.push_str(&format!(" {name}=\"1\""));
+                }
+            }
+            if a.is_empty() { String::new() } else { format!("<printOptions{a}/>") }
+        };
+        let (header_margin, footer_margin) = sheet.header_footer_margins.unwrap_or((0.3, 0.3));
+        let sheet_pr = if sheet.fit_to_page { "<sheetPr><pageSetUpPr fitToPage=\"1\"/></sheetPr>" } else { "" };
         let header_footer = match (&sheet.header, &sheet.footer) {
             (None, None) => String::new(),
             (h, f) => format!("<headerFooter>{}{}</headerFooter>", h.as_ref().filter(|s| !s.is_empty()).map(|s| format!("<oddHeader>{}</oddHeader>", esc(s))).unwrap_or_default(), f.as_ref().filter(|s| !s.is_empty()).map(|s| format!("<oddFooter>{}</oddFooter>", esc(s))).unwrap_or_default()),
         };
         let header_footer = if header_footer == "<headerFooter></headerFooter>" { String::new() } else { header_footer };
-        let default_row = sheet.default_row_twips.map(|t| format!(" defaultRowHeight=\"{}\" customHeight=\"1\"", ibis_calc::number_to_xml((t & 0x7FFF) as f64 / 20.0))).unwrap_or_else(|| " defaultRowHeight=\"15\"".into());
+        // The rows of an .xls with nothing in them are as high as their ROW record says (fUnsynced or not), or as DEFAULTROWHEIGHT says
+        // where they have no ROW: Excel measured no font for them (Microsoft Excel for Windows' PDFs of the corpus: 018's second sheet rows 1
+        // and 2 are 13.5 and 14.25 pt, 108's empty rows under its chart 14.25 pt). The app measures only the rows with cells
+        // (`ibisEmptyRowsAsSaved`, read as `DefaultRowRule::AsSaved`).
+        let default_row = sheet.default_row_twips.map(|t| format!(" defaultRowHeight=\"{}\" ibisEmptyRowsAsSaved=\"1\" ibisRowsAsSaved=\"1\"", ibis_calc::number_to_xml((t & 0x7FFF) as f64 / 20.0))).unwrap_or_else(|| " defaultRowHeight=\"15\" ibisEmptyRowsAsSaved=\"1\" ibisRowsAsSaved=\"1\"".into());
         // Conditional formats, data validations and hyperlinks (their addresses as the sheet's relationships).
         let formula_of = |tokens: &[u8], base: (u32, u32)| decompile(tokens, base, &book.cx);
         let mut has_notes = false;
@@ -1171,7 +1488,10 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
             let units = sheet.cols.iter().find(|&&(first, last, ..)| (first..=last).contains(&c)).map(|&(_, _, w, ..)| w as f64);
             let px = match units {
                 Some(w) => w * 7.0 / 256.0,
-                None => sheet.default_col_chars.unwrap_or(8) as f64 * 7.0 + 5.0,
+                None => match sheet.standard_width {
+                    Some(w) => w as f64 * 7.0 / 256.0,
+                    None => sheet.default_col_chars.unwrap_or(8) as f64 * 7.0 + 5.0,
+                },
             };
             px * 9525.0
         };
@@ -1192,8 +1512,11 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
             let x_of = |c: u16, dx: u16| (0..c).map(|k| col_emu(k)).sum::<f64>().round() as i64 + off(col_emu(c), dx, 1024.0);
             let y_of = |r: u16, dy: u16| (0..r).map(|k| row_emu(k)).sum::<f64>().round() as i64 + off(row_emu(r), dy, 256.0);
             let (x1, y1, x2, y2) = (x_of(c1, dx1), y_of(r1, dy1), x_of(c2, dx2), y_of(r2, dy2));
+            // The crop, as DrawingML's 1/1000 percent of each side (the file's are 16.16 fractions).
+            let [top, bottom, left, right] = picture.crop.map(|v| (v as f64 / 65536.0 * 100_000.0).round() as i64);
+            let src_rect = if [top, bottom, left, right] != [0; 4] { format!("<a:srcRect l=\"{left}\" t=\"{top}\" r=\"{right}\" b=\"{bottom}\"/>") } else { String::new() };
             drawing_xml += &format!(
-                "<xdr:twoCellAnchor editAs=\"oneCell\"><xdr:from><xdr:col>{c1}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{r1}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:from><xdr:to><xdr:col>{c2}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{r2}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:to><xdr:pic><xdr:nvPicPr><xdr:cNvPr id=\"{}\" name=\"Picture {}\"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed=\"{rid}\"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:twoCellAnchor>",
+                "<xdr:twoCellAnchor editAs=\"oneCell\"><xdr:from><xdr:col>{c1}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{r1}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:from><xdr:to><xdr:col>{c2}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{r2}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:to><xdr:pic><xdr:nvPicPr><xdr:cNvPr id=\"{}\" name=\"Picture {}\"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed=\"{rid}\"/>{src_rect}<a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:twoCellAnchor>",
                 off(col_emu(c1), dx1, 1024.0),
                 off(row_emu(r1), dy1, 256.0),
                 off(col_emu(c2), dx2, 1024.0),
@@ -1207,23 +1530,123 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
             );
         }
         // The charts: a part each (the series' cells as their caches), related from the drawing.
-        for (anchor, chart) in &sheet.charts {
-            let xml = crate::xls_chart::chart_xml(chart, &SheetCells { book: &book }, &|n| if crate::english_names() { format!("Series{n}") } else { format!("系列{n}") }); // i18n-ok（文書に保存する名前）
+        for (anchor, chart, chart_drawing) in &sheet.charts {
+            let mut xml = crate::xls_chart::chart_xml(chart, &SheetCells { book: &book }, &|n| if crate::english_names() { format!("Series{n}") } else { format!("系列{n}") }); // i18n-ok（文書に保存する名前）
             chart_count += 1;
+            // The shapes drawn on the chart (its titles' and legend's text boxes, arrows): a drawing of the chart (`c:userShapes`) with
+            // each shape placed by fractions of the chart (the file gives 1/4000 of its width and height).
+            if !chart_drawing.shapes.is_empty() {
+                let icv = |i: u16| book.color(i).and_then(|c| u32::from_str_radix(&c[2..], 16).ok());
+                let run_props = |ifnt: u16| run_props_xml(&book, ifnt);
+                let mut writer = crate::xls_drawing::ShapeWriter { defaults: &book.shape_defaults, icv: &icv, run_props: &run_props, kinds: &chart_drawing.objects.kinds, texts: &chart_drawing.objects.texts, blips: &book.blips, media: Vec::new(), media_base: media.len(), pictures: HashMap::new() };
+                let fraction = |v: i32| ibis_calc::number_to_xml(f64::from(v) / 4000.0);
+                let mut anchors = String::new();
+                for (shape, [x1, y1, x2, y2]) in &chart_drawing.shapes {
+                    // The shape's own space is the file's units (times 1000, to keep whole numbers in EMU fields); the anchor places it.
+                    let frame = (i64::from(*x1) * 1000, i64::from(*y1) * 1000, i64::from((x2 - x1).max(0)) * 1000, i64::from((y2 - y1).max(0)) * 1000);
+                    let shape_xml = writer.shape_xml(shape, frame, false);
+                    if shape_xml.is_empty() {
+                        continue;
+                    }
+                    anchors += &format!(
+                        "<cdr:relSizeAnchor><cdr:from><cdr:x>{}</cdr:x><cdr:y>{}</cdr:y></cdr:from><cdr:to><cdr:x>{}</cdr:x><cdr:y>{}</cdr:y></cdr:to>{}</cdr:relSizeAnchor>",
+                        fraction(*x1),
+                        fraction(*y1),
+                        fraction(*x2),
+                        fraction(*y2),
+                        shape_xml.replace("<xdr:", "<cdr:").replace("</xdr:", "</cdr:")
+                    );
+                }
+                if !anchors.is_empty() {
+                    let mut rels = String::new();
+                    for (rid, name, data) in writer.media {
+                        rels += &format!("<Relationship Id=\"{rid}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/{name}\"/>");
+                        media.push((format!("xl/media/{name}"), data));
+                    }
+                    sheet_files.push((format!("xl/drawings/chartdrawing{chart_count}.xml"), format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><c:userShapes xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:cdr=\"http://schemas.openxmlformats.org/drawingml/2006/chartDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">{anchors}</c:userShapes>")));
+                    sheet_files.push((format!("xl/drawings/_rels/chartdrawing{chart_count}.xml.rels"), format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{rels}</Relationships>")));
+                    sheet_files.push((format!("xl/charts/_rels/chart{chart_count}.xml.rels"), format!("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rIdU\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartUserShapes\" Target=\"../drawings/chartdrawing{chart_count}.xml\"/></Relationships>")));
+                    xml = xml.replacen("</c:chartSpace>", "<c:userShapes r:id=\"rIdU\"/></c:chartSpace>", 1);
+                }
+            }
             let rid = format!("rIdChart{chart_count}");
             sheet_files.push((format!("xl/charts/chart{chart_count}.xml"), xml));
             drawing_rels += &format!("<Relationship Id=\"{rid}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart\" Target=\"../charts/chart{chart_count}.xml\"/>");
-            let [c1, dx1, r1, dy1, c2, dx2, r2, dy2] = *anchor;
+            // The chart's corners as cells and offsets (EMU); one in a group is placed in the group's rectangle in proportion.
             let off = |frame: f64, amount: u16, unit: f64| ((frame * amount as f64 / unit).round() as i64).max(0);
+            let ((c1, o1), (r1, p1), (c2, o2), (r2, p2)) = match *anchor {
+                ChartAnchor::Cells([c1, dx1, r1, dy1, c2, dx2, r2, dy2]) => (
+                    (c1, off(col_emu(c1), dx1, 1024.0)),
+                    (r1, off(row_emu(r1), dy1, 256.0)),
+                    (c2, off(col_emu(c2), dx2, 1024.0)),
+                    (r2, off(row_emu(r2), dy2, 256.0)),
+                ),
+                ChartAnchor::InGroup { group: [c1, dx1, r1, dy1, c2, dx2, r2, dy2], frame, child } => {
+                    let x = |c: u16, dx: u16| (0..c).map(col_emu).sum::<f64>() + col_emu(c) * f64::from(dx) / 1024.0;
+                    let y = |r: u16, dy: u16| (0..r).map(row_emu).sum::<f64>() + row_emu(r) * f64::from(dy) / 256.0;
+                    let (gx1, gy1, gx2, gy2) = (x(c1, dx1), y(r1, dy1), x(c2, dx2), y(r2, dy2));
+                    let fw = f64::from((frame[2] - frame[0]).max(1));
+                    let fh = f64::from((frame[3] - frame[1]).max(1));
+                    let at_x = |v: i32| gx1 + (gx2 - gx1) * f64::from(v - frame[0]) / fw;
+                    let at_y = |v: i32| gy1 + (gy2 - gy1) * f64::from(v - frame[1]) / fh;
+                    // The cell an EMU distance from the sheet's corner falls in, and how far into it.
+                    let cell = |mut v: f64, size: &dyn Fn(u16) -> f64| {
+                        let mut i = 0u16;
+                        while i < u16::MAX && v >= size(i) {
+                            v -= size(i);
+                            i += 1;
+                        }
+                        (i, v.round().max(0.0) as i64)
+                    };
+                    (cell(at_x(child[0]), &col_emu), cell(at_y(child[1]), &row_emu), cell(at_x(child[2]), &col_emu), cell(at_y(child[3]), &row_emu))
+                }
+            };
             drawing_xml += &format!(
                 "<xdr:twoCellAnchor><xdr:from><xdr:col>{c1}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{r1}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:from><xdr:to><xdr:col>{c2}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{r2}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:to><xdr:graphicFrame macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"{}\" name=\"{}\"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></xdr:xfrm><a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>",
-                off(col_emu(c1), dx1, 1024.0),
-                off(row_emu(r1), dy1, 256.0),
-                off(col_emu(c2), dx2, 1024.0),
-                off(row_emu(r2), dy2, 256.0),
+                o1,
+                p1,
+                o2,
+                p2,
                 1000 + chart_count,
                 crate::chart_name(chart_count)
             );
+        }
+        // The other shapes (autoshapes, text boxes, lines, freeforms, groups), with their pictures related from the drawing.
+        if !sheet.shapes.is_empty() {
+            let icv = |i: u16| book.color(i).and_then(|c| u32::from_str_radix(&c[2..], 16).ok());
+            let run_props = |ifnt: u16| run_props_xml(&book, ifnt);
+            let mut writer = crate::xls_drawing::ShapeWriter { defaults: &book.shape_defaults, icv: &icv, run_props: &run_props, kinds: &sheet.objects.kinds, texts: &sheet.objects.texts, blips: &book.blips, media: Vec::new(), media_base: media.len(), pictures: HashMap::new() };
+            let off = |frame: f64, amount: u16, unit: f64| ((frame * amount as f64 / unit).round() as i64).max(0);
+            let x_of = |c: u16, dx: u16| (0..c).map(|k| col_emu(k)).sum::<f64>().round() as i64 + off(col_emu(c), dx, 1024.0);
+            let y_of = |r: u16, dy: u16| (0..r).map(|k| row_emu(k)).sum::<f64>().round() as i64 + off(row_emu(r), dy, 256.0);
+            for (shape, anchor) in &sheet.shapes {
+                let [c1, dx1, r1, dy1, c2, dx2, r2, dy2] = *anchor;
+                let (x1, y1, x2, y2) = (x_of(c1, dx1), y_of(r1, dy1), x_of(c2, dx2), y_of(r2, dy2));
+                let (mut x, mut y, mut w, mut h) = (x1, y1, (x2 - x1).max(0), (y2 - y1).max(0));
+                // Turned by 45 to 135 degrees (or 225 to 315) the anchor is the box turned a quarter about its centre
+                // (MS-ODRAW 2.2.3 and MS-XLS 2.5.193): its own box has the width and height swapped.
+                let degrees = (shape.props.get(0x04).map_or(0.0, |v| f64::from(v as i32) / 65536.0)).rem_euclid(180.0);
+                if (45.0..135.0).contains(&degrees) {
+                    let (cx, cy) = (x + w / 2, y + h / 2);
+                    (x, y, w, h) = (cx - h / 2, cy - w / 2, h, w);
+                }
+                let xml = writer.shape_xml(shape, (x, y, w, h), false);
+                if xml.is_empty() {
+                    continue;
+                }
+                drawing_xml += &format!(
+                    "<xdr:twoCellAnchor><xdr:from><xdr:col>{c1}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{r1}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:from><xdr:to><xdr:col>{c2}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{r2}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:to>{xml}<xdr:clientData{}/></xdr:twoCellAnchor>",
+                    off(col_emu(c1), dx1, 1024.0),
+                    off(row_emu(r1), dy1, 256.0),
+                    off(col_emu(c2), dx2, 1024.0),
+                    off(row_emu(r2), dy2, 256.0),
+                    if sheet.objects.no_print.contains(&shape.id) { " fPrintsWithSheet=\"0\"" } else { "" }
+                );
+            }
+            for (rid, name, data) in writer.media {
+                drawing_rels += &format!("<Relationship Id=\"{rid}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/{name}\"/>");
+                media.push((format!("xl/media/{name}"), data));
+            }
         }
         let has_pictures = !drawing_xml.is_empty();
         if has_pictures {
@@ -1270,7 +1693,7 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
         };
         let legacy = format!("{}{}", if has_pictures { "<drawing r:id=\"rIdD\"/>" } else { "" }, if has_notes { "<legacyDrawing r:id=\"rIdV\"/>" } else { "" });
         let xml = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><dimension ref=\"A1:{}{}\"/><sheetViews><sheetView{}{}{zoom} workbookViewId=\"0\"{}>{}</sheetView></sheetViews><sheetFormatPr{} baseColWidth=\"{}\"/>{}<sheetData>{rows_xml}</sheetData>{autofilter_xml}{merges_xml}{features}<pageMargins left=\"{}\" right=\"{}\" top=\"{}\" bottom=\"{}\" header=\"0.3\" footer=\"0.3\"/>{}{header_footer}{breaks}{legacy}</worksheet>",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">{sheet_pr}<dimension ref=\"A1:{}{}\"/><sheetViews><sheetView{}{}{zoom} workbookViewId=\"0\"{}>{}</sheetView></sheetViews><sheetFormatPr{}{} baseColWidth=\"{}\"/>{}<sheetData>{rows_xml}</sheetData>{autofilter_xml}{merges_xml}{features}{print_options}<pageMargins left=\"{}\" right=\"{}\" top=\"{}\" bottom=\"{}\" header=\"{}\" footer=\"{}\"/>{}{header_footer}{breaks}{legacy}</worksheet>",
             column_letters(max_col),
             max_row + 1,
             if sheet.show_grid { "" } else { " showGridLines=\"0\"" },
@@ -1278,12 +1701,15 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
             if k == 0 { " tabSelected=\"1\"" } else { "" },
             pane.unwrap_or_default(),
             default_row,
+            sheet.standard_width.map(|w| format!(" defaultColWidth=\"{}\"", ibis_calc::number_to_xml(w as f64 / 256.0))).unwrap_or_default(),
             sheet.default_col_chars.unwrap_or(8),
             if cols_xml.is_empty() { String::new() } else { format!("<cols>{cols_xml}</cols>") },
             m(0, 0.7),
             m(1, 0.7),
             m(2, 0.75),
             m(3, 0.75),
+            ibis_calc::number_to_xml(header_margin),
+            ibis_calc::number_to_xml(footer_margin),
             setup.unwrap_or_default(),
         )
 ;
@@ -1317,7 +1743,7 @@ fn emit(book: &Book) -> Result<Vec<u8>, Error> {
     let content_types = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"vml\" ContentType=\"application/vnd.openxmlformats-officedocument.vmlDrawing\"/><Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/><Default Extension=\"bmp\" ContentType=\"image/bmp\"/><Default Extension=\"tiff\" ContentType=\"image/tiff\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>{}{}</Types>",
         if book.theme.is_some() { "<Override PartName=\"/xl/theme/theme1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.theme+xml\"/>" } else { "" },
-        (1..=count).map(|n| format!("<Override PartName=\"/xl/worksheets/sheet{n}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")).chain(sheet_files.iter().filter(|(name, _)| name.starts_with("xl/comments")).map(|(name, _)| format!("<Override PartName=\"/{name}\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml\"/>"))).chain(sheet_files.iter().filter(|(name, _)| name.starts_with("xl/charts/chart")).map(|(name, _)| format!("<Override PartName=\"/{name}\" ContentType=\"application/vnd.openxmlformats-officedocument.drawingml.chart+xml\"/>"))).chain(sheet_files.iter().filter(|(name, _)| name.starts_with("xl/drawings/drawing") && name.ends_with(".xml") && !name.contains("_rels")).map(|(name, _)| format!("<Override PartName=\"/{name}\" ContentType=\"application/vnd.openxmlformats-officedocument.drawing+xml\"/>"))).collect::<String>()
+        (1..=count).map(|n| format!("<Override PartName=\"/xl/worksheets/sheet{n}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")).chain(sheet_files.iter().filter(|(name, _)| name.starts_with("xl/comments")).map(|(name, _)| format!("<Override PartName=\"/{name}\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml\"/>"))).chain(sheet_files.iter().filter(|(name, _)| name.starts_with("xl/charts/chart")).map(|(name, _)| format!("<Override PartName=\"/{name}\" ContentType=\"application/vnd.openxmlformats-officedocument.drawingml.chart+xml\"/>"))).chain(sheet_files.iter().filter(|(name, _)| name.starts_with("xl/drawings/chartdrawing") && name.ends_with(".xml") && !name.contains("_rels")).map(|(name, _)| format!("<Override PartName=\"/{name}\" ContentType=\"application/vnd.openxmlformats-officedocument.drawingml.chartshapes+xml\"/>"))).chain(sheet_files.iter().filter(|(name, _)| name.starts_with("xl/drawings/drawing") && name.ends_with(".xml") && !name.contains("_rels")).map(|(name, _)| format!("<Override PartName=\"/{name}\" ContentType=\"application/vnd.openxmlformats-officedocument.drawing+xml\"/>"))).collect::<String>()
     );
     let workbook_rels = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{}<Relationship Id=\"rIdS\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>{}</Relationships>",
@@ -1358,6 +1784,17 @@ struct SheetCells<'a> {
 impl crate::xls_chart::Cells for SheetCells<'_> {
     fn color(&self, index: usize) -> u32 {
         self.book.palette.get(index).copied().unwrap_or(0)
+    }
+
+    fn format_code(&self, index: u16) -> Option<String> {
+        self.book.formats.get(&index).cloned().or_else(|| crate::xlsx::builtin_format(index as i64).map(str::to_string))
+    }
+
+    fn range_format(&self, r: &crate::xls_chart::Ref) -> Option<String> {
+        let &(_, first, _) = self.book.cx.xti.get(r.ixti as usize)?;
+        let cell = self.book.sheets.get(first as usize)?.cells.get(&(r.rows.0 as u32, r.columns.0 as u32))?;
+        let format = self.book.xfs.get(cell.xf as usize)?.format;
+        (format != 0).then(|| self.format_code(format)).flatten()
     }
 
     fn range(&self, r: &crate::xls_chart::Ref) -> Option<(String, Vec<crate::xls_chart::Cell>)> {
@@ -1426,6 +1863,15 @@ mod encrypted_tests {
     }
 
     #[test]
+    fn a_workbook_encrypted_with_the_default_password_opens_without_asking() {
+        // Excel saves a workbook whose structure is locked encrypted with "VelvetSweatshop" (corpus 031).
+        let plain = plain();
+        let file = protect(&plain, &make_cryptoapi_info(DEFAULT_PASSWORD, [3; 16], [5; 16], 128), DEFAULT_PASSWORD);
+        assert!(!is_encrypted(&file));
+        assert_eq!(to_xlsx(&file).unwrap(), to_xlsx(&plain).unwrap());
+    }
+
+    #[test]
     fn every_method_is_opened_with_its_password() {
         let plain = plain();
         let want = to_xlsx(&plain).unwrap();
@@ -1443,5 +1889,90 @@ mod encrypted_tests {
                 std::fs::write(std::path::Path::new(&dir).join(format!("{}.xls", name.replace(' ', "_"))), &file).unwrap();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use super::*;
+
+    /// The probe of scripts/corpus/make_xls_shapes_probe.py, saved as .xls by Excel (Microsoft 365, Windows).
+    fn probe() -> (String, String) {
+        let xls = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/xls_shapes_probe.xls")).unwrap();
+        let xlsx = to_xlsx(&xls).unwrap();
+        let zip = crate::zip::Archive::new(&xlsx).unwrap();
+        let part = |name: &str| String::from_utf8(zip.read(name).unwrap().unwrap_or_default()).unwrap();
+        (part("xl/worksheets/sheet1.xml"), part("xl/drawings/drawing1.xml"))
+    }
+
+    #[test]
+    fn shared_strings_over_several_records_after_the_drawing_group_are_read() {
+        // The SST's CONTINUEs come after a MSODRAWINGGROUP's: they are the strings', not the drawing group's.
+        let xls = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/xls_shapes_probe.xls")).unwrap();
+        let xlsx = to_xlsx(&xls).unwrap();
+        let zip = crate::zip::Archive::new(&xlsx).unwrap();
+        let text: String = ["xl/sharedStrings.xml", "xl/worksheets/sheet1.xml"].iter().filter_map(|n| zip.read(n).ok().flatten()).map(|b| String::from_utf8(b).unwrap()).collect();
+        for n in [31, 1000, 2030] {
+            assert!(text.contains(&format!("文字列{n:04}")), "{n}");
+        }
+    }
+
+    #[test]
+    fn the_default_theme_is_office_2007s() {
+        // A THEME record of version 124226 and nothing more (Excel 365's for a workbook in that theme, corpus 040):
+        // its white (lt1) and its dark blue (dk2).
+        let record = [&[0x96, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 0xE5, 0x01, 0x00][..]];
+        let theme = String::from_utf8(theme_of(&record).unwrap()).unwrap();
+        assert!(theme.contains("lastClr=\"FFFFFF\"") && theme.contains("<a:dk2><a:srgbClr val=\"1F497D\"/>"), "{theme}");
+        assert_eq!(theme_of(&[&[0x96, 0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0][..]]), None);
+    }
+
+    #[test]
+    fn the_print_settings_of_an_old_workbook_are_kept() {
+        let (sheet, _) = probe();
+        assert!(sheet.contains("<pageSetUpPr fitToPage=\"1\"/>"), "{sheet}");
+        assert!(sheet.contains("horizontalCentered=\"1\""), "{sheet}");
+        assert!(sheet.contains("gridLines=\"1\""), "{sheet}");
+        assert!(sheet.contains("header=\"0.5\""), "{sheet}");
+        // The cell of rich text: its shared string's runs (corpus 041's headings, a bold line and a smaller one).
+        assert!(sheet.contains("<b/><sz val=\"14\"/>") && sheet.contains(">Bold</t></r><r>") && sheet.contains(">small</t></r>"), "{sheet}");
+        // Row 5's height was set (fUnsynced): a custom height; the others Excel measures by their fonts (corpus 126).
+        assert!(sheet.contains("<row r=\"5\" ht=\"30\" customHeight=\"1\">"), "{sheet}");
+        assert!(sheet.matches("customHeight=\"1\"").count() == 1, "{sheet}");
+        // The default width of the columns (STANDARDWIDTH; corpus 076's 3.625 printed as 8).
+        assert!(sheet.contains("defaultColWidth=\"3.625\""), "{sheet}");
+    }
+
+    #[test]
+    fn a_sheet_without_the_printers_settings_prints_on_the_default_paper() {
+        // SETUP's fNoPls: Excel prints on the printer's default paper; an .xlsx's pageSetup without paperSize would be
+        // Letter set smaller on A4 (corpus 172).
+        let xls = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/xls_shapes_probe.xls")).unwrap();
+        let xlsx = to_xlsx(&xls).unwrap();
+        let zip = crate::zip::Archive::new(&xlsx).unwrap();
+        let sheet = String::from_utf8(zip.read("xl/worksheets/sheet2.xml").unwrap().unwrap()).unwrap();
+        assert!(sheet.contains(&format!("paperSize=\"{}\"", crate::locale_paper::default_paper_size())), "{sheet}");
+    }
+
+    #[test]
+    fn the_shapes_of_an_old_workbook_are_drawn() {
+        let (_, drawing) = probe();
+        // The text box: its two lines, the first red, bold, 14 pt.
+        assert!(drawing.contains("txBox=\"1\""), "{drawing}");
+        assert!(drawing.contains(">Red</a:t>") && drawing.contains(">Plain</a:t>"), "{drawing}");
+        // The text boxes after the first 8224 bytes of drawing, whose pieces come in CONTINUEs after a text's.
+        for k in 0..6 {
+            assert!(drawing.contains(&format!(">Box{k}</a:t>")), "Box{k}: {drawing}");
+        }
+        assert!(drawing.contains("<a:rPr sz=\"1400\" b=\"1\"><a:solidFill><a:srgbClr val=\"FF0000\"/>"), "{drawing}");
+        // The rectangle filled red with a blue 2 pt outline, the ellipse without one, the line, the group.
+        assert!(drawing.contains("<a:srgbClr val=\"FF0000\"></a:srgbClr></a:solidFill><a:ln w=\"25400\"><a:solidFill><a:srgbClr val=\"0000FF\"/>"), "{drawing}");
+        assert!(drawing.contains("prst=\"ellipse\""), "{drawing}");
+        assert!(drawing.contains("<xdr:cxnSp"), "{drawing}");
+        assert!(drawing.contains("<xdr:grpSp>") && drawing.matches("<xdr:sp ").count() >= 5, "{drawing}");
+        // The picture, whose image is in a drawing group of two MSODRAWINGGROUP records (corpus 163).
+        assert!(drawing.contains("<xdr:pic>"), "{drawing}");
+        // Its crop (the left quarter: corpus 157's two pictures of one logo, each a part of it).
+        assert!(drawing.contains("<a:srcRect l=\"25000\" t=\"0\" r=\"0\" b=\"0\"/>"), "{drawing}");
     }
 }

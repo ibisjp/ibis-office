@@ -30,8 +30,6 @@ pub(crate) struct Theme {
     major_complex: Option<String>,
     minor_complex: Option<String>,
     pub(crate) fmt_scheme_name: Option<String>,
-    /// The widths (EMU) of the lines of `a:lnStyleLst`, for `lnRef idx`.
-    line_widths: Vec<Option<i64>>,
 }
 
 impl Theme {
@@ -119,9 +117,6 @@ impl Theme {
         }
         if let Some(fmt) = child(elements, "fmtScheme") {
             self.fmt_scheme_name = attr(fmt, "name").map(str::to_string);
-            if let Some(list) = child(fmt, "lnStyleLst") {
-                self.line_widths = children(list, "ln").map(|ln| attr(ln, "w").and_then(|w| w.parse().ok())).collect();
-            }
         }
     }
 
@@ -136,11 +131,6 @@ impl Theme {
             major: set(&self.major_latin, &self.major_east_asian, &self.major_japanese, &self.major_complex),
             minor: set(&self.minor_latin, &self.minor_east_asian, &self.minor_japanese, &self.minor_complex),
         }
-    }
-
-    /// The width of the theme's line `idx` (`lnRef idx`, 1-based), in EMU.
-    pub(crate) fn line_width(&self, idx: i64) -> Option<i64> {
-        self.line_widths.get(usize::try_from(idx.checked_sub(1)?).ok()?).copied().flatten()
     }
 
     /// A scheme colour by its own name (`dk1`, `accent1`, …).
@@ -188,6 +178,25 @@ impl Theme {
         let cs = if major { &self.major_complex } else { &self.minor_complex };
         cs.clone().or_else(|| self.typeface(if major { "+mj-cs" } else { "+mn-cs" }))
     }
+}
+
+/// The colours of Office's default theme ("Office", 2013 and later).
+fn office_default_colour(name: &str) -> Option<Rgb> {
+    Some(Rgb(match name {
+        "dk1" => 0x000000,
+        "lt1" => 0xFFFFFF,
+        "dk2" => 0x44546A,
+        "lt2" => 0xE7E6E6,
+        "accent1" => 0x4472C4,
+        "accent2" => 0xED7D31,
+        "accent3" => 0xA5A5A5,
+        "accent4" => 0xFFC000,
+        "accent5" => 0x5B9BD5,
+        "accent6" => 0x70AD47,
+        "hlink" => 0x0563C1,
+        "folHlink" => 0x954F72,
+        _ => return None,
+    }))
 }
 
 /// Resolves colour elements for one slide: its theme plus the colour map that
@@ -242,7 +251,9 @@ impl<'t> Colors<'t> {
 
     pub(crate) fn scheme(&self, name: &str) -> Option<Rgb> {
         let mapped = self.map.get(name).map(String::as_str).unwrap_or(name);
-        self.theme.colors.get(mapped).copied()
+        // A file with no theme part (or a theme without colours) is drawn with Office's own default theme, as Office does: a chart's
+        // automatic series colours are accent 1, 2, ... of it, not black.
+        self.theme.colors.get(mapped).copied().or_else(|| self.theme.colors.is_empty().then(|| office_default_colour(mapped)).flatten())
     }
 
     /// The colour given by the first colour element among `parent`'s children.
@@ -647,6 +658,14 @@ pub(crate) fn effect_style<'a, 'i>(theme: Node<'a, 'i>, idx: usize) -> Option<No
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_without_a_theme_uses_the_office_default_colours() {
+        let theme = Theme::default();
+        let colors = Colors::new(&theme, None, &[]);
+        assert_eq!(colors.named("accent1").rgb, Rgb(0x4472C4));
+        assert_eq!(colors.named("tx2").rgb, Rgb(0x44546A));
+    }
 
     fn color_of(xml: &str) -> Color {
         // Colour fixtures use the same DrawingML URI as a real Office part.

@@ -44,6 +44,8 @@ pub(crate) struct RunProps {
     pub(crate) japanese: Option<String>,
     /// `lang`.
     pub(crate) lang: Option<String>,
+    /// `a:rPr@altLang`, inherited like `lang`.
+    pub(crate) alt_lang: Option<String>,
     /// `kern`, in hundredths of a point.
     pub(crate) kern: Option<u32>,
     pub(crate) shadow: Option<Option<ibis_doc_model::Shadow>>,
@@ -74,6 +76,9 @@ impl RunProps {
         }
         if let Some(b) = attr_i64(node, "baseline") {
             self.baseline = Some(b.clamp(-100_000, 100_000) as i32);
+        }
+        if let Some(alt) = attr(node, "altLang") {
+            self.alt_lang = Some(alt.to_string());
         }
         if let Some(lang) = attr(node, "lang") {
             self.lang = Some(lang.to_string());
@@ -237,7 +242,7 @@ impl RunProps {
     /// characters, otherwise the Latin one.
     pub(crate) fn font_for(&self, text: &str) -> Option<String> {
         let east_asian = text.chars().any(is_east_asian);
-        let japanese = self.lang.as_deref().is_some_and(|l| l.starts_with("ja"));
+        let japanese = ibis_doc_model::east_asian_language(self.lang.as_deref(), self.alt_lang.as_deref()) == ibis_doc_model::EastAsianLang::Japanese;
         if east_asian && japanese && self.japanese.is_some() {
             self.japanese.clone()
         } else if east_asian {
@@ -494,7 +499,15 @@ pub(crate) fn bullet_glyph(text: &str, font: Option<&str>) -> String {
         // Text presentation (U+FE0E): without it Windows draws the heavy check mark as a colour emoji, which ignores the bullet's colour.
         "ü" => "✔\u{fe0e}",
         "ð" | "è" => "➔",
-        _ => "•",
+        // The rest of the typeface's glyphs: the character the tables of `symbol_font` give for the code.
+        _ => {
+            let mut chars = code.chars();
+            let stand_in = match (chars.next(), chars.next(), font) {
+                (Some(c), None, Some(f)) => crate::symbol_font::stand_in(f.trim(), c),
+                _ => None,
+            };
+            return stand_in.map_or_else(|| "•".to_string(), String::from);
+        }
     }
     .to_string()
 }
@@ -634,6 +647,17 @@ pub(crate) fn auto_number(scheme: &str, n: u32) -> String {
 mod tests {
     use super::*;
 
+    /// The `charset` of an `a:ea` is read per typeface (the first wins); an `a:ea` without one adds nothing.
+    #[test]
+    fn east_asian_charsets_are_read_per_typeface() {
+        let xml = r#"<a:rPr><a:ea typeface="A" charset="-128"/></a:rPr><a:rPr><a:ea typeface="B"/></a:rPr><a:rPr><a:ea typeface="A" charset="1"/><a:ea typeface="C" charset="-128"></a:ea></a:rPr>"#;
+        let mut traits = std::collections::BTreeMap::new();
+        read_east_asian_charsets(xml, &mut traits);
+        assert_eq!(traits.get("A").and_then(|t| t.charset), Some(-128));
+        assert!(!traits.contains_key("B"));
+        assert_eq!(traits.get("C").and_then(|t| t.charset), Some(-128));
+    }
+
     #[test]
     fn auto_number_schemes() {
         assert_eq!(auto_number("arabicPeriod", 3), "3.");
@@ -686,5 +710,27 @@ mod tests {
         assert_eq!(bullet_glyph("\u{f0a7}", Some("Wingdings")), "■");
         assert_eq!(bullet_glyph("\u{f06c}", Some("Wingdings")), "●");
         assert_eq!(bullet_glyph("\u{f0fc}", Some("Arial")), "\u{f0fc}");
+    }
+}
+
+/// The `charset` of each East Asian typeface (`<a:ea typeface=".." charset="-128"/>`) the XML text `xml` of a slide, layout or master names, into
+/// `traits`: PowerPoint draws a typeface the PC lacks in Yu Gothic when its `a:ea` says Shift-JIS and in MS Gothic when it says none
+/// (`tasks/doc/m56-missing-font-standins.md`). A plain scan of the text: the parts are not parsed again.
+pub(crate) fn read_east_asian_charsets(xml: &str, traits: &mut std::collections::BTreeMap<String, ibis_doc_model::TypefaceTraits>) {
+    let mut rest = xml;
+    while let Some(at) = rest.find("<a:ea ") {
+        rest = &rest[at + "<a:ea ".len()..];
+        let Some(end) = rest.find('>') else { return };
+        let tag = &rest[..end];
+        let value = |name: &str| -> Option<&str> {
+            let key = format!("{name}=\"");
+            let from = tag.find(&key)? + key.len();
+            let len = tag[from..].find('"')?;
+            Some(&tag[from..from + len])
+        };
+        if let (Some(typeface), Some(charset)) = (value("typeface"), value("charset").and_then(|c| c.parse::<i16>().ok())) {
+            traits.entry(typeface.to_string()).or_default().charset.get_or_insert(charset);
+        }
+        rest = &rest[end..];
     }
 }

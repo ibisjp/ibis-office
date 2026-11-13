@@ -19,6 +19,58 @@ pub enum TransitionPlan {
     Windows(Vec<Rect>),
     /// The new slide is seen through these rectangles at the given opacities (a soft edge: ワイプ).
     SoftWindows(Vec<(Rect, f64)>),
+    /// The old slide goes white, then the new one comes out of it (フラッシュ).
+    FadeWhite,
+    /// The slides are drawn at a size about the centre: each as `(scale, opacity)`, the new one over the old, or under it.
+    /// A flat stand-in for the effects that move the camera (ズーム, フライスルー, ワープ).
+    Scaled { old: Option<(f64, f64)>, new: Option<(f64, f64)>, new_on_top: bool },
+    /// The slide turns over about its vertical middle: the old one narrows to a strip of this share of its width (0 when gone),
+    /// then the new one widens (反転; a flat stand-in for the turn).
+    Flip { old: f64, new: f64 },
+    /// An effect drawn in 3D: the slides are cards placed in perspective (the viewer renders them from textures); `motion` is the
+    /// way the content moves, as for a push. Where the viewer cannot, `flat_plan` is its flat stand-in.
+    Turn3d { kind: Turn3dKind, motion: (f64, f64) },
+}
+
+/// The 3D effects the viewer draws as cards in perspective.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Turn3dKind {
+    /// 立方体: the slides are two faces of a cube.
+    Cube,
+    /// 反転: the slide turns over about its middle.
+    Flip,
+    /// 箱: the cube seen from inside.
+    Box,
+    /// 回転: the cube with only the slides' shapes turning over their own background.
+    Rotate,
+    /// 軌道: the box with only the slides' shapes turning over their own background.
+    Orbit,
+    /// コンベヤー: the cards of the slides ride a belt (the shapes alone, over the slide's background; linear time).
+    Conveyor,
+    /// ギャラリー: the two slides in a strip that backs off, tilts, scrolls and comes back (black background; linear time).
+    Gallery,
+    /// スイッチ: two cards on a rail that turn toward each other and pass.
+    Switch,
+    /// 観覧車: the old card sinks toward the viewer and out, the new one comes down from far at the top left.
+    Ferris,
+    /// 倒れる: the old slide falls forward over the new one.
+    FallOver,
+    /// ページめくり（単一）: the old slide leaves bent, its leading edge lifted toward the viewer.
+    PageCurlSingle,
+    /// ピールオフ: the old slide is peeled off by a roll along a slanted line.
+    PeelOff,
+    /// カーテン: the old slide's halves gather at the sides, pleated, and the new slide is behind.
+    Curtains,
+    /// 風: the old slide is blown off as a card.
+    Wind,
+    /// ページめくり（両側）: the old slide's half on the far side turns over like a leaf of a book, bent, and lands on the other half showing the new slide.
+    PageCurlDouble,
+    /// ドレープ: the new slide falls onto the old one as a card.
+    Drape,
+    /// 紙飛行機: the old slide is folded into a paper plane that flies off.
+    Airplane,
+    /// 折り紙: the old slide folds into a paper crane that flies off (drawn as one card sent back and tilted).
+    Origami,
 }
 
 /// The easing of transition `effect` at `t` (0 to 1 of its time), where PowerPoint's differs from the common ease-in-out
@@ -31,6 +83,13 @@ pub fn progress(effect: &str, t: f64) -> Option<f64> {
     match effect {
         "pull" | "reveal" | "cover" => Some(bezier_ease(0.72, 0.36, t)),
         "push" => Some(bezier_ease(0.44, 0.56, t)),
+        // 立方体 (`cube`) and 反転 (`flip`): fitted to the angle of the model of `turn3d.rs` over each frame of the video (the
+        // transition begins about 11 frames in, `cubic-bezier(x1, 0, x2, 1)` of its 60; rms error 0.002 and 0.009 of the angle).
+        "cube" | "rotate" => Some(bezier_ease(0.326, 0.69, t)),
+        "box" | "orbit" => Some(bezier_ease(0.346, 0.65, t)),
+        // コンベヤー runs at a constant speed in the table of `turn3d.rs`.
+        "conveyor" | "gallery" | "switch" | "ferris" | "fallOver" | "pageCurlSingle" | "peelOff" | "curtains" | "wind" | "pageCurlDouble" | "drape" | "airplane" | "origami" => Some(t),
+        "flip" => Some(bezier_ease(0.593, 0.358, t)),
         "wipe" => Some(t),
         _ => None,
     }
@@ -50,6 +109,42 @@ pub fn bezier_ease(x1: f64, x2: f64, u: f64) -> f64 {
     }
     let s = (lo + hi) / 2.0;
     3.0 * (1.0 - s) * s * s + s * s * s
+}
+
+/// The effects PowerPoint draws in 3D (the slide as a card turned, folded or swung in perspective) are drawn as the flat motion
+/// that is closest to them: the plan of `effect` when it is one of these, `None` otherwise. The picture is not PowerPoint's
+/// (the slides are not turned in perspective: GPUI elements cannot be), the direction and the way the slides leave are.
+fn flat_plan(effect: &str, token: &str, q: f64, aspect: f64) -> Option<TransitionPlan> {
+    let slide = |m: (f64, f64), pushed: bool| TransitionPlan::Slide { from: (-m.0, -m.1), old_to: if pushed { m } else { (0.0, 0.0) }, new_on_top: true };
+    let windows = |filter: &str| match reveal_rects(filter, true, q, aspect) {
+        Some(rects) => TransitionPlan::Windows(rects),
+        None => TransitionPlan::Fade { through_black: false },
+    };
+    // The files' `invX` (right) is the option "From Right" of the 2013 effects, the default "From Left": the slide leaves toward the other side.
+    let inv = token == "invX";
+    Some(match effect {
+        // ズーム: out, the old slide shrinks into the middle over the new one; in, the new one grows out of the middle.
+        "zoom" if token == "in" => TransitionPlan::Scaled { old: None, new: Some((q, q)), new_on_top: true },
+        "zoom" => TransitionPlan::Scaled { old: Some((1.0 - q, 1.0 - q)), new: None, new_on_top: false },
+        // フライスルー and ワープ move the camera through the slide: in, toward the new one; out, away from the old one.
+        "flythrough" | "warp" if (effect == "warp" && token == "in") || (effect == "flythrough" && (token.is_empty() || token.starts_with("in"))) => TransitionPlan::Scaled { old: Some((1.0 + q, 1.0 - q)), new: Some((q, q)), new_on_top: true },
+        "flythrough" | "warp" => TransitionPlan::Scaled { old: Some((1.0 - q, 1.0 - q)), new: Some((1.0 + (1.0 - q), q)), new_on_top: false },
+        "newsflash" => TransitionPlan::Scaled { old: Some((1.0 - q, 1.0 - q)), new: Some((q, q)), new_on_top: true },
+        "flash" => TransitionPlan::FadeWhite,
+        "flip" => TransitionPlan::Flip { old: (1.0 - 2.0 * q).max(0.0), new: (2.0 * q - 1.0).max(0.0) },
+        // The cards of a cube, a box, a rotating slide, an orbit and a switch move as the push does.
+        "cube" | "box" | "rotate" | "orbit" | "switch" | "ferris" => slide(motion(token), true),
+        // ripple: rings from the middle (the corners are drawn the same).
+        "ripple" => windows("circle(out)"),
+        "vortex" => windows("dissolve"),
+        // 2013's effects: the old slide leaves, curtains opening, strips falling, a wind of strips, the page lifted off.
+        "curtains" => windows("barn(outVertical)"),
+        "drape" => windows(if inv { "randombar(vertical)" } else { "blinds(vertical)" }),
+        "wind" | "fallOver" => TransitionPlan::SoftWindows(wipe_strips(if inv { 'l' } else { 'r' }, q)),
+        "peelOff" | "pageCurlDouble" | "pageCurlSingle" | "airplane" | "origami" => TransitionPlan::Slide { from: (0.0, 0.0), old_to: if inv { (1.0, 0.0) } else { (-1.0, 0.0) }, new_on_top: false },
+        "prestige" | "fracture" | "crush" => windows("dissolve"),
+        _ => return None,
+    })
 }
 
 /// How many pieces a wipe is drawn in (each at one opacity; a soft edge needs more than rectangles give).
@@ -144,7 +239,21 @@ pub fn plan(effect: &str, token: Option<&str>, q: f64, aspect: f64) -> Transitio
     };
     match effect {
         "fade" => TransitionPlan::Fade { through_black: token == "thruBlk" },
-        "push" | "pan" | "conveyor" | "gallery" | "ferris" => {
+        "conveyor" => TransitionPlan::Turn3d { kind: Turn3dKind::Conveyor, motion: motion(token) },
+        "gallery" => TransitionPlan::Turn3d { kind: Turn3dKind::Gallery, motion: motion(token) },
+        "switch" => TransitionPlan::Turn3d { kind: Turn3dKind::Switch, motion: motion(token) },
+        "ferris" => TransitionPlan::Turn3d { kind: Turn3dKind::Ferris, motion: motion(token) },
+        // The 2013 effects' option is the file's `invX` (from the right), the default from the left.
+        "fallOver" => TransitionPlan::Turn3d { kind: Turn3dKind::FallOver, motion: if token == "invX" { (1.0, 0.0) } else { (-1.0, 0.0) } },
+        "peelOff" => TransitionPlan::Turn3d { kind: Turn3dKind::PeelOff, motion: if token == "invX" { (1.0, 0.0) } else { (-1.0, 0.0) } },
+        "pageCurlSingle" => TransitionPlan::Turn3d { kind: Turn3dKind::PageCurlSingle, motion: if token == "invX" { (1.0, 0.0) } else { (-1.0, 0.0) } },
+        "pageCurlDouble" => TransitionPlan::Turn3d { kind: Turn3dKind::PageCurlDouble, motion: if token == "invX" { (1.0, 0.0) } else { (-1.0, 0.0) } },
+        "drape" => TransitionPlan::Turn3d { kind: Turn3dKind::Drape, motion: if token == "invX" { (1.0, 0.0) } else { (-1.0, 0.0) } },
+        "airplane" => TransitionPlan::Turn3d { kind: Turn3dKind::Airplane, motion: if token == "invX" { (1.0, 0.0) } else { (-1.0, 0.0) } },
+        "origami" => TransitionPlan::Turn3d { kind: Turn3dKind::Origami, motion: if token == "invX" { (1.0, 0.0) } else { (-1.0, 0.0) } },
+        "curtains" => TransitionPlan::Turn3d { kind: Turn3dKind::Curtains, motion: (-1.0, 0.0) },
+        "wind" => TransitionPlan::Turn3d { kind: Turn3dKind::Wind, motion: if token == "invX" { (1.0, 0.0) } else { (-1.0, 0.0) } },
+        "push" | "pan" => {
             let m = motion(token);
             TransitionPlan::Slide { from: (-m.0, -m.1), old_to: m, new_on_top: true }
         }
@@ -175,11 +284,11 @@ pub fn plan(effect: &str, token: Option<&str>, q: f64, aspect: f64) -> Transitio
         "randomBar" => windows(if token == "vert" { "randombar(vertical)" } else { "randombar(horizontal)" }),
         "comb" => windows(if token == "vert" { "comb(vertical)" } else { "comb(horizontal)" }),
         "circle" => windows(if token == "in" { "circle(in)" } else { "circle(out)" }),
-        "wheel" => match token.parse::<usize>() {
-            Ok(n) if n <= 2 => windows(&format!("wheel({n})")),
-            // Four or eight spokes need so many windows that the slide is drawn that many times: faded.
-            _ => TransitionPlan::Fade { through_black: false },
-        },
+        // The sectors are cut from one grid of cells whatever the number of spokes, so four and eight cost as much as one.
+        "wheel" | "wheelReverse" => windows(&format!("wheel({})", token.parse::<usize>().ok().filter(|n| (1..=16).contains(n)).unwrap_or(4))),
+        // Dissolve, and the tile effects whose tiles (hexagons, diamonds, strips) are drawn in 3D or as shapes the rectangles do not
+        // make: the new slide appears in squares in turn (an approximation of PowerPoint's, which shows the tiles' own shapes).
+        "dissolve" | "honeycomb" | "glitter" | "shred" => windows("dissolve"),
         "wedge" => windows("wedge"),
         "diamond" => windows("diamond(out)"),
         "plus" => windows("plus(out)"),
@@ -189,8 +298,18 @@ pub fn plan(effect: &str, token: Option<&str>, q: f64, aspect: f64) -> Transitio
             "ru" => "strips(upRight)",
             _ => "strips(upLeft)",
         }),
-        _ => TransitionPlan::Fade { through_black: false },
+        "cube" => TransitionPlan::Turn3d { kind: Turn3dKind::Cube, motion: motion(token) },
+        "flip" => TransitionPlan::Turn3d { kind: Turn3dKind::Flip, motion: motion(token) },
+        "box" => TransitionPlan::Turn3d { kind: Turn3dKind::Box, motion: motion(token) },
+        "rotate" => TransitionPlan::Turn3d { kind: Turn3dKind::Rotate, motion: motion(token) },
+        "orbit" => TransitionPlan::Turn3d { kind: Turn3dKind::Orbit, motion: motion(token) },
+        other => flat_plan(other, token, q, aspect).unwrap_or(TransitionPlan::Fade { through_black: false }),
     }
+}
+
+/// The flat stand-in of a 3D effect, for a viewer that cannot draw it in 3D.
+pub fn flat_stand_in(effect: &str, token: Option<&str>, q: f64, aspect: f64) -> Option<TransitionPlan> {
+    flat_plan(effect, token.unwrap_or(""), q, aspect)
 }
 
 #[cfg(test)]
@@ -219,8 +338,31 @@ mod tests {
         assert_eq!(w.len(), 18);
         let TransitionPlan::Windows(w) = plan("checker", None, 1.0, 1.0) else { panic!() };
         assert_eq!(w.len(), 35);
-        assert!(matches!(plan("vortex", None, 0.5, 1.0), TransitionPlan::Fade { through_black: false }));
+        // The 3D effects are drawn as the flat motion nearest to them, none as a fade.
+        for e in ["zoom", "flash", "flip", "cube", "box", "rotate", "orbit", "switch", "ripple", "vortex", "flythrough", "warp", "newsflash", "curtains", "drape", "wind", "fallOver", "peelOff", "pageCurlDouble", "pageCurlSingle", "airplane", "origami", "prestige", "fracture", "crush"] {
+            assert!(!matches!(plan(e, None, 0.5, 1.0), TransitionPlan::Fade { .. }), "{e}");
+        }
+        // 立方体 from the right (`dir="l"`): the new slide comes in from the right and pushes the old one out to the left.
+        assert_eq!(plan("cube", Some("l"), 0.5, 1.0), TransitionPlan::Turn3d { kind: Turn3dKind::Cube, motion: (-1.0, 0.0) });
+        assert_eq!(flat_stand_in("cube", Some("l"), 0.5, 1.0), Some(TransitionPlan::Slide { from: (1.0, 0.0), old_to: (-1.0, 0.0), new_on_top: true }));
+        // Wheels of 3, 4 (the default) and 8 spokes, and dissolve, are windows, not a fade.
+        for (e, t) in [("wheel", Some("3")), ("wheel", None), ("wheel", Some("8")), ("dissolve", None), ("honeycomb", None)] {
+            assert!(matches!(plan(e, t, 0.5, 1.0), TransitionPlan::Windows(_)), "{e} {t:?}");
+        }
         assert!(matches!(plan("fade", Some("thruBlk"), 0.5, 1.0), TransitionPlan::Fade { through_black: true }));
+    }
+
+    #[test]
+    fn the_fitted_3d_effects_are_cards_and_sheets_with_a_flat_stand_in() {
+        for (e, kind) in [("switch", Turn3dKind::Switch), ("ferris", Turn3dKind::Ferris), ("fallOver", Turn3dKind::FallOver), ("pageCurlSingle", Turn3dKind::PageCurlSingle), ("peelOff", Turn3dKind::PeelOff), ("curtains", Turn3dKind::Curtains), ("wind", Turn3dKind::Wind), ("pageCurlDouble", Turn3dKind::PageCurlDouble), ("drape", Turn3dKind::Drape), ("airplane", Turn3dKind::Airplane), ("origami", Turn3dKind::Origami)] {
+            assert!(matches!(plan(e, Some("r"), 0.5, 1.0), TransitionPlan::Turn3d { kind: k, .. } if k == kind), "{e}");
+            assert!(flat_stand_in(e, Some("r"), 0.5, 1.0).is_some(), "{e}");
+            // Linear in time (the tables are in video frames).
+            assert_eq!(progress(e, 0.3), Some(0.3), "{e}");
+        }
+        // The file's `invX` is the option that moves the content to the right.
+        assert!(matches!(plan("peelOff", Some("invX"), 0.5, 1.0), TransitionPlan::Turn3d { motion: (1.0, 0.0), .. }));
+        assert!(matches!(plan("peelOff", None, 0.5, 1.0), TransitionPlan::Turn3d { motion: (-1.0, 0.0), .. }));
     }
 
     #[test]

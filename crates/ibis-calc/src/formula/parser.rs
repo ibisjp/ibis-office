@@ -275,10 +275,20 @@ impl Parser {
 
     fn range(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.postfix()?;
-        while self.peek() == Some(&Token::Op(Op::Range)) {
+        while let Some(&Token::Op(op)) = self.peek()
+            && op.is_range()
+        {
             self.i += 1;
             let right = self.postfix()?;
             left = combine_range(left, right);
+            // `a:.b`, `a.:b`, `a.:.b` are TRIMRANGE(a:b, mode, mode): 2 trailing, 1 leading, 3 both.
+            let mode = match op {
+                Op::RangeTrimEnd => 2.0,
+                Op::RangeTrimStart => 1.0,
+                Op::RangeTrimBoth => 3.0,
+                _ => continue,
+            };
+            left = Expr::Call { name: "TRIMRANGE".to_string(), args: vec![left, Expr::Number(mode), Expr::Number(mode)] };
         }
         Ok(left)
     }
@@ -446,8 +456,8 @@ pub fn function_name(word: &str) -> String {
 
 /// A number that may be the start of a row range (`1:3`).
 fn number_or_rows(n: f64, p: &mut Parser) -> Expr {
-    let after_range = p.i >= 2 && matches!(p.tokens.get(p.i - 2).map(|s| &s.token), Some(Token::Op(Op::Range)));
-    if n.fract() == 0.0 && n >= 1.0 && n <= (MAX_ROW + 1) as f64 && (p.peek() == Some(&Token::Op(Op::Range)) || after_range) {
+    let after_range = p.i >= 2 && matches!(p.tokens.get(p.i - 2).map(|s| &s.token), Some(Token::Op(o)) if o.is_range());
+    if n.fract() == 0.0 && n >= 1.0 && n <= (MAX_ROW + 1) as f64 && (matches!(p.peek(), Some(Token::Op(o)) if o.is_range()) || after_range) {
         let row = n as u32 - 1;
         return Expr::Name { sheet: None, name: format!("\u{0}row:{row}:0:{n}") };
     }
@@ -478,7 +488,7 @@ fn word_on_sheet(word: &str, sheet: Option<SheetRef>, p: &mut Parser) -> Expr {
     }
     // Part of a whole column or row range: kept as a marker name that
     // `combine_range` turns into a range.
-    if p.peek() == Some(&Token::Op(Op::Range)) || matches!(p.tokens.get(p.i.wrapping_sub(2)).map(|s| &s.token), Some(Token::Op(Op::Range))) {
+    if matches!(p.peek(), Some(Token::Op(o)) if o.is_range()) || matches!(p.tokens.get(p.i.wrapping_sub(2)).map(|s| &s.token), Some(Token::Op(o)) if o.is_range()) {
         if let Some((column, fixed)) = parse_column(word) {
             return Expr::Name { sheet, name: format!("\u{0}col:{column}:{}:{word}", fixed as u8) };
         }

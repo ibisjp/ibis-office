@@ -7,7 +7,7 @@
 //! Put it in a field of the window's own editor (`SlideEditor`), or in a table keyed by the window's id that the code reads
 //! through the `window` it is drawing. A document window's view of its document (the tracked-change display, the hidden-text display,
 //! the reviewer filter: review 0.8.5, `code-shared-view-state`) is the same: it lives in the window's `Resources::markup_view`.
-//! This test looks at `src/shell/` and `src/docx/` with a plain search: a `thread_local!` there is allowed
+//! This test looks at the shell (`crates/ibis-office-shell/src`, named `shell/` below) and `src/docx/` with a plain search: a `thread_local!` there is allowed
 //! only when it is listed below with the reason it is not per-window state. Add a line only after checking that two windows
 //! open at once cannot disturb each other through it (the scenario `shell::followup_recent_menu_other_window`).
 //! Rule: doc/rule/implimentationRule.md, 「ウィンドウごとの UI 状態」.
@@ -16,9 +16,10 @@ use std::path::{Path, PathBuf};
 
 /// (file under src/, static, why it is not per-window UI state)
 const ALLOWED: &[(&str, &str, &str)] = &[
-    ("shell/about_window.rs", "OPEN", "the one About window's handle (a registry, not a state shown by the other windows)"),
-    ("shell/settings_window.rs", "OPEN", "the one settings window's handle (a registry)"),
-    ("shell/editor.rs", "OPEN_EDITOR_WINDOWS", "the registry of the editor windows themselves"),
+    ("shell/access_key.rs", "DUPLICATES", "scenarios only: the count of duplicate access keys found while assigning"),
+    ("shell/access_key.rs", "OVERRIDE", "scenarios only: forces the access keys on or off"),
+    ("shell/access_key.rs", "FRAME", "a table keyed by the window's id (the keys assigned in the frame being drawn)"),
+    ("shell/gradient_panel.rs", "IDS", "an interner of `&'static str` ids by prefix and index (the same for every window; holds no window state)"),
     ("shell/chrome.rs", "FORCED_SIDEBAR", "scenarios only: the panel a scenario forces"),
     ("shell/chrome.rs", "LAST_SIDEBAR_TITLE", "scenarios only: the title the scenario reads back"),
     ("shell/chrome.rs", "DROPDOWN_LAYOUT", "scenarios only: measurements read back by the scenarios"),
@@ -36,12 +37,21 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ("shell/dialog/form.rs", "OPTIONS", "a hand-off inside one build of a dialog form (set and read in the same call)"),
     ("shell/links.rs", "CAPTURE_URLS", "scenarios only: the URLs a scenario captures instead of opening"),
     ("shell/menu_search_history.rs", "CACHE", "the menu search history (data of the settings file, the same for every window)"),
+    ("shell/menu_layout.rs", "PLANNED_OVERRIDE", "tests and scenarios only: forces the planned menu lines on or off for the thread that runs the check (both forms of the menus are checked in one process; not a state of a window)"),
+    ("shell/shape_clipboard.rs", "TATE_SIDE", "the app's own side table of the last copy in a document (the 縦中横 the native bytes do not carry; the same for every window, as the clipboard is)"),
+    ("shell/native_shape_clipboard.rs", "SIMULATED", "scenarios only: the scenario's fake clipboard of shapes (the system's clipboard, the same for every window; moved here from the app's root with the shell's crate)"),
+    ("shell/native_shape_clipboard.rs", "SIMULATED_HTML", "scenarios only: the scenario's fake clipboard's HTML (the system's clipboard, the same for every window; moved here from the app's root with the shell's crate)"),
+    ("shell/native_shape_clipboard.rs", "SIMULATED_EMBED", "scenarios only: the scenario's fake clipboard's embedded worksheet (the system's clipboard, the same for every window; moved here from the app's root with the shell's crate)"),
+    ("shell/native_shape_clipboard.rs", "WRITTEN_VECTOR", "scenarios only: what a scenario's copy as a picture wrote (the system's clipboard, the same for every window; moved here from the app's root with the shell's crate)"),
+    ("shell/native_shape_clipboard.rs", "SIMULATED_VECTOR", "scenarios only: the scenario's fake clipboard's vector picture (the system's clipboard, the same for every window; moved here from the app's root with the shell's crate)"),
+    ("shell/spelling.rs", "LEARNED", "tests and scenarios only: the words learned (the user's dictionary, the same for every window; moved here from the app's root with the shell's crate)"),
     ("shell/qat.rs", "CACHE", "the quick access toolbar's items (data of the settings file, the same for every window)"),
     ("shell/scenario.rs", "CURRENT", "scenarios only"),
     ("shell/scenario.rs", "TEXT_SYSTEM", "scenarios only"),
     ("shell/update.rs", "AVAILABLE", "the newer version found (app-wide data)"),
     ("shell/update.rs", "CHECKING", "a check is running (app-wide)"),
     ("shell/update.rs", "CHECKED_NOW", "scenarios' counter (app-wide)"),
+    ("shell/update.rs", "ALERTS", "scenarios' record of the update alerts shown (app-wide, test only)"),
     ("shell/update.rs", "ASKED_AGAIN", "scenarios' log (app-wide)"),
     ("shell/update.rs", "BACKGROUND", "a background check is running (app-wide)"),
     ("shell/update.rs", "LAST_BACKGROUND", "when the last background check started (app-wide)"),
@@ -55,9 +65,10 @@ const ALLOWED_DOCX: &[(&str, &str, &str)] = &[
     ("docx/clipboard.rs", "TEXT_CLIPBOARD", "the app's own clipboard (shared by every window, as the system's is)"),
     ("docx/clipboard.rs", "CLIPBOARD", "the app's own clipboard (shared by every window, as the system's is)"),
     ("docx/clipboard.rs", "NEXT", "a counter of the ids of pasted pictures"),
-    ("docx/backup.rs", "ON", "the backup setting (data of the settings file, the same for every window)"),
     ("docx/repair.rs", "DAMAGED_DOCUMENT", "the file that could not be opened most recently (app-wide: the File menu's repair)"),
     ("docx/toolbar.rs", "DATE_UPDATES", "the 日付と時刻 dialog's check box, remembered for the next time (app-wide, as Word's)"),
+    ("docx/flow_layout.rs", "INSTALLED_FIRST", "a switch of the tools that count what asking the installed typeface's table first changes (`tests/docx/fallback_carry.rs`); off in the app, no window sets it"),
+    ("docx/flow_layout.rs", "CARRY_OFF", "a switch of the tools that count what Word's carrying over of a fallback typeface changes (`tests/docx/fallback_carry.rs`); off in the app, no window sets it"),
     ("docx/art_border.rs", "PICTURES", "the art borders' pictures (the same for every document)"),
     ("docx/art_border.rs", "SOURCE", "where the art borders' pictures come from (app-wide)"),
     ("docx/art_border.rs", "STATES", "the art borders' pictures being fetched (app-wide)"),
@@ -135,16 +146,24 @@ fn thread_local_statics(text: &str) -> Vec<String> {
     names
 }
 
+/// The shell's sources (crates/ibis-office-shell/src), named `shell/<path>` in `ALLOWED` as when they were `src/shell/` of
+/// this crate (tasks/doc/crate-split-plan.md, 12).
+fn shell_src() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../ibis-office-shell/src")
+}
+
 #[test]
 fn no_window_ui_state_in_a_thread_local() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let src = shell_src();
     let mut files = Vec::new();
-    rust_files(&src.join("shell"), &mut files);
+    rust_files(&src, &mut files);
+    // The shell's tests (`src/tests/`, this crate's `src/tests/shell/` before) are not looked at, as before.
+    files.retain(|file| !file.starts_with(src.join("tests")));
     assert!(files.len() > 20, "found only {} files under {}", files.len(), src.display());
     let mut found = Vec::new();
     for file in files {
         let text = std::fs::read_to_string(&file).unwrap_or_default();
-        let relative = file.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+        let relative = format!("shell/{}", file.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/"));
         for name in thread_local_statics(&text) {
             if !ALLOWED.iter().any(|(f, n, _)| *f == relative && *n == name) {
                 found.push(format!("{relative}: {name}"));
@@ -161,9 +180,9 @@ fn no_window_ui_state_in_a_thread_local() {
 
 #[test]
 fn every_allowed_entry_still_exists() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     for (file, name, _) in ALLOWED {
-        let text = std::fs::read_to_string(src.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
+        let path = shell_src().join(file.strip_prefix("shell/").expect("an entry of the shell"));
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{file}: {e}"));
         assert!(thread_local_statics(&text).iter().any(|n| n == name), "{file}: {name} is not a thread_local any more; remove it from ALLOWED");
     }
 }
@@ -174,16 +193,24 @@ fn the_search_finds_them() {
     assert_eq!(thread_local_statics(text), vec!["A", "B", "C"]);
 }
 
+/// The document screen's sources (crates/ibis-office-docx/src), named `docx/<path>` in `ALLOWED_DOCX` as when they were `src/docx/` of
+/// this crate (tasks/doc/crate-split-plan.md, 15).
+fn docx_src() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../ibis-office-docx/src")
+}
+
 #[test]
 fn no_document_view_state_in_a_docx_static() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let src = docx_src();
     let mut files = Vec::new();
-    rust_files(&src.join("docx"), &mut files);
+    rust_files(&src, &mut files);
+    // The checks (`src/tests/`) are not looked at, as before.
+    files.retain(|file| !file.starts_with(src.join("tests")));
     assert!(files.len() > 20, "found only {} files under {}", files.len(), src.display());
     let mut found = Vec::new();
     for file in files {
         let text = std::fs::read_to_string(&file).unwrap_or_default();
-        let relative = file.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+        let relative = format!("docx/{}", file.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/"));
         for name in thread_local_statics(&text).into_iter().chain(shared_value_statics(&text)) {
             if !ALLOWED_DOCX.iter().any(|(f, n, _)| *f == relative && *n == name) {
                 found.push(format!("{relative}: {name}"));
@@ -200,9 +227,8 @@ fn no_document_view_state_in_a_docx_static() {
 
 #[test]
 fn every_allowed_docx_entry_still_exists() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     for (file, name, _) in ALLOWED_DOCX {
-        let text = std::fs::read_to_string(src.join(file)).unwrap_or_else(|e| panic!("{file}: {e}"));
+        let text = std::fs::read_to_string(docx_src().join(file.strip_prefix("docx/").expect("an entry of the document screen"))).unwrap_or_else(|e| panic!("{file}: {e}"));
         assert!(thread_local_statics(&text).iter().chain(shared_value_statics(&text).iter()).any(|n| n == name), "{file}: {name} is not a shared static any more; remove it from ALLOWED_DOCX");
     }
 }

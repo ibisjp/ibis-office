@@ -1,0 +1,59 @@
+[package]
+name = "ibis-office-render"
+description = "Drawing the ibisOffice document model with GPUI: shapes, text, charts, tables, pictures, formulas; and the media player. Shared by every format and the export."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-office-base.workspace = true
+ibis-calc.workspace = true
+ibis-doc-model.workspace = true
+ibis-pptx.workspace = true
+ibis-emf.workspace = true
+ibis-eot.workspace = true
+icu_normalizer = "2.3"
+gpui-kit.workspace = true
+unicode-vo = "0.1.0"
+unicode-width = "0.2"
+lyon_tessellation = "1.0"
+# The pictures drawn (the desktop reads gif, jpeg and tiff too; the browser only png: see below).
+log = "0.4"
+harfrust = "=0.5.2"
+ttf-parser = "0.25"
+
+# The same declarations as ibis-office-app's (the `export` feature of the app turns this one's on).
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+zune-jpeg = { version = "=0.4.21", optional = true }
+zune-core = { version = "=0.4.12", optional = true }
+skrifa = { version = "=0.42.1", optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "gif", "jpeg", "tiff"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2.7"
+core-video = "0.5.2"
+core-foundation = "0.10.1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = ["Foundation", "Graphics_DirectX_Direct3D11", "Media_Core", "Media_Playback", "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_Com", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_UI_Shell"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+futures = { version = "0.3", default-features = false, features = ["std"] }
+wasm-bindgen = "0.2"
+skrifa = "=0.42.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+
+[features]
+default = []
+# The headless export (cfg(headless_export), set by build.rs) and what it decodes: ibis-office-app's `export` turns it on.
+export = ["dep:zune-jpeg", "dep:zune-core", "dep:skrifa"]
+# The scenario tests' extras (the chart scenarios' drawing probes).
+scenarios = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

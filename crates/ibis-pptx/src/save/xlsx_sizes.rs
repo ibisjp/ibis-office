@@ -153,7 +153,7 @@ pub(crate) fn write_sizes(doc: &mut XmlDocument, old: &Sheet, new: &Sheet, digit
     }
     // Rows.
     let data = doc.child(root, "sheetData").ok_or_else(|| Error::new("シートに sheetData がありません"))?;
-    let changed_rows: Vec<u32> = (0..new.rows.len().min(old.rows.len()) as u32).filter(|&r| old.rows[r as usize] != new.rows[r as usize] && new.fitted_rows.get(&r) != Some(&new.rows[r as usize])).collect();
+    let changed_rows: Vec<u32> = (0..new.rows.len().min(old.rows.len()) as u32).filter(|&r| (old.rows[r as usize] != new.rows[r as usize] && new.fitted_rows.get(&r) != Some(&new.rows[r as usize])) || (new.rows[r as usize] > 0 && new.custom_rows.contains(&r) != old.custom_rows.contains(&r))).collect();
     for r in changed_rows {
         let h = new.rows[r as usize];
         let found = doc.children_named(data, "row").find(|&n| doc.attr(n, "r").and_then(|v| v.parse::<u32>().ok()) == Some(r + 1));
@@ -178,7 +178,12 @@ pub(crate) fn write_sizes(doc: &mut XmlDocument, old: &Sheet, new: &Sheet, digit
         } else {
             doc.remove_attr(row, "hidden");
             doc.set_attr(row, "ht", &number(h as f64 / EMU_PER_POINT as f64));
-            doc.set_attr(row, "customHeight", "1");
+            // Fixed by hand: `customHeight`; fitted to the contents by the sheet (a wrapping cell's lines): the height alone, as Excel writes it.
+            if new.custom_rows.contains(&r) {
+                doc.set_attr(row, "customHeight", "1");
+            } else {
+                doc.remove_attr(row, "customHeight");
+            }
         }
     }
     Ok(())
@@ -287,6 +292,85 @@ pub(crate) fn write_panes(doc: &mut XmlDocument, frozen: Option<(u32, u32)>, spl
     let sel = detached(doc, &format!("{prefix}selection"));
     doc.set_attr(sel, "pane", active);
     doc.insert_after(pane, sel);
+    Ok(())
+}
+
+/// Where the sheet was left, in the first `sheetView`: `topLeftCell` (left out for A1, as Excel does), the pane's `topLeftCell`
+/// when it has panes, and the `selection` of the pane that has the focus (`activeCell` and `sqref`).
+pub(crate) fn write_view_position(doc: &mut XmlDocument, pos: &ibis_doc_model::SheetViewPosition) -> Result<(), Error> {
+    let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
+    let prefix = prefix_of(doc, root);
+    let views = match doc.child(root, "sheetViews") {
+        Some(v) => v,
+        None => {
+            let v = detached(doc, &format!("{prefix}sheetViews"));
+            place(doc, root, v, &["sheetFormatPr", "cols", "sheetData"]);
+            v
+        }
+    };
+    let view = match doc.child(views, "sheetView") {
+        Some(v) => v,
+        None => {
+            let v = doc.insert_element(views, 0, &format!("{prefix}sheetView"));
+            doc.set_attr(v, "workbookViewId", "0");
+            v
+        }
+    };
+    match pos.top_left {
+        Some((c, r)) if (c, r) != (0, 0) => {
+            // Excel's order (the schema's): `topLeftCell` before `colorId`, the zooms and `workbookViewId`.
+            let later: Vec<(String, String)> = doc
+                .attributes(view)
+                .iter()
+                .filter(|a| ["colorId", "zoomScale", "zoomScaleNormal", "zoomScaleSheetLayoutView", "zoomScalePageLayoutView", "workbookViewId"].contains(&a.name.as_str()))
+                .map(|a| (a.name.clone(), a.value.clone()))
+                .collect();
+            for (name, _) in &later {
+                doc.remove_attr(view, name);
+            }
+            doc.set_attr(view, "topLeftCell", &cell_name(c, r));
+            for (name, value) in later {
+                doc.set_attr(view, &name, &value);
+            }
+        }
+        _ => doc.remove_attr(view, "topLeftCell"),
+    }
+    let pane = doc.child(view, "pane");
+    if let (Some(p), Some((c, r))) = (pane, pos.pane_top_left) {
+        doc.set_attr(p, "topLeftCell", &cell_name(c, r));
+    }
+    let Some(active) = pos.active_cell else { return Ok(()) };
+    let active_pane = pane.map(|p| doc.attr(p, "activePane").unwrap_or("topLeft").to_string());
+    let existing = doc.children_named(view, "selection").find(|&s| match &active_pane {
+        Some(a) => doc.attr(s, "pane").unwrap_or("topLeft") == a,
+        None => doc.attr(s, "pane").is_none(),
+    });
+    let sel = match existing {
+        Some(s) => s,
+        None => {
+            let s = detached(doc, &format!("{prefix}selection"));
+            if let Some(a) = &active_pane {
+                doc.set_attr(s, "pane", a);
+            }
+            match doc.children_named(view, "selection").last().or(pane) {
+                Some(last) => doc.insert_after(last, s),
+                None => {
+                    let n = doc.children(view).len();
+                    doc.insert(view, n, s);
+                }
+            }
+            s
+        }
+    };
+    let (c, r) = active;
+    doc.set_attr(sel, "activeCell", &cell_name(c, r));
+    let range = match pos.selection {
+        Some(range) if (range.first_column, range.first_row) != (range.last_column, range.last_row) => {
+            format!("{}:{}", cell_name(range.first_column, range.first_row), cell_name(range.last_column, range.last_row))
+        }
+        _ => cell_name(c, r),
+    };
+    doc.set_attr(sel, "sqref", &range);
     Ok(())
 }
 
@@ -1818,36 +1902,33 @@ pub(crate) fn write_custom_sheet_views(doc: &mut XmlDocument, views: &[ibis_doc_
     Ok(())
 }
 
-/// Write sheet phonetic display and properties (`showPhonetic` on sheetView, `<phoneticPr>`).
+/// Write the furigana's display (`c/@ph` of the cells in `shown`; the old `sheetView/@showPhonetic` is taken off, the cells carry it) and its properties (`<phoneticPr>`).
 pub(crate) fn write_phonetic(
     doc: &mut XmlDocument,
-    show: bool,
+    shown: &std::collections::HashSet<(u32, u32)>,
     pr: Option<&ibis_doc_model::PhoneticProperties>,
 ) -> Result<(), Error> {
     let root = doc.root_element().ok_or_else(|| Error::new("シートの XML が空です"))?;
     let prefix = prefix_of(doc, root);
 
-    // sheetView showPhonetic
-    let views = match doc.child(root, "sheetViews") {
-        Some(v) => v,
-        None => {
-            let v = detached(doc, &format!("{prefix}sheetViews"));
-            place(doc, root, v, &["sheetFormatPr", "cols", "sheetData"]);
-            v
+    if let Some(views) = doc.child(root, "sheetViews") {
+        for view in doc.children_named(views, "sheetView").collect::<Vec<_>>() {
+            doc.remove_attr(view, "showPhonetic");
         }
-    };
-    let view = match doc.child(views, "sheetView") {
-        Some(v) => v,
-        None => {
-            let v = doc.insert_element(views, 0, &format!("{prefix}sheetView"));
-            doc.set_attr(v, "workbookViewId", "0");
-            v
+    }
+    // `row/@ph` and `col/@phonetic` (what a cell entered later in the row or column gets, and the furigana line the row's height takes)
+    // are left as the file has them.
+    if let Some(data) = doc.child(root, "sheetData") {
+        for row in doc.children_named(data, "row").collect::<Vec<_>>() {
+            for c in doc.children_named(row, "c").collect::<Vec<_>>() {
+                let at = doc.attr(c, "r").and_then(crate::xlsx::cell_ref).map(|(col, row)| (row, col));
+                if at.is_some_and(|a| shown.contains(&a)) {
+                    doc.set_attr(c, "ph", "1");
+                } else {
+                    doc.remove_attr(c, "ph");
+                }
+            }
         }
-    };
-    if show {
-        doc.set_attr(view, "showPhonetic", "1");
-    } else {
-        doc.remove_attr(view, "showPhonetic");
     }
 
     // phoneticPr (ECMA-376 Part 1 §18.3.1.65: fontId is required).

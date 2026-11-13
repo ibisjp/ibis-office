@@ -167,7 +167,7 @@ pub(super) fn read_chart(content: &str, tables: &[(String, Node)]) -> Option<Cha
         let target = if dim == "y" { &mut out.value } else { &mut out.category };
         if dim == "x" || dim == "y" {
             let num = |k: &str| st.get(k).and_then(|v| v.parse::<f64>().ok());
-            *target = Axis { min: num("minimum"), max: num("maximum"), major: num("interval-major"), log: flag(&st, "logarithmic"), reversed: flag(&st, "reverse-direction"), grid: children(axis, CHART, "grid").next().is_some_and(|g| attr(g, CHART, "class") != Some("minor")), title: children(axis, CHART, "title").next().map(text_of).filter(|t| !t.is_empty()) };
+            *target = Axis { format: None, min: num("minimum"), max: num("maximum"), major: num("interval-major"), log: flag(&st, "logarithmic"), reversed: flag(&st, "reverse-direction"), grid: children(axis, CHART, "grid").next().is_some_and(|g| attr(g, CHART, "class") != Some("minor")), title: children(axis, CHART, "title").next().map(text_of).filter(|t| !t.is_empty()), display_unit: None };
         }
         if dim == "y" && y_style.is_empty() {
             y_style = st.clone();

@@ -816,6 +816,34 @@ pub fn evaluate(book: &dyn Book, cell: CellId, formula: &str) -> (CellValue, boo
     }
 }
 
+/// The values a formula gives for a cell, as a list (a range's or an array's values row by row, blank ones left out; one value as
+/// one): what a data validation list takes from a formula such as `OFFSET(A1,0,0,3,1)` or `INDIRECT("B1:B3")`. `None` when the
+/// engine cannot work it out or it gives an error.
+pub fn evaluate_list(book: &dyn Book, cell: CellId, formula: &str) -> Option<Vec<CellValue>> {
+    let expr = parse(formula).ok()?;
+    let mut ctx = Ctx::new(book, &crate::eval::Stored, cell.0, cell.1, cell.2);
+    let v = ctx.eval(&expr);
+    if ctx.unsupported || ctx.aborted {
+        return None;
+    }
+    let array = match &v {
+        crate::eval::Value::Array(a) => Some(a.clone()),
+        crate::eval::Value::Ref(r) => match ctx.ref_to_array(r) {
+            crate::eval::Value::Array(a) => Some(a),
+            _ => None,
+        },
+        _ => None,
+    };
+    let values = match array {
+        Some(a) => a.data.iter().filter(|x| !matches!(x, crate::eval::Value::Empty | crate::eval::Value::Omitted)).map(|x| x.to_cell()).collect(),
+        None => match ctx.cell_result(v) {
+            CellValue::Error(_) => return None,
+            one => vec![one],
+        },
+    };
+    Some(values)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1412,6 +1440,46 @@ mod tests {
             let actual = res.iter().find(|r| r.cell == *cell).map(|r| &r.value).expect(formula);
             assert_eq!(actual, expected, "formula `{formula}` evaluated incorrectly");
         }
+    }
+
+    #[test]
+    fn evaluate_list_takes_array_functions_issue_154() {
+        for dynamic in [true, false] {
+            let mut book = MockBook::new(false);
+            book.dynamic = dynamic;
+            for (i, v) in [10.0, 20.0, 30.0].iter().enumerate() {
+                book.values.insert((0, i as u32, 0), CellValue::Number(*v));
+            }
+            for formula in ["TRANSPOSE(A1:A3)", "SORT(A1:A3,1,-1)", "OFFSET(A1,0,0,3,1)", "A1:A3", "IF(1,A1:A3)", "FILTER(A1:A3,A1:A3>10)"] {
+                let got = evaluate_list(&book, (0, 5, 5), formula);
+                let n = if formula.starts_with("FILTER") { 2 } else { 3 };
+                assert_eq!(got.as_ref().map(|v| v.len()), Some(n), "dynamic={dynamic} {formula}: {got:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn type_of_unary_plus_of_a_cell_issue_169() {
+        for dynamic in [true, false] {
+            let mut book = MockBook::new(false);
+            book.dynamic = dynamic;
+            book.values.insert((0, 0, 0), CellValue::Number(1.0));
+            book.values.insert((0, 1, 0), CellValue::Text("a".into()));
+            for (formula, expected) in [("TYPE(+A1)", 1.0), ("TYPE(+A2)", 2.0), ("TYPE(+A3)", 1.0), ("TYPE(+A1:A2)", 64.0)] {
+                if !dynamic && formula == "TYPE(+A1:A2)" { continue; }
+                assert_eq!(evaluate(&book, (0, 5, 5), formula).0, CellValue::Number(expected), "dynamic={dynamic} {formula}");
+            }
+        }
+    }
+
+    #[test]
+    fn optional_lambda_parameter_from_file_issue_168() {
+        let mut book = MockBook::new(false);
+        book.dynamic = true;
+        let shown = crate::formula::from_file("_xlfn.LAMBDA(_xlpm.a,_xlop.b,_xlpm.a)(10)");
+        assert_eq!(evaluate(&book, (0, 0, 0), &shown).0, CellValue::Number(10.0));
+        let shown = crate::formula::from_file("_xlfn.LAMBDA(_xlpm.a,_xlop.b,IF(ISOMITTED(_xlpm.b),_xlpm.a,_xlpm.a+_xlpm.b))(10,5)");
+        assert_eq!(evaluate(&book, (0, 0, 0), &shown).0, CellValue::Number(15.0));
     }
 
     #[test]

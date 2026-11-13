@@ -533,7 +533,11 @@ fn run_props_xml(x: &Prefixes, element: &str, body: &TextStyle, run: &ibis_doc_m
         Some(l) => format!(" lang=\"{l}\""),
         None => String::new(),
     };
-    let mut attrs = format!("{lang_attr} altLang=\"en-US\" sz=\"{}\" b=\"{}\" i=\"{}\"", style.font_size, style.bold as u8, style.italic as u8);
+    let alt_attr = match &run.alt_lang {
+        Some(l) => format!(" altLang=\"{}\"", escape(l)),
+        None => String::new(),
+    };
+    let mut attrs = format!("{lang_attr}{alt_attr} sz=\"{}\" b=\"{}\" i=\"{}\"", style.font_size, style.bold as u8, style.italic as u8);
     if run.underline {
         write!(attrs, " u=\"{}\"", run.underline_kind.value()).unwrap();
     }
@@ -545,17 +549,25 @@ fn run_props_xml(x: &Prefixes, element: &str, body: &TextStyle, run: &ibis_doc_m
     }
     attrs.push_str(" dirty=\"0\"");
     let mut children = String::new();
-    if let Some((rgb, width)) = run.outline {
-        write!(children, "<{a}ln w=\"{width}\"><{a}solidFill>{}</{a}solidFill></{a}ln>", color_xml(x, Color::opaque(rgb))).unwrap();
+    if let Some((color, width)) = run.outline {
+        write!(children, "<{a}ln w=\"{width}\"><{a}solidFill>{}</{a}solidFill></{a}ln>", color_xml(x, color)).unwrap();
     }
     write!(children, "<{a}solidFill>{}</{a}solidFill>", color_xml(x, Color::opaque(style.color))).unwrap();
-    if let Some(sh) = &run.shadow {
-        write!(
-            children,
-            "<{a}effectLst><{a}outerShdw blurRad=\"{}\" dist=\"{}\" dir=\"{}\" algn=\"{}\">{}</{a}outerShdw></{a}effectLst>",
-            sh.blur, sh.distance, sh.direction, sh.align.name(),
-            color_xml(x, sh.color),
-        ).unwrap();
+    if run.shadow.is_some() || run.glow.is_some() {
+        write!(children, "<{a}effectLst>").unwrap();
+        // The schema's order: the glow before the shadow.
+        if let Some((color, radius)) = run.glow {
+            write!(children, "<{a}glow rad=\"{radius}\">{}</{a}glow>", color_xml(x, color)).unwrap();
+        }
+        if let Some(sh) = &run.shadow {
+            write!(
+                children,
+                "<{a}outerShdw blurRad=\"{}\" dist=\"{}\" dir=\"{}\" algn=\"{}\">{}</{a}outerShdw>",
+                sh.blur, sh.distance, sh.direction, sh.align.name(),
+                color_xml(x, sh.color),
+            ).unwrap();
+        }
+        write!(children, "</{a}effectLst>").unwrap();
     }
     if let Some(rgb) = run.highlight {
         write!(children, "<{a}highlight>{}</{a}highlight>", color_xml(x, Color::opaque(rgb))).unwrap();

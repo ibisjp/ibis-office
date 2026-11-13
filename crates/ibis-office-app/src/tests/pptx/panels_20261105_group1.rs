@@ -5,6 +5,9 @@
 //! screens, print, recording preview, slide show setup, 3D model) after the layout fixes. Each takes its picture
 //! (`target/scenario/<name>/NN-*.png`); the recording preview's time is checked.
 use crate::shell::scenario::Scenario;
+use crate::pptx::ext::*;
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![

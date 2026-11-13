@@ -6182,6 +6182,61 @@ fn text_box_geometry_and_text_format() {
 }
 
 #[test]
+fn text_box_text_effects_are_saved_as_w14_and_read_again() {
+    use ibis_doc_model::{CharacterFormat, Color, Shadow};
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data.clone()).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+    let p = text_paragraph(flow(document.presentation()), 4).clone();
+    let at = FlowPos::new(p.id, 2);
+    let shape_of = |presentation: &Presentation| -> ibis_doc_model::Shape {
+        paragraphs(flow(presentation)).into_iter().find(|q| q.id == p.id).unwrap().runs.iter().find_map(|r| match &r.kind {
+            ibis_doc_model::FlowRunKind::Shape(s) => Some((**s).clone()),
+            _ => None,
+        }).expect("the text box")
+    };
+    document.execute(vec![Command::Flow(FlowCommand::InsertTextBox { at, size: ibis_doc_model::EmuSize::new(1_828_800, 914_400), text: "abcdef".into() })]).unwrap();
+    let outline = (Color::opaque(Rgb(0x112233)), 25_400);
+    let glow = (Color { rgb: Rgb(0x4472c4), alpha: 102 }, 63_500);
+    let shadow = Shadow::simple(Color { rgb: Rgb(0), alpha: 102 }, 50_800, 38_100, 2_700_000);
+    // The first three characters only.
+    document.execute(vec![Command::Flow(FlowCommand::FormatShapeText {
+        at,
+        range: Some((0, 3)),
+        format: CharacterFormat { outline: Some(Some(outline)), glow: Some(Some(glow)), shadow: Some(Some(shadow.clone())), ..Default::default() },
+    })]).unwrap();
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let xml = String::from_utf8(ibis_ooxml::Package::open(saved.clone()).unwrap().xml("word/document.xml").unwrap().to_bytes()).unwrap();
+    for needle in ["w14:glow", "w14:shadow", "w14:textOutline", "w14:val=\"112233\""] {
+        assert!(xml.contains(needle), "{needle} is written");
+    }
+    let root_tag = &xml[xml.find("<w:document").unwrap()..];
+    let root_tag = &root_tag[..root_tag.find('>').unwrap()];
+    assert!(root_tag.contains("xmlns:w14="), "w14 is declared");
+    let ignorable = root_tag.split("Ignorable=\"").nth(1).and_then(|r| r.split('"').next()).unwrap_or("");
+    assert!(ignorable.split_whitespace().any(|p| p == "w14"), "w14 is ignorable: {ignorable}");
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let ibis_doc_model::ShapeKind::Auto(a) = &shape_of(&reread).kind else { panic!("an auto shape") };
+    let runs = &a.text.as_ref().unwrap().paragraphs[0].runs;
+    assert_eq!(runs[0].text, "abc");
+    assert_eq!((runs[0].style.outline, runs[0].style.glow), (Some(outline), Some(glow)));
+    let read_shadow = runs[0].style.shadow.as_ref().expect("the shadow");
+    assert_eq!((read_shadow.blur, read_shadow.distance, read_shadow.direction, read_shadow.color), (50_800, 38_100, 2_700_000, shadow.color));
+    assert_eq!((runs[1].style.outline, runs[1].style.glow, runs[1].style.shadow.clone()), (None, None, None));
+    // Cleared again, they are gone from the file.
+    let mut second = Document::new(ibis_pptx::open(saved.clone()).unwrap().presentation);
+    second.execute(vec![Command::Flow(FlowCommand::FormatShapeText {
+        at,
+        range: None,
+        format: CharacterFormat { outline: Some(None), glow: Some(None), shadow: Some(None), ..Default::default() },
+    })]).unwrap();
+    let reopened = ibis_pptx::open(saved).unwrap();
+    let saved2 = reopened.source.save(second.presentation(), SaveOptions::default()).unwrap();
+    let xml2 = String::from_utf8(ibis_ooxml::Package::open(saved2).unwrap().xml("word/document.xml").unwrap().to_bytes()).unwrap();
+    assert!(!xml2.contains("w14:textOutline") && !xml2.contains("w14:glow"));
+}
+
+#[test]
 fn blocks_moved_are_saved_in_their_new_order() {
     let data = ibis_pptx::test_files::docx_with_outline(&std::fs::read(path(REPORT)).unwrap());
     // 章B (with its text) before 章A (with what is under it), as the outline's move does.
@@ -8025,4 +8080,109 @@ fn typed_spaces_are_saved_with_xml_space_preserve() {
         let open_tag = &xml[xml[..at].rfind("<w:t").unwrap()..at];
         assert!(open_tag.contains(r#"xml:space="preserve""#), "{text:?}: {open_tag}");
     }
+}
+
+// A font change sets the Latin and hAnsi typefaces together (Word writes both): the model equals the model read back, and undo restores both.
+#[test]
+fn font_change_sets_h_ansi_and_roundtrips() {
+    let data = std::fs::read(path(REPORT)).unwrap();
+    let opened = ibis_pptx::open(data).unwrap();
+    let mut document = Document::new(opened.presentation.clone());
+    let p = text_paragraph(flow(document.presentation()), 1).clone();
+    let (from, to) = (FlowPos::new(p.id, 0), FlowPos::new(p.id, 5));
+    let run0 = |d: &Document| paragraphs(flow(d.presentation())).into_iter().find(|q| q.id == p.id).unwrap().runs[0].style.clone();
+    let before = run0(&document);
+
+    document.execute(vec![Command::Flow(FlowCommand::SetRunFormat { from, to, change: RunChange::Font("Calibri".into()) })]).unwrap();
+    document.execute(vec![Command::Flow(FlowCommand::SetRunFormat { from, to, change: RunChange::Font("Arial".into()) })]).unwrap();
+    let after = run0(&document);
+    assert_eq!(after.font.as_deref(), Some("Arial"));
+    assert_eq!(after.h_ansi_font.as_deref(), Some("Arial"));
+
+    let saved = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();
+    let reread = ibis_pptx::read(&saved).unwrap();
+    let q = paragraphs(flow(&reread)).into_iter().find(|q| q.id == p.id).unwrap();
+    assert_eq!(q.runs[0].style, after);
+
+    assert!(document.undo());
+    assert!(document.undo());
+    let undone = run0(&document);
+    assert_eq!(undone.font, before.font);
+    assert_eq!(undone.h_ansi_font, before.h_ansi_font);
+}
+
+// Word's inheritance per attribute (#M75): a run with `w:ascii` only keeps the hAnsi typeface of the styles; read, laid over the styles, saved and read
+// again it is the same, and the saved run still writes no hAnsi.
+#[test]
+fn run_with_ascii_only_keeps_the_styles_h_ansi() {
+    let mut package = ibis_ooxml::Package::open(std::fs::read(path(REPORT)).unwrap()).unwrap();
+    let styles = String::from_utf8(package.read("word/styles.xml").unwrap()).unwrap();
+    let from = styles.find("<w:rPrDefault><w:rPr><w:rFonts ").unwrap() + "<w:rPrDefault><w:rPr>".len();
+    let to = from + styles[from..].find("/>").unwrap() + 2;
+    let styles = format!("{}<w:rFonts w:ascii=\"MS Mincho\" w:hAnsi=\"Courier New\" w:eastAsia=\"MS Mincho\"/>{}", &styles[..from], &styles[to..]);
+    package.set_bytes("word/styles.xml", styles.into_bytes());
+    let xml = String::from_utf8(package.read("word/document.xml").unwrap()).unwrap();
+    let at = xml.rfind("<w:sectPr").unwrap();
+    let paragraph = r#"<w:p><w:r><w:rPr><w:rFonts w:ascii="Arial"/></w:rPr><w:t>M75 ascii only</w:t></w:r><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/></w:rPr><w:t>M75 both</w:t></w:r></w:p>"#;
+    package.set_bytes("word/document.xml", format!("{}{}{}", &xml[..at], paragraph, &xml[at..]).into_bytes());
+    let data = package.save(SaveOptions::default()).unwrap();
+    let opened = ibis_pptx::open(data).unwrap();
+    let find = |p: &Presentation| paragraphs(flow(p)).into_iter().find(|q| q.text() == "M75 ascii onlyM75 both").unwrap().clone();
+    let q = find(&opened.presentation);
+    assert_eq!(q.runs[0].style.font.as_deref(), Some("Arial"));
+    assert_eq!(q.runs[0].style.h_ansi_font.as_deref(), Some("Courier New"));
+    assert_eq!(q.runs[1].style.h_ansi_font.as_deref(), Some("Arial"));
+    // Saved unchanged and read again.
+    let saved = opened.source.save(&opened.presentation, SaveOptions::default()).unwrap();
+    let reread = ibis_pptx::read(&saved).unwrap();
+    assert_eq!(find(&reread).runs.iter().map(|r| r.style.clone()).collect::<Vec<_>>(), q.runs.iter().map(|r| r.style.clone()).collect::<Vec<_>>());
+    // The saved ascii-only run still writes no hAnsi.
+    let doc_xml = String::from_utf8(ibis_ooxml::Package::open(saved).unwrap().read("word/document.xml").unwrap()).unwrap();
+    assert!(doc_xml.contains(r#"<w:rFonts w:ascii="Arial"/>"#));
+}
+
+// `w:hint="eastAsia"` is read into the run's style, kept when the run is edited, and written back: the saved file has it and reads back the same.
+#[test]
+fn rfonts_hint_is_read_kept_and_written() {
+    let mut package = ibis_ooxml::Package::open(std::fs::read(path(REPORT)).unwrap()).unwrap();
+    let xml = String::from_utf8(package.read("word/document.xml").unwrap()).unwrap();
+    let at = xml.rfind("<w:sectPr").unwrap();
+    let paragraph = r#"<w:p><w:r><w:rPr><w:rFonts w:hint="eastAsia"/></w:rPr><w:t>HINT ■é</w:t></w:r><w:r><w:t> plain ■</w:t></w:r></w:p>"#;
+    package.set_bytes("word/document.xml", format!("{}{}{}", &xml[..at], paragraph, &xml[at..]).into_bytes());
+    let data = package.save(SaveOptions::default()).unwrap();
+    let opened = ibis_pptx::open(data.clone()).unwrap();
+    let find = |p: &Presentation| paragraphs(flow(p)).into_iter().find(|q| q.text() == "HINT ■é plain ■").unwrap().clone();
+    let q = find(&opened.presentation);
+    assert!(q.runs[0].style.east_asia_hint && !q.runs[1].style.east_asia_hint);
+    let out = scenario_data("hint", data, BODY, |doc| {
+        let p = body_paragraphs(doc).into_iter().find(|p| p.text() == "HINT ■é plain ■").unwrap();
+        vec![FlowCommand::SetRunFormat { from: FlowPos::new(p.id, 0), to: FlowPos::new(p.id, 6), change: RunChange::Bold(true) }]
+    });
+    let saved = String::from_utf8(ibis_ooxml::Package::open(out.saved).unwrap().read("word/document.xml").unwrap()).unwrap();
+    assert!(saved.contains(r#"w:hint="eastAsia""#));
+    let reread = find(&out.edited);
+    assert!(reread.runs[0].style.east_asia_hint);
+}
+
+// #M136: a U+00AD written in `w:t` is a character of its own (Word draws it as a hyphen) and stays U+00AD through an edit and a save; the optional hyphen of
+// `w:softHyphen` is its own mark in the model and stays the element in the file, never a character of `w:t`.
+#[test]
+fn literal_soft_hyphen_and_softhyphen_element_survive_an_edit_and_save() {
+    let mut package = ibis_ooxml::Package::open(std::fs::read(path(REPORT)).unwrap()).unwrap();
+    let xml = String::from_utf8(package.read("word/document.xml").unwrap()).unwrap();
+    let paragraph = "<w:p><w:r><w:t>a\u{ad}b</w:t><w:softHyphen/><w:t>c</w:t></w:r></w:p>";
+    let at = xml.rfind("<w:sectPr").unwrap();
+    package.set_bytes("word/document.xml", format!("{}{}{}", &xml[..at], paragraph, &xml[at..]).into_bytes());
+    let data = package.save(ibis_ooxml::SaveOptions::default()).unwrap();
+    let outcome = scenario_data("soft-hyphen", data, BODY, |doc| {
+        let p = body_paragraphs(doc).into_iter().find(|p| p.text() == "a\u{ad}b\u{ad}c").expect("the paragraph reads with both as U+00AD in its text");
+        // The model tells them apart: the literal one is U+00AD, the element's is the optional hyphen's mark.
+        let chars: Vec<char> = p.runs.iter().filter_map(|r| if let FlowRunKind::Text(t) = &r.kind { Some(t.chars()) } else { None }).flatten().collect();
+        assert_eq!(chars, ['a', '\u{ad}', 'b', ibis_doc_model::OPTIONAL_HYPHEN, 'c']);
+        vec![FlowCommand::InsertText { at: FlowPos::new(p.id, 0), text: "x".into(), format: None }]
+    });
+    let saved = String::from_utf8(ibis_ooxml::Package::open(outcome.saved).unwrap().read("word/document.xml").unwrap()).unwrap();
+    assert!(saved.contains("a\u{ad}b"), "the literal U+00AD is still in w:t");
+    assert!(saved.contains("<w:softHyphen/>"), "the optional hyphen is still the element: {}", saved.split("<w:p>").last().unwrap_or(""));
+    assert!(!saved.contains(ibis_doc_model::OPTIONAL_HYPHEN), "the model's mark is never written");
 }

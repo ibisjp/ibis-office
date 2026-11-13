@@ -235,10 +235,17 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
         }
     }
     if baseline.guides != current.guides {
+        // PowerPoint 365 writes the normal view's guides twice, the same: `p:guideLst` of `viewProps.xml` (no id, no colour)
+        // and the extension of `presentation.xml` (with id, colour and `userDrawn`). Both are written.
+        super::pptx_guides::write_view(package, &map.presentation, &current.guides)?;
         let doc = package.xml_mut(&map.presentation)?;
         let root = doc.root_element().ok_or_else(|| Error::new("プレゼンテーションが空です"))?;
         super::pptx_guides::write(doc, root, &current.guides, super::pptx_guides::URI_PRESENTATION)?;
     }
+    // PowerPoint makes `viewProps.xml` and its `normalViewPr` at every save, so a file without them gets them now (an unchanged file is returned
+    // as it was above); what the user did to the notes pane is written into it.
+    let notes_pane = if baseline.notes_pane_save != current.notes_pane_save { current.notes_pane_save } else { None };
+    super::pptx_guides::write_notes_pane(package, &map.presentation, notes_pane)?;
     if baseline.layout_scale != current.layout_scale {
         scale_layout_parts(package, map, current.layout_scale)?;
     }
@@ -289,6 +296,16 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
     }
     if baseline.read_only_recommended != current.read_only_recommended {
         write_read_only_recommended(package, map, current.read_only_recommended)?;
+    }
+    if baseline.cmyk != current.cmyk {
+        let doc = package.xml_mut(&map.presentation)?;
+        let root = doc.root_element().ok_or_else(|| Error::new("プレゼンテーションが空です"))?;
+        super::pptx_cmyk::write_cmyk(doc, root, &current.cmyk)?;
+    }
+    if baseline.ibis_extensions != current.ibis_extensions {
+        let doc = package.xml_mut(&map.presentation)?;
+        let root = doc.root_element().ok_or_else(|| Error::new("プレゼンテーションが空です"))?;
+        super::pptx_ibis::write_features(doc, root, current.ibis_extensions)?;
     }
     if baseline.object_defaults != current.object_defaults {
         super::pptx_theme::write_defaults(package, &map.presentation, &current.object_defaults)?;
@@ -505,6 +522,9 @@ pub(crate) fn write_changes<'a>(package: &mut Package, map: &SourceMap, baseline
                         doc.remove_attr(node, "title");
                     }
                 }
+            }
+            if let Some(ibis) = &change.ibis {
+                super::pptx_ibis::write_shape_ext(doc, node, ibis.as_ref())?;
             }
             if let Some(is_decorative) = dec {
                 const DEC_URI: &str = "{C183D7F6-B498-43B3-948B-1728B52AA6E4}";
@@ -789,6 +809,7 @@ struct ShapeLabelChange {
     lock: Option<bool>,
     alt: Option<Option<ibis_doc_model::AltText>>,
     dec: Option<bool>,
+    ibis: Option<Option<ibis_doc_model::IbisShapeExt>>,
     tooltip: Option<Option<String>>,
     return_to_zoom: Option<bool>,
     zoom_show_bg: Option<bool>,
@@ -809,11 +830,12 @@ fn shape_labels(old_slides: &HashMap<SlideId, &Slide>, current: &Presentation) -
             let locked = slide.aspect_locked.contains(&shape.id);
             let alt = slide.shape_alt_texts.get(&shape.id);
             let dec = slide.decorative_shapes.contains(&shape.id);
+            let ibis = slide.ibis_ext(shape.id);
             let tooltip = slide.shape_link_tooltips.get(&shape.id);
             let rtz = slide.shape_return_to_zoom.contains(&shape.id);
             let show_bg = slide.shape_zoom_show_bg.get(&shape.id).copied();
             let dur = slide.shape_zoom_durations.get(&shape.id).copied();
-            let (name_change, hidden_change, link_change, lock_change, alt_change, dec_change, tooltip_change, rtz_change, show_bg_change, dur_change) = match old.filter(|o| o.shape(shape.id).is_some()) {
+            let (name_change, hidden_change, link_change, lock_change, alt_change, dec_change, ibis_change, tooltip_change, rtz_change, show_bg_change, dur_change) = match old.filter(|o| o.shape(shape.id).is_some()) {
                 Some(o) => (
                     (o.shape_names.get(&shape.id) != name).then(|| name.cloned().unwrap_or_default()),
                     (o.hidden_shapes.contains(&shape.id) != hidden).then_some(hidden),
@@ -821,6 +843,7 @@ fn shape_labels(old_slides: &HashMap<SlideId, &Slide>, current: &Presentation) -
                     (o.aspect_locked.contains(&shape.id) != locked).then_some(locked),
                     (o.shape_alt_texts.get(&shape.id) != alt).then(|| alt.cloned()),
                     (o.decorative_shapes.contains(&shape.id) != dec).then_some(dec),
+                    (o.ibis_ext(shape.id) != ibis).then_some(ibis),
                     (o.shape_link_tooltips.get(&shape.id) != tooltip).then(|| tooltip.cloned()),
                     (o.shape_return_to_zoom.contains(&shape.id) != rtz).then_some(rtz),
                     (o.shape_zoom_show_bg.get(&shape.id).copied() != show_bg).then(|| show_bg.unwrap_or(true)),
@@ -833,13 +856,14 @@ fn shape_labels(old_slides: &HashMap<SlideId, &Slide>, current: &Presentation) -
                     None,
                     alt.cloned().map(Some),
                     dec.then_some(true),
+                    ibis.map(Some),
                     tooltip.cloned().map(Some),
                     rtz.then_some(true),
                     show_bg,
                     dur,
                 ),
             };
-            if name_change.is_some() || hidden_change.is_some() || link_change.is_some() || lock_change.is_some() || alt_change.is_some() || dec_change.is_some() || tooltip_change.is_some() || rtz_change.is_some() || show_bg_change.is_some() || dur_change.is_some() {
+            if name_change.is_some() || hidden_change.is_some() || link_change.is_some() || lock_change.is_some() || alt_change.is_some() || dec_change.is_some() || ibis_change.is_some() || tooltip_change.is_some() || rtz_change.is_some() || show_bg_change.is_some() || dur_change.is_some() {
                 changes.push(ShapeLabelChange {
                     shape: shape.id,
                     name: name_change,
@@ -848,6 +872,7 @@ fn shape_labels(old_slides: &HashMap<SlideId, &Slide>, current: &Presentation) -
                     lock: lock_change,
                     alt: alt_change,
                     dec: dec_change,
+                    ibis: ibis_change,
                     tooltip: tooltip_change,
                     return_to_zoom: rtz_change,
                     zoom_show_bg: show_bg_change,

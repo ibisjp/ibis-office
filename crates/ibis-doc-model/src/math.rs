@@ -32,6 +32,9 @@ pub enum Math {
     Matrix(Vec<Vec<Math>>),
     /// An array of equations (`m:eqArr`): the rows are lined up at the `&` in them.
     EqArray(Vec<Math>),
+    /// `body` (a run's text, `m:r`) in a colour of its own (`w:rPr/w:color` in the `m:r`): a formula's runs have each their colour (#171). The
+    /// others are in the colour of the formula's run in the page.
+    Colored { color: crate::drawing::Rgb, body: Box<Math> },
 }
 
 /// How a fraction is drawn (`m:f/m:fPr/m:type`).
@@ -117,6 +120,7 @@ impl Math {
                 if *over { format!("{}{mark}", base.linear()) } else { format!("{}_{mark}", base.grouped()) }
             }
             Math::EqArray(rows) => format!("█({})", rows.iter().map(Math::linear).collect::<Vec<_>>().join("@")),
+            Math::Colored { body, .. } => body.linear(),
             Math::Matrix(rows) => {
                 let body: Vec<String> = rows.iter().map(|r| r.iter().map(Math::linear).collect::<Vec<_>>().join("&")).collect();
                 format!("■({})", body.join("@"))
@@ -321,6 +325,52 @@ impl Math {
                 out.push_str(r"\end{aligned}");
                 out
             }
+            Math::Colored { body, .. } => body.to_latex(),
+        }
+    }
+
+    /// The formula with each of its runs (`Text`, `Colored`) replaced by what `f` gives for it.
+    fn map_runs(&self, f: &dyn Fn(&Math) -> Math) -> Math {
+        let all = |items: &[Math]| items.iter().map(|m| m.map_runs(f)).collect::<Vec<_>>();
+        let boxed = |m: &Math| Box::new(m.map_runs(f));
+        let opt = |m: &Option<Box<Math>>| m.as_deref().map(boxed);
+        match self {
+            Math::Text(_) | Math::Colored { .. } => f(self),
+            Math::Row(items) => Math::Row(all(items)),
+            Math::Frac { num, den, kind } => Math::Frac { num: boxed(num), den: boxed(den), kind: *kind },
+            Math::Script { base, sub, sup } => Math::Script { base: boxed(base), sub: opt(sub), sup: opt(sup) },
+            Math::Radical { degree, body } => Math::Radical { degree: opt(degree), body: boxed(body) },
+            Math::Nary { op, sub, sup, body, stacked } => Math::Nary { op: op.clone(), sub: opt(sub), sup: opt(sup), body: boxed(body), stacked: *stacked },
+            Math::Delimited { open, close, sep, items } => Math::Delimited { open: open.clone(), close: close.clone(), sep: sep.clone(), items: all(items) },
+            Math::Function { name, arg } => Math::Function { name: boxed(name), arg: boxed(arg) },
+            Math::Mark { base, mark, over } => Math::Mark { base: boxed(base), mark: mark.clone(), over: *over },
+            Math::Matrix(rows) => Math::Matrix(rows.iter().map(|r| all(r)).collect()),
+            Math::EqArray(rows) => Math::EqArray(all(rows)),
+        }
+    }
+
+    /// The formula without the colours of its runs (`Colored`): what is left when the whole formula is given a colour, as Word does.
+    pub fn without_colors(&self) -> Math {
+        self.map_runs(&|run| match run {
+            Math::Colored { body, .. } => (**body).clone(),
+            other => other.clone(),
+        })
+    }
+
+    /// The formula with `color` on each run that has no colour of its own: how it is written when its page run has a colour.
+    pub fn with_default_color(&self, color: crate::drawing::Rgb) -> Math {
+        self.map_runs(&|run| match run {
+            Math::Text(t) if !t.is_empty() => Math::Colored { color, body: Box::new(run.clone()) },
+            other => other.clone(),
+        })
+    }
+
+    /// The text of a run (`Text`, or `Colored` holding one): what the neighbouring items look at to space the formula.
+    pub fn run_text(&self) -> Option<&str> {
+        match self {
+            Math::Text(t) => Some(t),
+            Math::Colored { body, .. } => body.run_text(),
+            _ => None,
         }
     }
 

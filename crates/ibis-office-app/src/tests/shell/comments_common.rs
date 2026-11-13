@@ -13,6 +13,8 @@ use crate::docx::comments::DocxComments;
 use crate::docx::scenarios::DocSteps;
 use crate::pptx::comments::PptxComments;
 use ibis_doc_model::FlowPos;
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
@@ -257,7 +259,7 @@ fn presentation() {
 
     // A click on the card selects the commented shape.
     s.update(|e, _, cx| {
-        if let Some(st) = e.pptx_mut() { st.selection.clear(); }
+        e.shape_edit.selection.clear();
         cx.notify();
     });
     press::<PptxComments>(&mut s, "card-0");

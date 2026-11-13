@@ -42,6 +42,16 @@ declare global {
   interface Window {
     /** Called from Rust for ファイル → 開く. */
     ibisOfficePickFile: () => Promise<PickedFile | null>;
+    /** Called from Rust for the CMYK profile setting (ICC file picker, kept in IndexedDB). */
+    ibisOfficePickIcc: () => Promise<PickedFile | null>;
+    ibisOfficeIccSave: (name: string, bytes: Uint8Array) => void;
+    ibisOfficeIccForget: () => void;
+    ibisOfficeIccLoad: () => Promise<PickedFile | null>;
+    /** Called from Rust for セットアップ (the fonts that can be downloaded; kept in IndexedDB in chunks). */
+    ibisOfficeFontFetchText: (url: string) => Promise<string>;
+    ibisOfficeFontsInstalled: () => Promise<{ file: string; size: number }[]>;
+    ibisOfficeFontDownload: (file: string, url: string, size: number) => Promise<number>;
+    ibisOfficeFontsLoad: () => Promise<Uint8Array[]>;
     /** Called from Rust when the close or the download button is pressed. */
     ibisOfficeEmbedAction: (kind: string, name: string, bytes?: Uint8Array) => void;
     /** Set by the embedding page before main.js. */
@@ -114,11 +124,11 @@ function embedAction(kind: string, name: string, bytes?: Uint8Array): void {
 }
 
 /** Show the browser's file picker. Resolves to `null` when cancelled. */
-function pickFile(): Promise<PickedFile | null> {
+function pickFile(accept?: string): Promise<PickedFile | null> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.pptx,.xlsx,.docx,.ppt,.xls,.doc,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    input.accept = accept ?? '.pptx,.xlsx,.docx,.ppt,.xls,.doc,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     input.addEventListener('change', () => {
       const file = input.files?.[0];
       if (!file) {
@@ -130,6 +140,172 @@ function pickFile(): Promise<PickedFile | null> {
     input.addEventListener('cancel', () => resolve(null));
     input.click();
   });
+}
+
+/** Show the browser's file picker for a CMYK ICC profile (the CMYK mode's setting). Resolves to `null` when cancelled. */
+function pickIcc(): Promise<PickedFile | null> {
+  return pickFile('.icc,.icm');
+}
+
+/**
+ * The CMYK profile the user chose is kept in the browser's own IndexedDB (never a server), as a setting: it stays after the
+ * page is closed. One record, 'cmyk-profile'.
+ */
+function settingsDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open('ibisoffice-settings', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('files');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => resolve(open.result);
+  });
+}
+
+function iccSave(name: string, bytes: Uint8Array): void {
+  // Copy: the bytes Rust hands over are a view into its memory.
+  const record = { name, bytes: bytes.slice() };
+  settingsDb().then((db) => db.transaction('files', 'readwrite').objectStore('files').put(record, 'cmyk-profile'), () => undefined);
+}
+
+function iccForget(): void {
+  settingsDb().then((db) => db.transaction('files', 'readwrite').objectStore('files').delete('cmyk-profile'), () => undefined);
+}
+
+function iccLoad(): Promise<PickedFile | null> {
+  return settingsDb().then(
+    (db) =>
+      new Promise<PickedFile | null>((resolve) => {
+        const get = db.transaction('files', 'readonly').objectStore('files').get('cmyk-profile');
+        get.onsuccess = () => resolve((get.result as PickedFile | undefined) ?? null);
+        get.onerror = () => resolve(null);
+      }),
+    () => null,
+  );
+}
+
+/**
+ * The fonts downloaded with セットアップ are kept in the browser's own IndexedDB (never a server), each in 1 MiB chunks:
+ * store 'chunks' (key [file, n]) and store 'fonts' (key file; written after the last chunk, so a font whose download stopped is
+ * not listed and its chunks are removed).
+ */
+const FONT_CHUNK = 1024 * 1024;
+
+function fontsDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open('ibisoffice-fonts', 1);
+    open.onupgradeneeded = () => {
+      open.result.createObjectStore('chunks');
+      open.result.createObjectStore('fonts');
+    };
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => resolve(open.result);
+  });
+}
+
+function idbDone(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
+function idbGet<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function fontFetchText(url: string): Promise<string> {
+  const response = await fetch(url, { cache: 'no-cache' });
+  if (!response.ok) {
+    throw new Error(`${url}: ${response.status}`);
+  }
+  return response.text();
+}
+
+async function fontsInstalled(): Promise<{ file: string; size: number }[]> {
+  const db = await fontsDb();
+  const store = db.transaction('fonts', 'readonly').objectStore('fonts');
+  const keys = (await idbGet(store.getAllKeys())) as string[];
+  const values = (await idbGet(store.getAll())) as { size: number }[];
+  return keys.map((file, i) => ({ file, size: values[i].size }));
+}
+
+async function fontDownload(file: string, url: string, size: number): Promise<number> {
+  const response = await fetch(url);
+  if (!response.ok || !response.body) {
+    throw new Error(`${url}: ${response.status}`);
+  }
+  const db = await fontsDb();
+  let chunks = 0;
+  let total = 0;
+  try {
+    const reader = response.body.getReader();
+    let pending: Uint8Array[] = [];
+    let pendingSize = 0;
+    const flush = async (all: boolean) => {
+      while (pendingSize >= FONT_CHUNK || (all && pendingSize > 0)) {
+        const joined = new Uint8Array(pendingSize);
+        let at = 0;
+        for (const part of pending) {
+          joined.set(part, at);
+          at += part.length;
+        }
+        const chunk = joined.slice(0, Math.min(FONT_CHUNK, pendingSize));
+        const rest = joined.slice(chunk.length);
+        const tx = db.transaction('chunks', 'readwrite');
+        tx.objectStore('chunks').put(chunk, [file, chunks]);
+        await idbDone(tx);
+        chunks += 1;
+        total += chunk.length;
+        pending = rest.length > 0 ? [rest] : [];
+        pendingSize = rest.length;
+      }
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      pending.push(value);
+      pendingSize += value.length;
+      await flush(false);
+    }
+    await flush(true);
+    if (size > 0 && total !== size) {
+      throw new Error(`the size is ${total} bytes, the list says ${size}`);
+    }
+    const tx = db.transaction('fonts', 'readwrite');
+    tx.objectStore('fonts').put({ size: total, chunks }, file);
+    await idbDone(tx);
+    return total;
+  } catch (error) {
+    const tx = db.transaction('chunks', 'readwrite');
+    tx.objectStore('chunks').delete(IDBKeyRange.bound([file, 0], [file, Number.MAX_SAFE_INTEGER]));
+    await idbDone(tx).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function fontsLoad(): Promise<Uint8Array[]> {
+  const db = await fontsDb();
+  const store = db.transaction('fonts', 'readonly').objectStore('fonts');
+  const keys = (await idbGet(store.getAllKeys())) as string[];
+  const values = (await idbGet(store.getAll())) as { size: number; chunks: number }[];
+  const fonts: Uint8Array[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const bytes = new Uint8Array(values[i].size);
+    let at = 0;
+    for (let n = 0; n < values[i].chunks; n++) {
+      // A transaction for each chunk: one held across the awaits could end before the next request.
+      const part = (await idbGet(db.transaction('chunks', 'readonly').objectStore('chunks').get([keys[i], n]))) as Uint8Array;
+      bytes.set(part, at);
+      at += part.length;
+    }
+    fonts.push(bytes);
+  }
+  return fonts;
 }
 
 /**
@@ -263,7 +439,15 @@ function showStatus(text: string): void {
   }
 }
 
-window.ibisOfficePickFile = pickFile;
+window.ibisOfficePickFile = () => pickFile();
+window.ibisOfficePickIcc = pickIcc;
+window.ibisOfficeIccSave = iccSave;
+window.ibisOfficeIccForget = iccForget;
+window.ibisOfficeIccLoad = iccLoad;
+window.ibisOfficeFontFetchText = fontFetchText;
+window.ibisOfficeFontsInstalled = fontsInstalled;
+window.ibisOfficeFontDownload = fontDownload;
+window.ibisOfficeFontsLoad = fontsLoad;
 window.ibisOfficeEmbedAction = embedAction;
 
 if (!('gpu' in navigator)) {
@@ -279,7 +463,7 @@ if (!('gpu' in navigator)) {
     const base = new URL('.', location.href).href.replace(/\/$/, '');
     const embed = embedOptions();
     set_embed_options(embed.close, embed.download, embed.view, embed.menuBar, embed.toolBar);
-    run(base, file?.name, file?.bytes);
+    await run(base, file?.name, file?.bytes);
     status?.remove();
   } catch (error) {
     console.error(error);

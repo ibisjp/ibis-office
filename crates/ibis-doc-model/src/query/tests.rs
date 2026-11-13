@@ -325,3 +325,92 @@ fn blank_query_roundtrip_and_m() {
     assert_eq!(src_table.rows.len(), 0);
 }
 
+
+fn s(x: &str) -> String {
+    x.to_string()
+}
+
+/// GitHub issue #173: the code `query_to_m` writes reads back as the same steps (what the 詳細エディター lets be edited).
+#[test]
+fn m_code_reads_back_as_the_steps() {
+    let steps = vec![
+        Step::PromoteHeaders,
+        Step::DemoteHeaders,
+        Step::ChangeType { column: s("数量"), ty: QType::Whole, culture: Culture::Invariant },
+        Step::ChangeType { column: s("日付"), ty: QType::Date, culture: Culture::Japanese },
+        Step::SelectColumns(vec![s("店"), s("商\"品")]),
+        Step::RemoveColumns(vec![s("単価")]),
+        Step::RenameColumn { from: s("店"), to: s("店舗") },
+        Step::ReorderColumns(vec![s("b"), s("a")]),
+        Step::FilterRows { column: s("数量"), op: Op::GreaterOrEqual, value: s("5") },
+        Step::FilterRows { column: s("店"), op: Op::Contains, value: s("北") },
+        Step::FilterRows { column: s("店"), op: Op::DoesNotContain, value: s("北") },
+        Step::FilterRows { column: s("店"), op: Op::BeginsWith, value: s("北") },
+        Step::FilterRows { column: s("店"), op: Op::EndsWith, value: s("北") },
+        Step::FilterRows { column: s("店"), op: Op::IsNull, value: s("") },
+        Step::FilterRows { column: s("店"), op: Op::IsNotNull, value: s("") },
+        Step::FilterRows { column: s("店"), op: Op::NotEquals, value: s("南") },
+        Step::KeepTopRows(3),
+        Step::KeepBottomRows(2),
+        Step::RemoveTopRows(1),
+        Step::RemoveBottomRows(1),
+        Step::RemoveDuplicates(vec![]),
+        Step::RemoveDuplicates(vec![s("店")]),
+        Step::RemoveBlankRows,
+        Step::RemoveErrors(vec![]),
+        Step::RemoveErrors(vec![s("店")]),
+        Step::ReplaceErrors { columns: vec![s("a"), s("b")], with: s("0") },
+        Step::Sort(vec![(s("店"), true), (s("数量"), false)]),
+        Step::SplitColumn { column: s("店"), by: SplitBy::Delimiter(s("-")) },
+        Step::SplitColumn { column: s("店"), by: SplitBy::Length(3) },
+        Step::MergeColumns { columns: vec![s("a"), s("b")], separator: s(", "), name: s("ab") },
+        Step::ReplaceValue { column: s("店"), find: s("北"), with: s("N"), whole_cell: true },
+        Step::ReplaceValue { column: s("店"), find: s("1"), with: s("x, y"), whole_cell: false },
+        Step::ReplaceNull { columns: vec![s("a")], with: s("0") },
+        Step::FillDown(vec![s("a")]),
+        Step::FillUp(vec![s("a")]),
+        Step::Transpose,
+        Step::ReverseRows,
+        Step::Trim(vec![s("a"), s("b")]),
+        Step::Upper(vec![s("a")]),
+        Step::Lower(vec![s("a")]),
+        Step::Pivot { attribute: s("商品"), values: s("数量"), agg: Agg::Sum },
+        Step::Pivot { attribute: s("商品"), values: s("数量"), agg: Agg::CountDistinct },
+        Step::Unpivot { columns: vec![s("a"), s("b")], attribute: s("属性"), value: s("値") },
+        Step::UnpivotOther { keep: vec![s("店")], attribute: s("属性"), value: s("値") },
+        Step::GroupBy { keys: vec![s("店")], aggregations: vec![(s("件数"), Agg::Count, None), (s("合計"), Agg::Sum, Some(s("数量")))] },
+        Step::Merge { right: s("Other Query"), left_keys: vec![s("店")], right_keys: vec![s("店")], kind: JoinKind::LeftOuter, expand: vec![s("住所")] },
+        Step::Append { other: s("Q2") },
+        Step::AddColumn { name: s("金額"), formula: s("[数量] * [単価]") },
+        Step::AddConditionalColumn { name: s("区分"), clauses: vec![Clause { column: s("数量"), op: Op::Greater, value: s("5"), output: s("多") }, Clause { column: s("店"), op: Op::Equals, value: s("北"), output: s("北") }], otherwise: s("少") },
+        Step::AddIndexColumn { name: s("番号"), start: 1, step: 1 },
+    ];
+    for source in [Source::Blank, Source::Table(s("売上")), Source::Range { sheet: s("Sheet1"), range: s("A1:D9") }] {
+        let query = Query { name: s("Q"), source, steps: steps.clone(), output: None };
+        let code = query_to_m(&query);
+        match m_to_query(&code, &query) {
+            Ok(back) => {
+                for (k, (a, b)) in query.steps.iter().zip(&back.steps).enumerate() {
+                    assert_eq!(a, b, "step {k}\n{code}");
+                }
+                assert_eq!(back, query);
+            }
+            Err(e) => panic!("{e:?}\n{code}"),
+        }
+    }
+}
+
+#[test]
+fn m_code_is_read_freely_and_refused_with_the_reason() {
+    let base = Query::new("Q", Source::Table(s("T")));
+    let free = "let\n  Source = Excel.CurrentWorkbook(){[Name=\"T\"]}[Content], // the table\n  /* a */ #\"Kept\" = Table.FirstN( Source , 2 ),\n  x=Table.Skip(#\"Kept\",1)\nin x";
+    let q = m_to_query(free, &base).unwrap();
+    assert_eq!(q.steps, vec![Step::KeepTopRows(2), Step::RemoveTopRows(1)]);
+    let refused = |code: &str| m_to_query(code, &base).unwrap_err();
+    assert_eq!(refused("Source = 1").key, "syntax");
+    assert_eq!(refused("let Source = foo in Source").key, "source");
+    assert_eq!(refused("let Source = Excel.CurrentWorkbook(){[Name=\"T\"]}[Content], a = Table.Foo(Source) in a").key, "function");
+    assert_eq!(refused("let Source = Excel.CurrentWorkbook(){[Name=\"T\"]}[Content], a = Table.FirstN(Source, x) in a").key, "arguments");
+    assert_eq!(refused("let Source = Excel.CurrentWorkbook(){[Name=\"T\"]}[Content], a = Table.FirstN(Source, 1) in Source").key, "result");
+    assert_eq!(refused("let Source = Excel.CurrentWorkbook(){[Name=\"T\"]}[Content], a = Table.FirstN(Other, 1) in a").key, "arguments");
+}

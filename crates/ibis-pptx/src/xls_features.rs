@@ -48,7 +48,8 @@ pub(crate) struct Dxf {
     pub back: Option<u16>,
     /// left, right, top, bottom: (style, colour index).
     pub borders: [Option<(u8, u16)>; 4],
-    /// The full colours (`RRGGBB`) of the extension (`CFEx`), over the palette's.
+    /// The full colours of the extension (`CFEx`), over the palette's: a `color` element's attributes
+    /// (`rgb="FF336699"`, `theme="4" tint="0.8"`).
     pub font_rgb: Option<String>,
     pub fore_rgb: Option<String>,
     pub back_rgb: Option<String>,
@@ -139,8 +140,8 @@ pub(crate) fn dxf_xml(dxf: &Dxf, color: &dyn Fn(u16) -> Option<String>) -> Strin
         Some(2 | 0x22) => font += "<u val=\"double\"/>",
         _ => {}
     }
-    if let Some(c) = dxf.font_rgb.as_ref().map(|c| format!("FF{c}")).or_else(|| dxf.font_color.and_then(color)) {
-        font += &format!("<color rgb=\"{c}\"/>");
+    if let Some(c) = dxf.font_rgb.clone().or_else(|| dxf.font_color.and_then(color).map(|c| format!("rgb=\"{c}\""))) {
+        font += &format!("<color {c}/>");
     }
     if !font.is_empty() {
         x += &format!("<font>{font}</font>");
@@ -149,8 +150,8 @@ pub(crate) fn dxf_xml(dxf: &Dxf, color: &dyn Fn(u16) -> Option<String>) -> Strin
         // A solid fill of a conditional format keeps its colour as the background's.
         const NAMES: [&str; 19] = ["none", "solid", "mediumGray", "darkGray", "lightGray", "darkHorizontal", "darkVertical", "darkDown", "darkUp", "darkGrid", "darkTrellis", "lightHorizontal", "lightVertical", "lightDown", "lightUp", "lightGrid", "lightTrellis", "gray125", "gray0625"];
         let name = dxf.pattern.filter(|&p| p > 1).and_then(|p| NAMES.get(p as usize));
-        let fg = dxf.fore_rgb.as_ref().map(|c| format!("FF{c}")).or_else(|| dxf.fore.and_then(color)).map(|c| format!("<fgColor rgb=\"{c}\"/>")).unwrap_or_default();
-        let bg = dxf.back_rgb.as_ref().map(|c| format!("FF{c}")).or_else(|| dxf.back.and_then(color)).map(|c| format!("<bgColor rgb=\"{c}\"/>")).unwrap_or_default();
+        let fg = dxf.fore_rgb.clone().or_else(|| dxf.fore.and_then(color).map(|c| format!("rgb=\"{c}\""))).map(|c| format!("<fgColor {c}/>")).unwrap_or_default();
+        let bg = dxf.back_rgb.clone().or_else(|| dxf.back.and_then(color).map(|c| format!("rgb=\"{c}\""))).map(|c| format!("<bgColor {c}/>")).unwrap_or_default();
         match name {
             Some(n) => x += &format!("<fill><patternFill patternType=\"{n}\">{fg}{bg}</patternFill></fill>"),
             None => x += &format!("<fill><patternFill>{bg}</patternFill></fill>"),
@@ -235,13 +236,22 @@ pub(crate) fn read_cf_ex(d: &[u8], groups: &mut [CfGroup]) {
     let mut dxf = rule.dxf.take().unwrap_or_default();
     let mut i = 16;
     while i + 12 <= d.len() {
+        // An ExtProp (MS-XLS 2.5.108) of a FullColorExt (2.5.155): its kind, size 20, the colour's type (1 an index,
+        // 2 RGB, 3 a theme colour), its tint (-32767 to 32767) and its value.
         let (kind, size, color_type, tint) = (u16_at(d, i).unwrap_or(0), u16_at(d, i + 2).unwrap_or(0), u16_at(d, i + 4).unwrap_or(0), u16_at(d, i + 6).unwrap_or(1));
-        if size == 20 && color_type == 2 && tint == 0 && [4, 5, 13].contains(&kind) {
-            let rgb = format!("{:02X}{:02X}{:02X}", d[i + 8], d[i + 9], d[i + 10]);
+        if size == 20 && (1..=3).contains(&color_type) && [4, 5, 13].contains(&kind) {
+            let tint = tint as i16;
+            let tint_attr = if tint != 0 { format!(" tint=\"{}\"", ibis_calc::number_to_xml((tint as f64 / 32767.0 * 1e6).round() / 1e6)) } else { String::new() };
+            let value = u32_at(d, i + 8).unwrap_or(0);
+            let attr = match color_type {
+                1 => format!("indexed=\"{value}\"{tint_attr}"),
+                2 => format!("rgb=\"FF{:02X}{:02X}{:02X}\"{tint_attr}", d[i + 8], d[i + 9], d[i + 10]),
+                _ => format!("theme=\"{value}\"{tint_attr}"),
+            };
             match kind {
-                4 => dxf.fore_rgb = Some(rgb),
-                5 => dxf.back_rgb = Some(rgb),
-                _ => dxf.font_rgb = Some(rgb),
+                4 => dxf.fore_rgb = Some(attr),
+                5 => dxf.back_rgb = Some(attr),
+                _ => dxf.font_rgb = Some(attr),
             }
             i += 20;
         } else {
@@ -743,4 +753,26 @@ pub(crate) fn autofilter_xml(range: &str, filters: &[ColumnFilter]) -> String {
         columns.push_str(&format!("<filterColumn colId=\"{}\">{inner}</filterColumn>", f.column));
     }
     format!("<autoFilter ref=\"{range}\">{columns}</autoFilter>")
+}
+
+#[cfg(test)]
+mod cf_tests {
+    use super::*;
+
+    #[test]
+    fn a_conditional_formats_theme_colour_with_a_tint_is_kept() {
+        // Corpus 103: the banding of MOD(ROW(),2) is accent 1 lightened by 0.8 (theme 4, tint 0.79998); the CF's palette
+        // colour is only the nearest (light turquoise).
+        let mut groups = vec![CfGroup { bound: [4, 27, 1, 4], ranges: vec![[4, 27, 1, 4]], rules: vec![CfRule { ct: 2, cp: 0, f1: Vec::new(), f2: Vec::new(), dxf: Some(Dxf { pattern: Some(1), back: Some(0x29), ..Default::default() }), bar: None }] }];
+        // CFEx: FrtRefHeaderNoGrbit (12, the bound at 4), fIsCF12 = 0, then an ExtProp of the background: kind 5,
+        // 20 bytes, a theme colour (3), tint 26214 (0.8), theme 4.
+        let mut d = vec![0x7B, 0x08, 0, 0, 4, 0, 27, 0, 1, 0, 4, 0, 0, 0, 0, 0];
+        d.extend([5, 0, 20, 0, 3, 0]);
+        d.extend(26214i16.to_le_bytes());
+        d.extend(4u32.to_le_bytes());
+        d.extend([0; 8]);
+        read_cf_ex(&d, &mut groups);
+        let xml = dxf_xml(groups[0].rules[0].dxf.as_ref().unwrap(), &|_| Some("FFCCFFFF".into()));
+        assert!(xml.contains("<bgColor theme=\"4\" tint=\"0.800012\"/>"), "{xml}");
+    }
 }

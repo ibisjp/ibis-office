@@ -34,8 +34,10 @@
 pub mod docx;
 pub mod pptx;
 pub(crate) mod pptx_new;
+pub(crate) mod pptx_cmyk;
 mod pptx_sections;
 pub(crate) mod pptx_guides;
+pub(crate) mod pptx_ibis;
 mod pptx_groups;
 pub(crate) mod pptx_chart;
 mod pptx_comments;
@@ -193,10 +195,12 @@ pub fn open_progressive(
         let remaining_offset = iter.position();
         // The cells the first rows make: room the last chunk's list keeps in front of its own, for the app to put them there
         // without a copy of the whole list.
+        #[cfg(not(target_family = "wasm"))]
         let first_cells_hint: usize = first.iter().map(|r| r.len()).sum();
         // The cells the rest will make, from the size of the text left against the first rows' (a few per cent over): the list
         // that gets them is made this big at once, so that it neither grows by doubling (3.7 GB for 2.3 GB of 21 million cells)
-        // nor stands beside the batches it is filled from.
+        // nor stands beside the batches it is filled from (the thread that fills it is not on the web).
+        #[cfg(not(target_family = "wasm"))]
         let estimated_cells = if first.is_empty() || remaining_offset == 0 {
             0
         } else {
@@ -1021,6 +1025,9 @@ impl Source {
             slide.aspect_locked = again.aspect_locked.iter().filter_map(|k| ids.get(k).copied()).collect();
             slide.shape_alt_texts = again.shape_alt_texts.iter().filter_map(|(k, v)| Some((*ids.get(k)?, v.clone()))).collect();
             slide.decorative_shapes = again.decorative_shapes.iter().filter_map(|k| ids.get(k).copied()).collect();
+            slide.ibis_wrap = again.ibis_wrap.iter().filter_map(|(k, v)| Some((*ids.get(k)?, *v))).collect();
+            slide.ibis_wrap_ignore = again.ibis_wrap_ignore.iter().filter_map(|k| ids.get(k).copied()).collect();
+            slide.text_chains = again.text_chains.iter().map(|c| ibis_doc_model::TextChain { boxes: c.boxes.iter().filter_map(|k| ids.get(k).copied()).collect(), joined: c.joined.clone(), padding: c.padding.clone() }).filter(|c| c.boxes.len() == c.joined.len()).collect();
             Ok((slide, sources))
         })();
         match made {
@@ -1223,6 +1230,9 @@ fn renumbered(slide: &ibis_doc_model::Slide, id: ibis_doc_model::SlideId, ids: &
     out.aspect_locked = slide.aspect_locked.iter().map(|k| map(*k)).collect();
     out.shape_alt_texts = slide.shape_alt_texts.iter().map(|(k, v)| (map(*k), v.clone())).collect();
     out.decorative_shapes = slide.decorative_shapes.iter().map(|k| map(*k)).collect();
+    out.ibis_wrap = slide.ibis_wrap.iter().map(|(k, v)| (map(*k), *v)).collect();
+    out.ibis_wrap_ignore = slide.ibis_wrap_ignore.iter().map(|k| map(*k)).collect();
+    out.text_chains = slide.text_chains.iter().map(|c| ibis_doc_model::TextChain { boxes: c.boxes.iter().map(|k| map(*k)).collect(), joined: c.joined.clone(), padding: c.padding.clone() }).collect();
     out.shape_placements = slide.shape_placements.iter().map(|(k, v)| (map(*k), *v)).collect();
     out.shape_prints = slide.shape_prints.iter().map(|(k, v)| (map(*k), *v)).collect();
     out.shape_formulas = slide.shape_formulas.iter().map(|(k, v)| (map(*k), v.clone())).collect();

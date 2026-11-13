@@ -36,6 +36,8 @@ pub(crate) fn english_names() -> bool {
 }
 
 mod animation;
+pub mod symbol_font;
+pub mod animation_catalog;
 mod comments;
 pub mod art_borders;
 mod blank;
@@ -80,6 +82,7 @@ mod odp_shape;
 mod odp_write;
 mod odp_style;
 mod odp_text;
+mod officeart_xml;
 pub mod ppt;
 mod ppt_timing;
 mod ppt_write;
@@ -96,7 +99,7 @@ mod xls_formula;
 pub mod font_digit;
 pub mod locale_paper;
 mod xlsx;
-pub use xlsx::{EXCEL_METRICS, ExcelMetrics};
+pub use xlsx::{APP_DEFAULT_ROW_PT, EXCEL_METRICS, ExcelMetrics};
 mod xlsx_external;
 mod xlsx_pivot;
 mod xlsx_slicer;
@@ -186,6 +189,11 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+/// Whether `data` is an old binary Office file (.ppt, .xls, .doc): the window opens it in Compatibility Mode.
+pub fn is_legacy_binary(data: &[u8]) -> bool {
+    ppt::is_ppt(data) || xls::is_xls(data) || docx_convert::is_doc(data)
+}
 
 /// Read a `.pptx` presentation, a `.xlsx` workbook (see [`read_xlsx`]) or a
 /// `.docx` document (see [`read_docx`]): which one is told by the package's
@@ -287,6 +295,7 @@ pub use ppt::dump as ppt_dump;
 pub use ppt_write::to_pptx as ppt_to_pptx;
 pub use odp::to_pptx as odp_to_pptx;
 pub use xlsb::to_xlsx as xlsb_to_xlsx;
+pub use xls::to_xlsx as xls_to_xlsx;
 pub use cell_style::{
     PresetCellStyle, preset_cell_styles, preset_cell_styles_of, preset_cell_styles_with_theme, tinted,
     workbook_theme_colors, workbook_theme_colors_from_slice,

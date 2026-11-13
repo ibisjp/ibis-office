@@ -4,8 +4,10 @@
 //! Apply-button regression audit of the real dialog catalog.
 //! Fixture inputs are changed; only a pointer click may commit them.
 use super::{Scenario, button_probe as buttons};
-use gpui_kit::*;
 use std::cell::{Cell, RefCell};
+use crate::pptx::ext::*;
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 thread_local! {
     static ACTIVE:Cell<bool>=const{Cell::new(false)};
     static RESULTS:RefCell<Vec<(String,bool)>>=const{RefCell::new(Vec::new())};
@@ -73,8 +75,8 @@ fn snapshot(s: &mut Scenario) -> String {
             "{:?}\n{:?}\n{:?}\n{:?}",
             e.presentation(),
             e.doc_state().and_then(|s| s.pending.as_ref()),
-            e.custom_user_name,
-            e.custom_user_initials
+            e.doc_prefs().custom_user_name,
+            e.doc_prefs().custom_user_initials
         )
     });
     model
@@ -209,7 +211,7 @@ fn prepare(s: &mut Scenario, fmt: &str, key: &str, id: &str) {
     if id=="pptx-paragraph-apply"{
         // The first field is inactive while line spacing is Default.
         // Change space-before, which is effective in every line-spacing mode.
-        s.update(|e,w,cx|{let input=e.pptx().unwrap().paragraph_panel.as_ref().unwrap().fields[1].clone();input.update(cx,|i,cx|i.set_value("2",w,cx));});return;
+        s.update(|e,w,cx|{let input=e.shape_edit.paragraph_panel.as_ref().unwrap().fields[1].clone();input.update(cx,|i,cx|i.set_value("2",w,cx));});return;
     }
     if id == "docx-font-apply" {
         s.update(|e, w, cx| {
@@ -231,9 +233,7 @@ fn prepare(s: &mut Scenario, fmt: &str, key: &str, id: &str) {
         s.update(|e, w, cx| {
             e.toggle_header_footer("footer", true, cx);
             let input = e
-                .pptx()
-                .unwrap()
-                .header_footer
+                .shape_edit.header_footer
                 .as_ref()
                 .unwrap()
                 .footer_text
@@ -421,9 +421,7 @@ fn extra_dialogs() {
         e.open_header_footer(w, cx);
         e.toggle_header_footer("footer", true, cx);
         let input = e
-            .pptx()
-            .unwrap()
-            .header_footer
+            .shape_edit.header_footer
             .as_ref()
             .unwrap()
             .footer_text

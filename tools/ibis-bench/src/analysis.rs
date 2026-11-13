@@ -25,6 +25,7 @@ impl Area {
 }
 
 /// Sixteen evenly spaced samples per cell, matching bench.swift's online grid.
+#[cfg_attr(not(windows), allow(dead_code))] // Used by `capture` (Windows only).
 pub fn grid(bgra: &[u8], width: usize, height: usize, stride: usize) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(
         width > 0 && height > 0 && stride >= width * 4,
@@ -68,6 +69,7 @@ pub fn changed(a: &[u8], b: &[u8], area: Area) -> f64 {
     count as f64 / total as f64
 }
 
+#[cfg_attr(not(windows), allow(dead_code))] // Used by `screen` (Windows only).
 pub fn has_content(grid: &[u8], area: Area) -> bool {
     let cells: Vec<_> = area.cells().collect();
     cells.iter().filter(|&&i| grid[i] < 200).count() as f64 / cells.len() as f64 > 0.005

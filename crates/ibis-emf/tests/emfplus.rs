@@ -159,7 +159,7 @@ fn paths_are_filled_and_the_world_transform_moves_them() {
         p.extend(f(y));
     }
     p.extend([0u8, 1, 0x81]);
-    let mut fill = u(RED);
+    let fill = u(RED);
     let mut translate = f(30.0);
     translate.extend(f(40.0));
     let data = emf(&[header(false), object(3, 0, &p), rec(0x402D, 0, &translate), rec(0x4014, 0x8000, &fill)], &[]);

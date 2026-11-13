@@ -5,6 +5,7 @@
 use super::Scenario;
 use crate::xlsx::scenarios::SheetSteps;
 use gpui_kit::*;
+use crate::xlsx::ext::*;
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![("xlsx::issue108_paste_tab_cell_editor", cell_editor), ("xlsx::issue108_paste_tab_wide_characters", tab_and_wide_characters), ("xlsx::issue108_paste_matrix_cell_editor", matrix_cell_editor), ("xlsx::issue108_paste_matrix_formula_bar", matrix_formula_bar), ("xlsx::issue108_paste_matrix_name_box", matrix_name_box), ("xlsx::issue108_paste_matrix_find_field", matrix_find_field)]
 }

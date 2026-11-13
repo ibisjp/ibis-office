@@ -88,7 +88,7 @@ pub(super) fn write_shape_edits(package: &mut Package, map: &SourceMap, baseline
             } else {
                 ibis_doc_model::ObjectPlacement::MoveAndSize
             });
-            add_shape(package, &drawing, new_sheet, shape, current, &mut media, new_charts, chart_data, formula, placement)?;
+            add_shape(package, &drawing, new_sheet, shape, current, &mut media, new_charts, chart_data, formula, placement, new_slide.shape_names.get(&shape.id).map(String::as_str))?;
             handled.insert(shape.id);
         }
     }
@@ -143,7 +143,7 @@ fn remove_chart_parts(package: &mut Package, drawing: &str, chart: &str) -> Resu
     Ok(())
 }
 
-fn add_shape(package: &mut Package, drawing: &str, sheet: &ibis_doc_model::Sheet, shape: &Shape, current: &Presentation, media: &mut HashMap<MediaId, String>, new_charts: &HashMap<ShapeId, super::super::NewChartEntry>, chart_data: &super::super::pptx_chart_data::ChartDataEdits, formula: Option<&str>, placement: ibis_doc_model::ObjectPlacement) -> Result<(), Error> {
+fn add_shape(package: &mut Package, drawing: &str, sheet: &ibis_doc_model::Sheet, shape: &Shape, current: &Presentation, media: &mut HashMap<MediaId, String>, new_charts: &HashMap<ShapeId, super::super::NewChartEntry>, chart_data: &super::super::pptx_chart_data::ChartDataEdits, formula: Option<&str>, placement: ibis_doc_model::ObjectPlacement, name: Option<&str>) -> Result<(), Error> {
     // The relationship of a picture's image, or of a chart's part.
     let rel = match &shape.kind {
         ShapeKind::Chart(after) => {
@@ -157,14 +157,14 @@ fn add_shape(package: &mut Package, drawing: &str, sheet: &ibis_doc_model::Sheet
                     {
                         super::write_chart_ex(package, &part, template, after)?;
                     }
-                    return add_anchor(package, drawing, sheet, shape, Some(rel), true, formula, placement);
+                    return add_anchor(package, drawing, sheet, shape, Some(rel), true, formula, placement, name);
                 }
                 let (rel, part) = super::super::pptx_new_chart::add_sheet_chart_part(package, drawing, entry.kind)?;
                 if let Some(template) = &entry.template {
                     // Its series from the cells, then the rest of what was set since.
                     let refs = chart_data.get(&shape.id).and_then(|e| e.iter().rev().find(|(c, _)| c.groups == after.groups)).map(|(_, d)| d.series.clone()).unwrap_or_else(|| entry.refs.clone());
                     if !refs.is_empty() {
-                        super::super::pptx_chart_data::write_sheet_chart_series(package, &part, after, &refs)?;
+                        super::super::pptx_chart_data::write_sheet_chart_series(package, &part, None, after, &refs)?;
                     }
                     let base_groups: Vec<_> = template
                         .groups
@@ -238,7 +238,7 @@ fn add_shape(package: &mut Package, drawing: &str, sheet: &ibis_doc_model::Sheet
         }
         _ => None,
     };
-    add_anchor(package, drawing, sheet, shape, rel, false, formula, placement)
+    add_anchor(package, drawing, sheet, shape, rel, false, formula, placement, name)
 }
 
 /// The cells a new chartEx chart reads: the first series' name, categories and values as the sheet holds them now.
@@ -302,7 +302,7 @@ fn ex_cells(current: &Presentation, refs: &[super::super::pptx_chart_data::Serie
 
 /// A new shape's anchor in the sheet's drawing, at its frame: a chart (`ex`: a chartEx one, in its alternate-content
 /// wrapper) or a picture or another shape, with the relationship `rel` it shows.
-fn add_anchor(package: &mut Package, drawing: &str, sheet: &ibis_doc_model::Sheet, shape: &Shape, rel: Option<String>, ex: bool, formula: Option<&str>, placement: ibis_doc_model::ObjectPlacement) -> Result<(), Error> {
+fn add_anchor(package: &mut Package, drawing: &str, sheet: &ibis_doc_model::Sheet, shape: &Shape, rel: Option<String>, ex: bool, formula: Option<&str>, placement: ibis_doc_model::ObjectPlacement, name: Option<&str>) -> Result<(), Error> {
     let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
     let cell = |offsets: &[i64], v: i64| -> (usize, i64) {
         let i = offsets.partition_point(|&o| o <= v).saturating_sub(1).min(offsets.len().saturating_sub(2));
@@ -349,6 +349,12 @@ fn add_anchor(package: &mut Package, drawing: &str, sheet: &ibis_doc_model::Shee
         }
     };
     let node: NodeId = x.import(doc, &anchor)?;
+    // The shape's own name is kept (an ink stroke's `インク N` is what 「すべてのインクを消去」 finds again after the file is opened).
+    if let Some(name) = name.filter(|n| !n.is_empty())
+        && let Some(c_nv_pr) = doc.descendants(node).into_iter().find(|&n| doc.local_name(n) == "cNvPr")
+    {
+        doc.set_attr(c_nv_pr, "name", name);
+    }
     let count = doc.children(root).len();
     doc.insert(root, count, node);
     Ok(())

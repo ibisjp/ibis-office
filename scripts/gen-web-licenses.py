@@ -34,7 +34,7 @@ BUILDS = {
 }
 # What each build ships besides the app: the AppImage's runtime is in the Linux one.
 EXTRA_PACKAGES = {"linux": ["ibis-appimage"]}
-OWN = {"ibis-office-app", "ibis-doc-model", "ibis-pptx", "ibis-emf", "ibis-eot", "ibis-imgdiff", "ibis-appimage"}
+OWN = {"ibis-office-app", "ibis-office-shell", "ibis-office-pptx", "ibis-office-docx", "ibis-office-xlsx", "ibis-office-render", "ibis-office-base", "ibis-doc-model", "ibis-pptx", "ibis-emf", "ibis-eot", "ibis-imgdiff", "ibis-appimage"}
 
 
 def run(*args):
@@ -195,9 +195,9 @@ def write(build):
     ecma = open(os.path.join(ROOT, "crates", "ibis-pptx", "data", "ECMA-NOTICE.txt"), encoding="utf-8").read().strip()
     # The art page borders' pictures: the desktop app reads them from the zip
     # in its Resources; the web version serves its PNG files one by one.
-    ecma_art = open(os.path.join(ROOT, "crates", "ibis-office-app", "data", "artborders", "ECMA-NOTICE.txt"), encoding="utf-8").read().strip()
+    ecma_art = open(os.path.join(ROOT, "crates", "ibis-pptx", "data", "artborders", "ECMA-NOTICE.txt"), encoding="utf-8").read().strip()
     plex = open(os.path.join(ROOT, "crates", "ibis-office-app", "fonts", "OFL.txt"), encoding="utf-8").read().strip()
-    carlito = open(os.path.join(ROOT, "crates", "ibis-office-app", "fonts", "carlito", "OFL.txt"), encoding="utf-8").read().strip()
+    carlito = open(os.path.join(ROOT, "crates", "ibis-office-render", "fonts", "carlito", "OFL.txt"), encoding="utf-8").read().strip()
     assets = json.loads(run("cargo", "metadata", "--locked", "--format-version", "1"))
     lucide_dir = next(os.path.dirname(p["manifest_path"]) for p in assets["packages"] if p["name"] == "gpui-kit-assets")
     lucide = open(os.path.join(lucide_dir, "LICENSE-LUCIDE"), encoding="utf-8").read().strip()
@@ -213,10 +213,10 @@ def write(build):
     else:
         bundled.append(("Carlito", "Calibri が入っていないときの代わりの文字", "SIL Open Font License 1.1"))
     bundled.append(("Lucide", "アイコン（`assets/icons/`）" if build == "web" else "アイコン（実行ファイルに埋め込み）", "ISC"))
-    # Material Symbols: the chrome's icons (crates/ibis-office-app/icons/material/),
+    # Material Symbols: the chrome's icons (crates/ibis-office-shell/icons/material/),
     # embedded in the binary on both builds.
     bundled.append(("Material Symbols（Google）", "タイトル行・メニュー・ツールバー・サイドバーのアイコン（実行ファイルに埋め込み）", "Apache-2.0"))
-    material_readme = open(os.path.join(ROOT, "crates", "ibis-office-app", "icons", "material", "README.md"), encoding="utf-8").read()
+    material_readme = open(os.path.join(ROOT, "crates", "ibis-office-shell", "icons", "material", "README.md"), encoding="utf-8").read()
     material_source = next((l[2:] for l in material_readme.splitlines() if l.startswith("- 出典")), "")
     where = {"web": " Web 版（`www/`）", "macos": " macOS 版（`ibisOffice.app`）", "linux": " Linux 版（AppImage）"}[build]
     md = [f"# サードパーティのライセンス（{label}）",

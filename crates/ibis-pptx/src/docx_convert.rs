@@ -137,7 +137,7 @@ fn run_visible_text(run: &FlowRun) -> String {
         return String::new();
     }
     match &run.kind {
-        FlowRunKind::Text(t) => t.clone(),
+        FlowRunKind::Text(t) => t.chars().map(|c| if c == ibis_doc_model::OPTIONAL_HYPHEN { '\u{ad}' } else { c }).collect(),
         FlowRunKind::Tab | FlowRunKind::PositionalTab { .. } => "\t".to_string(),
         FlowRunKind::LineBreak => "\n".to_string(),
         FlowRunKind::PageRef { shown, .. }

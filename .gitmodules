@@ -1,9 +1,15 @@
 [submodule "forks/gpui-component"]
 	path = forks/gpui-component
 	url = https://github.com/ibisjp/gpui-component.git
+[submodule "forks/gpui-base"]
+	path = forks/gpui-base
+	url = https://github.com/ibisjp/gpui-base.git
 [submodule "forks/gpui-pre"]
 	path = forks/gpui-pre
 	url = https://github.com/ibisjp/gpui-pre.git
+[submodule "forks/gpui-pre-apple"]
+	path = forks/gpui-pre-apple
+	url = https://github.com/ibisjp/gpui-pre-apple.git
 [submodule "forks/gpui-pre-macos"]
 	path = forks/gpui-pre-macos
 	url = https://github.com/ibisjp/gpui-pre-macos.git

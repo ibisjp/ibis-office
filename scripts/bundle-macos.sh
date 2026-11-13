@@ -6,6 +6,10 @@
 #
 #   scripts/bundle-macos.sh            debug build   (target/debug/ibisOffice.app)
 #   scripts/bundle-macos.sh --release  release build (target/release/ibisOffice.app)
+#   scripts/bundle-macos.sh --quick    the everyday release build (target/release/ibisOffice.app) for this Mac only:
+#                                      the development profile (incremental) in target/release, so an up-to-date
+#                                      target/release/ibisOffice is packed as it is (seconds) and a stale one is brought up
+#                                      to date first. Its executable keeps this Mac's paths: never distribute it.
 #
 # A bare executable opened from Finder starts in Terminal; an .app bundle does not.
 # UI icons and fonts are embedded in the executable; the bundle adds the app icon
@@ -14,17 +18,26 @@
 # ibisOfficeUpdater (Contents/MacOS).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+QUICK=
+[[ "${1:-}" == "--quick" ]] && QUICK=1
+# The distribution keeps the release defaults (no incremental, default LTO); Cargo.toml's release profile is for development.
+source scripts/dist-profile.sh
+# --quick builds the everyday target/release, with the development profile (Cargo.toml) and the planned menu lines shown.
+[[ -z $QUICK ]] || unset CARGO_PROFILE_RELEASE_INCREMENTAL CARGO_PROFILE_RELEASE_LTO IBIS_OFFICE_DIST
 
 PROFILE=debug
 FLAGS=()
-if [[ "${1:-}" == "--release" ]]; then PROFILE=release; FLAGS=(--release); fi
+if [[ "${1:-}" == "--release" || -n $QUICK ]]; then PROFILE=release; FLAGS=(--release); fi
 
 # The paths of this machine (the home folder, the repository) are not to go
 # into the executable (Rust keeps source paths for panics and the like): they
 # are rewritten to short relative ones, in a target directory of its own so
 # that the everyday builds (target/debug, target/release) are not rebuilt by the flags.
 REMAP="--remap-path-prefix=$HOME/.cargo/registry/src=crates.io --remap-path-prefix=$HOME/.cargo/git/checkouts=git --remap-path-prefix=$HOME/.rustup=rustup --remap-path-prefix=$(pwd)=."
-if [[ "$PROFILE" == release ]]; then
+if [[ -n $QUICK ]]; then
+  cargo build --release --locked -p ibis-office-app -p ibis-office-updater
+  BIN_DIR=target/release
+elif [[ "$PROFILE" == release ]]; then
   RUSTFLAGS="$REMAP" CARGO_TARGET_DIR=target/dist cargo build --release --locked -p ibis-office-app -p ibis-office-updater
   BIN_DIR=target/dist/release
 else
@@ -52,11 +65,11 @@ cp crates/ibis-office-app/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.ic
 python3 scripts/gen-web-licenses.py macos
 mkdir -p "$APP/Contents/Resources/Licenses"
 cp crates/ibis-office-app/macos/license.md "$APP/Contents/Resources/Licenses/license.md"
-cp crates/ibis-office-app/fonts/carlito/OFL.txt "$APP/Contents/Resources/Licenses/Carlito-OFL.txt"
+cp crates/ibis-office-render/fonts/carlito/OFL.txt "$APP/Contents/Resources/Licenses/Carlito-OFL.txt"
 # The pictures of Word's art page borders: ECMA-376's zip, unmodified, with
 # its notice (read when a document uses an art border; not in the executable).
 mkdir -p "$APP/Contents/Resources/artborders"
-cp crates/ibis-office-app/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip crates/ibis-office-app/data/artborders/ECMA-NOTICE.txt "$APP/Contents/Resources/artborders/"
+cp crates/ibis-pptx/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip crates/ibis-pptx/data/artborders/ECMA-NOTICE.txt "$APP/Contents/Resources/artborders/"
 
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

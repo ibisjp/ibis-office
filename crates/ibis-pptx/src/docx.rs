@@ -151,6 +151,8 @@ fn run_format(rpr: Node, theme: &Theme) -> RunFormat {
         };
         f.font = pick("ascii", "asciiTheme");
         f.east_asian_font = pick("eastAsia", "eastAsiaTheme");
+        // The hAnsi typeface (Word's own templates: ascii ＭＳ 明朝, hAnsi Courier New): the bullets in the geometric shapes are drawn in it.
+        f.h_ansi_font = pick("hAnsi", "hAnsiTheme");
         f.cs_font = pick("cs", "cstheme").or_else(|| pick("cs", "csTheme"));
         if let Some(h) = wattr(fonts, "hint") {
             f.east_asia_hint = Some(h == "eastAsia");
@@ -509,37 +511,15 @@ fn shading(shd: Node, theme: &Theme) -> Option<Rgb> {
     Some(Rgb(mix(16) | mix(8) | mix(0)))
 }
 
-/// A glyph of a symbol font (`Symbol`, `Wingdings`) as the Unicode character it shows.
+/// A glyph of a symbol font (`Symbol`, `Wingdings`, `Wingdings 2`, `Wingdings 3`) as the Unicode character it shows (the tables of
+/// [`crate::symbol_font`]). A code of a typeface with no such character (a hand, a clock) is `None`.
 fn symbol_char(c: char, font: Option<&str>) -> Option<char> {
-    let code = c as u32;
-    let code = if (0xf000..=0xf0ff).contains(&code) { code - 0xf000 } else { code };
-    match font? {
-        "Symbol" => Some(match code {
-            0xb7 => '•',
-            0xa8 => '♦',
-            0xd8 => '¬',
-            _ if c > '\u{ff}' => c,
-            _ => char::from_u32(code)?,
-        }),
-        "Wingdings" => match code {
-            0x6c => Some('●'),
-            0x6e => Some('■'),
-            0x6f => Some('□'),
-            0x71 => Some('❑'),
-            0x75 => Some('◆'),
-            0x76 => Some('❖'),
-            0x9f => Some('•'),
-            0xa7 => Some('▪'),
-            0xa8 => Some('◻'),
-            0xd8 => Some('➢'),
-            0xfb => Some('✗'),
-            0xfc => Some('✓'),
-            0xfd => Some('☒'),
-            0xfe => Some('☑'),
-            _ if c > '\u{ff}' => Some(c),
-            _ => None,
-        },
-        _ => None,
+    let font = font.filter(|f| crate::symbol_font::is_known(f))?;
+    match crate::symbol_font::stand_in(font, c) {
+        Some(mapped) => Some(mapped),
+        // A character that is no code of the typeface (a letter written in it) is itself.
+        None if crate::symbol_font::code_of(c).is_none() && !(0xe000..=0xf8ff).contains(&(c as u32)) => Some(c),
+        None => None,
     }
 }
 
@@ -548,7 +528,7 @@ fn bullet_char(c: char, font: Option<&str>) -> char {
     if let Some(mapped) = symbol_char(c, font) {
         return mapped;
     }
-    if matches!(font, Some("Wingdings")) || (0xf000..=0xf0ff).contains(&(c as u32)) {
+    if font.is_some_and(|f| f.starts_with("Wingdings")) || (0xf000..=0xf0ff).contains(&(c as u32)) {
         '●'
     } else {
         c
@@ -583,10 +563,23 @@ fn numbering(root: Node, theme: &Theme) -> Numbering {
             let run = child(lvl, "rPr").map(|r| run_format(r, theme)).unwrap_or_default();
             let format = wval(lvl, "numFmt").unwrap_or("decimal").to_string();
             let raw = wval(lvl, "lvlText").unwrap_or("");
-            let text: String = raw.chars().map(|c| if format == "bullet" { bullet_char(c, run.font.as_deref()) } else { c }).collect();
+            let mut text = String::new();
+            for c in raw.chars() {
+                if format != "bullet" {
+                    text.push(c);
+                    continue;
+                }
+                let stand_in = bullet_char(c, run.font.as_deref());
+                text.push(stand_in);
+                // A glyph of a symbol typeface is a plain shape: the text presentation selector keeps the hourglass and the zodiac signs
+                // from being drawn as colour emoji.
+                if run.font.as_deref().is_some_and(crate::symbol_font::is_known) && crate::symbol_font::emoji_by_default(stand_in) {
+                    text.push('\u{fe0e}');
+                }
+            }
             // The symbol typeface's character (U+F000 and the code), for the room it takes.
             let symbol = match (format.as_str(), run.font.as_deref(), raw.chars().next()) {
-                ("bullet", Some(f @ ("Symbol" | "Wingdings")), Some(c)) if raw.chars().count() == 1 => {
+                ("bullet", Some(f), Some(c)) if crate::symbol_font::is_known(f) && raw.chars().count() == 1 => {
                     let code = c as u32;
                     char::from_u32(if code < 0x100 { 0xf000 + code } else { code }).map(|c| (f.to_string(), c))
                 }
@@ -595,7 +588,7 @@ fn numbering(root: Node, theme: &Theme) -> Numbering {
             // A symbol font's bullet is drawn as the Unicode character, in
             // the paragraph's font.
             let mut run = run;
-            if format == "bullet" && matches!(run.font.as_deref(), Some("Symbol" | "Wingdings")) {
+            if format == "bullet" && run.font.as_deref().is_some_and(crate::symbol_font::is_known) {
                 run.font = None;
             }
             levels.push(ListLevel {
@@ -773,7 +766,9 @@ fn page_setup(sect: Node) -> PageSetup {
         page.first_page = start;
     }
     page.direction = child(sect, "textDirection").and_then(|n| wattr(n, "val")).map_or_default(ibis_doc_model::CellDirection::from_name);
-    if let Some(n) = child(sect, "lnNumType") {
+    // w:countBy 0 (and a missing one, whose default is 0) is no numbering at all: Word (Microsoft 365) shows no line
+    // numbers and reports LineNumbering.Active = 0 for both (GitHub issue #140, tasks/doc/issue140-check-20261110/).
+    if let Some(n) = child(sect, "lnNumType").filter(|n| wattr(*n, "countBy").and_then(|v| v.parse::<u32>().ok()).is_some_and(|c| c > 0)) {
         page.line_numbers = Some(ibis_doc_model::LineNumbers {
             count_by: wattr(n, "countBy").and_then(|v| v.parse().ok()).unwrap_or(1).max(1),
             // w:start is one less than the first number.
@@ -1029,6 +1024,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
             table_style: table_style.map(str::to_string),
             direct: ppr.map(|p| para_format(p, self.theme)).unwrap_or_default(),
             mark_format: ppr.and_then(|p| child(p, "rPr")).map(|r| run_format(r, self.theme)).unwrap_or_default(),
+            mark_revision: ppr.and_then(|p| child(p, "rPr")).and_then(|r| child(r, "del")).map(|d| ibis_doc_model::flow::Revision { kind: RevisionKind::Delete, author: wattr(d, "author").unwrap_or_default().to_string(), date: wattr(d, "date").unwrap_or_default().to_string() }),
             runs,
             bookmarks: p.descendants().filter(|n| n.is_element() && n.tag_name().name() == "bookmarkStart").filter_map(|n| wattr(n, "name")).map(str::to_string).collect(),
             bookmark_ends: p.descendants().filter(|n| n.is_element() && n.tag_name().name() == "bookmarkEnd").filter_map(|n| wattr(n, "id")).filter_map(|id| {
@@ -1830,7 +1826,8 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                 // An optional hyphen: a place to break a word, shown as a hyphen only where a line ends (GitHub issue #68 D12).
                 "softHyphen" => {
                     read.in_run(r, node, 1);
-                    push_text(out, "\u{ad}");
+                    // Not U+00AD: a U+00AD written in `w:t` is a character of its own that Word draws as a hyphen (the layout does), so the optional hyphen has its own mark.
+                    push_text(out, &ibis_doc_model::OPTIONAL_HYPHEN.to_string());
                 }
                 "footnoteReference" | "endnoteReference" => {
                     if let Some(id) = wattr(node, "id").and_then(|v| v.parse::<u32>().ok()) {
@@ -2002,6 +1999,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
         if !members.is_empty() {
             self.shape_groups.push(ibis_doc_model::ShapeGroup {
                 has_unmodelled_children: false,
+                soft_edge: None,
                 native_id: group_id,
                 name: group_name,
                 children: members,
@@ -2110,6 +2108,7 @@ impl<'p, 'd, 'i> Reader<'p, 'd, 'i> {
                         let nv = child(node, "cNvPr");
                         members.push(ibis_doc_model::GroupMember::Group(Box::new(ibis_doc_model::ShapeGroup {
                             has_unmodelled_children: false,
+                            soft_edge: None,
                             native_id: nv.and_then(|d| attr(d, "id")).map(str::to_string).unwrap_or_else(|| self.new_id().to_string()),
                             name: nv.and_then(|d| attr(d, "name")).unwrap_or("").to_string(),
                             children: inner,
@@ -2841,6 +2840,10 @@ fn parse_floating_anchor(holder: Node) -> Option<ibis_doc_model::FloatingAnchor>
                     _ => ibis_doc_model::TateChuYoko::Off,
                 }),
                 char_scale: f.scale.filter(|s| *s != 100),
+                // Word 2010's text effects (`w14:textOutline`, `w14:shadow`, `w14:glow`).
+                outline: f.effects.as_ref().and_then(|e| e.as_ref()).and_then(|e| e.outline).map(|(w, c)| (ibis_doc_model::Color::opaque(c), w)),
+                shadow: f.effects.as_ref().and_then(|e| e.as_ref()).and_then(|e| e.shadow).map(|s| ibis_doc_model::Shadow::simple(ibis_doc_model::Color { rgb: s.color, alpha: s.alpha }, s.blur, s.distance, s.direction)),
+                glow: f.effects.as_ref().and_then(|e| e.as_ref()).and_then(|e| e.glow).map(|(r, c, a)| (ibis_doc_model::Color { rgb: c, alpha: a }, r)),
                 ..Default::default()
             }
         };
@@ -3570,6 +3573,13 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
         pic_bullet_rels = package.relationships(&part).unwrap_or_default();
     }
     let mut style_nodes = HashMap::new();
+    // A document with no styles part has Word's own defaults, and Word kerns at every size in them: its PDFs of a line of brackets and stops
+    // (ＭＳ 明朝 6, 8, 10.5 and 14 pt; test/corpus-report/docx/bracket-pairs-nostyles.docx) squeeze each closing bracket or stop before another
+    // one by half an em, as with `w:kern` 2 in the defaults; with a styles part that has none, or `w:kern` 0, they keep the full em
+    // (bracket-pairs-styles-nokern.docx; the squeeze of pairs in flow_layout.rs asks for the run's kerning to be on).
+    if styles_doc.is_none() {
+        styles.defaults_run.kern = Some(2);
+    }
     if let Some(s) = &styles_doc {
         let root = s.root_element();
         if let Some(defaults) = child(root, "docDefaults") {
@@ -3924,8 +3934,10 @@ pub(crate) fn read_with_sources(data: &[u8]) -> Result<(Presentation, SourceMap)
     // The font table's typefaces (`w:font`): alternate names, character set, family, pitch, panose and the embedded font files.
     let font_table_part = part_of("/fontTable");
     let (font_table, embedded_fonts) = font_table_part.as_deref().map(|p| read_font_table(&package, p)).unwrap_or_default();
-    // A document with no settings is read as Word does: with the punctuation squeezed.
-    let compress_punctuation = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).is_none_or(|xml| xml.contains("characterSpacingControl w:val=\"compressPunctuation"));
+    // A document with no settings is read as Word does: as `characterSpacingControl`'s default, doNotCompress (ECMA-376
+    // Part 1 17.15.1.18): Word's PDF of test/github-issue/54/issue54-symbols.docx (no settings part) keeps every bracket of
+    // （）〔〕［］ a full em, which compressPunctuation would squeeze.
+    let compress_punctuation = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).is_some_and(|xml| xml.contains("characterSpacingControl w:val=\"compressPunctuation"));
     // 文書の既定テーマフォント言語 (w:themeFontLang, DOCX-JA-019, ECMA-376 Part 1 §17.15.1.88).
     let theme_font_lang = part_of("/settings").and_then(|p| package.read_xml(&p).ok()).and_then(|xml| {
         let doc = roxmltree::Document::parse(&xml).ok()?;
@@ -4207,6 +4219,21 @@ pub(crate) fn deobfuscate_font(data: &mut [u8], font_key: &str) -> bool {
 #[cfg(test)]
 mod namespace_tests {
     use super::*;
+
+    #[test]
+    fn a_document_without_settings_does_not_compress_punctuation() {
+        // characterSpacingControl's default is doNotCompress (ECMA-376 Part 1 17.15.1.18): Word's PDF of a document with no
+        // settings part (test/github-issue/54/issue54-symbols.docx) keeps every bracket of （）〔〕 a full em.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let source = std::fs::read(root.join("test/editing/docx-report.docx")).unwrap();
+        let mut package = ibis_ooxml::Package::open(source).unwrap();
+        package.set_bytes("word/settings.xml", br#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:characterSpacingControl w:val="compressPunctuation"/></w:settings>"#.to_vec());
+        let with = package.save(ibis_ooxml::SaveOptions::default()).unwrap();
+        assert!(crate::read_docx(&with).unwrap().flow.unwrap().compress_punctuation);
+        package.remove("word/settings.xml");
+        let without = package.save(ibis_ooxml::SaveOptions::default()).unwrap();
+        assert!(!crate::read_docx(&without).unwrap().flow.unwrap().compress_punctuation);
+    }
 
     #[test]
     fn story_references_require_relationship_namespace() {

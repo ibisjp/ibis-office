@@ -7,8 +7,12 @@
 //! The keys are written with `secondary-`: ⌘ on a Mac, Ctrl elsewhere.
 use super::Scenario;
 use crate::docx::scenarios::DocSteps;
+#[cfg(target_os = "macos")]
+use crate::pptx::ext::*;
 use crate::xlsx::scenarios::SheetSteps;
 use ibis_doc_model::FlowPos;
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 
 /// The cells A4 and A5 of xlsx-sales.xlsx hold this.
 const WORD: &str = "町店"; // i18n-ok（シートの中の文字）
@@ -148,7 +152,7 @@ fn pptx_range(s: &mut Scenario) -> Option<std::ops::Range<usize>> {
 }
 
 fn pptx_query(s: &mut Scenario) -> Option<String> {
-    s.with(|e, cx| e.pptx().and_then(|p| p.find.as_ref()).map(|f| f.query.read(cx).value().to_string()))
+    s.with(|e, cx| e.shape_edit.find.as_ref().map(|f| f.query.read(cx).value().to_string()))
 }
 
 /// プレゼンテーション画面.
@@ -179,7 +183,7 @@ fn pptx_keys() {
     assert_eq!(s.with(|e, _| e.presentation().slides[0].shapes[1].text_body().unwrap().text()), "foo bar foo bar foo", "Enter did not break a paragraph");
     #[cfg(target_os = "macos")]
     {
-        s.update(|e, w, cx| { if let Some(p) = e.pptx_mut() { p.find = None; } e.focus_handle.focus(w, cx); cx.notify(); });
+        s.update(|e, w, cx| { if e.pptx().is_some() { e.shape_edit.find = None; } e.focus_handle.focus(w, cx); cx.notify(); });
         s.key("cmd-g");
         assert_eq!(pptx_query(&mut s).as_deref(), Some("bar"), "⌘G opens the panel with the last text");
         assert!(pptx_range(&mut s).is_some());

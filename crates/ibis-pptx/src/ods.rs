@@ -1091,7 +1091,7 @@ pub fn to_xlsx(data: &[u8]) -> Result<Vec<u8>, Error> {
         }
         let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
         xml.push_str(&format!("<dimension ref=\"A1:{}{}\"/>", column_letters(max_col.max(1) - 1), max_row.max(1)));
-        xml.push_str("<sheetViews><sheetView workbookViewId=\"0\"/></sheetViews><sheetFormatPr defaultRowHeight=\"15\"/>");
+        xml.push_str("<sheetViews><sheetView workbookViewId=\"0\"/></sheetViews><sheetFormatPr defaultRowHeight=\"15\" ibisEmptyRowsAsSaved=\"1\"/>");
         if !cols.is_empty() {
             xml.push_str(&format!("<cols>{cols}</cols>"));
         }

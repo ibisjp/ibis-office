@@ -14,13 +14,14 @@ use crate::{
 };
 use gpui_kit::{
     component::{
-        h_flex,
-        input::{InputState, Textarea, TextareaState},
+        input::{Textarea, TextareaState},
         v_flex,
     },
     *,
 };
 use ibis_doc_model::{Command, EmuRect, FlowPos, Run, RunStyle, Shape};
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 #[derive(Clone, Copy)]
 struct Form {
     fields: usize,
@@ -441,7 +442,7 @@ fn paste() {
             )
             .unwrap()
         });
-        let offset = n * crate::pptx::editing::PASTE_OFFSET;
+        let offset = n * crate::shell::shape_items::PASTE_OFFSET;
         assert_eq!((bounds.x, bounds.y), (origin.0 + offset, origin.1 + offset));
     }
     s.click_cell("G8");
@@ -687,7 +688,7 @@ fn raster_paste() {
     for i in 0..3 {
         s.key("cmd-v");
         let frame = s.with(|e, _| e.selected_shape().unwrap().frame);
-        let offset = crate::pptx::editing::PASTE_OFFSET * i;
+        let offset = crate::shell::shape_items::PASTE_OFFSET * i;
         assert_eq!((frame.x, frame.y), (origin.0 + offset, origin.1 + offset));
     }
     s.screenshot("raster-paste");

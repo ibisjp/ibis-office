@@ -3,9 +3,11 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Actual pointer paths and editing-mode transitions from the follow-up request.
 use super::{Scenario,button_probe as buttons};
-use crate::{docx::scenarios::DocSteps,xlsx::scenarios::SheetSteps};
+use crate::xlsx::scenarios::SheetSteps;
 use gpui_kit::*;
 use ibis_doc_model::{Command,Shape,EmuRect};
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 pub(crate) fn all()->Vec<(&'static str,fn())>{vec![("shell::followup_start_reuse",start),("shell::followup_font_focus",font),("shell::followup_recent_path",recent),("shell::followup_recent_drag",recent_drag),("shell::followup_recent_menu_other_window",recent_menu_other_window),("shell::followup_ruby_close",ruby),("shell::followup_shape_border",shapes),("shell::followup_bar_caret_letters",caret),("shell::issue44_sequence_edit",issue44)]}
 fn workbook()->Scenario{let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Workbook,w,cx));s}
 fn start(){let mut s=Scenario::start_view();let n=s.window_count();s.with_app(|cx|crate::open_editor(None,None,cx));assert_eq!(s.window_count(),n);s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Workbook,w,cx));s.with_app(|cx|crate::open_editor(None,None,cx));assert_eq!(s.window_count(),n+1);s.with_app(|cx|crate::open_editor(None,None,cx));assert_eq!(s.window_count(),n+1);}
@@ -18,9 +20,9 @@ fn recent(){let _probe=buttons::Probe::new();let mut s=Scenario::start_view();le
 fn recent_menu_other_window(){let _probe=buttons::Probe::new();let mut s=Scenario::start_view();let path=super::repo_root().join("target/scenario-input/followup-recent.xlsx");std::fs::create_dir_all(path.parent().unwrap()).unwrap();std::fs::write(&path,b"fixture").unwrap();s.update(|e,_,cx|{e.recent_files=vec![path.clone()];cx.notify();});let b=buttons::bounds("row-actions-0").unwrap();let c=(f32::from(b.center().x),f32::from(b.center().y));s.hover(c);buttons::click(&mut s,"row-actions-0");let key=buttons::all().into_iter().find(|id|id.contains("searchable-item-row-actions")).expect("menu open");
     let own=s.with_app(|cx|cx.windows());
     for kind in [ibis_pptx::Kind::Workbook,ibis_pptx::Kind::Document,ibis_pptx::Kind::Presentation]{s.with_app(|cx|crate::open_window_with(cx,move|e,w,cx|e.new_file(kind,w,cx)));}
-    s.with_app(|cx|{crate::shell::settings_window::open(cx);crate::shell::about_window::open(cx);});
+    s.with_app(|cx|{crate::shell::about::open(cx);});
     let others:Vec<AnyWindowHandle>=s.with_app(|cx|cx.windows()).into_iter().filter(|w|!own.contains(w)).collect();
-    assert!(others.len()>=4,"windows of the other kinds are open: {}",others.len());
+    assert!(others.len()>=3,"windows of the other kinds are open: {}",others.len());
     for step in 1..=6{
         for w in &others{s.update_window(*w,|w,_|w.refresh());}
         s.hover((c.0+step as f32*3.,c.1+step as f32*2.));

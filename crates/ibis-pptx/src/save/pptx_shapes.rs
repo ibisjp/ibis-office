@@ -754,9 +754,43 @@ fn write_shape(doc: &mut XmlDocument, node: NodeId, source: &ShapeSource, old: &
     Ok(())
 }
 
+/// The fill, outline and effects of a drawn shape, a line or a picture that differ between `old` and `new`, written into the shape element
+/// `node` (a slide's `p:sp`, a sheet drawing's `xdr:sp` or `xdr:pic`) in the schema's order. Nothing is touched when nothing differs.
+pub(super) fn write_visuals(doc: &mut XmlDocument, node: NodeId, old: &Shape, new: &Shape) -> Result<(), Error> {
+    match (&old.kind, &new.kind) {
+        (ShapeKind::Auto(a), ShapeKind::Auto(b)) => {
+            if a.fill != b.fill { write_fill(doc, node, &a.fill, &b.fill)?; }
+            if a.stroke != b.stroke { write_stroke(doc, node, a.stroke.as_ref(), b.stroke.as_ref())?; }
+            if a.glow != b.glow { write_shape_glow(doc, node, a, b)?; }
+            if a.shadow != b.shadow { write_shape_shadow(doc, node, a, b)?; }
+            if a.reflection != b.reflection { write_shape_reflection(doc, node, a, b)?; }
+            if a.soft_edge != b.soft_edge { write_shape_soft_edge(doc, node, a, b)?; }
+        }
+        (ShapeKind::Picture(a), ShapeKind::Picture(b)) => {
+            if a.stroke != b.stroke { write_stroke(doc, node, a.stroke.as_ref(), b.stroke.as_ref())?; }
+            if a.shadow != b.shadow { write_picture_shadow(doc, node, a, b)?; }
+            if a.reflection != b.reflection { write_picture_reflection(doc, node, a, b)?; }
+            if a.soft_edge != b.soft_edge { write_picture_soft_edge(doc, node, a, b)?; }
+        }
+        (ShapeKind::Line(a), ShapeKind::Line(b)) if a != b => write_stroke(doc, node, Some(a), Some(b))?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Whether `write_visuals` has something to write for `old` and `new`.
+pub(super) fn visuals_differ(old: &Shape, new: &Shape) -> bool {
+    match (&old.kind, &new.kind) {
+        (ShapeKind::Auto(a), ShapeKind::Auto(b)) => a.fill != b.fill || a.stroke != b.stroke || a.glow != b.glow || a.shadow != b.shadow || a.reflection != b.reflection || a.soft_edge != b.soft_edge,
+        (ShapeKind::Picture(a), ShapeKind::Picture(b)) => a.stroke != b.stroke || a.shadow != b.shadow || a.reflection != b.reflection || a.soft_edge != b.soft_edge,
+        (ShapeKind::Line(a), ShapeKind::Line(b)) => a != b,
+        _ => false,
+    }
+}
+
 /// Get a direct effect list; reject implicit inheritance before overriding it.
 fn direct_effect_list(doc: &mut XmlDocument, node: NodeId, old: &ibis_doc_model::AutoShape) -> Result<NodeId, Error> {
-    let pr = doc.elements(node).find(|&n| doc.namespace(n) == Some(new::NS_P) && doc.local_name(n) == "spPr").ok_or_else(|| unsupported("この図形の効果"))?;
+    let pr = doc.elements(node).find(|&n| matches!(doc.namespace(n), Some(new::NS_P) | Some("http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing")) && doc.local_name(n) == "spPr").ok_or_else(|| unsupported("この図形の効果"))?;
     let list = doc.elements(pr).find(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "effectLst");
     let list = match list {
         Some(list) => list,
@@ -923,7 +957,7 @@ fn write_shape_soft_edge(doc: &mut XmlDocument, node: NodeId, old: &ibis_doc_mod
 }
 
 fn picture_effect_list(doc: &mut XmlDocument, node: NodeId, old: &ibis_doc_model::Picture) -> Result<NodeId, Error> {
-    let pr = doc.elements(node).find(|&n| doc.namespace(n) == Some(new::NS_P) && doc.local_name(n) == "spPr").ok_or_else(|| unsupported("この画像の効果"))?;
+    let pr = doc.elements(node).find(|&n| matches!(doc.namespace(n), Some(new::NS_P) | Some("http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing")) && doc.local_name(n) == "spPr").ok_or_else(|| unsupported("この画像の効果"))?;
     let list = doc.elements(pr).find(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "effectLst");
     let list = match list {
         Some(list) => list,
@@ -956,7 +990,7 @@ fn write_picture_soft_edge(doc: &mut XmlDocument, node: NodeId, old: &ibis_doc_m
 }
 
 fn write_shape_bevel(doc: &mut XmlDocument, node: NodeId, _old: &ibis_doc_model::AutoShape, new_shape: &ibis_doc_model::AutoShape) -> Result<(), Error> {
-    let pr = doc.elements(node).find(|&n| doc.namespace(n) == Some(new::NS_P) && doc.local_name(n) == "spPr").ok_or_else(|| unsupported("この図形の効果"))?;
+    let pr = doc.elements(node).find(|&n| matches!(doc.namespace(n), Some(new::NS_P) | Some("http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing")) && doc.local_name(n) == "spPr").ok_or_else(|| unsupported("この図形の効果"))?;
     let sp3d = doc.elements(pr).find(|&n| doc.namespace(n) == Some(new::NS_A) && doc.local_name(n) == "sp3d");
     let Some(ref bevel) = new_shape.bevel else {
         if let Some(sp3d_node) = sp3d {
@@ -994,7 +1028,7 @@ fn write_shape_bevel(doc: &mut XmlDocument, node: NodeId, _old: &ibis_doc_model:
 }
 
 fn write_shape_tilt(doc: &mut XmlDocument, node: NodeId, _old: &ibis_doc_model::AutoShape, new_shape: &ibis_doc_model::AutoShape) -> Result<(), Error> {
-    let pr = doc.elements(node).find(|&n| doc.namespace(n) == Some(new::NS_P) && doc.local_name(n) == "spPr").ok_or_else(|| unsupported("この図形の効果"))?;
+    let pr = doc.elements(node).find(|&n| matches!(doc.namespace(n), Some(new::NS_P) | Some("http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing")) && doc.local_name(n) == "spPr").ok_or_else(|| unsupported("この図形の効果"))?;
     let x = Prefixes::at(doc, pr);
 
     // 1. scene3d
@@ -1511,7 +1545,7 @@ fn mirror_zoom_frame(doc: &mut XmlDocument, node: NodeId, frame: ibis_doc_model:
     if !zoom {
         return;
     }
-    let mut set = |doc: &mut XmlDocument, xfrm: NodeId, off: Option<(i64, i64)>, ext: (i64, i64)| {
+    let set = |doc: &mut XmlDocument, xfrm: NodeId, off: Option<(i64, i64)>, ext: (i64, i64)| {
         if let (Some(o), Some(at)) = (off, doc.child(xfrm, "off")) {
             doc.set_attr(at, "x", &o.0.to_string());
             doc.set_attr(at, "y", &o.1.to_string());

@@ -28,6 +28,17 @@ fn test_file(name: &str) -> std::path::PathBuf {
 /// as the rectangle a presentation stores it as.
 fn normalize(p: &Presentation) -> Presentation {
     let mut p = p.clone();
+    // A transition's direction that is the schema's default is left out of the file (as PowerPoint does) and reads back as none: both are
+    // the same option.
+    for slide in &mut p.slides {
+        if let Some(t) = &mut slide.transition {
+            if let Some(d) = t.direction.clone() {
+                if ibis_doc_model::transition_catalog::effective_token(&t.effect, None) == Some(ibis_doc_model::transition_catalog::effective_token(&t.effect, Some(&d)).unwrap_or("")) {
+                    t.direction = None;
+                }
+            }
+        }
+    }
     let media_key: HashMap<MediaId, u64> = p
         .media
         .iter()
@@ -3111,10 +3122,10 @@ fn cell_frame_keeps_injected_namespace_content() {
 fn character_outline_round_trip() {
     let mut s = Scenario::open("character-outline", "editing/pptx-plan.pptx");
     let (slide, shape, _) = text_shapes(s.p(), 1).into_iter().next().unwrap();
-    for outline in [Some((Rgb(0x112233), 12_700)), Some((Rgb(0x995522), 25_400)), None] {
+    for outline in [Some((ibis_doc_model::Color::opaque(Rgb(0x112233)), 12_700)), Some((ibis_doc_model::Color::opaque(Rgb(0x995522)), 25_400)), None] {
         s.run(vec![Command::SetCharacterFormat { slide, shape, start: 1, end: 3, format: ibis_doc_model::CharacterFormat { outline: Some(outline), ..Default::default() } }]);
     }
-    s.run(vec![Command::SetCharacterFormat { slide, shape, start: 1, end: 3, format: ibis_doc_model::CharacterFormat { outline: Some(Some((Rgb(0x112233), 12_700))), ..Default::default() } }]);
+    s.run(vec![Command::SetCharacterFormat { slide, shape, start: 1, end: 3, format: ibis_doc_model::CharacterFormat { outline: Some(Some((ibis_doc_model::Color::opaque(Rgb(0x112233)), 12_700))), ..Default::default() } }]);
     // Also exercise generated run serialization after a paragraph split.
     s.run(vec![Command::EditText { slide, shape, at: 2, remove: 0, insert: "\n".into() }]);
 }
@@ -3893,7 +3904,7 @@ fn original_nested_group_hierarchy_read_and_safe_edit_gate() {
 fn create_nested_groups_and_ungroup_neutral_source_round_trip() {
     use ibis_doc_model::{ShapeGroup,GroupMember};
     let mut s=Scenario::open("group-create-ungroup","editing/pptx-plan.pptx");let slide=s.p().slides[2].id;let ids=s.p().slides[2].shapes.iter().map(|shape|shape.id).collect::<Vec<_>>();assert!(ids.len()>=4);
-    let groups=vec![ShapeGroup {has_unmodelled_children:false,native_id:"10000".into(),name:"group & <日本語>".into(),children:vec![GroupMember::Shape(ids[1]),GroupMember::Shape(ids[2])]}];let data=s.run(vec![Command::SetShapeGroups {slide,groups:groups.clone()}]);let read=ibis_pptx::read(&data).unwrap();assert_eq!(read.slides[2].groups[0].name,groups[0].name);let mut nested=vec![ShapeGroup {has_unmodelled_children:false,native_id:"10001".into(),name:"outer".into(),children:vec![GroupMember::Group(Box::new(groups[0].clone())),GroupMember::Shape(ids[3])]}];
+    let groups=vec![ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id:"10000".into(),name:"group & <日本語>".into(),children:vec![GroupMember::Shape(ids[1]),GroupMember::Shape(ids[2])]}];let data=s.run(vec![Command::SetShapeGroups {slide,groups:groups.clone()}]);let read=ibis_pptx::read(&data).unwrap();assert_eq!(read.slides[2].groups[0].name,groups[0].name);let mut nested=vec![ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id:"10001".into(),name:"outer".into(),children:vec![GroupMember::Group(Box::new(groups[0].clone())),GroupMember::Shape(ids[3])]}];
     let data=s.run(vec![Command::SetShapeGroups {slide,groups:nested.clone()}]);let read=ibis_pptx::read(&data).unwrap();assert_eq!(read.slides[2].groups.len(),1);assert_eq!(read.slides[2].groups[0].native_id,"10001");
     let mut opened=Scenario::open("group-ungroup-source","editing/pptx-plan.pptx");opened.data=data;opened.opened=ibis_pptx::open(opened.data.clone()).unwrap();opened.document=Document::new(opened.opened.presentation.clone());let slide=opened.p().slides[2].id;let mut inner=match &opened.p().slides[2].groups[0].children[0] {GroupMember::Group(g)=>(**g).clone(),_=>panic!("inner")};inner.name="inner renamed".into();let renamed=vec![ShapeGroup {children:vec![GroupMember::Group(Box::new(inner.clone())),opened.p().slides[2].groups[0].children[1].clone()],..opened.p().slides[2].groups[0].clone()}];opened.run(vec![Command::SetShapeGroups {slide,groups:renamed}]);opened.run(vec![Command::SetShapeGroups {slide,groups:vec![inner]}]);let cleared=opened.run(vec![Command::SetShapeGroups {slide,groups:vec![]}]);assert!(ibis_pptx::read(&cleared).unwrap().slides[2].groups.is_empty());
     // Unknown attributes on leaf shapes and their original namespace stay put.
@@ -3905,7 +3916,7 @@ fn create_nested_groups_and_ungroup_neutral_source_round_trip() {
 
 #[test]
 fn group_hidden_last_visible_leaf_keeps_original_group() {
-    use ibis_doc_model::{ShapeGroup,GroupMember};let mut s=Scenario::open("group-hidden-child","editing/pptx-plan.pptx");let slide=s.p().slides[2].id;let ids=s.p().slides[2].shapes.iter().map(|s|s.id).collect::<Vec<_>>();let data=s.run(vec![Command::SetShapeGroups {slide,groups:vec![ShapeGroup {has_unmodelled_children:false,native_id:"11000".into(),name:"hidden child group".into(),children:vec![GroupMember::Shape(ids[1]),GroupMember::Shape(ids[2])]}]}]);let mut package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml_mut("ppt/slides/slide3.xml").unwrap();let root=xml.root_element().unwrap();let group=xml.descendants(root).into_iter().find(|&n|xml.is_element(n)&&xml.namespace(n)==Some("http://schemas.openxmlformats.org/presentationml/2006/main")&&xml.local_name(n)=="grpSp").unwrap();let first=xml.elements(group).find(|&n|xml.namespace(n)==Some("http://schemas.openxmlformats.org/presentationml/2006/main")&&xml.local_name(n)=="sp").unwrap();let nv=xml.child(first,"nvSpPr").unwrap();let c=xml.child(nv,"cNvPr").unwrap();xml.set_attr(c,"hidden","1");
+    use ibis_doc_model::{ShapeGroup,GroupMember};let mut s=Scenario::open("group-hidden-child","editing/pptx-plan.pptx");let slide=s.p().slides[2].id;let ids=s.p().slides[2].shapes.iter().map(|s|s.id).collect::<Vec<_>>();let data=s.run(vec![Command::SetShapeGroups {slide,groups:vec![ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id:"11000".into(),name:"hidden child group".into(),children:vec![GroupMember::Shape(ids[1]),GroupMember::Shape(ids[2])]}]}]);let mut package=ibis_ooxml::Package::open(data).unwrap();let xml=package.xml_mut("ppt/slides/slide3.xml").unwrap();let root=xml.root_element().unwrap();let group=xml.descendants(root).into_iter().find(|&n|xml.is_element(n)&&xml.namespace(n)==Some("http://schemas.openxmlformats.org/presentationml/2006/main")&&xml.local_name(n)=="grpSp").unwrap();let first=xml.elements(group).find(|&n|xml.namespace(n)==Some("http://schemas.openxmlformats.org/presentationml/2006/main")&&xml.local_name(n)=="sp").unwrap();let nv=xml.child(first,"nvSpPr").unwrap();let c=xml.child(nv,"cNvPr").unwrap();xml.set_attr(c,"hidden","1");
     let data=package.save(Default::default()).unwrap();let opened=ibis_pptx::open(data.clone()).unwrap();let slide=opened.presentation.slides[2].id;let GroupMember::Shape(visible)=opened.presentation.slides[2].groups[0].children[0] else {panic!("visible member")};let mut doc=Document::new(opened.presentation.clone());doc.execute(vec![Command::RemoveShape {slide,shape:visible}]).unwrap();assert_eq!(doc.presentation().slides[2].groups.len(),1,"native group still owns the hidden shape");assert!(doc.presentation().slides[2].groups[0].children.is_empty());let saved=opened.source.save(doc.presentation(),Default::default()).unwrap();let reread=ibis_pptx::read(&saved).unwrap();assert_eq!(reread.slides[2].groups.len(),1);assert!(reread.slides[2].groups[0].children.is_empty());assert!(doc.undo());assert_eq!(doc.presentation(),&opened.presentation);assert_eq!(opened.source.save(doc.presentation(),Default::default()).unwrap(),data);assert!(doc.redo());assert_eq!(doc.presentation().slides[2].groups.len(),1);std::fs::write(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/pptx-edit/group-hidden-visible-removed.pptx"),saved).unwrap();
     let mut preview=opened.presentation.clone();preview.apply(Command::SetShapeGroups {slide,groups:vec![]}).unwrap();assert!(opened.source.save(&preview,Default::default()).is_err(),"ungroup must not discard an unmodelled hidden child");
 }
@@ -4048,7 +4059,8 @@ fn transition_direction_round_trip() {
     let xml = package.xml("ppt/slides/slide1.xml").unwrap();
     let root = xml.root_element().unwrap();
     let push_elem = xml.descendants(root).into_iter().find(|&n| xml.is_element(n) && xml.local_name(n) == "push").expect("push element found");
-    assert_eq!(xml.attr(push_elem, "dir"), Some("l"));
+    // 左から is the schema's default: PowerPoint leaves `dir` out (`<p:push/>`), and it reads back as the same option.
+    assert_eq!(xml.attr(push_elem, "dir"), None);
 
     // 再読込して direction が Some("l") であることを検証
     s.data = saved2;
@@ -4057,7 +4069,8 @@ fn transition_direction_round_trip() {
     let slide = s.p().slides[0].id;
     let t2 = s.p().slides[0].transition.as_ref().expect("transition present");
     assert_eq!(t2.effect, "push");
-    assert_eq!(t2.direction.as_deref(), Some("l"));
+    let eff = |d: Option<&str>| ibis_doc_model::transition_catalog::effective_token("push", d);
+    assert_eq!(eff(t2.direction.as_deref()), Some("l"));
 
     // 3. 方向を "u"（上から）に変更して差分保存
     trans.direction = Some("u".to_string());
@@ -4065,7 +4078,7 @@ fn transition_direction_round_trip() {
 
     // Undo / Redo 検証
     assert!(s.document.undo());
-    assert_eq!(s.p().slides[0].transition.as_ref().and_then(|t| t.direction.as_deref()), Some("l"));
+    assert_eq!(eff(s.p().slides[0].transition.as_ref().and_then(|t| t.direction.as_deref())), Some("l"));
     assert!(s.document.redo());
     assert_eq!(s.p().slides[0].transition.as_ref().and_then(|t| t.direction.as_deref()), Some("u"));
 
@@ -4091,7 +4104,8 @@ fn transition_direction_round_trip() {
     let xml4 = package4.xml("ppt/slides/slide1.xml").unwrap();
     let root4 = xml4.root_element().unwrap();
     let split_elem = xml4.descendants(root4).into_iter().find(|&n| xml4.is_element(n) && xml4.local_name(n) == "split").expect("split element found");
-    assert_eq!(xml4.attr(split_elem, "orient"), Some("horz"));
+    // (`orient="horz"` is the schema's default: PowerPoint leaves it out.)
+    assert_eq!(xml4.attr(split_elem, "orient"), None);
     assert_eq!(xml4.attr(split_elem, "dir"), Some("in"));
 
     // 再読込して direction が Some("horzIn") であることを検証
@@ -9622,4 +9636,95 @@ fn an_empty_effect_list_turns_off_the_themes_shadow() {
     };
     assert!(with_style(false).is_some(), "the theme's shadow, named by effectRef");
     assert!(with_style(true).is_none(), "an empty effectLst turns it off");
+}
+
+/// GitHub issue #77: `numCol` and `spcCol` of horizontal and of vertical (`eaVert`) text boxes are read, kept by a save and read
+/// back (the file is the one PowerPoint's PDF was made from).
+#[test]
+fn text_columns_of_horizontal_and_vertical_boxes_round_trip() {
+    let mut s = Scenario::open("text-columns-vertical", "corpus-report/pptx/text-columns-vertical.pptx");
+    let expected: [(&str, u32, i64, bool); 6] = [("H2", 2, 360_000, false), ("V1", 1, 0, true), ("V2", 2, 0, true), ("V3", 3, 0, true), ("V2sp", 2, 720_000, true), ("V2b", 2, 360_000, true)];
+    let shapes = s.p().slides[0].shapes.clone();
+    assert_eq!(shapes.len(), expected.len());
+    for (shape, (name, columns, spacing, vertical)) in shapes.iter().zip(expected) {
+        let body = shape.text_body().unwrap();
+        assert_eq!((body.columns, body.column_spacing, body.vertical), (columns, spacing, vertical), "{name}");
+    }
+    // Changed: the vertical box with 2 columns gets 3, 1 cm apart, and the vertical writing stays.
+    let slide = s.p().slides[0].id;
+    let target = &shapes[2];
+    let mut body = target.text_body().unwrap().clone();
+    body.columns = 3;
+    body.column_spacing = 360_000;
+    let saved = s.run(vec![Command::SetTextBody { slide, shape: target.id, body }]);
+    let package = ibis_ooxml::Package::open(saved.clone()).unwrap();
+    let xml = package.xml("ppt/slides/slide1.xml").unwrap();
+    let root = xml.root_element().unwrap();
+    let pr: Vec<_> = xml.descendants(root).into_iter().filter(|&n| xml.is_element(n) && xml.local_name(n) == "bodyPr").collect();
+    assert_eq!((xml.attr(pr[2], "vert"), xml.attr(pr[2], "numCol"), xml.attr(pr[2], "spcCol")), (Some("eaVert"), Some("3"), Some("360000")));
+    s.data = saved;
+    s.opened = ibis_pptx::open(s.data.clone()).unwrap();
+    let again = s.opened.presentation.slides[0].shapes[2].text_body().unwrap();
+    assert_eq!((again.columns, again.column_spacing, again.vertical), (3, 360_000, true));
+}
+
+/// A run's `altLang` (none, ja-JP, en-US) is written as the model has it: a run without one has none after save and read, and a changed or
+/// removed one is changed or removed in the file.
+#[test]
+fn run_alt_lang_round_trip() {
+    let mut s = Scenario::open("run-alt-lang", "editing/pptx-plan.pptx");
+    let (slide, shape, _) = text_shapes(s.p(), 1).into_iter().next().unwrap();
+    for alt in [None, Some("ja-JP"), Some("en-US"), Some("ko-KR"), None] {
+        let mut body = s.p().slide(slide).unwrap().shape(shape).unwrap().text_body().unwrap().clone();
+        for p in &mut body.paragraphs {
+            for r in &mut p.runs {
+                r.style.alt_lang = alt.map(str::to_string);
+            }
+        }
+        let saved = s.run(vec![Command::SetTextBody { slide, shape, body }]);
+        let opened = ibis_pptx::open(saved).unwrap();
+        let back = opened.presentation.slides[0].shape(shape).unwrap().text_body().unwrap().clone();
+        let mut seen = 0;
+        for p in &back.paragraphs {
+            for r in &p.runs {
+                assert_eq!(r.style.alt_lang.as_deref(), alt, "altLang {alt:?} reads back as {:?}", r.style.alt_lang);
+                seen += 1;
+            }
+        }
+        assert!(seen > 0);
+    }
+}
+
+/// 2026-11-12 (#153): a group's own effects (`p:grpSpPr/a:effectLst`: a shadow and a soft edge) stay in the file through a save that changes the
+/// group (renamed) and one that changes a shape of it (moved), and the soft edge is read into the model.
+#[test]
+fn group_effect_list_survives_a_save() {
+    use ibis_doc_model::{ShapeGroup,GroupMember};
+    let mut s=Scenario::open("group-effects","editing/pptx-plan.pptx");let slide=s.p().slides[2].id;let ids=s.p().slides[2].shapes.iter().map(|shape|shape.id).collect::<Vec<_>>();
+    let data=s.run(vec![Command::SetShapeGroups {slide,groups:vec![ShapeGroup {has_unmodelled_children:false,native_id:"12000".into(),name:"effects".into(),soft_edge:None,children:vec![GroupMember::Shape(ids[1]),GroupMember::Shape(ids[2])]}]}]);
+    let mut package=ibis_ooxml::Package::open(data).unwrap();
+    let xml=String::from_utf8(package.read("ppt/slides/slide3.xml").unwrap()).unwrap();
+    let effects="<a:effectLst><a:outerShdw blurRad=\"50800\" dist=\"38100\" dir=\"2700000\"><a:srgbClr val=\"000000\"/></a:outerShdw><a:softEdge rad=\"161290\"/></a:effectLst>";
+    assert!(xml.contains("</a:xfrm></p:grpSpPr>"));
+    // (The group's own `grpSpPr`, after its name; the slide's shape tree has one before.)
+    let at=xml.find("name=\"effects\"").unwrap();let end=at+xml[at..].find("</a:xfrm></p:grpSpPr>").unwrap()+"</a:xfrm>".len();
+    package.set_bytes("ppt/slides/slide3.xml",format!("{}{effects}{}",&xml[..end],&xml[end..]).into_bytes());
+    let data=package.save(Default::default()).unwrap();
+    let opened=ibis_pptx::open(data).unwrap();
+    assert_eq!(opened.presentation.slides[2].groups[0].soft_edge,Some(161_290));
+    let slide=opened.presentation.slides[2].id;
+    let slide_xml=|bytes:&[u8]|{let p=ibis_ooxml::Package::open(bytes.to_vec()).unwrap();String::from_utf8(p.read("ppt/slides/slide3.xml").unwrap()).unwrap()};
+    let kept=|xml:&str|{let at=xml.find("id=\"12000\"").unwrap();let from=at+xml[at..].find("<p:grpSpPr>").unwrap();let g=&xml[from..from+xml[from..].find("</p:grpSpPr>").unwrap()];g.contains("<a:outerShdw")&&g.contains("<a:softEdge rad=\"161290\"/>")};
+    // Renamed.
+    let mut renamed=opened.presentation.clone();let mut group=renamed.slides[2].groups[0].clone();group.name="renamed".into();
+    renamed.apply(Command::SetShapeGroups {slide,groups:vec![group]}).unwrap();
+    let saved=opened.source.save(&renamed,Default::default()).unwrap();
+    assert!(slide_xml(&saved).contains("renamed")&&kept(&slide_xml(&saved)),"renamed: the group's effects are kept");
+    // A shape of it moved.
+    let mut moved=opened.presentation.clone();let id=ids[1];let mut frame=moved.slides[2].shape(id).unwrap().frame;frame.x+=12_700;
+    moved.apply(Command::SetFrame {slide,shape:id,frame}).unwrap();
+    let saved=opened.source.save(&moved,Default::default()).unwrap();
+    assert!(kept(&slide_xml(&saved)),"moved: the group's effects are kept");
+    let reread=ibis_pptx::read(&saved).unwrap();
+    assert_eq!(reread.slides[2].groups[0].soft_edge,Some(161_290));
 }

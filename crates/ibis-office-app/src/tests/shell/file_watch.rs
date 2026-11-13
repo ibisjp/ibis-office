@@ -12,16 +12,20 @@ use crate::shell::dialog::InteractionLayer;
 use crate::xlsx::scenarios::SheetSteps;
 use gpui_kit::*;
 use ibis_pptx::Kind;
+use crate::docx::ext::*;
+use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("shell::external_update_unchanged_asks_yes_no", unchanged_asks_yes_no),
         ("shell::external_update_changed_asks_three_ways", changed_asks_three_ways),
+        ("shell::external_update_enter_and_escape_answer", enter_and_escape_answer),
         ("shell::external_update_no_is_not_asked_again", no_is_not_asked_again),
         ("shell::external_update_own_save_is_ignored", own_save_is_ignored),
         ("shell::external_update_replaced_by_rename", replaced_by_rename),
         ("shell::external_update_os_watcher_reaches_the_window", os_watcher_reaches_the_window),
         ("shell::external_update_keeps_the_view_document", view_kept_document),
+        ("shell::external_update_keeps_the_view_long_document", view_kept_long_document),
         ("shell::external_update_keeps_the_view_workbook", view_kept_workbook),
         ("shell::external_update_keeps_the_view_presentation", view_kept_presentation),
         ("shell::open_guard_same_file", same_file),
@@ -187,6 +191,53 @@ fn unchanged_asks_yes_no() {
         // Read again: what it is now is known, nothing more is asked.
         check(&mut s);
         assert!(!dialog_open(&mut s), "{kind:?}: the new content is the window's");
+    }
+}
+
+/// The keyboard answers the question as the buttons do: Esc is いいえ (the window keeps what it shows), Enter is はい (the file is
+/// read again). With unsaved edits there is no primary button, and Enter does nothing.
+fn enter_and_escape_answer() {
+    for kind in KINDS {
+        let (a, b) = samples(kind);
+        let mut s = Scenario::open(a);
+        s.size(1200., 720.);
+        let path = file_of(&mut s);
+        let before = fingerprint(&mut s);
+        other_app_copies(&root(b), &path);
+        check(&mut s);
+        assert!(dialog_open(&mut s), "{kind:?}");
+        s.key("escape");
+        assert!(!dialog_open(&mut s), "{kind:?}: Esc answers no");
+        assert_eq!(fingerprint(&mut s), before, "{kind:?}: no keeps the window's content");
+        drop(s);
+        // Enter reads it.
+        let mut s = Scenario::open(a);
+        s.size(1200., 720.);
+        let path = file_of(&mut s);
+        let before = fingerprint(&mut s);
+        other_app_copies(&root(b), &path);
+        check(&mut s);
+        assert!(dialog_open(&mut s), "{kind:?}");
+        s.key("enter");
+        assert!(!dialog_open(&mut s), "{kind:?}: Enter answers yes");
+        s.settle();
+        assert_ne!(fingerprint(&mut s), before, "{kind:?}: yes read the file again");
+        assert!(!s.with(|e, _| e.is_dirty()));
+        drop(s);
+        // Unsaved edits: no primary button; the keyboard starts on the first one that is not red (保存して開く), Tab moves on, Esc is no.
+        let mut s = Scenario::open(a);
+        s.size(1200., 720.);
+        let path = file_of(&mut s);
+        edit(&mut s, kind);
+        other_app_copies(&root(b), &path);
+        check(&mut s);
+        assert!(dialog_open(&mut s), "{kind:?}");
+        assert_eq!(s.with(|e, _| e.message_box_focus()), 1, "{kind:?}: the ring starts on save-as, not on the red button");
+        s.key("tab");
+        assert_eq!(s.with(|e, _| e.message_box_focus()), 2, "{kind:?}: Tab: to no");
+        s.key("escape");
+        assert!(!dialog_open(&mut s), "{kind:?}: Esc answers no");
+        assert!(s.with(|e, _| e.is_dirty()), "{kind:?}: the edits are kept");
     }
 }
 
@@ -535,6 +586,22 @@ fn view_kept_document() {
             e.flow().and_then(|d| ibis_doc_model::flow_command::paragraph(d, caret.para)).is_some_and(|p| caret.offset <= p.len())
         });
         assert!(ok, "a caret that is put back is inside the text: {caret:?}");
+    }
+}
+
+/// A long document (many pages), scrolled far down at the fit-to-window zoom and again at a chosen zoom, no caret: the
+/// scroll stays when the same file is written again.
+fn view_kept_long_document() {
+    let _probe = buttons::Probe::new();
+    let sample = "test/benchmark/securities-registration-statement.docx";
+    let mut s = Scenario::open(sample);
+    s.size(1200., 720.);
+    for zoom in [1.0, 0.6] {
+        view_scroll(&mut s, zoom, 0., 6000.);
+        let before = view_of(&mut s);
+        assert!(before.scroll.1 < -3000, "scrolled far down: {before:?}");
+        answer_yes_to_the_update(&mut s, sample);
+        assert_eq!(view_of(&mut s), before, "the same file read again: the same view at zoom {zoom}");
     }
 }
 
