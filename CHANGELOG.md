@@ -30,7 +30,7 @@ The two large changes of this version:
 - Files protected with Office 2007's Standard Encryption (AES-128, AES-192 or AES-256 with SHA-1) open after the password is given, in .docx, .xlsx and .pptx and on the Web; a wrong password, a damaged file and an unsupported method are told apart. Saving keeps the password and writes the stronger Agile Encryption (#190).
 - An update that this copy cannot install (a Flatpak, a build from the source, a copy that macOS moved to a temporary place) says why on every start and from the start window's button (for a Flatpak, with the install command and a copy button). On Windows a warning appears when the install folder holds your own files (#136).
 - Help > Add to List of Apps on Linux (AppImage) asks again about the list of apps; the first question says that without it the dock may show no icon (#147).
-- Settings is a modal dialog with a splitter whose position is kept, and a reorderable quick access table with an add menu and command icons. Settings > CMYK Profile lists the profiles found in the OS folders, lets you choose one or a file, shows where to download one, and resets to the default (#133).
+- Settings is a modal dialog with a splitter whose position is kept, and a reorderable quick access table with an add menu and command icons.
 - The title row's Draw button opens the Ink panel in the three screens (the button stays filled while the panel is open). The Ink panel starts with an Off tool (the pointer then behaves as without ink: a click places the caret, a drag selects), and the lasso follows the eraser.
 - The title row's comments button is filled while the comments pane is open, and its add-comment button is gone (Review > New Comment and the right-click menu add a comment).
 - A selected shape can be dragged from the band just outside its frame, where the cursor is a hand (before, a press 1 px outside the frame did nothing).
@@ -58,7 +58,7 @@ The two large changes of this version:
 - Paste Special takes the cells another program put on the clipboard (a Microsoft Excel worksheet or an HTML table), not only the last copy made here (#134).
 - Copying cells outlines them with the dashed line, as a cut does, until Esc or typing into a cell.
 - Copying a whole dynamic array's spill range pastes the formula only, and it spills again; spilled cells copied without their formula paste nothing (except Paste Values); cutting the formula cell takes the whole array and cutting spilled cells alone is refused, as in Microsoft Excel (#176).
-- Phonetic guides (furigana) are shown as Microsoft Excel shows them: only for cells that have a guide, in the guide's typeface and size, aligned as the cell is, with the guide's line added to the row height; the View menu has Show and Edit Phonetic Guide (#170, #40).
+- Phonetic guides (furigana) are shown as Microsoft Excel shows them: only for cells that have a guide, in the guide's typeface and size, aligned as the cell is, with the guide's line added to the row height (#170).
 - Cells with a volatile function (TODAY, NOW, RAND and so on) and the cells that depend on them are calculated again when a workbook is opened, except in manual calculation mode (#177).
 - Typing `@` and a function name followed by `(`, such as `@sum(a1:a2)`, enters the formula `=sum(a1:a2)` as Microsoft Excel does, also with the full-width mark; any other entry that starts with `@` stays text (#148).
 - Settings > Spreadsheet has a font for the half-width letters and digits of the formula bar (#149).
@@ -81,14 +81,12 @@ The two large changes of this version:
 - Animations (#89): colors, fill and outline, font changes, the lean of Light Speed and effects by letters or words are drawn as Microsoft PowerPoint draws them; the More Effects lists hold every effect Microsoft PowerPoint has (291 effects).
 - Text in columns (#77): vertical text takes columns too; the text box panel has a columns spinner (1 to 16) and a column spacing spinner.
 - Guides of the slide master and of each layout are read, shown on the slide, snapped to by moving and resizing, and shown with their distance from the middle while dragged (Alt for 0.01 cm); the normal view's guides are read and written as Microsoft PowerPoint 365 does, and a guide's color survives saving and opening again (#84).
-- CMYK color mode: colors given as CMYK are kept, the color picker has C/M/Y/K inputs and shows colors as the press prints them, the file keeps the flag and the profile name, and PDF export writes DeviceCMYK. CMYK and YCCK JPEG pictures in .pptx, .docx and .xlsx are shown with the chosen CMYK profile (#133).
 - ibisOffice's own features that Microsoft PowerPoint lacks, each asked about once per file: text wrap around pictures and videos, with four distances in the Size and Position panel (#132); linked text boxes whose text flows from box to box while you type (also while an input method composes), with link and unlink, an overflow mark, arrow keys that cross from box to box, Select All over the whole chain, a dashed link line, and a solid blue frame on the box with the caret and dashed frames on the other boxes of the chain (#131).
 - The notes pane opens the way the file says (Microsoft PowerPoint's normal view settings), and moving, hiding or showing it is saved; dragging the border to the bottom hides the notes pane or the slide pane.
 
 #### Web version
 
 - The media player plays embedded video and audio through the browser, shows the length when known, offers QuickTime movies as MP4, and says what the browser says when a format cannot be played (#125).
-- Settings > CMYK Profile works with an ICC file picker and keeps the profile in the browser (#133).
 - File > New of an open document and the menu bar's logo open another browser tab with a new file of that kind.
 
 #### Command line
@@ -99,8 +97,7 @@ The two large changes of this version:
 
 #### All apps
 
-- The menu bar is reorganized in the three screens, Document, Spreadsheet and Presentation. Commands that left a menu are found by the command search, the toolbar, the right-click menus or the side bars; commands mentioned in issues are back in the menus (phonetic guides #40 #170, apply a slide layout #84 #85 #62, insert an equation #171, text columns of a text box #77, Format Cells #39, text box settings #14; fit text is in the toolbar's alignment drop-down and Edit > Asian Layout, #53). Menu lines of the design that are not made yet are hidden. The Help menu stands with the other menus, with Check for Updates and Show Update Log.
-- The mail merge commands live in the mail merge pane: the Mailings menu opens it, with Envelopes, Labels, Select Recipients, Insert Merge Field and Preview Results as menu lines.
+- The menu bar is reorganized in the three screens, Document, Spreadsheet and Presentation. Commands that left a menu are found by the command search, the toolbar, the right-click menus or the side bars.
 - The save prompt's buttons are Save, Cancel and Don't Save in that order; Don't Save is red and Enter presses Save.
 - When a typeface is missing on the PC, the stand-in follows what the file says about the typeface, not its name: in .xlsx files by the font's family, in .docx files by the font table's character set, in .pptx files by the run's East Asian character set. A Japanese PC that lists Yu Gothic or MS Mincho only by their Japanese names finds them too.
 - About ibisOffice is one shared dialog on every OS. All eight table screens use one table that lifts a row at the press and reorders by dragging. Drop-downs, spinners, segmented controls, sliders, radio buttons and check boxes show a disabled and a mixed state.
