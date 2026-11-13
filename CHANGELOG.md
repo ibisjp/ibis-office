@@ -173,6 +173,7 @@ The two large changes of this version:
 - .xlsx: a sheet with both a form control or picture and notes is saved in the order Microsoft Excel needs (Microsoft Excel replaced the sheet as unreadable); a book saved by an earlier version is mended when saved again.
 - .xlsx: a million-row spill no longer slows the cursor keys (#137); editing an unrelated cell recalculates only the volatile formulas (#109).
 - .xlsx: objects anchored to cells follow the rows measured on opening, and saving no longer anchors them to other cells.
+- .xlsx: printing and PDF export place the rows as Microsoft Excel for Windows prints them (each row at whole printer pixels, also on a scaled page), so .xls and .xlsx pages break and line up closer to Excel's.
 - .xlsx: pressing F2 or Enter in a cell no longer shrinks a row where the Normal font cannot be measured.
 - .xlsx: the ink pen ends when the ink pane cannot be seen, and Erase All removes reopened ink.
 - .xlsx: .xls files open and print closer to Microsoft Excel: shared strings no longer panic or lose text, files with Microsoft Excel's default password for a locked structure open, print settings, drawings (autoshapes, text boxes, lines, groups), pictures' crops, rich text fonts, conditional format colors and saved row heights are read; charts in .xls files show data labels, fills and lines, markers, axis number formats, secondary axes, display units and the axis titles.
