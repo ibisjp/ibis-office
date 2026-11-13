@@ -17,3 +17,8 @@
 # IPAmj Mincho (IPA Font License v1.0, Ver.006.01, from https://moji.or.jp/): the font file as distributed, not changed, with its LICENSE
 # and README beside it. Add "size" (the file's bytes) and "sha256" of the file put on Pages when it is published.
 {"id":"IPAmjMincho","name_en":"IPAmj Mincho","name_ja":"IPAmj\u660e\u671d","file":"ipamjm.ttf","size":46676744,"sha256":"a3e84f495f3c388db7a1473bf1985c1c076d0c814100f10a027ca6853eb1e8cb","url":"https://ibisjp.github.io/ibis-office/fonts/IPAmjMincho/ipamjm.ttf","license":"IPA Font License v1.0","license_url":"https://ibisjp.github.io/ibis-office/fonts/IPAmjMincho/LICENSE"}
+#
+# Add Character_GJMincho / 追加文字行政事務標準明朝 (Digital Agency, 2026-08-18; SIL OFL 1.1 chosen of its two licences, from
+# https://www.digital.go.jp/policies/local_governments/character-specification#mincho-font): acgjm.ttf as distributed, not changed,
+# with OFL.txt as LICENSE, Licence.txt and Readme.md beside it. Reserved Font Names: GJMincho, GJ明朝, 追加文字行政事務標準明朝.
+{"id":"ACGJMincho","name_en":"Add Character_GJMincho","name_ja":"\u8ffd\u52a0\u6587\u5b57\u884c\u653f\u4e8b\u52d9\u6a19\u6e96\u660e\u671d","file":"acgjm.ttf","size":5302608,"sha256":"8e660718fb4480a044f0848a83d718d16cd016b53ada4476e587f328ae39dd85","url":"https://ibisjp.github.io/ibis-office/fonts/ACGJMincho/acgjm.ttf","license":"SIL OFL 1.1","license_url":"https://ibisjp.github.io/ibis-office/fonts/ACGJMincho/LICENSE"}
