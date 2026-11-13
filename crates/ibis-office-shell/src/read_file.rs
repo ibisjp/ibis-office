@@ -65,7 +65,10 @@ fn read_file_unguarded(path: &std::path::Path, password: Option<&str>) -> Result
     let external_document_format=ibis_pptx::docx_convert::DocxConvertFormat::from_path(path);
     let open_result=if let Some(format)=external_document_format {
         ibis_pptx::docx_convert::import_docx_format(&data,format).map(|opened|(opened,None))
-    } else {ibis_pptx::open_progressive(data,100_000)};
+    } else {
+        // The volatile cells calculated again on open (CELL("filename") among them) need the file's path.
+        ibis_calc::eval::convert::with_opening_file(Some(path.to_string_lossy().into_owned()), || ibis_pptx::open_progressive(data,100_000))
+    };
     let (opened, csv_stream) = open_result.map_err(|e| {
         note_open_failed(path);
         e.to_string()

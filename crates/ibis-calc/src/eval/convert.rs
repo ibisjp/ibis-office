@@ -174,8 +174,26 @@ pub fn set_workbook_file(path: Option<String>) {
     }
 }
 
+thread_local! {
+    /// The file being opened on this thread (see [`with_opening_file`]).
+    static OPENING_FILE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `read` (which opens a workbook) with `path` as the file `CELL("filename")` sees on this thread, so that the
+/// volatile cells calculated again on open (as Excel does, #177) know which file they are in. Other windows' files are
+/// not touched (the setting is per thread).
+pub fn with_opening_file<T>(path: Option<String>, read: impl FnOnce() -> T) -> T {
+    let before = OPENING_FILE.with(|f| f.replace(path));
+    let out = read();
+    OPENING_FILE.with(|f| *f.borrow_mut() = before);
+    out
+}
+
 /// The workbook's file path, if it has one.
 pub fn workbook_file() -> Option<String> {
+    if let Some(path) = OPENING_FILE.with(|f| f.borrow().clone()) {
+        return Some(path);
+    }
     WORKBOOK_FILE.lock().ok().and_then(|f| f.clone())
 }
 

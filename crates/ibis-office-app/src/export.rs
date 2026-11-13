@@ -579,13 +579,16 @@ pub(crate) fn windows_print_geometry(presentation: &mut Presentation) {
         if !slide.shapes.iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Sheet(_))) {
             continue;
         }
+        // The rows print at whole pixels of the printer (`printed_row`); what is below a row moves with it (`RowMap`).
+        let map = RowMap::of(slide, |h| printed_row(h, rf), rf);
+        let my = |y: i64| map.as_ref().map_or(by(y, rf), |m| m.y(y));
         if let Some(size) = &mut slide.size {
-            *size = ibis_doc_model::EmuSize::new(by(size.width, cf), by(size.height, rf));
+            *size = ibis_doc_model::EmuSize::new(by(size.width, cf), my(size.height));
         }
         // What is drawn over a chart (its user shapes, `cdr:relSizeAnchor`) stays where it is on the chart, which keeps its size and
         // is put where its cell now is: it moves with the chart instead of its position being scaled on its own (a source line
         // under the plot would else land on the axis labels).
-        let charts: Vec<(ibis_doc_model::EmuRect, (i64, i64))> = slide.shapes.iter().filter(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Chart(_))).map(|s| (s.frame, (by(s.frame.x, cf) - s.frame.x, by(s.frame.y, rf) - s.frame.y))).collect();
+        let charts: Vec<(ibis_doc_model::EmuRect, (i64, i64))> = slide.shapes.iter().filter(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Chart(_))).map(|s| (s.frame, (by(s.frame.x, cf) - s.frame.x, my(s.frame.y) - s.frame.y))).collect();
         for shape in &mut slide.shapes {
             let f = shape.frame;
             if !matches!(shape.kind, ibis_doc_model::ShapeKind::Sheet(_) | ibis_doc_model::ShapeKind::Chart(_)) {
@@ -599,7 +602,7 @@ pub(crate) fn windows_print_geometry(presentation: &mut Presentation) {
             // in a page of 419.7 pt of columns); it is put where its cell now is. The sheet itself is
             // all its cells.
             let is_sheet = matches!(shape.kind, ibis_doc_model::ShapeKind::Sheet(_));
-            shape.frame = ibis_doc_model::EmuRect::new(by(f.x, cf), by(f.y, rf), if is_sheet { by(f.width, cf) } else { f.width }, if is_sheet { by(f.height, rf) } else { f.height });
+            shape.frame = ibis_doc_model::EmuRect::new(by(f.x, cf), my(f.y), if is_sheet { by(f.width, cf) } else { f.width }, if is_sheet { my(f.bottom()) - my(f.y) } else { f.height });
             if let ibis_doc_model::ShapeKind::Sheet(sheet) = &mut shape.kind {
                 let sheet = std::sync::Arc::make_mut(sheet);
                 sheet.columns.iter_mut().for_each(|c| *c = by(*c, cf));
@@ -620,11 +623,120 @@ pub(crate) fn windows_print_geometry(presentation: &mut Presentation) {
                         }
                     }
                 }
-                sheet.rows.iter_mut().for_each(|r| *r = by(*r, rf));
+                sheet.rows.iter_mut().for_each(|r| *r = printed_row(*r, rf));
                 sheet.default_column = by(sheet.default_column, cf);
-                sheet.default_row = by(sheet.default_row, rf);
+                sheet.default_row = printed_row(sheet.default_row, rf);
             }
         }
+    }
+}
+
+/// The EMU of a pixel of the printer Excel for Windows lays a printed page out on (600 dpi).
+const PRINTER_PIXEL: f64 = ibis_doc_model::EMU_PER_INCH as f64 / 600.0;
+
+/// A row's printed height at 100 %: its screen height times the row factor, in whole pixels of the printer (600 dpi),
+/// `floor(x + 1/8)` of those pixels. The rule measured on Excel 365's PDFs of 667 rows (7 Normal fonts, at 100 %, 94 %,
+/// 75 % and 63 %; `tasks/doc/data/xls-goal-printed-custom-row-rounding.csv`): a row whose pixels end in .870 is cut
+/// down, .875 and .88 go up. Why the threshold is 1/8 is not known (no text metric or unit of Excel's found that gives
+/// it); keeping it waits on the user's decision (AGENTS.md: no ad hoc factors).
+fn printed_row(height: i64, factor: f64) -> i64 {
+    if height <= 0 {
+        return height;
+    }
+    ((height as f64 * factor / PRINTER_PIXEL + 0.125).floor() * PRINTER_PIXEL).round() as i64
+}
+
+/// A printed row on a page at `scale` (not 100 %): Excel scales the row's whole printer pixels (`printed_row`) and rounds
+/// the product to whole pixels, half up (ＭＳ Ｐゴシック 11 at 75 %: a row of 34 pixels prints 25.5 → 26, one of 56 prints 42;
+/// the same 667 rows as `printed_row`). The row is kept in the sheet's EMU, so that it comes to those pixels at the scale.
+fn zoomed_row(height: i64, scale: f64) -> i64 {
+    if height <= 0 || scale <= 0.0 {
+        return height;
+    }
+    let pixels = (height as f64 / PRINTER_PIXEL).round();
+    ((pixels * scale + 0.5).floor() * PRINTER_PIXEL / scale).round() as i64
+}
+
+/// Where a height down a sheet's slide comes to when the sheet's rows change their heights: a point in a row keeps its
+/// share of the row (a picture anchored in row 20 stays in row 20 when the rows above it print shorter), a point past the
+/// rows moves with the default row, one above the sheet by `factor`.
+struct RowMap {
+    from: i64,
+    to: i64,
+    old: Vec<i64>,
+    new: Vec<i64>,
+    default: (i64, i64),
+    factor: f64,
+}
+
+impl RowMap {
+    /// The map of the slide's sheet, its rows' heights changed by `height`; the sheet's top moves by `factor`.
+    fn of(slide: &Slide, height: impl Fn(i64) -> i64, factor: f64) -> Option<RowMap> {
+        let (frame, sheet) = slide.shapes.iter().find_map(|s| match &s.kind {
+            ibis_doc_model::ShapeKind::Sheet(sheet) => Some((s.frame, sheet)),
+            _ => None,
+        })?;
+        let new_rows: Vec<i64> = sheet.rows.iter().map(|&h| height(h)).collect();
+        Some(RowMap {
+            from: frame.y,
+            to: (frame.y as f64 * factor).round() as i64,
+            old: tops_of(&sheet.rows),
+            new: tops_of(&new_rows),
+            default: (sheet.default_row, height(sheet.default_row)),
+            factor,
+        })
+    }
+
+    fn y(&self, y: i64) -> i64 {
+        let r = y - self.from;
+        if r <= 0 {
+            return self.to + (r as f64 * self.factor).round() as i64;
+        }
+        let share = |d: i64, old: i64, new: i64| if old > 0 { (d as f64 * new as f64 / old as f64).round() as i64 } else { 0 };
+        let (old_end, new_end) = (*self.old.last().unwrap_or(&0), *self.new.last().unwrap_or(&0));
+        if r >= old_end {
+            return self.to + new_end + share(r - old_end, self.default.0, self.default.1);
+        }
+        let i = self.old.partition_point(|&t| t <= r).saturating_sub(1);
+        self.to + self.new[i] + share(r - self.old[i], self.old[i + 1] - self.old[i], self.new[i + 1] - self.new[i])
+    }
+}
+
+/// The rows of a sheet laid out as Excel for Windows prints it (`windows_print_geometry`) on a page at `scale`: each comes
+/// to whole printer pixels at the scale (`zoomed_row`); what is anchored below a row moves with it.
+fn zoom_printed_rows(slide: &mut Slide, scale: f64) {
+    if (scale - 1.0).abs() < 1e-9 {
+        return;
+    }
+    let Some(map) = RowMap::of(slide, |h| zoomed_row(h, scale), 1.0) else { return };
+    if let Some(size) = &mut slide.size {
+        size.height = map.y(size.height);
+    }
+    for shape in &mut slide.shapes {
+        let f = shape.frame;
+        let is_sheet = matches!(shape.kind, ibis_doc_model::ShapeKind::Sheet(_));
+        shape.frame = ibis_doc_model::EmuRect::new(f.x, map.y(f.y), f.width, if is_sheet { map.y(f.bottom()) - map.y(f.y) } else { f.height });
+        if let ibis_doc_model::ShapeKind::Sheet(sheet) = &mut shape.kind {
+            let sheet = std::sync::Arc::make_mut(sheet);
+            sheet.rows.iter_mut().for_each(|r| *r = zoomed_row(*r, scale));
+            sheet.default_row = zoomed_row(sheet.default_row, scale);
+        }
+    }
+}
+
+/// `zoom_printed_rows` at the scale the slide's sheet prints at, when the sheet is laid out as Excel for Windows prints it.
+fn zoom_printed_rows_for(presentation: &Presentation, slide: &mut Slide, resources: &Resources, text: &[EmuRect]) {
+    let Some(sheet) = slide.shapes.iter().find_map(|s| match &s.kind {
+        ibis_doc_model::ShapeKind::Sheet(sheet) if *sheet.printed => Some(sheet.clone()),
+        _ => None,
+    }) else {
+        return;
+    };
+    let default_style = presentation.workbook.as_ref().and_then(|w| w.default_style.clone()).unwrap_or_default();
+    let headings = crate::xlsx::header_footer::heading_size(&sheet, &default_style, resources);
+    let (area, titles) = (export_area(presentation, slide), print_titles(presentation, slide));
+    if let Some((_, scale, _)) = sheet_pages_with_text(slide, area, titles, headings, text) {
+        zoom_printed_rows(slide, scale);
     }
 }
 
@@ -682,7 +794,11 @@ fn snap_custom_rows(presentation: &Presentation, slide: &mut Slide) {
     let slide_height = presentation.size_of(slide).height;
     for shape in &mut slide.shapes {
         let ibis_doc_model::ShapeKind::Sheet(sheet) = &mut shape.kind else { continue };
-        if sheet.custom_rows.is_empty() {
+        // A sheet laid out as Excel for Windows prints it (`windows_print_geometry`) keeps its rows: they are on the 0.75 pt pixels from
+        // the reader and printed at their screen pixels times the row factor, not cut to whole points after it (Excel 365's PDFs of
+        // custom rows of 5.25 to 30.75 pt under ＭＳ Ｐゴシック, 游ゴシック and Calibri 11: a 24.75 pt row under ＭＳ Ｐゴシック 11 prints 187
+        // pixels of 600 dpi, 33 × 102 / 18; cut to whole points it would be 22 pt, 183).
+        if sheet.custom_rows.is_empty() || *sheet.printed {
             continue;
         }
         let mut shape_cut: i64 = 0;
@@ -988,6 +1104,8 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
                 let mut slide = presentation.slides[number - 1].clone();
                 black_and_white(&mut slide);
                 print_layout(&presentation, &mut slide);
+                let id = slide.id;
+                zoom_printed_rows_for(&presentation, &mut slide, &resources, sheet_text.get(&id).map(Vec::as_slice).unwrap_or(&[]));
                 let area = export_area(&presentation, &slide);
                 let titles = print_titles(&presentation, &slide);
                 let default_style = presentation.workbook.as_ref().and_then(|w| w.default_style.clone()).unwrap_or_default();
@@ -1007,6 +1125,8 @@ pub fn export(mut presentation: Presentation, options: &Options) -> Result<(), S
         let mut slide = presentation.slides[number - 1].clone();
         black_and_white(&mut slide);
                 print_layout(&presentation, &mut slide);
+        let id = slide.id;
+        zoom_printed_rows_for(&presentation, &mut slide, &resources, sheet_text.get(&id).map(Vec::as_slice).unwrap_or(&[]));
         let area = export_area(&presentation, &slide);
         // The scale the sheet prints at, for its dashed borders.
         let titles = print_titles(&presentation, &slide);
