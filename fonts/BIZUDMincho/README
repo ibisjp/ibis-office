@@ -1,0 +1,9 @@
+BIZ UDMincho (BIZUDMincho-Regular.ttf, Version 1.06) — redistributed unmodified for ibisOffice's セットアップ (font download)
+
+Source:     https://github.com/googlefonts/morisawa-biz-ud-mincho (the repository Google Fonts builds BIZ UDMincho from; Morisawa Inc.),
+            commit ef5ff4aa1e2906f43b50948bb8cd64e10577c634, fonts/ttf/BIZUDMincho-Regular.ttf, fetched 2026-11-15
+SHA-256:    468ee6d9b149ca144809e03841bf18740ecf014e055a00da6ecaf1aaf4165af2
+Files:      BIZUDMincho-Regular.ttf   the font, as in the repository (not converted, subset or renamed)
+            LICENSE               the SIL Open Font License 1.1 (OFL.txt of the repository)
+            Readme.md             the repository's README
+Licence:    SIL Open Font License, Version 1.1. ibisOffice may subset the font to embed the characters used in a PDF it writes (OFL allows it).
