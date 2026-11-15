@@ -22,3 +22,10 @@
 # https://www.digital.go.jp/policies/local_governments/character-specification#mincho-font): acgjm.ttf as distributed, not changed,
 # with OFL.txt as LICENSE, Licence.txt and Readme.md beside it. Reserved Font Names: GJMincho, GJ明朝, 追加文字行政事務標準明朝.
 {"id":"ACGJMincho","name_en":"Add Character_GJMincho","name_ja":"\u8ffd\u52a0\u6587\u5b57\u884c\u653f\u4e8b\u52d9\u6a19\u6e96\u660e\u671d","file":"acgjm.ttf","size":5302608,"sha256":"8e660718fb4480a044f0848a83d718d16cd016b53ada4476e587f328ae39dd85","url":"https://ibisjp.github.io/ibis-office/fonts/ACGJMincho/acgjm.ttf","license":"SIL OFL 1.1","license_url":"https://ibisjp.github.io/ibis-office/fonts/ACGJMincho/LICENSE"}
+#
+# BIZ UDGothic / BIZ UDMincho (Morisawa Inc., SIL OFL 1.1; Version 1.051 / 1.06; from the repository Google Fonts builds them from,
+# https://github.com/googlefonts/morisawa-biz-ud-gothic and -mincho, fonts/ttf/*-Regular.ttf): the file as distributed, not changed, with
+# the repository's OFL.txt as LICENSE and its README beside it. The browser version's PDF takes these as the Japanese fonts when the
+# viewer's PC has none for a character (it fetches the one it needs by this list, id BIZUDGothic / BIZUDMincho); OFL lets the PDF embed a subset.
+{"id":"BIZUDGothic","name_en":"BIZ UDGothic","name_ja":"BIZ UDゴシック","file":"BIZUDGothic-Regular.ttf","size":4667380,"sha256":"7d2b48d84ef4e65c9f85bcf65fb1fb41c92b134be641fab6a7141d597c9a92b0","url":"https://ibisjp.github.io/ibis-office/fonts/BIZUDGothic/BIZUDGothic-Regular.ttf","license":"SIL OFL 1.1","license_url":"https://ibisjp.github.io/ibis-office/fonts/BIZUDGothic/LICENSE"}
+{"id":"BIZUDMincho","name_en":"BIZ UDMincho","name_ja":"BIZ UD明朝","file":"BIZUDMincho-Regular.ttf","size":6153932,"sha256":"468ee6d9b149ca144809e03841bf18740ecf014e055a00da6ecaf1aaf4165af2","url":"https://ibisjp.github.io/ibis-office/fonts/BIZUDMincho/BIZUDMincho-Regular.ttf","license":"SIL OFL 1.1","license_url":"https://ibisjp.github.io/ibis-office/fonts/BIZUDMincho/LICENSE"}
