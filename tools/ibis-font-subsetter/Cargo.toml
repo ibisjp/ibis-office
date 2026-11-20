@@ -1,0 +1,24 @@
+[package]
+name = "ibis-font-subsetter"
+description = "Cuts an OFL font into the blocks the browser version fetches (a base block and blocks of a size)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license = "AGPL-3.0-only"
+
+[dependencies]
+anyhow = "1"
+# The subsetter (Google fontations, MIT OR Apache-2.0): the font's tables are cut by the same rules as HarfBuzz's hb-subset.
+skera = "0.10"
+write-fonts = "0.56"
+skrifa = "0.50"
+sha2 = "0.10"
+miniz_oxide = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.6", default-features = false }
+gpui_wgpu = { package = "gpui-pre-wgpu", version = "=0.3.6" }
+harfrust = "=0.5.2"
+ttf-parser = "0.25"
