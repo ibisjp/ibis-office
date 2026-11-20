@@ -50,6 +50,7 @@ pub(crate) mod master_view;
 pub(crate) mod guides;
 pub(crate) mod notes_format;
 pub(crate) mod morph;
+pub(crate) mod morph_text;
 
 /// The presentation's own lines of the menus, its button of the toolbar's left part and its sidebar of sizes.
 pub(crate) mod menu_items;
@@ -76,11 +77,14 @@ pub(crate) mod compatibility_panel;
 pub(crate) mod glyph_prewarm;
 pub mod slideshow;
 pub(crate) mod turn3d;
+pub(crate) mod turn3d_ripple;
+pub(crate) mod turn3d_tiles;
 pub(crate) mod turn3d_tracks;
 pub(crate) mod grid_view;
 pub(crate) mod thumbnails;
 pub(crate) mod slide_zoom;
 pub(crate) mod zoom_cards;
+pub(crate) mod export_html;
 pub(crate) mod photo_album;
 pub(crate) mod compare;
 pub(crate) mod audio_record;
@@ -147,6 +151,8 @@ pub struct State {
     pub link_panel: Option<links::LinkPanel>,
     /// The video and audio clips playing.
     pub(crate) clips: Vec<clips::Playing>,
+    /// The sound of a slide's transition playing in the slide show (#224).
+    pub(crate) transition_sound: Option<clips::TransitionPlaying>,
     /// The clip the pointer is over (or whose control bar it is over): its control bar shows (clip_bar.rs).
     pub(crate) clip_hover: Option<ibis_doc_model::ShapeId>,
     /// The clip whose seek bar is being dragged.
@@ -216,7 +222,7 @@ pub struct State {
 
 impl Default for State {
     fn default() -> Self {
-        Self { slideshow: None, master_view: None, notes_format: None, animation_copy: None, photo_album: None, section_panel: None, layout_panel: None, print_panel: None, #[cfg(feature = "export")] edit_points: None, path_draw: None, notes_marks_panel: None, print_settings: Default::default(), folded_sections: Default::default(), section_selection: None, cell_size_panel: None, comments: None, animation_pane: false, animation_expanded: Default::default(), animation_drag_folded: Vec::new(), animation_table: Default::default(), animation_dnd: Default::default(), sidebar_settings: None, smartart_text_pane: false, smartart_reorder: Default::default(), animation_options_panel: None, reading_order_pane: None, link_panel: None, clips: Vec::new(), clip_hover: None, clip_seek: None, clip_volume: Default::default(), timing_panel: None, show_panel: None, notes_field: None, notes_hidden: false, notes_touched: Default::default(), pane_width: None, notes_height: notes::PANE_HEIGHT, notes_open_percent: None, pane_drag: None, grid_view: false, outline_view: false, outline_edit: None, ink: None, math_panel: None, notes_page_view: false, slide_selection: Vec::new(), properties_panel: None, inspect_panel: None, accessibility_panel: None, compatibility_panel: None, slide_zoom_dialog: None, section_zoom_dialog: None, summary_zoom_dialog: None, compare_panel: None, audio_record: None, threed_panel: None, record_preview: None, screen_reader: None, ribbon_qat: None, trust_center: None }
+        Self { slideshow: None, master_view: None, notes_format: None, animation_copy: None, photo_album: None, section_panel: None, layout_panel: None, print_panel: None, #[cfg(feature = "export")] edit_points: None, path_draw: None, notes_marks_panel: None, print_settings: Default::default(), folded_sections: Default::default(), section_selection: None, cell_size_panel: None, comments: None, animation_pane: false, animation_expanded: Default::default(), animation_drag_folded: Vec::new(), animation_table: Default::default(), animation_dnd: Default::default(), sidebar_settings: None, smartart_text_pane: false, smartart_reorder: Default::default(), animation_options_panel: None, reading_order_pane: None, link_panel: None, clips: Vec::new(), transition_sound: None, clip_hover: None, clip_seek: None, clip_volume: Default::default(), timing_panel: None, show_panel: None, notes_field: None, notes_hidden: false, notes_touched: Default::default(), pane_width: None, notes_height: notes::PANE_HEIGHT, notes_open_percent: None, pane_drag: None, grid_view: false, outline_view: false, outline_edit: None, ink: None, math_panel: None, notes_page_view: false, slide_selection: Vec::new(), properties_panel: None, inspect_panel: None, accessibility_panel: None, compatibility_panel: None, slide_zoom_dialog: None, section_zoom_dialog: None, summary_zoom_dialog: None, compare_panel: None, audio_record: None, threed_panel: None, record_preview: None, screen_reader: None, ribbon_qat: None, trust_center: None }
     }
 }
 
@@ -229,7 +235,109 @@ mod view_menu;
 mod title_buttons;
 mod event_hooks;
 mod infobar_hooks;
-impl_format_state!(State, ibis_pptx::Kind::Presentation);
+/// What a touch gesture on the page can change in this state (`shell::format::GestureView`, #209). Every field is named in
+/// `gesture_snapshot`: one added later does not compile until it is decided whether a touch can change it (name it and keep it
+/// below) or not (`field: _`). A drag or edit that cannot be copied is kept as "there was none" (`*_was_none`): a cancelled touch
+/// ends it.
+pub struct GestureSnapshot {
+    slide_selection: Vec<ibis_doc_model::SlideId>,
+    section_selection: Option<(String,ibis_doc_model::SlideId)>,
+    pane_drag: Option<notes::PaneDrag>,
+    edit_points_was_none: bool,
+    path_draw_was_none: bool,
+    outline_edit_was_none: bool,
+}
+
+impl crate::shell::format::GestureView for State {
+    type Snapshot = GestureSnapshot;
+
+    fn gesture_snapshot(&self) -> GestureSnapshot {
+        let State {
+            slideshow: _,
+            master_view: _,
+            notes_format: _,
+            section_panel: _,
+            layout_panel: _,
+            print_panel: _,
+            #[cfg(feature = "export")]
+            edit_points,
+            path_draw,
+            notes_marks_panel: _,
+            print_settings: _,
+            folded_sections: _,
+            section_selection,
+            timing_panel: _,
+            show_panel: _,
+            cell_size_panel: _,
+            comments: _,
+            animation_pane: _,
+            animation_expanded: _,
+            animation_drag_folded: _,
+            animation_table: _,
+            animation_dnd: _,
+            sidebar_settings: _,
+            smartart_text_pane: _,
+            smartart_reorder: _,
+            animation_options_panel: _,
+            reading_order_pane: _,
+            link_panel: _,
+            clips: _,
+            transition_sound: _,
+            clip_hover: _,
+            clip_seek: _,
+            clip_volume: _,
+            animation_copy: _,
+            photo_album: _,
+            notes_field: _,
+            notes_hidden: _,
+            notes_touched: _,
+            pane_width: _,
+            notes_height: _,
+            notes_open_percent: _,
+            pane_drag,
+            grid_view: _,
+            outline_view: _,
+            outline_edit,
+            ink: _,
+            math_panel: _,
+            notes_page_view: _,
+            slide_selection,
+            properties_panel: _,
+            inspect_panel: _,
+            accessibility_panel: _,
+            compatibility_panel: _,
+            slide_zoom_dialog: _,
+            section_zoom_dialog: _,
+            summary_zoom_dialog: _,
+            compare_panel: _,
+            audio_record: _,
+            threed_panel: _,
+            record_preview: _,
+            screen_reader: _,
+            ribbon_qat: _,
+            trust_center: _,
+        } = self;
+        GestureSnapshot {
+            slide_selection: slide_selection.clone(),
+            section_selection: section_selection.clone(),
+            pane_drag: pane_drag.clone(),
+            edit_points_was_none: edit_points.is_none(),
+            path_draw_was_none: path_draw.is_none(),
+            outline_edit_was_none: outline_edit.is_none(),
+        }
+    }
+
+    fn gesture_restore(&mut self, snapshot: GestureSnapshot) {
+        self.slide_selection = snapshot.slide_selection;
+        self.section_selection = snapshot.section_selection;
+        self.pane_drag = snapshot.pane_drag;
+        if snapshot.edit_points_was_none { self.edit_points = None; }
+        if snapshot.path_draw_was_none { self.path_draw = None; }
+        if snapshot.outline_edit_was_none { self.outline_edit = None; }
+    }
+}
+
+impl_format_state!(State, ibis_formats::Kind::Presentation);
 
 impl State {
     /// The presentation's state out of `format`, the editor's `format` field. `SlideEditor::pptx` borrows the whole editor; this
@@ -320,7 +428,7 @@ impl FormatEditor for Presentation {
 
     /// A presentation as .odp (OpenDocument), as a template, as a slide show (.ppsx) and as .pptx (whatever it was opened as).
     #[cfg(not(target_family = "wasm"))]
-    fn bytes_for_path(editor: &SlideEditor, path: &std::path::Path, source: &ibis_pptx::Source, copy: bool) -> Option<Result<crate::shell::format::FileBytes, String>> {
+    fn bytes_for_path(editor: &SlideEditor, path: &std::path::Path, source: &ibis_formats::Source, copy: bool) -> Option<Result<crate::shell::format::FileBytes, String>> {
         use crate::shell::format::FileBytes;
         // Every kind of file made here (.odp, templates, slide shows, packages) is refused while the master view or the notes formatting is open.
         if let Some(why) = Self::save_refused(editor) {
@@ -329,24 +437,23 @@ impl FormatEditor for Presentation {
         let extension = path.extension()?;
         if extension.eq_ignore_ascii_case("odp") {
             // Saved, the file's password encrypts it; a copy is left as it is (as the shell did before the formats were cut apart).
-            return Some(ibis_pptx::write_odp(editor.presentation()).map(|bytes| FileBytes { bytes, protect: !copy, note: None }).map_err(|e| e.to_string()));
+            return Some(ibis_odf::write_odp(editor.presentation()).map(|bytes| FileBytes { bytes, protect: !copy, note: None }).map_err(|e| e.to_string()));
         }
         fn package<E: ToString>(bytes: Result<Vec<u8>, E>) -> Option<Result<FileBytes, String>> {
             Some(bytes.map(|bytes| FileBytes { bytes, protect: true, note: None }).map_err(|e| e.to_string()))
         }
-        if extension.to_str().is_some_and(ibis_pptx::is_template) {
-            return package(source.save_template(&Self::model_for_save(editor), ibis_pptx::SaveOptions::default()));
+        if extension.to_str().is_some_and(ibis_formats::is_template) {
+            return package(source.save_template(&Self::model_for_save(editor), ibis_formats::SaveOptions::default()));
         }
-        if extension.to_str().is_some_and(ibis_pptx::is_slideshow) {
-            return package(source.save_slideshow(&Self::model_for_save(editor), ibis_pptx::SaveOptions::default()));
+        if extension.to_str().is_some_and(ibis_formats::is_slideshow) {
+            return package(source.save_slideshow(&Self::model_for_save(editor), ibis_formats::SaveOptions::default()));
         }
         if extension.eq_ignore_ascii_case("pptx") || extension.eq_ignore_ascii_case("pptm") {
-            return package(source.save_presentation(&Self::model_for_save(editor), ibis_pptx::SaveOptions::default()));
+            return package(source.save_presentation(&Self::model_for_save(editor), ibis_formats::SaveOptions::default()));
         }
         None
     }
 
-    #[cfg(not(target_family = "wasm"))]
     fn pdf_job(editor: &SlideEditor, printing: bool) -> Result<crate::shell::format::PdfJob, String> {
         let bytes = editor.current_bytes()?;
         // A presentation's print: the settings' slides, and pictures when the colour, a frame or handouts ask for them.
@@ -575,7 +682,7 @@ impl FormatEditor for Presentation {
         use crate::shell::chrome::MenuItem;
         use crate::shell::shape_state::ShapePanel;
         match panel {
-            ShapePanel::AltText => vec![MenuItem::tr("pptx.check-accessibility").icon("accessibility").on(|this, window, cx| this.open_pptx_accessibility_panel(window, cx)).into()],
+            ShapePanel::AltText => vec![MenuItem::tr("review.accessibility-check").icon("accessibility").on(|this, window, cx| this.open_pptx_accessibility_panel(window, cx)).into()],
             ShapePanel::HeaderFooter => vec![
                 MenuItem::new("pptx.notes-header-footer", crate::shell::i18n::text("pptx.notes-marks-panel.notes-header-footer")).on(|this, w, cx| this.open_notes_marks(w, cx)).into(),
             ],
@@ -596,7 +703,7 @@ impl FormatEditor for Presentation {
     }
 
     fn format_key(editor: &mut SlideEditor, keystroke: &Keystroke, window: &mut Window, cx: &mut Context<SlideEditor>) -> bool {
-        editor.master_grid_key(keystroke, window, cx)
+        editor.slideshow_question_key(keystroke, window, cx) || editor.master_grid_key(keystroke, window, cx)
     }
 
     fn workspace_wheel(editor: &mut SlideEditor, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<SlideEditor>) -> bool {
@@ -605,7 +712,7 @@ impl FormatEditor for Presentation {
 
     fn register_actions(root: Stateful<Div>, cx: &mut Context<SlideEditor>) -> Stateful<Div> {
         root
-            .on_action(cx.listener(|e,_:&crate::shell::actions::DuplicatePresentationSelection,w,cx|{if e.kind()==ibis_pptx::Kind::Presentation{if e.selected_shapes().is_empty(){e.duplicate_current_slide(w,cx);}else{e.duplicate_selected(cx);}}}))
+            .on_action(cx.listener(|e,_:&crate::shell::actions::DuplicatePresentationSelection,w,cx|{if e.kind()==ibis_formats::Kind::Presentation{if e.selected_shapes().is_empty(){e.duplicate_current_slide(w,cx);}else{e.duplicate_selected(cx);}}}))
             .on_action(cx.listener(|this, _: &crate::shell::actions::StartSlideshow, window, cx| this.start_slideshow(window, cx)))
             .on_action(cx.listener(|this, _: &crate::shell::actions::StartPresenterView, window, cx| this.start_presenter_view(window, cx)))
             .on_action(cx.listener(|this, _: &crate::shell::actions::BlackScreen, _, cx| this.blank_slideshow(0x000000, cx)))
@@ -676,15 +783,16 @@ impl FormatEditor for Presentation {
     fn new_state(_: &Model, _: &mut Window, cx: &mut Context<SlideEditor>) -> Box<dyn FormatState> {
         for context in [slide_view::CONTEXT,crate::shell::editor::WORKSPACE_CONTEXT,crate::shell::editor::LIST_CONTEXT] {
             cx.bind_keys([
-                KeyBinding::new("ctrl-m",crate::shell::actions::AddPresentationSlide,Some(context)),
-                KeyBinding::new("cmd-shift-n",crate::shell::actions::AddPresentationSlide,Some(context)),
-                KeyBinding::new("cmd-d",crate::shell::actions::DuplicatePresentationSelection,Some(context)),
+                KeyBinding::new("ctrl-m",crate::shell::actions::AddSlide,Some(context)),
+                KeyBinding::new("cmd-shift-n",crate::shell::actions::AddSlide,Some(context)),
+                // Not in the start window, where ⌘D makes a new document (`shell/start_menu.rs`).
+                KeyBinding::new("cmd-d",crate::shell::actions::DuplicatePresentationSelection,Some(&format!("{context} && !{}",crate::shell::start_menu::START_CONTEXT))),
             ]);
         }
         // ⌃D is forward-delete while text is edited on a Mac, so it duplicates only off the Mac.
         if !crate::shell::app::is_mac() {
             for context in [slide_view::CONTEXT,crate::shell::editor::WORKSPACE_CONTEXT,crate::shell::editor::LIST_CONTEXT] {
-                cx.bind_keys([KeyBinding::new("ctrl-d",crate::shell::actions::DuplicatePresentationSelection,Some(context))]);
+                cx.bind_keys([KeyBinding::new("ctrl-d",crate::shell::actions::DuplicatePresentationSelection,Some(&format!("{context} && !{}",crate::shell::start_menu::START_CONTEXT)))]);
             }
         }
         cx.bind_keys([
@@ -911,6 +1019,10 @@ impl FormatEditor for Presentation {
         chrome::toolbar_right(editor)
     }
 
+    fn toolbar_scene(editor: &SlideEditor) -> &'static str {
+        chrome::toolbar_scene(editor)
+    }
+
     /// Opened with no panel chosen, the pane shows the slide's or the shape's size and position (chrome::sidebar).
     fn sidebar_on_request() -> bool {
         true
@@ -949,7 +1061,7 @@ impl FormatEditor for Presentation {
     }
 
     fn sidebar(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<SidebarPanel> {
-        editor.threed_model_panel(cx).or_else(|| editor.record_preview_panel(cx)).or_else(|| editor.pptx_screen_reader_panel(cx)).or_else(|| editor.pptx_ribbon_qat_panel(cx)).or_else(|| editor.pptx_trust_center_panel(cx).map(|panel| panel.modal_named("pptx_trust_center_panel"))).or_else(|| editor.audio_record_panel(cx).map(|panel| panel.modal_named("audio_record_panel"))).or_else(|| editor.compare_panel(cx).map(|panel| panel.modal_named("compare_panel"))).or_else(|| editor.smartart_text_pane(cx)).or_else(|| editor.photo_album_panel(cx).map(|panel| panel.modal_named("photo_album_panel"))).or_else(|| editor.pptx_ink_panel(cx)).or_else(|| editor.pptx_autocorrect_panel(cx).map(|panel| panel.modal_named("pptx_autocorrect_panel"))).or_else(|| editor.pptx_math_panel(cx).map(|panel| panel.modal_named("pptx_math_panel"))).or_else(|| editor.master_view_panel(cx)).or_else(|| editor.notes_format_panel(cx)).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.animation_options_panel(cx).map(|panel| panel.modal_named("animation_options_panel"))).or_else(|| editor.pptx_compatibility_panel(cx).map(|panel| panel.modal_named("pptx_compatibility_panel"))).or_else(|| editor.pptx_accessibility_panel(cx)).or_else(|| editor.presentation_inspect_panel(cx).map(|panel| panel.modal_named("presentation_inspect_panel"))).or_else(|| editor.presentation_properties_panel(cx).map(|panel| panel.modal_named("presentation_properties_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.notes_marks_panel(cx).map(|panel| panel.modal_named("notes_marks_panel"))).or_else(|| editor.spelling_panel(cx)).or_else(|| editor.pptx_thesaurus_panel(cx)).or_else(|| editor.compress_panel(cx).map(|panel| panel.modal_named("compress_panel"))).or_else(|| editor.print_panel(cx).map(|panel| panel.modal_named("print_panel"))).or_else(|| editor.layout_name_panel(cx).map(|panel| panel.modal_named("layout_name_panel"))).or_else(|| editor.pptx_section_panel(cx).map(|panel| panel.modal_named("pptx_section_panel"))).or_else(|| editor.pptx_gradient_panel(cx).map(|panel| panel.modal_named("pptx_gradient_panel"))).or_else(|| editor.shadow_panel(cx).map(|panel| panel.modal_named("shadow_panel"))).or_else(|| editor.glow_panel(cx).map(|panel| panel.modal_named("glow_panel"))).or_else(|| editor.pptx_paragraph_panel(cx).map(|panel| panel.modal_named("pptx_paragraph_panel"))).or_else(|| editor.timing_panel(cx).map(|panel| panel.modal_named("timing_panel"))).or_else(|| editor.show_panel(cx).map(|panel| panel.modal_named("show_panel"))).or_else(|| editor.crop_panel(cx).map(|panel| panel.modal_named("crop_panel"))).or_else(|| editor.frame_panel(cx).map(|panel| panel.modal_named("frame_panel"))).or_else(|| editor.cell_size_panel(cx).map(|panel| panel.modal_named("cell_size_panel"))).or_else(|| editor.alt_text_panel(cx).map(|panel| panel.modal_named("alt_text_panel"))).or_else(|| editor.chart_panel(cx).map(|panel| panel.modal_named("chart_panel"))).or_else(|| editor.header_footer_panel(cx).map(|panel| panel.modal_named("header_footer_panel"))).or_else(|| editor.text_insets_panel(cx).map(|panel| panel.modal_named("text_insets_panel"))).or_else(|| editor.slide_link_panel(cx).map(|panel| panel.modal_named("slide_link_panel"))).or_else(|| editor.theme_panel(cx).map(|panel| panel.modal_named("theme_panel"))).or_else(|| editor.slide_size_panel(cx).map(|panel| panel.modal_named("slide_size_panel"))).or_else(|| editor.animation_pane(cx)).or_else(|| editor.reading_order_pane(cx)).or_else(|| editor.selection_pane(cx)).or_else(|| editor.pptx_find_panel(cx)).or_else(|| editor.slide_comments_panel(cx)).or_else(|| chrome::sidebar(editor, window, cx)).or_else(|| menu_items::size_sidebar(editor))
+        editor.threed_model_panel(cx).or_else(|| editor.record_preview_panel(cx)).or_else(|| editor.pptx_screen_reader_panel(cx)).or_else(|| editor.pptx_ribbon_qat_panel(cx)).or_else(|| editor.pptx_trust_center_panel(cx).map(|panel| panel.modal_named("pptx_trust_center_panel"))).or_else(|| editor.audio_record_panel(cx).map(|panel| panel.modal_named("audio_record_panel"))).or_else(|| editor.compare_panel(cx).map(|panel| panel.modal_named("compare_panel"))).or_else(|| editor.smartart_text_pane(cx)).or_else(|| editor.photo_album_panel(cx).map(|panel| panel.modal_named("photo_album_panel"))).or_else(|| editor.pptx_ink_panel(cx)).or_else(|| editor.pptx_autocorrect_panel(cx).map(|panel| panel.modal_named("pptx_autocorrect_panel"))).or_else(|| editor.pptx_math_panel(cx).map(|panel| panel.modal_named("pptx_math_panel"))).or_else(|| editor.master_view_panel(cx)).or_else(|| editor.notes_format_panel(cx)).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.animation_options_panel(cx).map(|panel| panel.modal_named("animation_options_panel"))).or_else(|| editor.pptx_compatibility_panel(cx).map(|panel| panel.modal_named("pptx_compatibility_panel"))).or_else(|| editor.pptx_accessibility_panel(cx)).or_else(|| editor.presentation_inspect_panel(cx).map(|panel| panel.modal_named("presentation_inspect_panel"))).or_else(|| editor.presentation_properties_panel(cx).map(|panel| panel.modal_named("presentation_properties_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.notes_marks_panel(cx).map(|panel| panel.modal_named("notes_marks_panel"))).or_else(|| editor.spelling_panel(cx)).or_else(|| editor.pptx_thesaurus_panel(cx)).or_else(|| editor.compress_panel(cx).map(|panel| panel.modal_named("compress_panel"))).or_else(|| editor.print_panel(cx).map(|panel| panel.modal_named("print_panel"))).or_else(|| editor.layout_name_panel(cx).map(|panel| panel.modal_named("layout_name_panel"))).or_else(|| editor.pptx_section_panel(cx).map(|panel| panel.modal_named("pptx_section_panel"))).or_else(|| editor.pptx_gradient_panel(cx).map(|panel| panel.modal_named("pptx_gradient_panel"))).or_else(|| editor.shadow_panel(cx).map(|panel| panel.modal_named("shadow_panel"))).or_else(|| editor.glow_panel(cx).map(|panel| panel.modal_named("glow_panel"))).or_else(|| editor.pptx_paragraph_panel(cx).map(|panel| panel.modal_named("pptx_paragraph_panel"))).or_else(|| editor.timing_panel(cx).map(|panel| panel.modal_named("timing_panel"))).or_else(|| editor.show_panel(cx).map(|panel| panel.modal_named("show_panel"))).or_else(|| editor.crop_panel(cx).map(|panel| panel.modal_named("crop_panel"))).or_else(|| editor.frame_panel(cx).map(|panel| panel.modal_named("frame_panel"))).or_else(|| editor.cell_size_panel(cx).map(|panel| panel.modal_named("cell_size_panel"))).or_else(|| editor.alt_text_panel(cx).map(|panel| panel.modal_named("alt_text_panel"))).or_else(|| editor.chart_panel(cx).map(|panel| panel.modal_named("chart_panel"))).or_else(|| editor.header_footer_panel(cx).map(|panel| panel.modal_named("header_footer_panel"))).or_else(|| editor.text_insets_panel(cx).map(|panel| panel.modal_named("text_insets_panel"))).or_else(|| editor.slide_link_panel(cx).map(|panel| panel.modal_named("slide_link_panel"))).or_else(|| editor.slide_zoom_panel(cx).map(|panel| panel.modal_named("slide_zoom_dialog"))).or_else(|| editor.section_zoom_panel(cx).map(|panel| panel.modal_named("section_zoom_dialog"))).or_else(|| editor.summary_zoom_panel(cx).map(|panel| panel.modal_named("summary_zoom_dialog"))).or_else(|| editor.theme_panel(cx).map(|panel| panel.modal_named("theme_panel"))).or_else(|| editor.slide_size_panel(cx).map(|panel| panel.modal_named("slide_size_panel"))).or_else(|| editor.animation_pane(cx)).or_else(|| editor.reading_order_pane(cx)).or_else(|| editor.selection_pane(cx)).or_else(|| editor.pptx_find_panel(cx)).or_else(|| editor.slide_comments_panel(cx)).or_else(|| chrome::sidebar(editor, window, cx)).or_else(|| menu_items::size_sidebar(editor))
     }
 
     #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]

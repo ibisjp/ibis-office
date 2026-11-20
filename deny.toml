@@ -7,6 +7,8 @@ allow = [
   "ISC", "Zlib", "Unicode-3.0", "Unicode-DFS-2016", "CC0-1.0", "BSL-1.0", "0BSD", "OFL-1.1",
   # BSD-style: keep the copyright notice.
   "bzip2-1.0.6",
+  # Independent JPEG Group (jpeg-encoder's libjpeg-derived DCT): state "based in part on the work of the IJG" in the disclosure (user, 2026-11-17, #246).
+  "IJG",
   # Only while its sources are used unmodified (see AGENTS.md).
   "MPL-2.0",
 ]
@@ -14,3 +16,9 @@ confidence-threshold = 0.9
 
 [licenses.private]
 ignore = true
+
+[advisories]
+# RUSTSEC-2026-0387: crypto-bigint 0.5.5 has operations that are not constant time. It comes in through sm2 0.13 (the OFD viewer, #235), which only
+# VERIFIES signatures over public data (no secret key is ever used), so the timing does not leak anything. The user accepted it (2026-11-17).
+# Remove this entry when sm2 0.14 or later (crypto-bigint 0.7.6 or later) is used (check at every release).
+ignore = [{ id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 via sm2 0.13: signature verification of public data only; remove when sm2 0.14+ is used" }]

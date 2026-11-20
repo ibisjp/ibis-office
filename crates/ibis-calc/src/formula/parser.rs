@@ -126,9 +126,24 @@ pub(super) fn implicit_spans(text: &str) -> Result<Vec<(usize, usize)>, ParseErr
     parse_with_implicit_spans(text).map(|(_, spans)| spans)
 }
 
+/// Where the trim operators `.:.` `.:` `:.` are in a formula: (start of the left operand, start and end of the operator,
+/// end of the right operand, the operator), in the order the parser meets them (the inner one of a chain first).
+pub(super) fn trim_spans(text: &str) -> Result<Vec<(usize, usize, usize, usize, Op)>, ParseError> {
+    let tokens = tokenize(text).map_err(|e| ParseError { at: e.at, message: e.message.to_string() })?;
+    let mut p = Parser { tokens, i: 0, end: text.len(), implicit_spans: Vec::new(), trim_spans: Vec::new() };
+    if p.tokens.is_empty() {
+        return Err(ParseError { at: 0, message: "数式がありません".into() });
+    }
+    p.expr()?;
+    if p.i < p.tokens.len() {
+        return Err(p.error("数式の終わりに余分なものがあります"));
+    }
+    Ok(p.trim_spans)
+}
+
 fn parse_with_implicit_spans(text: &str) -> Result<(Expr, Vec<(usize, usize)>), ParseError> {
     let tokens = tokenize(text).map_err(|e| ParseError { at: e.at, message: e.message.to_string() })?;
-    let mut p = Parser { tokens, i: 0, end: text.len(), implicit_spans: Vec::new() };
+    let mut p = Parser { tokens, i: 0, end: text.len(), implicit_spans: Vec::new(), trim_spans: Vec::new() };
     if p.tokens.is_empty() {
         return Err(ParseError { at: 0, message: "数式がありません".into() });
     }
@@ -144,6 +159,7 @@ struct Parser {
     i: usize,
     end: usize,
     implicit_spans: Vec<(usize, usize)>,
+    trim_spans: Vec<(usize, usize, usize, usize, Op)>,
 }
 
 impl Parser {
@@ -273,22 +289,61 @@ impl Parser {
         Ok(left)
     }
 
+    /// `a:b`. The trim operators bind tighter than `:` (Excel: `A:B.:.C` is `A:(B.:.C)`, `A1.:.A10:B10` is `(A1.:.A10):B10`).
     fn range(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.trim_range()?;
+        while self.peek() == Some(&Token::Op(Op::Range)) {
+            self.i += 1;
+            let before = self.trim_spans.len();
+            let at = self.i;
+            let right = self.trim_range()?;
+            // Measured with Excel: `A1:A10.:.B10` (a cell, then a trimmed range) is refused when typed; `A:B.:.C` and `A.:.A:B` are not.
+            if self.trim_spans.len() > before && matches!(&left, Expr::Ref(r) if r.is_cell()) {
+                self.i = at;
+                return Err(self.error("セルの参照の後にトリム参照は続けられません"));
+            }
+            left = combine_range(left, right);
+        }
+        Ok(left)
+    }
+
+    /// `a.:.b`, `a.:b`, `a:.b`: TRIMRANGE(a:b, mode, mode): 2 trailing, 1 leading, 3 both. Excel takes only a cell, a column or a row
+    /// (with a sheet) at each end; anything else (a function's result, a name, a range, another trim) is refused when typed.
+    fn trim_range(&mut self) -> Result<Expr, ParseError> {
+        let left_start = self.tokens.get(self.i).map_or(self.end, |t| t.start);
         let mut left = self.postfix()?;
         while let Some(&Token::Op(op)) = self.peek()
             && op.is_range()
+            && op != Op::Range
         {
+            let op_at = self.tokens[self.i].start;
+            let op_end = self.tokens[self.i].end;
+            if !is_trim_end(&left) {
+                return Err(self.error("トリム参照演算子の端にできるのはセル・列・行の参照だけです"));
+            }
             self.i += 1;
             let right = self.postfix()?;
-            left = combine_range(left, right);
-            // `a:.b`, `a.:b`, `a.:.b` are TRIMRANGE(a:b, mode, mode): 2 trailing, 1 leading, 3 both.
+            if !is_trim_end(&right) {
+                self.i -= 1;
+                return Err(self.error("トリム参照演算子の端にできるのはセル・列・行の参照だけです"));
+            }
+            // Measured with Excel (tasks/doc/requests/2026-11-20-258-trimref-fixed-result.md): `B:B.:.C:C`, `A:A.:.C:C` and `=B:B.:.C:C` are refused
+            // when typed (the end that is column C followed by `:C`), where `A:A.:.B:B`, `B:B.:.D:D`, `B:B.:.C:D` and `B:B.:.B:B` are taken. Why
+            // (C is R1C1's column) is not known: only this form is refused.
+            if let Some((None, true, 2, _)) = marker(&right)
+                && self.peek() == Some(&Token::Op(Op::Range))
+                && matches!(self.tokens.get(self.i + 1).map(|t| &t.token), Some(Token::Word(w)) if w.trim_start_matches('$').eq_ignore_ascii_case("c"))
+            {
+                self.i -= 1;
+                return Err(self.error("この形のトリム参照は入力できません"));
+            }
+            self.trim_spans.push((left_start, op_at, op_end, self.tokens[self.i - 1].end, op));
             let mode = match op {
                 Op::RangeTrimEnd => 2.0,
                 Op::RangeTrimStart => 1.0,
-                Op::RangeTrimBoth => 3.0,
-                _ => continue,
+                _ => 3.0,
             };
-            left = Expr::Call { name: "TRIMRANGE".to_string(), args: vec![left, Expr::Number(mode), Expr::Number(mode)] };
+            left = Expr::Call { name: "TRIMRANGE".to_string(), args: vec![combine_range(left, right), Expr::Number(mode), Expr::Number(mode)] };
         }
         Ok(left)
     }
@@ -507,6 +562,11 @@ fn marker(e: &Expr) -> Option<(Option<SheetRef>, bool, u32, bool)> {
     let (index, rest) = rest.split_once(':')?;
     let (fixed, _) = rest.split_once(':')?;
     Some((sheet.clone(), kind == "col", index.parse().ok()?, fixed == "1"))
+}
+
+/// A cell, a whole column or a whole row: what a trim operator takes at an end.
+fn is_trim_end(e: &Expr) -> bool {
+    matches!(e, Expr::Ref(r) if r.is_cell()) || marker(e).is_some()
 }
 
 /// `left:right`.

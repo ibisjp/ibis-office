@@ -100,7 +100,7 @@ pub(super) fn fitted_height_is_the_drawn_lines() {
                 });
                 s.click_cell(cell);
                 if sales {
-                    s.update(|e, _, cx| e.format_cells(ibis_doc_model::StyleChange::Wrap(true), cx));
+                    s.update(|e, _, cx| e.format_cells(ibis_doc_model::StyleChange::WrapText(true), cx));
                 }
                 s.enter(text, "enter");
                 assert_fitted(&mut s, cell, row, column, &format!("{file} {name} width {width}"));

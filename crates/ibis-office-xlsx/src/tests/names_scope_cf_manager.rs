@@ -24,7 +24,7 @@ fn names(s: &mut Scenario) -> Vec<(String, Option<usize>, String)> {
 fn put_formula(s: &mut Scenario, sheet: usize, row: u32, formula: &str) {
     s.update(|e, _, _| {
         let slide = e.presentation().workbook.as_ref().unwrap().sheets[sheet].slide.unwrap();
-        e.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row, column: 0, input: CellInput::Formula(formula.into()) }] })]).unwrap();
+        e.document.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![CellEdit { row, column: 0, input: CellInput::Formula(formula.into()) }] })]).unwrap();
     });
 }
 

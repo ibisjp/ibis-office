@@ -41,40 +41,8 @@ pub(super) fn get(name: &str) -> Option<Func> {
                 v => v,
             }
         },
-        "IFS" => |c, a| {
-            if a.len() % 2 != 0 {
-                return err(CellError::Value);
-            }
-            for pair in a.chunks(2) {
-                let cond = c.eval_scalar(&pair[0]);
-                match to_bool(&cond) {
-                    Ok(true) => return selected(c, &pair[1]),
-                    Ok(false) => {}
-                    Err(e) => return err(e),
-                }
-            }
-            err(CellError::NA)
-        },
-        "SWITCH" => |c, a| {
-            let v = c.eval_scalar_or_array(&a[0]);
-            if let Value::Error(e) = v {
-                return err(e);
-            }
-            let rest = &a[1..];
-            let pairs = rest.len() / 2;
-            for i in 0..pairs {
-                let candidate = c.eval_scalar_or_array(&rest[2 * i]);
-                if let Value::Error(e) = candidate {
-                    return err(e);
-                }
-                if compare(&v, &candidate) == std::cmp::Ordering::Equal && std::mem::discriminant(&v) == std::mem::discriminant(&candidate)
-                    || matches!((&v, &candidate), (Value::Empty, _) | (_, Value::Empty)) && compare(&v, &candidate) == std::cmp::Ordering::Equal
-                {
-                    return selected(c, &rest[2 * i + 1]);
-                }
-            }
-            if rest.len() % 2 == 1 { selected(c, &rest[rest.len() - 1]) } else { err(CellError::NA) }
-        },
+        "IFS" => ifs,
+        "SWITCH" => switch,
         "NOT" => |c, a| {
             let v = c.eval_scalar_or_array(&a[0]);
             c.map1(v, |_, v| match to_bool(&v) {
@@ -97,6 +65,95 @@ pub(super) fn get(name: &str) -> Option<Func> {
     })
 }
 
+/// IFS: the first pair whose condition holds gives its value. A condition that is an array is worked out element by element
+/// (the pairs from it on are evaluated, and the result spills), as Excel does (#236).
+fn ifs(c: &mut Ctx, a: &[Expr]) -> Value {
+    if a.len() % 2 != 0 {
+        return err(CellError::Value);
+    }
+    for (k, pair) in a.chunks(2).enumerate() {
+        let cond = c.eval_scalar_or_array(&pair[0]);
+        match cond {
+            Value::Array(arr) => {
+                // Every remaining result and condition, each as a scalar or an array: cond, result, cond, result...
+                let mut values = vec![Value::Array(arr)];
+                for (j, rest) in a[2 * k..].chunks(2).enumerate() {
+                    if j > 0 {
+                        let cv = c.eval(&rest[0]);
+                        values.push(c.scalar_or_array_of(cv));
+                    }
+                    let rv = c.eval(&rest[1]);
+                    values.push(empty_as_zero(c.scalar_or_array_of(rv)));
+                }
+                return c.map_values(values, &mut |_, v| {
+                    for p in v.chunks(2) {
+                        match to_bool(&p[0]) {
+                            Ok(true) => return p[1].clone(),
+                            Ok(false) => {}
+                            Err(e) => return err(e),
+                        }
+                    }
+                    err(CellError::NA)
+                });
+            }
+            cond => match to_bool(&cond) {
+                Ok(true) => return selected(c, &pair[1]),
+                Ok(false) => {}
+                Err(e) => return err(e),
+            },
+        }
+    }
+    err(CellError::NA)
+}
+
+/// Whether SWITCH's value `v` is its candidate (the same kind of value, equal).
+fn switch_matches(v: &Value, candidate: &Value) -> bool {
+    compare(v, candidate) == std::cmp::Ordering::Equal && std::mem::discriminant(v) == std::mem::discriminant(candidate)
+        || matches!((v, candidate), (Value::Empty, _) | (_, Value::Empty)) && compare(v, candidate) == std::cmp::Ordering::Equal
+}
+
+/// SWITCH: the first candidate equal to the value gives its result. Arrays (the value, a candidate or a result) are worked out
+/// element by element and spill (#236).
+fn switch(c: &mut Ctx, a: &[Expr]) -> Value {
+    let v = c.eval_scalar_or_array(&a[0]);
+    if let Value::Error(e) = v {
+        return err(e);
+    }
+    let rest = &a[1..];
+    let pairs = rest.len() / 2;
+    if let Value::Array(_) = v {
+        let mut values = vec![v];
+        for e in rest {
+            let x = c.eval(e);
+            values.push(empty_as_zero(c.scalar_or_array_of(x)));
+        }
+        return c.map_values(values, &mut |_, v| {
+            if let Value::Error(e) = &v[0] {
+                return err(*e);
+            }
+            for i in 0..pairs {
+                if let Value::Error(e) = &v[1 + 2 * i] {
+                    return err(*e);
+                }
+                if switch_matches(&v[0], &v[1 + 2 * i]) {
+                    return v[2 + 2 * i].clone();
+                }
+            }
+            if rest.len() % 2 == 1 { v[v.len() - 1].clone() } else { err(CellError::NA) }
+        });
+    }
+    for i in 0..pairs {
+        let candidate = c.eval_scalar_or_array(&rest[2 * i]);
+        if let Value::Error(e) = candidate {
+            return err(e);
+        }
+        if switch_matches(&v, &candidate) {
+            return selected(c, &rest[2 * i + 1]);
+        }
+    }
+    if rest.len() % 2 == 1 { selected(c, &rest[rest.len() - 1]) } else { err(CellError::NA) }
+}
+
 /// The result chosen by IFS or SWITCH: a reference stays a reference (as IF's).
 fn selected(c: &mut Ctx, e: &Expr) -> Value {
     let v = c.eval(e);
@@ -114,9 +171,10 @@ fn if_(c: &mut Ctx, a: &[Expr]) -> Value {
     let cond = c.eval_scalar_or_array(&a[0]);
     let branch = |c: &mut Ctx, i: usize, keep_ref: bool| -> Value {
         match a.get(i) {
-            // IF(FALSE, 1) is FALSE; IF(FALSE, 1,) is 0.
+            // IF(FALSE, 1) is FALSE; IF(FALSE, 1,) shows 0 but is an omitted argument that passes on (Excel: `ISBLANK(IF(1,))` and `""=IF(1,)` are TRUE, `ISODD(IF(1,))` is
+            // #N/A; GitHub #250, `isTEST2.xlsx`).
             None => Value::Bool(i == 1),
-            Some(Expr::Missing) => Value::Number(0.0),
+            Some(Expr::Missing) => Value::Omitted,
             Some(e) => {
                 // Evaluated once: a branch that calls itself (a recursive LAMBDA) would otherwise double its work at every level.
                 let v = c.eval(e);

@@ -13,6 +13,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::issue89_every_effect_of_the_check_file_changes_what_is_drawn", every_effect_is_drawn),
         ("pptx::issue89_frames_of_the_check_file_at_set_times", frames),
         ("pptx::issue89_looks_of_the_effects_of_a_file", looks),
+        ("pptx::issue89_probe_of_an_effect_of_a_file", probe),
         ("pptx::issue89_gallery_effects_are_in_the_menu_and_kept_through_a_save", gallery_in_menu),
     ]
 }
@@ -29,7 +30,7 @@ fn signature(a: &ibis_doc_model::Animation, p: f32) -> [i64; 8] {
     let slide = (960.0, 540.0);
     let from = ShapeMotion::at_rest(if a.class == AnimationClass::Entrance { 0.0 } else { 1.0 });
     let m = motion_at(a, from, p, frame, slide);
-    let area = preset_reveal(a, p, frame).map_or(1.0, |r| r.iter().map(|r| (r[2] - r[0]) * (r[3] - r[1])).sum::<f64>());
+    let area = preset_reveal(a, p, frame, (f64::from(frame.2), f64::from(frame.3))).map_or(1.0, |r| r.iter().map(|(r, o)| (r[2] - r[0]) * (r[3] - r[1]) * o).sum::<f64>());
     let q = |v: f32| (v * 100.0).round() as i64;
     [q(m.opacity), q(m.dx), q(m.dy), q(m.turn), q(m.grow.0), q(m.grow.1), (area * 100.0).round() as i64, 0]
 }
@@ -41,7 +42,7 @@ fn every_effect_is_drawn() {
         return;
     }
     let data = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(FILE)).unwrap();
-    let p = ibis_pptx::read(&data).unwrap();
+    let p = ibis_formats::read(&data).unwrap();
     let mut nothing = Vec::new();
     for (i, slide) in p.slides.iter().enumerate() {
         for a in &slide.animations {
@@ -61,8 +62,12 @@ fn every_effect_is_drawn() {
     assert!(nothing.len() <= UNDRAWN, "{} effects are drawn as nothing: {nothing:?}", nothing.len());
 }
 
-/// The effects that change nothing the player draws (a colour, a font, a 3D turn or a skew only): see the report of #89.
-const UNDRAWN: usize = 28;
+/// The effects that change nothing the player draws: 29 of the file's 291, found by running the check file (it was 28 and the test did not run where the
+/// file is not: the file is not in the repository, `present()`). 24 emphasis effects (a colour, a font, a 3D turn or a skew only), the entrance and the
+/// exit of カラー表示 (preset 27, a colour) and of ランダム効果 (24: the file holds an empty `p:anim`, PowerPoint picks an effect at each play), and the
+/// entrance フラッシュ（1 回） (11), which PowerPoint saves as a lone `p:set` of `style.visibility` (an Appear: the exit of the same name does draw). See the
+/// report of #89.
+const UNDRAWN: usize = 29;
 
 /// A picture of the show at set times after the click for the slides in `ANIM89_PAGES` (comma separated, 1-based; `all` for the
 /// whole file), as `target/scenario/<test name>/<nn>-p<slide>-<ms>.png`.
@@ -131,13 +136,13 @@ fn frames() {
 /// behaviours, and is saved and read back as it was.
 fn gallery_in_menu() {
     for (class, key_class) in [(AnimationClass::Entrance, "entr"), (AnimationClass::Emphasis, "emph")] {
-        let effect = ibis_pptx::animation_catalog::effects_of(class)
+        let effect = ibis_formats::animation_catalog::effects_of(class)
             .filter(|e| !(class == AnimationClass::Entrance && ibis_doc_model::animation_preset::preset_def(e.id).is_some()))
-            .find(|e| ibis_pptx::animation_catalog::make(ibis_doc_model::ShapeId(0), class, e.id, e.options[0].0).is_some_and(|a| a.look == AnimationLook::Preset))
+            .find(|e| ibis_formats::animation_catalog::make(ibis_doc_model::ShapeId(0), class, e.id, e.options[0].0).is_some_and(|a| a.look == AnimationLook::Preset))
             .expect("a gallery effect");
         let mut s = Scenario::open("test/editing/pptx-plan.pptx");
         s.select_shape(0);
-        s.toolbar_menu("motion", &format!("pptx.anim.cat.{key_class}.{}", effect.id));
+        s.toolbar_menu("motion", &format!("pptx.animation.cat.{key_class}.{}", effect.id));
         let a = s.with(|e, _| e.slide().animations.first().cloned()).expect("an effect");
         assert_eq!((a.class, a.look, a.preset.0), (class, AnimationLook::Preset, effect.id));
         assert!(!a.behaviors.is_empty());
@@ -153,7 +158,7 @@ fn looks() {
     let Ok(out) = std::env::var("ANIM89_LOOKS") else { return };
     let file = std::env::var("ANIM89_FILE").unwrap_or_else(|_| FILE.to_string());
     let data = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(&file)).unwrap();
-    let p = ibis_pptx::read(&data).unwrap();
+    let p = ibis_formats::read(&data).unwrap();
     let mut lines = Vec::new();
     for (i, slide) in p.slides.iter().enumerate() {
         for a in &slide.animations {
@@ -161,4 +166,20 @@ fn looks() {
         }
     }
     std::fs::write(out, lines.join("\n")).unwrap();
+}
+
+/// `ANIM89_PROBE=<slide>` (with `ANIM89_FILE`): opacity, offset, turn and size of the first effect of that slide at 25 steps of its
+/// time (a shape of 480 x 180 at (240, 180) on a slide of 960 x 540), to compare with what PowerPoint's video shows.
+fn probe() {
+    let Ok(slide_no) = std::env::var("ANIM89_PROBE") else { return };
+    let file = std::env::var("ANIM89_FILE").unwrap_or_else(|_| FILE.to_string());
+    let data = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(&file)).unwrap();
+    let p = ibis_formats::read(&data).unwrap();
+    let a = &p.slides[slide_no.parse::<usize>().unwrap() - 1].animations[0];
+    let frame = (240.0, 180.0, 480.0, 180.0);
+    let from = ShapeMotion::at_rest(if a.class == AnimationClass::Entrance { 0.0 } else { 1.0 });
+    for k in 0..=24 {
+        let m = motion_at(a, from, k as f32 / 24.0 * 0.9999, frame, (960.0, 540.0));
+        println!("probe {k:2} op {:.3} dx {:.1} dy {:.1} turn {:.1} grow {:.3} {:.3}", m.opacity, m.dx, m.dy, m.turn, m.grow.0, m.grow.1);
+    }
 }

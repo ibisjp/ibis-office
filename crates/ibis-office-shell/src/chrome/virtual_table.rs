@@ -161,6 +161,8 @@ pub struct TableRow {
     pub cells: Vec<AnyElement>,
     pub selected: bool,
     pub on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    /// The row itself neither highlights under the pointer nor takes the click: its cells do (a tree row whose arrow and label are two targets).
+    pub parts_hit: bool,
     /// Makes the row a heading row.
     pub group: Option<GroupHeader>,
     /// The row can be dragged (needs `DataTable::row_dnd`).
@@ -197,6 +199,12 @@ impl TableRow {
         if let Some(g) = self.group.as_mut() {
             g.collapsed = Some(collapsed);
         }
+        self
+    }
+
+    /// The cells take the pointer (hover and click) themselves, not the row as a whole.
+    pub fn parts_hit(mut self) -> Self {
+        self.parts_hit = true;
         self
     }
 
@@ -434,7 +442,8 @@ pub(crate) fn render(id: &'static str, height: f32, v: Virtual, editor: WeakEnti
                 .map(|(n, row)| {
                     let i = range.start + n;
                     // A live reorder shows the move itself, no insertion line.
-                    let hover = row_dnd.as_ref().filter(|_| !live_reorder).and_then(|d| d.hover()).filter(|(t, at, _)| *t == id && *at == i).map(|(_, _, place)| place);
+                    // (A row of another table dragged over it, the commands onto the order: the insertion line, as ever.)
+                    let hover = row_dnd.as_ref().filter(|d| !live_reorder || d.dragging().is_some_and(|(t, _)| t != id)).and_then(|d| d.hover()).filter(|(t, at, _)| *t == id && *at == i).map(|(_, _, place)| place);
                     let slide = row_dnd.as_ref().filter(|_| live_reorder).and_then(|d| d.live_shift(id, i));
                     let held = row_dnd.as_ref().zip(row.drag.as_ref()).is_some_and(|(d, drag)| d.carried() == Some((id, drag.id)));
                     // The rows may have changed since the press (a screen that folds rows when one is picked up): the held row's place is where it is now.
@@ -465,7 +474,7 @@ pub(crate) fn render(id: &'static str, height: f32, v: Virtual, editor: WeakEnti
                             0xffffff
                         }))
                         .when(dragged && !live_reorder, |d| d.opacity(0.45));
-                    if !row.selected && hover != Some(super::row_dnd::DropPlace::Into) {
+                    if !row.selected && !row.parts_hit && hover != Some(super::row_dnd::DropPlace::Into) {
                         line = line.hover(|s| s.bg(rgb(0xf1f3f4)));
                     }
                     if let Some(g) = row.group {
@@ -556,7 +565,7 @@ pub(crate) fn render(id: &'static str, height: f32, v: Virtual, editor: WeakEnti
                         }
                         _ => {}
                     }
-                    if let Some(click) = row.on_click {
+                    if let Some(click) = row.on_click.filter(|_| !row.parts_hit) {
                         line = line.on_click(move |ev, w, cx| click(ev, w, cx));
                     }
                     if !live_reorder {

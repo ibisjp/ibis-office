@@ -139,7 +139,7 @@ fn lines_per_band(text: &str, vertical: bool, margin: f64) -> [usize; 3] {
         let (w, h) = if vertical { (220, 160) } else { (160, 220) };
         let frame = ibis_doc_model::EmuRect::new(1_000_000, 1_000_000, w * 12_700, h * 12_700);
         let shape = ibis_doc_model::Shape::new(id, frame, ibis_doc_model::ShapeKind::TextBox(body));
-        e.run(vec![ibis_doc_model::Command::InsertShape { slide, index: e.slide().shapes.len(), shape }], cx);
+        e.run(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(e.slide().shapes.len(), shape)] }], cx);
         e.set_selection(vec![id]);
         cx.notify();
     });

@@ -156,7 +156,7 @@ impl SlideEditor {
 
         let mut commands = vec![
             FlowCommand::InsertTextBox { at: caret, size, text: initial_text.to_string() },
-            FlowCommand::SetShapeTextFormat {
+            FlowCommand::SetShapeTextBasicFormat {
                 at: caret,
                 bold: Some(preset.bold),
                 italic: None,
@@ -198,7 +198,7 @@ impl SlideEditor {
     pub(crate) fn doc_insert_signature_line(&mut self, signer: &str, title: &str, cx: &mut Context<Self>) -> bool {
         let Some((_, caret)) = self.text_selection() else { return false };
         let size = EmuSize::new(3_000_000, 1_200_000);
-        let label = crate::shell::i18n::text("xlsx.signature-line");
+        let label = crate::shell::i18n::text("insert.signature-line");
         let text = if signer.is_empty() {
             format!("✕ _______________________________\n{label}") // i18n-ok: signature placeholder
         } else if title.is_empty() {
@@ -299,7 +299,7 @@ pub(crate) fn docx_smartart_insert_items() -> Vec<MenuEntry> {
             })
             .into(),
         MenuItem::tr("pptx.insert.smartart.picture")
-            .icon("insert_photo")
+            .icon("image")
             .on(|e, _, cx| {
                 e.doc_insert_smartart("picture", cx);
             })

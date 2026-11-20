@@ -136,6 +136,7 @@ mod platform {
         fn RegisterClipboardFormatW(name: *const u16) -> u32;
         fn OpenClipboard(owner: *mut c_void) -> i32;
         fn CloseClipboard() -> i32;
+        fn EmptyClipboard() -> i32;
         fn GetClipboardData(format: u32) -> *mut c_void;
         fn SetClipboardData(format: u32, handle: *mut c_void) -> *mut c_void;
     }
@@ -328,7 +329,10 @@ mod platform {
     }
     /// Add "XML Spreadsheet" (SpreadsheetML 2003), which Excel for Windows pastes with the formulas and formats.
     pub fn write_xml_spreadsheet(xml: &[u8]) -> bool {
-        unsafe { write_memory(named_format("XML Spreadsheet"), xml) }
+        // With the terminating NUL Excel's own copy has (the memory is not zeroed: a reader of a C string would run on).
+        let mut bytes = xml.to_vec();
+        bytes.push(0);
+        unsafe { write_memory(named_format("XML Spreadsheet"), &bytes) }
     }
     /// The bytes of "HTML Format" (the header with offsets, then the HTML).
     pub fn read_html() -> Option<Vec<u8>> {
@@ -337,6 +341,51 @@ mod platform {
     /// Add "HTML Format" (`bytes`: the header and the HTML) beside the text already on the clipboard.
     pub fn write_html(bytes: &[u8]) -> bool {
         unsafe { write_memory(html_format(), bytes) }
+    }
+    /// Put the copied cells as one set in one go, as Excel does: the clipboard is opened once, emptied, and the text
+    /// (`CF_UNICODETEXT`, with its terminating NUL), "HTML Format" and "XML Spreadsheet" are set before it is closed.
+    /// Adding the HTML and the XML in a second, separate opening (after the toolkit wrote the text) left the clipboard
+    /// with the text alone (#187: Excel pasted what the text held, with an empty row more).
+    pub fn write_cells(text: &str, html: &[u8], xml: Option<&[u8]>) -> bool {
+        unsafe {
+            if OpenClipboard(std::ptr::null_mut()) == 0 {
+                return false;
+            }
+            let _close = Close;
+            if EmptyClipboard() == 0 {
+                return false;
+            }
+            let put = |format: u32, bytes: &[u8]| -> bool {
+                let handle = GlobalAlloc(2, bytes.len());
+                if handle.is_null() {
+                    return false;
+                }
+                let ptr = GlobalLock(handle);
+                if ptr.is_null() {
+                    GlobalFree(handle);
+                    return false;
+                }
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
+                GlobalUnlock(handle);
+                if SetClipboardData(format, handle).is_null() {
+                    GlobalFree(handle);
+                    false
+                } else {
+                    true
+                }
+            };
+            let utf16: Vec<u8> = text.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
+            if !put(13, &utf16) {
+                return false;
+            }
+            put(html_format(), html);
+            if let Some(xml) = xml {
+                let mut bytes = xml.to_vec();
+                bytes.push(0);
+                put(named_format("XML Spreadsheet"), &bytes);
+            }
+            true
+        }
     }
     pub fn write(bytes: &[u8], text: Option<&str>) -> bool {
         unsafe {
@@ -467,6 +516,22 @@ pub fn write_html(html: &str) -> bool {
     return platform::write_html(&cf_html(html));
     #[cfg(not(windows))]
     platform::write_html(html.as_bytes())
+}
+
+/// Windows: put the cells' text, HTML table and XML Spreadsheet on the clipboard together, in one opening, with the text as given
+/// (`false`: not done, the caller writes them one by one; always `false` off Windows and for a scenario's fake clipboard).
+pub fn write_cells(text: &str, html: &str, xml: Option<&str>) -> bool {
+    #[cfg(feature = "scenarios")]
+    if SIMULATED_HTML.with(|s| s.borrow().is_some()) {
+        return false;
+    }
+    #[cfg(windows)]
+    return platform::write_cells(text, &cf_html(html), xml.map(str::as_bytes));
+    #[cfg(not(windows))]
+    {
+        let _ = (text, html, xml);
+        false
+    }
 }
 
 /// Put the cells as an XML Spreadsheet beside the text (Windows: Excel pastes it with formulas and formats; elsewhere nothing).
@@ -670,8 +735,19 @@ pub fn svg_as_png(svg: &str, width: f32, height: f32, scale: f32) -> Option<Imag
     Some(Image::from_bytes(ImageFormat::Png, bytes.into_inner()))
 }
 
+/// The picture of `shapes` for the clipboard. It is drawn in a headless app of its own, whose start (`app_init`) follows that
+/// app's window appearance (light) and so would turn the process-wide appearance of the chrome light under a window that is
+/// dark (#200): the appearance is kept as it was.
 #[cfg(headless_export)]
 pub fn image_fallback(
+    presentation: &ibis_doc_model::Presentation,
+    shapes: &[ibis_doc_model::Shape],
+) -> Option<Image> {
+    crate::palette::keep_appearance(|| draw_image_fallback(presentation, shapes))
+}
+
+#[cfg(headless_export)]
+fn draw_image_fallback(
     presentation: &ibis_doc_model::Presentation,
     shapes: &[ibis_doc_model::Shape],
 ) -> Option<Image> {
@@ -692,7 +768,7 @@ pub fn image_fallback(
         }
     }
     let mut shapes = shapes.to_vec();
-    let bounds = ibis_pptx::shape_clipboard::drawing_bounds(&shapes)?;
+    let bounds = ibis_formats::shape_clipboard::drawing_bounds(&shapes)?;
     let (x, y, w, h) = (bounds.x, bounds.y, bounds.width, bounds.height);
     for shape in &mut shapes {
         shape.frame.x -= x;

@@ -106,7 +106,7 @@ fn typed_chart_data() {
         let open = e.chart_data_window().expect("the data grid");
         (open.view.clone(), open.refs.clone())
     });
-    let (_, range) = ibis_pptx::parse_ref(refs[0].values.as_deref().expect("a range")).expect("a reference");
+    let (_, range) = ibis_formats::parse_ref(refs[0].values.as_deref().expect("a range")).expect("a reference");
     s.with_app(|app| {
         view.update(app, |d, cx| {
             let slide = d.current_slide;

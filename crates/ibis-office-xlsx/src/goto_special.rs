@@ -616,7 +616,7 @@ impl SlideEditor {
             }
         }
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]) {
+        if let Err(err) = self.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { sheet: slide, edits })]) {
             self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
         }
         cx.notify();

@@ -940,9 +940,11 @@ pub enum OverstrikeAlign {
     Left,
     /// `\ar`: every argument against the right.
     Right,
+    /// `\o` with no switch (Word's 割注-like stack `eq \o(\s\up 5(上),\s\do 2(下))`): every argument in the middle of the widest one.
+    Center,
 }
 
-/// An `EQ \o\ad`, `\o\al` or `\o\ar` field's arguments: the text of each and
+/// An `EQ \o\ad`, `\o\al`, `\o\ar` or `\o` (no switch) field's arguments: the text of each and
 /// how far it is raised (points; negative: lowered, by `\s\up n` and `\s\do n`).
 pub fn overstrike(instruction: &str) -> Option<(OverstrikeAlign, Vec<(String, f32)>)> {
     let (switch, parts) = overstrike_arguments(instruction)?;
@@ -950,6 +952,7 @@ pub fn overstrike(instruction: &str) -> Option<(OverstrikeAlign, Vec<(String, f3
         "\\ad" => OverstrikeAlign::Distribute,
         "\\al" => OverstrikeAlign::Left,
         "\\ar" => OverstrikeAlign::Right,
+        "" => OverstrikeAlign::Center,
         _ => return None,
     };
     let args = parts
@@ -1137,6 +1140,8 @@ mod tests {
         assert_eq!(super::overstrike("eq \\o \\al(\\s \\up 6(上),\\s \\up-6(下))"), Some((Left, vec![("上".into(), 6.0), ("下".into(), -6.0)])));
         assert_eq!(super::overstrike("eq \\o\\al(\\s \\up 6(上),\\s \\up-6(下))"), Some((Left, vec![("上".into(), 6.0), ("下".into(), -6.0)])));
         assert_eq!(super::overstrike("eq \\o\\ac(○,字)"), None);
+        // No switch: centred (GitHub issue #180).
+        assert_eq!(super::overstrike("eq \\o(\\s\\up 5(かき),\\s\\do 2(くけ))"), Some((Center, vec![("かき".into(), 5.0), ("くけ".into(), -2.0)])));
     }
 
     use super::*;

@@ -234,7 +234,7 @@ impl SlideEditor {
                 Some(_) => None,
                 None => Some(AutoFilter { range: CellRange { last_row: t.range.last_row - t.totals_rows, ..t.range }, columns: Vec::new() }),
             };
-            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetTableFilter { slide, index, filter })]) {
+            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetTableFilter { sheet: slide, index, filter })]) {
                 log::warn!("filter rejected: {err}");
             }
             self.wb_mut().filter_panel = None;
@@ -253,7 +253,7 @@ impl SlideEditor {
                 Some(AutoFilter { range, columns: Vec::new() })
             }
         };
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetAutoFilter { slide, filter })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetAutoFilter { sheet: slide, filter })]) {
             log::warn!("filter rejected: {err}");
         }
         self.wb_mut().filter_panel = None;
@@ -269,9 +269,9 @@ impl SlideEditor {
         let slide = self.current_slide;
         let Some((_, sheet)) = self.current_sheet() else { return };
         let command = if let Some(f) = sheet.auto_filter.clone() {
-            Some(SheetCommand::SetAutoFilter { slide, filter: Some(f) })
+            Some(SheetCommand::SetAutoFilter { sheet: slide, filter: Some(f) })
         } else if let Some((idx, t)) = sheet.tables.iter().enumerate().find(|(_, t)| t.filter.is_some()) {
-            Some(SheetCommand::SetTableFilter { slide, index: idx, filter: t.filter.clone() })
+            Some(SheetCommand::SetTableFilter { sheet: slide, index: idx, filter: t.filter.clone() })
         } else {
             None
         };
@@ -300,14 +300,14 @@ impl SlideEditor {
         if let Some(mut af) = sheet.auto_filter.clone() {
             if !af.columns.is_empty() {
                 af.columns.clear();
-                commands.push(Command::Sheet(SheetCommand::SetAutoFilter { slide, filter: Some(af) }));
+                commands.push(Command::Sheet(SheetCommand::SetAutoFilter { sheet: slide, filter: Some(af) }));
             }
         }
         for (index, t) in sheet.tables.iter().enumerate() {
             if let Some(mut tf) = t.filter.clone() {
                 if !tf.columns.is_empty() {
                     tf.columns.clear();
-                    commands.push(Command::Sheet(SheetCommand::SetTableFilter { slide, index, filter: Some(tf) }));
+                    commands.push(Command::Sheet(SheetCommand::SetTableFilter { sheet: slide, index, filter: Some(tf) }));
                 }
             }
         }
@@ -347,8 +347,8 @@ impl SlideEditor {
         }
         let slide = self.current_slide;
         let command = match target {
-            FilterTarget::Sheet => SheetCommand::SetAutoFilter { slide, filter: Some(f) },
-            FilterTarget::Table(index) => SheetCommand::SetTableFilter { slide, index, filter: Some(f) },
+            FilterTarget::Sheet => SheetCommand::SetAutoFilter { sheet: slide, filter: Some(f) },
+            FilterTarget::Table(index) => SheetCommand::SetTableFilter { sheet: slide, index, filter: Some(f) },
         };
         if let Err(err) = self.document.execute(vec![Command::Sheet(command)]) {
             log::warn!("filter rejected: {err}");
@@ -517,7 +517,7 @@ impl SlideEditor {
         let Some((target, column)) = self.wb().filter_panel.as_ref().map(|p| (p.target, p.column)) else { return };
         let Some(range) = self.target_filter(target).map(|f| f.range) else { return };
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SortBy { slide, range, keys: vec![(column, by)], header: true, match_case: false })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SortByKeys { sheet: slide, range, keys: vec![(column, by)], header: true, match_case: false })]) {
             log::warn!("sort rejected: {err}");
         }
         self.close_filter_panel(cx);

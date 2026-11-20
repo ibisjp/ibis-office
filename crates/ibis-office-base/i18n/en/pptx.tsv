@@ -237,10 +237,6 @@ pptx.transition	Change Transition
 pptx.background	Change Background
 pptx.theme	Change Theme
 pptx.edit-theme	Edit Theme
-pptx.order.front	Bring to Front
-pptx.order.forward	Bring Forward
-pptx.order.backward	Send Backward
-pptx.order.back	Send to Back
 pptx.rotate.right	Rotate Right 90°
 pptx.rotate.left	Rotate Left 90°
 pptx.rotate.flip-h	Flip Horizontal
@@ -710,12 +706,6 @@ pptx.paragraph.font-top	Top
 pptx.paragraph.font-center	Centered
 pptx.paragraph.font-baseline	Baseline
 pptx.paragraph.font-bottom	Bottom
-pptx.align.left	Align Left
-pptx.align.center	Align Center
-pptx.align.right	Align Right
-pptx.align.top	Align Top
-pptx.align.middle	Align Middle
-pptx.align.bottom	Align Bottom
 pptx.shadow.none	No Shadow
 pptx.shadow.right	Right, 4 pt
 pptx.shadow.diagonal	Bottom Right, 4 pt
@@ -880,90 +870,90 @@ pptx.timing-panel.transition-timing-slide-index	Transition Timing of Slide {inde
 pptx.copy-slide	Copy Slide
 pptx.cut-slide	Cut Slide
 pptx.paste-slide	Paste Slide
-xlsx.note-new	New Note
+xlsx.new-note	New Note
 xlsx.note-edit	Edit Note
 xlsx.note-delete	Delete Note
 xlsx.clear-comments	Clear Comments and Notes
-pptx.anim.preview	Preview
-pptx.anim.play-all	Play All
-pptx.anim.entrance	Entrance
-pptx.anim.emphasis	Emphasis
-pptx.anim.exit	Exit
-pptx.anim.in.appear	Appear
-pptx.anim.in.fade	Fade
-pptx.anim.in.fly-bottom	Fly In (From Bottom)
-pptx.anim.in.fly-left	Fly In (From Left)
-pptx.anim.in.fly-right	Fly In (From Right)
-pptx.anim.in.fly-top	Fly In (From Top)
-pptx.anim.in.float	Float In
-pptx.anim.in.float-down	Float In (Down)
-pptx.anim.in.wipe	Wipe
-pptx.anim.in.wipe-bottom	Wipe (From Bottom)
-pptx.anim.in.wipe-left	Wipe (From Left)
-pptx.anim.in.wipe-right	Wipe (From Right)
-pptx.anim.in.wipe-top	Wipe (From Top)
-pptx.anim.in.zoom	Zoom
-pptx.anim.in.replay	Replay
-pptx.anim.em.spin	Spin
-pptx.anim.em.grow	Grow/Shrink
-pptx.anim.out.disappear	Disappear
-pptx.anim.out.fade	Fade
-pptx.anim.out.fly-bottom	Fly Out (To Bottom)
-pptx.anim.out.fly-left	Fly Out (To Left)
-pptx.anim.out.fly-right	Fly Out (To Right)
-pptx.anim.out.fly-top	Fly Out (To Top)
-pptx.anim.out.float	Float Out
-pptx.anim.out.float-up	Float Out (Up)
-pptx.anim.out.wipe	Wipe
-pptx.anim.out.wipe-bottom	Wipe (To Bottom)
-pptx.anim.out.wipe-left	Wipe (To Left)
-pptx.anim.out.wipe-right	Wipe (To Right)
-pptx.anim.out.wipe-top	Wipe (To Top)
-pptx.anim.out.zoom	Zoom
-pptx.anim.out.rewind	Rewind
-pptx.anim.start	Start
-pptx.anim.start.click	On Click
-pptx.anim.start.with	With Previous
-pptx.anim.start.after	After Previous
-pptx.anim.duration	Duration
-pptx.anim.duration.500	0.5 Seconds
-pptx.anim.duration.1000	1 Second
-pptx.anim.duration.2000	2 Seconds
-pptx.anim.delay	Delay
-pptx.anim.delay.0	None
-pptx.anim.delay.500	0.5 Seconds
-pptx.anim.delay.1000	1 Second
-pptx.anim.delay.2000	2 Seconds
-pptx.anim.repeat	Repeat
-pptx.anim.repeat.none	None
-pptx.anim.repeat.2	2
-pptx.anim.repeat.3	3
-pptx.anim.repeat.4	4
-pptx.anim.repeat.5	5
-pptx.anim.repeat.10	10
-pptx.anim.repeat.until-click	Until Next Click
-pptx.anim.repeat.until-end	Until End of Slide
-pptx.anim.autoreverse	Auto-reverse
-pptx.anim.rewind	Rewind when done playing
-pptx.anim.smooth	Smooth
-pptx.anim.smooth.none	None (Linear)
-pptx.anim.smooth.start	Smooth Start (50%)
-pptx.anim.smooth.end	Smooth End (50%)
-pptx.anim.smooth.both	Both (Start & End)
-pptx.anim.smooth-start	Smooth Start
-pptx.anim.smooth-end	Smooth End
-pptx.anim.after	After animation
-pptx.anim.after.hold	Keep Showing
-pptx.anim.after.hide	Hide After Animation
-pptx.anim.after.dim	Dim with Color
-pptx.anim.after.hide-next	Hide on Next Click
-pptx.anim.remove	Remove Animation
-pptx.anim.order.earlier	Move Earlier
-pptx.anim.order.later	Move Later
-pptx.anim.trigger	Trigger
-pptx.anim.trigger.click	On Click of
-pptx.anim.trigger.bookmark	On Bookmark
-pptx.anim.trigger.none	None
+pptx.animation.preview	Preview
+pptx.animation.play-all	Play All
+pptx.animation.entrance	Entrance
+pptx.animation.emphasis	Emphasis
+pptx.animation.exit	Exit
+pptx.animation.in.appear	Appear
+pptx.animation.in.fade	Fade
+pptx.animation.in.fly-bottom	Fly In (From Bottom)
+pptx.animation.in.fly-left	Fly In (From Left)
+pptx.animation.in.fly-right	Fly In (From Right)
+pptx.animation.in.fly-top	Fly In (From Top)
+pptx.animation.in.float	Float In
+pptx.animation.in.float-down	Float In (Down)
+pptx.animation.in.wipe	Wipe
+pptx.animation.in.wipe-bottom	Wipe (From Bottom)
+pptx.animation.in.wipe-left	Wipe (From Left)
+pptx.animation.in.wipe-right	Wipe (From Right)
+pptx.animation.in.wipe-top	Wipe (From Top)
+pptx.animation.in.zoom	Zoom
+pptx.animation.in.replay	Replay
+pptx.animation.em.spin	Spin
+pptx.animation.em.grow	Grow/Shrink
+pptx.animation.out.disappear	Disappear
+pptx.animation.out.fade	Fade
+pptx.animation.out.fly-bottom	Fly Out (To Bottom)
+pptx.animation.out.fly-left	Fly Out (To Left)
+pptx.animation.out.fly-right	Fly Out (To Right)
+pptx.animation.out.fly-top	Fly Out (To Top)
+pptx.animation.out.float	Float Out
+pptx.animation.out.float-up	Float Out (Up)
+pptx.animation.out.wipe	Wipe
+pptx.animation.out.wipe-bottom	Wipe (To Bottom)
+pptx.animation.out.wipe-left	Wipe (To Left)
+pptx.animation.out.wipe-right	Wipe (To Right)
+pptx.animation.out.wipe-top	Wipe (To Top)
+pptx.animation.out.zoom	Zoom
+pptx.animation.out.rewind	Rewind
+pptx.animation.start	Start
+pptx.animation.start.click	On Click
+pptx.animation.start.with	With Previous
+pptx.animation.start.after	After Previous
+pptx.animation.duration	Duration
+pptx.animation.duration.500	0.5 Seconds
+pptx.animation.duration.1000	1 Second
+pptx.animation.duration.2000	2 Seconds
+pptx.animation.delay	Delay
+pptx.animation.delay.0	None
+pptx.animation.delay.500	0.5 Seconds
+pptx.animation.delay.1000	1 Second
+pptx.animation.delay.2000	2 Seconds
+pptx.animation.repeat	Repeat
+pptx.animation.repeat.none	None
+pptx.animation.repeat.2	2
+pptx.animation.repeat.3	3
+pptx.animation.repeat.4	4
+pptx.animation.repeat.5	5
+pptx.animation.repeat.10	10
+pptx.animation.repeat.until-click	Until Next Click
+pptx.animation.repeat.until-end	Until End of Slide
+pptx.animation.autoreverse	Auto-reverse
+pptx.animation.rewind	Rewind when done playing
+pptx.animation.smooth	Smooth
+pptx.animation.smooth.none	None (Linear)
+pptx.animation.smooth.start	Smooth Start (50%)
+pptx.animation.smooth.end	Smooth End (50%)
+pptx.animation.smooth.both	Both (Start & End)
+pptx.animation.smooth-start	Smooth Start
+pptx.animation.smooth-end	Smooth End
+pptx.animation.after	After animation
+pptx.animation.after.hold	Keep Showing
+pptx.animation.after.hide	Hide After Animation
+pptx.animation.after.dim	Dim with Color
+pptx.animation.after.hide-next	Hide on Next Click
+pptx.animation.remove	Remove Animation
+pptx.animation.order.earlier	Move Earlier
+pptx.animation.order.later	Move Later
+pptx.animation.trigger	Trigger
+pptx.animation.trigger.click	On Click of
+pptx.animation.trigger.bookmark	On Bookmark
+pptx.animation.trigger.none	None
 pptx.chrome.change-shape	Change Shape
 pptx.paste-slide-keep	Paste Slide (Keep Source Formatting)
 table.distribute-rows	Distribute Rows
@@ -973,17 +963,17 @@ pptx.header-footer	Header & Footer…
 pptx.header-footer.slide-number	Slide number
 pptx.header-footer.don-t-show-title-slide	Don't show on title slide
 pptx.notes-marks-panel.apply-all	Apply to All
-pptx.anim.add	Add Animation
-pptx.anim.pane	Animation Pane
-pptx.anim.path	Motion Path
-pptx.anim.path.down	Line (Down)
-pptx.anim.path.left	Line (Left)
-pptx.anim.path.right	Line (Right)
-pptx.anim.path.up	Line (Up)
-pptx.anim.other	Other Effect
-pptx.anim.options-dialog	Effect Options…
-pptx.anim.panel.effect	Effect
-pptx.anim.panel.timing	Timing
+pptx.animation.add	Add Animation
+pptx.animation.pane	Animation Pane
+pptx.animation.path	Motion Path
+pptx.animation.path.down	Line (Down)
+pptx.animation.path.left	Line (Left)
+pptx.animation.path.right	Line (Right)
+pptx.animation.path.up	Line (Up)
+pptx.animation.other	Other Effect
+pptx.animation.options-dialog	Effect Options…
+pptx.animation.panel.effect	Effect
+pptx.animation.panel.timing	Timing
 pptx.menu.animation	Animation
 pptx.animation-ui.there-no-animations-slide	There are no animations on this slide.
 pptx.selection-pane.shape-n	Shape {n}
@@ -1156,12 +1146,6 @@ pptx.replace-fonts.fonts-used-presentation	Fonts used in presentation
 pptx.replace-fonts.replaced-fonts-n-location-s	Replaced fonts in {n} location(s)
 pptx.replace-fonts.font-replace-was-not-found	Font to replace was not found
 pptx.table-style-options	Table Style Options
-pptx.table.first-row	Header Row
-pptx.table.last-row	Total Row
-pptx.table.band-row	Banded Rows
-pptx.table.first-col	First Column
-pptx.table.last-col	Last Column
-pptx.table.band-col	Banded Columns
 pptx.table-style	Table Style
 pptx.table-style.none	No Style
 pptx.table-style.grid	Table Grid
@@ -1220,32 +1204,32 @@ pptx.show-panel.use-timings-2	Use timings
 pptx.show-panel.please-enter-valid-slide-number	Please enter a valid slide number (1 or greater)
 pptx.misc.pause	Pause
 pptx.slideshow.reset	Reset
-pptx.anim.options	Effect Options
-pptx.anim.options.tooltip	Effect Options
-pptx.anim.painter	Animation Painter
-pptx.anim.painter.tooltip	Animation Painter (Copy and paste animations)
-pptx.anim.opt.fly-bottom	From Bottom
-pptx.anim.opt.fly-left	From Left
-pptx.anim.opt.fly-right	From Right
-pptx.anim.opt.fly-top	From Top
-pptx.anim.opt.float-up	Float Up
-pptx.anim.opt.float-down	Float Down
-pptx.anim.opt.wipe-bottom	From Bottom
-pptx.anim.opt.wipe-left	From Left
-pptx.anim.opt.wipe-right	From Right
-pptx.anim.opt.wipe-top	From Top
-pptx.anim.opt.spin-360-cw	360° Clockwise
-pptx.anim.opt.spin-360-ccw	360° Counterclockwise
-pptx.anim.opt.spin-180	Half Spin (180°)
-pptx.anim.opt.spin-720	Two Spins (720°)
-pptx.anim.opt.scale-150	Larger (150%)
-pptx.anim.opt.scale-200	2x (200%)
-pptx.anim.opt.scale-50	Smaller (50%)
-pptx.anim.opt.scale-25	Tiny (25%)
-pptx.anim.opt.path-down	Down
-pptx.anim.opt.path-left	Left
-pptx.anim.opt.path-right	Right
-pptx.anim.opt.path-up	Up
+pptx.animation.options	Effect Options
+pptx.animation.options.tooltip	Effect Options
+pptx.animation.painter	Animation Painter
+pptx.animation.painter.tooltip	Animation Painter (Copy and paste animations)
+pptx.animation.opt.fly-bottom	From Bottom
+pptx.animation.opt.fly-left	From Left
+pptx.animation.opt.fly-right	From Right
+pptx.animation.opt.fly-top	From Top
+pptx.animation.opt.float-up	Float Up
+pptx.animation.opt.float-down	Float Down
+pptx.animation.opt.wipe-bottom	From Bottom
+pptx.animation.opt.wipe-left	From Left
+pptx.animation.opt.wipe-right	From Right
+pptx.animation.opt.wipe-top	From Top
+pptx.animation.opt.spin-360-cw	360° Clockwise
+pptx.animation.opt.spin-360-ccw	360° Counterclockwise
+pptx.animation.opt.spin-180	Half Spin (180°)
+pptx.animation.opt.spin-720	Two Spins (720°)
+pptx.animation.opt.scale-150	Larger (150%)
+pptx.animation.opt.scale-200	2x (200%)
+pptx.animation.opt.scale-50	Smaller (50%)
+pptx.animation.opt.scale-25	Tiny (25%)
+pptx.animation.opt.path-down	Down
+pptx.animation.opt.path-left	Left
+pptx.animation.opt.path-right	Right
+pptx.animation.opt.path-up	Up
 pptx.alt-text	Alt Text…
 pptx.alt-text.title	Title
 pptx.alt-text.description	Description
@@ -1266,10 +1250,10 @@ pptx.gridlines	Gridlines
 pptx.guides	Guides
 pptx.snap-to-grid	Snap to Grid
 pptx.snap-to-shape	Snap to Shape
-pptx.anim.copy	Animation Painter (Copy)
-pptx.anim.paste	Animation Painter (Paste)
-pptx.anim.copied	Copied animation painter
-pptx.anim.pasted	Pasted animation painter
+pptx.animation.copy	Animation Painter (Copy)
+pptx.animation.paste	Animation Painter (Paste)
+pptx.animation.copied	Copied animation painter
+pptx.animation.pasted	Pasted animation painter
 pptx.mark-as-final	Mark as Final
 pptx.read-only-recommended	Read-Only Recommended
 pptx.infobar.final.title	Marked as Final
@@ -1313,7 +1297,6 @@ pptx.inspect-panel.no-off-slide-objects-were	No off-slide objects were found.
 pptx.inspect.remove-all	Remove All
 pptx.inspect-panel.reinspect	Reinspect
 pptx.inspect-panel.reinspection-complete	Reinspection complete.
-pptx.check-accessibility	Check Accessibility…
 pptx.accessibility-panel.accessibility	Accessibility
 pptx.accessibility-panel.check-presentation-accessibility	Check the presentation for accessibility issues to ensure it is easy for everyone to read.
 pptx.accessibility-panel.no-accessibility-issues-found	No accessibility issues found.
@@ -1541,7 +1524,6 @@ pptx.zoom.duration-2000	2.00 Seconds
 pptx.zoom.duration-2500	2.50 Seconds
 pptx.chrome.radar	Radar
 pptx.chrome.filled-radar	Filled Radar
-pptx.compatibility-check	Check Compatibility…
 pptx.compat.recheck	Recheck
 pptx.compat.summary-hint	Checks for features not supported by earlier versions of PowerPoint.
 pptx.compat.no-issues	No compatibility issues found.
@@ -1675,6 +1657,7 @@ pptx.spelling-panel.add-dictionary	Add to Dictionary
 pptx.spelling-panel.spell-checking-not-available	Spell checking is not available in this environment
 pptx.spelling-panel.no-spelling-errors-found	No spelling errors found
 pptx.print-panel.landscape-handouts	Landscape handouts
+pptx.print-panel.vertical-order-handouts	Handouts in vertical order
 pptx.master-view	Slide Master
 pptx.master-view.slide-master	Slide Master
 pptx.master-view.master-document-cannot-edited-yet	The master of this document cannot be edited yet
@@ -1700,13 +1683,13 @@ pptx.notes-format.select-notes-text-set-bold	Select the notes text and set bold,
 pptx.notes-format.notes-formatting	Notes Formatting
 pptx.notes-format.close-notes-formatting	Exit formatting mode
 pptx.notes.edit-notes-formatting	Edit Notes Formatting
-pptx.anim.path.custom	Custom Path
+pptx.animation.path.custom	Custom Path
 pptx.path-draw.custom-path-click-slide-place	Custom path: click the slide to place points; double-click or press Enter to finish (Esc cancels)
 pptx.smartart-to-shapes	Convert SmartArt to Shapes
 pptx.smartart.smartart-has-parts-cannot	This SmartArt has parts that cannot be converted to shapes
-pptx.anim.build	Text Animation
-pptx.anim.build.whole	As One Object
-pptx.anim.build.paragraph	By Paragraph
+pptx.animation.build	Text Animation
+pptx.animation.build.whole	As One Object
+pptx.animation.build.paragraph	By Paragraph
 pptx.handout-master	Handout Master
 pptx.notes-format.handout-master-undo-history	Handout master: the undo history is cleared when you close it
 pptx.notes-format.handout-master-closed-undo-history	Handout master closed (the undo history was cleared)
@@ -1727,8 +1710,8 @@ pptx.password-window.enter-password-modify	Enter Password to Modify
 pptx.password-window.set-password-modify	Set Password to Modify
 pptx.password-window.password-needed-edit-file	The password needed to edit the file
 pptx.password-window.password-needed-edit-file-2	A password is needed to edit this file
-pptx.password-window.open-read-only	Open Read Only
-pptx.password-window.remove-password-modify	Remove Password to Modify
+pptx.password-window.open-read-only	Open &Read Only
+pptx.password-window.remove-password-modify	&Remove Password to Modify
 pptx.insert-chart.waterfall	Waterfall
 pptx.insert-chart.histogram	Histogram
 pptx.insert-chart.pareto	Pareto
@@ -1828,6 +1811,7 @@ _pptx.auto-reverse-2	Auto Reverse
 _pptx.don-t-hide	Keep Showing
 _pptx.dim-2	Dim
 _pptx.after-animation	After Animation
+_pptx.dim-color	Dim Color
 _pptx.with-previous-2	With Previous
 _pptx.after-previous-2	After Previous
 _pptx.duration	Duration
@@ -1905,8 +1889,8 @@ pptx.insert-chart.box-whisker	Box and Whisker
 pptx.insert-chart.treemap	Treemap
 pptx.insert-chart.sunburst	Sunburst
 pptx.print-panel.outline	Outline (the slides' titles and text)
-pptx.anim.build.word	By Word
-pptx.anim.build.letter	By Letter
+pptx.animation.build.word	By Word
+pptx.animation.build.letter	By Letter
 pptx.chart.ex.own-color	Chart's Own Color
 pptx.chart.ex.increase	Increase
 pptx.chart.ex.decrease	Decrease
@@ -1972,19 +1956,19 @@ pptx.photo-album.frame.center-shadow	Center Shadow
 pptx.photo-album.frame.soft-edge	Soft Edge
 pptx.photo-album.create	Create
 pptx.photo-album.create-success	Photo album created successfully
-pptx.anim.chart-build	Chart Animation
-pptx.anim.chart.whole	As One Object
-pptx.anim.chart.series	By Series
-pptx.anim.chart.category	By Category
-pptx.anim.chart.series-el	By Element in Series
-pptx.anim.chart.category-el	By Element in Category
-pptx.anim.chart.anim-bg	Start by Drawing Chart Background
-pptx.anim.dgm-build	SmartArt Animation
-pptx.anim.dgm.whole	As One Object
-pptx.anim.dgm.all	All at Once
-pptx.anim.dgm.one-by-one	One by One
-pptx.anim.dgm.level-at-once	Level at Once
-pptx.anim.dgm.level-one-by-one	Level One by One
+pptx.animation.chart-build	Chart Animation
+pptx.animation.chart.whole	As One Object
+pptx.animation.chart.series	By Series
+pptx.animation.chart.category	By Category
+pptx.animation.chart.series-el	By Element in Series
+pptx.animation.chart.category-el	By Element in Category
+pptx.animation.chart.anim-bg	Start by Drawing Chart Background
+pptx.animation.dgm-build	SmartArt Animation
+pptx.animation.dgm.whole	As One Object
+pptx.animation.dgm.all	All at Once
+pptx.animation.dgm.one-by-one	One by One
+pptx.animation.dgm.level-at-once	Level at Once
+pptx.animation.dgm.level-one-by-one	Level One by One
 pptx.insert.smartart.list	Basic Block List
 pptx.insert.smartart.vlist	Vertical Bullet List
 pptx.insert.smartart.process	Basic Process
@@ -2220,43 +2204,43 @@ pptx.master-view.duplicate-layout	Duplicate Layout
 pptx.master-view.delete-layout	Delete Layout
 pptx.master-view.apply-to-slide	Apply to Slide and Close
 pptx.master-view.layout-in-use	A layout used by a slide cannot be deleted.
-pptx.anim.preset.blinds	Blinds
-pptx.anim.preset.blinds.horizontal	Horizontal
-pptx.anim.preset.blinds.vertical	Vertical
-pptx.anim.preset.box	Box
-pptx.anim.preset.box.in	In
-pptx.anim.preset.box.out	Out
-pptx.anim.preset.checkerboard	Checkerboard
-pptx.anim.preset.checkerboard.across	Across
-pptx.anim.preset.checkerboard.down	Down
-pptx.anim.preset.circle	Circle
-pptx.anim.preset.circle.in	In
-pptx.anim.preset.circle.out	Out
-pptx.anim.preset.diamond	Diamond
-pptx.anim.preset.diamond.in	In
-pptx.anim.preset.diamond.out	Out
-pptx.anim.preset.peek	Peek
-pptx.anim.preset.peek.bottom	From Bottom
-pptx.anim.preset.peek.left	From Left
-pptx.anim.preset.peek.right	From Right
-pptx.anim.preset.peek.top	From Top
-pptx.anim.preset.plus	Plus
-pptx.anim.preset.plus.in	In
-pptx.anim.preset.plus.out	Out
-pptx.anim.preset.randombar	Random Bars
-pptx.anim.preset.randombar.horizontal	Horizontal
-pptx.anim.preset.randombar.vertical	Vertical
-pptx.anim.preset.split	Split
-pptx.anim.preset.split.out-vertical	Vertical Out
-pptx.anim.preset.split.in-vertical	Vertical In
-pptx.anim.preset.split.out-horizontal	Horizontal Out
-pptx.anim.preset.split.in-horizontal	Horizontal In
-pptx.anim.preset.strips	Strips
-pptx.anim.preset.strips.down-left	Down Left
-pptx.anim.preset.strips.up-left	Up Left
-pptx.anim.preset.strips.down-right	Down Right
-pptx.anim.preset.strips.up-right	Up Right
-pptx.anim.preset.other	Other Effect
+pptx.animation.preset.blinds	Blinds
+pptx.animation.preset.blinds.horizontal	Horizontal
+pptx.animation.preset.blinds.vertical	Vertical
+pptx.animation.preset.box	Box
+pptx.animation.preset.box.in	In
+pptx.animation.preset.box.out	Out
+pptx.animation.preset.checkerboard	Checkerboard
+pptx.animation.preset.checkerboard.across	Across
+pptx.animation.preset.checkerboard.down	Down
+pptx.animation.preset.circle	Circle
+pptx.animation.preset.circle.in	In
+pptx.animation.preset.circle.out	Out
+pptx.animation.preset.diamond	Diamond
+pptx.animation.preset.diamond.in	In
+pptx.animation.preset.diamond.out	Out
+pptx.animation.preset.peek	Peek
+pptx.animation.preset.peek.bottom	From Bottom
+pptx.animation.preset.peek.left	From Left
+pptx.animation.preset.peek.right	From Right
+pptx.animation.preset.peek.top	From Top
+pptx.animation.preset.plus	Plus
+pptx.animation.preset.plus.in	In
+pptx.animation.preset.plus.out	Out
+pptx.animation.preset.randombar	Random Bars
+pptx.animation.preset.randombar.horizontal	Horizontal
+pptx.animation.preset.randombar.vertical	Vertical
+pptx.animation.preset.split	Split
+pptx.animation.preset.split.out-vertical	Vertical Out
+pptx.animation.preset.split.in-vertical	Vertical In
+pptx.animation.preset.split.out-horizontal	Horizontal Out
+pptx.animation.preset.split.in-horizontal	Horizontal In
+pptx.animation.preset.strips	Strips
+pptx.animation.preset.strips.down-left	Down Left
+pptx.animation.preset.strips.up-left	Up Left
+pptx.animation.preset.strips.down-right	Down Right
+pptx.animation.preset.strips.up-right	Up Right
+pptx.animation.preset.other	Other Effect
 transition.checker	Checkerboard
 transition.blinds	Blinds
 transition.comb	Comb
@@ -2308,22 +2292,22 @@ transition.dir.strips-in	Strips In
 transition.dir.strips-out	Strips Out
 transition.dir.rects-in	Rectangles In
 transition.dir.rects-out	Rectangles Out
-pptx.anim.trigger.shape-click	On Click of Shape
-pptx.anim.trigger.target	Shape
-pptx.anim.unit.seconds	s
+pptx.animation.trigger.shape-click	On Click of Shape
+pptx.animation.trigger.target	Shape
+pptx.animation.unit.seconds	s
 pptx.gradient-panel.path-shape	Shape
 pptx.gradient-panel.stop-n	Stop {n}
-pptx.anim.pane.col.order	Order
-pptx.anim.pane.col.effect	Shape and effect
-pptx.anim.pane.total	Total {s} s
+pptx.animation.pane.col.order	Order
+pptx.animation.pane.col.effect	Shape and effect
+pptx.animation.pane.total	Total {s} s
 pptx.zoom.summary-section	Summary Section
 pptx.zoom.summary-needs-sections	A summary zoom needs sections. Add sections first.
 pptx.notes-format.close-format-editing	Close Format Editing
-pptx.anim.media.play	Play
-pptx.anim.media.pause	Pause
-pptx.anim.media.stop	Stop
-pptx.anim.media.class	Media
-pptx.anim.panel.effect-change	Change effect
+pptx.animation.media.play	Play
+pptx.animation.media.pause	Pause
+pptx.animation.media.stop	Stop
+pptx.animation.media.class	Media
+pptx.animation.panel.effect-change	Change effect
 transition.dir.smoothly-left	Smoothly From Left
 transition.dir.smoothly-right	Smoothly From Right
 transition.dir.through-black-left	Through Black From Left
@@ -2339,326 +2323,326 @@ transition.dir.hexagons-up	Hexagons From Top
 transition.dir.in-bounce	In With Bounce
 transition.dir.out-bounce	Out With Bounce
 # Names of PowerPoint's animation effects (made by scripts/gen-animation-presets.py)
-pptx.anim.cat.entr.1	Appear
-pptx.anim.cat.entr.2	Fly In
-pptx.anim.cat.entr.2.1	Up
-pptx.anim.cat.entr.2.2	Right
-pptx.anim.cat.entr.2.4	Down
-pptx.anim.cat.entr.2.8	Left
-pptx.anim.cat.entr.2.9	UpLeft
-pptx.anim.cat.entr.2.3	UpRight
-pptx.anim.cat.entr.2.6	DownRight
-pptx.anim.cat.entr.2.12	DownLeft
-pptx.anim.cat.entr.3	Blinds
-pptx.anim.cat.entr.3.10	Horizontal
-pptx.anim.cat.entr.3.5	Vertical
-pptx.anim.cat.entr.4	Box
-pptx.anim.cat.entr.4.16	In
-pptx.anim.cat.entr.4.32	Out
-pptx.anim.cat.entr.5	Checkerboard
-pptx.anim.cat.entr.5.10	Horizontal
-pptx.anim.cat.entr.5.5	Vertical
-pptx.anim.cat.entr.6	Circle
-pptx.anim.cat.entr.6.16	In
-pptx.anim.cat.entr.6.32	Out
-pptx.anim.cat.entr.7	Crawl In
-pptx.anim.cat.entr.7.1	Up
-pptx.anim.cat.entr.7.2	Right
-pptx.anim.cat.entr.7.4	Down
-pptx.anim.cat.entr.7.8	Left
-pptx.anim.cat.entr.8	Diamond
-pptx.anim.cat.entr.8.16	In
-pptx.anim.cat.entr.8.32	Out
-pptx.anim.cat.entr.9	Dissolve In
-pptx.anim.cat.entr.10	Fade
-pptx.anim.cat.entr.11	Flash Once
-pptx.anim.cat.entr.12	Peek In
-pptx.anim.cat.entr.12.1	Up
-pptx.anim.cat.entr.12.2	Right
-pptx.anim.cat.entr.12.4	Down
-pptx.anim.cat.entr.12.8	Left
-pptx.anim.cat.entr.13	Plus
-pptx.anim.cat.entr.13.16	In
-pptx.anim.cat.entr.13.32	Out
-pptx.anim.cat.entr.14	Random Bars
-pptx.anim.cat.entr.14.10	Horizontal
-pptx.anim.cat.entr.14.5	Vertical
-pptx.anim.cat.entr.15	Spiral In
-pptx.anim.cat.entr.16	Split
-pptx.anim.cat.entr.16.26	HorizontalIn
-pptx.anim.cat.entr.16.42	HorizontalOut
-pptx.anim.cat.entr.16.21	VerticalIn
-pptx.anim.cat.entr.16.37	VerticalOut
-pptx.anim.cat.entr.17	Stretch
-pptx.anim.cat.entr.17.1	Up
-pptx.anim.cat.entr.17.2	Right
-pptx.anim.cat.entr.17.4	Down
-pptx.anim.cat.entr.17.8	Left
-pptx.anim.cat.entr.17.10	Horizontal
-pptx.anim.cat.entr.18	Strips
-pptx.anim.cat.entr.18.9	UpLeft
-pptx.anim.cat.entr.18.3	UpRight
-pptx.anim.cat.entr.18.6	DownRight
-pptx.anim.cat.entr.18.12	DownLeft
-pptx.anim.cat.entr.19	Swivel
-pptx.anim.cat.entr.19.10	Horizontal
-pptx.anim.cat.entr.19.5	Vertical
-pptx.anim.cat.entr.20	Wedge
-pptx.anim.cat.entr.21	Wheel
-pptx.anim.cat.entr.21.1	1 spoke(s)
-pptx.anim.cat.entr.21.2	2 spoke(s)
-pptx.anim.cat.entr.21.3	3 spoke(s)
-pptx.anim.cat.entr.21.4	4 spoke(s)
-pptx.anim.cat.entr.21.8	8 spoke(s)
-pptx.anim.cat.entr.22	Wipe
-pptx.anim.cat.entr.22.1	Up
-pptx.anim.cat.entr.22.2	Right
-pptx.anim.cat.entr.22.4	Down
-pptx.anim.cat.entr.22.8	Left
-pptx.anim.cat.entr.23	Basic Zoom
-pptx.anim.cat.entr.23.16	In
-pptx.anim.cat.entr.23.32	Out
-pptx.anim.cat.entr.23.272	InSlightly
-pptx.anim.cat.entr.23.528	InCenter
-pptx.anim.cat.entr.23.288	OutSlightly
-pptx.anim.cat.entr.23.36	OutBottom
-pptx.anim.cat.entr.24	Random Effects
-pptx.anim.cat.entr.25	Boomerang
-pptx.anim.cat.entr.26	Bounce
-pptx.anim.cat.entr.27	Color Reveal
-pptx.anim.cat.entr.28	Credits
-pptx.anim.cat.entr.29	Ease In
-pptx.anim.cat.entr.30	Float
-pptx.anim.cat.entr.31	Grow & Turn
-pptx.anim.cat.entr.34	Light Speed
-pptx.anim.cat.entr.35	Pinwheel
-pptx.anim.cat.entr.37	Rise Up
-pptx.anim.cat.entr.38	Swish
-pptx.anim.cat.entr.39	Thin Line
-pptx.anim.cat.entr.40	Unfold
-pptx.anim.cat.entr.41	Whip
-pptx.anim.cat.entr.42	Float Up (Ascend)
-pptx.anim.cat.entr.43	Center Revolve
-pptx.anim.cat.entr.45	Faded Swivel
-pptx.anim.cat.entr.47	Float Down (Descend)
-pptx.anim.cat.entr.48	Sling
-pptx.anim.cat.entr.49	Spinner
-pptx.anim.cat.entr.50	Stretchy
-pptx.anim.cat.entr.51	Zip
-pptx.anim.cat.entr.52	Arc Up
-pptx.anim.cat.entr.53	Zoom (Faded Zoom)
-pptx.anim.cat.entr.53.16	In
-pptx.anim.cat.entr.53.528	InCenter
-pptx.anim.cat.entr.54	Glide
-pptx.anim.cat.entr.55	Expand
-pptx.anim.cat.entr.56	Flip
-pptx.anim.cat.entr.58	Fold
-pptx.anim.cat.exit.1	Disappear
-pptx.anim.cat.exit.2	Fly Out
-pptx.anim.cat.exit.2.1	Up
-pptx.anim.cat.exit.2.2	Right
-pptx.anim.cat.exit.2.4	Down
-pptx.anim.cat.exit.2.8	Left
-pptx.anim.cat.exit.2.9	UpLeft
-pptx.anim.cat.exit.2.3	UpRight
-pptx.anim.cat.exit.2.6	DownRight
-pptx.anim.cat.exit.2.12	DownLeft
-pptx.anim.cat.exit.3	Blinds
-pptx.anim.cat.exit.3.10	Horizontal
-pptx.anim.cat.exit.3.5	Vertical
-pptx.anim.cat.exit.4	Box
-pptx.anim.cat.exit.4.16	In
-pptx.anim.cat.exit.4.32	Out
-pptx.anim.cat.exit.5	Checkerboard
-pptx.anim.cat.exit.5.10	Horizontal
-pptx.anim.cat.exit.5.5	Vertical
-pptx.anim.cat.exit.6	Circle
-pptx.anim.cat.exit.6.16	In
-pptx.anim.cat.exit.6.32	Out
-pptx.anim.cat.exit.7	Crawl Out
-pptx.anim.cat.exit.7.1	Up
-pptx.anim.cat.exit.7.2	Right
-pptx.anim.cat.exit.7.4	Down
-pptx.anim.cat.exit.7.8	Left
-pptx.anim.cat.exit.8	Diamond
-pptx.anim.cat.exit.8.16	In
-pptx.anim.cat.exit.8.32	Out
-pptx.anim.cat.exit.9	Dissolve Out
-pptx.anim.cat.exit.10	Fade
-pptx.anim.cat.exit.11	Flash Once
-pptx.anim.cat.exit.12	Peek Out
-pptx.anim.cat.exit.12.1	Up
-pptx.anim.cat.exit.12.2	Right
-pptx.anim.cat.exit.12.4	Down
-pptx.anim.cat.exit.12.8	Left
-pptx.anim.cat.exit.13	Plus
-pptx.anim.cat.exit.13.16	In
-pptx.anim.cat.exit.13.32	Out
-pptx.anim.cat.exit.14	Random Bars
-pptx.anim.cat.exit.14.10	Horizontal
-pptx.anim.cat.exit.14.5	Vertical
-pptx.anim.cat.exit.15	Spiral Out
-pptx.anim.cat.exit.16	Split
-pptx.anim.cat.exit.16.26	HorizontalIn
-pptx.anim.cat.exit.16.42	HorizontalOut
-pptx.anim.cat.exit.16.21	VerticalIn
-pptx.anim.cat.exit.16.37	VerticalOut
-pptx.anim.cat.exit.17	Stretch
-pptx.anim.cat.exit.17.1	Up
-pptx.anim.cat.exit.17.2	Right
-pptx.anim.cat.exit.17.4	Down
-pptx.anim.cat.exit.17.8	Left
-pptx.anim.cat.exit.17.10	Horizontal
-pptx.anim.cat.exit.18	Strips
-pptx.anim.cat.exit.18.9	UpLeft
-pptx.anim.cat.exit.18.3	UpRight
-pptx.anim.cat.exit.18.6	DownRight
-pptx.anim.cat.exit.18.12	DownLeft
-pptx.anim.cat.exit.19	Swivel
-pptx.anim.cat.exit.19.10	Horizontal
-pptx.anim.cat.exit.19.5	Vertical
-pptx.anim.cat.exit.20	Wedge
-pptx.anim.cat.exit.21	Wheel
-pptx.anim.cat.exit.21.1	1 spoke(s)
-pptx.anim.cat.exit.21.2	2 spoke(s)
-pptx.anim.cat.exit.21.3	3 spoke(s)
-pptx.anim.cat.exit.21.4	4 spoke(s)
-pptx.anim.cat.exit.21.8	8 spoke(s)
-pptx.anim.cat.exit.22	Wipe
-pptx.anim.cat.exit.22.1	Up
-pptx.anim.cat.exit.22.2	Right
-pptx.anim.cat.exit.22.4	Down
-pptx.anim.cat.exit.22.8	Left
-pptx.anim.cat.exit.23	Basic Zoom
-pptx.anim.cat.exit.23.16	In
-pptx.anim.cat.exit.23.32	OutBottom
-pptx.anim.cat.exit.23.272	InSlightly
-pptx.anim.cat.exit.23.288	OutSlightly
-pptx.anim.cat.exit.24	Random Effects
-pptx.anim.cat.exit.25	Boomerang
-pptx.anim.cat.exit.26	Bounce
-pptx.anim.cat.exit.27	Color Reveal
-pptx.anim.cat.exit.28	Rewind
-pptx.anim.cat.exit.29	Ease In
-pptx.anim.cat.exit.30	Float
-pptx.anim.cat.exit.31	Grow & Turn
-pptx.anim.cat.exit.34	Light Speed
-pptx.anim.cat.exit.35	Pinwheel
-pptx.anim.cat.exit.37	Rise Up
-pptx.anim.cat.exit.38	Swish
-pptx.anim.cat.exit.39	Thin Line
-pptx.anim.cat.exit.40	Unfold
-pptx.anim.cat.exit.41	Whip
-pptx.anim.cat.exit.42	Float Out
-pptx.anim.cat.exit.43	Center Revolve
-pptx.anim.cat.exit.45	Faded Swivel
-pptx.anim.cat.exit.47	Float Out Down
-pptx.anim.cat.exit.48	Sling
-pptx.anim.cat.exit.49	Spinner
-pptx.anim.cat.exit.50	Stretchy
-pptx.anim.cat.exit.51	Zip
-pptx.anim.cat.exit.52	Arc Up
-pptx.anim.cat.exit.53	Zoom (Faded Zoom)
-pptx.anim.cat.exit.53.32	InCenter
-pptx.anim.cat.exit.54	Glide
-pptx.anim.cat.exit.55	Expand
-pptx.anim.cat.exit.56	Flip
-pptx.anim.cat.exit.58	Fold
-pptx.anim.cat.emph.36	Shimmer
-pptx.anim.cat.emph.1	Change Fill Color
-pptx.anim.cat.emph.2	Change Font
-pptx.anim.cat.emph.3	Change Font Color
-pptx.anim.cat.emph.4	Change Font Size
-pptx.anim.cat.emph.5	Change Font Style
-pptx.anim.cat.emph.6	Grow/Shrink
-pptx.anim.cat.emph.7	Change Line Color
-pptx.anim.cat.emph.8	Spin
-pptx.anim.cat.emph.9	Transparency
-pptx.anim.cat.emph.10	Bold Flash
-pptx.anim.cat.emph.14	Blast
-pptx.anim.cat.emph.15	Bold Reveal
-pptx.anim.cat.emph.16	Brush On Color
-pptx.anim.cat.emph.18	Brush On Underline
-pptx.anim.cat.emph.19	Color Blend
-pptx.anim.cat.emph.20	Color Wave
-pptx.anim.cat.emph.21	Complementary Color
-pptx.anim.cat.emph.22	Complementary Color 2
-pptx.anim.cat.emph.23	Contrasting Color
-pptx.anim.cat.emph.24	Darken
-pptx.anim.cat.emph.25	Desaturate
-pptx.anim.cat.emph.26	Flash Bulb
-pptx.anim.cat.emph.27	Flicker
-pptx.anim.cat.emph.28	Grow With Color
-pptx.anim.cat.emph.30	Lighten
-pptx.anim.cat.emph.31	Style Emphasis
-pptx.anim.cat.emph.32	Teeter
-pptx.anim.cat.emph.33	Vertical Grow
-pptx.anim.cat.emph.34	Wave
-pptx.anim.cat.path.1	Circle
-pptx.anim.cat.path.2	Right Triangle
-pptx.anim.cat.path.3	Diamond
-pptx.anim.cat.path.4	Hexagon
-pptx.anim.cat.path.5	5 Point Star
-pptx.anim.cat.path.6	Crescent Moon
-pptx.anim.cat.path.7	Square
-pptx.anim.cat.path.8	Trapezoid
-pptx.anim.cat.path.9	Heart
-pptx.anim.cat.path.10	Octagon
-pptx.anim.cat.path.11	6 Point Star
-pptx.anim.cat.path.12	Football
-pptx.anim.cat.path.13	Equal Triangle
-pptx.anim.cat.path.14	Parallelogram
-pptx.anim.cat.path.15	Pentagon
-pptx.anim.cat.path.16	4 Point Star
-pptx.anim.cat.path.17	8 Point Star
-pptx.anim.cat.path.18	Teardrop
-pptx.anim.cat.path.19	Pointy Star
-pptx.anim.cat.path.20	Curved Square
-pptx.anim.cat.path.21	Curved X
-pptx.anim.cat.path.22	Vertical Figure 8
-pptx.anim.cat.path.23	Curvy Star
-pptx.anim.cat.path.24	Loop de Loop
-pptx.anim.cat.path.25	Buzzsaw
-pptx.anim.cat.path.26	Horizontal Figure 8
-pptx.anim.cat.path.27	Peanut
-pptx.anim.cat.path.28	Figure 8 Four
-pptx.anim.cat.path.29	Neutron
-pptx.anim.cat.path.30	Swoosh
-pptx.anim.cat.path.31	Bean
-pptx.anim.cat.path.32	Plus
-pptx.anim.cat.path.33	Inverted Triangle
-pptx.anim.cat.path.34	Inverted Square
-pptx.anim.cat.path.35	Left
-pptx.anim.cat.path.36	Turn Right
-pptx.anim.cat.path.37	Arc Down
-pptx.anim.cat.path.38	Zigzag
-pptx.anim.cat.path.39	S Curve 2
-pptx.anim.cat.path.40	Sine Wave
-pptx.anim.cat.path.41	Bounce Left
-pptx.anim.cat.path.42	Down
-pptx.anim.cat.path.43	Turn Up
-pptx.anim.cat.path.44	Arc Up
-pptx.anim.cat.path.45	Heartbeat
-pptx.anim.cat.path.46	Spiral Right
-pptx.anim.cat.path.47	Wave
-pptx.anim.cat.path.48	Curvy Left
-pptx.anim.cat.path.49	Diagonal Down Right
-pptx.anim.cat.path.50	Turn Down
-pptx.anim.cat.path.51	Arc Left
-pptx.anim.cat.path.52	Funnel
-pptx.anim.cat.path.53	Spring
-pptx.anim.cat.path.54	Bounce Right
-pptx.anim.cat.path.55	Spiral Left
-pptx.anim.cat.path.56	Diagonal Up Right
-pptx.anim.cat.path.57	Turn Up Right
-pptx.anim.cat.path.58	Arc Right
-pptx.anim.cat.path.59	S Curve 1
-pptx.anim.cat.path.60	Decaying Wave
-pptx.anim.cat.path.61	Curvy Right
-pptx.anim.cat.path.62	Stairs Down
-pptx.anim.cat.path.64	Up
-pptx.anim.cat.path.63	Right
-pptx.anim.more-effects	More Effects
+pptx.animation.cat.entr.1	Appear
+pptx.animation.cat.entr.2	Fly In
+pptx.animation.cat.entr.2.1	Up
+pptx.animation.cat.entr.2.2	Right
+pptx.animation.cat.entr.2.4	Down
+pptx.animation.cat.entr.2.8	Left
+pptx.animation.cat.entr.2.9	UpLeft
+pptx.animation.cat.entr.2.3	UpRight
+pptx.animation.cat.entr.2.6	DownRight
+pptx.animation.cat.entr.2.12	DownLeft
+pptx.animation.cat.entr.3	Blinds
+pptx.animation.cat.entr.3.10	Horizontal
+pptx.animation.cat.entr.3.5	Vertical
+pptx.animation.cat.entr.4	Box
+pptx.animation.cat.entr.4.16	In
+pptx.animation.cat.entr.4.32	Out
+pptx.animation.cat.entr.5	Checkerboard
+pptx.animation.cat.entr.5.10	Horizontal
+pptx.animation.cat.entr.5.5	Vertical
+pptx.animation.cat.entr.6	Circle
+pptx.animation.cat.entr.6.16	In
+pptx.animation.cat.entr.6.32	Out
+pptx.animation.cat.entr.7	Crawl In
+pptx.animation.cat.entr.7.1	Up
+pptx.animation.cat.entr.7.2	Right
+pptx.animation.cat.entr.7.4	Down
+pptx.animation.cat.entr.7.8	Left
+pptx.animation.cat.entr.8	Diamond
+pptx.animation.cat.entr.8.16	In
+pptx.animation.cat.entr.8.32	Out
+pptx.animation.cat.entr.9	Dissolve In
+pptx.animation.cat.entr.10	Fade
+pptx.animation.cat.entr.11	Flash Once
+pptx.animation.cat.entr.12	Peek In
+pptx.animation.cat.entr.12.1	Up
+pptx.animation.cat.entr.12.2	Right
+pptx.animation.cat.entr.12.4	Down
+pptx.animation.cat.entr.12.8	Left
+pptx.animation.cat.entr.13	Plus
+pptx.animation.cat.entr.13.16	In
+pptx.animation.cat.entr.13.32	Out
+pptx.animation.cat.entr.14	Random Bars
+pptx.animation.cat.entr.14.10	Horizontal
+pptx.animation.cat.entr.14.5	Vertical
+pptx.animation.cat.entr.15	Spiral In
+pptx.animation.cat.entr.16	Split
+pptx.animation.cat.entr.16.26	HorizontalIn
+pptx.animation.cat.entr.16.42	HorizontalOut
+pptx.animation.cat.entr.16.21	VerticalIn
+pptx.animation.cat.entr.16.37	VerticalOut
+pptx.animation.cat.entr.17	Stretch
+pptx.animation.cat.entr.17.1	Up
+pptx.animation.cat.entr.17.2	Right
+pptx.animation.cat.entr.17.4	Down
+pptx.animation.cat.entr.17.8	Left
+pptx.animation.cat.entr.17.10	Horizontal
+pptx.animation.cat.entr.18	Strips
+pptx.animation.cat.entr.18.9	UpLeft
+pptx.animation.cat.entr.18.3	UpRight
+pptx.animation.cat.entr.18.6	DownRight
+pptx.animation.cat.entr.18.12	DownLeft
+pptx.animation.cat.entr.19	Swivel
+pptx.animation.cat.entr.19.10	Horizontal
+pptx.animation.cat.entr.19.5	Vertical
+pptx.animation.cat.entr.20	Wedge
+pptx.animation.cat.entr.21	Wheel
+pptx.animation.cat.entr.21.1	1 spoke(s)
+pptx.animation.cat.entr.21.2	2 spoke(s)
+pptx.animation.cat.entr.21.3	3 spoke(s)
+pptx.animation.cat.entr.21.4	4 spoke(s)
+pptx.animation.cat.entr.21.8	8 spoke(s)
+pptx.animation.cat.entr.22	Wipe
+pptx.animation.cat.entr.22.1	Up
+pptx.animation.cat.entr.22.2	Right
+pptx.animation.cat.entr.22.4	Down
+pptx.animation.cat.entr.22.8	Left
+pptx.animation.cat.entr.23	Basic Zoom
+pptx.animation.cat.entr.23.16	In
+pptx.animation.cat.entr.23.32	Out
+pptx.animation.cat.entr.23.272	InSlightly
+pptx.animation.cat.entr.23.528	InCenter
+pptx.animation.cat.entr.23.288	OutSlightly
+pptx.animation.cat.entr.23.36	OutBottom
+pptx.animation.cat.entr.24	Random Effects
+pptx.animation.cat.entr.25	Boomerang
+pptx.animation.cat.entr.26	Bounce
+pptx.animation.cat.entr.27	Color Reveal
+pptx.animation.cat.entr.28	Credits
+pptx.animation.cat.entr.29	Ease In
+pptx.animation.cat.entr.30	Float
+pptx.animation.cat.entr.31	Grow & Turn
+pptx.animation.cat.entr.34	Light Speed
+pptx.animation.cat.entr.35	Pinwheel
+pptx.animation.cat.entr.37	Rise Up
+pptx.animation.cat.entr.38	Swish
+pptx.animation.cat.entr.39	Thin Line
+pptx.animation.cat.entr.40	Unfold
+pptx.animation.cat.entr.41	Whip
+pptx.animation.cat.entr.42	Float Up (Ascend)
+pptx.animation.cat.entr.43	Center Revolve
+pptx.animation.cat.entr.45	Faded Swivel
+pptx.animation.cat.entr.47	Float Down (Descend)
+pptx.animation.cat.entr.48	Sling
+pptx.animation.cat.entr.49	Spinner
+pptx.animation.cat.entr.50	Stretchy
+pptx.animation.cat.entr.51	Zip
+pptx.animation.cat.entr.52	Arc Up
+pptx.animation.cat.entr.53	Zoom (Faded Zoom)
+pptx.animation.cat.entr.53.16	In
+pptx.animation.cat.entr.53.528	InCenter
+pptx.animation.cat.entr.54	Glide
+pptx.animation.cat.entr.55	Expand
+pptx.animation.cat.entr.56	Flip
+pptx.animation.cat.entr.58	Fold
+pptx.animation.cat.exit.1	Disappear
+pptx.animation.cat.exit.2	Fly Out
+pptx.animation.cat.exit.2.1	Up
+pptx.animation.cat.exit.2.2	Right
+pptx.animation.cat.exit.2.4	Down
+pptx.animation.cat.exit.2.8	Left
+pptx.animation.cat.exit.2.9	UpLeft
+pptx.animation.cat.exit.2.3	UpRight
+pptx.animation.cat.exit.2.6	DownRight
+pptx.animation.cat.exit.2.12	DownLeft
+pptx.animation.cat.exit.3	Blinds
+pptx.animation.cat.exit.3.10	Horizontal
+pptx.animation.cat.exit.3.5	Vertical
+pptx.animation.cat.exit.4	Box
+pptx.animation.cat.exit.4.16	In
+pptx.animation.cat.exit.4.32	Out
+pptx.animation.cat.exit.5	Checkerboard
+pptx.animation.cat.exit.5.10	Horizontal
+pptx.animation.cat.exit.5.5	Vertical
+pptx.animation.cat.exit.6	Circle
+pptx.animation.cat.exit.6.16	In
+pptx.animation.cat.exit.6.32	Out
+pptx.animation.cat.exit.7	Crawl Out
+pptx.animation.cat.exit.7.1	Up
+pptx.animation.cat.exit.7.2	Right
+pptx.animation.cat.exit.7.4	Down
+pptx.animation.cat.exit.7.8	Left
+pptx.animation.cat.exit.8	Diamond
+pptx.animation.cat.exit.8.16	In
+pptx.animation.cat.exit.8.32	Out
+pptx.animation.cat.exit.9	Dissolve Out
+pptx.animation.cat.exit.10	Fade
+pptx.animation.cat.exit.11	Flash Once
+pptx.animation.cat.exit.12	Peek Out
+pptx.animation.cat.exit.12.1	Up
+pptx.animation.cat.exit.12.2	Right
+pptx.animation.cat.exit.12.4	Down
+pptx.animation.cat.exit.12.8	Left
+pptx.animation.cat.exit.13	Plus
+pptx.animation.cat.exit.13.16	In
+pptx.animation.cat.exit.13.32	Out
+pptx.animation.cat.exit.14	Random Bars
+pptx.animation.cat.exit.14.10	Horizontal
+pptx.animation.cat.exit.14.5	Vertical
+pptx.animation.cat.exit.15	Spiral Out
+pptx.animation.cat.exit.16	Split
+pptx.animation.cat.exit.16.26	HorizontalIn
+pptx.animation.cat.exit.16.42	HorizontalOut
+pptx.animation.cat.exit.16.21	VerticalIn
+pptx.animation.cat.exit.16.37	VerticalOut
+pptx.animation.cat.exit.17	Stretch
+pptx.animation.cat.exit.17.1	Up
+pptx.animation.cat.exit.17.2	Right
+pptx.animation.cat.exit.17.4	Down
+pptx.animation.cat.exit.17.8	Left
+pptx.animation.cat.exit.17.10	Horizontal
+pptx.animation.cat.exit.18	Strips
+pptx.animation.cat.exit.18.9	UpLeft
+pptx.animation.cat.exit.18.3	UpRight
+pptx.animation.cat.exit.18.6	DownRight
+pptx.animation.cat.exit.18.12	DownLeft
+pptx.animation.cat.exit.19	Swivel
+pptx.animation.cat.exit.19.10	Horizontal
+pptx.animation.cat.exit.19.5	Vertical
+pptx.animation.cat.exit.20	Wedge
+pptx.animation.cat.exit.21	Wheel
+pptx.animation.cat.exit.21.1	1 spoke(s)
+pptx.animation.cat.exit.21.2	2 spoke(s)
+pptx.animation.cat.exit.21.3	3 spoke(s)
+pptx.animation.cat.exit.21.4	4 spoke(s)
+pptx.animation.cat.exit.21.8	8 spoke(s)
+pptx.animation.cat.exit.22	Wipe
+pptx.animation.cat.exit.22.1	Up
+pptx.animation.cat.exit.22.2	Right
+pptx.animation.cat.exit.22.4	Down
+pptx.animation.cat.exit.22.8	Left
+pptx.animation.cat.exit.23	Basic Zoom
+pptx.animation.cat.exit.23.16	In
+pptx.animation.cat.exit.23.32	OutBottom
+pptx.animation.cat.exit.23.272	InSlightly
+pptx.animation.cat.exit.23.288	OutSlightly
+pptx.animation.cat.exit.24	Random Effects
+pptx.animation.cat.exit.25	Boomerang
+pptx.animation.cat.exit.26	Bounce
+pptx.animation.cat.exit.27	Color Reveal
+pptx.animation.cat.exit.28	Rewind
+pptx.animation.cat.exit.29	Ease In
+pptx.animation.cat.exit.30	Float
+pptx.animation.cat.exit.31	Grow & Turn
+pptx.animation.cat.exit.34	Light Speed
+pptx.animation.cat.exit.35	Pinwheel
+pptx.animation.cat.exit.37	Rise Up
+pptx.animation.cat.exit.38	Swish
+pptx.animation.cat.exit.39	Thin Line
+pptx.animation.cat.exit.40	Unfold
+pptx.animation.cat.exit.41	Whip
+pptx.animation.cat.exit.42	Float Out
+pptx.animation.cat.exit.43	Center Revolve
+pptx.animation.cat.exit.45	Faded Swivel
+pptx.animation.cat.exit.47	Float Out Down
+pptx.animation.cat.exit.48	Sling
+pptx.animation.cat.exit.49	Spinner
+pptx.animation.cat.exit.50	Stretchy
+pptx.animation.cat.exit.51	Zip
+pptx.animation.cat.exit.52	Arc Up
+pptx.animation.cat.exit.53	Zoom (Faded Zoom)
+pptx.animation.cat.exit.53.32	InCenter
+pptx.animation.cat.exit.54	Glide
+pptx.animation.cat.exit.55	Expand
+pptx.animation.cat.exit.56	Flip
+pptx.animation.cat.exit.58	Fold
+pptx.animation.cat.emph.36	Shimmer
+pptx.animation.cat.emph.1	Change Fill Color
+pptx.animation.cat.emph.2	Change Font
+pptx.animation.cat.emph.3	Change Font Color
+pptx.animation.cat.emph.4	Change Font Size
+pptx.animation.cat.emph.5	Change Font Style
+pptx.animation.cat.emph.6	Grow/Shrink
+pptx.animation.cat.emph.7	Change Line Color
+pptx.animation.cat.emph.8	Spin
+pptx.animation.cat.emph.9	Transparency
+pptx.animation.cat.emph.10	Bold Flash
+pptx.animation.cat.emph.14	Blast
+pptx.animation.cat.emph.15	Bold Reveal
+pptx.animation.cat.emph.16	Brush On Color
+pptx.animation.cat.emph.18	Brush On Underline
+pptx.animation.cat.emph.19	Color Blend
+pptx.animation.cat.emph.20	Color Wave
+pptx.animation.cat.emph.21	Complementary Color
+pptx.animation.cat.emph.22	Complementary Color 2
+pptx.animation.cat.emph.23	Contrasting Color
+pptx.animation.cat.emph.24	Darken
+pptx.animation.cat.emph.25	Desaturate
+pptx.animation.cat.emph.26	Flash Bulb
+pptx.animation.cat.emph.27	Flicker
+pptx.animation.cat.emph.28	Grow With Color
+pptx.animation.cat.emph.30	Lighten
+pptx.animation.cat.emph.31	Style Emphasis
+pptx.animation.cat.emph.32	Teeter
+pptx.animation.cat.emph.33	Vertical Grow
+pptx.animation.cat.emph.34	Wave
+pptx.animation.cat.path.1	Circle
+pptx.animation.cat.path.2	Right Triangle
+pptx.animation.cat.path.3	Diamond
+pptx.animation.cat.path.4	Hexagon
+pptx.animation.cat.path.5	5 Point Star
+pptx.animation.cat.path.6	Crescent Moon
+pptx.animation.cat.path.7	Square
+pptx.animation.cat.path.8	Trapezoid
+pptx.animation.cat.path.9	Heart
+pptx.animation.cat.path.10	Octagon
+pptx.animation.cat.path.11	6 Point Star
+pptx.animation.cat.path.12	Football
+pptx.animation.cat.path.13	Equal Triangle
+pptx.animation.cat.path.14	Parallelogram
+pptx.animation.cat.path.15	Pentagon
+pptx.animation.cat.path.16	4 Point Star
+pptx.animation.cat.path.17	8 Point Star
+pptx.animation.cat.path.18	Teardrop
+pptx.animation.cat.path.19	Pointy Star
+pptx.animation.cat.path.20	Curved Square
+pptx.animation.cat.path.21	Curved X
+pptx.animation.cat.path.22	Vertical Figure 8
+pptx.animation.cat.path.23	Curvy Star
+pptx.animation.cat.path.24	Loop de Loop
+pptx.animation.cat.path.25	Buzzsaw
+pptx.animation.cat.path.26	Horizontal Figure 8
+pptx.animation.cat.path.27	Peanut
+pptx.animation.cat.path.28	Figure 8 Four
+pptx.animation.cat.path.29	Neutron
+pptx.animation.cat.path.30	Swoosh
+pptx.animation.cat.path.31	Bean
+pptx.animation.cat.path.32	Plus
+pptx.animation.cat.path.33	Inverted Triangle
+pptx.animation.cat.path.34	Inverted Square
+pptx.animation.cat.path.35	Left
+pptx.animation.cat.path.36	Turn Right
+pptx.animation.cat.path.37	Arc Down
+pptx.animation.cat.path.38	Zigzag
+pptx.animation.cat.path.39	S Curve 2
+pptx.animation.cat.path.40	Sine Wave
+pptx.animation.cat.path.41	Bounce Left
+pptx.animation.cat.path.42	Down
+pptx.animation.cat.path.43	Turn Up
+pptx.animation.cat.path.44	Arc Up
+pptx.animation.cat.path.45	Heartbeat
+pptx.animation.cat.path.46	Spiral Right
+pptx.animation.cat.path.47	Wave
+pptx.animation.cat.path.48	Curvy Left
+pptx.animation.cat.path.49	Diagonal Down Right
+pptx.animation.cat.path.50	Turn Down
+pptx.animation.cat.path.51	Arc Left
+pptx.animation.cat.path.52	Funnel
+pptx.animation.cat.path.53	Spring
+pptx.animation.cat.path.54	Bounce Right
+pptx.animation.cat.path.55	Spiral Left
+pptx.animation.cat.path.56	Diagonal Up Right
+pptx.animation.cat.path.57	Turn Up Right
+pptx.animation.cat.path.58	Arc Right
+pptx.animation.cat.path.59	S Curve 1
+pptx.animation.cat.path.60	Decaying Wave
+pptx.animation.cat.path.61	Curvy Right
+pptx.animation.cat.path.62	Stairs Down
+pptx.animation.cat.path.64	Up
+pptx.animation.cat.path.63	Right
+pptx.animation.more-effects	More Effects
 transition.dir.from-top	From Top
 transition.dir.from-right	From Right
 transition.dir.from-left	From Left
@@ -2720,3 +2704,13 @@ shape.effects.text-glow-size	Size
 pptx.sidebar.text-fill	Text fill
 shape.effects.panel-title	Format shape
 shape.effects.text	Text
+pptx.export-html	Web Page (.html)
+pptx.html-label-chart	Chart
+pptx.html-label-diagram	SmartArt
+pptx.html-label-picture	Picture
+pptx.html-label-object	Object
+pptx.html-label-slide	Slide {n}
+pptx.html-no-slides	There are no slides to export (all are hidden)
+pptx.html-too-large	The pictures are too large to export as a Web page
+pptx.html-exported	Exported to {path}
+pptx.html-export-failed	Couldn't export: {error}

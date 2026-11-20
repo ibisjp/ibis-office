@@ -9,4 +9,4 @@ publish.workspace = true
 [dependencies]
 
 [dev-dependencies]
-ibis-pptx.workspace = true
+ibis-formats.workspace = true

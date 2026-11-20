@@ -168,8 +168,8 @@ impl SlideEditor {
         let Some((range, column, header)) = self.sort_selection() else { return };
         let color = self.current_style().fill;
         self.run_sheet(
-            vec![Command::Sheet(SheetCommand::SortBy {
-                slide: self.current_slide,
+            vec![Command::Sheet(SheetCommand::SortByKeys {
+                sheet: self.current_slide,
                 range,
                 keys: vec![(
                     column,
@@ -191,8 +191,8 @@ impl SlideEditor {
         let style = self.current_style();
         let color = (style.color.0 != 0).then_some(style.color);
         self.run_sheet(
-            vec![Command::Sheet(SheetCommand::SortBy {
-                slide: self.current_slide,
+            vec![Command::Sheet(SheetCommand::SortByKeys {
+                sheet: self.current_slide,
                 range,
                 keys: vec![(
                     column,
@@ -217,8 +217,8 @@ impl SlideEditor {
             return;
         };
         self.run_sheet(
-            vec![Command::Sheet(SheetCommand::SortBy {
-                slide: self.current_slide,
+            vec![Command::Sheet(SheetCommand::SortByKeys {
+                sheet: self.current_slide,
                 range,
                 keys: vec![(
                     column,
@@ -420,8 +420,8 @@ impl SlideEditor {
         }
         if let Err(error) = self
             .document
-            .execute(vec![Command::Sheet(SheetCommand::SortBy {
-                slide,
+            .execute(vec![Command::Sheet(SheetCommand::SortByKeys {
+                sheet: slide,
                 range: r,
                 keys: by,
                 header,

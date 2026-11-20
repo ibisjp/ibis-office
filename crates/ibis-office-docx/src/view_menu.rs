@@ -52,7 +52,7 @@ pub(crate) fn connect(editor: &SlideEditor, menus: &mut Menus) {
     check(menus, "docx.view.one-page", editor.is_zoom_one_page());
     check(menus, "docx.view.multiple-pages", editor.is_zoom_multiple_pages());
     check(menus, "docx.view.page-width", editor.is_zoom_page_width());
-    check(menus, "docx.view.zoom-100", editor.is_zoom_100());
+    check(menus, "view.zoom-100", editor.is_zoom_100());
     // ウィンドウ > 分割: while the document is split, the line is 分割の解除 (`docx.remove-split`), checked.
     if editor.is_document_split()
         && let Some(item) = menus.find_mut("docx.split")

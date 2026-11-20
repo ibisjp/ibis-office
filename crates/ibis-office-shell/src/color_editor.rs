@@ -32,15 +32,13 @@ pub struct ColorEditorState {
     pub color: Rgb,
     pub hsv: [f32; 3],
     pub(crate) rgb_mode: bool,
-    /// The file has the CMYK mode on: every colour shown and chosen is the colour as the press prints it.
-    pub gamut: bool,
     pub numbers: [Entity<InputState>; 6],
     pub sliders: [Entity<SliderState>; 6],
     drag: Rc<Cell<Option<bool>>>,
     pub wheel_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     _subscriptions: Vec<Subscription>,
 }
-pub(crate) fn rgb_to_hsv(color: Rgb) -> [f32; 3] {
+pub fn rgb_to_hsv(color: Rgb) -> [f32; 3] {
     let [r, g, b] = [
         ((color.0 >> 16) & 255) as f32 / 255.,
         ((color.0 >> 8) & 255) as f32 / 255.,
@@ -60,7 +58,7 @@ pub(crate) fn rgb_to_hsv(color: Rgb) -> [f32; 3] {
     };
     [h, if max == 0. { 0. } else { d / max }, max]
 }
-pub(crate) fn hsv_to_rgb([h, s, v]: [f32; 3]) -> Rgb {
+pub fn hsv_to_rgb([h, s, v]: [f32; 3]) -> Rgb {
     let h = h.rem_euclid(360.) / 60.;
     let c = v * s;
     let x = c * (1. - (h.rem_euclid(2.) - 1.).abs());
@@ -144,7 +142,6 @@ impl ColorEditorState {
             color,
             hsv,
             rgb_mode: false,
-            gamut: false,
             numbers,
             sliders,
             drag: Rc::new(Cell::new(None)),
@@ -192,7 +189,6 @@ pub fn color_editor(
     hex: &Entity<InputState>,
     recent: &[Rgb],
     changed: ColorChanged,
-    extra: Option<AnyElement>,
     cx: &Context<SlideEditor>,
 ) -> Div {
     let weak = cx.entity().downgrade();
@@ -249,9 +245,8 @@ pub fn color_editor(
                 .child(div().text_sm().child(text("color.editor.current")))
                 .child(swatch("color-current".into(), state.color, 100., 32.)),
         )
-        // Beside the previews (not under the sliders): the picker's own controls stay in view without scrolling.
-        .children(extra);
-    let first = if state.rgb_mode { 3 } else { 0 };
+        ;
+    let (first, count) = if state.rgb_mode { (3, 3) } else { (0, 3) };
     let labels = [
         "color.editor.hue",
         "color.editor.saturation",
@@ -260,7 +255,7 @@ pub fn color_editor(
         "color.editor.green",
         "color.editor.blue",
     ];
-    let rows = (first..first + 3).map(|i| {
+    let rows = (first..first + count).map(|i| {
         h_flex()
             .items_center()
             .gap_2()
@@ -301,9 +296,12 @@ pub fn color_editor(
         .child(previews)
         .child(
             h_flex()
+                .w_full()
                 .gap_3()
                 .flex_wrap()
                 .items_start()
+                // Palette at the left edge, wheel at the right edge: the dialog's width is shared out evenly.
+                .justify_between()
                 .child(palette)
                 .child(hue_sv_wheel(state, changed, cx)),
         )
@@ -320,6 +318,53 @@ pub fn color_editor(
                 .child(div().w(px(42.)).text_sm().child("HEX"))
                 .child(chrome::text_field(hex)),
         )
+}
+
+thread_local! {
+    static SQUARES: std::cell::RefCell<Vec<((u32, u32, u64), std::sync::Arc<RenderImage>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The saturation/brightness square of `hue` (whole degrees) as the press prints it (the soft proof of a CMYK-mode file): `2 * diamond` logical pixels on a side,
+/// drawn at `scale` device pixels per logical pixel, transparent outside the rotated square (its edge antialiased).
+fn gamut_square(hue: f32, diamond: f32, scale: f32) -> Option<std::sync::Arc<RenderImage>> {
+    let hue = hue.rem_euclid(360.).round() % 360.;
+    let n = (2. * diamond * scale).round() as usize;
+    let key = (hue as u32, n as u32, crate::cmyk::converter_generation());
+    if let Some(hit) = SQUARES.with(|c| c.borrow().iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone())) {
+        return Some(hit);
+    }
+    let pitch = 2. * diamond / n as f32; // logical pixels per device pixel
+    let mut bytes = Vec::with_capacity(n * n * 4);
+    for row in 0..n {
+        for column in 0..n {
+            let (x, y) = (-diamond + (column as f32 + 0.5) * pitch, -diamond + (row as f32 + 0.5) * pitch);
+            // Distance inside the rotated square's edge, in device pixels (half a pixel in = half covered).
+            let inside = (diamond - x.abs() - y.abs()) / std::f32::consts::SQRT_2 / pitch;
+            let coverage = (inside + 0.5).clamp(0., 1.);
+            if coverage == 0. {
+                bytes.extend_from_slice(&[0, 0, 0, 0]);
+                continue;
+            }
+            // The colour at the edge pixels is taken from just inside the square.
+            let (ex, ey) = (x.clamp(-diamond, diamond), y.clamp(-diamond, diamond));
+            let excess = (ex.abs() + ey.abs() - diamond).max(0.);
+            let (ex, ey) = (ex - excess * ex.signum() * 0.5, ey - excess * ey.signum() * 0.5);
+            let saturation = ((ex / diamond + ey / diamond + 1.) / 2.).clamp(0., 1.);
+            let value = 1. - ((ey / diamond - ex / diamond + 1.) / 2.).clamp(0., 1.);
+            let wanted = hsv_to_rgb([hue, saturation, value]);
+            let printed = crate::cmyk::gamut(wanted);
+            bytes.extend_from_slice(&[printed.b(), printed.g(), printed.r(), (coverage * 255.).round() as u8]);
+        }
+    }
+    let picture = ibis_office_render::bgra_picture(n, n, bytes)?;
+    SQUARES.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= 24 {
+            c.remove(0);
+        }
+        c.push((key, picture.clone()));
+    });
+    Some(picture)
 }
 
 /// The hue ring and the saturation/brightness square (the dialog's height has to leave room for the rows under it).
@@ -361,17 +406,6 @@ fn hue_sv_wheel(
                     window.paint_path(path, rgb(crate::cmyk::shown(hsv_to_rgb([degree as f32, 1., 1.])).0));
                 }
             }
-            // A file with the CMYK mode on draws the colours as the press prints them; where a colour is outside what the
-            // press prints, a small grey dot marks it (a grey tick on the ring's rim, a dot in each cell of the square).
-            let gamut = crate::cmyk::display_gamut_on();
-            if gamut {
-                for degree in 0..360 {
-                    if crate::cmyk::out_of_gamut(hsv_to_rgb([degree as f32 + 0.5, 1., 1.])) {
-                        let p = point_at((degree as f32 + 0.5).to_radians(), radius - 2.);
-                        window.paint_quad(fill(Bounds::new(p - point(px(1.), px(1.)), size(px(2.), px(2.))), rgba(0x555555cc)));
-                    }
-                }
-            }
             let diamond_path = || {
                 let mut path = PathBuilder::fill();
                 for (i, (x, y)) in [(0., -diamond), (diamond, 0.), (0., diamond), (-diamond, 0.)]
@@ -388,31 +422,17 @@ fn hue_sv_wheel(
                 path.close();
                 path.build().ok()
             };
-            if gamut {
-                // The square of saturation and brightness, as small cells (the middle of each cell is the colour; those
-                // outside what the press prints are dotted).
-                const CELLS: usize = 28;
-                let cell = 2. * diamond / CELLS as f32;
-                for row in 0..CELLS {
-                    for column in 0..CELLS {
-                        let (x, y) = (-diamond + (column as f32 + 0.5) * cell, -diamond + (row as f32 + 0.5) * cell);
-                        if x.abs() + y.abs() > diamond {
-                            continue;
-                        }
-                        let saturation = ((x / diamond + y / diamond + 1.) / 2.).clamp(0., 1.);
-                        let value = 1. - ((y / diamond - x / diamond + 1.) / 2.).clamp(0., 1.);
-                        let wanted = hsv_to_rgb([hsv[0], saturation, value]);
-                        let origin = point(center.x + px(x - cell / 2.), center.y + px(y - cell / 2.));
-                        window.paint_quad(fill(Bounds::new(origin, size(px(cell + 0.5), px(cell + 0.5))), rgb(crate::cmyk::gamut(wanted).0)));
-                        if crate::cmyk::out_of_gamut(wanted) {
-                            let dot = point(center.x + px(x - 0.75), center.y + px(y - 0.75));
-                            window.paint_quad(fill(Bounds::new(dot, size(px(1.5), px(1.5))), rgba(0x55555599)));
-                        }
-                    }
+            // A file with the CMYK mode on (and the soft proof on) draws the square as the press prints it: a picture with one
+            // colour per device pixel, made once per hue step.
+            let proof = crate::cmyk::display_gamut_on();
+            if proof {
+                if let Some(picture) = gamut_square(hsv[0], diamond, window.scale_factor()) {
+                    let area = Bounds::new(center - point(px(diamond), px(diamond)), size(px(2. * diamond), px(2. * diamond)));
+                    let _ = window.paint_image(area, area, Corners::default(), picture, 0, false);
                 }
             }
             // A rotated square occupies the middle half of its axis-aligned gradient projection.
-            if let (false, Some(path)) = (gamut, diamond_path()) {
+            if let (false, Some(path)) = (proof, diamond_path()) {
                 window.paint_path(
                     path,
                     linear_gradient(
@@ -422,7 +442,7 @@ fn hue_sv_wheel(
                     ),
                 );
             }
-            if let (false, Some(path)) = (gamut, diamond_path()) {
+            if let (false, Some(path)) = (proof, diamond_path()) {
                 window.paint_path(
                     path,
                     linear_gradient(
@@ -557,14 +577,6 @@ impl ColorEditorState {
                 let shift=(5-i)*8;picker.color=Rgb((picker.color.0 & !(255<<shift)) | ((value.round().clamp(0.,255.) as u32)<<shift));picker.hsv=rgb_to_hsv(picker.color);
             }
             ColorAction::Number(_) => unreachable!(),
-        }
-        if picker.gamut {
-            // A file with the CMYK mode on keeps the colour the press prints; the wheel's marker stays where it was put.
-            let keep_hsv = matches!(action, ColorAction::Hue(_) | ColorAction::Sv(..)) || matches!(action, ColorAction::Channel(i, _) if i < 3);
-            picker.color = crate::cmyk::gamut(picker.color);
-            if !keep_hsv {
-                picker.hsv = rgb_to_hsv(picker.color);
-            }
         }
         picker.sync(except,window,cx);
         let value=format!("{:06X}",picker.color.0);

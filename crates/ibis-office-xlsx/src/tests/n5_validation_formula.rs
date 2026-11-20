@@ -22,7 +22,7 @@ pub(super) fn run() {
             prompt: None,
             error: None,
         };
-        e.run_sheet(vec![Command::Sheet(SheetCommand::SetValidation { slide: e.current_slide, ranges: rule.ranges.clone(), rule: Some(rule) })], cx);
+        e.run_sheet(vec![Command::Sheet(SheetCommand::SetValidation { sheet: e.current_slide, ranges: rule.ranges.clone(), rule: Some(rule) })], cx);
     });
     for text in ["D", "-x"] {
         s.click_cell("A1");

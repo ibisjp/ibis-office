@@ -6,32 +6,16 @@
 
 use wasm_bindgen::{JsCast, JsValue};
 
-/// The Canvas 2D drawing of `texts` (each at its x, on one baseline) in CSS font `font`, grown by a round stroke of `grow` on every side
-/// when `grow` is more than 0, on a canvas of `cols` x `rows` cells of `pitch` logical pixels. Coordinates are logical pixels from the canvas's
-/// top-left; the baseline is `baseline` down. The coverage (alpha, 0 to 1) of each cell.
-const DRAW: &str = "
-const c = new OffscreenCanvas(cols, rows);
-const g = c.getContext('2d', { willReadFrequently: true });
-g.scale(1 / pitch, 1 / pitch);
-g.font = font;
-g.textBaseline = 'alphabetic';
-g.fillStyle = '#000';
-g.strokeStyle = '#000';
-g.lineJoin = 'round';
-g.lineCap = 'round';
-g.lineWidth = 2 * grow;
-for (let i = 0; i < texts.length; i++) {
-  if (grow > 0) g.strokeText(texts[i], xs[i], baseline);
-  g.fillText(texts[i], xs[i], baseline);
-}
-const d = g.getImageData(0, 0, cols, rows).data;
-const a = new Float32Array(cols * rows);
-for (let i = 0; i < a.length; i++) a[i] = d[i * 4 + 3] / 255;
-return a;
-";
-
-thread_local! {
-    static DRAW_FN: js_sys::Function = js_sys::Function::new_with_args("font,texts,xs,baseline,grow,pitch,cols,rows", DRAW);
+// The Canvas 2D drawing of `texts` (each at its x, on one baseline) in CSS font `font`, grown by a round stroke of `grow` on every side when `grow` is
+// more than 0, on a canvas of `cols` x `rows` cells of `pitch` logical pixels; the coverage (alpha, 0 to 1) of each cell. A function of `js/web_scripts.js`
+// (no `new Function`: a host page's Content-Security-Policy has no `unsafe-eval`).
+#[wasm_bindgen::prelude::wasm_bindgen(module = "/js/web_scripts.js")]
+extern "C" {
+    #[wasm_bindgen(thread_local_v2, js_name = drawFn)]
+    static DRAW_FN: js_sys::Function;
+    /// The picture of a character as the browser sets it in vertical text (a promise of `{ data, px, asc }`).
+    #[wasm_bindgen(thread_local_v2, js_name = verticalFn)]
+    static VERTICAL_FN: js_sys::Function;
 }
 
 /// The CSS `font` shorthand for `font` at `size` logical pixels: the typefaces the document names and the browser's stand-ins (`Font::fallbacks`, the
@@ -79,23 +63,6 @@ use std::sync::Arc;
 
 use gpui_kit::RenderImage;
 
-const VERTICAL: &str = "
-const S = size, W = 2 * size;
-const esc = ch.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${W}' height='${W}'><foreignObject width='${W}' height='${W}'><div xmlns='http://www.w3.org/1999/xhtml' style='position:absolute;left:${S / 2}px;top:${S / 2}px;width:${S}px;height:${S}px;font:${font};line-height:${S}px;writing-mode:vertical-rl;text-orientation:${sideways ? 'sideways' : 'mixed'};color:${color};white-space:pre'>${esc}</div></foreignObject></svg>`;
-const img = new Image();
-img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
-const px = Math.max(1, Math.ceil(W * scale));
-const c = new OffscreenCanvas(px, px);
-const g = c.getContext('2d', { willReadFrequently: true });
-g.drawImage(img, 0, 0, px, px);
-const data = g.getImageData(0, 0, px, px).data;
-g.font = font;
-const asc = g.measureText('\\u3042').emHeightAscent;
-return { data, px, asc: asc > 0 ? asc : 0.88 * size };
-";
-
 enum Slot {
     Loading,
     Ready(Arc<RenderImage>, f32),
@@ -103,7 +70,6 @@ enum Slot {
 }
 
 thread_local! {
-    static VERTICAL_FN: js_sys::Function = js_sys::Function::new_with_args("font,ch,size,color,sideways,scale", &format!("return (async () => {{{VERTICAL}}})();"));
     static SLOTS: RefCell<HashMap<u64, Slot>> = RefCell::new(HashMap::new());
     static LOADING: Cell<usize> = const { Cell::new(0) };
 }

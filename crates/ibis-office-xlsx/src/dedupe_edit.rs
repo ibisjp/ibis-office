@@ -143,7 +143,7 @@ impl SlideEditor {
         let gone = ibis_doc_model::sheet_command::duplicate_rows(sheet, r, &columns, header).len();
         let rows = (r.last_row - r.first_row + 1 - u32::from(header)) as usize;
         if gone > 0
-            && let Err(error) = self.document.execute(vec![Command::Sheet(SheetCommand::RemoveDuplicates { slide, range: r, columns, header })])
+            && let Err(error) = self.document.execute(vec![Command::Sheet(SheetCommand::RemoveDuplicates { sheet: slide, range: r, columns, header })])
         {
             self.dedupe_message(error.to_string(), cx);
             return;

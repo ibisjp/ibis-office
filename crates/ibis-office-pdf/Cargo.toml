@@ -1,0 +1,19 @@
+[package]
+name = "ibis-office-pdf"
+description = "PDF viewer and editor front end for ibisOffice (GPUI rendering bridge over ibis-pdf)."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-pdf = { path = "../ibis-pdf", features = ["interpret"] }
+ibis-ofd.workspace = true
+ibis-xps.workspace = true
+ibis-office-base.workspace = true
+ibis-office-shell.workspace = true
+ibis-office-docx.workspace = true
+ibis-doc-model.workspace = true
+ibis-formats.workspace = true
+gpui-kit.workspace = true
+image = { version = "0.25", default-features = false }

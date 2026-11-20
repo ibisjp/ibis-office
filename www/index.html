@@ -26,17 +26,8 @@
   </head>
   <body>
     <div id="status"><span id="status-text">Loading ibisOffice…</span><div id="progress"><div></div></div></div>
-    <script>
-      // The same language as the playground page's menu, else the browser's.
-      (() => {
-        let lang = null;
-        try { lang = localStorage.getItem('ibisoffice-lang'); } catch { /* storage blocked */ }
-        if ((lang ?? navigator.language).toLowerCase().startsWith('ja')) {
-          document.documentElement.lang = 'ja';
-          document.getElementById('status-text').textContent = 'ibisOffice を読み込んでいます…';
-        }
-      })();
-    </script>
+    <!-- No inline script: the host serves this page under a CSP of script-src 'self' (publish/docs/web-embedding.md). -->
+    <script src="./boot.js"></script>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

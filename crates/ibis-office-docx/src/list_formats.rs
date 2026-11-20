@@ -96,7 +96,7 @@ mod tests {
         for ((id, _, text, _), symbol) in BULLET_LIBRARY.iter().zip(BULLET_SYMBOLS) {
             if let Some((face, code)) = symbol {
                 // (➔ of the library is Wingdings' 0xE8, which the reader's table gives as ➡: the same right arrow.)
-                let back = ibis_pptx::symbol_font::stand_in(face, code).map(String::from);
+                let back = ibis_formats::symbol_font::stand_in(face, code).map(String::from);
                 assert!(back.as_deref() == Some(text) || (*id == "docx.bullet.arrow-right" && back.as_deref() == Some("\u{27a1}")), "{id}: {code:?} in {face} reads back as {back:?}");
             }
         }

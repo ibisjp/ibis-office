@@ -449,14 +449,14 @@ impl SlideEditor {
             let mut commands = Vec::new();
             if let Some((_, sheet)) = self.current_sheet() {
                 if let Some(edit) = replacement_in_sheet(sheet, row, column, query, with, options) {
-                    commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits: vec![edit] }));
+                    commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![edit] }));
                 }
                 if options.comments
                     && let Some(note) = sheet.comment_at(row, column)
                     && let Some(new_text) = replace_text_with_options(&note.text, query, with, options)
                 {
                     commands.push(Command::Sheet(SheetCommand::SetComment {
-                        slide,
+                        sheet: slide,
                         row,
                         column,
                         comment: Some(ibis_doc_model::SheetComment {
@@ -499,7 +499,7 @@ impl SlideEditor {
                 .collect();
             if !edits.is_empty() {
                 total_replaced += edits.len();
-                commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
+                commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits }));
             }
             if options.comments {
                 let notes = sheet.comments.clone();
@@ -507,7 +507,7 @@ impl SlideEditor {
                     if let Some(new_text) = replace_text_with_options(&note.text, query, with, options) {
                         total_replaced += 1;
                         commands.push(Command::Sheet(SheetCommand::SetComment {
-                            slide,
+                            sheet: slide,
                             row: note.row,
                             column: note.column,
                             comment: Some(ibis_doc_model::SheetComment {

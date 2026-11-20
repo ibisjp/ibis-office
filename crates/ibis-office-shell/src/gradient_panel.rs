@@ -227,7 +227,7 @@ impl SlideEditor {
             Target::Background {slide,fill:old}=>if *old==fill {Vec::new()} else {vec![Command::SetBackground {slide:*slide,fill}]},
             Target::Shapes {slide,shapes,cells}=>shapes.iter().filter_map(|shape|match &shape.kind {
                 ShapeKind::Auto(a)=>if a.fill==fill {None} else {Some(Command::SetFill {slide:*slide,shape:shape.id,fill:fill.clone()})},
-                ShapeKind::Table(t)=>{let mut table=(**t).clone();for (r,row) in table.rows.iter_mut().enumerate() {for (c,cell) in row.cells.iter_mut().enumerate() {if cells.is_none_or(|(id,r0,r1,c0,c1)|id!=shape.id || (r0..=r1).contains(&r)&&(c0..=c1).contains(&c)) {cell.fill=fill.clone();}}}if table==**t {None} else {Some(Command::SetKind {slide:*slide,shape:shape.id,kind:Box::new(ShapeKind::Table(Box::new(table)))})}},
+                ShapeKind::Table(t)=>{let mut table=(**t).clone();for (r,row) in table.rows.iter_mut().enumerate() {for (c,cell) in row.cells.iter_mut().enumerate() {if cells.is_none_or(|(id,r0,r1,c0,c1)|id!=shape.id || (r0..=r1).contains(&r)&&(c0..=c1).contains(&c)) {cell.fill=fill.clone();}}}if table==**t {None} else {Some(Command::SetShapeKind {slide:*slide,shape:shape.id,kind:Box::new(ShapeKind::Table(Box::new(table)))})}},
                 _=>None,
             }).collect(),
         };

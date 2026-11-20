@@ -79,6 +79,11 @@ fn system_format(seconds: i64) -> Option<String> {
     )
 }
 
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn system_format(_seconds: i64) -> Option<String> {
+    None
+}
+
 #[cfg(target_os = "linux")]
 fn system_format(seconds: i64) -> Option<String> {
     use std::ffi::{c_char, c_int, c_long, c_void};

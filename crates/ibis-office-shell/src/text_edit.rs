@@ -166,7 +166,7 @@ impl SlideEditor {
         commands
             .into_iter()
             .map(|c| match &c {
-                Command::EditText { shape, .. } | Command::SetCharacterFormat { shape, .. } | Command::SetParagraphFormat { shape, .. } | Command::SetTextBody { shape, .. }
+                Command::ReplaceTextRange { shape, .. } | Command::SetCharacterFormat { shape, .. } | Command::SetParagraphFormat { shape, .. } | Command::SetTextBody { shape, .. }
                     if *shape == edit.shape =>
                 {
                     Command::InCell { row, column, command: Box::new(c) }
@@ -249,7 +249,7 @@ impl SlideEditor {
             let mut auto = auto.clone();
             auto.text = Some(crate::shape_items::centred_body());
             let kind = Box::new(ShapeKind::Auto(auto));
-            if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind }]) {
+            if let Err(err) = self.document.execute(vec![Command::SetShapeKind { slide, shape, kind }]) {
                 log::warn!("edit rejected: {err}");
                 return;
             }
@@ -293,6 +293,8 @@ impl SlideEditor {
         // Composed text not committed yet is put in first.
         if self.text_editing().is_some_and(|e| e.marked.is_some()) {
             self.commit_marked(cx);
+            // The input method's session ends with it: what it was composing is not carried on to the next place (#202).
+            window.discard_marked_text();
         }
         if with_format!(self, box_edit_active(self)) {
             with_format!(self, box_edit_commit(self, window, cx));
@@ -356,7 +358,7 @@ impl SlideEditor {
             return done;
         }
         let Some(edit) = self.text_editing().cloned() else { return false };
-        let command = Command::EditText { slide: self.current_slide, shape: edit.shape, at: start, remove, insert: insert.to_string() };
+        let command = Command::ReplaceTextRange { slide: self.current_slide, shape: edit.shape, at: start, remove, insert: insert.to_string() };
         self.edit_text(command, typing, cx)
     }
 
@@ -406,7 +408,7 @@ impl SlideEditor {
             return;
         }
         let slide = self.current_slide;
-        let remove = Command::EditText { slide, shape: edit.shape, at: start, remove: marker.chars().count() + 1, insert: String::new() };
+        let remove = Command::ReplaceTextRange { slide, shape: edit.shape, at: start, remove: marker.chars().count() + 1, insert: String::new() };
         if !self.edit_text(remove, false, cx) {
             return;
         }
@@ -430,7 +432,7 @@ impl SlideEditor {
         // Not what follows a character of a word (`(c)` in the middle of one is not the mark).
         let Some(correct) = autocorrection(&word) else { return end };
         let slide = self.current_slide;
-        let command = Command::EditText { slide, shape: edit.shape, at: start, remove: word.chars().count(), insert: correct.clone() };
+        let command = Command::ReplaceTextRange { slide, shape: edit.shape, at: start, remove: word.chars().count(), insert: correct.clone() };
         if !self.edit_text(command, false, cx) {
             return end;
         }
@@ -556,7 +558,7 @@ impl SlideEditor {
             let y = (at.y - frame.height / 2).clamp(0, (size.height - frame.height).max(0));
             if (x, y) != (frame.x, frame.y) {
                 let slide = self.current_slide;
-                self.run(vec![Command::SetFrame { slide, shape: first, frame: ibis_doc_model::EmuRect::new(x, y, frame.width, frame.height) }], cx);
+                self.run(vec![Command::SetFrame { slide, frames: vec![(first, ibis_doc_model::EmuRect::new(x, y, frame.width, frame.height))], with_attached: true }], cx);
             }
         }
         if !inserted.is_empty() {
@@ -1373,6 +1375,70 @@ pub fn word_boundary(chars: &[char], from: usize, forward: bool) -> usize {
         }
     }
     i
+}
+
+/// Windows' Ctrl+→: the start of the next word (over the rest of this one and the spaces after it); Ctrl+←: the start of this word, or of the
+/// previous one at its start (PowerPoint for Windows, 2026-11-18, #210: where it breaks a Japanese run into words is its dictionary's, not the
+/// character classes' here).
+pub fn word_start(chars: &[char], from: usize, forward: bool) -> usize {
+    let n = chars.len();
+    let mut i = from.min(n);
+    if forward {
+        if i < n {
+            let class = word_class(chars[i]);
+            while i < n && word_class(chars[i]) == class && class != 0 {
+                i += 1;
+            }
+        }
+        while i < n && word_class(chars[i]) == 0 {
+            i += 1;
+        }
+        i
+    } else {
+        word_boundary(chars, from, false)
+    }
+}
+
+/// Windows' Ctrl+↑ / Ctrl+↓ (the keys that move by lines, in horizontal text): the start of this paragraph (of the previous one when the caret is
+/// at the start of this), the start of the next one (the end of the text in the last). Measured on PowerPoint for Windows in horizontal
+/// and in every vertical text (#210).
+pub fn paragraph_boundary(chars: &[char], from: usize, forward: bool) -> usize {
+    let n = chars.len();
+    let from = from.min(n);
+    if forward {
+        chars[from..].iter().position(|&c| c == '\n').map_or(n, |i| from + i + 1)
+    } else {
+        let start = chars[..from].iter().rposition(|&c| c == '\n').map_or(0, |i| i + 1);
+        if from > start {
+            start
+        } else if start == 0 {
+            0
+        } else {
+            chars[..start - 1].iter().rposition(|&c| c == '\n').map_or(0, |i| i + 1)
+        }
+    }
+}
+
+#[cfg(test)]
+mod windows_key_tests {
+    use super::{paragraph_boundary, word_start};
+
+    #[test]
+    fn ctrl_arrows_move_by_words_and_paragraphs_as_powerpoint_for_windows() {
+        let t: Vec<char> = "あいうえ\nおかきく\nけこさし".chars().collect();
+        // PowerPoint (eaVert and horizontal alike, caret 8 = after お か, 1-based Start): Ctrl+↑ to the paragraph's start 6, Ctrl+↓ to 11.
+        assert_eq!(paragraph_boundary(&t, 7, false), 5);
+        assert_eq!(paragraph_boundary(&t, 7, true), 10);
+        // At a paragraph's start the previous one's; at the first, 0; in the last, the end of the text.
+        assert_eq!(paragraph_boundary(&t, 5, false), 0);
+        assert_eq!(paragraph_boundary(&t, 0, false), 0);
+        assert_eq!(paragraph_boundary(&t, 11, true), t.len());
+        let w: Vec<char> = "Hello, world  です".chars().collect();
+        assert_eq!(word_start(&w, 0, true), 5);
+        assert_eq!(word_start(&w, 5, true), 7);
+        assert_eq!(word_start(&w, 7, true), 14);
+        assert_eq!(word_start(&w, 14, false), 7);
+    }
 }
 
 #[cfg(test)]

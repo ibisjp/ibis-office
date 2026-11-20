@@ -406,7 +406,12 @@ fn pptx_command_and_cleanup() {
     s.wheel(background, -160.);
     s.settle();
     assert!(s.with(|e, _| e.workspace_scroll.offset().y) < before_scroll.y, "PPTX viewport still scrolls");
-    assert!(s.with(|e, _| e.presentation() == &presentation));
+    // The zoom is the presentation's own `view_zoom` since GitHub issue #237 (the save writes it): it moved with the shortcut; nothing else did.
+    assert!(s.with(|e, _| {
+        let mut now = e.presentation().clone();
+        now.view_zoom = presentation.view_zoom;
+        now == presentation
+    }));
     close_via_cross(&mut s);
     assert!(s.with(|e, _| e.shape_edit.size_panel.is_none()), "cross discards the slide-size draft");
     s.key("cmd-0");

@@ -112,7 +112,7 @@ impl SlideEditor {
                 .on(|this, w, cx| this.apply_notes_marks(w, cx))
                 .into(),
             MenuItem::tr("pptx.find.clear")
-                .icon("clear")
+                .icon("close")
                 .on(|this, _, cx| this.clear_notes_marks(cx))
                 .into(),
             MenuEntry::Separator,

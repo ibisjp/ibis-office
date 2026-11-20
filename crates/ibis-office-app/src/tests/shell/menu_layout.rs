@@ -53,7 +53,7 @@ const FILES: [(&str, &str); 3] = [
 const MAX_ROWS: usize = 25;
 
 /// The redesign allows these to be in two menus (comment, cross-reference, page break).
-const ALLOWED_TWICE: &[&str] = &["pptx.anim.preview", "docx.page-break", "docx.xref", "docx.quick-parts.prop.comments", "insert.comment", "xlsx.protect-sheet"];
+const ALLOWED_TWICE: &[&str] = &["pptx.animation.preview", "docx.page-break", "docx.cross-reference", "docx.quick-parts.prop.comments", "insert.comment", "xlsx.protect-sheet"];
 
 fn rows(entries: &[MenuEntry]) -> usize {
     entries.iter().filter(|e| !matches!(e, MenuEntry::Separator)).count()
@@ -107,7 +107,7 @@ fn no_duplicate_ids() {
         });
         let mut seen = HashSet::new();
         // `pptx.anim.more-effects` is in each of the animation submenus the old menu had (not a layout duplicate).
-        let twice: Vec<_> = all_ids.iter().filter(|id| !seen.insert(**id) && !ALLOWED_TWICE.contains(id) && **id != "pptx.anim.more-effects").collect();
+        let twice: Vec<_> = all_ids.iter().filter(|id| !seen.insert(**id) && !ALLOWED_TWICE.contains(id) && **id != "pptx.animation.more-effects").collect();
         assert!(twice.is_empty(), "{name}: shown more than once in the bar: {twice:?}");
         // The design has a group and a line of the same name: Review's Comments (new, delete, next, previous) and Data's Data Validation.
         labels.retain(|l| l != "menu.review: コメント" && l != "menu.data: データの入力規則"); // i18n-ok（試験：設計の言葉）
@@ -444,17 +444,17 @@ fn screenshots() {
 /// pointed at `pptx.action.movie`, the video action button that draws a shape, instead of `insert.video`; the transitions' サウンド at
 /// `pptx.action.sound`, the sound action button; a sheet's オート SUM at the status bar's summaries).
 const WORDS_REVIEWED: &[&str] = &[
-    "file.copy", "file.export", "docx.insert.draw-table", "insert.video", "insert.audio", "docx.caption.figure", "docx.toa", "docx.picture.replace",
+    "file.copy", "file.export", "docx.insert.draw-table", "insert.video", "insert.audio", "docx.caption.figure", "docx.table-of-authorities", "docx.picture.replace",
     "file.start-window", "xlsx.open-and-repair", "xlsx.insert-sheet", "xlsx.filter", "xlsx.gridlines", "xlsx.picture.reset", "xlsx.chart-format",
     "pptx.autorecover-settings", "pptx.slide.add-hidden-title", "pptx.notes-header-footer", "pptx.background.custom", "pptx.background", "pptx.theme-colors",
-    "pptx.transition", "view.slideshow", "pptx.skip-slide", "pptx.check-accessibility", "pptx.inspect-document", "pptx.grid-view", "pptx.fill.custom",
+    "pptx.transition", "view.slideshow", "pptx.skip-slide", "review.accessibility-check", "pptx.inspect-document", "pptx.grid-view", "pptx.fill.custom",
     "pptx.shadow", "pptx.text.warp", "pptx.default-shape", "pptx.smartart.add-shape", "pptx.video.reset-effects", "pptx.video.styles",
     "pptx.clip.caption.add", "file.info", "edit.find-replace", "insert.symbol", "docx.index", "tools.spelling", "tools.dictionary", "docx.picture.ratio",
     "docx.picture.size", "pptx.chart.data-quick", "xlsx.theme-palette", "xlsx.theme-fonts", "xlsx.theme-effects", "xlsx.sort", "xlsx.formula-bar",
     "xlsx.headings", "window.arrange-all", "xlsx.picture.remove-background", "xlsx.chart.save-template", "pptx.insert-object", "pptx.theme",
     "pptx.slide-size", "slideshow.rehearse-timings", "pptx.proofing-language", "pptx.review.compare", "pptx.normal-view", "pptx.frame.settings",
     "pptx.smartart.change-layout", "xlsx.autosum", "xlsx.autosum.average", "xlsx.autosum.count", "xlsx.autosum.max", "xlsx.autosum.min",
-    "transition.sound", "transition.on-click", "pptx.anim.duration", "pptx.clip.play", "pptx.layout.master.rename", "pptx.rotate.right",
+    "transition.sound", "transition.on-click", "pptx.animation.duration", "pptx.clip.play", "pptx.layout.master.rename", "pptx.rotate.right",
     "pptx.rotate.left", "pptx.rotate.flip-v", "pptx.rotate.flip-h", "docx.page.direction.horizontal", "insert.comment", "tools.settings", "help.help",
     "insert.link", "insert.table", "transition.none", "transition.fade", "transition.wipe", "transition.split", "xlsx.insert-symbol",
     "docx.gridlines", "xlsx.pivot-blank-rows", "xlsx.pivot-styles", "slideshow.custom-shows", "docx.comments.next", "docx.comments.previous",
@@ -598,7 +598,7 @@ fn tied_lines() {
             (Layout, vec!["menu.group.margins", "docx.page.margins-narrow"]),
             (References, vec!["docx.reference.bibliography.update"]),
             (References, vec!["docx.caption.insert"]),
-            (References, vec!["menu.group.table-of-authorities", "docx.toa.update"]),
+            (References, vec!["menu.group.table-of-authorities", "docx.table-of-authorities.update"]),
             (Review, vec!["draw.hide-ink"]),
             (Mailings, vec!["docx.merge.envelopes"]),
             (Mailings, vec!["docx.merge.labels"]),
@@ -607,7 +607,7 @@ fn tied_lines() {
             (Mailings, vec!["docx.merge.preview"]),
         ]),
         (1, vec![
-            (View, vec!["xlsx.phonetic-toggle"]),
+            (View, vec!["xlsx.toggle-phonetic"]),
             (View, vec!["xlsx.phonetic-edit"]),
             (Formulas, vec!["menu.group.function-library", "xlsx.datetime-functions", "xlsx.fn.today"]),
         ]),
@@ -645,7 +645,7 @@ fn tied_lines() {
     let mut s = Scenario::open(FILES[0].1);
     // No table of authorities in the file: the update leaves the document as it is.
     let before = s.with(|e, _| e.flow().map(|d| d.body.len()));
-    run(&mut s, References, &["menu.group.table-of-authorities", "docx.toa.update"]);
+    run(&mut s, References, &["menu.group.table-of-authorities", "docx.table-of-authorities.update"]);
     assert_eq!(s.with(|e, _| e.flow().map(|d| d.body.len())), before, "nothing to update");
     // #14: ウィンドウ ▸ サイドバー ▸ テキスト ボックスの設定 runs docx.textbox.edit (it had no command: grey for ever, 「自動で開く」).
     let menus = s.with(|e, _| e.menu_bar_menus());
@@ -664,7 +664,7 @@ fn tied_lines() {
     let menus = s.with(|e, _| e.menu_bar_menus());
     // 差し込み文書: the way to the panel (差し込み印刷…) is the first line (user decision 2026-11-11: the panel is enough).
     let first = menus.menus.iter().find(|(id, _)| *id == Mailings).and_then(|(_, entries)| entries.first().cloned());
-    assert!(matches!(&first, Some(MenuEntry::Item(it)) if it.id == "docx.merge" && it.enabled()), "Mail Merge… is the first line of the Mailings menu");
+    assert!(matches!(&first, Some(MenuEntry::Item(it)) if it.id == "docx.mail-merge" && it.enabled()), "Mail Merge… is the first line of the Mailings menu");
     // #53 (user decision 2026-11-11): 文字の均等割り付け is on the toolbar's alignment arrow, not in the menu bar; the menu search finds it.
     assert!(menus.menus.iter().all(|(_, entries)| crate::shell::scenario::find_item(entries, "docx.align.fit-text").is_none()), "fit text is not in the menu bar");
     let align = match s.toolbar_part("align") {

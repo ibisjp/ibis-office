@@ -23,7 +23,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 /// The base file with its `normalViewPr` replaced, written under `target/scenario-input/`, and opened as the application opens a file (`open_path`).
 fn open_with(name: &str, normal: &str) -> Scenario {
     let source = repo_root().join("test/editing/pptx-comments-modern.pptx");
-    let mut package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&source).unwrap()).unwrap();
+    let mut package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&source).unwrap()).unwrap();
     let xml = String::from_utf8(package.read("ppt/viewProps.xml").unwrap()).unwrap();
     let (start, end) = (xml.find("<p:normalViewPr>").unwrap(), xml.find("</p:normalViewPr>").unwrap() + "</p:normalViewPr>".len());
     package.set_bytes("ppt/viewProps.xml", format!("{}{}{}", &xml[..start], normal, &xml[end..]).into_bytes());
@@ -87,7 +87,7 @@ fn least_slide_pane() {
 
 /// The `normalViewPr` of the file `path`.
 fn normal_view_of(path: &std::path::Path) -> String {
-    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(path).unwrap()).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(path).unwrap()).unwrap();
     let xml = String::from_utf8(package.read("ppt/viewProps.xml").unwrap()).unwrap();
     let (start, end) = (xml.find("<p:normalViewPr").unwrap(), xml.find("</p:normalViewPr>").unwrap());
     xml[start..end].to_string()

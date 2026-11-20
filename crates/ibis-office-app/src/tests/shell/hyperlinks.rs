@@ -211,15 +211,15 @@ fn xlsx_text_area() {
     use ibis_doc_model::{CellAlign as A, CellVerticalAlign as V, StyleChange as C};
     // (formats, text, merged over B..D and two rows)
     let cases: Vec<(Vec<C>, &str, bool)> = vec![
-        (vec![C::Align(A::Left)], "Go", false),
-        (vec![C::Align(A::Center), C::Vertical(V::Top)], "Go", false),
-        (vec![C::Align(A::Right), C::Vertical(V::Bottom)], "Go", false),
-        (vec![C::Align(A::Center), C::Rotation(90)], "Go", false),
-        (vec![C::Align(A::Left), C::Rotation(45)], "Go", false),
+        (vec![C::HorizontalAlignment(A::Left)], "Go", false),
+        (vec![C::HorizontalAlignment(A::Center), C::VerticalAlignment(V::Top)], "Go", false),
+        (vec![C::HorizontalAlignment(A::Right), C::VerticalAlignment(V::Bottom)], "Go", false),
+        (vec![C::HorizontalAlignment(A::Center), C::Rotation(90)], "Go", false),
+        (vec![C::HorizontalAlignment(A::Left), C::Rotation(45)], "Go", false),
         (vec![C::Rotation(255)], "Go", false),
-        (vec![C::Wrap(true), C::Vertical(V::Center)], "Go Go Go Go Go", false),
-        (vec![C::Align(A::Center), C::Vertical(V::Center)], "Go", true),
-        (vec![C::Align(A::Right), C::Vertical(V::Bottom)], "Go", true),
+        (vec![C::WrapText(true), C::VerticalAlignment(V::Center)], "Go Go Go Go Go", false),
+        (vec![C::HorizontalAlignment(A::Center), C::VerticalAlignment(V::Center)], "Go", true),
+        (vec![C::HorizontalAlignment(A::Right), C::VerticalAlignment(V::Bottom)], "Go", true),
     ];
     for (k, (changes, text, merged)) in cases.into_iter().enumerate() {
         // A fresh workbook for each: the rows of a screenful only are painted.
@@ -234,7 +234,7 @@ fn xlsx_text_area() {
             let range = ibis_doc_model::CellRange { first_row: row, last_row: row + 1, first_column: 1, last_column: 3 };
             s.update(|e, _, cx| {
                 let slide = e.current_slide;
-                e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Merge { slide, range, center: false })]).unwrap();
+                e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Merge { sheet: slide, range, center: false })]).unwrap();
                 cx.notify();
             });
             s.click_cell(&reference);
@@ -312,7 +312,7 @@ fn xlsx_click_matrix() {
                         s.click_cell(&reference);
                         s.enter("Link text", "enter");
                         s.click_cell(&reference);
-                        s.update(|e, _, cx| e.format_cells(C::Align(*align), cx));
+                        s.update(|e, _, cx| e.format_cells(C::HorizontalAlignment(*align), cx));
                         assert_eq!(s.selected(), reference);
                         s.update(|e, _, cx| e.insert_cell_link(&url, cx));
                         targets.push(reference);

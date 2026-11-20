@@ -675,12 +675,12 @@ impl SlideEditor {
         let edits: Vec<CellEdit> = output.cells.iter().map(|(r, c, input)| CellEdit { row: origin.0 + r, column: origin.1 + c, input: input.clone() }).collect();
         let mut commands = Vec::new();
         if let Some((index, name, slide, shape)) = add_sheet {
-            commands.push(Command::Sheet(SheetCommand::AddSheet { index, name, slide, shape }));
+            commands.push(Command::Sheet(SheetCommand::AddSheet { index, name, sheet: slide, shape }));
         }
-        commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
+        commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits }));
         for (range, code) in &output.formats {
             let abs = CellRange { first_row: origin.0 + range.first_row, first_column: origin.1 + range.first_column, last_row: origin.0 + range.last_row, last_column: origin.1 + range.last_column };
-            commands.push(Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![abs], change: StyleChange::NumberFormat(code.clone()) }));
+            commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![abs], change: StyleChange::NumberFormat(code.clone()) }));
         }
         if let Err(err) = self.document.execute(commands) {
             return Err(format("edit.refused", &[("error", &err)]));
@@ -695,32 +695,32 @@ impl SlideEditor {
         let chart_spec = match tool {
             Tool::Histogram if flags[2] && rows > 1 => {
                 let out_name = self.presentation().slide(slide).and_then(|s| s.name.clone()).unwrap_or_default();
-                let quoted = ibis_pptx::quote_sheet(&out_name);
+                let quoted = ibis_formats::quote_sheet(&out_name);
                 let table_col = if flags[0] { origin.1 + if flags[1] { 4 } else { 3 } } else { origin.1 };
                 let (h_row, r0, r1) = (origin.0, origin.0 + 1, origin.0 + rows - 1);
-                let cats = ibis_pptx::format_ref(&quoted, CellRange { first_row: r0, first_column: table_col, last_row: r1, last_column: table_col });
-                let mut refs = vec![ibis_pptx::SeriesRefs {
-                    name: Some(ibis_pptx::format_ref(&quoted, CellRange { first_row: h_row, first_column: table_col + 1, last_row: h_row, last_column: table_col + 1 })),
+                let cats = ibis_formats::format_ref(&quoted, CellRange { first_row: r0, first_column: table_col, last_row: r1, last_column: table_col });
+                let mut refs = vec![ibis_formats::SeriesRefs {
+                    name: Some(ibis_formats::format_ref(&quoted, CellRange { first_row: h_row, first_column: table_col + 1, last_row: h_row, last_column: table_col + 1 })),
                     categories: Some(cats.clone()),
-                    values: Some(ibis_pptx::format_ref(&quoted, CellRange { first_row: r0, first_column: table_col + 1, last_row: r1, last_column: table_col + 1 })),
+                    values: Some(ibis_formats::format_ref(&quoted, CellRange { first_row: r0, first_column: table_col + 1, last_row: r1, last_column: table_col + 1 })),
                     ..Default::default()
                 }];
                 let kind = if flags[0] || flags[1] {
-                    refs.push(ibis_pptx::SeriesRefs {
-                        name: Some(ibis_pptx::format_ref(&quoted, CellRange { first_row: h_row, first_column: table_col + 2, last_row: h_row, last_column: table_col + 2 })),
+                    refs.push(ibis_formats::SeriesRefs {
+                        name: Some(ibis_formats::format_ref(&quoted, CellRange { first_row: h_row, first_column: table_col + 2, last_row: h_row, last_column: table_col + 2 })),
                         categories: Some(cats),
-                        values: Some(ibis_pptx::format_ref(&quoted, CellRange { first_row: r0, first_column: table_col + 2, last_row: r1, last_column: table_col + 2 })),
+                        values: Some(ibis_formats::format_ref(&quoted, CellRange { first_row: r0, first_column: table_col + 2, last_row: r1, last_column: table_col + 2 })),
                         ..Default::default()
                     });
-                    ibis_pptx::NewChartKind::ComboColumnLineSecondaryAxis
+                    ibis_formats::NewChartKind::ComboColumnLineSecondaryAxis
                 } else {
-                    ibis_pptx::NewChartKind::ClusteredColumn
+                    ibis_formats::NewChartKind::ClusteredColumn
                 };
                 Some((kind, refs))
             }
             Tool::Regression if flags[3] => {
                 let out_name = self.presentation().slide(slide).and_then(|s| s.name.clone()).unwrap_or_default();
-                let quoted = ibis_pptx::quote_sheet(&out_name);
+                let quoted = ibis_formats::quote_sheet(&out_name);
                 let obs_label = text("xlsx.analysis.out.observation");
                 let obs_row = output.cells.iter().find_map(|(r, c, inp)| {
                     (*c == 0 && matches!(inp, ibis_doc_model::CellInput::Value(CellValue::Text(t)) if *t == obs_label)).then_some(*r)
@@ -730,16 +730,16 @@ impl SlideEditor {
                     let r0 = h_row + 1;
                     let r1 = origin.0 + rows.saturating_sub(1);
                     (r1 >= r0).then(|| {
-                        let cats = ibis_pptx::format_ref(&quoted, CellRange { first_row: r0, first_column: origin.1, last_row: r1, last_column: origin.1 });
+                        let cats = ibis_formats::format_ref(&quoted, CellRange { first_row: r0, first_column: origin.1, last_row: r1, last_column: origin.1 });
                         let refs = (1..=2)
-                            .map(|dc| ibis_pptx::SeriesRefs {
-                                name: Some(ibis_pptx::format_ref(&quoted, CellRange { first_row: h_row, first_column: origin.1 + dc, last_row: h_row, last_column: origin.1 + dc })),
+                            .map(|dc| ibis_formats::SeriesRefs {
+                                name: Some(ibis_formats::format_ref(&quoted, CellRange { first_row: h_row, first_column: origin.1 + dc, last_row: h_row, last_column: origin.1 + dc })),
                                 categories: Some(cats.clone()),
-                                values: Some(ibis_pptx::format_ref(&quoted, CellRange { first_row: r0, first_column: origin.1 + dc, last_row: r1, last_column: origin.1 + dc })),
+                                values: Some(ibis_formats::format_ref(&quoted, CellRange { first_row: r0, first_column: origin.1 + dc, last_row: r1, last_column: origin.1 + dc })),
                                 ..Default::default()
                             })
                             .collect();
-                        (ibis_pptx::NewChartKind::Line, refs)
+                        (ibis_formats::NewChartKind::Line, refs)
                     })
                 })
             }
@@ -747,9 +747,9 @@ impl SlideEditor {
                 first.as_ref().and_then(|r| {
                     let (cells, _) = vector(&r.sheet, r.range, labels);
                     let (&first_cell, &last_cell) = (cells.first()?, cells.last()?);
-                    let in_quoted = ibis_pptx::quote_sheet(&r.name);
+                    let in_quoted = ibis_formats::quote_sheet(&r.name);
                     let out_name = self.presentation().slide(slide).and_then(|s| s.name.clone()).unwrap_or_default();
-                    let out_quoted = ibis_pptx::quote_sheet(&out_name);
+                    let out_quoted = ibis_formats::quote_sheet(&out_name);
                     let vertical = cells.len() < 2 || cells[0].1 == cells[1].1;
                     let out_range = if vertical {
                         CellRange { first_row: origin.0, first_column: origin.1, last_row: origin.0 + rows.saturating_sub(1), last_column: origin.1 }
@@ -757,20 +757,20 @@ impl SlideEditor {
                         CellRange { first_row: origin.0, first_column: origin.1, last_row: origin.0, last_column: origin.1 + columns.saturating_sub(1) }
                     };
                     let refs = vec![
-                        ibis_pptx::SeriesRefs {
-                            name: labels.then(|| ibis_pptx::format_ref(&in_quoted, CellRange { first_row: r.range.first_row, first_column: r.range.first_column, last_row: r.range.first_row, last_column: r.range.first_column })),
+                        ibis_formats::SeriesRefs {
+                            name: labels.then(|| ibis_formats::format_ref(&in_quoted, CellRange { first_row: r.range.first_row, first_column: r.range.first_column, last_row: r.range.first_row, last_column: r.range.first_column })),
                             categories: None,
-                            values: Some(ibis_pptx::format_ref(&in_quoted, CellRange { first_row: first_cell.0, first_column: first_cell.1, last_row: last_cell.0, last_column: last_cell.1 })),
+                            values: Some(ibis_formats::format_ref(&in_quoted, CellRange { first_row: first_cell.0, first_column: first_cell.1, last_row: last_cell.0, last_column: last_cell.1 })),
                             ..Default::default()
                         },
-                        ibis_pptx::SeriesRefs {
+                        ibis_formats::SeriesRefs {
                             name: None,
                             categories: None,
-                            values: Some(ibis_pptx::format_ref(&out_quoted, out_range)),
+                            values: Some(ibis_formats::format_ref(&out_quoted, out_range)),
                             ..Default::default()
                         },
                     ];
-                    Some((ibis_pptx::NewChartKind::Line, refs))
+                    Some((ibis_formats::NewChartKind::Line, refs))
                 })
             }
             _ => None,
@@ -794,7 +794,7 @@ impl SlideEditor {
             let id = self.document.ids().new_shape_id();
             if let Ok(chart) = source.new_sheet_chart(&current, slide, id, ibis_doc_model::EmuRect::new(x, y, 4_572_000, 2_743_200), kind, refs) {
                 let index = self.presentation().slide(slide).map_or(0, |s| s.shapes.len());
-                let _ = self.document.amend_last(vec![Command::InsertShape { slide, index, shape: chart }]);
+                let _ = self.document.amend_last(vec![Command::InsertShape { slide, shapes: vec![(index, chart)] }]);
             }
         }
 

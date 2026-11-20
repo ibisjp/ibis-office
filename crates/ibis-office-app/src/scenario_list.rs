@@ -11,6 +11,8 @@ pub(crate) use crate::shell::scenario::*;
 
 #[path = "tests/shell/dialog_apply.rs"]
 mod dialog_apply;
+#[path = "tests/shell/host.rs"]
+mod host_scenarios;
 #[path = "tests/shell/font_setup.rs"]
 mod font_setup_scenarios;
 #[path = "tests/shell/shared_equation_editor.rs"]
@@ -37,18 +39,44 @@ mod issues_33_plus;
 mod issues59_62;
 #[path = "tests/shell/issue138_ime_target.rs"]
 mod issue138_ime_target;
+#[path = "tests/shell/issue202_ime_cell_move.rs"]
+mod issue202_ime_cell_move;
 #[path = "tests/shell/issue121_ime.rs"]
 mod issue121_ime;
+#[path = "tests/shell/k0054_open_replace.rs"]
+mod k0054_open_replace;
+#[path = "tests/shell/issue182_reconvert.rs"]
+mod issue182_reconvert;
+#[path = "tests/shell/issue201_close_inactive.rs"]
+mod issue201_close_inactive;
+#[path = "tests/shell/plane16_font.rs"]
+mod plane16_font;
 #[path = "tests/shell/issue143_140.rs"]
 mod issue143_140;
 #[path = "tests/shell/access_key.rs"]
 mod access_key_scenarios;
+#[path = "tests/shell/issue235_pdf.rs"]
+mod issue235_pdf;
+#[path = "tests/shell/issue235_viewer.rs"]
+mod issue235_viewer;
+#[path = "tests/shell/issue245_caret.rs"]
+mod issue245_caret;
 #[path = "tests/shell/menu_layout.rs"]
 mod menu_layout_scenarios;
 #[path = "tests/shell/menus_20261109.rs"]
 mod menus_20261109_scenarios;
 #[path = "tests/shell/menus_20261112.rs"]
 mod menus_20261112_scenarios;
+#[path = "tests/shell/menus_20261114.rs"]
+mod menus_20261114_scenarios;
+#[path = "tests/shell/touch_gesture.rs"]
+mod touch_gesture_scenarios;
+#[path = "tests/shell/k0034_rest.rs"]
+mod k0034_rest_scenarios;
+#[path = "tests/shell/toolbar_scenes.rs"]
+mod toolbar_scenes_scenarios;
+#[path = "tests/shell/k0039_workbook.rs"]
+mod k0039_workbook_scenarios;
 #[path = "tests/shell/menu_every_item.rs"]
 mod menu_every_item_scenarios;
 #[path = "tests/shell/menu_contexts.rs"]
@@ -102,6 +130,8 @@ mod scenario_i18n;
 pub(crate) mod scenario_fix;
 #[path = "tests/shell/scenario_open_save.rs"]
 mod scenario_open_save;
+#[path = "tests/shell/issue232_signature.rs"]
+mod issue232_signature;
 #[path = "tests/shell/scenario_menu_search.rs"]
 mod scenario_menu_search;
 
@@ -121,9 +151,18 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(issues_33_plus::all());
     all.extend(issues59_62::all());
     all.extend(issue138_ime_target::all());
+    all.extend(issue202_ime_cell_move::all());
     all.extend(issue121_ime::all());
+    all.extend(k0054_open_replace::all());
+    all.extend(issue182_reconvert::all());
+    all.extend(issue201_close_inactive::all());
+    all.extend(host_scenarios::all());
+    all.extend(plane16_font::all());
     all.extend(issue143_140::all());
     all.extend(access_key_scenarios::all());
+    all.extend(issue235_pdf::all());
+    all.extend(issue235_viewer::all());
+    all.extend(issue245_caret::all());
     all.extend(ui_20261028::all());
     all.extend(ui_20261029_align::all());
     all.extend(editing_20261028::all());
@@ -143,6 +182,10 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(xlsx_ink_followup::all());
     all.extend(crate::shell::scenario::popup_guard_scenarios::all());
     all.extend(crate::shell::scenario::settings_dialog_scenarios::all());
+    all.extend(crate::shell::scenario::toolbar_overflow_scenarios::all());
+    all.extend(crate::shell::scenario::start_menu_scenarios::all());
+    all.extend(toolbar_scenes_scenarios::all());
+    all.extend(k0039_workbook_scenarios::all());
     all.extend(crate::shell::scenario::segment_control_ui::all());
     all.extend(common_parts::all());
     all.extend(crate::shell::scenario::input_components_rendering::all());
@@ -150,11 +193,15 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(scenario_i18n::all());
     all.extend(scenario_fix::all());
     all.extend(scenario_open_save::all());
+    all.extend(issue232_signature::all());
     all.extend(crate::shell::scenario_menus::all());
     all.extend(scenario_menu_search::all());
     all.extend(menu_layout_scenarios::all());
     all.extend(menus_20261109_scenarios::all());
     all.extend(menus_20261112_scenarios::all());
+    all.extend(menus_20261114_scenarios::all());
+    all.extend(touch_gesture_scenarios::all());
+    all.extend(k0034_rest_scenarios::all());
     all.extend(menu_every_item_scenarios::all());
     all.extend(menu_contexts_scenarios::all());
     all.extend(sidebars_scenarios::all());
@@ -174,6 +221,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(crate::docx_layout_tests_grid::all());
     #[cfg(target_os = "macos")]
     all.extend(crate::xlsx_corpus_report::all());
+    #[cfg(target_os = "macos")]
+    all.extend(crate::xlsx_issue189::all());
     #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
     {
         all.extend(crate::export_print::export_print_tests::all());

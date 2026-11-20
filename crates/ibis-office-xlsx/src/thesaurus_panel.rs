@@ -84,7 +84,7 @@ impl SlideEditor {
         let Some((column, row)) = self.current_cell() else { return };
         let slide = self.current_slide;
         let edit = CellEdit { row, column, input: CellInput::Value(CellValue::Text(synonym.to_string())) };
-        let message = match self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![edit] })]) {
+        let message = match self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![edit] })]) {
             Ok(()) => format("docx.thesaurus.replaced-msg", &[("word", &synonym)]),
             Err(err) => format("edit.refused", &[("error", &err)]),
         };

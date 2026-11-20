@@ -10,7 +10,7 @@ use super::{
     i18n::text,
 };
 use gpui_kit::{
-    component::{v_flex, input::{InputEvent, InputState}},
+    component::input::{InputEvent, InputState},
     *,
 };
 use ibis_doc_model::Rgb;
@@ -29,10 +29,26 @@ impl SlideEditor {
     fn color_picker_state(&self) -> Option<Shared> {
         self.document_memory.get::<Option<Shared>>(KEY).flatten()
     }
-    /// The colour the open picker holds now and whether it shows colours as printed (`None` when no picker is open).
-    pub fn picker_state_summary(&self) -> Option<(ibis_doc_model::Rgb, bool)> {
-        self.color_picker_state().map(|s| { let s = s.borrow(); (s.picker.color, s.picker.gamut) })
+    /// The colour the open picker holds now.
+    pub fn picker_color(&self) -> Option<ibis_doc_model::Rgb> {
+        self.color_picker_state().map(|s| s.borrow().picker.color)
     }
+
+    /// Where the open picker's wheel was drawn last (window pixels).
+    pub fn color_picker_wheel_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.color_picker_state().and_then(|s| s.borrow().picker.wheel_bounds.get())
+    }
+
+    /// The hue, saturation and brightness of the open picker's wheel.
+    pub fn color_picker_hsv(&self, _cx: &App) -> Option<[f32; 3]> {
+        self.color_picker_state().map(|s| s.borrow().picker.hsv)
+    }
+
+    /// The numeric field `i` (0..6: H, S, B, R, G, B) of the open picker.
+    pub fn picker_field(&self, i: usize) -> Option<Entity<InputState>> {
+        self.color_picker_state().map(|s| s.borrow().picker.numbers[i].clone())
+    }
+
     pub fn open_color_picker_dialog(
         &mut self,
         color: Rgb,
@@ -40,17 +56,8 @@ impl SlideEditor {
         w: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // A file with the CMYK mode on shows and keeps the colour as the press prints it.
-        let gamut = self.cmyk_on();
-        let shown = self.chosen_color(color);
-        let hex = cx.new(|cx| InputState::new(w, cx).default_value(format!("{:06X}", shown.0)));
-        let mut picker = ColorEditorState::new(color, w, cx, Self::change_color_picker);
-        picker.gamut = gamut;
-        if gamut {
-            picker.color = shown;
-            picker.hsv = super::color_editor::rgb_to_hsv(shown);
-            picker.sync(None, w, cx);
-        }
+        let hex = cx.new(|cx| InputState::new(w, cx).default_value(format!("{:06X}", color.0)));
+        let picker = ColorEditorState::new(color, w, cx, Self::change_color_picker);
         let subscription = cx.subscribe_in(&hex, w, |e, _, event: &InputEvent, w, cx| {
             if matches!(event, InputEvent::Change) {
                 e.change_color_picker(ColorAction::Hex, w, cx);
@@ -111,72 +118,22 @@ impl SlideEditor {
             return;
         };
         let pick = state.borrow().pick.clone();
-        // (A file with the CMYK mode on saves the colour as the press prints it.)
-        let color = self.chosen_color(color);
         self.close_color_picker_dialog(w, cx);
         pick(self, Some(color), w, cx);
         self.note_recent_color(color);
     }
-    /// The checkbox for the CMYK mode: turning it on asks first (a feature PowerPoint does not have); the picker then shows
-    /// the colours as printed. Turning it off shows them as they are.
-    fn toggle_cmyk_mode_from_picker(&mut self, cx: &mut Context<Self>) {
-        if self.cmyk_on() {
-            let mut mode = self.presentation().cmyk.clone();
-            mode.enabled = false;
-            self.run(vec![ibis_doc_model::Command::SetCmykMode { cmyk: mode }], cx);
-            super::cmyk::set_display_gamut(false);
-            if let Some(state) = self.color_picker_state() {
-                state.borrow_mut().picker.gamut = false;
-            }
-            cx.notify();
-        } else {
-            self.require_cmyk(
-                Rc::new(|e, cx| {
-                    e.cmyk_picker_refresh = true;
-                    cx.notify();
-                }),
-                cx,
-            );
-        }
-    }
-
-    /// 「プロファイル…」: the picker is closed (nothing is chosen) and the window to choose the ICC profile opens.
-    fn open_profile_from_picker(&mut self, w: &mut Window, cx: &mut Context<Self>) {
-        self.close_color_picker_dialog(w, cx);
-        self.open_cmyk_profile_chooser(w, cx);
-    }
-
     pub(crate) fn color_picker_dialog(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<chrome::SidebarPanel> {
         let state = self.color_picker_state()?;
-        // The question about CMYK was answered with OK: the picker shows the colours as printed from now on.
-        if std::mem::take(&mut self.cmyk_picker_refresh) {
-            super::cmyk::set_display_gamut(true);
-            let hex = state.borrow().hex.clone();
-            let mut s = state.borrow_mut();
-            s.picker.gamut = true;
-            let now = s.picker.color;
-            s.picker.change(ColorAction::Pick(now), &hex, window, cx);
-        }
         let state = state.borrow();
-        let cmyk = self.has_cmyk().then(|| {
-            v_flex()
-                .gap_1()
-                .child(chrome::checkbox_button("color-cmyk-mode", text("color.dialog.cmyk-mode"), self.cmyk_on(), false, cx.listener(|e, _, _, cx| e.toggle_cmyk_mode_from_picker(cx))))
-                .children(self.cmyk_on().then(|| {
-                    chrome::button_group([chrome::ButtonGroupItem::new("color-cmyk-profile", text("shell.cmyk.profile.title")).on_click(cx.listener(|e, _, w, cx| e.open_profile_from_picker(w, cx)))])
-                }))
-                .into_any_element()
-        });
         let body = color_editor::color_editor(
             &state.picker,
             &state.hex,
             &self.recent_colors,
             Self::change_color_picker,
-            cmyk,
             cx,
         )
         .children(

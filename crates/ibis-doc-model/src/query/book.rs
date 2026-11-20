@@ -49,6 +49,128 @@ fn guess_type(values: &[&CellValue]) -> QType {
     }
 }
 
+/// What reads a workbook file into a document (the app's file reader). The model knows no file format, so the app gives it this once
+/// (`set_workbook_loader`); without it (a build that reads no files, the browser) a source that is a file cannot be read.
+static LOADER: std::sync::OnceLock<fn(&str) -> Result<Presentation, String>> = std::sync::OnceLock::new();
+
+/// Give the model the function that reads the workbook at a path (`Excel.Workbook(File.Contents(path))`). Only the first is kept.
+pub fn set_workbook_loader(loader: fn(&str) -> Result<Presentation, String>) {
+    let _ = LOADER.set(loader);
+}
+
+/// `Excel.Workbook(File.Contents(path), null, true)` and the item chosen in it (`{[Item="Data",Kind="Sheet"]}[Data]`): a sheet is its
+/// used range from A1, the columns `Column1`… (the headings are the next step's, 昇格されたヘッダー数); a table is the table, its headings
+/// the names.
+fn read_workbook(path: &str, item: &str, sheet: bool) -> Result<QTable, String> {
+    if item.is_empty() {
+        return Err(format!("ファイル {path} のシートまたはテーブルを選んでいません"));
+    }
+    let load = LOADER.get().ok_or_else(|| format!("ファイル {path} を読み込めません"))?;
+    let loaded = load(path)?;
+    read_item(&loaded, item, sheet)
+}
+
+/// One sheet (its used range from A1) or table of a loaded workbook.
+fn read_item(loaded: &Presentation, item: &str, sheet: bool) -> Result<QTable, String> {
+    if !sheet {
+        return read_source(loaded, &Source::Table(item.to_string()));
+    }
+    let s = sheet_named(loaded, item).ok_or_else(|| format!("シート {item} がありません"))?;
+    let (mut last_row, mut last_column, mut any) = (0, 0, false);
+    for cell in s.cells.iter().filter(|c| !matches!(c.value, CellValue::Empty)) {
+        (last_row, last_column, any) = (last_row.max(cell.row), last_column.max(cell.column), true);
+    }
+    if !any {
+        return Ok(table_of_cells(Vec::new(), 1));
+    }
+    Ok(table_of_cells(block(s, 0, 0, last_row, last_column), last_column as usize + 1))
+}
+
+/// Every sheet and table of the workbook file at `path` (`Excel.Workbook`): the name, whether it is a sheet, and its table.
+pub(super) fn workbook_items(path: &str) -> Result<Vec<(String, bool, QTable)>, String> {
+    let load = LOADER.get().ok_or_else(|| format!("ファイル {path} を読み込めません"))?;
+    let loaded = load(path)?;
+    let mut out = Vec::new();
+    if let Some(wb) = loaded.workbook.as_deref() {
+        for ws in &wb.sheets {
+            out.push((ws.name.clone(), true, read_item(&loaded, &ws.name, true)?));
+        }
+    }
+    for slide in &loaded.slides {
+        let Some(sheet) = sheet_of_slide(slide) else { continue };
+        for t in &sheet.tables {
+            out.push((t.name.clone(), false, read_item(&loaded, &t.name, false)?));
+        }
+    }
+    Ok(out)
+}
+
+/// `Csv.Document(File.Contents(path), [Delimiter, Columns, Encoding, QuoteStyle])`: the columns `Column1`, `Column2`… of text (the step
+/// after it, 昇格されたヘッダー数, makes the first row their names), as Excel gives it. The file is read where files can be (not in the browser),
+/// as UTF-8 (`Encoding=65001`, a byte order mark dropped).
+pub(super) fn read_csv(path: &str, delimiter: &str, columns: usize, encoding: u32, quote: &str) -> Result<QTable, String> {
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = (delimiter, columns, encoding, quote);
+        Err(format!("ブラウザ版ではファイル {path} を読み込めません"))
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        if encoding != 65001 {
+            return Err(format!("文字コード {encoding} には対応していません"));
+        }
+        let bytes = std::fs::read(path).map_err(|e| format!("ファイル {path} を読み込めません（{e}）"))?;
+        let text = String::from_utf8_lossy(&bytes);
+        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+        let rows = csv_records(text, delimiter.chars().next().unwrap_or(','), quote != "None");
+        let width = rows.iter().map(Vec::len).max().unwrap_or(0).max(columns).max(1);
+        let cells = rows.into_iter().map(|row| (0..width).map(|i| row.get(i).filter(|v| !v.is_empty()).map_or(CellValue::Empty, |v| CellValue::Text(v.clone()))).collect()).collect();
+        Ok(table_of_cells(cells, width))
+    }
+}
+
+/// The records of CSV text: fields apart at `delimiter`, records at line ends; with `quoted`, a field in double quotes may hold the delimiter,
+/// line ends and a doubled quote.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn csv_records(text: &str, delimiter: char, quoted: bool) -> Vec<Vec<String>> {
+    let (mut rows, mut row, mut field) = (Vec::new(), Vec::new(), String::new());
+    let (mut in_quotes, mut chars) = (false, text.chars().peekable());
+    let mut any = false;
+    while let Some(c) = chars.next() {
+        any = true;
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    field.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                field.push(c);
+            }
+        } else if c == '"' && quoted && field.is_empty() {
+            in_quotes = true;
+        } else if c == delimiter {
+            row.push(std::mem::take(&mut field));
+        } else if c == '\n' || c == '\r' {
+            if c == '\r' && chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            row.push(std::mem::take(&mut field));
+            rows.push(std::mem::take(&mut row));
+            any = false;
+        } else {
+            field.push(c);
+        }
+    }
+    if any {
+        row.push(field);
+        rows.push(row);
+    }
+    rows
+}
+
 /// A source as a table: a table of the workbook (its headings the column names, its columns typed from
 /// their values), a defined name's range, or a range of a sheet (the columns `Column1`, `Column2`…).
 pub fn read_source(p: &Presentation, source: &Source) -> Result<QTable, String> {
@@ -60,6 +182,8 @@ pub fn read_source(p: &Presentation, source: &Source) -> Result<QTable, String> 
             }],
             rows: Vec::new(),
         }),
+        Source::Csv { path, delimiter, columns, encoding, quote } => read_csv(path, delimiter, *columns as usize, *encoding, quote),
+        Source::Workbook { path, item, sheet } => read_workbook(path, item, *sheet),
         Source::Range { sheet, range } => {
             let s = sheet_named(p, sheet).ok_or_else(|| format!("シート {sheet} がありません"))?;
             let mut ends = range.split(':');

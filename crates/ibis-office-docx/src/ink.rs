@@ -443,7 +443,7 @@ impl SlideEditor {
                 flip_v: false,
                 glue: Glue::default(),
             },
-            FlowCommand::PlaceShapeOnPage {
+            FlowCommand::SetShapePagePosition {
                 at,
                 size,
                 x: min_x,
@@ -492,7 +492,7 @@ impl SlideEditor {
                         flip_v: end.1 < start.1,
                         glue: Glue::default(),
                     },
-                    FlowCommand::PlaceShapeOnPage { at, size, x, y },
+                    FlowCommand::SetShapePagePosition { at, size, x, y },
                 ]
             }
             Recognized::Rectangle | Recognized::Ellipse | Recognized::Triangle => {
@@ -502,7 +502,7 @@ impl SlideEditor {
                     Recognized::Triangle => "triangle",
                     Recognized::Line => unreachable!(),
                 };
-                let Some(geometry) = ibis_pptx::preset_geometry(preset) else {
+                let Some(geometry) = ibis_formats::preset_geometry(preset) else {
                     return false;
                 };
                 let size = EmuSize::new(bbox_size.width.max(12_700), bbox_size.height.max(12_700));
@@ -514,7 +514,7 @@ impl SlideEditor {
                         fill: None,
                         line: Some((stroke.color.rgb, stroke.width)),
                     },
-                    FlowCommand::PlaceShapeOnPage {
+                    FlowCommand::SetShapePagePosition {
                         at,
                         size,
                         x: min_x,
@@ -855,7 +855,7 @@ impl SlideEditor {
                         flip_v: end.1 < start.1,
                         glue: Glue::default(),
                     });
-                    commands.push(FlowCommand::PlaceShapeOnPage { at, size, x, y });
+                    commands.push(FlowCommand::SetShapePagePosition { at, size, x, y });
                 }
                 Recognized::Rectangle | Recognized::Ellipse | Recognized::Triangle => {
                     let preset = match rec {
@@ -864,7 +864,7 @@ impl SlideEditor {
                         Recognized::Triangle => "triangle",
                         Recognized::Line => unreachable!(),
                     };
-                    let Some(geometry) = ibis_pptx::preset_geometry(preset) else {
+                    let Some(geometry) = ibis_formats::preset_geometry(preset) else {
                         continue;
                     };
                     let size = EmuSize::new(
@@ -878,7 +878,7 @@ impl SlideEditor {
                         fill: None,
                         line: Some((stroke.color.rgb, stroke.width)),
                     });
-                    commands.push(FlowCommand::PlaceShapeOnPage {
+                    commands.push(FlowCommand::SetShapePagePosition {
                         at,
                         size,
                         x: ox,

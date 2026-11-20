@@ -380,11 +380,11 @@ impl SlideEditor {
                             .icon("pivot_table_chart")
                             .on(|this, window, cx| this.open_create_pivot(window, cx))
                             .into(),
-                        MenuItem::new("xlsx.cell-table-slicer", "xlsx.slicer-insert")
+                        MenuItem::new("xlsx.cell-table-slicer", "xlsx.insert-slicer")
                             .icon("filter_alt")
                             .on(|this, window, cx| this.open_slicer_insert_panel(window, cx))
                             .into(),
-                        MenuItem::new("xlsx.cell-table-timeline", "xlsx.timeline-insert")
+                        MenuItem::new("xlsx.cell-table-timeline", "xlsx.insert-timeline")
                             .icon("view_timeline")
                             .on(|this, window, cx| this.open_timeline_insert_panel(window, cx))
                             .into(),
@@ -747,15 +747,15 @@ impl SlideEditor {
                     .icon("dataset")
                     .on(|this, window, cx| this.open_pivot_change_source(window, cx))
                     .into(),
-                MenuItem::new("xlsx.cell-pivot-chart", "xlsx.pivot-chart-insert")
+                MenuItem::new("xlsx.cell-pivot-chart", "xlsx.insert-pivot-chart")
                     .icon("insert_chart")
                     .on(|this, window, cx| this.open_insert_pivot_chart(window, cx))
                     .into(),
-                MenuItem::new("xlsx.cell-pivot-slicer", "xlsx.slicer-insert")
+                MenuItem::new("xlsx.cell-pivot-slicer", "xlsx.insert-slicer")
                     .icon("filter_alt")
                     .on(|this, window, cx| this.open_slicer_insert_panel(window, cx))
                     .into(),
-                MenuItem::new("xlsx.cell-pivot-timeline", "xlsx.timeline-insert")
+                MenuItem::new("xlsx.cell-pivot-timeline", "xlsx.insert-timeline")
                     .icon("timeline")
                     .on(|this, window, cx| this.open_timeline_insert_panel(window, cx))
                     .into(),
@@ -1196,7 +1196,7 @@ impl SlideEditor {
                     .into(),
             );
             out.push(
-                MenuItem::new("xlsx.cell-comment-delete", "xlsx.comment-delete")
+                MenuItem::new("xlsx.cell-comment-delete", "xlsx.delete-comment")
                     .icon("delete")
                     .on(|this, window, cx| {
                         if let Some((c, r)) = this.current_cell() {
@@ -1217,7 +1217,7 @@ impl SlideEditor {
         }
         // メモ (Notes: 新しいメモ / メモの編集・メモの削除).
         out.push(
-            MenuItem::tr(if has_note { "xlsx.note-edit" } else { "xlsx.note-new" })
+            MenuItem::tr(if has_note { "xlsx.note-edit" } else { "xlsx.new-note" })
                 .icon("note_add")
                 .shortcut("⇧F2")
                 .on(|this, window, cx| this.begin_note_edit(window, cx))
@@ -1442,7 +1442,7 @@ impl SlideEditor {
                         })
                         .into(),
                     MenuItem::new("xlsx.cell-remove-arrows", "xlsx.remove-all-arrows")
-                        .icon("clear")
+                        .icon("close")
                         .disabled(!has_arrows)
                         .on(|this, window, cx| {
                             this.remove_all_arrows(cx);
@@ -1659,7 +1659,7 @@ impl SlideEditor {
                 .on(|this, window, cx| {
                     let Some((_, sheet)) = this.current_sheet() else { return };
                     let (slide, shown) = (this.current_slide, !sheet.grid_lines);
-                    this.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetGridLines { slide, shown })], cx);
+                    this.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetGridLines { sheet: slide, shown })], cx);
                     this.focus_handle.focus(window, cx);
                 })
                 .into(),
@@ -1670,11 +1670,23 @@ impl SlideEditor {
                 .on(|this, window, cx| {
                     let Some((_, sheet)) = this.current_sheet() else { return };
                     let (slide, shown) = (this.current_slide, !sheet.headings);
-                    this.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetHeadings { slide, shown })], cx);
+                    this.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetHeadings { sheet: slide, shown })], cx);
                     this.focus_handle.focus(window, cx);
                 })
                 .into(),
         );
+        // Sheets selected together (作業グループ, #238).
+        out.push(MenuEntry::Separator);
+        out.push(MenuItem::new("xlsx.tab-select-all", "_xlsx.group-select-all").on(|this, window, cx| {
+            this.select_all_sheets(cx);
+            this.focus_handle.focus(window, cx);
+        }).into());
+        if !self.sheet_group().is_empty() {
+            out.push(MenuItem::new("xlsx.tab-ungroup", "_xlsx.group-ungroup").on(|this, window, cx| {
+                this.ungroup_sheets(cx);
+                this.focus_handle.focus(window, cx);
+            }).into());
+        }
         out
     }
 

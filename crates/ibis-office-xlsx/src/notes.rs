@@ -234,7 +234,7 @@ impl SlideEditor {
         let runs = edit.runs.clone().filter(|r| r.iter().map(|x| x.text.as_str()).collect::<String>() == edit.text).unwrap_or_default();
         let comment = (!edit.text.trim().is_empty()).then(|| SheetComment { row, column, author: note.author.clone(), text: edit.text.clone(), runs, rect: Some(note.rect) });
         if comment != note.original {
-            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetComment { slide, row, column, comment })]) {
+            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetComment { sheet: slide, row, column, comment })]) {
                 self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
             }
         }
@@ -252,7 +252,7 @@ impl SlideEditor {
             .comments
             .iter()
             .filter(|c| ranges.iter().any(|r| (r.first_row..=r.last_row).contains(&c.row) && (r.first_column..=r.last_column).contains(&c.column)))
-            .map(|c| Command::Sheet(SheetCommand::SetComment { slide, row: c.row, column: c.column, comment: None }))
+            .map(|c| Command::Sheet(SheetCommand::SetComment { sheet: slide, row: c.row, column: c.column, comment: None }))
             .collect();
         if commands.is_empty() {
             return;
@@ -511,7 +511,7 @@ impl SlideEditor {
                             && let Some(l) = painted.lines.get(line).filter(|_| focus.is_focused(window) && crate::shell::caret::visible(format!("note:{caret_utf16}:{}", painted.lines.len()), window, cx))
                         {
                             let b = caret.map_or(0, |c| c.0);
-                            window.paint_quad(fill(Bounds::new(point(o.x + px(l.x_at(b)), o.y + px(l.baseline - l.ascent)), gpui_kit::size(px(1.0), px(l.ascent + l.descent))), rgb(0x000000)));
+                            window.paint_quad(fill(Bounds::new(point(o.x + px(l.x_at(b)), o.y + px(l.baseline - l.ascent)), gpui_kit::size(px(1.0), px(l.ascent + l.descent))), crate::shell::caret::color_over(Some(ibis_doc_model::Rgb(FILL)), ibis_doc_model::Rgb::WHITE)));
                         }
                     },
                 )

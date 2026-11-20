@@ -37,13 +37,13 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 }
 fn new_save_recent() {
     for (kind, ext) in [
-        (ibis_pptx::Kind::Document, "docx"),
-        (ibis_pptx::Kind::Workbook, "xlsx"),
-        (ibis_pptx::Kind::Presentation, "pptx"),
+        (ibis_formats::Kind::Document, "docx"),
+        (ibis_formats::Kind::Workbook, "xlsx"),
+        (ibis_formats::Kind::Presentation, "pptx"),
     ] {
         let mut s = Scenario::start_view();
         s.update(|e, w, cx| e.new_file(kind, w, cx));
-        if kind == ibis_pptx::Kind::Workbook {
+        if kind == ibis_formats::Kind::Workbook {
             s.click_cell("A1");
             s.enter("Saved history", "enter");
         }
@@ -74,7 +74,7 @@ fn phonetic_reopen() {
         Scenario::open(&fixture.to_string_lossy())
     } else {
         let mut s = Scenario::start_view();
-        s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+        s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
         s.click_cell("A2");
         s.enter("アイビス", "enter"); // i18n-ok: Japanese document fixture content and expected values, not UI labels.
         s
@@ -120,7 +120,7 @@ fn phonetic_reopen() {
     );
     s.update(|e, w, cx| e.close_dialog(w, cx));
     if !s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_phonetic) {
-        s.menu("xlsx.phonetic-toggle");
+        s.menu("xlsx.toggle-phonetic");
     }
     assert!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_phonetic));
     s.screenshot("phonetic-layout");
@@ -205,7 +205,7 @@ fn chart_settings_switch() {
     let fixture=crate::shell::scenario::repo_root().join("test/private/グラフ確認.xlsx"); // i18n-ok: Private user fixture path, preserving the original Unicode filename.
     let mut s=if fixture.exists(){Scenario::open(&fixture.to_string_lossy())}else{
         let mut s=Scenario::start_view();
-        s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Workbook,w,cx));
+        s.update(|e,w,cx|e.new_file(ibis_formats::Kind::Workbook,w,cx));
         for (cell,value) in [("A1","x"),("B1","y"),("A2","1"),("B2","2"),("A3","2"),("B3","4")]{s.click_cell(cell);s.enter(value,"enter");}
         s
     };
@@ -233,7 +233,7 @@ fn chart_settings_switch() {
 
 fn time_shortcut() {
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     s.click_cell("A1");
     s.key("ctrl-:");
     assert!(
@@ -244,7 +244,7 @@ fn time_shortcut() {
 fn repeat_edit() {
     use ibis_doc_model::sheet_command::StyleChange;
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     s.click_cell("A1");
     s.toolbar("bold");
     s.click_cell("B1");
@@ -272,7 +272,7 @@ fn fit_text_dialog() {
     use crate::docx::scenarios::DocSteps;
     use ibis_doc_model::{FlowCommand, FlowPos, RunChange};
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Document, w, cx));
     s.type_text("あいうえおかき"); // i18n-ok: Japanese document fixture content and expected values, not UI labels.
     let (para, _) = s.paragraph(0);
     s.update(|e, w, cx| {
@@ -350,9 +350,9 @@ fn fit_text_dialog() {
 fn native_shape_clipboard() {
     use ibis_doc_model::{EmuRect, FlowRunKind, Shape};
     for kind in [
-        ibis_pptx::Kind::Presentation,
-        ibis_pptx::Kind::Workbook,
-        ibis_pptx::Kind::Document,
+        ibis_formats::Kind::Presentation,
+        ibis_formats::Kind::Workbook,
+        ibis_formats::Kind::Document,
     ] {
         let mut s = Scenario::start_view();
         s.update(|e, w, cx| e.new_file(kind, w, cx));
@@ -364,12 +364,12 @@ fn native_shape_clipboard() {
                 EmuRect::new(0, 0, 3000000, 1000000),
                 "Office vector text",
             );
-            ibis_pptx::shape_clipboard::write_gvml(&p, &[shape]).unwrap()
+            ibis_formats::shape_clipboard::write_gvml(&p, &[shape]).unwrap()
         });
         crate::native_shape_clipboard::simulate(Some(native));
         assert!(s.update(|e, _, cx| e.paste_office_shapes(cx)));
         let shapes = s.with(|e, _| {
-            if kind == ibis_pptx::Kind::Document {
+            if kind == ibis_formats::Kind::Document {
                 let ibis_doc_model::Block::Paragraph(p) = &e.flow().unwrap().body[0] else {
                     panic!()
                 };
@@ -417,7 +417,7 @@ fn native_shape_clipboard() {
 
 fn formula_references() {
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     for (cell, value) in [("A1", "1"), ("B1", "2"), ("C1", "3")] {
         s.click_cell(cell);
         s.enter(value, "enter");
@@ -480,7 +480,7 @@ fn formula_references() {
 // F2 / a double-click (Edit mode) moves the caret instead; F2 again goes back to Enter mode.
 fn formula_edit_mode_arrows() {
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     let text = |s: &mut Scenario| s.with(|e, _| e.cell_edit().unwrap().text.clone());
     s.click_cell("A1");
     s.enter("=1+1", "enter");
@@ -510,10 +510,10 @@ fn formula_edit_mode_arrows() {
 }
 fn series_headers() {
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     s.update(|e, _, cx| {
         let slide=e.current_slide;
-        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::RenameSheet { slide, name:"O'Brien 売上".into() })],cx); // i18n-ok: Japanese document fixture content and expected values, not UI labels.
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::RenameSheet { sheet: slide, name:"O'Brien 売上".into() })],cx); // i18n-ok: Japanese document fixture content and expected values, not UI labels.
     });
     for (cell, value) in [
         ("A1", "項目"), // i18n-ok: Japanese document fixture content and expected values, not UI labels.
@@ -555,7 +555,7 @@ fn series_headers() {
 
 fn far_grid_alignment() {
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     s.update(|e, w, cx| {
         e.set_zoom(Some(2.83), w, cx);
         e.go_to_reference("AOU18823", w, cx);
@@ -586,7 +586,7 @@ fn far_grid_alignment() {
 fn rotated_lines() {
     use ibis_doc_model::{EmuRect, Shape};
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Presentation, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Presentation, w, cx));
     let mut widths = Vec::new();
     for angle in [0, 90, 180, 270] {
         let image = s.with(|e, _| {
@@ -636,7 +636,7 @@ fn rotated_lines() {
 fn vertical_composition() {
     use crate::docx::scenarios::DocSteps;
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Document, w, cx));
     s.type_text("日本語。文章（縦書き）"); // i18n-ok: Japanese document fixture content and expected values, not UI labels.
     s.menu("docx.page.direction.vertical");
     s.update(|e, w, cx| {
@@ -664,7 +664,7 @@ fn vertical_composition() {
 fn crop_resolution() {
     use std::io::Cursor;
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Presentation, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Presentation, w, cx));
     let pixels = image::RgbaImage::from_fn(2880, 1920, |_, y| {
         if y % 4 < 2 {
             image::Rgba([0, 0, 0, 255])
@@ -701,7 +701,7 @@ fn large_font_multiple_spacing() {
     use crate::docx::scenarios::DocSteps;
     use ibis_doc_model::{FlowCommand, FlowPos, LineHeight, ParaChange, RunChange};
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Document, w, cx));
     s.type_text("大きい文字の行間"); // i18n-ok: Japanese document fixture content and expected values, not UI labels.
     let (id, _) = s.paragraph(0);
     s.update(|e, _, cx| {
@@ -723,7 +723,7 @@ fn large_font_multiple_spacing() {
                 FlowCommand::SetParagraphFormat {
                     first: id,
                     last: id,
-                    change: ParaChange::Line(LineHeight::Auto(240)),
+                    change: ParaChange::LineSpacing(LineHeight::Auto(240)),
                 },
             ],
             cx,
@@ -741,7 +741,7 @@ fn large_font_multiple_spacing() {
             vec![FlowCommand::SetParagraphFormat {
                 first: id,
                 last: id,
-                change: ParaChange::Line(LineHeight::Auto(360)),
+                change: ParaChange::LineSpacing(LineHeight::Auto(360)),
             }],
             cx,
         );

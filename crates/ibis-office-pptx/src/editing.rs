@@ -371,7 +371,7 @@ impl SlideEditor {
         for (id, frame, b) in shapes {
             let d = at.round() as i64 - key(&b);
             if d != 0 {
-                commands.push(Command::SetFrame { slide, shape: id, frame: if horizontal { frame.translated(d, 0) } else { frame.translated(0, d) } });
+                commands.push(Command::SetFrame { slide, frames: vec![(id, if horizontal { frame.translated(d, 0) } else { frame.translated(0, d) })], with_attached: true });
             }
             at += len(&b) as f64 + gap;
         }
@@ -398,7 +398,7 @@ impl SlideEditor {
                     }
                 }
             }
-            return self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
+            return self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
         }
         self.drop_untouched_body();
         let commands = self
@@ -485,7 +485,7 @@ impl SlideEditor {
                     }
                 }
             }
-            return self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
+            return self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
         }
         let commands = self
             .selected_shapes()
@@ -678,7 +678,7 @@ impl SlideEditor {
             }
             _ => {}
         }
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
     }
 
     /// Change the text format of each selected shape's whole text.
@@ -918,6 +918,8 @@ impl SlideEditor {
             highlight: Some(run.highlight), outline: Some(run.outline), baseline: Some(run.baseline), spacing: Some(run.spacing),
             strike: Some(run.strike), caps: Some(run.caps), shadow: Some(run.shadow), glow: Some(run.glow), link: None, link_tooltip: None,
             lang: Some(run.lang.clone()), tate_chu_yoko: None, char_scale: None,
+            // Copying a run's format resets nothing; it sets what the run has.
+            reset: Default::default(),
         };
         if self.is_presentation() { self.shape_edit.character_format_copy = Some(format); }
         cx.notify();
@@ -1317,7 +1319,7 @@ impl SlideEditor {
         self.resources.add_picture(media, format, &data);
         let commands = pictures.into_iter().map(|(shape, mut picture)| {
             picture.media = media;
-            Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Picture(picture)) }
+            Command::SetShapeKind { slide, shape, kind: Box::new(ShapeKind::Picture(picture)) }
         }).collect();
         self.run(commands, cx);
     }
@@ -1353,10 +1355,10 @@ impl SlideEditor {
         let slide = self.current_slide;
         let mut commands = Vec::new();
         if let Some(old) = replaced {
-            commands.push(Command::RemoveShapes { slide, shapes: vec![old] });
+            commands.push(Command::DeleteShape { slide, shapes: vec![old], with_attached: false });
         }
         let index = self.slide().shapes.len() - usize::from(replaced.is_some());
-        commands.push(Command::InsertShape { slide, index, shape });
+        commands.push(Command::InsertShape { slide, shapes: vec![(index, shape)] });
         commands.push(Command::SetAspectLocked { slide, shape: id, locked: true });
         self.run(commands, cx);
         self.set_selection(vec![id]);
@@ -1402,7 +1404,7 @@ impl SlideEditor {
 
     /// Insert a screenshot of an available window (window snapshot).
     pub(crate) fn insert_screenshot_window(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
-        let (data, _, _) = ibis_pptx::screenshot_snapshot(640, 360);
+        let (data, _, _) = ibis_formats::screenshot_snapshot(640, 360);
         self.insert_picture("Screenshot_Window.png", data, cx)
     }
 
@@ -1411,7 +1413,7 @@ impl SlideEditor {
         if let Some(id) = self.insert_screenshot_from_clipboard(cx) {
             return Some(id);
         }
-        let (data, _, _) = ibis_pptx::screenshot_snapshot(480, 270);
+        let (data, _, _) = ibis_formats::screenshot_snapshot(480, 270);
         self.insert_picture("Screen_Clipping.png", data, cx)
     }
 
@@ -1485,7 +1487,7 @@ impl SlideEditor {
                     }
                 }
             }
-            self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
+            self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
             return Some(media);
         }
 
@@ -1565,7 +1567,7 @@ impl SlideEditor {
         let fill = self.slide().background.clone();
         let hidden = self.slide().hide_backdrop;
         let mut commands: Vec<Command> = self.presentation().slides.iter().filter(|s| s.background != fill).map(|s| Command::SetBackground { slide: s.id, fill: fill.clone() }).collect();
-        commands.extend(self.presentation().slides.iter().filter(|s| s.hide_backdrop != hidden).map(|s| Command::SetBackdropHidden { slide: s.id, hidden }));
+        commands.extend(self.presentation().slides.iter().filter(|s| s.hide_backdrop != hidden).map(|s| Command::SetBackgroundGraphicsHidden { slide: s.id, hidden }));
         if !commands.is_empty() {
             self.run(commands, cx);
         }
@@ -1574,7 +1576,7 @@ impl SlideEditor {
     /// 図形の変更: the selected auto shapes made preset `preset` (their text,
     /// fill and outline kept).
     pub(crate) fn change_selected_shapes(&mut self, preset: &str, cx: &mut Context<Self>) {
-        let Some(geometry) = ibis_pptx::preset_geometry(preset) else { return };
+        let Some(geometry) = ibis_formats::preset_geometry(preset) else { return };
         let slide = self.current_slide;
         let commands: Vec<Command> = self
             .selected_shapes()
@@ -1583,7 +1585,7 @@ impl SlideEditor {
                 ShapeKind::Auto(a) if a.geometry != geometry => {
                     let mut a = a.clone();
                     a.geometry = geometry.clone();
-                    Some(Command::SetKind { slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(a)) })
+                    Some(Command::SetShapeKind { slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(a)) })
                 }
                 _ => None,
             })
@@ -1600,8 +1602,8 @@ impl SlideEditor {
         let chosen = self.selected_slide_ids();
         // The file as it is now, and the slides' parts in it.
         let saved = self.source.as_ref().and_then(|source| {
-            let data: std::sync::Arc<[u8]> = source.save(self.presentation(), ibis_pptx::SaveOptions::default()).ok()?.into();
-            let opened = ibis_pptx::open(data.clone()).ok()?;
+            let data: std::sync::Arc<[u8]> = source.save(self.presentation(), ibis_formats::SaveOptions::default()).ok()?.into();
+            let opened = ibis_formats::open(data.clone()).ok()?;
             let parts = opened.source.slide_parts(&opened.presentation);
             Some((data, parts))
         });
@@ -1611,7 +1613,7 @@ impl SlideEditor {
                 let slide = self.presentation().slide(*id)?.clone();
                 let layout = slide.layout.and_then(|l| self.presentation().layout(l)).map(|l| l.name.clone());
                 let index = self.presentation().slide_index(*id)?;
-                let file = saved.as_ref().and_then(|(data, parts)| Some(ibis_pptx::ForeignSlide { data: data.clone(), part: parts.get(index).cloned().flatten()?, keep_source: false }));
+                let file = saved.as_ref().and_then(|(data, parts)| Some(ibis_formats::ForeignSlide { data: data.clone(), part: parts.get(index).cloned().flatten()?, keep_source: false }));
                 Some((slide, layout, file))
             })
             .collect();
@@ -1770,9 +1772,9 @@ impl SlideEditor {
         } else {
             return;
         }
-        let mut commands = vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }];
+        let mut commands = vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }];
         if frame != shape.frame {
-            commands.push(Command::SetFrame { slide, shape: id, frame });
+            commands.push(Command::SetFrame { slide, frames: vec![(id, frame)], with_attached: true });
         }
         self.run(commands, cx);
     }
@@ -1816,7 +1818,7 @@ impl SlideEditor {
         }
         let slide = self.current_slide;
         self.end_text_edit(window, cx);
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
     }
 
     /// セルの結合: the cells selected (the edited cell to the Shift+clicked one).
@@ -1826,7 +1828,7 @@ impl SlideEditor {
         let Some(merged) = table.with_merged(a, b) else { return };
         let slide = self.current_slide;
         self.end_text_edit(window, cx);
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(merged))) }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(merged))) }], cx);
         self.begin_table_cell_edit(id, (a.0.min(b.0), a.1.min(b.1)), window, cx);
     }
 
@@ -1837,7 +1839,7 @@ impl SlideEditor {
         let Some(split) = table.with_split(at) else { return };
         let slide = self.current_slide;
         self.end_text_edit(window, cx);
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(split))) }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(split))) }], cx);
         self.begin_table_cell_edit(id, at, window, cx);
     }
 
@@ -1882,7 +1884,7 @@ impl SlideEditor {
             TableOption::BandCol => table.style_options.band_col = !table.style_options.band_col,
         }
         let id = shape.id;
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
     }
 
     /// 表のスタイルオプションが有効かどうか.
@@ -1907,7 +1909,7 @@ impl SlideEditor {
         let mut table = (**table).clone();
         table.style_id = style_id;
         let id = shape.id;
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) }], cx);
     }
 
     /// 現在選択されている表のスタイル ID を取得する.
@@ -1974,6 +1976,15 @@ impl SlideEditor {
     pub(crate) fn set_transition_sound(&mut self, sound: Option<ibis_doc_model::TransitionSound>, cx: &mut Context<Self>) {
         let slide = self.current_slide;
         let mut transition = self.slide().transition.clone().unwrap_or_else(|| ibis_doc_model::Transition::new(""));
+        // The browser version carries no sound: it fetches the one chosen (kept in IndexedDB), for the save and the show.
+        #[cfg(target_family = "wasm")]
+        if let Some(ibis_doc_model::TransitionSound::Play { name, .. }) = &sound {
+            let id = ibis_formats::transition_sounds::id_of(name);
+            cx.spawn(async move |_, _| {
+                crate::shell::web::fetch_transition_sound(&id).await;
+            })
+            .detach();
+        }
         transition.sound = sound;
         self.run(vec![Command::SetTransition { slide, transition: Some(transition) }], cx);
     }
@@ -2011,7 +2022,7 @@ impl SlideEditor {
             if picture.artistic_effect == effect { return None; }
             let mut picture = picture.clone();
             picture.artistic_effect = effect;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
         }).collect();
         self.run(commands, cx);
     }
@@ -2038,16 +2049,12 @@ impl SlideEditor {
 
         for (shape_id, frame, svg_data) in selected_svgs {
             let shape_index = self.slide().shapes.iter().position(|s| s.id == shape_id).unwrap_or(0);
-            match ibis_pptx::convert_svg_to_shapes(|| self.document.ids().new_shape_id(), &svg_data, frame) {
+            match ibis_formats::convert_svg_to_shapes(|| self.document.ids().new_shape_id(), &svg_data, frame) {
                 Ok(new_shapes) if !new_shapes.is_empty() => {
-                    commands.push(Command::RemoveShape { slide: slide_id, shape: shape_id });
+                    commands.push(Command::DeleteShape { slide: slide_id, shapes: vec![shape_id], with_attached: true });
                     for (i, new_shape) in new_shapes.into_iter().enumerate() {
                         new_shape_ids.push(new_shape.id);
-                        commands.push(Command::InsertShape {
-                            slide: slide_id,
-                            index: shape_index + i,
-                            shape: new_shape,
-                        });
+                        commands.push(Command::InsertShape { slide: slide_id, shapes: vec![(shape_index + i, new_shape)] });
                     }
                 }
                 _ => {}
@@ -2076,7 +2083,7 @@ impl SlideEditor {
     pub(crate) fn set_shape_glow(&mut self, glow: Option<(Color,i64)>, cx: &mut Context<Self>) {
         let commands=self.selected_shapes().into_iter().filter_map(|shape| {
             let ShapeKind::Auto(auto)=&shape.kind else {return None};if auto.glow==glow {return None;}
-            let mut auto=auto.clone();auto.glow=glow;Some(Command::SetKind {slide:self.current_slide,shape:shape.id,kind:Box::new(ShapeKind::Auto(auto))})
+            let mut auto=auto.clone();auto.glow=glow;Some(Command::SetShapeKind {slide:self.current_slide,shape:shape.id,kind:Box::new(ShapeKind::Auto(auto))})
         }).collect();
         self.apply_pptx_commands_checked(commands,cx);
     }
@@ -2087,13 +2094,13 @@ impl SlideEditor {
                     if auto.shadow == shadow { return None; }
                     let mut auto = auto.clone();
                     auto.shadow = shadow;
-                    Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
+                    Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
                 }
                 ShapeKind::Picture(picture) => {
                     if picture.shadow == shadow { return None; }
                     let mut picture = picture.clone();
                     picture.shadow = shadow;
-                    Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+                    Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
                 }
                 _ => None,
             }
@@ -2107,13 +2114,13 @@ impl SlideEditor {
                     if auto.reflection == reflection { return None; }
                     let mut auto = auto.clone();
                     auto.reflection = reflection;
-                    Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
+                    Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
                 }
                 ShapeKind::Picture(picture) => {
                     if picture.reflection == reflection { return None; }
                     let mut picture = picture.clone();
                     picture.reflection = reflection;
-                    Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+                    Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
                 }
                 _ => None,
             }
@@ -2127,13 +2134,13 @@ impl SlideEditor {
                     if auto.soft_edge == soft_edge { return None; }
                     let mut auto = auto.clone();
                     auto.soft_edge = soft_edge;
-                    Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
+                    Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
                 }
                 ShapeKind::Picture(picture) => {
                     if picture.soft_edge == soft_edge { return None; }
                     let mut picture = picture.clone();
                     picture.soft_edge = soft_edge;
-                    Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+                    Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
                 }
                 _ => None,
             }
@@ -2146,7 +2153,7 @@ impl SlideEditor {
             if auto.bevel == bevel { return None; }
             let mut auto = auto.clone();
             auto.bevel = bevel;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
         }).collect();
         self.apply_pptx_commands_checked(commands, cx);
     }
@@ -2157,7 +2164,7 @@ impl SlideEditor {
             if auto.tilt == tilt { return None; }
             let mut auto = auto.clone();
             auto.tilt = tilt;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
         }).collect();
         self.apply_pptx_commands_checked(commands, cx);
     }
@@ -2193,7 +2200,7 @@ impl SlideEditor {
             if auto.tilt == new_tilt { return None; }
             let mut auto = auto.clone();
             auto.tilt = new_tilt;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
         }).collect();
         self.apply_pptx_commands_checked(commands, cx);
     }
@@ -2213,7 +2220,7 @@ impl SlideEditor {
             if auto.tilt == new_tilt { return None; }
             let mut auto = auto.clone();
             auto.tilt = new_tilt;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Auto(auto)) })
         }).collect();
         self.apply_pptx_commands_checked(commands, cx);
     }
@@ -2224,7 +2231,7 @@ impl SlideEditor {
             let ShapeKind::Picture(picture) = &shape.kind else { return None };
             if picture.duotone.is_none() && picture.clear.is_none() && picture.luminance.is_none() && picture.artistic_effect.is_none() { return None; }
             let mut picture = picture.clone(); picture.duotone = None; picture.clear = None; picture.luminance = None; picture.artistic_effect = None;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
         }).collect();
         self.run(commands, cx);
     }
@@ -2309,7 +2316,7 @@ impl SlideEditor {
                 }
             }
             if pic == *picture { return None; }
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(pic)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(pic)) })
         }).collect();
         self.apply_pptx_commands_checked(commands, cx);
     }
@@ -2463,7 +2470,7 @@ pub(crate) fn crop_for_aspect(orig_w: u64, orig_h: u64, num: u64, den: u64) -> i
 #[derive(Clone)]
 pub(crate) struct CopiedSlides {
     pub(crate) origin: SlideOrigin,
-    pub(crate) slides: Vec<(ibis_doc_model::Slide, Option<String>, Option<ibis_pptx::ForeignSlide>)>,
+    pub(crate) slides: Vec<(ibis_doc_model::Slide, Option<String>, Option<ibis_formats::ForeignSlide>)>,
 }
 
 /// The slide clipboard, shared by the app's windows.
@@ -2503,7 +2510,7 @@ fn matching_layout(presentation: &ibis_doc_model::Presentation, name: Option<&st
 #[derive(Clone)]
 pub(crate) struct SlideOrigin {
     window: gpui_kit::EntityId,
-    file: Option<std::sync::Weak<ibis_pptx::Source>>,
+    file: Option<std::sync::Weak<ibis_formats::Source>>,
 }
 
 impl SlideOrigin {
@@ -2747,7 +2754,7 @@ impl SlideEditor {
             own_frame: true,
         };
         let commands = vec![
-            Command::InsertShape { slide: slide_id, index: shape_len, shape },
+            Command::InsertShape { slide: slide_id, shapes: vec![(shape_len, shape)] },
             Command::SetPlaceholder { slide: slide_id, shape: shape_id, placeholder: Some(ph) },
             Command::SetSlideName { slide: slide_id, name: Some(title) },
         ];

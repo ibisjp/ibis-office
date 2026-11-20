@@ -7,7 +7,7 @@ use gpui_kit::*;
 use ibis_doc_model::{EmuRect, Fill, Stroke, Table};
 
 use crate::rich_text::TextPositions;
-use crate::shape_view::{Resources, exact_origin, hsla, text_body_element, with_fill};
+use crate::shape_view::{Resources, exact_origin, hsla, text_body_element, turned_cell_text, with_fill};
 
 /// Draw `table` filling `frame` (frame-relative, so x and y are ignored).
 pub fn table_element(table: &Table, frame: EmuRect, scale: f32, res: &Resources) -> Div {
@@ -112,7 +112,7 @@ fn growing_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edi
             // Each border centred on its edge, drawn over the cell without protruding outside cell corners.
             let line = |stroke: &Option<Stroke>, edge: u8| {
                 let stroke = stroke.as_ref()?;
-                let t = (stroke.width as f32 * scale).max(1.0);
+                let t = (stroke.drawn_width() as f32 * scale).max(1.0);
                 if stroke.dashed || stroke.compound != ibis_doc_model::LineCompound::Single {
                     let stroke = stroke.clone();
                     let c = canvas(
@@ -181,13 +181,13 @@ fn growing_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edi
                         let o = bounds.origin;
                         let min_px = if window.is_recording_paints_only() { 0.0 } else { 1.0 };
                         if let Some(s) = &tl_br {
-                            let width = px((s.width as f32 * scale).max(min_px));
+                            let width = px((s.drawn_width() as f32 * scale).max(min_px));
                             if let Some(p) = crate::shape_view::polygon_styled(&[o, point(o.x + px(w), o.y + px(h))], Some(width), false, s.cap, s.join) {
                                 window.paint_path(p, hsla(s.color));
                             }
                         }
                         if let Some(s) = &bl_tr {
-                            let width = px((s.width as f32 * scale).max(min_px));
+                            let width = px((s.drawn_width() as f32 * scale).max(min_px));
                             if let Some(p) = crate::shape_view::polygon_styled(&[point(o.x, o.y + px(h)), point(o.x + px(w), o.y)], Some(width), false, s.cap, s.join) {
                                 window.paint_path(p, hsla(s.color));
                             }
@@ -258,17 +258,22 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
             let (w, h) = (right - left, bottom - top);
             let positions = edited.filter(|(at, _)| *at == (r, c)).map(|(_, p)| p).or_else(||recorded?.get(&(r,c)));
             let cell_origin_x = (frame.x + xs_emu[c]) as f32 * scale;
+            let cell_text = if cell.text.vertical || cell.text.sideways != 0 {
+                turned_cell_text(&cell.text, (w / scale) as f64, (h / scale) as f64, scale, res, positions, Some(cell_origin_x))
+            } else {
+                text_body_element(&cell.text, Some((w / scale) as f64), None, scale, res, positions, None, Some(cell_origin_x), None)
+            };
             // A fill reaches one pixel into the next column and row (painted later, so the neighbour's own fill covers it):
             // the device-pixel snapping of the boxes otherwise leaves a hairline of the background between two fills.
             let slide_at = Some((frame.x as f32 * scale + left, frame.y as f32 * scale + top));
             let (ow, oh) = (if c + c_span < num_cols { 1.0 } else { 0.0 }, if r + r_span < num_rows { 1.0 } else { 0.0 });
             if !matches!(&cell.fill, Fill::None) && !matches!(&cell.fill, Fill::Solid(c) if c.alpha < 255) && (ow > 0.0 || oh > 0.0) {
                 cells.push(cell_fill_element(div().absolute().left(px(left)).top(px(top)).w(px(w + ow)).h(px(h + oh)), &cell.fill, res, scale, slide_at));
-                cells.push(div().absolute().left(px(left)).top(px(top)).w(px(w)).h(px(h)).child(text_body_element(&cell.text, Some((w / scale) as f64), None, scale, res, positions, None, Some(cell_origin_x), None)));
+                cells.push(div().absolute().left(px(left)).top(px(top)).w(px(w)).h(px(h)).child(cell_text));
             } else {
                 cells.push(
                     cell_fill_element(div().absolute().left(px(left)).top(px(top)).w(px(w)).h(px(h)), &cell.fill, res, scale, slide_at)
-                        .child(text_body_element(&cell.text, Some((w / scale) as f64), None, scale, res, positions, None, Some(cell_origin_x), None)),
+                        .child(cell_text),
                 );
             }
 
@@ -317,8 +322,12 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
 
             let from_x = edge_x(c_start);
             let to_x = edge_x(c_end);
-            let is_outer_left = is_outer_h && c_start == 0;
-            let is_outer_right = is_outer_h && c_end == num_cols;
+            // An outer horizontal line runs past the table's edge by half its width only where a vertical line meets it there (the
+            // corner of a box); a bottom border alone ends at the cell's edge (issue #189 D4: 12 pt line over a 150 pt cell is 150 pt
+            // in PowerPoint, 162 pt with the half widths on each side; 6, 3 and 0.5 pt halves the same).
+            let corner_has_vertical = |col: usize| (r > 0 && v_edges[col][r - 1].is_some()) || (r < num_rows && v_edges[col][r].is_some());
+            let is_outer_left = is_outer_h && c_start == 0 && corner_has_vertical(0);
+            let is_outer_right = is_outer_h && c_end == num_cols && corner_has_vertical(num_cols);
 
             render_h_line(
                 &mut border_segments,
@@ -402,7 +411,7 @@ fn fixed_table(table: &Table, frame: EmuRect, scale: f32, res: &Resources, edite
             for (p0, p1, stroke) in &diagonals {
                 let start = point(px(ox + p0[0]), px(oy + p0[1]));
                 let end = point(px(ox + p1[0]), px(oy + p1[1]));
-                let width = px((stroke.width as f32 * scale).max(if recording { 0.0 } else { 1.0 }));
+                let width = px((stroke.drawn_width() as f32 * scale).max(if recording { 0.0 } else { 1.0 }));
                 if let Some(p) = crate::shape_view::polygon_styled(&[start, end], Some(width), false, stroke.cap, stroke.join) {
                     window.paint_path(p, hsla(stroke.color));
                 }
@@ -442,12 +451,12 @@ fn render_h_line(
     is_outer_left: bool,
     is_outer_right: bool,
 ) {
-    let t = (stroke.width as f32 * scale).max(min_px);
+    let t = (stroke.drawn_width() as f32 * scale).max(min_px);
     let color = hsla(stroke.color);
-    for &(mut a, mut b) in stroke.compound.bands() {
-        if is_bottom {
-            (a, b) = (1.0 - b, 1.0 - a);
-        }
+    for &(a, b) in stroke.compound.bands() {
+        // The bands run from the top down on every horizontal line, outer or inner: `thickThin` has its thick line above the thin one on
+        // the top edge and on the bottom edge too (issue #189 D5: bottom edge at y = 113, PowerPoint thick 107.0..110.6, thin
+        // 111.8..113.0).
         let band_t = ((b - a) * t).max(min_px * 0.5);
         let offset = ((a + b) / 2.0 - 0.5) * t;
         let band_top = at_y + offset - band_t / 2.0;
@@ -518,12 +527,13 @@ fn render_v_line(
     is_outer_top: bool,
     is_outer_bottom: bool,
 ) {
-    let t = (stroke.width as f32 * scale).max(min_px);
+    let t = (stroke.drawn_width() as f32 * scale).max(min_px);
     let color = hsla(stroke.color);
     for &(mut a, mut b) in stroke.compound.bands() {
-        if is_right {
-            (a, b) = (1.0 - b, 1.0 - a);
-        }
+        // The bands run from the right to the left on every vertical line, outer or inner: `thickThin` has its thick line on the right of
+        // the thin one on the left edge and on the right edge alike (issue #189 D5: left edge at x = 637, PowerPoint thin
+        // 637.0..638.3, thick 639.4..643.0).
+        (a, b) = (1.0 - b, 1.0 - a);
         let band_t = ((b - a) * t).max(min_px * 0.5);
         let offset = ((a + b) / 2.0 - 0.5) * t;
         let band_left = at_x + offset - band_t / 2.0;

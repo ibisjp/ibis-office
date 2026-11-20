@@ -75,6 +75,10 @@ thread_local! {
     static SHARED_CLIP: std::cell::RefCell<Option<(usize, Clip)>> = const { std::cell::RefCell::new(None) };
 }
 
+/// The end of each row in the plain text put on the clipboard: Excel for Windows writes `\r\n` after every row (the last one
+/// too, exactly one) and reads a bare `\n`-ended text with an empty row below the last (#187).
+pub(crate) const ROW_END: &str = if cfg!(windows) { "\r\n" } else { "\n" };
+
 /// For tests, which drive one window: what was copied counts as copied in another window from now on.
 #[cfg(any(test, feature = "scenarios"))]
 pub(crate) fn copied_in_another_window() {
@@ -263,7 +267,7 @@ impl SlideEditor {
                             });
                         }
                     }
-                    text.push('\n');
+                    text.push_str(ROW_END);
                 }
                 for v in &sheet.validations {
                     for vr in &v.ranges {
@@ -384,7 +388,7 @@ impl SlideEditor {
                             }
                         }
                     }
-                    text.push('\n');
+                    text.push_str(ROW_END);
                 }
                 CellRange { first_row: 0, first_column: 0, last_row: h.saturating_sub(1), last_column: w.saturating_sub(1) }
             }
@@ -447,14 +451,17 @@ impl SlideEditor {
                             }
                         }
                     }
-                    text.push('\n');
+                    text.push_str(ROW_END);
                 }
                 CellRange { first_row: 0, first_column: 0, last_row: h.saturating_sub(1), last_column: w.saturating_sub(1) }
             }
         };
 
         let spill_ghosts = spill_ghosts_in(sheet, &cells);
-        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        // Off Windows the text goes first and the HTML table beside it; on Windows all go together below (one opening).
+        if !cfg!(windows) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        }
         let slide = self.current_slide;
         let owner = self as *const Self as usize;
         let source = self.presentation().workbook.as_ref().map(|w| super::paste_names::NameSource {
@@ -465,14 +472,23 @@ impl SlideEditor {
         });
         if let Some(state) = self.sheet_state_mut() {
             let clip = Clip { slide, range: clip_range, cells, cut, text, validations, cell_images, col_widths, comments, merges: merges.clone(), source, foreign: false, origin: Some(cx.weak_entity()), cut_elsewhere: false, spill_ghosts };
-            // The cells as an HTML table beside the text, as Excel puts them (formats, formulas and merged cells go with it).
-            crate::native_shape_clipboard::write_html(&super::clipboard_html::write(&clip, &merges));
+            // The cells as an HTML table beside the text, as Excel puts them (formats, formulas and merged cells go with it),
+            // and as an XML Spreadsheet, which Excel for Windows pastes with the formulas and formats.
+            let html = super::clipboard_html::write(&clip, &merges);
+            let xml = super::clipboard_xmlss::write(&clip, &merges);
+            // Windows: the text, the HTML and the XML in one opening of the clipboard (written one after the other, the
+            // later ones were lost and only the text stayed, #187).
+            if !crate::native_shape_clipboard::write_cells(&clip.text, &html, xml.as_deref()) {
+                if cfg!(windows) {
+                    cx.write_to_clipboard(ClipboardItem::new_string(clip.text.clone()));
+                }
+                crate::native_shape_clipboard::write_html(&html);
+                if let Some(xml) = &xml {
+                    crate::native_shape_clipboard::write_xml_spreadsheet(xml);
+                }
+            }
             // The clipboard holds something new, whatever a cut pasted before left on it.
             SPENT_HTML.with(|s| *s.borrow_mut() = None);
-            // And as an XML Spreadsheet, which Excel for Windows pastes with the formulas and formats.
-            if let Some(xml) = super::clipboard_xmlss::write(&clip, &merges) {
-                crate::native_shape_clipboard::write_xml_spreadsheet(&xml);
-            }
             // And as Excel's own embedded worksheet (the file format's formulas, formats and theme colours).
             if let Some(bytes) = super::clipboard_native::write(&clip, &merges) {
                 crate::native_shape_clipboard::write_embed_source(&bytes);
@@ -481,6 +497,8 @@ impl SlideEditor {
             state.clip = Some(clip);
             state.copy_outline = true;
             cx.notify();
+        } else if cfg!(windows) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
     }
 
@@ -593,7 +611,7 @@ impl SlideEditor {
                     self.status = Some(crate::shell::i18n::text("_xlsx.can-t-paste-here").into());
                     return cx.notify();
                 }
-                commands.push(Command::Sheet(SheetCommand::MoveCells { slide, from: clip.range, row: dest.first_row, column: dest.first_column }));
+                commands.push(Command::Sheet(SheetCommand::MoveCells { sheet: slide, from: clip.range, row: dest.first_row, column: dest.first_column }));
                 if let Some(state) = self.sheet_state_mut() {
                     SPENT_HTML.with(|s| *s.borrow_mut() = crate::native_shape_clipboard::read_html());
                     state.clip = None;
@@ -615,11 +633,11 @@ impl SlideEditor {
                         self.status = Some(crate::shell::i18n::text("_xlsx.can-t-paste-here").into());
                         return cx.notify();
                     };
-                    shape_commands.extend(inside.into_iter().map(|range| Command::Sheet(SheetCommand::Unmerge { slide, range })));
+                    shape_commands.extend(inside.into_iter().map(|range| Command::Sheet(SheetCommand::Unmerge { sheet: slide, range })));
                     for &Tile { row: tile_row, column: tile_column, .. } in &tiles {
                         for m in &clip.merges {
                             let range = CellRange { first_row: tile_row + m.first_row, first_column: tile_column + m.first_column, last_row: tile_row + m.last_row, last_column: tile_column + m.last_column };
-                            shape_commands.push(Command::Sheet(SheetCommand::PasteMerge { slide, range }));
+                            shape_commands.push(Command::Sheet(SheetCommand::PasteMerge { sheet: slide, range }));
                         }
                         for r in 0..h {
                             for c in 0..w {
@@ -627,7 +645,7 @@ impl SlideEditor {
                                 let copied = clip.comments.iter().find(|(cr, cc, _)| *cr == r && *cc == c).map(|(_, _, comment)| comment);
                                 if copied.is_some() || here.comment_at(tr, tc).is_some() {
                                     let comment = copied.map(|comment| ibis_doc_model::SheetComment { row: tr, column: tc, ..comment.clone() });
-                                    comment_commands.push(Command::Sheet(SheetCommand::SetComment { slide, row: tr, column: tc, comment }));
+                                    comment_commands.push(Command::Sheet(SheetCommand::SetComment { sheet: slide, row: tr, column: tc, comment }));
                                 }
                             }
                         }
@@ -721,10 +739,10 @@ impl SlideEditor {
                         .map(|(r, c)| CellEdit { row: r, column: c, input: CellInput::Clear })
                         .collect();
                     if !edits.is_empty() {
-                        commands.push(Command::Sheet(SheetCommand::SetCells { slide: clip.slide, edits }));
+                        commands.push(Command::Sheet(SheetCommand::SetCells { sheet: clip.slide, edits }));
                         let ranges = vec![clip.range];
-                        commands.push(Command::Sheet(SheetCommand::ClearFormats { slide: clip.slide, ranges }));
-                        commands.push(Command::Sheet(SheetCommand::SetValidation { slide: clip.slide, ranges: vec![clip.range], rule: None }));
+                        commands.push(Command::Sheet(SheetCommand::ClearFormats { sheet: clip.slide, ranges }));
+                        commands.push(Command::Sheet(SheetCommand::SetValidation { sheet: clip.slide, ranges: vec![clip.range], rule: None }));
                     }
                     if !clip.cell_images.is_empty() {
                         if let Some(src_slide) = self.document.presentation().slide(clip.slide) {
@@ -750,8 +768,8 @@ impl SlideEditor {
                                                         false
                                                     }
                                                 }) {
-                                                    commands.push(Command::RemoveShape { slide: clip.slide, shape: shape.id });
-                                                    commands.push(Command::Sheet(SheetCommand::PlacePictureOverCells { slide: clip.slide, shape: shape.id, row: cut_r, column: cut_c }));
+                                                    commands.push(Command::DeleteShape { slide: clip.slide, shapes: vec![shape.id], with_attached: true });
+                                                    commands.push(Command::Sheet(SheetCommand::PlacePictureOverCells { sheet: clip.slide, shape: shape.id, row: cut_r, column: cut_c }));
                                                 }
                                             }
                                         }
@@ -775,7 +793,7 @@ impl SlideEditor {
                                         let mut new_rule = rule.clone();
                                         new_rule.ranges = vec![target_range];
                                         commands.push(Command::Sheet(SheetCommand::SetValidation {
-                                            slide,
+                                            sheet: slide,
                                             ranges: vec![target_range],
                                             rule: Some(new_rule),
                                         }));
@@ -784,8 +802,8 @@ impl SlideEditor {
                                         let shape_id = self.document.ids().new_shape_id();
                                         let shape = Shape::new(shape_id, EmuRect::new(0, 0, 100, 100), ShapeKind::Picture(pic.clone()));
                                         let shape_idx = self.slide().shapes.len() + commands.len();
-                                        commands.push(Command::InsertShape { slide, index: shape_idx, shape });
-                                        commands.push(Command::Sheet(SheetCommand::PlacePictureInCell { slide, shape: shape_id, row: tr, column: tc }));
+                                        commands.push(Command::InsertShape { slide, shapes: vec![(shape_idx, shape)] });
+                                        commands.push(Command::Sheet(SheetCommand::PlacePictureInCell { sheet: slide, shape: shape_id, row: tr, column: tc }));
                                     }
                                 }
                             }
@@ -809,7 +827,7 @@ impl SlideEditor {
                                         let mut new_rule = rule.clone();
                                         new_rule.ranges = vec![target_range];
                                         commands.push(Command::Sheet(SheetCommand::SetValidation {
-                                            slide,
+                                            sheet: slide,
                                             ranges: vec![target_range],
                                             rule: Some(new_rule),
                                         }));
@@ -820,8 +838,8 @@ impl SlideEditor {
                                         let shape_id = self.document.ids().new_shape_id();
                                         let shape = Shape::new(shape_id, EmuRect::new(0, 0, 100, 100), ShapeKind::Picture(pic.clone()));
                                         let shape_idx = self.slide().shapes.len() + commands.len();
-                                        commands.push(Command::InsertShape { slide, index: shape_idx, shape });
-                                        commands.push(Command::Sheet(SheetCommand::PlacePictureInCell { slide, shape: shape_id, row: target_row, column: target_col }));
+                                        commands.push(Command::InsertShape { slide, shapes: vec![(shape_idx, shape)] });
+                                        commands.push(Command::Sheet(SheetCommand::PlacePictureInCell { sheet: slide, shape: shape_id, row: target_row, column: target_col }));
                                     }
                                 }
                             }
@@ -840,7 +858,7 @@ impl SlideEditor {
                     }
                     None => Vec::new(),
                 };
-                commands.insert(0, Command::Sheet(SheetCommand::PutCells { slide, cells }));
+                commands.insert(0, Command::Sheet(SheetCommand::PasteCells { sheet: slide, cells }));
                 // The ranges that go are dissolved and the merged ones made before the cells are put (what lies under a merge stays).
                 commands.splice(0..0, shape_commands);
                 commands.splice(0..0, names);
@@ -915,14 +933,14 @@ impl SlideEditor {
                     let links = self.link_new_books_commands(&format!("CHOOSE(1,{})", external.join(",")));
                     commands.splice(0..0, links);
                 }
-                commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
+                commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits }));
                 for ((r, c), code) in formats {
                     let range = CellRange { first_row: r, last_row: r, first_column: c, last_column: c };
-                    commands.push(Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: ibis_doc_model::StyleChange::NumberFormat(code) }));
+                    commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change: ibis_doc_model::StyleChange::NumberFormat(code) }));
                 }
             }
         }
-        if let Err(err) = self.document.execute(commands) {
+        if let Err(err) = self.document.execute(self.group_commands(commands)) {
             log::warn!("paste rejected: {err}");
             self.status = Some(crate::shell::i18n::text("_xlsx.can-t-paste-here").into());
         } else {
@@ -954,9 +972,9 @@ impl SlideEditor {
         let Some(clip) = self.sheet_state().and_then(|s| s.clip.clone()).filter(|c| c.cut && c.text == text) else { return };
         let slide = clip.slide;
         let edits: Vec<CellEdit> = clip.cells.iter().map(|c| CellEdit { row: c.orig_row, column: c.orig_column, input: CellInput::Clear }).collect();
-        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { slide, edits })];
-        commands.push(Command::Sheet(SheetCommand::ClearFormats { slide, ranges: vec![clip.range] }));
-        commands.push(Command::Sheet(SheetCommand::SetValidation { slide, ranges: vec![clip.range], rule: None }));
+        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })];
+        commands.push(Command::Sheet(SheetCommand::ClearFormats { sheet: slide, ranges: vec![clip.range] }));
+        commands.push(Command::Sheet(SheetCommand::SetValidation { sheet: slide, ranges: vec![clip.range], rule: None }));
         if let Some(state) = self.sheet_state_mut() {
             state.clip = None;
         }
@@ -971,7 +989,7 @@ impl SlideEditor {
         self.commit_cell_edit(cx);
         let Some(range) = self.selected_range() else { return };
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::ClearFormats { slide, ranges: vec![range] })]) {
+        if let Err(err) = self.document.execute(self.group_commands(vec![Command::Sheet(SheetCommand::ClearFormats { sheet: slide, ranges: vec![range] })])) {
             log::warn!("clearing formats rejected: {err}");
         }
         cx.notify();
@@ -1220,7 +1238,7 @@ impl SlideEditor {
             }
         }
         if !cells.is_empty() {
-            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::PutCells { slide, cells })]) {
+            if let Err(err) = self.document.execute(self.group_commands(vec![Command::Sheet(SheetCommand::PasteCells { sheet: slide, cells })])) {
                 log::warn!("paste link rejected: {err}");
                 self.status = Some(crate::shell::i18n::text("_xlsx.can-t-paste-here").into());
             }
@@ -1331,7 +1349,7 @@ impl SlideEditor {
             for (first, count) in spans {
                 for j in 0..count {
                     let width = clip.col_widths.iter().find(|(rel, _)| *rel == j % w).map(|(_, width)| *width).unwrap_or(sheet.default_column);
-                    commands.push(Command::Sheet(SheetCommand::SetSize { slide, axis: Axis::Columns, first: first + j, last: first + j, size: width }));
+                    commands.push(Command::Sheet(SheetCommand::SetSize { sheet: slide, axis: Axis::Columns, first: first + j, last: first + j, size: width }));
                 }
             }
             if !commands.is_empty() {
@@ -1531,7 +1549,7 @@ impl SlideEditor {
                                 c.column = tc;
                                 c
                             });
-                            comment_commands.push(Command::Sheet(SheetCommand::SetComment { slide, row: tr, column: tc, comment }));
+                            comment_commands.push(Command::Sheet(SheetCommand::SetComment { sheet: slide, row: tr, column: tc, comment }));
                         }
                     }
                     if carries_validation && !(options.skip_blanks && blank) && !covered_alive {
@@ -1544,7 +1562,7 @@ impl SlideEditor {
                         });
                         let had = sheet.validations.iter().any(|v| v.ranges.iter().any(|vr| (vr.first_row..=vr.last_row).contains(&tr) && (vr.first_column..=vr.last_column).contains(&tc)));
                         if rule.is_some() || had {
-                            validation_commands.push(Command::Sheet(SheetCommand::SetValidation { slide, ranges: vec![cell_range], rule }));
+                            validation_commands.push(Command::Sheet(SheetCommand::SetValidation { sheet: slide, ranges: vec![cell_range], rule }));
                         }
                     }
                 }
@@ -1557,7 +1575,7 @@ impl SlideEditor {
                         continue;
                     }
                     let range = CellRange { first_row: r0.min(r1), first_column: c0.min(c1), last_row: r0.max(r1), last_column: c0.max(c1) };
-                    merge_commands.push(Command::Sheet(SheetCommand::PasteMerge { slide, range }));
+                    merge_commands.push(Command::Sheet(SheetCommand::PasteMerge { sheet: slide, range }));
                 }
             }
         }
@@ -1573,10 +1591,10 @@ impl SlideEditor {
             commands = self.brought_commands(brought);
         }
         // The merged ranges first: what a destination cell under one holds stays there (as in Excel).
-        commands.extend(dissolve.into_iter().map(|range| Command::Sheet(SheetCommand::Unmerge { slide, range })));
+        commands.extend(dissolve.into_iter().map(|range| Command::Sheet(SheetCommand::Unmerge { sheet: slide, range })));
         commands.extend(merge_commands);
         if carries_contents || carries_formats || carries_number_format {
-            commands.push(Command::Sheet(SheetCommand::PutCells { slide, cells }));
+            commands.push(Command::Sheet(SheetCommand::PasteCells { sheet: slide, cells }));
         }
         commands.extend(comment_commands);
         commands.extend(validation_commands);
@@ -1782,7 +1800,7 @@ impl SlideEditor {
             }
         }
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::PutCells { slide, cells })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::PasteCells { sheet: slide, cells })]) {
             log::warn!("format paint rejected: {err}");
         }
         cx.notify();

@@ -13,7 +13,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use crate::shell::palette::rgb;
 
-use ibis_pptx::repair::{repair_document, RepairLogLevel, RepairMode, RepairReport};
+use ibis_formats::repair::{repair_document, RepairLogLevel, RepairMode, RepairReport};
 
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;

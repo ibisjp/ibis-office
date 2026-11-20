@@ -212,7 +212,7 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// Apply the entered document properties via `Command::SetDocProperties`.
+    /// Apply the entered document properties via `Command::SetDocumentProperties`.
     pub(crate) fn apply_presentation_doc_properties(&mut self, cx: &mut Context<Self>) {
         let (title, creator, subject, keywords, description, category, manager, company, custom, embed_fonts) = {
             let Some(p) = self.pptx().and_then(|s| s.properties_panel.as_ref()) else { return };
@@ -243,7 +243,7 @@ impl SlideEditor {
         new_props.company = opt(company);
         new_props.custom = custom;
 
-        let command = ibis_doc_model::Command::SetDocProperties { properties: new_props };
+        let command = ibis_doc_model::Command::SetDocumentProperties { properties: new_props };
         self.run(vec![command], cx);
 
         let current_embedded = !self.presentation().fonts.is_empty();
@@ -363,12 +363,12 @@ impl SlideEditor {
                 .into(),
         );
         entries.push(
-            MenuItem::tr("pptx.check-accessibility")
+            MenuItem::tr("review.accessibility-check")
                 .on(|this, w, cx| this.open_pptx_accessibility_panel(w, cx))
                 .into(),
         );
         entries.push(
-            MenuItem::tr("pptx.compatibility-check")
+            MenuItem::tr("review.compatibility-check")
                 .on(|this, w, cx| {
                     this.close_presentation_properties_panel(cx);
                     this.open_pptx_compatibility_panel(w, cx);

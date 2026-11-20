@@ -82,7 +82,7 @@ impl SlideEditor {
             self.focus_handle.focus(window,cx);return;
         }
         let Some((container,index))=self.flow().and_then(|d|flow_command::locate(d,target.0)) else{return};
-        if self.run_flow(vec![FlowCommand::ReplaceBlocks {container,index,remove:1,blocks:vec![Block::Table(table.clone())]}],cx) {
+        if self.run_flow(vec![FlowCommand::ReplaceBlockRange {container,index,remove:1,blocks:vec![Block::Table(table.clone())]}],cx) {
             if let Some(edit)=self.doc_state_mut().and_then(|s|s.table_size.as_mut()) {edit.table=table;edit.initial=(values,rule);edit.error=None;}
             self.focus_handle.focus(window,cx);
         }

@@ -58,8 +58,8 @@ const MAX_ATTEMPTS: u32 = 2;
 #[cfg(target_os = "macos")]
 const TEAM_ID: &str = "SQ8CQKBW45";
 
-const CHECK_KEY: &str = "check-updates";
-const ATTEMPT_KEY: &str = "update-attempt";
+const CHECK_KEY: &str = "app.check-updates";
+const ATTEMPT_KEY: &str = "app.update-attempt";
 
 /// The start-up alert of a version this copy cannot update to by itself was shown in this process.
 static MANUAL_ALERTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -280,7 +280,7 @@ pub(crate) fn offer_again(cx: &mut App) {
 /// ヘルプ > 更新を確認 / the start page's 更新を確認: the user's own check, whatever the setting 起動時に更新を確かめる says
 /// and whether the start-up question was refused. A newer version asks the update question; none says so (「最新です」);
 /// a check that could not be made says so too. Not in the browser (no updater there; the caller does not show it).
-pub(crate) fn check_now(cx: &mut App) {
+pub fn check_now(cx: &mut App) {
     #[cfg(any(test, feature = "scenarios"))]
     {
         let _ = &cx;

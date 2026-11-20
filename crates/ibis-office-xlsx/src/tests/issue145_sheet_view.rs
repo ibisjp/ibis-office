@@ -13,7 +13,7 @@ fn scroll(s: &mut Scenario) -> f32 {
 }
 
 pub(crate) fn sheets_keep_their_scroll() {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     s.size(1200., 720.);
     s.update(|e, window, cx| e.copy_sheet(window, cx));
     let ids: Vec<_> = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.iter().filter_map(|sh| sh.slide).collect());
@@ -81,17 +81,18 @@ pub(crate) fn sheet_views_round_trip_through_the_file() {
     assert_eq!(b.active_cell, Some((1, 1)));
     assert!(b.top_left.is_some_and(|(_, r)| r > 150 && r < 250), "the second sheet's top row: {:?}", b.top_left);
     // And the XML: Excel's own attributes.
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&path).unwrap(), "xl/worksheets/sheet1.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&path).unwrap(), "xl/worksheets/sheet1.xml").unwrap();
     assert!(xml.contains("topLeftCell=\"A") && xml.contains("activeCell=\"C7\"") && xml.contains("sqref=\"C7\""), "{xml}");
-    // Opened again: where each sheet was left.
+    // Opened again: on the sheet the file was left on (the second, #195: `activeTab`), and each sheet where it was left.
     drop(s);
     let mut t = Scenario::open(path.to_str().unwrap());
     let ids: Vec<_> = t.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.iter().filter_map(|sh| sh.slide).collect());
-    assert!((scroll(&mut t) - first).abs() < 25.0, "the first sheet opens where it was left: {} for {first}", scroll(&mut t));
-    assert_eq!(t.with(|e, _| e.current_cell()), Some((2, 6)));
-    t.update(|e, window, cx| e.select_slide(ids[1], window, cx));
-    assert!((scroll(&mut t) - second).abs() < 25.0, "the second sheet too: {} for {second}", scroll(&mut t));
+    assert_eq!(t.with(|e, _| e.current_slide), ids[1]);
+    assert!((scroll(&mut t) - second).abs() < 25.0, "the second sheet opens where it was left: {} for {second}", scroll(&mut t));
     assert_eq!(t.with(|e, _| e.current_cell()), Some((1, 1)));
+    t.update(|e, window, cx| e.select_slide(ids[0], window, cx));
+    assert!((scroll(&mut t) - first).abs() < 25.0, "the first sheet too: {} for {first}", scroll(&mut t));
+    assert_eq!(t.with(|e, _| e.current_cell()), Some((2, 6)));
 }
 
 /// Frozen panes: the part that scrolls is `pane/@topLeftCell`. Saved from the scroll, put back as the scroll when opened, for the top
@@ -126,7 +127,7 @@ pub(crate) fn frozen_panes_keep_the_scroll_in_the_file() {
         assert_eq!(row > frozen.1, y != 0.0, "{menu}: row {row}");
         assert_eq!(column.max(frozen.0), column);
         // `topLeftCell` before `workbookViewId` (as Excel writes it) when the top-left pane scrolls on a side.
-        let xml = ibis_pptx::test_files::part_text(&std::fs::read(&path).unwrap(), "xl/worksheets/sheet1.xml").unwrap();
+        let xml = ibis_formats::test_files::part_text(&std::fs::read(&path).unwrap(), "xl/worksheets/sheet1.xml").unwrap();
         let tag = &xml[xml.find("<sheetView ").unwrap()..];
         let tag = &tag[..tag.find('>').unwrap()];
         if let (Some(a), Some(b)) = (tag.find("topLeftCell"), tag.find("workbookViewId")) {
@@ -146,7 +147,7 @@ pub(crate) fn frozen_panes_keep_the_scroll_in_the_file() {
 pub(crate) fn deleting_the_other_sheet_keeps_the_scroll() {
     use ibis_doc_model::sheet_command::SheetCommand;
     use ibis_doc_model::Command;
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     s.size(1200., 720.);
     s.update(|e, window, cx| e.copy_sheet(window, cx));
     let ids: Vec<_> = s.with(|e, _| e.presentation().workbook.as_ref().unwrap().sheets.iter().filter_map(|sh| sh.slide).collect());
@@ -164,7 +165,7 @@ pub(crate) fn deleting_the_other_sheet_keeps_the_scroll() {
         cx.notify();
     });
     // Deleting the shown sheet: the first one comes back where it was.
-    s.update(|e, _, cx| e.run_sheet(vec![Command::Sheet(SheetCommand::DeleteSheet { slide: two })], cx));
+    s.update(|e, _, cx| e.run_sheet(vec![Command::Sheet(SheetCommand::DeleteSheet { sheet: two })], cx));
     assert_eq!(s.with(|e, _| e.current_slide), one);
     assert_eq!(scroll(&mut s), first, "after the other sheet is deleted the first keeps its scroll");
     // Deleting a sheet that is not shown changes nothing of the view.
@@ -205,10 +206,11 @@ pub(crate) fn current_slide_is_assigned_only_by_the_setter() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut bad = Vec::new();
     scan(&root.join("ibis-office-xlsx/src"), &[], &mut bad);
-    // The shell: only these lines of editor.rs (the setter, loading, a window made from this one, the fallback of `select_slide`).
+    // The shell: only these lines of editor.rs (the setter, loading (a presentation with no slide, a PDF that failed to open, has none), a window made from this one, the fallback of `select_slide`).
     let allowed = [
         "self.current_slide = to;",
         "self.current_slide = presentation.slides[0].id;",
+        "self.current_slide = presentation.slides.first().map(|s| s.id).unwrap_or(ibis_doc_model::SlideId(0));",
         "editor.current_slide = current;",
         "self.current_slide = slide;",
     ];

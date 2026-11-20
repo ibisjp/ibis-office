@@ -17,7 +17,7 @@ pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
     ("pptx::ui_review_slide_dimensions_keep_exact_emu",slide_dimensions),
 ]}
 fn fixture()->(Scenario,Vec<ShapeId>){
-    fixture_from(Scenario::new_document(ibis_pptx::Kind::Presentation))
+    fixture_from(Scenario::new_document(ibis_formats::Kind::Presentation))
 }
 fn fixture_from(mut s:Scenario)->(Scenario,Vec<ShapeId>){
     s.size(1200.,900.);

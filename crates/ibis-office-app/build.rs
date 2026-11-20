@@ -67,6 +67,26 @@ fn windows_icon() {
         group.extend_from_slice(&id.to_le_bytes());
     }
     push_resource(&mut res, RT_GROUP_ICON, 1, &group);
+    // The icons of the files ibisOffice opens (K0048): the document, spreadsheet and presentation icons as icon groups 2, 3 and 4 (their images
+    // from id 100 on), which the registered file types point to (`DefaultIcon` = "<exe>",-2 ... -4, see src/open_with.rs).
+    let mut next_id = 100u16;
+    for (group_id, name) in [(2u16, "document"), (3, "spreadsheet"), (4, "presentation")] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("icons").join("doc").join(format!("{name}.ico"));
+        println!("cargo:rerun-if-changed={}", path.display());
+        let kind = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let kind_u16 = |i: usize| u16::from_le_bytes([kind[i], kind[i + 1]]);
+        let kind_u32 = |i: usize| u32::from_le_bytes([kind[i], kind[i + 1], kind[i + 2], kind[i + 3]]);
+        let mut kind_group = kind[..6].to_vec();
+        for i in 0..kind_u16(4) as usize {
+            let entry = 6 + 16 * i;
+            let (len, offset) = (kind_u32(entry + 8) as usize, kind_u32(entry + 12) as usize);
+            push_resource(&mut res, RT_ICON, next_id, &kind[offset..offset + len]);
+            kind_group.extend_from_slice(&kind[entry..entry + 12]);
+            kind_group.extend_from_slice(&next_id.to_le_bytes());
+            next_id += 1;
+        }
+        push_resource(&mut res, RT_GROUP_ICON, group_id, &kind_group);
+    }
     // And the version, for the 詳細 tab of the file's properties.
     push_version_resource(&mut res, &windows_version(), "ibisOffice", "ibisOffice.exe");
 

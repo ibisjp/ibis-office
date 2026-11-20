@@ -114,11 +114,80 @@ pub(crate) mod autospace_letters_tests;
 #[path = "tests/ms_fixed_advance_tests.rs"]
 pub(crate) mod ms_fixed_advance_tests;
 #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/issue178_tests.rs"]
+pub(crate) mod issue178_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue180.rs"]
+pub(crate) mod issue180_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue188.rs"]
+pub(crate) mod issue188_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue191.rs"]
+pub(crate) mod issue191_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue228.rs"]
+pub(crate) mod issue228_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue234.rs"]
+pub(crate) mod issue234_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue192.rs"]
+pub(crate) mod issue192_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue193.rs"]
+pub(crate) mod issue193_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue196.rs"]
+pub(crate) mod issue196_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_squeeze_share.rs"]
+pub(crate) mod squeeze_share_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue54_punct.rs"]
+pub(crate) mod issue54_punct_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue200.rs"]
+pub(crate) mod issue200_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue204.rs"]
+pub(crate) mod issue204_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue192_script.rs"]
+pub(crate) mod issue192_script_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue54_pitch.rs"]
+pub(crate) mod issue54_pitch_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue54_mark_room.rs"]
+pub(crate) mod issue54_mark_room_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue54_meiryo.rs"]
+pub(crate) mod issue54_meiryo_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/issue179_tests.rs"]
+pub(crate) mod issue179_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/issue223_tests.rs"]
+pub(crate) mod issue223_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue179_180_rest.rs"]
+pub(crate) mod issue179_180_rest_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue157_fonts.rs"]
+pub(crate) mod issue157_fonts_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/scenario_issue179_multiple.rs"]
+pub(crate) mod issue179_multiple_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 #[path = "tests/deleted_marks_tests.rs"]
 pub(crate) mod deleted_marks_tests;
 #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 #[path = "tests/ivs_tests.rs"]
 pub(crate) mod ivs_tests;
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
+#[path = "tests/justify_squeeze_tests.rs"]
+pub(crate) mod justify_squeeze_tests;
 pub(crate) mod toolbar;
 mod view_menu;
 pub(crate) mod ruler_panel;
@@ -332,7 +401,147 @@ pub struct Document;
 mod dialog_hooks;
 mod event_hooks;
 mod infobar_hooks;
-impl_format_state!(State, ibis_pptx::Kind::Document);
+/// What a touch gesture on the page can change in this state (`shell::format::GestureView`, #209). Every field is named in
+/// `gesture_snapshot`: one added later does not compile until it is decided whether a touch can change it (name it and keep it
+/// below) or not (`field: _`). A drag or edit that cannot be copied is kept as "there was none" (`*_was_none`): a cancelled touch
+/// ends it.
+pub struct GestureSnapshot {
+    caret: Option<FlowPos>,
+    anchor: Option<FlowPos>,
+    extra_selections: Vec<(FlowPos, FlowPos)>,
+    hf_return: Option<FlowPos>,
+    goal_x: Option<f32>,
+    pending: Option<InsertFormat>,
+    dragging: bool,
+    shape_selected: bool,
+    selected_shapes: Vec<FlowPos>,
+    draw_box: Option<draw_table::DrawBox>,
+    shape_drag: Option<text_box_panel::ShapeDrag>,
+    split_dragging: bool,
+    box_edit_was_none: bool,
+}
+
+impl crate::shell::format::GestureView for State {
+    type Snapshot = GestureSnapshot;
+
+    fn gesture_snapshot(&self) -> GestureSnapshot {
+        let State {
+            autocorrect_off: _,
+            draw_table_mode: _,
+            compare_options: _,
+            draw_box,
+            draw_shape: _,
+            autocorrect: _,
+            characters: _,
+            pending_page: _,
+            caret,
+            anchor,
+            extra_selections,
+            hf_return,
+            goal_x,
+            pending,
+            format_brush: _,
+            marked: _,
+            marked_clauses: _,
+            laid_out: _,
+            dragging,
+            find: _,
+            link: _,
+            style_edit: _,
+            cell_border_edge: _,
+            paragraph_border_edge: _,
+            font_edit: _,
+            color_edit: _,
+            paragraph_edit: _,
+            tab_edit: _,
+            picture_edit: _,
+            compress_panel: _,
+            table_size: _,
+            table_formula: _,
+            comments: _,
+            ruby: _,
+            fit_text_edit: _,
+            tate_edit: _,
+            control: _,
+            text_box: _,
+            merge: _,
+            box_edit,
+            shape_drag,
+            shape_selected,
+            selected_shapes,
+            docx_math: _,
+            quick_parts: _,
+            inspect_panel: _,
+            compatibility_panel: _,
+            print_settings: _,
+            print_panel: _,
+            source_manager: _,
+            thesaurus: _,
+            immersive_reader: _,
+            mini_toolbar: _,
+            screentip: _,
+            drag_select: _,
+            repair: _,
+            template_panel: _,
+            helper: _,
+            selection_pane: _,
+            selection_reorder: _,
+            accessibility_panel: _,
+            navigation_tab: _,
+            nav_query: _,
+            read_only_dismissed: _,
+            overtype: _,
+            list_style: _,
+            theme_panel: _,
+            editing_wrap_points: _,
+            master_doc_panel: _,
+            docx_ink: _,
+            screen_reader: _,
+            read_aloud: _,
+            toolbar_customize: _,
+            split: _,
+            split_scroll: _,
+            split_dragging,
+            split_active: _,
+            read_mode: _,
+            focus_mode: _,
+            page_movement_side_to_side: _,
+        } = self;
+        GestureSnapshot {
+            caret: caret.clone(),
+            anchor: anchor.clone(),
+            extra_selections: extra_selections.clone(),
+            hf_return: hf_return.clone(),
+            goal_x: goal_x.clone(),
+            pending: pending.clone(),
+            dragging: dragging.clone(),
+            shape_selected: shape_selected.clone(),
+            selected_shapes: selected_shapes.clone(),
+            draw_box: draw_box.clone(),
+            shape_drag: shape_drag.clone(),
+            split_dragging: split_dragging.clone(),
+            box_edit_was_none: box_edit.is_none(),
+        }
+    }
+
+    fn gesture_restore(&mut self, snapshot: GestureSnapshot) {
+        self.caret = snapshot.caret;
+        self.anchor = snapshot.anchor;
+        self.extra_selections = snapshot.extra_selections;
+        self.hf_return = snapshot.hf_return;
+        self.goal_x = snapshot.goal_x;
+        self.pending = snapshot.pending;
+        self.dragging = snapshot.dragging;
+        self.shape_selected = snapshot.shape_selected;
+        self.selected_shapes = snapshot.selected_shapes;
+        self.draw_box = snapshot.draw_box;
+        self.shape_drag = snapshot.shape_drag;
+        self.split_dragging = snapshot.split_dragging;
+        if snapshot.box_edit_was_none { self.box_edit = None; }
+    }
+}
+
+impl_format_state!(State, ibis_formats::Kind::Document);
 
 #[ibis_office_macros::editor_ext(Docx)]
 impl SlideEditor {
@@ -408,7 +617,7 @@ impl FormatEditor for Document {
         sidebars: sidebars::SIDEBARS,
         mask: crate::shell::commands::KindMask::DOCX,
         several_windows: Some(crate::shell::format::SeveralWindows { compare_left_right: true, follow_shape_edits: false, number_in_title_bar: false }),
-        shapes: crate::shell::format::ShapeRules { in_shell: false, several: false, try_first: true, cmyk: false, break_is_typed: true },
+        shapes: crate::shell::format::ShapeRules { in_shell: false, several: false, try_first: true, cmyk: true, break_is_typed: true },
         outer_contexts,
         font_substitutes: false,
         drawing_canvas: true,
@@ -416,7 +625,7 @@ impl FormatEditor for Document {
         search_history_key: "menu-search.history.document",
         px_per_inch_at_100: crate::shell::editor::PX_PER_INCH_AT_100,
         #[cfg(not(target_family = "wasm"))]
-        save_formats: &[("file.save-format.docx", "docx"), ("file.save-format.dotx", "dotx"), ("file.save-format.odt", "odt")],
+        save_formats: &[("file.save-format.docx", "docx"), ("file.save-format.dotx", "dotx"), ("file.save-format.odt", "odt"), ("file.save-format.md", "md")],
     };
 
     fn box_edit_active(editor: &SlideEditor) -> bool {
@@ -514,20 +723,40 @@ impl FormatEditor for Document {
 
     /// A document as .odt (OpenDocument) and as a template (.dotx, .dotm).
     #[cfg(not(target_family = "wasm"))]
-    fn bytes_for_path(editor: &SlideEditor, path: &std::path::Path, source: &ibis_pptx::Source, copy: bool) -> Option<Result<crate::shell::format::FileBytes, String>> {
+    fn bytes_for_path(editor: &SlideEditor, path: &std::path::Path, source: &ibis_formats::Source, copy: bool) -> Option<Result<crate::shell::format::FileBytes, String>> {
         use crate::shell::format::FileBytes;
         let extension = path.extension()?;
         if extension.eq_ignore_ascii_case("odt") {
             // Saved, the file's password encrypts it; a copy is left as it is (as the shell did before the formats were cut apart).
-            return Some(ibis_pptx::docx_convert::export_docx_to_odt(editor.presentation()).map(|bytes| FileBytes { bytes, protect: !copy, note: None }).map_err(|e| e.to_string()));
+            return Some(ibis_odf::export_docx_to_odt(editor.presentation()).map(|bytes| FileBytes { bytes, protect: !copy, note: None }).map_err(|e| e.to_string()));
+        }
+        if extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown") {
+            return Some(
+                ibis_formats::docx_convert::export_docx_format(editor.presentation(), ibis_formats::docx_convert::DocxConvertFormat::Markdown)
+                    .map(|bytes| FileBytes { bytes, protect: false, note: None })
+                    .map_err(|e| e.to_string()),
+            );
+        }
+        if extension.eq_ignore_ascii_case("xml") {
+            return Some(
+                ibis_formats::lawtext::export_presentation_to_law_xml(editor.presentation())
+                    .map(|xml| FileBytes { bytes: xml.into_bytes(), protect: false, note: None })
+                    .map_err(|e| e.to_string()),
+            );
+        }
+        if extension.eq_ignore_ascii_case("lawtext") {
+            return Some(
+                ibis_formats::lawtext::export_presentation_to_lawtext(editor.presentation())
+                    .map(|lt| FileBytes { bytes: lt.into_bytes(), protect: false, note: None })
+                    .map_err(|e| e.to_string()),
+            );
         }
         if extension.eq_ignore_ascii_case("dotx") || extension.eq_ignore_ascii_case("dotm") {
-            return Some(source.save_template(editor.presentation(), ibis_pptx::SaveOptions::default()).map(|bytes| FileBytes { bytes, protect: true, note: None }).map_err(|e| e.to_string()));
+            return Some(source.save_template(editor.presentation(), ibis_formats::SaveOptions::default()).map(|bytes| FileBytes { bytes, protect: true, note: None }).map_err(|e| e.to_string()));
         }
         None
     }
 
-    #[cfg(not(target_family = "wasm"))]
     fn pdf_job(editor: &SlideEditor, printing: bool) -> Result<crate::shell::format::PdfJob, String> {
         let bytes = editor.current_bytes()?;
         if !printing {
@@ -578,6 +807,10 @@ impl FormatEditor for Document {
     /// フォントの置換: the fonts of the document's text runs.
     fn used_fonts(editor: &SlideEditor) -> Vec<String> {
         editor.flow().map(|d| replace_fonts::document_used_fonts(d)).unwrap_or_default()
+    }
+
+    fn used_text(editor: &SlideEditor) -> Option<String> {
+        editor.flow().map(|d| replace_fonts::document_used_text(d))
     }
 
     fn replace_fonts(editor: &mut SlideEditor, target: &str, replacement: &str, cx: &mut Context<SlideEditor>) -> usize {
@@ -705,11 +938,11 @@ impl FormatEditor for Document {
     }
 
     /// A document's chart is in its text: found by its id alone.
-    fn read_chart_data(editor: &SlideEditor, source: &ibis_pptx::Source, _slide: ibis_doc_model::SlideId, shape: ibis_doc_model::ShapeId) -> Result<ibis_pptx::ChartData, ibis_pptx::Error> {
+    fn read_chart_data(editor: &SlideEditor, source: &ibis_formats::Source, _slide: ibis_doc_model::SlideId, shape: ibis_doc_model::ShapeId) -> Result<ibis_formats::ChartData, ibis_formats::Error> {
         source.doc_chart_data(editor.presentation(), shape)
     }
 
-    fn apply_chart_data(editor: &mut SlideEditor, _slide: ibis_doc_model::SlideId, shape: ibis_doc_model::ShapeId, book: &Presentation, data: ibis_pptx::ChartData, cx: &mut Context<SlideEditor>) {
+    fn apply_chart_data(editor: &mut SlideEditor, _slide: ibis_doc_model::SlideId, shape: ibis_doc_model::ShapeId, book: &Presentation, data: ibis_formats::ChartData, cx: &mut Context<SlideEditor>) {
         editor.apply_doc_chart_data(shape, book, data, cx)
     }
 
@@ -1291,7 +1524,9 @@ impl FormatEditor for Document {
     #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
     fn ignored_scenarios() -> Vec<(&'static str, fn())> {
         let mut out = typeset68::ignored();
+        out.extend(justify_squeeze_tests::ignored());
         out.push(("docx::fallback_carry_count_corpus", fallback_carry::count_corpus));
+        out.push(("docx::issue54_page_counts", issue54_mark_room_tests::page_counts));
         #[cfg(target_os = "macos")]
         out.extend(corpus_report::ignored());
         out
@@ -1299,7 +1534,11 @@ impl FormatEditor for Document {
 
     /// The sidebar: 検索と置換's panel when it is open.
     fn sidebar(editor: &mut SlideEditor, _: &mut Window, cx: &mut Context<SlideEditor>) -> Option<crate::shell::chrome::SidebarPanel> {
-        editor.font_panel(cx).map(|panel| panel.modal_named("font_panel")).or_else(|| editor.color_panel(cx).map(|panel| panel.modal_named("color_panel"))).or_else(|| editor.table_size_panel(cx).map(|panel| panel.modal_named("table_size_panel"))).or_else(|| editor.table_formula_panel(cx).map(|panel| panel.modal_named("table_formula_panel"))).or_else(|| editor.picture_panel(cx)).or_else(|| editor.docx_compress_panel(cx).map(|panel| panel.modal_named("docx_compress_panel"))).or_else(|| editor.paragraph_panel(cx).map(|panel| panel.modal_named("paragraph_panel"))).or_else(|| editor.tab_panel(cx)).or_else(|| editor.comments_panel(cx)).or_else(|| editor.style_panel(cx).map(|panel| panel.modal_named("style_panel"))).or_else(|| editor.link_panel(cx).map(|panel| panel.modal_named("link_panel"))).or_else(|| editor.find_panel(cx)).or_else(|| editor.tate_chu_yoko_panel(cx).map(|panel| panel.modal_named("tate_chu_yoko_panel"))).or_else(|| editor.ruby_panel(cx).map(|panel| panel.modal_named("ruby_panel")).or_else(||editor.fit_text_panel(cx).map(|p|p.modal_named("fit_text_panel")))).or_else(|| editor.text_box_panel(cx)).or_else(|| editor.merge_panel(cx)).or_else(|| editor.doc_page_setup_panel(cx).map(|panel| panel.modal_named("doc_page_setup_panel"))).or_else(|| editor.notes_panel(cx).map(|panel| panel.modal_named("notes_panel"))).or_else(|| editor.bookmark_panel(cx).map(|panel| panel.modal_named("bookmark_panel"))).or_else(|| editor.watermark_panel(cx).map(|panel| panel.modal_named("watermark_panel"))).or_else(|| editor.new_style_panel(cx).map(|panel| panel.modal_named("new_style_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.word_count_panel(cx)).or_else(|| editor.field_panel(cx).map(|panel| panel.modal_named("field_panel"))).or_else(|| editor.caption_panel(cx).map(|panel| panel.modal_named("caption_panel"))).or_else(|| editor.doc_properties_panel(cx).map(|panel| panel.modal_named("doc_properties_panel"))).or_else(|| editor.cross_reference_panel(cx).map(|panel| panel.modal_named("cross_reference_panel"))).or_else(|| editor.selection_pane_panel(cx)).or_else(|| editor.accessibility_panel(cx)).or_else(|| editor.update_toc_panel(cx).map(|panel| panel.modal_named("update_toc_panel"))).or_else(|| editor.user_info_panel(cx).map(|panel| panel.modal_named("user_info_panel"))).or_else(|| editor.kinsoku_panel(cx).map(|panel| panel.modal_named("kinsoku_panel"))).or_else(|| editor.go_to_panel(cx).map(|panel| panel.modeless_named("go_to_panel"))).or_else(|| editor.doc_spelling_panel(cx)).or_else(|| editor.doc_chart_panel(cx)).or_else(|| editor.control_panel(cx).map(|panel| panel.modal_named("control_panel"))).or_else(|| editor.doc_autocorrect_panel(cx).map(|panel| panel.modal_named("doc_autocorrect_panel"))).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.docx_math_panel(cx).map(|panel| panel.modal_named("docx_math_panel"))).or_else(|| editor.quick_parts_panel(cx)).or_else(|| editor.doc_inspect_panel(cx).map(|panel| panel.modal_named("doc_inspect_panel"))).or_else(|| editor.doc_compatibility_panel(cx).map(|panel| panel.modal_named("doc_compatibility_panel"))).or_else(|| editor.doc_print_panel(cx).map(|panel| panel.modal_named("doc_print_panel"))).or_else(|| editor.doc_source_manager_panel(cx).map(|panel| panel.modal_named("doc_source_manager_panel"))).or_else(|| editor.doc_thesaurus_panel(cx)).or_else(|| editor.doc_repair_panel(cx).map(|panel| panel.modal_named("doc_repair_panel"))).or_else(|| editor.doc_template_panel(cx).map(|panel| panel.modal_named("doc_template_panel"))).or_else(|| editor.list_style_panel(cx).map(|panel| panel.modal_named("list_style_panel"))).or_else(|| editor.docx_theme_panel(cx).map(|panel| panel.modal_named("docx_theme_panel"))).or_else(|| editor.master_doc_panel(cx)).or_else(|| editor.docx_ink_panel(cx)).or_else(|| editor.docx_screen_reader_panel(cx)).or_else(|| editor.docx_read_aloud_panel(cx)).or_else(|| editor.docx_customize_toolbar_panel(cx))
+        // The merge panel comes last: it is shown only when no other panel is open, and any other panel that opens takes it away (issue #204).
+        let others = editor.font_panel(cx).map(|panel| panel.modal_named("font_panel")).or_else(|| editor.color_panel(cx).map(|panel| panel.modal_named("color_panel"))).or_else(|| editor.table_size_panel(cx).map(|panel| panel.modal_named("table_size_panel"))).or_else(|| editor.table_formula_panel(cx).map(|panel| panel.modal_named("table_formula_panel"))).or_else(|| editor.picture_panel(cx)).or_else(|| editor.docx_compress_panel(cx).map(|panel| panel.modal_named("docx_compress_panel"))).or_else(|| editor.paragraph_panel(cx).map(|panel| panel.modal_named("paragraph_panel"))).or_else(|| editor.tab_panel(cx)).or_else(|| editor.comments_panel(cx)).or_else(|| editor.style_panel(cx).map(|panel| panel.modal_named("style_panel"))).or_else(|| editor.link_panel(cx).map(|panel| panel.modal_named("link_panel"))).or_else(|| editor.find_panel(cx)).or_else(|| editor.tate_chu_yoko_panel(cx).map(|panel| panel.modal_named("tate_chu_yoko_panel"))).or_else(|| editor.ruby_panel(cx).map(|panel| panel.modal_named("ruby_panel")).or_else(||editor.fit_text_panel(cx).map(|p|p.modal_named("fit_text_panel")))).or_else(|| editor.text_box_panel(cx)).or_else(|| editor.doc_page_setup_panel(cx).map(|panel| panel.modal_named("doc_page_setup_panel"))).or_else(|| editor.notes_panel(cx).map(|panel| panel.modal_named("notes_panel"))).or_else(|| editor.bookmark_panel(cx).map(|panel| panel.modal_named("bookmark_panel"))).or_else(|| editor.watermark_panel(cx).map(|panel| panel.modal_named("watermark_panel"))).or_else(|| editor.new_style_panel(cx).map(|panel| panel.modal_named("new_style_panel"))).or_else(|| editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel"))).or_else(|| editor.word_count_panel(cx)).or_else(|| editor.field_panel(cx).map(|panel| panel.modal_named("field_panel"))).or_else(|| editor.caption_panel(cx).map(|panel| panel.modal_named("caption_panel"))).or_else(|| editor.doc_properties_panel(cx).map(|panel| panel.modal_named("doc_properties_panel"))).or_else(|| editor.cross_reference_panel(cx).map(|panel| panel.modal_named("cross_reference_panel"))).or_else(|| editor.selection_pane_panel(cx)).or_else(|| editor.accessibility_panel(cx)).or_else(|| editor.update_toc_panel(cx).map(|panel| panel.modal_named("update_toc_panel"))).or_else(|| editor.user_info_panel(cx).map(|panel| panel.modal_named("user_info_panel"))).or_else(|| editor.kinsoku_panel(cx).map(|panel| panel.modal_named("kinsoku_panel"))).or_else(|| editor.go_to_panel(cx).map(|panel| panel.modeless_named("go_to_panel"))).or_else(|| editor.doc_spelling_panel(cx)).or_else(|| editor.doc_chart_panel(cx)).or_else(|| editor.control_panel(cx).map(|panel| panel.modal_named("control_panel"))).or_else(|| editor.doc_autocorrect_panel(cx).map(|panel| panel.modal_named("doc_autocorrect_panel"))).or_else(|| editor.autorecover_settings_panel(cx).map(|panel| panel.modal_named("autorecover_settings_panel"))).or_else(|| editor.recover_unsaved_panel(cx).map(|panel| panel.modal_named("recover_unsaved_panel"))).or_else(|| editor.docx_math_panel(cx).map(|panel| panel.modal_named("docx_math_panel"))).or_else(|| editor.quick_parts_panel(cx)).or_else(|| editor.doc_inspect_panel(cx).map(|panel| panel.modal_named("doc_inspect_panel"))).or_else(|| editor.doc_compatibility_panel(cx).map(|panel| panel.modal_named("doc_compatibility_panel"))).or_else(|| editor.doc_print_panel(cx).map(|panel| panel.modal_named("doc_print_panel"))).or_else(|| editor.doc_source_manager_panel(cx).map(|panel| panel.modal_named("doc_source_manager_panel"))).or_else(|| editor.doc_thesaurus_panel(cx)).or_else(|| editor.doc_repair_panel(cx).map(|panel| panel.modal_named("doc_repair_panel"))).or_else(|| editor.doc_template_panel(cx).map(|panel| panel.modal_named("doc_template_panel"))).or_else(|| editor.list_style_panel(cx).map(|panel| panel.modal_named("list_style_panel"))).or_else(|| editor.docx_theme_panel(cx).map(|panel| panel.modal_named("docx_theme_panel"))).or_else(|| editor.master_doc_panel(cx)).or_else(|| editor.docx_ink_panel(cx)).or_else(|| editor.docx_screen_reader_panel(cx)).or_else(|| editor.docx_read_aloud_panel(cx)).or_else(|| editor.docx_customize_toolbar_panel(cx));
+        if others.is_none() { return editor.merge_panel(cx); }
+        if let Some(merge) = editor.doc_state_mut().and_then(|s| s.merge.as_mut()) { merge.visible = false; }
+        others
     }
 
     /// The title bar's コメントを追加: a comment on the selection.
@@ -1372,6 +1611,17 @@ impl FormatEditor for Document {
         toolbar::toolbar_right(editor)
     }
 
+    /// The caret in a picture (its format buttons), in a table (its), or in plain text.
+    fn toolbar_scene(editor: &SlideEditor) -> &'static str {
+        if editor.picture_at_caret().is_some() {
+            "image"
+        } else if editor.table_at_caret().is_some() {
+            "table"
+        } else {
+            "none"
+        }
+    }
+
     fn status_items(editor: &SlideEditor) -> Vec<SharedString> {
         let characters = editor.doc_state().map_or(0, |s| s.characters);
         let mode = if editor.is_overtype() {
@@ -1401,6 +1651,22 @@ impl FormatEditor for Document {
         }
         items
     }
+}
+
+/// The lines of the document screen's menus, for another screen that shows the same menus with what it cannot do grey (a PDF that is looked at): the
+/// document's own lines of the commands' table at `part`, not connected (a line with no handler is grey).
+pub fn viewer_menu_items(editor: &SlideEditor, part: crate::shell::chrome::MenuPart) -> Vec<crate::shell::chrome::MenuEntry> {
+    menu_items::menu_items(editor, part)
+}
+
+/// The document screen's own buttons of the left part of the toolbar, for the same use.
+pub fn viewer_toolbar_left() -> Vec<ToolItem> {
+    menu_items::toolbar_left()
+}
+
+/// The document screen's right half of the toolbar, for the same use.
+pub fn viewer_toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
+    toolbar::toolbar_right(editor)
 }
 
 #[ibis_office_macros::editor_ext(Docx2)]

@@ -174,7 +174,7 @@ impl SlideEditor {
 
         let slide = self.current_slide;
         match self.document.execute(vec![Command::Sheet(SheetCommand::Consolidate {
-            slide,
+            sheet: slide,
             destination: dest,
             consolidate,
         })]) {

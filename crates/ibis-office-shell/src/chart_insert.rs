@@ -6,10 +6,29 @@
 //! names, `docx/chart_insert.rs`). What inserting a kind does is the format's (`insert`).
 
 use gpui_kit::*;
-use ibis_pptx::NewChartKind;
+use ibis_formats::NewChartKind;
 
 use crate::chrome::{MenuEntry, MenuItem};
 use crate::editor::SlideEditor;
+
+/// How many tiles a row of the 挿入 > グラフ menu has, on every screen (K0032).
+pub const CHART_TILE_COLUMNS: usize = 3;
+
+/// The kinds of chart only a sheet or a presentation has (Excel 2016's chartEx), each as a picture in the same grid.
+pub fn chart_ex_items_with_thumbs(insert: fn(&mut SlideEditor, NewChartKind, &mut Window, &mut Context<SlideEditor>), thumb: fn(&SlideEditor, NewChartKind, f32) -> AnyElement) -> Vec<MenuEntry> {
+    let item = move |id: &'static str, icon: &'static str, kind: NewChartKind| -> MenuEntry {
+        MenuItem::tr(id).icon(icon).on(move |this: &mut SlideEditor, window, cx| insert(this, kind, window, cx)).thumb(move |editor, width| thumb(editor, kind, width)).tile_columns(CHART_TILE_COLUMNS).into()
+    };
+    vec![
+        item("pptx.insert-chart.waterfall", "waterfall_chart", NewChartKind::Waterfall),
+        item("pptx.insert-chart.histogram", "bar_chart", NewChartKind::Histogram),
+        item("pptx.insert-chart.pareto", "bar_chart", NewChartKind::Pareto),
+        item("pptx.insert-chart.funnel", "filter_alt", NewChartKind::Funnel),
+        item("pptx.insert-chart.box-whisker", "bar_chart", NewChartKind::BoxWhisker),
+        item("pptx.insert-chart.treemap", "grid_view", NewChartKind::Treemap),
+        item("pptx.insert-chart.sunburst", "donut_large", NewChartKind::Sunburst),
+    ]
+}
 
 /// The kinds of chart, in menu order, each item calling `insert` with its kind (a document's, a sheet's): a list of
 /// names.
@@ -23,7 +42,7 @@ pub fn chart_items_with_thumbs(insert: fn(&mut SlideEditor, NewChartKind, &mut W
     let item = move |id: &'static str, icon: &'static str, kind: NewChartKind| -> MenuEntry {
         let item = MenuItem::tr(id).icon(icon).on(move |this: &mut SlideEditor, window, cx| insert(this, kind, window, cx));
         match thumb {
-            Some(thumb) => item.thumb(move |editor, width| thumb(editor, kind, width)).into(),
+            Some(thumb) => item.thumb(move |editor, width| thumb(editor, kind, width)).tile_columns(CHART_TILE_COLUMNS).into(),
             None => item.into(),
         }
     };
@@ -196,4 +215,56 @@ pub fn chart_with_preview_data(mut template: ibis_doc_model::Chart, kind: NewCha
         series.point_strokes.retain(|(point, _)| *point < values.len());
     }
     template
+}
+
+thread_local! {
+    /// The pictures of 挿入 > グラフ made from the fixed data, by screen and kind: made once, as the data does not depend on the document.
+    static KIND_CHARTS: std::cell::RefCell<std::collections::HashMap<(&'static str, String), std::rc::Rc<ibis_doc_model::Chart>>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// An empty presentation, for the screens that have none of their own to ask for a new chart of a kind (a sheet's menu: `fixed_kind_chart`).
+    static BLANK: std::cell::RefCell<Option<std::rc::Rc<ibis_formats::Opened>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The picture of the chart `kind` in the 挿入 > グラフ menu with the fixed data (`chart_with_preview_data`): the one function the three
+/// screens draw it with (K0032). `make` makes the chart of the kind as the screen's document would insert it (a new chart, whose own look
+/// the picture shows), asked once per `screen` and kind; a kind that cannot be made now (no caret yet) is asked again the next time.
+pub fn kind_thumbnail(editor: &SlideEditor, screen: &'static str, kind: NewChartKind, width: f32, make: impl FnOnce() -> Option<ibis_doc_model::Chart>) -> AnyElement {
+    let key = (screen, format!("{kind:?}"));
+    let cached = KIND_CHARTS.with(|c| c.borrow().get(&key).cloned());
+    let chart = cached.or_else(|| {
+        let made = std::rc::Rc::new(chart_with_preview_data(make()?, kind));
+        KIND_CHARTS.with(|c| c.borrow_mut().insert(key, made.clone()));
+        Some(made)
+    });
+    match chart {
+        Some(chart) => chart_preview_view(editor, &chart, width, 3.0 / 4.0),
+        None => div().size_full().bg(rgb(0xf5f5f5)).into_any_element(),
+    }
+}
+
+/// A new chart of `kind` as a presentation makes it (its sample data for the kinds of chartEx), over an empty presentation of the app's own:
+/// what a sheet's menu draws when no cells are chosen to draw (the same pictures as a presentation's and a document's menus, K0032).
+pub fn blank_presentation_chart(kind: NewChartKind) -> Option<ibis_doc_model::Chart> {
+    let opened = BLANK.with(|b| {
+        let mut b = b.borrow_mut();
+        if b.is_none() {
+            *b = ibis_formats::new_presentation().ok().and_then(|bytes| ibis_formats::open(bytes).ok()).map(std::rc::Rc::new);
+        }
+        b.clone()
+    })?;
+    let slide = opened.presentation.slides.first()?.id;
+    let size = opened.presentation.size_of(opened.presentation.slide(slide)?);
+    let frame = ibis_doc_model::EmuRect::new(0, 0, size.width * 3 / 4, size.height * 3 / 4);
+    match opened.source.new_chart_kind(&opened.presentation, slide, ibis_doc_model::ShapeId(u64::MAX), frame, kind).ok()?.kind {
+        ibis_doc_model::ShapeKind::Chart(chart) => Some(*chart),
+        _ => None,
+    }
+}
+
+/// A chart of the cells a sheet's menu draws, with what the other screens' pictures leave out (the title, the legend and the data table that
+/// would crowd a picture of a hundred pixels).
+pub fn chart_without_preview_chrome(mut chart: ibis_doc_model::Chart) -> ibis_doc_model::Chart {
+    chart.title = None;
+    chart.legend = None;
+    chart.data_table = None;
+    chart
 }

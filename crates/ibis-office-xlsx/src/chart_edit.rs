@@ -5,7 +5,7 @@
 //! title (shown or not, its text), the legend's place (or none), and the
 //! value axis's minimum, maximum and major unit (each automatic or a
 //! number) and its major gridlines. Each change is one step to undo;
-//! saving writes it into the chart's part (`ibis-pptx` save/xlsx.rs).
+//! saving writes it into the chart's part (`ibis-formats` save/xlsx.rs).
 
 use crate::shell::chrome::Checkbox;
 use gpui_kit::component::input::InputState;
@@ -273,7 +273,7 @@ impl SlideEditor {
             input.update(cx, |i, cx| i.set_value(text, window, cx));
             input
         };
-        let range = self.source.as_deref().and_then(|s| s.sheet_chart_refs(id, chart)).and_then(|refs| ibis_pptx::refs_range(&refs)).map(|(sheet, range, _)| ibis_pptx::format_ref(&sheet, range)).unwrap_or_default();
+        let range = self.source.as_deref().and_then(|s| s.sheet_chart_refs(id, chart)).and_then(|refs| ibis_formats::refs_range(&refs)).map(|(sheet, range, _)| ibis_formats::format_ref(&sheet, range)).unwrap_or_default();
         let range_input = cx.new(|cx| InputState::new(window, cx));
         range_input.update(cx, |i, cx| i.set_value(range, window, cx));
         let ex = chart.ex_source.as_ref().map(|s| s.0.options()).unwrap_or_default();
@@ -357,7 +357,7 @@ impl SlideEditor {
         super::chart_style::inherit_new_text(&before,&mut chart);
         if chart == before { return; }
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(chart))) }]) {
+        if let Err(err) = self.document.execute(vec![Command::SetShapeKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(chart))) }]) {
             log::warn!("chart edit rejected: {err}");
         }
         cx.notify();
@@ -374,7 +374,7 @@ impl SlideEditor {
         next.ex_source = Some(ibis_doc_model::ExSourceRef(changed.0, source.1));
         let next = ibis_doc_model::chart_refresh::rebuilt_ex(self.presentation(), &next);
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(next))) }]) {
+        if let Err(err) = self.document.execute(vec![Command::SetShapeKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(next))) }]) {
             log::warn!("chart edit rejected: {err}");
         }
         cx.notify();
@@ -437,7 +437,7 @@ impl SlideEditor {
         };
         let Some((shape, chart)) = self.sheet_chart().map(|(id, c)| (id, c.clone())) else { return };
         let Some(source) = self.source.clone() else { return };
-        let Some(current) = source.sheet_chart_refs(shape, &chart).and_then(|refs| ibis_pptx::refs_range(&refs)) else {
+        let Some(current) = source.sheet_chart_refs(shape, &chart).and_then(|refs| ibis_formats::refs_range(&refs)) else {
             return fail(self, "_xlsx.the-data-range-of-this-chart-cannot-be-changed", cx);
         };
         let text = self.wb().chart_edit.as_ref().map(|p| p.range.read(cx).value().trim().trim_start_matches('=').to_string()).unwrap_or_default();
@@ -445,8 +445,8 @@ impl SlideEditor {
             (current.0.clone(), current.1)
         } else {
             let sheet_name = self.slide().name.clone().unwrap_or_default();
-            let typed = if text.contains('!') { text.clone() } else { format!("{}!{text}", ibis_pptx::quote_sheet(&sheet_name)) };
-            let Some((sheet, range)) = ibis_pptx::parse_ref(&typed) else {
+            let typed = if text.contains('!') { text.clone() } else { format!("{}!{text}", ibis_formats::quote_sheet(&sheet_name)) };
+            let Some((sheet, range)) = ibis_formats::parse_ref(&typed) else {
                 return fail(self, "_xlsx.cannot-read-the-data-range-example-sheet1-a-3-d", cx);
             };
             (sheet, range)
@@ -456,7 +456,7 @@ impl SlideEditor {
         let is_xy_or_stock = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Stock { .. } | ibis_doc_model::ChartType::Scatter { .. } | ibis_doc_model::ChartType::Bubble { .. }));
         let by_columns = if switch { !current.2 } else if changed {
             // X-Y and stock charts read their own layout: in columns unless the range is wider than tall.
-            if is_xy_or_stock { range.last_row - range.first_row >= range.last_column - range.first_column } else { ibis_pptx::preferred_series_columns(self.presentation(),&sheet,range) }
+            if is_xy_or_stock { range.last_row - range.first_row >= range.last_column - range.first_column } else { ibis_formats::preferred_series_columns(self.presentation(),&sheet,range) }
         } else { current.2 };
         let is_scatter = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Scatter { .. }));
         let is_bubble = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Bubble { .. }));
@@ -464,24 +464,24 @@ impl SlideEditor {
             let total_series: usize = chart.groups.iter().map(|g| g.series.len()).sum();
             let has_bar = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Bar { .. }));
             if has_bar {
-                if total_series <= 4 { Some(ibis_pptx::NewChartKind::StockVHLC) } else { Some(ibis_pptx::NewChartKind::StockVOHLC) }
+                if total_series <= 4 { Some(ibis_formats::NewChartKind::StockVHLC) } else { Some(ibis_formats::NewChartKind::StockVOHLC) }
             } else if total_series <= 3 {
-                Some(ibis_pptx::NewChartKind::StockHLC)
+                Some(ibis_formats::NewChartKind::StockHLC)
             } else {
-                Some(ibis_pptx::NewChartKind::StockOHLC)
+                Some(ibis_formats::NewChartKind::StockOHLC)
             }
         } else {
             None
         };
-        let get_refs = |by_cols: bool| -> Option<Vec<ibis_pptx::SeriesRefs>> {
+        let get_refs = |by_cols: bool| -> Option<Vec<ibis_formats::SeriesRefs>> {
             if let Some(kind) = stock_kind {
-                ibis_pptx::stock_refs_for_range(self.presentation(), &sheet, range, kind, by_cols)
+                ibis_formats::stock_refs_for_range(self.presentation(), &sheet, range, kind, by_cols)
             } else if is_bubble {
-                ibis_pptx::bubble_refs_for_range(self.presentation(), &sheet, range, by_cols)
+                ibis_formats::bubble_refs_for_range(self.presentation(), &sheet, range, by_cols)
             } else if is_scatter {
-                ibis_pptx::scatter_refs_for_range(self.presentation(), &sheet, range, by_cols)
+                ibis_formats::scatter_refs_for_range(self.presentation(), &sheet, range, by_cols)
             } else {
-                ibis_pptx::refs_for_range(self.presentation(), &sheet, range, by_cols)
+                ibis_formats::refs_for_range(self.presentation(), &sheet, range, by_cols)
             }
         };
         let refs = if switch {
@@ -499,18 +499,18 @@ impl SlideEditor {
                 if r.name.is_none() { series.name.clear(); }
             }
         }
-        let target = ibis_pptx::sheet_chart_from_data(&renamed, self.presentation(), &refs);
+        let target = ibis_formats::sheet_chart_from_data(&renamed, self.presentation(), &refs);
         if target == chart {
             return cx.notify();
         }
-        source.set_chart_data(shape, target.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs });
+        source.set_chart_data(shape, target.clone(), ibis_formats::ChartData { workbook: Vec::new(), series: refs });
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
+        if let Err(err) = self.document.execute(vec![Command::SetShapeKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
             log::warn!("chart data edit rejected: {err}");
         }
         let input = self.wb().chart_edit.as_ref().map(|p| p.range.clone());
         if let Some(input) = input {
-            let shown = ibis_pptx::format_ref(&sheet, range);
+            let shown = ibis_formats::format_ref(&sheet, range);
             input.update(cx, |i, cx| i.set_value(shown, window, cx));
         }
         if let Some(p) = self.wb_mut().chart_edit.as_mut() {
@@ -563,10 +563,10 @@ impl SlideEditor {
             g.series.extend(iter.by_ref().take(len));
         }
 
-        let target = ibis_pptx::sheet_chart_from_data(&chart, self.presentation(), &refs);
-        source.set_chart_data(shape, target.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs });
+        let target = ibis_formats::sheet_chart_from_data(&chart, self.presentation(), &refs);
+        source.set_chart_data(shape, target.clone(), ibis_formats::ChartData { workbook: Vec::new(), series: refs });
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
+        if let Err(err) = self.document.execute(vec![Command::SetShapeKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
             log::warn!("chart series move rejected: {err}");
         }
         if let Some(p) = self.wb_mut().chart_edit.as_mut() {
@@ -608,15 +608,15 @@ impl SlideEditor {
         }
 
         chart.groups.retain(|g|!g.series.is_empty());
-        let target = ibis_pptx::sheet_chart_from_data(&chart, self.presentation(), &refs);
-        source.set_chart_data(shape, target.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs.clone() });
+        let target = ibis_formats::sheet_chart_from_data(&chart, self.presentation(), &refs);
+        source.set_chart_data(shape, target.clone(), ibis_formats::ChartData { workbook: Vec::new(), series: refs.clone() });
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
+        if let Err(err) = self.document.execute(vec![Command::SetShapeKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
             log::warn!("chart series delete rejected: {err}");
         }
         if let Some(input) = self.wb().chart_edit.as_ref().map(|p| p.range.clone()) {
-            if let Some((sheet, range, _)) = ibis_pptx::refs_range(&refs) {
-                let shown = ibis_pptx::format_ref(&sheet, range);
+            if let Some((sheet, range, _)) = ibis_formats::refs_range(&refs) {
+                let shown = ibis_formats::format_ref(&sheet, range);
                 input.update(cx, |i, cx| i.set_value(shown, window, cx));
             }
         }
@@ -640,8 +640,8 @@ impl SlideEditor {
             return fail(self, "xlsx.chart-series-add-error", cx);
         };
         let is_bubble = chart.groups.iter().any(|g| matches!(g.kind, ibis_doc_model::ChartType::Bubble { .. }));
-        let new_ref = if let Some((sheet, range, by_columns)) = ibis_pptx::refs_range(&refs) {
-            let one = |r0: u32, c0: u32, r1: u32, c1: u32| ibis_pptx::format_ref(&sheet, CellRange { first_row: r0, first_column: c0, last_row: r1, last_column: c1 });
+        let new_ref = if let Some((sheet, range, by_columns)) = ibis_formats::refs_range(&refs) {
+            let one = |r0: u32, c0: u32, r1: u32, c1: u32| ibis_formats::format_ref(&sheet, CellRange { first_row: r0, first_column: c0, last_row: r1, last_column: c1 });
             let has_header = refs.first().and_then(|r| r.name.as_ref()).is_some();
             if is_bubble {
                 if by_columns {
@@ -652,7 +652,7 @@ impl SlideEditor {
                     } else {
                         (range.first_row, None)
                     };
-                    ibis_pptx::SeriesRefs {
+                    ibis_formats::SeriesRefs {
                         name,
                         categories: refs.first().and_then(|r| r.categories.clone()),
                         values: Some(one(data_r0, next_col, range.last_row, next_col)),
@@ -666,7 +666,7 @@ impl SlideEditor {
                     } else {
                         (range.first_column, None)
                     };
-                    ibis_pptx::SeriesRefs {
+                    ibis_formats::SeriesRefs {
                         name,
                         categories: refs.first().and_then(|r| r.categories.clone()),
                         values: Some(one(next_row, data_c0, next_row, range.last_column)),
@@ -680,7 +680,7 @@ impl SlideEditor {
                 } else {
                     (range.first_row, None)
                 };
-                ibis_pptx::SeriesRefs {
+                ibis_formats::SeriesRefs {
                     name,
                     categories: refs.first().and_then(|r| r.categories.clone()),
                     values: Some(one(data_r0, next_col, range.last_row, next_col)),
@@ -693,7 +693,7 @@ impl SlideEditor {
                 } else {
                     (range.first_column, None)
                 };
-                ibis_pptx::SeriesRefs {
+                ibis_formats::SeriesRefs {
                     name,
                     categories: refs.first().and_then(|r| r.categories.clone()),
                     values: Some(one(next_row, data_c0, next_row, range.last_column)),
@@ -706,15 +706,15 @@ impl SlideEditor {
             return fail(self, "xlsx.chart-series-add-error", cx);
         };
         refs.push(new_ref);
-        let target = ibis_pptx::sheet_chart_from_data(&chart, self.presentation(), &refs);
-        source.set_chart_data(shape, target.clone(), ibis_pptx::ChartData { workbook: Vec::new(), series: refs.clone() });
+        let target = ibis_formats::sheet_chart_from_data(&chart, self.presentation(), &refs);
+        source.set_chart_data(shape, target.clone(), ibis_formats::ChartData { workbook: Vec::new(), series: refs.clone() });
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
+        if let Err(err) = self.document.execute(vec![Command::SetShapeKind { slide, shape, kind: Box::new(ShapeKind::Chart(Box::new(target))) }]) {
             log::warn!("chart series add rejected: {err}");
         }
         if let Some(input) = self.wb().chart_edit.as_ref().map(|p| p.range.clone()) {
-            if let Some((sheet, range, _)) = ibis_pptx::refs_range(&refs) {
-                let shown = ibis_pptx::format_ref(&sheet, range);
+            if let Some((sheet, range, _)) = ibis_formats::refs_range(&refs) {
+                let shown = ibis_formats::format_ref(&sheet, range);
                 input.update(cx, |i, cx| i.set_value(shown, window, cx));
             }
         }

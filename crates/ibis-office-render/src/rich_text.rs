@@ -35,6 +35,9 @@ pub struct Piece {
     /// The size drawn, in pixels (smaller than the run's size for a
     /// superscript or subscript).
     pub size: f32,
+    /// The run says no size of its own (it takes the one the styles give). A line's height and baseline count such a run at the larger of
+    /// that size and its paragraph's mark's (see `lay_out`).
+    pub inherits_size: bool,
     pub color: Hsla,
     pub underline: bool,
     /// How the underline is drawn (`a:rPr/@u`).
@@ -346,6 +349,8 @@ struct Lane {
     offset: f32,
     room: f32,
     drop: f32,
+    /// Text in columns: the line starts the next column; the space left in the column above it (not drawn, it is lost).
+    jump: f32,
 }
 
 impl LineObstacles {
@@ -369,7 +374,7 @@ impl LineObstacles {
                     bottom = Some(bottom.map_or(*y1, |b: f32| b.min(*y1)));
                 }
             }
-            let Some(bottom) = bottom else { return Lane { offset: 0.0, room: width, drop: y - start } };
+            let Some(bottom) = bottom else { return Lane { offset: 0.0, room: width, drop: y - start, jump: 0.0 } };
             blocked.sort_by(|a, b| a.0.total_cmp(&b.0));
             let mut best = (0.0f32, 0.0f32);
             let mut at = 0.0f32;
@@ -380,10 +385,39 @@ impl LineObstacles {
                 at = at.max(b);
             }
             if best.1 - best.0 >= min_room.min(width) {
-                return Lane { offset: best.0, room: best.1 - best.0, drop: y - start };
+                return Lane { offset: best.0, room: best.1 - best.0, drop: y - start, jump: 0.0 };
             }
             y = bottom;
         }
+    }
+}
+
+/// Text in columns among obstacles: the columns of a text are laid out one below the other in a strip of one column's width (`TextBlock::flow`),
+/// the strip's position `s` being `column * height + the place in the column`. The lane of a line of `height` whose place in the strip
+/// is `s`: a line that does not fit under the ones above in its column starts the next (`Lane::jump` is the space left), and the obstacles are
+/// those of the column it is in, `pitch` further left for each column before it.
+fn column_lane(o: &LineObstacles, s: f32, flow: (f32, f32, usize), height: f32, width: f32, min_room: f32, margin_left: f32) -> Lane {
+    let (column_height, pitch, count) = flow;
+    let mut s = s;
+    let mut jump = 0.0f32;
+    loop {
+        let column = ((s / column_height.max(1.0)).floor().max(0.0) as usize).min(count.saturating_sub(1));
+        let top = s - column as f32 * column_height;
+        let last = column + 1 >= count;
+        if !last && top > 0.5 && top + height > column_height + 0.5 {
+            let next = (column + 1) as f32 * column_height;
+            jump += next - s;
+            s = next;
+            continue;
+        }
+        let lane = o.lane(top, height, width, min_room, margin_left + column as f32 * pitch);
+        if !last && top + lane.drop > 0.5 && top + lane.drop + height > column_height + 0.5 {
+            let next = (column + 1) as f32 * column_height;
+            jump += next - s;
+            s = next;
+            continue;
+        }
+        return Lane { jump, ..lane };
     }
 }
 
@@ -391,6 +425,9 @@ impl LineObstacles {
 pub(crate) struct RichParagraph {
     /// What the lines wrap round, if anything.
     pub obstacles: Option<Rc<LineObstacles>>,
+    /// A paragraph measured on its own (no painting) in a text in columns: the height of a column, the distance from one column's left edge
+    /// to the next's and the number of columns, pixels (`TextBlock::flow`'s, for the paragraph's lines to be put in their columns).
+    pub measure_flow: Option<(f32, f32, usize)>,
     pub pieces: Vec<Piece>,
     pub align: TextAlign,
     pub font_align: FontAlign,
@@ -398,6 +435,10 @@ pub(crate) struct RichParagraph {
     /// The pitch of the line grid the paragraph is set on, in pixels (`Paragraph::grid_pitch`).
     pub grid_pitch: Option<f32>,
     pub wrap: bool,
+    /// Whether the spaces at the end of a line count towards its width for centring and right alignment: in PowerPoint a text box that does not wrap
+    /// (`wrap="none"`) keeps them (probe: 3 spaces after "ABCDEFGH" move a centred line half their width left and a right-aligned one all of it,
+    /// before the end of the text, a line break and a paragraph break alike); one that wraps drops them.
+    pub count_end_spaces: bool,
     /// Where the first line starts, from the element's left edge (negative
     /// for a hanging indent); the other lines start at the edge.
     pub first_line: f32,
@@ -442,6 +483,10 @@ pub(crate) struct RichParagraph {
     /// Where the paragraph's text is meant to start (window pixels, unrounded
     /// by layout): corrects for GPUI layout snapping to whole device pixels.
     pub at_x: Option<f32>,
+    /// The ascent and descent, in ems, of the typeface of the paragraph's mark (its end-of-paragraph character, Latin).
+    /// PowerPoint's last line of a paragraph is as the mark's typeface and the line's own typefaces make it: the baseline falls
+    /// where the larger ascent and the larger descent of them put it (`None`: the line's own).
+    pub mark: Option<(f32, f32, f32)>,
 }
 
 thread_local! {
@@ -489,6 +534,9 @@ pub(crate) struct TextBlock {
     pub(crate) quota: Rc<RefCell<Option<Vec<usize>>>>,
     /// The lines in the band now (`quota`).
     pub in_band: Rc<std::cell::Cell<usize>>,
+    /// Text in columns among obstacles: where each paragraph ends in the strip of columns (`column * height + place in the column`,
+    /// the space below it included), recorded as it is prepainted.
+    pub(crate) strip_end: Rc<RefCell<Vec<f32>>>,
     /// How the text is turned (window pixels), set with `top`.
     pub turn: Rc<std::cell::Cell<Option<Turn>>>,
     /// The area the text is placed in (top and height, window pixels), set
@@ -878,6 +926,9 @@ pub struct CharPosition {
     pub x: f32,
     pub advance: f32,
     pub line: usize,
+    /// The box of the glyph's ink (the glyph's box in the typeface's file, `xMin`, `xMax`, `yMax`, `yMin`), as (left, right, top, bottom) in pixels: left and right from `x`,
+    /// top and bottom from the line's baseline (down is positive). `None` for a character with no ink (a space) or a typeface whose file cannot be read.
+    pub ink: Option<(f32, f32, f32, f32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -998,6 +1049,12 @@ struct Char {
     /// Unspaced advance from the shaper.
     raw: f32,
     advance: f32,
+    /// How far the glyph is drawn right of the cell's left edge, where the cell was narrowed to a proportional typeface's advance
+    /// (`glyph_shift`; 0 or negative). The glyph of the substitute typeface is cut for the full cell.
+    shift: f32,
+    /// How much narrower the glyph is drawn than the stand-in typeface cut it (1 when as cut): where the cell was narrowed to a proportional
+    /// typeface's advance, a glyph whose ink is wider than that typeface's own is squeezed to it (`kana_ink_fit`).
+    squeeze: f32,
     /// A typeset formula's ascent and descent, in place of the piece's.
     lift: Option<(f32, f32)>,
     /// In East Asian vertical writing, an ASCII digit that stands upright
@@ -1040,6 +1097,8 @@ struct Line {
     offset: f32,
     avail: Option<f32>,
     drop: f32,
+    /// Text in columns among obstacles (`column_lane`): above 0, the line starts the next column and this is the space left in the one before.
+    jump: f32,
 }
 
 #[derive(Default)]
@@ -1128,6 +1187,15 @@ impl Element for RichParagraphElement {
                 heights.resize(t.index + 1, 0.0);
             }
             heights[t.index] = t.before + text_height(paragraph, &self.layout.borrow().lines) + t.after;
+            if paragraph.obstacles.is_some() && t.block.flow.get().is_some() {
+                let layout = self.layout.borrow();
+                let end = column_start(t) + layout.lines.iter().map(|l| l.jump).sum::<f32>() + text_height(paragraph, &layout.lines) + t.after;
+                let mut ends = t.block.strip_end.borrow_mut();
+                if ends.len() <= t.index {
+                    ends.resize(t.index + 1, 0.0);
+                }
+                ends[t.index] = end;
+            }
             let mut boxes = t.block.line_boxes.borrow_mut();
             if boxes.len() <= t.index {
                 boxes.resize(t.index + 1, Vec::new());
@@ -1190,11 +1258,16 @@ impl Element for RichParagraphElement {
         for (n, line) in layout.lines.iter().enumerate() {
             let mut column_shift = 0.0;
             if let Some((t, (column_height, pitch, count))) = flow {
-                let full = match &quota {
-                    Some(q) => t.block.in_band.get() >= q.get(t.block.column.get()).copied().unwrap_or(usize::MAX),
-                    None => top > 0.5 && top + line.height > column_height + 0.5,
+                // Among obstacles the layout has put each line in its column (`column_lane`).
+                let full = if paragraph.obstacles.is_some() {
+                    line.jump > 0.0
+                } else {
+                    match &quota {
+                        Some(q) => t.block.in_band.get() >= q.get(t.block.column.get()).copied().unwrap_or(usize::MAX),
+                        None => top > 0.5 && top + line.height > column_height + 0.5,
+                    }
                 };
-                if full && top > 0.0 && t.block.column.get() + 1 < count {
+                if full && (top > 0.0 || paragraph.obstacles.is_some()) && t.block.column.get() + 1 < count {
                     t.block.column.set(t.block.column.get() + 1);
                     t.block.in_band.set(0);
                     consumed += top;
@@ -1214,7 +1287,7 @@ impl Element for RichParagraphElement {
             let shown_width: f32 = shown_slice.iter().map(|c| c.advance).sum();
             // A comma or full stop that hangs past the edge (the line broke because it did not fit) is not spread over the room: the characters before it
             // are, and it follows the last of them (PowerPoint's justified line of 032 p10 ends past the edge with its comma).
-            let hang = shown_slice.last().filter(|c| paragraph.hanging_punct && hangs(c.c) && shown_width > room + 0.01 && shown_chars > 2).map_or(0.0, |c| c.advance);
+            let hang = shown_slice.last().filter(|c| paragraph.hanging_punct && hangs_char(c.c, c.east_asian) && shown_width > room + 0.01 && shown_chars > 2).map_or(0.0, |c| c.advance);
             let spread_chars = shown_chars - usize::from(hang > 0.0);
             let spread_width = shown_width - hang;
             let spread = match paragraph.align {
@@ -1273,7 +1346,8 @@ impl Element for RichParagraphElement {
                 let mut at = x;
                 for (k, c) in layout.chars[line.start..line.end].iter().enumerate() {
                     let adv = c.advance + char_extra(line.start + k);
-                    p.chars.push(CharPosition { x: at, advance: adv, line: n });
+                    let ink = glyph_ink_box(window, &paragraph.pieces[c.piece], c);
+                    p.chars.push(CharPosition { x: at, advance: adv, line: n, ink });
                     at += adv;
                 }
             }
@@ -1515,7 +1589,7 @@ impl Element for RichParagraphElement {
                         let italic = window.text_system().synthetic_style(run.font_id).1;
                         for glyph in &run.glyphs {
                             let before = text[..glyph.index.min(text.len())].chars().count();
-                            let dx: f32 = (i..(i + before).min(j)).map(|k| layout.chars[k].advance + char_extra(k) - layout.chars[k].raw).sum();
+                            let dx: f32 = (i..(i + before).min(j)).map(|k| layout.chars[k].advance + char_extra(k) - layout.chars[k].raw).sum::<f32>() + layout.chars.get(i + before).filter(|_| i + before < j).map_or(0.0, |c| c.shift);
                             let polygons = crate::glyph_outline::glyph_polygons(&data, index, glyph.id.0, piece.size)?;
                             let (gx, gy) = (x + f32::from(glyph.position.x) + dx, y + f32::from(glyph.position.y));
                             all.extend(slanted_if_synthetic(polygons, italic).into_iter().map(|c| c.into_iter().map(|(a, b)| (gx + a, gy + b)).collect()));
@@ -1536,13 +1610,13 @@ impl Element for RichParagraphElement {
                         for run in &shaped.runs {
                             for glyph in &run.glyphs {
                                 let before = text[..glyph.index.min(text.len())].chars().count();
-                                let dx: f32 = (i..(i + before).min(j)).map(|k| layout.chars[k].advance + char_extra(k) - layout.chars[k].raw).sum();
+                                let dx: f32 = (i..(i + before).min(j)).map(|k| layout.chars[k].advance + char_extra(k) - layout.chars[k].raw).sum::<f32>() + layout.chars.get(i + before).filter(|_| i + before < j).map_or(0.0, |c| c.shift);
                                 let _ = window.paint_glyph(at + glyph.position + point(px(dx), px(0.0)), run.font_id, glyph.id, px(piece.size), color);
                             }
                         }
                     }
                 }
-                if piece.spacing_px() == 0.0 && extra == 0.0 && space_extra == 0.0 && piece.kana_widths.is_none() && piece.advance_table.is_none() && !piece.proportional_alnum && !text.contains('\t') {
+                if piece.spacing_px() == 0.0 && extra == 0.0 && space_extra == 0.0 && piece.kana_widths.is_none() && piece.advance_table.is_none() && !piece.proportional_alnum && !text.contains('\t') && !(crate::glyph_text::recording() && piece.font.features.0.iter().any(|(tag, on)| tag.as_str() == "palt" && *on != 0)) {
                     let height = shaped.ascent + shaped.descent;
                     let _ = shaped.paint(point(px(x), px(y) - shaped.ascent), height, gpui_kit::TextAlign::Left, None, window, cx);
                 } else {
@@ -1592,12 +1666,39 @@ fn paint_turned_glyph(window: &mut Window, (x, y): (f32, f32), font_id: FontId, 
 /// line, is at (`cx`, `gy` - 0.38 em) of a line laid out across (`size` pixels), the cell turned back a quarter turn about its
 /// middle (which stays where it is). The glyph's origin is `across` pixels from the cell's middle, to the right as it
 /// stands (a full width character: half a width to the left). Returns the glyph's origin and the angle it is painted at.
-fn upright_glyph((cx, gy): (f32, f32), size: f32, across: f32, turn: Turn) -> ((f32, f32), f32) {
-    // The em square: from 0.88 em above the baseline to 0.12 em below, so its middle is 0.38 em above the baseline; the origin
-    // is that much below the middle once the glyph stands.
-    let cy = gy - 0.38 * size;
-    let (ox, oy) = (cx + 0.38 * size, cy - across);
+fn upright_glyph((cx, gy): (f32, f32), size: f32, across: f32, (centre, along): (f32, f32), turn: Turn) -> ((f32, f32), f32) {
+    // The em square's middle is `centre` em above the baseline (`upright_centre`); the origin is `along` ems from the middle of the cell
+    // along the line (the font's Windows ascent less half an em).
+    let cy = gy - centre * size;
+    let (ox, oy) = (cx + along * size, cy - across);
     (turn.apply(ox, oy), turn.radians() - std::f32::consts::FRAC_PI_2)
+}
+
+/// Where PowerPoint puts an upright glyph of a vertical column, from the font's Windows ascent and descent (`OS/2`): the middle of the
+/// glyph (its em square) is `0.5 - descent` em above the baseline, across the line, and the glyph's origin is `ascent - 0.5` em from the
+/// middle of its cell along the line, so the origin is the font's Windows ascent from the cell's start. (Measured on Windows PowerPoint's
+/// PDF with a vertical column of each of 30 typefaces: MS Gothic and Mincho 0.360 across, 0.359 predicted; BIZ UD 0.3825, 0.38; Meiryo UI
+/// 0.2915, 0.29; Yu Gothic 0.203, 0.198; Yu Gothic UI 0.255, 0.249; Meiryo 0.061, 0.06; along the line, the upright origin is 1.06 em
+/// (Meiryo UI), 0.86 (MS Gothic) from the cell's start, the fonts' ascents; `tasks/doc/handoff-pptx.md`.) Returns (across, along).
+fn upright_centre(ascent_px: f32, descent_px: f32, size: f32) -> (f32, f32) {
+    if size > 0.0 { (0.5 - descent_px / size, ascent_px / size - 0.5) } else { (0.38, 0.38) }
+}
+
+/// The vertical advance (`vmtx`'s advanceHeight) of glyph `glyph` of the font in `data` (the `index`th of a collection), in ems.
+fn vertical_advance_em(data: &[u8], index: u32, glyph: u32) -> Option<f32> {
+    let u16_at = |at: usize| data.get(at..at + 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
+    let u32_at = |at: usize| data.get(at..at + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+    let offset = if data.starts_with(b"ttcf") { u32_at(12 + 4 * index as usize)? as usize } else { 0 };
+    let tables = u16_at(offset + 4)? as usize;
+    let find = |tag: &[u8; 4]| -> Option<usize> { (0..tables).find_map(|i| (data.get(offset + 12 + 16 * i..offset + 16 + 16 * i)? == tag).then(|| u32_at(offset + 12 + 16 * i + 8).map(|o| o as usize)).flatten()) };
+    let em = f32::from(u16_at(find(b"head")? + 18)?);
+    let metrics = usize::from(u16_at(find(b"vhea")? + 34)?);
+    let vmtx = find(b"vmtx")?;
+    if em <= 0.0 || metrics == 0 {
+        return None;
+    }
+    let entry = (glyph as usize).min(metrics - 1);
+    Some(f32::from(u16_at(vmtx + 4 * entry)?) / em)
 }
 
 /// Paint `glyph` with its origin at (`tx`, `ty`) (window pixels), turned
@@ -1715,6 +1816,7 @@ fn paint_turned(shaped: &ShapedLine, text: &str, chars: &[Char], piece: &Piece, 
         shift[k + 1] = shift[k] + if c.tcy == Tcy::No { 0.0 } else { c.advance - c.raw };
     }
     for run in &shaped.runs {
+        let centre = upright_centre(piece.ascent, piece.descent, piece.size);
         for glyph in &run.glyphs {
             let at_char = text[..glyph.index.min(text.len())].chars().count();
             let (mut gx, gy) = glyph_at(glyph.index, glyph.position);
@@ -1734,7 +1836,7 @@ fn paint_turned(shaped: &ShapedLine, text: &str, chars: &[Char], piece: &Piece, 
                 let _ = line_height;
                 let squeeze = if matches!(piece.tate, Some(ibis_doc_model::TateChuYoko::Fit | ibis_doc_model::TateChuYoko::Grow)) && total > 0.0 { piece.tate_scale } else { 1.0 };
                 let cell_start = x + chars[..first].iter().map(|c| c.raw).sum::<f32>() + shift[first];
-                let (at, angle) = upright_glyph((cell_start + piece.size / 2.0, gy), piece.size, (-total / 2.0 + before) * squeeze, turn);
+                let (at, angle) = upright_glyph((cell_start + piece.size / 2.0, gy), piece.size, (-total / 2.0 + before) * squeeze, centre, turn);
                 paint_glyph_scaled(window, at, angle, squeeze, run.font_id, glyph.id, piece.size, piece.color, trace_ref);
             } else if upright && tcy != Tcy::No {
                 // A digit upright in a cell of one em along the line: the digits of a pair side by side, centred across the cell.
@@ -1745,10 +1847,13 @@ fn paint_turned(shaped: &ShapedLine, text: &str, chars: &[Char], piece: &Piece, 
                     Tcy::First if at_char + 1 < chars.len() => (gx, chars[at_char].raw + chars[at_char + 1].raw, 0.0),
                     _ => (gx, chars[at_char].raw, 0.0),
                 };
-                let (at, angle) = upright_glyph((cell + piece.size / 2.0, gy), piece.size, -pair / 2.0 + offset, turn);
+                let (at, angle) = upright_glyph((cell + piece.size / 2.0, gy), piece.size, -pair / 2.0 + offset, centre, turn);
                 paint_glyph_at(window, at, angle, run.font_id, glyph.id, piece.size, piece.color, trace_ref);
-            } else if upright && this.is_some_and(is_cjk) {
+            } else if upright && this.is_some_and(crate::vertical_text::powerpoint_upright) {
                 let c = this.unwrap_or(' ');
+                // Whether a character stands or lies in a column is UAX #50's orientation (`vertical_text::upright`), as in the document (DOCX) screen's
+                // vertical text, not a range of code points (GitHub issue #188: the half-width katakana, UAX #50 R, lie in PowerPoint's vertical text, and
+                // ☆ ♪ ❶ ➀ and the like, U, stand; a table of ranges had them the other way about).
                 // The web build's browser draws the text the bundled fonts lack, and its `vert` glyphs cannot be asked for: the browser sets the
                 // character in vertical text itself and its picture stands in the cell (#130; `browser_raster`). Which characters take the
                 // vertical glyph is this module's table (`vertical_text::vertical_glyph`: UAX #50 Tu and Tr, ； U+FF1B excepted as Word does).
@@ -1774,7 +1879,10 @@ fn paint_turned(shaped: &ShapedLine, text: &str, chars: &[Char], piece: &Piece, 
                 } else {
                     glyph.id
                 };
-                let (at, angle) = upright_glyph((gx + piece.size / 2.0, gy), piece.size, -piece.size / 2.0, turn);
+                // The cell of the character down the column: where the advances of the characters before it (a standing one's is its
+                // vertical advance) put it, not where the line was shaped (horizontal advances).
+                let cell = x + chars[..at_char.min(chars.len())].iter().map(|c| c.advance).sum::<f32>();
+                let (at, angle) = upright_glyph((cell + piece.size / 2.0, gy), piece.size, -piece.size / 2.0, centre, turn);
                 paint_glyph_at(window, at, angle, run.font_id, id, piece.size, piece.color, trace_ref);
             } else {
                 paint_turned_glyph(window, (gx, gy), run.font_id, glyph.id, piece.size, piece.color, turn, trace_ref);
@@ -1912,7 +2020,7 @@ fn paint_inner_shadow(
             }
             let shift_x = if spaced {
                 let before = text[..glyph.index.min(text.len())].chars().count();
-                chars[..before.min(chars.len())].iter().map(|c| c.advance + extra - c.raw).sum::<f32>()
+                chars[..before.min(chars.len())].iter().map(|c| c.advance + extra - c.raw).sum::<f32>() + chars.get(before).map_or(0.0, |c| c.shift)
             } else {
                 0.0
             };
@@ -2001,16 +2109,78 @@ fn paint_inner_shadow(
     }
 }
 
+/// How a stand-in's glyph is fitted to the ink of the proportional typeface's glyph it stands for: the stand-in's ink is `left..right` from
+/// the glyph's origin, the typeface's `own_left..own_right` from the left edge of the cell (pixels). The glyph is drawn as wide as the
+/// typeface's ink when its own is wider (squeezed by the ratio of the two widths; never widened), and the middle of its ink goes to the middle of
+/// the typeface's. Returns the squeeze and how far the glyph's origin is from the cell's left edge; `None` when either has no ink.
+fn kana_ink_fit(left: f32, right: f32, own_left: f32, own_right: f32) -> Option<(f32, f32)> {
+    let (width, own_width) = (right - left, own_right - own_left);
+    if !(width > 0.0 && own_width > 0.0) {
+        return None;
+    }
+    let squeeze = if width > own_width { own_width / width } else { 1.0 };
+    Some((squeeze, (own_left + own_right) / 2.0 - (left + right) / 2.0 * squeeze))
+}
+
 /// Paint `shaped` (the line of `text`) glyph by glyph from `baseline`,
 /// placing each character at its laid-out advance (`c.advance + extra`).
+/// How far a glyph is drawn from the left edge of its cell when the cell is narrowed from the shaper's advance `raw` to `cell`
+/// (a proportional typeface's advance, `Meiryo UI`'s `hmtx`): the substitute typeface's glyph is cut for the full-width cell, and
+/// the proportional typeface cut it for the narrow one, so it goes where that one's ink is. An opening bracket's ink is at the right
+/// of a full-width cell (it goes the whole difference left); a closing bracket's and a stop's at the left (it stays); any other
+/// (kana, `ー`, `・`, `：`, `；`) is in the middle of its cell (half the difference). The rule is the typesetting convention for
+/// full-width glyphs, not a measured factor; a cell that is not narrower is left alone.
+fn glyph_shift(c: char, raw: f32, cell: f32) -> f32 {
+    let narrowed = raw - cell;
+    if narrowed <= 0.0 {
+        return 0.0;
+    }
+    if "（「『【〔〈《［｛〘〖".contains(c) { // i18n-ok（約物の字形の位置）
+        -narrowed
+    } else if "）」』】〕〉》］｝〙〗、。，．".contains(c) { // i18n-ok（約物の字形の位置）
+        0.0
+    } else {
+        -0.5 * narrowed
+    }
+}
+
+/// The box of the ink of `c`'s glyph (see `CharPosition::ink`) drawn in `piece`'s typeface and size, from the typeface's file (`glyf`'s box of the glyph); a superscript's or subscript's
+/// glyph is moved with its baseline.
+fn glyph_ink_box(window: &Window, piece: &Piece, c: &Char) -> Option<(f32, f32, f32, f32)> {
+    if c.c.is_whitespace() {
+        return None;
+    }
+    let system = window.text_system();
+    let id = system.resolve_font(&piece.font);
+    let (data, index) = system.font_data(id)?;
+    let face = ttf_parser::Face::parse(&data, index).ok()?;
+    let upem = f32::from(face.units_per_em());
+    let r = face.glyph_bounding_box(face.glyph_index(c.c)?)?;
+    let em = piece.size / upem;
+    Some((f32::from(r.x_min) * em + c.shift, f32::from(r.x_max) * em + c.shift, -f32::from(r.y_max) * em - piece.raise, -f32::from(r.y_min) * em - piece.raise))
+}
+
 fn paint_spaced(shaped: &ShapedLine, text: &str, chars: &[Char], start_index: usize, char_extra: &dyn Fn(usize) -> f32, piece: &Piece, baseline: Point<Pixels>, window: &mut Window) {
     for run in &shaped.runs {
         for glyph in &run.glyphs {
             let before = text[..glyph.index.min(text.len())].chars().count();
-            let dx: f32 = chars[..before.min(chars.len())].iter().enumerate().map(|(k, c)| c.advance + char_extra(start_index + k) - c.raw).sum();
+            let dx: f32 = chars[..before.min(chars.len())].iter().enumerate().map(|(k, c)| c.advance + char_extra(start_index + k) - c.raw).sum::<f32>() + chars.get(before).map_or(0.0, |c| c.shift);
             let at = point(baseline.x + glyph.position.x + px(dx), baseline.y + glyph.position.y);
+            if let Some(c) = text.get(glyph.index..).and_then(|t| t.chars().next()) {
+                crate::glyph_text::note(run.font_id, glyph.id, at, c);
+            }
+            let squeeze = chars.get(before).map_or(1.0, |c| c.squeeze);
             let _ = if glyph.is_emoji {
                 window.paint_emoji(at, run.font_id, glyph.id, px(piece.size))
+            } else if squeeze < 1.0 {
+                // Squeezed about the glyph's origin (the glyph's ink is fitted to the typeface's: `kana_ink_fit`).
+                let scale = window.scale_factor();
+                let pivot = point(ScaledPixels(f32::from(at.x) * scale), ScaledPixels(f32::from(at.y) * scale));
+                let transformation = TransformationMatrix::unit()
+                    .translate(pivot)
+                    .scale(gpui_kit::size(squeeze, 1.0))
+                    .translate(point(ScaledPixels(-pivot.x.0), ScaledPixels(-pivot.y.0)));
+                window.paint_glyph_transformed(at, run.font_id, glyph.id, px(piece.size), piece.color, transformation)
             } else {
                 window.paint_glyph(at, run.font_id, glyph.id, px(piece.size), piece.color)
             };
@@ -2049,6 +2219,18 @@ fn text_above(paragraph: &RichParagraph) -> f32 {
     }
 }
 
+/// Where the paragraph of `t` starts in the strip of columns (`column_lane`): where the paragraph above it ended, and the space above it.
+fn column_start(t: &TextTop) -> f32 {
+    let ends = t.block.strip_end.borrow();
+    t.index.checked_sub(1).and_then(|i| ends.get(i).copied()).unwrap_or(0.0) + t.before
+}
+
+/// The ascent and descent of a paragraph's last line (`line`, pixels at the size `largest`) once its mark's typeface (`mark`, ems) counts:
+/// the larger ascent and the larger descent of the two.
+pub(crate) fn with_mark(line: (f32, f32), mark: (f32, f32, f32), largest: f32) -> (f32, f32) {
+    (line.0.max(mark.0 * largest), line.1.max(mark.1 * largest))
+}
+
 fn lay_out(paragraph: &RichParagraph, width: Option<f32>, top_above: f32, window: &mut Window) -> Layout {
     lay_out_in(paragraph, width, top_above, window.text_system())
 }
@@ -2067,7 +2249,7 @@ fn lay_out_in(paragraph: &RichParagraph, width: Option<f32>, top_above: f32, tex
             let boxed = math_view::typeset(math, piece.size, &mut math_view::text_measure(piece.font.clone(), text));
             let count = piece.text.chars().count().max(1) as f32;
             for (start, c) in piece.text.char_indices() {
-                chars.push(Char { piece: index, start, end: start + c.len_utf8(), c, raw: boxed.width / count, advance: boxed.width / count, lift: Some((boxed.ascent, boxed.descent)), tcy: Tcy::No, east_asian: piece.east_asian_lang });
+                chars.push(Char { piece: index, start, end: start + c.len_utf8(), c, raw: boxed.width / count, advance: boxed.width / count, shift: 0.0, squeeze: 1.0, lift: Some((boxed.ascent, boxed.descent)), tcy: Tcy::No, east_asian: piece.east_asian_lang });
             }
             maths[index] = Some(boxed);
             continue;
@@ -2095,17 +2277,44 @@ fn lay_out_in(paragraph: &RichParagraph, width: Option<f32>, top_above: f32, tex
             let x1 = if end == piece.text.len() { f32::from(shaped.width) } else { f32::from(shaped.x_for_index(end)) };
             let raw = (x1 - x0).max(0.0);
             let next_c = bounds.get(k + 1).map(|b| b.1);
-            let adv = if let Some(w) = piece.kana_widths
-                && (0x3041..=0x30fa).contains(&(c as usize))
+            let mut shift = 0.0;
+            let mut squeeze = 1.0;
+            // A character standing in a vertical column takes the glyph's vertical advance (`vmtx`'s advanceHeight; an em for the
+            // full-width characters). Windows PowerPoint's PDF: the hiragana of Meiryo UI, 0.86 to 0.94 em across a line, are a full
+            // 28 pt apart down a column (077).
+            let adv = if paragraph.upright && (c as u32) >= 0x2E80 && crate::vertical_text::powerpoint_upright(c) {
+                let em = shaped
+                    .runs
+                    .iter()
+                    .find_map(|r| r.glyphs.iter().find(|g| g.index == start).map(|g| (r.font_id, g.id.0)))
+                    .and_then(|(font_id, glyph)| text.font_data(font_id).and_then(|(data, index)| vertical_advance_em(&data, index, glyph)))
+                    .unwrap_or(1.0);
+                em * piece.size + piece.spacing_px()
+            } else if let Some(w) = piece.kana_widths
+                && ((0x3041..=0x30fa).contains(&(c as usize)) || (0x30fc..=0x30fe).contains(&(c as usize)))
                 && !next_c.is_some_and(|n| "（「『【〔〈《［｛〘〖".contains(n)) // i18n-ok（禁則の文字の並び）
             {
-                (w[c as usize - 0x3040] as f32 / 256.0) * piece.size + piece.spacing_px()
+                let cell = (w[c as usize - 0x3040] as f32 / 256.0) * piece.size;
+                shift = glyph_shift(c, raw, cell);
+                // The typeface's own glyph is narrower than the stand-in's (the cell is narrower than the one the stand-in's glyph was cut
+                // for): the stand-in's glyph is drawn as wide as that ink and centred on it.
+                let drawn = shaped.runs.iter().find_map(|r| r.glyphs.iter().find(|g| g.index == start).map(|g| (r.font_id, g.id)));
+                if let Some(((font_id, glyph), (own_left, own_right))) = drawn.zip(crate::font_metrics::meiryo_ui_kana_ink(c))
+                    && let Some((left, right)) = text.glyph_ink_extent(font_id, glyph, px(piece.size))
+                    && let Some((s, x)) = kana_ink_fit(f32::from(left), f32::from(right), own_left * piece.size, own_right * piece.size)
+                {
+                    squeeze = s;
+                    shift = x;
+                }
+                cell + piece.spacing_px()
             } else if let Some(em) = piece.advance_table.and_then(|t| t.advance(c)) {
                 em * piece.size + piece.spacing_px()
             } else if piece.proportional_alnum
                 && let Some(w) = crate::font_metrics::fallback_fullwidth_alnum_width(c)
             {
-                (w as f32 / 256.0) * piece.size + piece.spacing_px()
+                let cell = (w as f32 / 256.0) * piece.size;
+                shift = glyph_shift(c, raw, cell);
+                cell + piece.spacing_px()
             } else if c == ' ' && piece.spacing_px() == 0.0 && piece.text.chars().all(|ch| ch == ' ') {
                 // Office (DirectWrite/GDI) snaps space advances to 96 DPI half-pixels:
                 // (Points from pixels by the paragraph's own scale: below one pixel a point the space came out too narrow.)
@@ -2122,7 +2331,7 @@ fn lay_out_in(paragraph: &RichParagraph, width: Option<f32>, top_above: f32, tex
             } else {
                 raw + piece.spacing_px()
             };
-            chars.push(Char { piece: index, start, end, c, raw, advance: adv, lift: None, tcy: Tcy::No, east_asian: piece.east_asian_lang });
+            chars.push(Char { piece: index, start, end, c, raw, advance: adv, shift, squeeze, lift: None, tcy: Tcy::No, east_asian: piece.east_asian_lang });
         }
         if paragraph.upright {
             match piece.tate {
@@ -2157,7 +2366,18 @@ fn lay_out_in(paragraph: &RichParagraph, width: Option<f32>, top_above: f32, tex
         LineRule::Multiple(m) => m * largest_piece,
         LineRule::Fixed(h) => h,
     };
-    let lane_of = |y: f32| paragraph.obstacles.as_ref().map_or(Lane { offset: 0.0, room: room.unwrap_or(0.0), drop: 0.0 }, |o| o.lane(top_above + y, est_height, room.unwrap_or(0.0), largest_piece, paragraph.margin_left));
+    // (A text painted: its columns are the block's; one measured by itself: the paragraph's own.)
+    let columns = match &paragraph.text_top {
+        Some(t) => t.block.flow.get().map(|f| (column_start(t), f)),
+        None => paragraph.measure_flow.map(|f| (top_above, f)),
+    }
+    .filter(|_| paragraph.obstacles.is_some());
+    let lane_of = |y: f32| {
+        paragraph.obstacles.as_ref().map_or(Lane { offset: 0.0, room: room.unwrap_or(0.0), drop: 0.0, jump: 0.0 }, |o| match columns {
+            Some((start, flow)) => column_lane(o, start + y, flow, est_height, room.unwrap_or(0.0), largest_piece, paragraph.margin_left),
+            None => o.lane(top_above + y, est_height, room.unwrap_or(0.0), largest_piece, paragraph.margin_left),
+        })
+    };
     let lane = paragraph.obstacles.as_ref().filter(|_| room.is_some() && paragraph.wrap).map(|_| (&lane_of as &dyn Fn(f32) -> Lane, est_height));
     let (breaks, lanes) = break_lines_in(&mut chars, room, paragraph.first_line, paragraph.margin_left, &paragraph.tabs, paragraph.default_tab, slack, rules, lane);
     let lines = breaks
@@ -2166,7 +2386,8 @@ fn lay_out_in(paragraph: &RichParagraph, width: Option<f32>, top_above: f32, tex
         .map(|(n, (start, end))| {
             let lane = lanes.get(n).copied();
             let visible = chars[start..end].iter().rposition(|c| !c.c.is_whitespace()).map_or(start, |p| start + p + 1);
-            let width = chars[start..visible].iter().map(|c| c.advance).sum();
+            let counted = if paragraph.count_end_spaces { end } else { visible };
+            let width = chars[start..counted].iter().map(|c| c.advance).sum();
             // An empty paragraph's line is its (empty) first piece's.
             let (a, d, largest) = match paragraph.pieces.first() {
                 Some(p) if start == end => (p.ascent, p.descent, p.size),
@@ -2175,6 +2396,25 @@ fn lay_out_in(paragraph: &RichParagraph, width: Option<f32>, top_above: f32, tex
                     (a, d, chars[start..end].iter().map(|c| paragraph.pieces[c.piece].size).fold(0.0, f32::max))
                 }
             };
+            // The last line of a single-spaced paragraph is as high above its baseline as its mark's typeface and its own make it (the
+            // larger ascent, the larger descent). (With other spacing a probe of 講演者 in Courier New agrees with the same rule at 80 to 150 %,
+            // but corpus pages 099:1, 081:18 and 079:11 at other spacing do not lift: not understood, so kept to single.)
+            let is_last = end == chars.len() && start != end;
+            let single_spaced = match paragraph.line {
+                LineRule::Multiple(m) => (m - POWERPOINT_SINGLE).abs() < POWERPOINT_SINGLE * 1e-4,
+                LineRule::Fixed(h) => (h - POWERPOINT_SINGLE * largest).abs() < POWERPOINT_SINGLE * largest * 1e-4,
+            };
+            let mark = paragraph.mark.filter(|_| is_last && single_spaced);
+            // A run that says no size of its own counts, for the height of the line, at the larger of its size and the mark's: PowerPoint's
+            // PDFs of the pptx PowerPoint wrote of 018 page 10 (text of 16 pt and a run without a size, 18 pt; the mark's 24, 36 and 50 pt):
+            // the line is 1.2 times the mark's size high and its baseline 0.94 of that below the top. With every run's size said (or the mark
+            // smaller than the run) the mark's size does not count: the line is as high as its text.
+            let sized_by_mark = mark.filter(|m| m.2 > largest && chars[start..end].iter().any(|c| paragraph.pieces[c.piece].inherits_size));
+            let (a, d) = match mark {
+                Some(mark) => with_mark((a, d), mark, sized_by_mark.map_or(largest, |m| m.2)),
+                None => (a, d),
+            };
+            let largest = sized_by_mark.map_or(largest, |m| m.2);
             let single = POWERPOINT_SINGLE * largest;
             let height = match paragraph.line {
                 LineRule::Multiple(m) => m * largest,
@@ -2209,7 +2449,7 @@ fn lay_out_in(paragraph: &RichParagraph, width: Option<f32>, top_above: f32, tex
             } else {
                 (height, baseline)
             };
-            Line { start, end, width, height, baseline, natural, offset: lane.map_or(0.0, |l| l.offset), avail: lane.map(|l| l.room), drop: lane.map_or(0.0, |l| l.drop) }
+            Line { start, end, width, height, baseline, natural, offset: lane.map_or(0.0, |l| l.offset), avail: lane.map(|l| l.room), drop: lane.map_or(0.0, |l| l.drop), jump: lane.map_or(0.0, |l| l.jump) }
         })
         .collect();
     Layout { width, chars, lines, maths }
@@ -2391,12 +2631,15 @@ fn break_lines_in(
         // lang ja-JP, hangs; "range," of corpus 139, English, goes down with its word).
         // Hanging punctuation is, like the kinsoku lists, for a run of an East Asian language: in en-US or with no lang a 。 that does not fit goes
         // down (PowerPoint's PDF of test/editing/pptx-text-turn-matrix4.pptx, slide 4).
-        let hang = rules.hang && hangs(c.c) && hangs_in(c.east_asian) && ends_here && used <= room + slack;
-        if !c.c.is_whitespace() && !hang && used + c.advance > room + slack && i > start {
-            let end = last_break.filter(|&b| b > start).unwrap_or(i);
+        let hang = rules.hang && hangs_char(c.c, c.east_asian) && ends_here && used <= room + slack;
+        // A tab that does not fit does not hang past the edge as a space does: it starts the next line, where it goes to that line's first tab stop
+        // and the spaces after it follow (PowerPoint's PDF of 079.ppt, slide 13: "…その時期<tab>    に取組め…", the second line begins in from the margin).
+        let tab_wraps = c.c == '\t';
+        if (!c.c.is_whitespace() || tab_wraps) && !hang && used + c.advance > room + slack && i > start {
+            let end = if tab_wraps { i } else { last_break.filter(|&b| b > start).unwrap_or(i) };
             lines.push((start, end));
             if let (Some((f, est_height)), Some(l)) = (lane, here) {
-                line_y += l.drop + est_height;
+                line_y += l.drop + l.jump + est_height;
                 let next = f(line_y);
                 lanes.push(next);
                 here = Some(next);
@@ -2482,6 +2725,18 @@ fn kinsoku_of(language: ibis_doc_model::EastAsianLang) -> Option<Kinsoku<'static
 
 fn hangs(c: char) -> bool {
     matches!(c, '、' | '。' | '，' | '．' | ',' | '.')
+}
+
+/// Whether `c` hangs past the end of a line in a run of `language`. PowerPoint's PDFs of a justified Latin line one punctuation mark too long
+/// (30 pt Calibri, altLang set): zh-CN and ko-KR let `: ; ! ? )` and the comma and full stop hang (the line stays one line, the mark past the
+/// edge), ja-JP only the comma and full stop, en-US none (the last word goes down); `-` hangs in none.
+fn hangs_char(c: char, language: ibis_doc_model::EastAsianLang) -> bool {
+    use ibis_doc_model::EastAsianLang::*;
+    match language {
+        Japanese | Chinese if hangs(c) => hangs_in(language),
+        Chinese | Korean => matches!(c, ',' | '.' | ':' | ';' | '!' | '?' | ')'),
+        _ => false,
+    }
 }
 
 pub fn is_cjk(c: char) -> bool {
@@ -2655,6 +2910,48 @@ fn text_shadow_offsets(blur: f32) -> Vec<(f32, f32)> {
 
 #[cfg(test)]
 mod tests {
+    use super::glyph_shift;
+
+    /// A cell narrowed from a full em: an opening bracket goes the whole difference left, a closing bracket stays, kana and `・` go half;
+    /// a cell not narrower is not moved. Two sizes and two cells (Meiryo UI's `ア` 209/256 and `・` 128/256 of 1 em; 76/256 of 2 em).
+    #[test]
+    fn glyphs_in_narrowed_cells_go_where_the_proportional_ink_is() {
+        for em in [10.0f32, 24.0] {
+            let cell = |w: f32| w / 256.0 * em;
+            assert!((glyph_shift('ア', em, cell(209.0)) + 0.5 * (em - cell(209.0))).abs() < 1e-5);
+            assert!((glyph_shift('ー', em, cell(209.0)) + 0.5 * (em - cell(209.0))).abs() < 1e-5);
+            assert!((glyph_shift('・', em, cell(128.0)) + 0.5 * (em - cell(128.0))).abs() < 1e-5);
+            assert!((glyph_shift('（', em, cell(76.0)) + (em - cell(76.0))).abs() < 1e-5);
+            assert_eq!(glyph_shift('）', em, cell(76.0)), 0.0);
+            assert_eq!(glyph_shift('ア', em, em), 0.0);
+            assert_eq!(glyph_shift('ア', em, em * 1.2), 0.0);
+        }
+    }
+
+    /// A stand-in's glyph is fitted to Meiryo UI's ink: squeezed by the ratio of the ink widths only when its own is wider, and its ink's
+    /// middle goes to the middle of Meiryo UI's. `ン` (Meiryo UI's ink 119..1476 of 2048, the cell 1528) at two sizes with a stand-in whose
+    /// ink is 0.14 to 0.91 em, and a narrower one.
+    #[test]
+    fn a_stand_ins_glyph_is_fitted_to_the_ink_of_the_typeface_it_stands_for() {
+        let (own_left, own_right) = crate::font_metrics::meiryo_ui_kana_ink('ン').unwrap();
+        assert!((own_left - 119.0 / 2048.0).abs() < 1e-6 && (own_right - 1476.0 / 2048.0).abs() < 1e-6);
+        for em in [10.0f32, 24.0] {
+            let (squeeze, origin) = super::kana_ink_fit(0.14 * em, 0.91 * em, own_left * em, own_right * em).unwrap();
+            assert!((squeeze - (own_right - own_left) / 0.77).abs() < 1e-5, "{squeeze}");
+            // the squeezed ink is as wide as Meiryo UI's and its middle is Meiryo UI's middle
+            let (l, r) = (origin + 0.14 * em * squeeze, origin + 0.91 * em * squeeze);
+            assert!((r - l - (own_right - own_left) * em).abs() < 1e-4);
+            assert!(((l + r) / 2.0 - (own_left + own_right) / 2.0 * em).abs() < 1e-4);
+            // a glyph whose ink is narrower than Meiryo UI's is not widened, only centred
+            let (squeeze, origin) = super::kana_ink_fit(0.3 * em, 0.5 * em, own_left * em, own_right * em).unwrap();
+            assert_eq!(squeeze, 1.0);
+            assert!((origin + 0.4 * em - (own_left + own_right) / 2.0 * em).abs() < 1e-4);
+        }
+        assert!(super::kana_ink_fit(1.0, 1.0, 0.1, 0.8).is_none());
+        assert!(crate::font_metrics::meiryo_ui_kana_ink('A').is_none());
+        assert!(crate::font_metrics::meiryo_ui_kana_ink('\u{3040}').is_none());
+    }
+
     use super::{Breaks, Char, CharPosition, LinePosition, ParagraphPositions, break_lines, text_shadow_offsets, TEXT_SHADOW_SIGMA_PER_BLUR};
 
     /// The shadow's blur is a Gaussian of deviation 0.265 blurRad (PowerPoint's PDFs of blurRad 3pt, 6pt, 12pt and 24pt): the offsets' variance in each direction, whatever the radius.
@@ -2674,7 +2971,7 @@ mod tests {
     /// "ab c" wrapped after "ab " (10 px a character), then "de".
     fn positions() -> ParagraphPositions {
         let chars = [(0.0, 0), (10.0, 0), (20.0, 0), (0.0, 1), (10.0, 1)]
-            .map(|(x, line)| CharPosition { x, advance: 10.0, line })
+            .map(|(x, line)| CharPosition { x, advance: 10.0, line, ink: None })
             .to_vec();
         let lines = vec![
             LinePosition { start: 0, end: 3, x: 0.0, top: 0.0, baseline: 8.0, height: 12.0, column: 0, left: 0.0, right: 100.0 },
@@ -2718,7 +3015,7 @@ mod tests {
     }
 
     fn chars(text: &str, advance: f32) -> Vec<Char> {
-        text.char_indices().map(|(i, c)| Char { piece: 0, start: i, end: i + c.len_utf8(), c, raw: advance, advance, lift: None, tcy: super::Tcy::No, east_asian: ibis_doc_model::EastAsianLang::Japanese }).collect()
+        text.char_indices().map(|(i, c)| Char { piece: 0, start: i, end: i + c.len_utf8(), c, raw: advance, advance, shift: 0.0, squeeze: 1.0, lift: None, tcy: super::Tcy::No, east_asian: ibis_doc_model::EastAsianLang::Japanese }).collect()
     }
 
     /// PowerPoint's vertical text sets the digits two by two upright (found in PowerPoint: 26年 has 26 side by side, 2026年 has 20 and
@@ -2772,7 +3069,7 @@ mod tests {
                     let at = c.len();
                     let _ = at;
                     for (i, ch) in text.char_indices() {
-                        c.push(Char { piece: 0, start: i, end: i + ch.len_utf8(), c: ch, raw: 1.0, advance: 1.0, lift: None, tcy: super::Tcy::No, east_asian: *language });
+                        c.push(Char { piece: 0, start: i, end: i + ch.len_utf8(), c: ch, raw: 1.0, advance: 1.0, shift: 0.0, squeeze: 1.0, lift: None, tcy: super::Tcy::No, east_asian: *language });
                     }
                 }
                 let lines = break_lines(&mut c, Some(room), 0.0, 0.0, &[], 0.0, 0.01, Breaks::default());
@@ -2800,6 +3097,23 @@ mod tests {
         let mut c = chars("abcdef", 1.0);
         assert_eq!(break_lines(&mut c, Some(4.0), -2.0, 0.0, &[], 0.0, 0.5, Breaks::default()), vec![(0, 6)]);
         assert_eq!(break_lines(&mut c, Some(4.0), 1.0, 0.0, &[], 0.0, 0.5, Breaks::default()), vec![(0, 3), (3, 6)]);
+    }
+
+    /// PowerPoint's PDFs of 講演者 (40 pt, HGPｺﾞｼｯｸE, ascent 0.8594 and descent 0.1406) with a Latin mark in Courier New (0.8325, 0.3003): the
+    /// baseline is 8 px (at 58.3 px/em) higher at 100 % line spacing, 6 px at 90 %, 4 px at 80 % and the same at 125 %.
+    #[test]
+    fn a_marks_typeface_lifts_the_last_line_as_powerpoint_does() {
+        use crate::font_metrics::{POWERPOINT_SINGLE, natural_below, powerpoint_below_baseline};
+        let baseline = |m: f32, a: f32, d: f32| {
+            let (single, height) = (POWERPOINT_SINGLE, m * POWERPOINT_SINGLE);
+            height - powerpoint_below_baseline(height, single, natural_below(single, a, d))
+        };
+        let own = (0.8594, 0.1406);
+        let marked = super::with_mark(own, (0.8325, 0.3003, 1.0), 1.0);
+        for (m, lift_px) in [(1.0, 8.0), (0.9, 6.0), (0.8, 4.0), (1.25, 0.0)] {
+            let lift = (baseline(m, own.0, own.1) - baseline(m, marked.0, marked.1)) * 58.3;
+            assert!((lift - lift_px).abs() < 2.5, "at {m}: lifted {lift} px, PowerPoint {lift_px}");
+        }
     }
 
     #[test]
@@ -2903,7 +3217,51 @@ pub(crate) fn measure_lines(paragraph: &RichParagraph, width: Option<f32>, top: 
         // (`chars` are the paragraph's characters in order: a line's index into them is its number of characters.)
         byte_index
     };
-    layout.lines.iter().map(|l| MeasuredLine { start: to_char(l.start), end: to_char(l.end), height: l.height + l.drop }).collect()
+    layout.lines.iter().map(|l| MeasuredLine { start: to_char(l.start), end: to_char(l.end), height: l.height + l.drop + l.jump, width: l.width }).collect()
+}
+
+/// The box of one character of a text laid out without painting (`Resources::char_boxes`), in pixels from the top left of the
+/// text area.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CharBox {
+    /// The paragraph and the character's index in it (Unicode scalar values).
+    pub paragraph: usize,
+    pub index: usize,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+pub(crate) struct ParagraphBoxes {
+    pub chars: Vec<CharBox>,
+    /// The paragraph's height from its first line's top to its last line's bottom.
+    pub height: f32,
+}
+
+/// Where the characters of `paragraph` are when it is laid out `width` wide with its first line `top` pixels below the text's top.
+pub(crate) fn paragraph_char_boxes(paragraph: &RichParagraph, width: Option<f32>, top: f32, text: &gpui_kit::WindowTextSystem) -> ParagraphBoxes {
+    let layout = lay_out_in(paragraph, width, top, text);
+    let mut chars = Vec::with_capacity(layout.chars.len());
+    let mut y = top;
+    for (n, line) in layout.lines.iter().enumerate() {
+        y += line.drop;
+        let start = if n == 0 { paragraph.first_line } else { 0.0 };
+        let box_width = width.unwrap_or(line.width);
+        let room = line.avail.unwrap_or(box_width) - start;
+        let shift = match paragraph.align {
+            TextAlign::Center => (room - line.width) / 2.0,
+            TextAlign::Right => room - line.width,
+            _ => 0.0,
+        };
+        let mut x = paragraph.margin_left + line.offset + start + shift;
+        for (k, c) in layout.chars[line.start..line.end].iter().enumerate() {
+            chars.push(CharBox { paragraph: 0, index: line.start + k, x, y, width: c.advance, height: line.height });
+            x += c.advance;
+        }
+        y += line.height;
+    }
+    ParagraphBoxes { chars, height: y - top }
 }
 
 /// A line `measure_lines` found.
@@ -2912,6 +3270,8 @@ pub(crate) struct MeasuredLine {
     pub start: usize,
     pub end: usize,
     pub height: f32,
+    /// Without trailing spaces, from where the line starts.
+    pub width: f32,
 }
 
 #[cfg(test)]

@@ -208,7 +208,7 @@ impl SlideEditor {
         let ts = cx.text_system().clone();
         let mut changed: Vec<SlideId> = Vec::new();
         for (slide, index) in targets {
-            let Some(mut sheet) = ibis_pptx::refreshed_pivot(&work, slide, index) else { continue };
+            let Some(mut sheet) = ibis_formats::refreshed_pivot(&work, slide, index) else { continue };
             let before = work.slide(slide).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { Some(s.clone()) } else { None }));
             if before.is_some_and(|old| covers_others(&old, &sheet, index)) {
                 return self.refuse_overlap(cx);
@@ -228,7 +228,7 @@ impl SlideEditor {
             .into_iter()
             .filter_map(|slide| {
                 let sheet = work.slide(slide)?.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { Some((**s).clone()) } else { None })?;
-                Some(Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet) }))
+                Some(Command::Sheet(SheetCommand::ReplaceSheet { sheet: slide, replacement: Box::new(sheet) }))
             })
             .collect();
         // Also sync any PivotCharts linked to refreshed pivots
@@ -253,7 +253,7 @@ impl SlideEditor {
         self.commit_cell_edit(cx);
         let before_slides: Vec<SlideId> = self.presentation().slides.iter().map(|s| s.id).collect();
         let cmd = Command::Sheet(SheetCommand::ShowPivotDetails {
-            slide: self.current_slide,
+            sheet: self.current_slide,
             column,
             row,
         });
@@ -628,14 +628,14 @@ impl SlideEditor {
                 new_pivot.fields.push(ibis_doc_model::PivotField { name: h.clone(), ..Default::default() });
             }
         }
-        let Some(mut sheet) = ibis_pptx::rebuilt_pivot(self.presentation(), slide, index, Some(new_pivot)) else {
+        let Some(mut sheet) = ibis_formats::rebuilt_pivot(self.presentation(), slide, index, Some(new_pivot)) else {
             return self.pivot_message(text("_xlsx.the-data-range-is-not-valid"), cx);
         };
         let default_size = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref()).map_or(11.0, |s| s.font_size as f32 / 100.0);
         let ts = cx.text_system().clone();
         let fitted_widths = fitted_for(&sheet, &[index], default_size, &self.resources, &ts);
         set_fitted_widths(&mut sheet, fitted_widths);
-        let mut commands = vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet.clone()) })];
+        let mut commands = vec![Command::Sheet(SheetCommand::ReplaceSheet { sheet: slide, replacement: Box::new(sheet.clone()) })];
         if let Some(p) = sheet.pivots.get(index) {
             commands.extend(self.sync_pivot_charts_commands(slide, &sheet, p));
         }
@@ -658,7 +658,7 @@ impl SlideEditor {
         let Some(pivot) = sheet.pivots.get_mut(index) else { return };
         pivot.show_drill = !pivot.show_drill;
         let shown = pivot.show_drill;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet) })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::ReplaceSheet { sheet: slide, replacement: Box::new(sheet) })], cx);
         self.status = Some(if shown {
             crate::shell::i18n::text("xlsx.pivot-drill-buttons-shown").into()
         } else {
@@ -1243,7 +1243,7 @@ impl SlideEditor {
                 n += 1;
             };
             let (slide, shape) = (self.document.ids().new_slide_id(), self.document.ids().new_shape_id());
-            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::AddSheet { index, name: sheet_name, slide, shape })]) {
+            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::AddSheet { index, name: sheet_name, sheet: slide, shape })]) {
                 return self.pivot_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);
             }
             (slide, 2, 0)
@@ -1256,11 +1256,11 @@ impl SlideEditor {
         };
         let pivot = PivotTable::new(&name, source, &data, row, column);
         let index = self.presentation().slide(slide).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { Some(s.pivots.len()) } else { None })).unwrap_or(0);
-        let Some(sheet) = ibis_pptx::rebuilt_pivot(self.presentation(), slide, index, Some(pivot)) else { return };
+        let Some(sheet) = ibis_formats::rebuilt_pivot(self.presentation(), slide, index, Some(pivot)) else { return };
         if !new_sheet && self.current_sheet_of(slide).is_some_and(|old| covers_others(&old, &sheet, index) || old.cell(row, column).is_some_and(|c| !c.value.is_empty())) {
             return self.refuse_overlap(cx);
         }
-        let command = vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet) })];
+        let command = vec![Command::Sheet(SheetCommand::ReplaceSheet { sheet: slide, replacement: Box::new(sheet) })];
         let result = if new_sheet { self.document.amend_last(command) } else { self.document.execute(command) };
         if let Err(err) = result {
             return self.pivot_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);
@@ -1319,7 +1319,7 @@ impl SlideEditor {
             n += 1;
         };
         let (slide, shape) = (self.document.ids().new_slide_id(), self.document.ids().new_shape_id());
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::AddSheet { index, name: sheet_name, slide, shape })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::AddSheet { index, name: sheet_name, sheet: slide, shape })]) {
             self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
             cx.notify();
             return;
@@ -1367,14 +1367,14 @@ impl SlideEditor {
         }
 
         let pivot_index = self.presentation().slide(slide).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { Some(s.pivots.len()) } else { None })).unwrap_or(0);
-        let Some(mut sheet) = ibis_pptx::rebuilt_pivot(self.presentation(), slide, pivot_index, Some(pivot)) else { return };
+        let Some(mut sheet) = ibis_formats::rebuilt_pivot(self.presentation(), slide, pivot_index, Some(pivot)) else { return };
 
         let default_size = self.presentation().workbook.as_ref().and_then(|w| w.default_style.as_ref()).map_or(11.0, |s| s.font_size as f32 / 100.0);
         let ts = cx.text_system().clone();
         let fitted_widths = fitted_for(&sheet, &[pivot_index], default_size, &self.resources, &ts);
         set_fitted_widths(&mut sheet, fitted_widths);
 
-        let command = vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet) })];
+        let command = vec![Command::Sheet(SheetCommand::ReplaceSheet { sheet: slide, replacement: Box::new(sheet) })];
         if let Err(err) = self.document.amend_last(command) {
             self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
             cx.notify();
@@ -1391,11 +1391,11 @@ impl SlideEditor {
     pub(crate) fn change_pivot(&mut self, target: (SlideId, usize), change: impl FnOnce(&mut PivotTable), cx: &mut Context<Self>) {
         let (slide, index) = target;
         let Some(mut pivot) = self.presentation().slide(slide).and_then(|s| s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { s.pivots.get(index).cloned() } else { None })) else { return };
-        if let Some(data) = ibis_pptx::pivot_data(self.presentation(), slide, index) {
+        if let Some(data) = ibis_formats::pivot_data(self.presentation(), slide, index) {
             pivot.fill_shared(&data);
         }
         change(&mut pivot);
-        let Some(mut sheet) = ibis_pptx::rebuilt_pivot(self.presentation(), slide, index, Some(pivot)) else { return };
+        let Some(mut sheet) = ibis_formats::rebuilt_pivot(self.presentation(), slide, index, Some(pivot)) else { return };
         if self.current_sheet_of(slide).is_some_and(|old| covers_others(&old, &sheet, index)) {
             return self.refuse_overlap(cx);
         }
@@ -1405,7 +1405,7 @@ impl SlideEditor {
             let fitted_widths = fitted_for(&sheet, &[index], default_size, &self.resources, &ts);
         set_fitted_widths(&mut sheet, fitted_widths);
         }
-        let mut commands = vec![Command::Sheet(SheetCommand::ReplaceSheet { slide, sheet: Box::new(sheet.clone()) })];
+        let mut commands = vec![Command::Sheet(SheetCommand::ReplaceSheet { sheet: slide, replacement: Box::new(sheet.clone()) })];
         if let Some(p) = sheet.pivots.get(index) {
             commands.extend(self.sync_pivot_charts_commands(slide, &sheet, p));
         }
@@ -1425,7 +1425,7 @@ impl SlideEditor {
         if !self.presentation().slides.iter().flat_map(|s| &s.shapes).any(|sh| matches!(&sh.kind, ShapeKind::Chart(c) if linked(c))) {
             return Vec::new();
         }
-        let Some(data) = ibis_pptx::pivot_source(self.presentation(), sheet, pivot) else {
+        let Some(data) = ibis_formats::pivot_source(self.presentation(), sheet, pivot) else {
             return Vec::new();
         };
         let built = pivot.build(&data);
@@ -1437,7 +1437,7 @@ impl SlideEditor {
                         let mut updated_chart = (**c).clone();
                         ibis_doc_model::pivot::update_chart_from_pivot(&mut updated_chart, pivot, &built);
                         if &updated_chart != c.as_ref() {
-                            commands.push(Command::SetKind {
+                            commands.push(Command::SetShapeKind {
                                 slide: s.id,
                                 shape: sh.id,
                                 kind: Box::new(ShapeKind::Chart(Box::new(updated_chart))),
@@ -1456,7 +1456,7 @@ impl SlideEditor {
         let s = self.presentation().slide(slide)?;
         let pivot = s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { s.pivots.get(index).cloned() } else { None })?;
         let sheet = s.shapes.iter().find_map(|sh| if let ShapeKind::Sheet(s) = &sh.kind { Some(s) } else { None })?;
-        let data = ibis_pptx::pivot_source(self.presentation(), sheet, &pivot)?;
+        let data = ibis_formats::pivot_source(self.presentation(), sheet, &pivot)?;
         let built = pivot.build(&data);
         let chart = ibis_doc_model::pivot::chart_from_pivot(&pivot, &built);
 
@@ -1473,7 +1473,7 @@ impl SlideEditor {
             kind: ShapeKind::Chart(Box::new(chart)),
             floating: None,
         };
-        self.run_sheet(vec![Command::InsertShape { slide, index: shape_index, shape }], cx);
+        self.run_sheet(vec![Command::InsertShape { slide, shapes: vec![(shape_index, shape)] }], cx);
         self.selection = Some(id);
         self.status = Some(crate::shell::i18n::text("xlsx.pivot-chart-inserted").into());
         cx.notify();

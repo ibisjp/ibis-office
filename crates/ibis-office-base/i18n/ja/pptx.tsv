@@ -237,10 +237,6 @@ pptx.transition	切り替え効果を変更
 pptx.background	背景を変更
 pptx.theme	テーマ
 pptx.edit-theme	テーマを編集
-pptx.order.front	最前面へ移動
-pptx.order.forward	前面へ移動
-pptx.order.backward	背面へ移動
-pptx.order.back	最背面へ移動
 pptx.rotate.right	右に 90° 回転
 pptx.rotate.left	左に 90° 回転
 pptx.rotate.flip-h	左右に反転
@@ -496,12 +492,6 @@ pptx.paragraph.font-top	上
 pptx.paragraph.font-center	中央
 pptx.paragraph.font-baseline	ベースライン
 pptx.paragraph.font-bottom	下
-pptx.align.left	左揃え
-pptx.align.center	左右中央揃え
-pptx.align.right	右揃え
-pptx.align.top	上揃え
-pptx.align.middle	上下中央揃え
-pptx.align.bottom	下揃え
 pptx.shadow.none	外側の影なし
 pptx.shadow.right	右・4 pt
 pptx.shadow.diagonal	右下・4 pt
@@ -659,106 +649,106 @@ fill.path.shape	中心青→白・図形
 pptx.copy-slide	スライドのコピー
 pptx.cut-slide	スライドの切り取り
 pptx.paste-slide	スライドの貼り付け
-xlsx.note-new	新しいメモ
+xlsx.new-note	新しいメモ
 xlsx.note-edit	メモの編集
 xlsx.note-delete	メモの削除
 xlsx.clear-comments	コメントのクリア
-pptx.anim.preview	プレビュー
-pptx.anim.play-all	すべて再生
-pptx.anim.entrance	開始
-pptx.anim.emphasis	強調
-pptx.anim.exit	終了
-pptx.anim.in.appear	アピール
-pptx.anim.in.fade	フェード
-pptx.anim.in.fly-bottom	スライドイン（下から）
-pptx.anim.in.fly-left	スライドイン（左から）
-pptx.anim.in.fly-right	スライドイン（右から）
-pptx.anim.in.fly-top	スライドイン（上から）
-pptx.anim.in.float	フロートイン
-pptx.anim.in.float-down	フロートイン（下へ）
-pptx.anim.in.wipe	ワイプ
-pptx.anim.in.wipe-bottom	ワイプ（下から）
-pptx.anim.in.wipe-left	ワイプ（左から）
-pptx.anim.in.wipe-right	ワイプ（右から）
-pptx.anim.in.wipe-top	ワイプ（上から）
-pptx.anim.in.zoom	ズーム
-pptx.anim.in.replay	インクの再生
-pptx.anim.em.spin	スピン
-pptx.anim.em.grow	拡大／収縮
-pptx.anim.out.disappear	クリア
-pptx.anim.out.fade	フェード
-pptx.anim.out.fly-bottom	スライドアウト（下へ）
-pptx.anim.out.fly-left	スライドアウト（左へ）
-pptx.anim.out.fly-right	スライドアウト（右へ）
-pptx.anim.out.fly-top	スライドアウト（上へ）
-pptx.anim.out.float	フロートアウト
-pptx.anim.out.float-up	フロートアウト（上へ）
-pptx.anim.out.wipe	ワイプ
-pptx.anim.out.wipe-bottom	ワイプ（下へ）
-pptx.anim.out.wipe-left	ワイプ（左へ）
-pptx.anim.out.wipe-right	ワイプ（右へ）
-pptx.anim.out.wipe-top	ワイプ（上へ）
-pptx.anim.out.zoom	ズーム
-pptx.anim.out.rewind	巻き戻し
-pptx.anim.start	開始
-pptx.anim.start.click	クリック時
-pptx.anim.start.with	直前の動作と同時
-pptx.anim.start.after	直前の動作の後
-pptx.anim.duration	継続時間
-pptx.anim.duration.500	0.5 秒
-pptx.anim.duration.1000	1 秒
-pptx.anim.duration.2000	2 秒
-pptx.anim.delay	遅延
-pptx.anim.delay.0	なし
-pptx.anim.delay.500	0.5 秒
-pptx.anim.delay.1000	1 秒
-pptx.anim.delay.2000	2 秒
-pptx.anim.repeat	繰り返し
-pptx.anim.repeat.none	なし
-pptx.anim.repeat.2	2 回
-pptx.anim.repeat.3	3 回
-pptx.anim.repeat.4	4 回
-pptx.anim.repeat.5	5 回
-pptx.anim.repeat.10	10 回
-pptx.anim.repeat.until-click	次のクリックまで
-pptx.anim.repeat.until-end	スライドの最後まで
-pptx.anim.autoreverse	自動反転
-pptx.anim.rewind	再生が終了したら巻き戻す
-pptx.anim.smooth	滑らかさ
-pptx.anim.smooth.none	なし（等速）
-pptx.anim.smooth.start	滑らかに開始（50%）
-pptx.anim.smooth.end	滑らかに終了（50%）
-pptx.anim.smooth.both	両方（開始・終了）
-pptx.anim.smooth-start	滑らかに開始
-pptx.anim.smooth-end	滑らかに終了
-pptx.anim.after	再生後の動作
-pptx.anim.after.hold	そのまま表示
-pptx.anim.after.hide	再生後に非表示
-pptx.anim.after.dim	淡色表示
-pptx.anim.after.hide-next	次のクリック時に非表示
-pptx.anim.remove	アニメーションの削除
-pptx.anim.order.earlier	順番を前にする
-pptx.anim.order.later	順番を後にする
-pptx.anim.trigger	トリガー
-pptx.anim.trigger.click	クリック時
-pptx.anim.trigger.bookmark	ブックマーク時
-pptx.anim.trigger.none	解除
+pptx.animation.preview	プレビュー
+pptx.animation.play-all	すべて再生
+pptx.animation.entrance	開始
+pptx.animation.emphasis	強調
+pptx.animation.exit	終了
+pptx.animation.in.appear	アピール
+pptx.animation.in.fade	フェード
+pptx.animation.in.fly-bottom	スライドイン（下から）
+pptx.animation.in.fly-left	スライドイン（左から）
+pptx.animation.in.fly-right	スライドイン（右から）
+pptx.animation.in.fly-top	スライドイン（上から）
+pptx.animation.in.float	フロートイン
+pptx.animation.in.float-down	フロートイン（下へ）
+pptx.animation.in.wipe	ワイプ
+pptx.animation.in.wipe-bottom	ワイプ（下から）
+pptx.animation.in.wipe-left	ワイプ（左から）
+pptx.animation.in.wipe-right	ワイプ（右から）
+pptx.animation.in.wipe-top	ワイプ（上から）
+pptx.animation.in.zoom	ズーム
+pptx.animation.in.replay	インクの再生
+pptx.animation.em.spin	スピン
+pptx.animation.em.grow	拡大／収縮
+pptx.animation.out.disappear	クリア
+pptx.animation.out.fade	フェード
+pptx.animation.out.fly-bottom	スライドアウト（下へ）
+pptx.animation.out.fly-left	スライドアウト（左へ）
+pptx.animation.out.fly-right	スライドアウト（右へ）
+pptx.animation.out.fly-top	スライドアウト（上へ）
+pptx.animation.out.float	フロートアウト
+pptx.animation.out.float-up	フロートアウト（上へ）
+pptx.animation.out.wipe	ワイプ
+pptx.animation.out.wipe-bottom	ワイプ（下へ）
+pptx.animation.out.wipe-left	ワイプ（左へ）
+pptx.animation.out.wipe-right	ワイプ（右へ）
+pptx.animation.out.wipe-top	ワイプ（上へ）
+pptx.animation.out.zoom	ズーム
+pptx.animation.out.rewind	巻き戻し
+pptx.animation.start	開始
+pptx.animation.start.click	クリック時
+pptx.animation.start.with	直前の動作と同時
+pptx.animation.start.after	直前の動作の後
+pptx.animation.duration	継続時間
+pptx.animation.duration.500	0.5 秒
+pptx.animation.duration.1000	1 秒
+pptx.animation.duration.2000	2 秒
+pptx.animation.delay	遅延
+pptx.animation.delay.0	なし
+pptx.animation.delay.500	0.5 秒
+pptx.animation.delay.1000	1 秒
+pptx.animation.delay.2000	2 秒
+pptx.animation.repeat	繰り返し
+pptx.animation.repeat.none	なし
+pptx.animation.repeat.2	2 回
+pptx.animation.repeat.3	3 回
+pptx.animation.repeat.4	4 回
+pptx.animation.repeat.5	5 回
+pptx.animation.repeat.10	10 回
+pptx.animation.repeat.until-click	次のクリックまで
+pptx.animation.repeat.until-end	スライドの最後まで
+pptx.animation.autoreverse	自動反転
+pptx.animation.rewind	再生が終了したら巻き戻す
+pptx.animation.smooth	滑らかさ
+pptx.animation.smooth.none	なし（等速）
+pptx.animation.smooth.start	滑らかに開始（50%）
+pptx.animation.smooth.end	滑らかに終了（50%）
+pptx.animation.smooth.both	両方（開始・終了）
+pptx.animation.smooth-start	滑らかに開始
+pptx.animation.smooth-end	滑らかに終了
+pptx.animation.after	再生後の動作
+pptx.animation.after.hold	そのまま表示
+pptx.animation.after.hide	再生後に非表示
+pptx.animation.after.dim	淡色表示
+pptx.animation.after.hide-next	次のクリック時に非表示
+pptx.animation.remove	アニメーションの削除
+pptx.animation.order.earlier	順番を前にする
+pptx.animation.order.later	順番を後にする
+pptx.animation.trigger	トリガー
+pptx.animation.trigger.click	クリック時
+pptx.animation.trigger.bookmark	ブックマーク時
+pptx.animation.trigger.none	解除
 pptx.paste-slide-keep	スライドの貼り付け（元の書式を保持）
 table.distribute-rows	高さを揃える
 table.distribute-columns	幅を揃える
 background.apply-all	すべてに適用
 pptx.header-footer	ヘッダーとフッター…
-pptx.anim.add	アニメーションの追加
-pptx.anim.pane	アニメーション ウィンドウ
-pptx.anim.path	アニメーションの軌跡
-pptx.anim.path.down	直線（下へ）
-pptx.anim.path.left	直線（左へ）
-pptx.anim.path.right	直線（右へ）
-pptx.anim.path.up	直線（上へ）
-pptx.anim.other	その他の効果
-pptx.anim.options-dialog	効果のオプション…
-pptx.anim.panel.effect	効果
-pptx.anim.panel.timing	タイミング
+pptx.animation.add	アニメーションの追加
+pptx.animation.pane	アニメーション ウィンドウ
+pptx.animation.path	アニメーションの軌跡
+pptx.animation.path.down	直線（下へ）
+pptx.animation.path.left	直線（左へ）
+pptx.animation.path.right	直線（右へ）
+pptx.animation.path.up	直線（上へ）
+pptx.animation.other	その他の効果
+pptx.animation.options-dialog	効果のオプション…
+pptx.animation.panel.effect	効果
+pptx.animation.panel.timing	タイミング
 pptx.menu.animation	アニメーション
 pptx.selection-pane	選択ウィンドウ
 align.distributed	均等割り付け
@@ -864,12 +854,6 @@ pptx.replace-fonts.fonts-used-presentation	プレゼンテーションで使用�
 pptx.replace-fonts.replaced-fonts-n-location-s	{n} 箇所のフォントを置換しました
 pptx.replace-fonts.font-replace-was-not-found	置換対象のフォントは見つかりませんでした
 pptx.table-style-options	表のスタイルオプション
-pptx.table.first-row	タイトル行
-pptx.table.last-row	集計行
-pptx.table.band-row	縞模様 (行)
-pptx.table.first-col	最初の列
-pptx.table.last-col	最後の列
-pptx.table.band-col	縞模様 (列)
 pptx.table-style	表スタイル
 pptx.table-style.none	スタイルなし
 pptx.table-style.grid	表 (格子)
@@ -929,32 +913,32 @@ pptx.show-panel.please-enter-valid-slide-number	スライド番号には1以上�
 pptx.misc.pause	一時停止
 pptx.comments.reopen	再開
 pptx.slideshow.reset	リセット
-pptx.anim.options	効果のオプション
-pptx.anim.options.tooltip	アニメーションの効果のオプション
-pptx.anim.painter	アニメーションの書式設定
-pptx.anim.painter.tooltip	アニメーションの書式設定（アニメーションのコピー・貼り付け）
-pptx.anim.opt.fly-bottom	下から
-pptx.anim.opt.fly-left	左から
-pptx.anim.opt.fly-right	右から
-pptx.anim.opt.fly-top	上から
-pptx.anim.opt.float-up	上へフロート
-pptx.anim.opt.float-down	下へフロート
-pptx.anim.opt.wipe-bottom	下から
-pptx.anim.opt.wipe-left	左から
-pptx.anim.opt.wipe-right	右から
-pptx.anim.opt.wipe-top	上から
-pptx.anim.opt.spin-360-cw	360° 時計回り
-pptx.anim.opt.spin-360-ccw	360° 反時計回り
-pptx.anim.opt.spin-180	180° 半回転
-pptx.anim.opt.spin-720	720° 2回転
-pptx.anim.opt.scale-150	拡大 (150%)
-pptx.anim.opt.scale-200	2倍 (200%)
-pptx.anim.opt.scale-50	縮小 (50%)
-pptx.anim.opt.scale-25	極小 (25%)
-pptx.anim.opt.path-down	下へ
-pptx.anim.opt.path-left	左へ
-pptx.anim.opt.path-right	右へ
-pptx.anim.opt.path-up	上へ
+pptx.animation.options	効果のオプション
+pptx.animation.options.tooltip	アニメーションの効果のオプション
+pptx.animation.painter	アニメーションの書式設定
+pptx.animation.painter.tooltip	アニメーションの書式設定（アニメーションのコピー・貼り付け）
+pptx.animation.opt.fly-bottom	下から
+pptx.animation.opt.fly-left	左から
+pptx.animation.opt.fly-right	右から
+pptx.animation.opt.fly-top	上から
+pptx.animation.opt.float-up	上へフロート
+pptx.animation.opt.float-down	下へフロート
+pptx.animation.opt.wipe-bottom	下から
+pptx.animation.opt.wipe-left	左から
+pptx.animation.opt.wipe-right	右から
+pptx.animation.opt.wipe-top	上から
+pptx.animation.opt.spin-360-cw	360° 時計回り
+pptx.animation.opt.spin-360-ccw	360° 反時計回り
+pptx.animation.opt.spin-180	180° 半回転
+pptx.animation.opt.spin-720	720° 2回転
+pptx.animation.opt.scale-150	拡大 (150%)
+pptx.animation.opt.scale-200	2倍 (200%)
+pptx.animation.opt.scale-50	縮小 (50%)
+pptx.animation.opt.scale-25	極小 (25%)
+pptx.animation.opt.path-down	下へ
+pptx.animation.opt.path-left	左へ
+pptx.animation.opt.path-right	右へ
+pptx.animation.opt.path-up	上へ
 pptx.alt-text	代替テキスト…
 pptx.alt-text.title	タイトル
 pptx.alt-text.description	説明
@@ -968,10 +952,10 @@ pptx.gridlines	グリッド線
 pptx.guides	ガイド
 pptx.snap-to-grid	グリッドに合わせる
 pptx.snap-to-shape	図形に合わせる
-pptx.anim.copy	アニメーションのコピー
-pptx.anim.paste	アニメーションの貼り付け
-pptx.anim.copied	アニメーションの書式設定をコピーしました
-pptx.anim.pasted	アニメーションの書式設定を貼り付けました
+pptx.animation.copy	アニメーションのコピー
+pptx.animation.paste	アニメーションの貼り付け
+pptx.animation.copied	アニメーションの書式設定をコピーしました
+pptx.animation.pasted	アニメーションの書式設定を貼り付けました
 pptx.mark-as-final	最終版にする
 pptx.read-only-recommended	読み取り専用を推奨
 pptx.infobar.final.title	最終版
@@ -1015,7 +999,6 @@ pptx.inspect-panel.no-off-slide-objects-were	スライド外のオブジェク�
 pptx.inspect.remove-all	すべて削除
 pptx.inspect-panel.reinspect	再検査
 pptx.inspect-panel.reinspection-complete	再検査が完了しました
-pptx.check-accessibility	アクセシビリティ チェック…
 pptx.accessibility-panel.accessibility	アクセシビリティ
 pptx.accessibility-panel.check-presentation-accessibility	プレゼンテーションのアクセシビリティを検査し、問題を検出します。
 pptx.accessibility-panel.no-accessibility-issues-found	アクセシビリティの問題は見つかりませんでした。
@@ -1231,7 +1214,6 @@ pptx.zoom.duration-2000	2.00 秒
 pptx.zoom.duration-2500	2.50 秒
 pptx.chrome.radar	レーダー
 pptx.chrome.filled-radar	塗りつぶしレーダー
-pptx.compatibility-check	互換性チェック…
 pptx.compat.recheck	再検査
 pptx.compat.summary-hint	旧バージョンの PowerPoint で失われる可能性がある機能を検査します
 pptx.compat.no-issues	互換性の問題は見つかりませんでした
@@ -1329,11 +1311,11 @@ pptx.ink.message.converted-text	インクをテキストに変換しました
 pptx.ink.message.converted-math	インクを数式に変換しました
 pptx.master-view	スライド マスター
 pptx.notes-format	ノートの書式編集
-pptx.anim.path.custom	カスタム軌跡を描く
+pptx.animation.path.custom	カスタム軌跡を描く
 pptx.smartart-to-shapes	SmartArt を図形に変換
-pptx.anim.build	テキストの動き
-pptx.anim.build.whole	オブジェクト全体
-pptx.anim.build.paragraph	段落別
+pptx.animation.build	テキストの動き
+pptx.animation.build.whole	オブジェクト全体
+pptx.animation.build.paragraph	段落別
 pptx.handout-master	配布資料マスター
 pptx.modify-password	書き込みパスワード…
 pptx.infobar.modify.title	書き込みパスワード
@@ -1710,6 +1692,7 @@ pptx.spelling-panel.add-dictionary	辞書に追加
 pptx.spelling-panel.spell-checking-not-available	この環境ではスペルチェックを使えません
 pptx.spelling-panel.no-spelling-errors-found	スペルの間違いは見つかりませんでした
 pptx.print-panel.landscape-handouts	配布資料を横向きにする
+pptx.print-panel.vertical-order-handouts	配布資料を縦の順に並べる
 pptx.master-view.slide-master	スライド マスター
 pptx.master-view.master-document-cannot-edited-yet	この文書のマスターはまだ編集できません
 pptx.master-view.there-no-slide-master	マスターがありません
@@ -1750,8 +1733,8 @@ pptx.password-window.enter-password-modify	書き込みパスワードを入力
 pptx.password-window.set-password-modify	書き込みパスワードを設定
 pptx.password-window.password-needed-edit-file	ファイルを編集するときに必要なパスワード
 pptx.password-window.password-needed-edit-file-2	このファイルを編集するには、書き込みパスワードが必要です
-pptx.password-window.open-read-only	読み取り専用で開く
-pptx.password-window.remove-password-modify	書き込みパスワードを解除
+pptx.password-window.open-read-only	読み取り専用で開く(&R)
+pptx.password-window.remove-password-modify	書き込みパスワードを解除(&R)
 pptx.cell-size-panel.row-height-cm	行の高さ
 pptx.cell-size-panel.column-width-cm	列の幅
 pptx.cell-size-panel.cell-size	セルのサイズ
@@ -1829,6 +1812,7 @@ _pptx.auto-reverse-2	自動反転
 _pptx.don-t-hide	そのまま表示
 _pptx.dim-2	淡色表示
 _pptx.after-animation	再生後の動作
+_pptx.dim-color	淡色表示の色
 _pptx.with-previous-2	直前と同時
 _pptx.after-previous-2	直前の後
 _pptx.duration	継続時間
@@ -1906,8 +1890,8 @@ pptx.insert-chart.box-whisker	箱ひげ図
 pptx.insert-chart.treemap	ツリーマップ
 pptx.insert-chart.sunburst	サンバースト
 pptx.print-panel.outline	アウトライン（スライドのタイトルと本文を文字で）
-pptx.anim.build.word	単語別
-pptx.anim.build.letter	文字別
+pptx.animation.build.word	単語別
+pptx.animation.build.letter	文字別
 pptx.chart.ex.own-color	グラフの既定の色
 pptx.chart.ex.increase	増加
 pptx.chart.ex.decrease	減少
@@ -1973,19 +1957,19 @@ pptx.photo-album.frame.center-shadow	中心の影
 pptx.photo-album.frame.soft-edge	ソフト エッジ
 pptx.photo-album.create	作成
 pptx.photo-album.create-success	フォト アルバムを作成しました
-pptx.anim.chart-build	グラフの動作
-pptx.anim.chart.whole	1 つのオブジェクトとして
-pptx.anim.chart.series	系列別
-pptx.anim.chart.category	カテゴリ別
-pptx.anim.chart.series-el	系列内の要素別
-pptx.anim.chart.category-el	カテゴリ内の要素別
-pptx.anim.chart.anim-bg	背景を描画して開始
-pptx.anim.dgm-build	スマートアート アニメーション
-pptx.anim.dgm.whole	1 つのオブジェクトとして
-pptx.anim.dgm.all	すべて同時
-pptx.anim.dgm.one-by-one	1 つずつ
-pptx.anim.dgm.level-at-once	レベルごと
-pptx.anim.dgm.level-one-by-one	レベルで 1 つずつ
+pptx.animation.chart-build	グラフの動作
+pptx.animation.chart.whole	1 つのオブジェクトとして
+pptx.animation.chart.series	系列別
+pptx.animation.chart.category	カテゴリ別
+pptx.animation.chart.series-el	系列内の要素別
+pptx.animation.chart.category-el	カテゴリ内の要素別
+pptx.animation.chart.anim-bg	背景を描画して開始
+pptx.animation.dgm-build	スマートアート アニメーション
+pptx.animation.dgm.whole	1 つのオブジェクトとして
+pptx.animation.dgm.all	すべて同時
+pptx.animation.dgm.one-by-one	1 つずつ
+pptx.animation.dgm.level-at-once	レベルごと
+pptx.animation.dgm.level-one-by-one	レベルで 1 つずつ
 pptx.insert.smartart.list	基本ブロック リスト
 pptx.insert.smartart.vlist	縦方向リスト
 pptx.insert.smartart.process	基本手順
@@ -2221,43 +2205,43 @@ pptx.master-view.duplicate-layout	レイアウトの複製
 pptx.master-view.delete-layout	レイアウトの削除
 pptx.master-view.apply-to-slide	スライドに適用して閉じる
 pptx.master-view.layout-in-use	スライドが使っているレイアウトは削除できません
-pptx.anim.preset.blinds	ブラインド
-pptx.anim.preset.blinds.horizontal	水平
-pptx.anim.preset.blinds.vertical	垂直
-pptx.anim.preset.box	ボックス
-pptx.anim.preset.box.in	内
-pptx.anim.preset.box.out	外
-pptx.anim.preset.checkerboard	チェッカーボード
-pptx.anim.preset.checkerboard.across	横
-pptx.anim.preset.checkerboard.down	縦
-pptx.anim.preset.circle	円
-pptx.anim.preset.circle.in	内
-pptx.anim.preset.circle.out	外
-pptx.anim.preset.diamond	ひし形
-pptx.anim.preset.diamond.in	内
-pptx.anim.preset.diamond.out	外
-pptx.anim.preset.peek	のぞき込み
-pptx.anim.preset.peek.bottom	下から
-pptx.anim.preset.peek.left	左から
-pptx.anim.preset.peek.right	右から
-pptx.anim.preset.peek.top	上から
-pptx.anim.preset.plus	プラス
-pptx.anim.preset.plus.in	内
-pptx.anim.preset.plus.out	外
-pptx.anim.preset.randombar	ランダムストライプ
-pptx.anim.preset.randombar.horizontal	水平
-pptx.anim.preset.randombar.vertical	垂直
-pptx.anim.preset.split	スプリット
-pptx.anim.preset.split.out-vertical	垂直方向（外）
-pptx.anim.preset.split.in-vertical	垂直方向（内）
-pptx.anim.preset.split.out-horizontal	水平方向（外）
-pptx.anim.preset.split.in-horizontal	水平方向（内）
-pptx.anim.preset.strips	ストリップ
-pptx.anim.preset.strips.down-left	左下へ
-pptx.anim.preset.strips.up-left	左上へ
-pptx.anim.preset.strips.down-right	右下へ
-pptx.anim.preset.strips.up-right	右上へ
-pptx.anim.preset.other	その他の効果
+pptx.animation.preset.blinds	ブラインド
+pptx.animation.preset.blinds.horizontal	水平
+pptx.animation.preset.blinds.vertical	垂直
+pptx.animation.preset.box	ボックス
+pptx.animation.preset.box.in	内
+pptx.animation.preset.box.out	外
+pptx.animation.preset.checkerboard	チェッカーボード
+pptx.animation.preset.checkerboard.across	横
+pptx.animation.preset.checkerboard.down	縦
+pptx.animation.preset.circle	円
+pptx.animation.preset.circle.in	内
+pptx.animation.preset.circle.out	外
+pptx.animation.preset.diamond	ひし形
+pptx.animation.preset.diamond.in	内
+pptx.animation.preset.diamond.out	外
+pptx.animation.preset.peek	のぞき込み
+pptx.animation.preset.peek.bottom	下から
+pptx.animation.preset.peek.left	左から
+pptx.animation.preset.peek.right	右から
+pptx.animation.preset.peek.top	上から
+pptx.animation.preset.plus	プラス
+pptx.animation.preset.plus.in	内
+pptx.animation.preset.plus.out	外
+pptx.animation.preset.randombar	ランダムストライプ
+pptx.animation.preset.randombar.horizontal	水平
+pptx.animation.preset.randombar.vertical	垂直
+pptx.animation.preset.split	スプリット
+pptx.animation.preset.split.out-vertical	垂直方向（外）
+pptx.animation.preset.split.in-vertical	垂直方向（内）
+pptx.animation.preset.split.out-horizontal	水平方向（外）
+pptx.animation.preset.split.in-horizontal	水平方向（内）
+pptx.animation.preset.strips	ストリップ
+pptx.animation.preset.strips.down-left	左下へ
+pptx.animation.preset.strips.up-left	左上へ
+pptx.animation.preset.strips.down-right	右下へ
+pptx.animation.preset.strips.up-right	右上へ
+pptx.animation.preset.other	その他の効果
 transition.checker	チェッカーボード
 transition.blinds	ブラインド
 transition.comb	コーム
@@ -2309,22 +2293,22 @@ transition.dir.strips-in	ストリップ（内側へ）
 transition.dir.strips-out	ストリップ（外側へ）
 transition.dir.rects-in	四角形（内側へ）
 transition.dir.rects-out	四角形（外側へ）
-pptx.anim.trigger.shape-click	図形のクリック時
-pptx.anim.trigger.target	対象の図形
-pptx.anim.unit.seconds	秒
+pptx.animation.trigger.shape-click	図形のクリック時
+pptx.animation.trigger.target	対象の図形
+pptx.animation.unit.seconds	秒
 pptx.gradient-panel.path-shape	形状
 pptx.gradient-panel.stop-n	ストップ {n}
-pptx.anim.pane.col.order	順
-pptx.anim.pane.col.effect	対象と効果
-pptx.anim.pane.total	全体 {s} 秒
+pptx.animation.pane.col.order	順
+pptx.animation.pane.col.effect	対象と効果
+pptx.animation.pane.total	全体 {s} 秒
 pptx.zoom.summary-section	サマリー セクション
 pptx.zoom.summary-needs-sections	サマリー ズームには、セクションが必要です。セクションを追加してください。
 pptx.notes-format.close-format-editing	書式編集を閉じる
-pptx.anim.media.play	再生
-pptx.anim.media.pause	一時停止
-pptx.anim.media.stop	停止
-pptx.anim.media.class	メディア
-pptx.anim.panel.effect-change	効果の変更
+pptx.animation.media.play	再生
+pptx.animation.media.pause	一時停止
+pptx.animation.media.stop	停止
+pptx.animation.media.class	メディア
+pptx.animation.panel.effect-change	効果の変更
 transition.dir.smoothly-left	スムーズ・左から
 transition.dir.smoothly-right	スムーズ・右から
 transition.dir.through-black-left	黒いスクリーンを通過・左から
@@ -2340,326 +2324,326 @@ transition.dir.hexagons-up	六角形・上から
 transition.dir.in-bounce	内側へ・バウンスあり
 transition.dir.out-bounce	外側へ・バウンスあり
 # PowerPoint の効果の名前（scripts/gen-animation-presets.py が作る。日本語名は PowerPoint の UI の名前を記憶から書いたもの）
-pptx.anim.cat.entr.1	アピール
-pptx.anim.cat.entr.2	スライドイン
-pptx.anim.cat.entr.2.1	上から
-pptx.anim.cat.entr.2.2	右から
-pptx.anim.cat.entr.2.4	下から
-pptx.anim.cat.entr.2.8	左から
-pptx.anim.cat.entr.2.9	左上から
-pptx.anim.cat.entr.2.3	右上から
-pptx.anim.cat.entr.2.6	右下から
-pptx.anim.cat.entr.2.12	左下から
-pptx.anim.cat.entr.3	ブラインド
-pptx.anim.cat.entr.3.10	水平
-pptx.anim.cat.entr.3.5	垂直
-pptx.anim.cat.entr.4	ボックス
-pptx.anim.cat.entr.4.16	内
-pptx.anim.cat.entr.4.32	外
-pptx.anim.cat.entr.5	チェッカーボード
-pptx.anim.cat.entr.5.10	横方向
-pptx.anim.cat.entr.5.5	縦方向
-pptx.anim.cat.entr.6	円
-pptx.anim.cat.entr.6.16	内
-pptx.anim.cat.entr.6.32	外
-pptx.anim.cat.entr.7	クロール
-pptx.anim.cat.entr.7.1	上から
-pptx.anim.cat.entr.7.2	右から
-pptx.anim.cat.entr.7.4	下から
-pptx.anim.cat.entr.7.8	左から
-pptx.anim.cat.entr.8	ひし形
-pptx.anim.cat.entr.8.16	内
-pptx.anim.cat.entr.8.32	外
-pptx.anim.cat.entr.9	ディゾルブ
-pptx.anim.cat.entr.10	フェード
-pptx.anim.cat.entr.11	フラッシュ（1 回）
-pptx.anim.cat.entr.12	のぞき込み
-pptx.anim.cat.entr.12.1	上から
-pptx.anim.cat.entr.12.2	右から
-pptx.anim.cat.entr.12.4	下から
-pptx.anim.cat.entr.12.8	左から
-pptx.anim.cat.entr.13	プラス
-pptx.anim.cat.entr.13.16	内
-pptx.anim.cat.entr.13.32	外
-pptx.anim.cat.entr.14	ランダム ストライプ
-pptx.anim.cat.entr.14.10	水平
-pptx.anim.cat.entr.14.5	垂直
-pptx.anim.cat.entr.15	スパイラル
-pptx.anim.cat.entr.16	スプリット
-pptx.anim.cat.entr.16.26	水平方向（内）
-pptx.anim.cat.entr.16.42	水平方向（外）
-pptx.anim.cat.entr.16.21	垂直方向（内）
-pptx.anim.cat.entr.16.37	垂直方向（外）
-pptx.anim.cat.entr.17	ストレッチ
-pptx.anim.cat.entr.17.1	上から
-pptx.anim.cat.entr.17.2	右から
-pptx.anim.cat.entr.17.4	下から
-pptx.anim.cat.entr.17.8	左から
-pptx.anim.cat.entr.17.10	横方向
-pptx.anim.cat.entr.18	ストリップ
-pptx.anim.cat.entr.18.9	左上へ
-pptx.anim.cat.entr.18.3	右上へ
-pptx.anim.cat.entr.18.6	右下へ
-pptx.anim.cat.entr.18.12	左下へ
-pptx.anim.cat.entr.19	スイベル
-pptx.anim.cat.entr.19.10	水平
-pptx.anim.cat.entr.19.5	垂直
-pptx.anim.cat.entr.20	くさび
-pptx.anim.cat.entr.21	ホイール
-pptx.anim.cat.entr.21.1	1 スポーク
-pptx.anim.cat.entr.21.2	2 スポーク
-pptx.anim.cat.entr.21.3	3 スポーク
-pptx.anim.cat.entr.21.4	4 スポーク
-pptx.anim.cat.entr.21.8	8 スポーク
-pptx.anim.cat.entr.22	ワイプ
-pptx.anim.cat.entr.22.1	上から
-pptx.anim.cat.entr.22.2	右から
-pptx.anim.cat.entr.22.4	下から
-pptx.anim.cat.entr.22.8	左から
-pptx.anim.cat.entr.23	ズーム（基本）
-pptx.anim.cat.entr.23.16	内
-pptx.anim.cat.entr.23.32	外
-pptx.anim.cat.entr.23.272	少し内
-pptx.anim.cat.entr.23.528	画面の中央から内
-pptx.anim.cat.entr.23.288	少し外
-pptx.anim.cat.entr.23.36	画面の下へ外
-pptx.anim.cat.entr.24	ランダム効果
-pptx.anim.cat.entr.25	ブーメラン
-pptx.anim.cat.entr.26	バウンス
-pptx.anim.cat.entr.27	カラー表示
-pptx.anim.cat.entr.28	クレジット
-pptx.anim.cat.entr.29	イーズ イン
-pptx.anim.cat.entr.30	フロート
-pptx.anim.cat.entr.31	拡大して回転
-pptx.anim.cat.entr.34	ライト スピード
-pptx.anim.cat.entr.35	風車
-pptx.anim.cat.entr.37	浮き上がり
-pptx.anim.cat.entr.38	スウィッシュ
-pptx.anim.cat.entr.39	細い線
-pptx.anim.cat.entr.40	展開
-pptx.anim.cat.entr.41	ホイップ
-pptx.anim.cat.entr.42	フロートイン
-pptx.anim.cat.entr.43	中心で回転
-pptx.anim.cat.entr.45	フェード スイベル
-pptx.anim.cat.entr.47	フロートイン（下へ）
-pptx.anim.cat.entr.48	スリング
-pptx.anim.cat.entr.49	スピナー
-pptx.anim.cat.entr.50	ストレッチ（伸縮）
-pptx.anim.cat.entr.51	ジッパー
-pptx.anim.cat.entr.52	アーチ アップ
-pptx.anim.cat.entr.53	ズーム
-pptx.anim.cat.entr.53.16	オブジェクトの中心
-pptx.anim.cat.entr.53.528	スライドの中心
-pptx.anim.cat.entr.54	グライド
-pptx.anim.cat.entr.55	拡大
-pptx.anim.cat.entr.56	フリップ
-pptx.anim.cat.entr.58	折りたたみ
-pptx.anim.cat.exit.1	クリア
-pptx.anim.cat.exit.2	スライドアウト
-pptx.anim.cat.exit.2.1	上へ
-pptx.anim.cat.exit.2.2	右へ
-pptx.anim.cat.exit.2.4	下へ
-pptx.anim.cat.exit.2.8	左へ
-pptx.anim.cat.exit.2.9	左上へ
-pptx.anim.cat.exit.2.3	右上へ
-pptx.anim.cat.exit.2.6	右下へ
-pptx.anim.cat.exit.2.12	左下へ
-pptx.anim.cat.exit.3	ブラインド
-pptx.anim.cat.exit.3.10	水平
-pptx.anim.cat.exit.3.5	垂直
-pptx.anim.cat.exit.4	ボックス
-pptx.anim.cat.exit.4.16	内
-pptx.anim.cat.exit.4.32	外
-pptx.anim.cat.exit.5	チェッカーボード
-pptx.anim.cat.exit.5.10	横方向
-pptx.anim.cat.exit.5.5	縦方向
-pptx.anim.cat.exit.6	円
-pptx.anim.cat.exit.6.16	内
-pptx.anim.cat.exit.6.32	外
-pptx.anim.cat.exit.7	クロール アウト
-pptx.anim.cat.exit.7.1	上へ
-pptx.anim.cat.exit.7.2	右へ
-pptx.anim.cat.exit.7.4	下へ
-pptx.anim.cat.exit.7.8	左へ
-pptx.anim.cat.exit.8	ひし形
-pptx.anim.cat.exit.8.16	内
-pptx.anim.cat.exit.8.32	外
-pptx.anim.cat.exit.9	ディゾルブ アウト
-pptx.anim.cat.exit.10	フェード
-pptx.anim.cat.exit.11	フラッシュ（1 回）
-pptx.anim.cat.exit.12	のぞき出し
-pptx.anim.cat.exit.12.1	上へ
-pptx.anim.cat.exit.12.2	右へ
-pptx.anim.cat.exit.12.4	下へ
-pptx.anim.cat.exit.12.8	左へ
-pptx.anim.cat.exit.13	プラス
-pptx.anim.cat.exit.13.16	内
-pptx.anim.cat.exit.13.32	外
-pptx.anim.cat.exit.14	ランダム ストライプ
-pptx.anim.cat.exit.14.10	水平
-pptx.anim.cat.exit.14.5	垂直
-pptx.anim.cat.exit.15	スパイラル アウト
-pptx.anim.cat.exit.16	スプリット
-pptx.anim.cat.exit.16.26	水平方向（内）
-pptx.anim.cat.exit.16.42	水平方向（外）
-pptx.anim.cat.exit.16.21	垂直方向（内）
-pptx.anim.cat.exit.16.37	垂直方向（外）
-pptx.anim.cat.exit.17	ストレッチ
-pptx.anim.cat.exit.17.1	上へ
-pptx.anim.cat.exit.17.2	右へ
-pptx.anim.cat.exit.17.4	下へ
-pptx.anim.cat.exit.17.8	左へ
-pptx.anim.cat.exit.17.10	横方向
-pptx.anim.cat.exit.18	ストリップ
-pptx.anim.cat.exit.18.9	左上へ
-pptx.anim.cat.exit.18.3	右上へ
-pptx.anim.cat.exit.18.6	右下へ
-pptx.anim.cat.exit.18.12	左下へ
-pptx.anim.cat.exit.19	スイベル
-pptx.anim.cat.exit.19.10	水平
-pptx.anim.cat.exit.19.5	垂直
-pptx.anim.cat.exit.20	くさび
-pptx.anim.cat.exit.21	ホイール
-pptx.anim.cat.exit.21.1	1 スポーク
-pptx.anim.cat.exit.21.2	2 スポーク
-pptx.anim.cat.exit.21.3	3 スポーク
-pptx.anim.cat.exit.21.4	4 スポーク
-pptx.anim.cat.exit.21.8	8 スポーク
-pptx.anim.cat.exit.22	ワイプ
-pptx.anim.cat.exit.22.1	上へ
-pptx.anim.cat.exit.22.2	右へ
-pptx.anim.cat.exit.22.4	下へ
-pptx.anim.cat.exit.22.8	左へ
-pptx.anim.cat.exit.23	ズーム（基本）
-pptx.anim.cat.exit.23.16	内
-pptx.anim.cat.exit.23.32	画面の下へ外
-pptx.anim.cat.exit.23.272	少し内
-pptx.anim.cat.exit.23.288	少し外
-pptx.anim.cat.exit.24	ランダム効果
-pptx.anim.cat.exit.25	ブーメラン
-pptx.anim.cat.exit.26	バウンス
-pptx.anim.cat.exit.27	カラー表示
-pptx.anim.cat.exit.28	巻き戻し
-pptx.anim.cat.exit.29	イーズ イン
-pptx.anim.cat.exit.30	フロート
-pptx.anim.cat.exit.31	拡大して回転
-pptx.anim.cat.exit.34	ライト スピード
-pptx.anim.cat.exit.35	風車
-pptx.anim.cat.exit.37	浮き上がり
-pptx.anim.cat.exit.38	スウィッシュ
-pptx.anim.cat.exit.39	細い線
-pptx.anim.cat.exit.40	展開
-pptx.anim.cat.exit.41	ホイップ
-pptx.anim.cat.exit.42	フロートアウト
-pptx.anim.cat.exit.43	中心で回転
-pptx.anim.cat.exit.45	フェード スイベル
-pptx.anim.cat.exit.47	フロートアウト（下へ）
-pptx.anim.cat.exit.48	スリング
-pptx.anim.cat.exit.49	スピナー
-pptx.anim.cat.exit.50	ストレッチ（伸縮）
-pptx.anim.cat.exit.51	ジッパー
-pptx.anim.cat.exit.52	アーチ アップ
-pptx.anim.cat.exit.53	ズーム
-pptx.anim.cat.exit.53.32	スライドの中心
-pptx.anim.cat.exit.54	グライド
-pptx.anim.cat.exit.55	拡大
-pptx.anim.cat.exit.56	フリップ
-pptx.anim.cat.exit.58	折りたたみ
-pptx.anim.cat.emph.36	きらめき
-pptx.anim.cat.emph.1	塗りつぶしの色
-pptx.anim.cat.emph.2	フォント
-pptx.anim.cat.emph.3	フォントの色
-pptx.anim.cat.emph.4	フォント サイズ
-pptx.anim.cat.emph.5	フォント スタイル
-pptx.anim.cat.emph.6	拡大／収縮
-pptx.anim.cat.emph.7	線の色
-pptx.anim.cat.emph.8	スピン
-pptx.anim.cat.emph.9	透過性
-pptx.anim.cat.emph.10	太字（フラッシュ）
-pptx.anim.cat.emph.14	ブラスト
-pptx.anim.cat.emph.15	太字表示
-pptx.anim.cat.emph.16	ブラシの色
-pptx.anim.cat.emph.18	ブラシの下線
-pptx.anim.cat.emph.19	カラー ブレンド
-pptx.anim.cat.emph.20	カラー ウェーブ
-pptx.anim.cat.emph.21	補色
-pptx.anim.cat.emph.22	補色 2
-pptx.anim.cat.emph.23	対比色
-pptx.anim.cat.emph.24	暗く
-pptx.anim.cat.emph.25	彩度を下げる
-pptx.anim.cat.emph.26	フラッシュ バルブ
-pptx.anim.cat.emph.27	ちらつき
-pptx.anim.cat.emph.28	色付きで拡大
-pptx.anim.cat.emph.30	明るく
-pptx.anim.cat.emph.31	スタイルの強調
-pptx.anim.cat.emph.32	シーソー
-pptx.anim.cat.emph.33	縦方向に拡大
-pptx.anim.cat.emph.34	ウェーブ
-pptx.anim.cat.path.1	円
-pptx.anim.cat.path.2	直角三角形
-pptx.anim.cat.path.3	ひし形
-pptx.anim.cat.path.4	六角形
-pptx.anim.cat.path.5	星（5 ポイント）
-pptx.anim.cat.path.6	三日月
-pptx.anim.cat.path.7	正方形
-pptx.anim.cat.path.8	台形
-pptx.anim.cat.path.9	ハート
-pptx.anim.cat.path.10	八角形
-pptx.anim.cat.path.11	星（6 ポイント）
-pptx.anim.cat.path.12	フットボール
-pptx.anim.cat.path.13	正三角形
-pptx.anim.cat.path.14	平行四辺形
-pptx.anim.cat.path.15	五角形
-pptx.anim.cat.path.16	星（4 ポイント）
-pptx.anim.cat.path.17	星（8 ポイント）
-pptx.anim.cat.path.18	涙形
-pptx.anim.cat.path.19	とがった星
-pptx.anim.cat.path.20	曲線の正方形
-pptx.anim.cat.path.21	曲線の X
-pptx.anim.cat.path.22	縦の 8 の字
-pptx.anim.cat.path.23	曲線の星
-pptx.anim.cat.path.24	ループ
-pptx.anim.cat.path.25	丸のこ
-pptx.anim.cat.path.26	横の 8 の字
-pptx.anim.cat.path.27	ピーナッツ
-pptx.anim.cat.path.28	8 の字（4 つ）
-pptx.anim.cat.path.29	中性子
-pptx.anim.cat.path.30	スウッシュ
-pptx.anim.cat.path.31	豆
-pptx.anim.cat.path.32	プラス
-pptx.anim.cat.path.33	逆三角形
-pptx.anim.cat.path.34	逆正方形
-pptx.anim.cat.path.35	直線（左へ）
-pptx.anim.cat.path.36	右折
-pptx.anim.cat.path.37	弧（下）
-pptx.anim.cat.path.38	ジグザグ
-pptx.anim.cat.path.39	S カーブ 2
-pptx.anim.cat.path.40	正弦波
-pptx.anim.cat.path.41	左バウンド
-pptx.anim.cat.path.42	直線（下へ）
-pptx.anim.cat.path.43	上折
-pptx.anim.cat.path.44	弧（上）
-pptx.anim.cat.path.45	心拍
-pptx.anim.cat.path.46	右スパイラル
-pptx.anim.cat.path.47	波
-pptx.anim.cat.path.48	曲線（左）
-pptx.anim.cat.path.49	右下斜め
-pptx.anim.cat.path.50	下折
-pptx.anim.cat.path.51	弧（左）
-pptx.anim.cat.path.52	ろうと
-pptx.anim.cat.path.53	ばね
-pptx.anim.cat.path.54	右バウンド
-pptx.anim.cat.path.55	左スパイラル
-pptx.anim.cat.path.56	右上斜め
-pptx.anim.cat.path.57	右上折
-pptx.anim.cat.path.58	弧（右）
-pptx.anim.cat.path.59	S カーブ 1
-pptx.anim.cat.path.60	減衰波
-pptx.anim.cat.path.61	曲線（右）
-pptx.anim.cat.path.62	階段（下）
-pptx.anim.cat.path.64	直線（上へ）
-pptx.anim.cat.path.63	直線（右へ）
-pptx.anim.more-effects	その他の効果
+pptx.animation.cat.entr.1	アピール
+pptx.animation.cat.entr.2	スライドイン
+pptx.animation.cat.entr.2.1	上から
+pptx.animation.cat.entr.2.2	右から
+pptx.animation.cat.entr.2.4	下から
+pptx.animation.cat.entr.2.8	左から
+pptx.animation.cat.entr.2.9	左上から
+pptx.animation.cat.entr.2.3	右上から
+pptx.animation.cat.entr.2.6	右下から
+pptx.animation.cat.entr.2.12	左下から
+pptx.animation.cat.entr.3	ブラインド
+pptx.animation.cat.entr.3.10	水平
+pptx.animation.cat.entr.3.5	垂直
+pptx.animation.cat.entr.4	ボックス
+pptx.animation.cat.entr.4.16	内
+pptx.animation.cat.entr.4.32	外
+pptx.animation.cat.entr.5	チェッカーボード
+pptx.animation.cat.entr.5.10	横方向
+pptx.animation.cat.entr.5.5	縦方向
+pptx.animation.cat.entr.6	円
+pptx.animation.cat.entr.6.16	内
+pptx.animation.cat.entr.6.32	外
+pptx.animation.cat.entr.7	クロール
+pptx.animation.cat.entr.7.1	上から
+pptx.animation.cat.entr.7.2	右から
+pptx.animation.cat.entr.7.4	下から
+pptx.animation.cat.entr.7.8	左から
+pptx.animation.cat.entr.8	ひし形
+pptx.animation.cat.entr.8.16	内
+pptx.animation.cat.entr.8.32	外
+pptx.animation.cat.entr.9	ディゾルブ
+pptx.animation.cat.entr.10	フェード
+pptx.animation.cat.entr.11	フラッシュ（1 回）
+pptx.animation.cat.entr.12	のぞき込み
+pptx.animation.cat.entr.12.1	上から
+pptx.animation.cat.entr.12.2	右から
+pptx.animation.cat.entr.12.4	下から
+pptx.animation.cat.entr.12.8	左から
+pptx.animation.cat.entr.13	プラス
+pptx.animation.cat.entr.13.16	内
+pptx.animation.cat.entr.13.32	外
+pptx.animation.cat.entr.14	ランダム ストライプ
+pptx.animation.cat.entr.14.10	水平
+pptx.animation.cat.entr.14.5	垂直
+pptx.animation.cat.entr.15	スパイラル
+pptx.animation.cat.entr.16	スプリット
+pptx.animation.cat.entr.16.26	水平方向（内）
+pptx.animation.cat.entr.16.42	水平方向（外）
+pptx.animation.cat.entr.16.21	垂直方向（内）
+pptx.animation.cat.entr.16.37	垂直方向（外）
+pptx.animation.cat.entr.17	ストレッチ
+pptx.animation.cat.entr.17.1	上から
+pptx.animation.cat.entr.17.2	右から
+pptx.animation.cat.entr.17.4	下から
+pptx.animation.cat.entr.17.8	左から
+pptx.animation.cat.entr.17.10	横方向
+pptx.animation.cat.entr.18	ストリップ
+pptx.animation.cat.entr.18.9	左上へ
+pptx.animation.cat.entr.18.3	右上へ
+pptx.animation.cat.entr.18.6	右下へ
+pptx.animation.cat.entr.18.12	左下へ
+pptx.animation.cat.entr.19	スイベル
+pptx.animation.cat.entr.19.10	水平
+pptx.animation.cat.entr.19.5	垂直
+pptx.animation.cat.entr.20	くさび
+pptx.animation.cat.entr.21	ホイール
+pptx.animation.cat.entr.21.1	1 スポーク
+pptx.animation.cat.entr.21.2	2 スポーク
+pptx.animation.cat.entr.21.3	3 スポーク
+pptx.animation.cat.entr.21.4	4 スポーク
+pptx.animation.cat.entr.21.8	8 スポーク
+pptx.animation.cat.entr.22	ワイプ
+pptx.animation.cat.entr.22.1	上から
+pptx.animation.cat.entr.22.2	右から
+pptx.animation.cat.entr.22.4	下から
+pptx.animation.cat.entr.22.8	左から
+pptx.animation.cat.entr.23	ズーム（基本）
+pptx.animation.cat.entr.23.16	内
+pptx.animation.cat.entr.23.32	外
+pptx.animation.cat.entr.23.272	少し内
+pptx.animation.cat.entr.23.528	画面の中央から内
+pptx.animation.cat.entr.23.288	少し外
+pptx.animation.cat.entr.23.36	画面の下へ外
+pptx.animation.cat.entr.24	ランダム効果
+pptx.animation.cat.entr.25	ブーメラン
+pptx.animation.cat.entr.26	バウンス
+pptx.animation.cat.entr.27	カラー表示
+pptx.animation.cat.entr.28	クレジット
+pptx.animation.cat.entr.29	イーズ イン
+pptx.animation.cat.entr.30	フロート
+pptx.animation.cat.entr.31	拡大して回転
+pptx.animation.cat.entr.34	ライト スピード
+pptx.animation.cat.entr.35	風車
+pptx.animation.cat.entr.37	浮き上がり
+pptx.animation.cat.entr.38	スウィッシュ
+pptx.animation.cat.entr.39	細い線
+pptx.animation.cat.entr.40	展開
+pptx.animation.cat.entr.41	ホイップ
+pptx.animation.cat.entr.42	フロートイン
+pptx.animation.cat.entr.43	中心で回転
+pptx.animation.cat.entr.45	フェード スイベル
+pptx.animation.cat.entr.47	フロートイン（下へ）
+pptx.animation.cat.entr.48	スリング
+pptx.animation.cat.entr.49	スピナー
+pptx.animation.cat.entr.50	ストレッチ（伸縮）
+pptx.animation.cat.entr.51	ジッパー
+pptx.animation.cat.entr.52	アーチ アップ
+pptx.animation.cat.entr.53	ズーム
+pptx.animation.cat.entr.53.16	オブジェクトの中心
+pptx.animation.cat.entr.53.528	スライドの中心
+pptx.animation.cat.entr.54	グライド
+pptx.animation.cat.entr.55	拡大
+pptx.animation.cat.entr.56	フリップ
+pptx.animation.cat.entr.58	折りたたみ
+pptx.animation.cat.exit.1	クリア
+pptx.animation.cat.exit.2	スライドアウト
+pptx.animation.cat.exit.2.1	上へ
+pptx.animation.cat.exit.2.2	右へ
+pptx.animation.cat.exit.2.4	下へ
+pptx.animation.cat.exit.2.8	左へ
+pptx.animation.cat.exit.2.9	左上へ
+pptx.animation.cat.exit.2.3	右上へ
+pptx.animation.cat.exit.2.6	右下へ
+pptx.animation.cat.exit.2.12	左下へ
+pptx.animation.cat.exit.3	ブラインド
+pptx.animation.cat.exit.3.10	水平
+pptx.animation.cat.exit.3.5	垂直
+pptx.animation.cat.exit.4	ボックス
+pptx.animation.cat.exit.4.16	内
+pptx.animation.cat.exit.4.32	外
+pptx.animation.cat.exit.5	チェッカーボード
+pptx.animation.cat.exit.5.10	横方向
+pptx.animation.cat.exit.5.5	縦方向
+pptx.animation.cat.exit.6	円
+pptx.animation.cat.exit.6.16	内
+pptx.animation.cat.exit.6.32	外
+pptx.animation.cat.exit.7	クロール アウト
+pptx.animation.cat.exit.7.1	上へ
+pptx.animation.cat.exit.7.2	右へ
+pptx.animation.cat.exit.7.4	下へ
+pptx.animation.cat.exit.7.8	左へ
+pptx.animation.cat.exit.8	ひし形
+pptx.animation.cat.exit.8.16	内
+pptx.animation.cat.exit.8.32	外
+pptx.animation.cat.exit.9	ディゾルブ アウト
+pptx.animation.cat.exit.10	フェード
+pptx.animation.cat.exit.11	フラッシュ（1 回）
+pptx.animation.cat.exit.12	のぞき出し
+pptx.animation.cat.exit.12.1	上へ
+pptx.animation.cat.exit.12.2	右へ
+pptx.animation.cat.exit.12.4	下へ
+pptx.animation.cat.exit.12.8	左へ
+pptx.animation.cat.exit.13	プラス
+pptx.animation.cat.exit.13.16	内
+pptx.animation.cat.exit.13.32	外
+pptx.animation.cat.exit.14	ランダム ストライプ
+pptx.animation.cat.exit.14.10	水平
+pptx.animation.cat.exit.14.5	垂直
+pptx.animation.cat.exit.15	スパイラル アウト
+pptx.animation.cat.exit.16	スプリット
+pptx.animation.cat.exit.16.26	水平方向（内）
+pptx.animation.cat.exit.16.42	水平方向（外）
+pptx.animation.cat.exit.16.21	垂直方向（内）
+pptx.animation.cat.exit.16.37	垂直方向（外）
+pptx.animation.cat.exit.17	ストレッチ
+pptx.animation.cat.exit.17.1	上へ
+pptx.animation.cat.exit.17.2	右へ
+pptx.animation.cat.exit.17.4	下へ
+pptx.animation.cat.exit.17.8	左へ
+pptx.animation.cat.exit.17.10	横方向
+pptx.animation.cat.exit.18	ストリップ
+pptx.animation.cat.exit.18.9	左上へ
+pptx.animation.cat.exit.18.3	右上へ
+pptx.animation.cat.exit.18.6	右下へ
+pptx.animation.cat.exit.18.12	左下へ
+pptx.animation.cat.exit.19	スイベル
+pptx.animation.cat.exit.19.10	水平
+pptx.animation.cat.exit.19.5	垂直
+pptx.animation.cat.exit.20	くさび
+pptx.animation.cat.exit.21	ホイール
+pptx.animation.cat.exit.21.1	1 スポーク
+pptx.animation.cat.exit.21.2	2 スポーク
+pptx.animation.cat.exit.21.3	3 スポーク
+pptx.animation.cat.exit.21.4	4 スポーク
+pptx.animation.cat.exit.21.8	8 スポーク
+pptx.animation.cat.exit.22	ワイプ
+pptx.animation.cat.exit.22.1	上へ
+pptx.animation.cat.exit.22.2	右へ
+pptx.animation.cat.exit.22.4	下へ
+pptx.animation.cat.exit.22.8	左へ
+pptx.animation.cat.exit.23	ズーム（基本）
+pptx.animation.cat.exit.23.16	内
+pptx.animation.cat.exit.23.32	画面の下へ外
+pptx.animation.cat.exit.23.272	少し内
+pptx.animation.cat.exit.23.288	少し外
+pptx.animation.cat.exit.24	ランダム効果
+pptx.animation.cat.exit.25	ブーメラン
+pptx.animation.cat.exit.26	バウンス
+pptx.animation.cat.exit.27	カラー表示
+pptx.animation.cat.exit.28	巻き戻し
+pptx.animation.cat.exit.29	イーズ イン
+pptx.animation.cat.exit.30	フロート
+pptx.animation.cat.exit.31	拡大して回転
+pptx.animation.cat.exit.34	ライト スピード
+pptx.animation.cat.exit.35	風車
+pptx.animation.cat.exit.37	浮き上がり
+pptx.animation.cat.exit.38	スウィッシュ
+pptx.animation.cat.exit.39	細い線
+pptx.animation.cat.exit.40	展開
+pptx.animation.cat.exit.41	ホイップ
+pptx.animation.cat.exit.42	フロートアウト
+pptx.animation.cat.exit.43	中心で回転
+pptx.animation.cat.exit.45	フェード スイベル
+pptx.animation.cat.exit.47	フロートアウト（下へ）
+pptx.animation.cat.exit.48	スリング
+pptx.animation.cat.exit.49	スピナー
+pptx.animation.cat.exit.50	ストレッチ（伸縮）
+pptx.animation.cat.exit.51	ジッパー
+pptx.animation.cat.exit.52	アーチ アップ
+pptx.animation.cat.exit.53	ズーム
+pptx.animation.cat.exit.53.32	スライドの中心
+pptx.animation.cat.exit.54	グライド
+pptx.animation.cat.exit.55	拡大
+pptx.animation.cat.exit.56	フリップ
+pptx.animation.cat.exit.58	折りたたみ
+pptx.animation.cat.emph.36	きらめき
+pptx.animation.cat.emph.1	塗りつぶしの色
+pptx.animation.cat.emph.2	フォント
+pptx.animation.cat.emph.3	フォントの色
+pptx.animation.cat.emph.4	フォント サイズ
+pptx.animation.cat.emph.5	フォント スタイル
+pptx.animation.cat.emph.6	拡大／収縮
+pptx.animation.cat.emph.7	線の色
+pptx.animation.cat.emph.8	スピン
+pptx.animation.cat.emph.9	透過性
+pptx.animation.cat.emph.10	太字（フラッシュ）
+pptx.animation.cat.emph.14	ブラスト
+pptx.animation.cat.emph.15	太字表示
+pptx.animation.cat.emph.16	ブラシの色
+pptx.animation.cat.emph.18	ブラシの下線
+pptx.animation.cat.emph.19	カラー ブレンド
+pptx.animation.cat.emph.20	カラー ウェーブ
+pptx.animation.cat.emph.21	補色
+pptx.animation.cat.emph.22	補色 2
+pptx.animation.cat.emph.23	対比色
+pptx.animation.cat.emph.24	暗く
+pptx.animation.cat.emph.25	彩度を下げる
+pptx.animation.cat.emph.26	フラッシュ バルブ
+pptx.animation.cat.emph.27	ちらつき
+pptx.animation.cat.emph.28	色付きで拡大
+pptx.animation.cat.emph.30	明るく
+pptx.animation.cat.emph.31	スタイルの強調
+pptx.animation.cat.emph.32	シーソー
+pptx.animation.cat.emph.33	縦方向に拡大
+pptx.animation.cat.emph.34	ウェーブ
+pptx.animation.cat.path.1	円
+pptx.animation.cat.path.2	直角三角形
+pptx.animation.cat.path.3	ひし形
+pptx.animation.cat.path.4	六角形
+pptx.animation.cat.path.5	星（5 ポイント）
+pptx.animation.cat.path.6	三日月
+pptx.animation.cat.path.7	正方形
+pptx.animation.cat.path.8	台形
+pptx.animation.cat.path.9	ハート
+pptx.animation.cat.path.10	八角形
+pptx.animation.cat.path.11	星（6 ポイント）
+pptx.animation.cat.path.12	フットボール
+pptx.animation.cat.path.13	正三角形
+pptx.animation.cat.path.14	平行四辺形
+pptx.animation.cat.path.15	五角形
+pptx.animation.cat.path.16	星（4 ポイント）
+pptx.animation.cat.path.17	星（8 ポイント）
+pptx.animation.cat.path.18	涙形
+pptx.animation.cat.path.19	とがった星
+pptx.animation.cat.path.20	曲線の正方形
+pptx.animation.cat.path.21	曲線の X
+pptx.animation.cat.path.22	縦の 8 の字
+pptx.animation.cat.path.23	曲線の星
+pptx.animation.cat.path.24	ループ
+pptx.animation.cat.path.25	丸のこ
+pptx.animation.cat.path.26	横の 8 の字
+pptx.animation.cat.path.27	ピーナッツ
+pptx.animation.cat.path.28	8 の字（4 つ）
+pptx.animation.cat.path.29	中性子
+pptx.animation.cat.path.30	スウッシュ
+pptx.animation.cat.path.31	豆
+pptx.animation.cat.path.32	プラス
+pptx.animation.cat.path.33	逆三角形
+pptx.animation.cat.path.34	逆正方形
+pptx.animation.cat.path.35	直線（左へ）
+pptx.animation.cat.path.36	右折
+pptx.animation.cat.path.37	弧（下）
+pptx.animation.cat.path.38	ジグザグ
+pptx.animation.cat.path.39	S カーブ 2
+pptx.animation.cat.path.40	正弦波
+pptx.animation.cat.path.41	左バウンド
+pptx.animation.cat.path.42	直線（下へ）
+pptx.animation.cat.path.43	上折
+pptx.animation.cat.path.44	弧（上）
+pptx.animation.cat.path.45	心拍
+pptx.animation.cat.path.46	右スパイラル
+pptx.animation.cat.path.47	波
+pptx.animation.cat.path.48	曲線（左）
+pptx.animation.cat.path.49	右下斜め
+pptx.animation.cat.path.50	下折
+pptx.animation.cat.path.51	弧（左）
+pptx.animation.cat.path.52	ろうと
+pptx.animation.cat.path.53	ばね
+pptx.animation.cat.path.54	右バウンド
+pptx.animation.cat.path.55	左スパイラル
+pptx.animation.cat.path.56	右上斜め
+pptx.animation.cat.path.57	右上折
+pptx.animation.cat.path.58	弧（右）
+pptx.animation.cat.path.59	S カーブ 1
+pptx.animation.cat.path.60	減衰波
+pptx.animation.cat.path.61	曲線（右）
+pptx.animation.cat.path.62	階段（下）
+pptx.animation.cat.path.64	直線（上へ）
+pptx.animation.cat.path.63	直線（右へ）
+pptx.animation.more-effects	その他の効果
 transition.dir.from-top	上から
 transition.dir.from-right	右から
 transition.dir.from-left	左から
@@ -2721,3 +2705,13 @@ shape.effects.text-glow-size	サイズ
 pptx.sidebar.text-fill	文字の塗りつぶし
 shape.effects.panel-title	図形の書式
 shape.effects.text	文字
+pptx.export-html	Web ページ（.html）
+pptx.html-label-chart	グラフ
+pptx.html-label-diagram	SmartArt
+pptx.html-label-picture	図
+pptx.html-label-object	オブジェクト
+pptx.html-label-slide	スライド {n}
+pptx.html-no-slides	書き出せるスライドがありません（すべて非表示です）
+pptx.html-too-large	図が大きすぎるため、Web ページに書き出せません
+pptx.html-exported	{path} に書き出しました
+pptx.html-export-failed	書き出せませんでした: {error}

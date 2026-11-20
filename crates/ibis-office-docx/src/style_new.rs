@@ -204,7 +204,7 @@ impl SlideEditor {
             if start != end {
                 // The direct formatting taken into the style (as Word does).
                 commands.push(FlowCommand::SetRunFormat { from: start, to: end, change: ibis_doc_model::RunChange::Clear });
-                commands.push(FlowCommand::SetCharStyle { from: start, to: end, style: Some(id.clone()) });
+                commands.push(FlowCommand::SetCharacterStyle { from: start, to: end, style: Some(id.clone()) });
             }
         } else {
             style.para = ibis_doc_model::ParaFormat { num_id: None, level: None, ..para.direct.clone() };
@@ -381,7 +381,7 @@ impl SlideEditor {
             return;
         }
         let keep = self.text_selection();
-        self.run_flow(vec![FlowCommand::SetCharStyle { from: start, to: end, style }], cx);
+        self.run_flow(vec![FlowCommand::SetCharacterStyle { from: start, to: end, style }], cx);
         if let (Some((a, c)), Some(state)) = (keep, self.doc_state_mut()) {
             state.anchor = Some(a);
             state.caret = Some(c);

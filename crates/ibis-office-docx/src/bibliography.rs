@@ -192,7 +192,7 @@ pub(crate) fn bibliography_commands(
         }
     }
     let entries = bibliography_paragraphs(&with_styles, instruction, doc.new_id());
-    commands.push(FlowCommand::SetToc { before, replace, entries, bookmarks: Vec::new() });
+    commands.push(FlowCommand::SetTableOfContents { before, replace, entries, bookmarks: Vec::new() });
     commands
 }
 

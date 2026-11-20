@@ -227,7 +227,7 @@ impl Harness {
 
     fn set(&mut self, x: &[f64]) -> bool {
         let edits = self.model.variables.iter().zip(x).map(|(&(row, column), v)| CellEdit { row, column, input: CellInput::Value(CellValue::Number(*v)) }).collect();
-        self.doc.execute(vec![Command::Sheet(SheetCommand::SetCells { slide: self.slide, edits })]).is_ok()
+        self.doc.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: self.slide, edits })]).is_ok()
     }
 
     fn eval(&mut self, x: &[f64]) -> Option<Point> {
@@ -867,7 +867,7 @@ pub fn solve(presentation: &Presentation, slide: SlideId, model: &Model, stop: &
 pub fn values_with(presentation: &Presentation, slide: SlideId, variables: &[(u32, u32)], x: &[f64], cells: &[(u32, u32)]) -> Vec<f64> {
     let mut doc = Document::new(presentation.clone());
     let edits = variables.iter().zip(x).map(|(&(row, column), v)| CellEdit { row, column, input: CellInput::Value(CellValue::Number(*v)) }).collect();
-    let _ = doc.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits })]);
+    let _ = doc.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })]);
     cells.iter().map(|&c| read(&doc, slide, c)).collect()
 }
 
@@ -1557,7 +1557,7 @@ mod tests {
         }));
         let mut d = Document::new(p);
         let edits = cells.iter().map(|(row, column, input)| CellEdit { row: *row, column: *column, input: input.clone() }).collect();
-        d.execute(vec![Command::Sheet(SheetCommand::SetCells { slide: id, edits })]).unwrap();
+        d.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: id, edits })]).unwrap();
         (d.presentation().clone(), id)
     }
 

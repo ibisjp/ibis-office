@@ -14,7 +14,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use crate::palette::rgb;
 
-use crate::actions::OpenFile;
+use crate::actions::Open;
 use crate::editor::SlideEditor;
 use crate::icons::Material;
 use gpui_kit::component::Icon;
@@ -127,9 +127,9 @@ impl SlideEditor {
             .hover(|s| s.underline())
             .child(Icon::new(Material("folder_open")).size(px(20.)).text_color(rgb(LINK_COLOR)))
             .child(crate::i18n::text("start.open"))
-            .on_click(cx.listener(|this, _, window, cx| this.open_file(&OpenFile, window, cx)));
+            .on_click(cx.listener(|this, _, window, cx| this.open_file(&Open, window, cx)));
         // The first badge's left edge under 新規作成's.
-        let new_files = div().flex().gap_4().ml(px(BADGE_OVERHANG - TILE_PADDING)).children(crate::format::infos().into_iter().map(|(kind, info)| self.new_file_tile(kind, info.extension, info.new_badge_color, cx)));
+        let new_files = div().flex().gap_4().ml(px(BADGE_OVERHANG - TILE_PADDING)).children(crate::format::creatable_infos().into_iter().map(|(kind, info)| self.new_file_tile(kind, info.extension, info.new_badge_color, cx)));
 
         div()
             .id("start-view")
@@ -202,7 +202,7 @@ impl SlideEditor {
 
     /// One kind of 新規作成: a blank page with the format's badge on its
     /// lower left; a click makes an empty file of it.
-    fn new_file_tile(&self, kind: ibis_pptx::Kind, label: &'static str, color: u32, cx: &mut Context<Self>) -> AnyElement {
+    fn new_file_tile(&self, kind: ibis_formats::Kind, label: &'static str, color: u32, cx: &mut Context<Self>) -> AnyElement {
         let page = div()
             .w(px(PAGE_WIDTH))
             .h(px(PAGE_HEIGHT))
@@ -236,7 +236,7 @@ impl SlideEditor {
     #[cfg(not(target_family="wasm"))]
     pub(crate) fn recent_file_actions(&self,path:std::path::PathBuf)->Vec<crate::chrome::MenuEntry>{
         vec![crate::chrome::MenuItem::tr("start.recent.remove").icon("delete").on(move|e,_,cx|{
-            e.recent_files=crate::recent_files::remove(&path);cx.notify();
+            e.recent_files=crate::recent_files::remove(&path);crate::app::set_app_menus(cx);cx.notify();
         }).into()]
     }
 

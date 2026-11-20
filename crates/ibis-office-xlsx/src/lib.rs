@@ -33,6 +33,7 @@ pub(crate) mod sidebars;
 pub mod cell_edit;
 pub(crate) mod clipboard;
 pub(crate) mod clipboard_html;
+pub mod sheet_html;
 pub(crate) mod clipboard_native;
 pub(crate) mod clipboard_xmlss;
 mod function_dialog;
@@ -112,6 +113,7 @@ pub(crate) mod sheet_tab_drag;
 mod right_pane;
 pub mod sheet_view;
 pub(crate) mod view_position;
+pub(crate) mod sheet_group;
 pub(crate) mod replace_fonts;
 pub(crate) mod view_state;
 pub(crate) mod slicer;
@@ -159,6 +161,8 @@ pub(crate) mod shape_edit;
 pub(crate) mod chart_insert;
 pub mod threaded_comments;
 pub(crate) mod accessibility_panel;
+pub(crate) mod machine_readability;
+pub(crate) mod machine_readability_panel;
 pub(crate) mod compatibility_panel;
 pub(crate) mod selection_pane;
 pub(crate) mod frame_panel;
@@ -205,6 +209,8 @@ pub struct State {
     pub cell_edit: Option<cell_edit::CellEdit>,
     /// Where the formula bar's text field is (set when painted), to find the character pressed.
     pub bar_bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    /// The last character of the text being composed in the formula bar (set when painted), where the input method's candidate window opens.
+    pub bar_marked_rect: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     /// The formula bar widened to several lines (the ▼ at its right end), as Excel's: all the lines of a cell are shown and typed into; closed, it shows one line.
     pub(crate) bar_expanded: bool,
     pub bar_visual_lines: Vec<(usize,String)>,
@@ -303,12 +309,17 @@ pub struct State {
     pub(crate) tab_drag: Option<sheet_tab_drag::TabDrag>,
     /// What the right pane was last made for (`right_pane.rs`).
     pub(crate) right_key: Option<right_pane::RightKey>,
+    /// A dialog panel (queries, data table, ...) was in the pane at the last frame: when it is gone and nothing took its
+    /// place, the pane closes with it instead of falling back to the cell format pane (#211).
+    pub(crate) dialog_pane_open: bool,
     /// The fields pane the current cell opened in a pivot table (`pivot_pane.rs`).
     pub(crate) pivot_pane: pivot_pane::PivotPane,
     /// Scrolling of the sheet tabs along the bottom.
     pub tab_scroll: ScrollHandle,
     pub(crate) tab_reveal: Option<SlideId>,
     pub(crate) tab_last_click: Option<(SlideId, usize)>,
+    /// The sheets selected together with the present one (作業グループ, `sheet_group.rs`; in use only while the present sheet is one of them).
+    pub(crate) group: Vec<SlideId>,
     /// Whether the formula bar is shown.
     pub show_formula_bar: bool,
     /// データの入力規則のマーク表示 (Circle Invalid Data).
@@ -443,7 +454,165 @@ mod dialog_hooks;
 mod event_hooks;
 mod workspace_hooks;
 mod infobar_hooks;
-impl_format_state!(State, ibis_pptx::Kind::Workbook);
+/// What a touch gesture on the page can change in this state (`shell::format::GestureView`, #209). Every field is named in
+/// `gesture_snapshot`: one added later does not compile until it is decided whether a touch can change it (name it and keep it
+/// below) or not (`field: _`). A drag or edit that cannot be copied is kept as "there was none" (`*_was_none`): a cancelled touch
+/// ends it.
+pub struct GestureSnapshot {
+    cells: HashMap<SlideId, (u32, u32)>,
+    cell_ends: HashMap<SlideId, (u32, u32)>,
+    cell_drag: bool,
+    header_select: Option<ibis_doc_model::sheet_command::Axis>,
+    fill_source: Option<ibis_doc_model::CellRange>,
+    cell_move: Option<fill::CellMove>,
+    fill_copy: bool,
+    tab_start: Option<(u32, (u32, u32))>,
+    sheet_scrolls: HashMap<SlideId, Point<Pixels>>,
+    header_drag: Option<headers::HeaderDrag>,
+    control_drag: Option<control::ControlThumbDrag>,
+    split_drag: Option<split_view::SplitDrag>,
+    deselect_drag: Option<sheet_ui::DeselectDrag>,
+    timeline_drag: Option<timeline::TimelineDrag>,
+    ruler_margin_drag: Option<page_layout::RulerMarginDrag>,
+    cell_edit: Option<cell_edit::CellEdit>,
+    drag_scroll_was_none: bool,
+    tab_drag_was_none: bool,
+}
+
+impl crate::shell::format::GestureView for State {
+    type Snapshot = GestureSnapshot;
+
+    fn gesture_snapshot(&self) -> GestureSnapshot {
+        let State {
+            range_pick: _,
+            range_pick_click_release: _,
+            cells,
+            cell_ends,
+            cell_drag,
+            drag_scroll,
+            deselect_drag,
+            split_drag,
+            jump: _,
+            cell_edit,
+            bar_bounds: _,
+            bar_marked_rect: _,
+            bar_expanded: _,
+            bar_visual_lines: _,
+            bar_caret_row: _,
+            bar_shapes: _,
+            bar_scroll: _,
+            clip: _,
+            copy_outline: _,
+            header_geometry: _,
+            header_drag,
+            timeline_drag,
+            control_drag,
+            ruler_margin_drag,
+            header_select,
+            header_hover: _,
+            header_popup: _,
+            fill_source,
+            cell_move,
+            fill_copy,
+            move_overwrite: _,
+            tab_start,
+            painter: _,
+            names: _,
+            validation: _,
+            validation_warning: _,
+            list_popup: _,
+            validation_choices: _,
+            validation_rejected: _,
+            validation_message_bounds: _,
+            filter_panel: _,
+            comment_hover: _,
+            note_card: _,
+            comment_scroll: _,
+            comment_popup: _,
+            table_dialog: _,
+            chart_edit: _,
+            last_fill: _,
+            last_paste: _,
+            find: _,
+            spelling: _,
+            link: _,
+            page_setup: _,
+            print_panel: _,
+            header_footer_edit: _,
+            custom_format: _,
+            format_tab: _,
+            conditional_edit: _,
+            sort_edit: _,
+            panels: _,
+            links_notice: _,
+            border_line: _,
+            border_color: _,
+            tab_drag,
+            right_key: _,
+            dialog_pane_open: _,
+            pivot_pane: _,
+            tab_scroll: _,
+            tab_reveal: _,
+            tab_last_click: _,
+            group: _,
+            show_formula_bar: _,
+            validation_circles: _,
+            unlocked_ranges: _,
+            trace_arrows: _,
+            calc_warmup_started: _,
+            print_what: _,
+            always_create_backup: _,
+            show_all_notes: _,
+            design_mode: _,
+            status_summary_mask: _,
+            sheet_scrolls,
+            pending_view_scroll: _,
+        } = self;
+        GestureSnapshot {
+            cells: cells.clone(),
+            cell_ends: cell_ends.clone(),
+            cell_drag: cell_drag.clone(),
+            header_select: header_select.clone(),
+            fill_source: fill_source.clone(),
+            cell_move: cell_move.clone(),
+            fill_copy: fill_copy.clone(),
+            tab_start: tab_start.clone(),
+            sheet_scrolls: sheet_scrolls.clone(),
+            header_drag: header_drag.clone(),
+            control_drag: control_drag.clone(),
+            split_drag: split_drag.clone(),
+            deselect_drag: deselect_drag.clone(),
+            timeline_drag: timeline_drag.clone(),
+            ruler_margin_drag: ruler_margin_drag.clone(),
+            cell_edit: cell_edit.clone(),
+            drag_scroll_was_none: drag_scroll.is_none(),
+            tab_drag_was_none: tab_drag.is_none(),
+        }
+    }
+
+    fn gesture_restore(&mut self, snapshot: GestureSnapshot) {
+        self.cells = snapshot.cells;
+        self.cell_ends = snapshot.cell_ends;
+        self.cell_drag = snapshot.cell_drag;
+        self.header_select = snapshot.header_select;
+        self.fill_source = snapshot.fill_source;
+        self.cell_move = snapshot.cell_move;
+        self.fill_copy = snapshot.fill_copy;
+        self.tab_start = snapshot.tab_start;
+        self.sheet_scrolls = snapshot.sheet_scrolls;
+        self.header_drag = snapshot.header_drag;
+        self.control_drag = snapshot.control_drag;
+        self.split_drag = snapshot.split_drag;
+        self.deselect_drag = snapshot.deselect_drag;
+        self.timeline_drag = snapshot.timeline_drag;
+        self.ruler_margin_drag = snapshot.ruler_margin_drag;
+        self.cell_edit = snapshot.cell_edit;
+        if snapshot.drag_scroll_was_none { self.drag_scroll = None; }
+        if snapshot.tab_drag_was_none { self.tab_drag = None; }
+    }
+}
+
+impl_format_state!(State, ibis_formats::Kind::Workbook);
 
 #[ibis_office_macros::editor_ext(Xlsx)]
 impl SlideEditor {
@@ -557,7 +726,7 @@ impl FormatEditor for Workbook {
         sidebars: sidebars::SIDEBARS,
         mask: crate::shell::commands::KindMask::XLSX,
         several_windows: Some(crate::shell::format::SeveralWindows { compare_left_right: false, follow_shape_edits: true, number_in_title_bar: true }),
-        shapes: crate::shell::format::ShapeRules { in_shell: false, several: true, try_first: false, cmyk: false, break_is_typed: false },
+        shapes: crate::shell::format::ShapeRules { in_shell: false, several: true, try_first: false, cmyk: true, break_is_typed: false },
         outer_contexts,
         font_substitutes: false,
         drawing_canvas: false,
@@ -590,13 +759,12 @@ impl FormatEditor for Workbook {
         true
     }
 
-    #[cfg(not(target_family = "wasm"))]
     fn pdf_job(editor: &SlideEditor, _printing: bool) -> Result<crate::shell::format::PdfJob, String> {
         editor.xlsx_pdf_job()
     }
 
     #[cfg(not(target_family = "wasm"))]
-    fn bytes_for_path(editor: &SlideEditor, path: &std::path::Path, source: &ibis_pptx::Source, copy: bool) -> Option<Result<crate::shell::format::FileBytes, String>> {
+    fn bytes_for_path(editor: &SlideEditor, path: &std::path::Path, source: &ibis_formats::Source, copy: bool) -> Option<Result<crate::shell::format::FileBytes, String>> {
         editor.xlsx_bytes_for_path(path, source, copy)
     }
 
@@ -606,6 +774,9 @@ impl FormatEditor for Workbook {
     }
 
     fn sidebar_sync(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) {
+        if !editor.sidebar_open {
+            if let Some(s) = editor.sheet_state_mut() { s.dialog_pane_open = false; }
+        }
         editor.sync_pivot_pane(window, cx);
     }
 
@@ -741,6 +912,10 @@ impl FormatEditor for Workbook {
     /// フォントの置換: the fonts of the cells' formats.
     fn used_fonts(editor: &SlideEditor) -> Vec<String> {
         replace_fonts::workbook_used_fonts(editor.presentation())
+    }
+
+    fn used_text(editor: &SlideEditor) -> Option<String> {
+        Some(replace_fonts::workbook_used_text(editor.presentation()))
     }
 
     fn replace_fonts(editor: &mut SlideEditor, target: &str, replacement: &str, cx: &mut Context<SlideEditor>) -> usize {
@@ -959,7 +1134,7 @@ impl FormatEditor for Workbook {
 
     /// The file is written with where each sheet is scrolled to and what is selected in it (`xlsx/view_position.rs`).
     fn model_for_save(editor: &SlideEditor) -> std::borrow::Cow<'_, Presentation> {
-        editor.workbook_for_save()
+        editor.with_group_for_save(editor.workbook_for_save())
     }
 
     /// The workbook's theme (`xlsx/theme_panel.rs`).
@@ -1052,11 +1227,20 @@ impl FormatEditor for Workbook {
 
     fn sidebar(editor: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) -> Option<crate::shell::chrome::SidebarPanel> {
         let chain = |editor: &mut SlideEditor, cx: &mut Context<SlideEditor>| {
-            editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel")).or_else(|| editor.custom_format_panel(cx)).or_else(|| editor.page_setup_panel(cx).map(|panel| panel.modal_named("page_setup_panel"))).or_else(|| editor.xlsx_print_panel(cx).map(|panel| panel.modal_named("xlsx_print_panel"))).or_else(|| editor.header_footer_edit_panel(cx)).or_else(|| editor.cell_link_panel(cx).map(|panel| panel.modal_named("cell_link_panel"))).or_else(|| editor.sheet_find_panel(cx)).or_else(|| editor.sheet_spelling_panel(cx).map(|panel| panel.modal_named("sheet_spelling_panel"))).or_else(|| editor.validation_panel(cx).map(|panel| panel.modal_named("validation_panel"))).or_else(|| editor.names_panel(cx)).or_else(|| editor.conditional_panel(cx).map(|panel|panel.modal_named(if editor.wb().conditional_edit.as_ref().is_some_and(|p|!p.manager&&p.parent.is_some()){"conditional_rule_editor"}else{"conditional_panel"}))).or_else(|| editor.sort_panel(cx).map(|panel| if editor.wb().sort_edit.as_ref().is_some_and(|p|p.editor.is_some()){panel.modal_named("sort_level_editor")}else{panel})).or_else(|| editor.edit_panel(cx)).or_else(|| editor.sheet_chart_panel(cx))
+            editor.symbol_panel(cx).map(|panel| panel.modal_named("symbol_panel")).or_else(|| editor.table_dialog_panel(cx).map(|panel| panel.modal_named("table_dialog"))).or_else(|| editor.goto_panel(cx).map(|panel| panel.modal_named("goto_dialog"))).or_else(|| editor.custom_format_panel(cx)).or_else(|| editor.page_setup_panel(cx).map(|panel| panel.modal_named("page_setup_panel"))).or_else(|| editor.xlsx_print_panel(cx).map(|panel| panel.modal_named("xlsx_print_panel"))).or_else(|| editor.header_footer_edit_panel(cx)).or_else(|| editor.cell_link_panel(cx).map(|panel| panel.modal_named("cell_link_panel"))).or_else(|| editor.sheet_find_panel(cx)).or_else(|| editor.sheet_spelling_panel(cx).map(|panel| panel.modal_named("sheet_spelling_panel"))).or_else(|| editor.validation_panel(cx).map(|panel| panel.modal_named("validation_panel"))).or_else(|| editor.names_panel(cx)).or_else(|| editor.conditional_panel(cx).map(|panel|panel.modal_named(if editor.wb().conditional_edit.as_ref().is_some_and(|p|!p.manager&&p.parent.is_some()){"conditional_rule_editor"}else{"conditional_panel"}))).or_else(|| editor.sort_panel(cx).map(|panel| if editor.wb().sort_edit.as_ref().is_some_and(|p|p.editor.is_some()){panel.modal_named("sort_level_editor")}else{panel})).or_else(|| editor.edit_panel(cx)).or_else(|| editor.sheet_chart_panel(cx))
         };
         // The pane's input fields show the document's values (Undo, Redo, another cell, an external update).
         editor.sync_format_panel(window, cx);
         let panel = chain(editor, cx);
+        // A dialog panel closed by its own button leaves the pane open and empty: the pane would follow the selection to
+        // the cell format. It was a dialog, not the attribute pane, so the pane closes with it (#211).
+        let dialog_now = panel.is_some() && crate::shell::chrome::current_panel_key().is_some();
+        let was_dialog = editor.sheet_state().is_some_and(|s| s.dialog_pane_open);
+        if let Some(s) = editor.sheet_state_mut() { s.dialog_pane_open = dialog_now; }
+        if was_dialog && panel.is_none() && !editor.sheet_range_pick_active() && editor.sheet_state().is_some_and(|s| s.panels.pivot.is_none()) {
+            editor.sidebar_open = false;
+            return None;
+        }
         // No tabs: the pane shows what is selected (right_pane.rs).
         if editor.sync_right_pane(panel.is_some(), window, cx) { chain(editor, cx) } else { panel }
     }
@@ -1156,7 +1340,7 @@ impl FormatEditor for Workbook {
             _ => None,
         });
         conditional::apply_ahead(sheets.collect());
-        Box::new(State { range_pick: None, range_pick_click_release: false, cells: HashMap::new(), cell_ends: HashMap::new(), cell_drag: false, drag_scroll: None, deselect_drag: None, split_drag: None, jump: sheet_ui::CellJump::new(window, cx), cell_edit: None, bar_bounds: Default::default(), bar_expanded: false, bar_visual_lines: Vec::new(), bar_caret_row:None, bar_shapes:Vec::new(), bar_scroll: ScrollHandle::new(), clip: None, copy_outline: false, header_geometry: Default::default(), header_drag: None, timeline_drag: None, control_drag: None, ruler_margin_drag: None, header_select: None, header_hover: None, header_popup: None, fill_source: None, cell_move: None, fill_copy: false, move_overwrite: None, tab_start: None, painter: None, names: None, validation: None, validation_warning: None, list_popup: None, validation_choices: None, validation_rejected: None, validation_message_bounds: None, filter_panel: None, comment_hover: None, note_card: Default::default(), comment_scroll: ScrollHandle::new(), comment_popup: Default::default(), table_dialog: None, chart_edit: None, last_fill: None, last_paste: None, find: None, spelling: None, link: None, page_setup: false, print_panel: false, header_footer_edit: None, custom_format: None, format_tab: 0, conditional_edit: None, sort_edit: None, panels: Default::default(), links_notice: crate::shell::settings_dialog::links_warning_enabled() && presentation.workbook.as_ref().is_some_and(|w| w.external_books.iter().any(|b| !b.broken && !b.name.is_empty())), border_line: ibis_doc_model::BorderLine::Thin, border_color: ibis_doc_model::Rgb::BLACK, tab_drag: None, tab_scroll: ScrollHandle::new(), tab_reveal: None, tab_last_click: None, right_key: None, pivot_pane: Default::default(), show_formula_bar: true, validation_circles: false, unlocked_ranges: HashSet::new(), trace_arrows: Vec::new(), calc_warmup_started: false, print_what: PrintWhat::ActiveSheet, always_create_backup: None, show_all_notes: false, design_mode: false, status_summary_mask: STATUS_SUMMARY_DEFAULT, sheet_scrolls: HashMap::new(), pending_view_scroll: None })
+        Box::new(State { range_pick: None, range_pick_click_release: false, cells: HashMap::new(), cell_ends: HashMap::new(), cell_drag: false, drag_scroll: None, deselect_drag: None, split_drag: None, jump: sheet_ui::CellJump::new(window, cx), cell_edit: None, bar_bounds: Default::default(), bar_marked_rect: Default::default(), bar_expanded: false, bar_visual_lines: Vec::new(), bar_caret_row:None, bar_shapes:Vec::new(), bar_scroll: ScrollHandle::new(), clip: None, copy_outline: false, header_geometry: Default::default(), header_drag: None, timeline_drag: None, control_drag: None, ruler_margin_drag: None, header_select: None, header_hover: None, header_popup: None, fill_source: None, cell_move: None, fill_copy: false, move_overwrite: None, tab_start: None, painter: None, names: None, validation: None, validation_warning: None, list_popup: None, validation_choices: None, validation_rejected: None, validation_message_bounds: None, filter_panel: None, comment_hover: None, note_card: Default::default(), comment_scroll: ScrollHandle::new(), comment_popup: Default::default(), table_dialog: None, chart_edit: None, last_fill: None, last_paste: None, find: None, spelling: None, link: None, page_setup: false, print_panel: false, header_footer_edit: None, custom_format: None, format_tab: 0, conditional_edit: None, sort_edit: None, panels: Default::default(), links_notice: crate::shell::settings_dialog::links_warning_enabled() && presentation.workbook.as_ref().is_some_and(|w| w.external_books.iter().any(|b| !b.broken && !b.name.is_empty())), border_line: ibis_doc_model::BorderLine::Thin, border_color: ibis_doc_model::Rgb::BLACK, tab_drag: None, tab_scroll: ScrollHandle::new(), tab_reveal: None, tab_last_click: None, group: Vec::new(), right_key: None, dialog_pane_open: false, pivot_pane: Default::default(), show_formula_bar: true, validation_circles: false, unlocked_ranges: HashSet::new(), trace_arrows: Vec::new(), calc_warmup_started: false, print_what: PrintWhat::ActiveSheet, always_create_backup: None, show_all_notes: false, design_mode: false, status_summary_mask: STATUS_SUMMARY_DEFAULT, sheet_scrolls: HashMap::new(), pending_view_scroll: None })
     }
 
     /// A worksheet at its own zoom, as Excel shows it.
@@ -1250,6 +1434,12 @@ impl FormatEditor for Workbook {
     /// selected cell is in.
     fn selection_context(editor: &SlideEditor, state: &mut crate::shell::menu_context::ContextState) {
         state.objects = editor.selected_shapes().into_iter().map(crate::shell::menu_context::ObjectKind::of).collect();
+        // K0056: a shape whose text is being edited counts as the selected one (its 図形の書式 pane and menu rows are lit, as its right-click menu's first item is).
+        if state.objects.is_empty()
+            && let Some(shape) = editor.editing.as_ref().and_then(|e| editor.slide().shape(e.shape))
+        {
+            state.objects.push(crate::shell::menu_context::ObjectKind::of(shape));
+        }
         state.ink_selected = editor.ink_is_selected();
         state.in_sheet_table = editor.table_at_selection().is_some();
         state.in_pivot = editor.pivot_at_selection().is_some();
@@ -1258,7 +1448,12 @@ impl FormatEditor for Workbook {
 
     /// A worksheet opens where it was left (its scroll; its selected cell, its split panes and its zoom are kept too), at the top-left corner
     /// the first time, at its own zoom.
-    fn show_page(editor: &mut SlideEditor, slide: SlideId, _: &mut Window, _: &mut Context<SlideEditor>) -> bool {
+    fn show_page(editor: &mut SlideEditor, slide: SlideId, _: &mut Window, cx: &mut Context<SlideEditor>) -> bool {
+        // What is being typed into a cell, the text the input method is composing too, goes into that cell before the sheet is changed (a click on a sheet tab; #202, as Excel does):
+        // it is not carried on to the other sheet.
+        if editor.cell_edit().is_some() {
+            editor.commit_cell_edit(cx);
+        }
         editor.set_current_slide(slide);
         editor.set_selection(Vec::new());
         if let Some(index) = editor.presentation().slide_index(slide) {
@@ -1270,7 +1465,17 @@ impl FormatEditor for Workbook {
     /// The one place a worksheet's view is kept and put back (`SlideEditor::set_current_slide` calls it for every change of the active
     /// sheet): the scroll of the sheet left is saved under its `SlideId` (not its position, so deleting or moving sheets shifts nothing;
     /// a deleted sheet's is dropped), the new sheet's own zoom is shown and its scroll comes back, at the top-left corner the first time.
+    fn title_suffix(editor: &SlideEditor) -> Option<String> {
+        editor.group_title_suffix()
+    }
+
     fn page_changed(editor: &mut SlideEditor, from: SlideId, to: SlideId) {
+        // A sheet outside the group ends it (a sheet of the group keeps it).
+        if let Some(state) = editor.sheet_state_mut() {
+            if !state.group.contains(&to) {
+                state.group.clear();
+            }
+        }
         let offset = editor.workspace_scroll.offset();
         let from_exists = editor.presentation().slide(from).is_some();
         let remembered = editor.sheet_state_mut().and_then(|s| {
@@ -1295,6 +1500,11 @@ impl FormatEditor for Workbook {
 
     fn toolbar_right(editor: &SlideEditor) -> Vec<crate::shell::chrome::ToolItem> {
         toolbar::toolbar_right(editor)
+    }
+
+    /// The workbook's toolbar is one (the cells'): the buttons do not change with what is selected.
+    fn toolbar_scene(_editor: &SlideEditor) -> &'static str {
+        "cell"
     }
 
     fn menus(editor: &SlideEditor, menus: &mut crate::shell::chrome::Menus) {
@@ -1379,9 +1589,13 @@ impl FormatEditor for Workbook {
         }
     }
 
-    fn bounds_for_range(editor: &mut SlideEditor, _: std::ops::Range<usize>, element: Bounds<Pixels>, _: &mut Window, _: &mut Context<SlideEditor>) -> Option<Bounds<Pixels>> {
+    fn bounds_for_range(editor: &mut SlideEditor, _: std::ops::Range<usize>, element: Bounds<Pixels>, _: &mut Window, cx: &mut Context<SlideEditor>) -> Option<Bounds<Pixels>> {
         if editor.editing.is_some() {
             return editor.caret_bounds();
+        }
+        // The first character is asked about before the box has been painted: lay it out now, so the window opens under the cell and not at the editor's corner (K0020).
+        if editor.cell_edit().is_some_and(|e| e.rect.get().is_none()) {
+            editor.seed_edit_geometry(cx);
         }
         editor.cell_bounds_for_range(element)
     }

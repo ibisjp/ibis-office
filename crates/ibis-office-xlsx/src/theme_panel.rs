@@ -27,10 +27,10 @@ impl SlideEditor {
     pub(crate) fn current_theme_palette_colors(&self) -> [Rgb; 10] {
         if let Some(w) = self.presentation().workbook.as_ref() {
             if !w.theme_colors.is_empty() {
-                return ibis_pptx::workbook_theme_colors_from_slice(&w.theme_colors);
+                return ibis_formats::workbook_theme_colors_from_slice(&w.theme_colors);
             }
         }
-        ibis_pptx::workbook_theme_colors(self.source.as_deref())
+        ibis_formats::workbook_theme_colors(self.source.as_deref())
     }
 
     /// Check if the workbook matches a predefined theme palette preset.
@@ -186,7 +186,7 @@ impl SlideEditor {
             other => other,
         };
         let current = self.presentation().theme_effects.as_deref().unwrap_or("office");
-        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return false };
+        let Some(preset) = ibis_formats::theme_effects::find_effect_preset(preset_id) else { return false };
         current.eq_ignore_ascii_case(preset.id) || current.eq_ignore_ascii_case(preset.name)
     }
 
@@ -198,7 +198,7 @@ impl SlideEditor {
             "intense" => "metro",
             other => other,
         };
-        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return };
+        let Some(preset) = ibis_formats::theme_effects::find_effect_preset(preset_id) else { return };
         self.commit_cell_edit(cx);
         self.run_sheet(vec![Command::SetThemeEffects { name: Some(preset.id.to_string()) }], cx);
         self.status = Some(crate::shell::i18n::format("xlsx.theme-effect-applied", &[("name", &crate::shell::i18n::text(preset.label_key))]).into());

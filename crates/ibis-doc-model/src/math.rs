@@ -329,40 +329,53 @@ impl Math {
         }
     }
 
-    /// The formula with each of its runs (`Text`, `Colored`) replaced by what `f` gives for it.
-    fn map_runs(&self, f: &dyn Fn(&Math) -> Math) -> Math {
-        let all = |items: &[Math]| items.iter().map(|m| m.map_runs(f)).collect::<Vec<_>>();
-        let boxed = |m: &Math| Box::new(m.map_runs(f));
+    /// The formula with each of its runs (`Text`, `Colored` over one) replaced by what `f` gives for it, and each structure that draws something of its own (a fraction bar,
+    /// brackets, a radical or an operator sign: `Frac`, `Radical`, `Nary`, `Delimited`, `Mark`, `EqArray`, `Matrix`; its children done) by what `s` gives for it and the colour
+    /// it had (`Colored` over it).
+    fn map_runs(&self, f: &dyn Fn(&Math) -> Math, s: &dyn Fn(Math, Option<crate::drawing::Rgb>) -> Math) -> Math {
+        let all = |items: &[Math]| items.iter().map(|m| m.map_runs(f, s)).collect::<Vec<_>>();
+        let boxed = |m: &Math| Box::new(m.map_runs(f, s));
         let opt = |m: &Option<Box<Math>>| m.as_deref().map(boxed);
-        match self {
-            Math::Text(_) | Math::Colored { .. } => f(self),
+        let (own, shape) = match self {
+            Math::Colored { color, body } if !matches!(**body, Math::Text(_)) => (Some(*color), &**body),
+            other => (None, other),
+        };
+        match shape {
+            Math::Text(_) | Math::Colored { .. } => f(shape),
             Math::Row(items) => Math::Row(all(items)),
-            Math::Frac { num, den, kind } => Math::Frac { num: boxed(num), den: boxed(den), kind: *kind },
             Math::Script { base, sub, sup } => Math::Script { base: boxed(base), sub: opt(sub), sup: opt(sup) },
-            Math::Radical { degree, body } => Math::Radical { degree: opt(degree), body: boxed(body) },
-            Math::Nary { op, sub, sup, body, stacked } => Math::Nary { op: op.clone(), sub: opt(sub), sup: opt(sup), body: boxed(body), stacked: *stacked },
-            Math::Delimited { open, close, sep, items } => Math::Delimited { open: open.clone(), close: close.clone(), sep: sep.clone(), items: all(items) },
             Math::Function { name, arg } => Math::Function { name: boxed(name), arg: boxed(arg) },
-            Math::Mark { base, mark, over } => Math::Mark { base: boxed(base), mark: mark.clone(), over: *over },
-            Math::Matrix(rows) => Math::Matrix(rows.iter().map(|r| all(r)).collect()),
-            Math::EqArray(rows) => Math::EqArray(all(rows)),
+            Math::Frac { num, den, kind } => s(Math::Frac { num: boxed(num), den: boxed(den), kind: *kind }, own),
+            Math::Radical { degree, body } => s(Math::Radical { degree: opt(degree), body: boxed(body) }, own),
+            Math::Nary { op, sub, sup, body, stacked } => s(Math::Nary { op: op.clone(), sub: opt(sub), sup: opt(sup), body: boxed(body), stacked: *stacked }, own),
+            Math::Delimited { open, close, sep, items } => s(Math::Delimited { open: open.clone(), close: close.clone(), sep: sep.clone(), items: all(items) }, own),
+            Math::Mark { base, mark, over } => s(Math::Mark { base: boxed(base), mark: mark.clone(), over: *over }, own),
+            Math::Matrix(rows) => s(Math::Matrix(rows.iter().map(|r| all(r)).collect()), own),
+            Math::EqArray(rows) => s(Math::EqArray(all(rows)), own),
         }
     }
 
-    /// The formula without the colours of its runs (`Colored`): what is left when the whole formula is given a colour, as Word does.
+    /// The formula without the colours of its runs and of its structures (`Colored`): what is left when the whole formula is given a colour, as Word does.
     pub fn without_colors(&self) -> Math {
-        self.map_runs(&|run| match run {
-            Math::Colored { body, .. } => (**body).clone(),
-            other => other.clone(),
-        })
+        self.map_runs(
+            &|run| match run {
+                Math::Colored { body, .. } => (**body).clone(),
+                other => other.clone(),
+            },
+            &|m, _| m,
+        )
     }
 
-    /// The formula with `color` on each run that has no colour of its own: how it is written when its page run has a colour.
+    /// The formula with `color` on each run, and on each structure's own drawing (a fraction bar, brackets...), that has no colour of its own: how it is written when its page
+    /// run has a colour (Word's `w:rPr/w:color` on the `m:r`s and in the `m:ctrlPr`s).
     pub fn with_default_color(&self, color: crate::drawing::Rgb) -> Math {
-        self.map_runs(&|run| match run {
-            Math::Text(t) if !t.is_empty() => Math::Colored { color, body: Box::new(run.clone()) },
-            other => other.clone(),
-        })
+        self.map_runs(
+            &|run| match run {
+                Math::Text(t) if !t.is_empty() => Math::Colored { color, body: Box::new(run.clone()) },
+                other => other.clone(),
+            },
+            &|m, own| Math::Colored { color: own.unwrap_or(color), body: Box::new(m) },
+        )
     }
 
     /// The text of a run (`Text`, or `Colored` holding one): what the neighbouring items look at to space the formula.

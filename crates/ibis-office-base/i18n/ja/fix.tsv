@@ -94,13 +94,11 @@ xlsx.new-window	新しいウィンドウを開く
 fix.misc.new-window	新しいウィンドウを開く
 fix.editor.do-you-want-save-changes	変更を保存しますか？
 fix.editor.don-t-save	保存しない
-xlsx.view-side-by-side	並べて比較
 xlsx.sync-scrolling	同期スクロール
 xlsx.reset-window-position	ウィンドウの位置をリセット
 fix.misc.view-side-side	並べて比較
 fix.misc.synchronous-scrolling	同期スクロール
 fix.misc.reset-window-position	ウィンドウの位置をリセット
-xlsx.compatibility-check	互換性チェック…
 xlsx.compatibility.title	互換性チェック
 xlsx.compatibility.desc	このブックが旧バージョンの Excel (97-2003) と互換性があるかをスキャンし、問題点を一覧表示します。
 xlsx.compatibility.passed	互換性の問題は見つかりませんでした
@@ -256,12 +254,12 @@ pptx.insert-chart.surface-3d	3-D 表面
 pptx.insert-chart.surface-3d-wireframe	3-D ワイヤーフレーム表面
 pptx.insert-chart.contour	等高線
 pptx.insert-chart.contour-wireframe	ワイヤーフレーム等高線
-xlsx.pivot-chart-insert	ピボットグラフ…
+xlsx.insert-pivot-chart	ピボットグラフ…
 xlsx.pivot-chart	ピボットグラフ
 xlsx.pivot-chart-source	連動ピボットテーブル
 xlsx.pivot-chart-open-fields	ピボットテーブルのフィールド…
 xlsx.pivot-chart-inserted	ピボットグラフを挿入しました
-xlsx.phonetic-toggle	ふりがなの表示/非表示
+xlsx.toggle-phonetic	ふりがなの表示/非表示
 xlsx.phonetic-edit	ふりがなの編集…
 fix.phonetic.edit-furigana	ふりがなの編集
 fix.phonetic.furigana	ふりがな

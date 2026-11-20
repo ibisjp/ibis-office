@@ -27,12 +27,14 @@ ibis-office-pptx.workspace = true
 ibis-office-docx.workspace = true
 # The workbook screen (XLSX), a crate of its own (tasks/doc/crate-split-plan.md, 16).
 ibis-office-xlsx.workspace = true
+ibis-office-pdf = { path = "../ibis-office-pdf" }
 # `#[editor_ext]`: the methods a format writes for the editor become extension traits (tasks/doc/crate-split-plan.md, 10).
 ibis-office-macros.workspace = true
 ibis-doc-model.workspace = true
 # ICC profiles for CMYK colours (pure Rust; BSD-3-Clause OR Apache-2.0; also in the tree through `image`).
 moxcms = "0.8"
-ibis-pptx.workspace = true
+ibis-formats.workspace = true
+ibis-odf.workspace = true
 ibis-emf.workspace = true
 ibis-eot.workspace = true
 gpui-kit.workspace = true
@@ -60,7 +62,7 @@ zune-core = { version = "=0.4.12", optional = true }
 # Without its text shaping (the export hands it positioned glyphs); its
 # images feature is what takes pixels, and rayon (already a dependency of
 # the workspace) writes pages and fonts on several threads.
-krilla = { version = "=0.8.2", default-features = false, features = ["raster-images", "rayon"], optional = true }
+krilla = { version = "=0.8.2", default-features = false, features = ["raster-images"], optional = true }
 # The characters of the glyphs embedded, from the fonts' cmaps (the version
 # krilla uses; MIT OR Apache-2.0).
 skrifa = { version = "=0.42.1", optional = true }
@@ -73,7 +75,11 @@ usvg = { version = "=0.46.0", default-features = false, features = ["text", "sys
 
 # Automatic update (shell/update.rs): the log, paths and versions it shares with ibisOfficeUpdater.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+# Pages and fonts written on several threads (the browser has none: see the wasm table's krilla).
+krilla = { version = "=0.8.2", default-features = false, features = ["raster-images", "rayon"], optional = true }
 ibis-office-updater = { path = "../ibis-office-updater" }
+# `ibisOffice --mcp`: the MCP server on standard input and output (GitHub issue #159; ibisOffice-mcp is the same for Windows, whose GUI exe has none).
+ibis-mcp.workspace = true
 # Another app changing an open file (shell/file_watch.rs): the operating system's file watcher (CC0-1.0; FSEvents, inotify,
 # ReadDirectoryChangesW). Already in the tree through gpui-component; futures' channel (MIT OR Apache-2.0) carries its events.
 notify = "7"
@@ -116,7 +122,20 @@ export = ["dep:gpui-pre-platform", "dep:gpui-pre-windows", "dep:gpui-pre-wgpu", 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui-pre-wgpu = { version = "=0.3.6", features = ["test-support"], optional = true }
 
+[target.'cfg(target_os = "android")'.dependencies]
+gpui-android = { path = "../gpui-android" }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+gpui-ios = { path = "../gpui-ios" }
+
 [target.'cfg(target_family = "wasm")'.dependencies]
+# The browser version's vector PDF (export.rs): the desktop's writer without its threads (one thread in the browser).
+krilla = { version = "=0.8.2", default-features = false, features = ["raster-images"] }
+subsetter = "=0.2.6"
+# The picture PDF of a printed deck's handouts (export.rs write_pdf); already in the tree through the png crate.
+miniz_oxide = "0.8"
+# GPUI's headless app (a window that only records what is painted): the fork's feature without the test harness' crates.
+gpui-pre = { version = "=0.3.6", features = ["headless-app"] }
 # Reading a fetched response's body (the art borders' pictures); the version
 # GPUI already uses.
 futures = { version = "0.3", default-features = false, features = ["std"] }

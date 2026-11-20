@@ -15,40 +15,37 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     ]
 }
 
-fn new_file(kind: ibis_pptx::Kind) -> Scenario {
+fn new_file(kind: ibis_formats::Kind) -> Scenario {
     let mut s = Scenario::start_view();
     s.update(|e, w, cx| e.new_file(kind, w, cx));
     s.quit_with_last_window();
     s
 }
 
-fn edit(s: &mut Scenario, kind: ibis_pptx::Kind) {
+fn edit(s: &mut Scenario, kind: ibis_formats::Kind) {
     match kind {
-        ibis_pptx::Kind::Document => {
+        ibis_formats::Kind::Pdf => unreachable!("a PDF is only viewed: the scenarios do not make one"),
+        ibis_formats::Kind::Document => {
             let (id, _) = s.paragraph(0);
             s.click_text(ibis_doc_model::FlowPos::new(id, 0));
             s.type_text("unsaved");
         }
-        ibis_pptx::Kind::Workbook => {
+        ibis_formats::Kind::Workbook => {
             s.click_cell("A1");
             // Do not commit the cell: quitting must catch pending typed input too.
             s.type_text("unsaved");
         }
-        ibis_pptx::Kind::Presentation => s.update(|e, _, cx| {
+        ibis_formats::Kind::Presentation => s.update(|e, _, cx| {
             let id = e.document.ids().new_shape_id();
             let frame = ibis_doc_model::EmuRect::new(0, 0, 914_400, 914_400);
-            e.execute(vec![ibis_doc_model::Command::InsertShape {
-                slide: e.current_slide,
-                index: 0,
-                shape: ibis_doc_model::Shape::text_box(id, frame, "unsaved"),
-            }], cx);
+            e.execute(vec![ibis_doc_model::Command::InsertShape { slide: e.current_slide, shapes: vec![(0, ibis_doc_model::Shape::text_box(id, frame, "unsaved"))] }], cx);
         }),
     }
     assert!(s.with(|e, _| e.is_dirty()));
 }
 
 fn unsaved_each_format() {
-    for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Document, ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let mut s = new_file(kind);
         assert!(s.with_app(|app| app.should_quit()), "{kind:?}: clean files permit native termination");
         assert_eq!(s.window_count(), 1, "the guard itself does not remove clean windows");
@@ -74,13 +71,13 @@ fn unsaved_each_format() {
 }
 
 fn save_existing_file() {
-    let mut s = new_file(ibis_pptx::Kind::Document);
+    let mut s = new_file(ibis_formats::Kind::Document);
     // Scenario::open copies an input into the scenario root. Save in a subdirectory so the
     // reopen step cannot copy the saved file onto itself (which would truncate its contents).
     let saved_dir = s.screenshot_path("saved");
     std::fs::create_dir_all(&saved_dir).unwrap();
     let path = s.save_as(saved_dir.join("native-quit.docx").to_str().unwrap());
-    edit(&mut s, ibis_pptx::Kind::Document);
+    edit(&mut s, ibis_formats::Kind::Document);
     assert!(!s.with_app(|app| app.should_quit()));
     s.settle();
     s.update(|e, w, cx| e.confirm_save_and_close(w, cx));
@@ -98,8 +95,8 @@ fn save_existing_file() {
 }
 
 fn multiple_windows() {
-    let mut s = new_file(ibis_pptx::Kind::Document);
-    edit(&mut s, ibis_pptx::Kind::Document);
+    let mut s = new_file(ibis_formats::Kind::Document);
+    edit(&mut s, ibis_formats::Kind::Document);
     // A clean start window must not hide the dirty editor when the OS asks to quit.
     s.with_app(|app| crate::open_editor(None, None, app));
     s.settle();

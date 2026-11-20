@@ -15,7 +15,7 @@ pub mod parser;
 
 pub use parser::{AreaRef, BinaryOp, Corner, Expr, MAX_COLUMN, MAX_ROW, ParseError, SheetRef, parse};
 
-use lexer::{Token, tokenize};
+use lexer::{Op, Token, tokenize};
 
 use crate::functions::table::function_info;
 
@@ -26,7 +26,7 @@ pub fn from_file(text: &str) -> String {
     if !text.contains("_xl") {
         return text.to_string();
     }
-    let text = &single_calls_to_implicit(&anchor_arrays_to_spills(text));
+    let text = &trim_calls_to_operators(&single_calls_to_implicit(&anchor_arrays_to_spills(text)));
     let Ok(tokens) = tokenize(text) else { return text.to_string() };
     let mut out = String::with_capacity(text.len());
     let mut at = 0;
@@ -92,7 +92,7 @@ pub fn strip_formula_spaces(formula: &str) -> String {
 /// need a prefix get it (`_xlfn.`, `_xlfn._xlws.`), and the parameters of
 /// LAMBDA and LET get `_xlpm.`.
 pub fn to_file(text: &str) -> String {
-    let text = &implicit_to_single_calls(&spills_to_anchor_arrays(text));
+    let text = &implicit_to_single_calls(&spills_to_anchor_arrays(&trim_operators_to_calls(text)));
     let Ok(tokens) = tokenize(text) else { return text.to_string() };
     let (params, optional) = lambda_parameters(&tokens);
     let mut out = String::with_capacity(text.len() + 8);
@@ -139,6 +139,92 @@ pub fn to_file(text: &str) -> String {
         }
     }
     out.push_str(&text[at..]);
+    out
+}
+
+/// The file spells the trim-reference operators as calls: `A.:.A` is `_xlfn._TRO_ALL(A:A)`, `A.:A` is `_xlfn._TRO_LEADING(A:A)`,
+/// `A:.A` is `_xlfn._TRO_TRAILING(A:A)` (what Excel writes; GitHub issue #258). The screen shows the operators.
+fn trim_calls_to_operators(text: &str) -> String {
+    let mut out = text.to_string();
+    loop {
+        let Ok(tokens) = tokenize(&out) else { return out };
+        let mut replacement = None;
+        for i in (0..tokens.len()).rev() {
+            let Token::Word(w) = &tokens[i].token else { continue };
+            let Some((op, mode)) = trim_call_kind(w) else { continue };
+            if tokens.get(i + 1).map(|t| &t.token) != Some(&Token::LParen) { continue; }
+            let mut depth = 0;
+            let mut colons = Vec::new();
+            let mut close = None;
+            for j in i + 1..tokens.len() {
+                match &tokens[j].token {
+                    Token::LParen | Token::LBrace => depth += 1,
+                    Token::RParen | Token::RBrace => {
+                        depth -= 1;
+                        if depth == 0 { close = Some(j); break; }
+                    }
+                    Token::Op(Op::Range) if depth == 1 => colons.push(j),
+                    Token::Comma if depth == 1 => { colons.clear(); colons.push(usize::MAX); }
+                    _ => {}
+                }
+            }
+            let Some(j) = close else { continue };
+            let inner = &out[tokens[i + 1].end..tokens[j].start];
+            let text_out = match colons.as_slice() {
+                [k] if *k != usize::MAX => {
+                    let (a, b) = (&out[tokens[i + 1].end..tokens[*k].start], &out[tokens[*k].end..tokens[j].start]);
+                    format!("{a}{op}{b}")
+                }
+                // Not a plain `a:b` (a name, a function's result): the same as TRIMRANGE with the two modes.
+                _ => format!("TRIMRANGE({inner},{mode},{mode})"),
+            };
+            replacement = Some((tokens[i].start, tokens[j].end, text_out));
+            break;
+        }
+        let Some((start, end, new)) = replacement else { return out };
+        out.replace_range(start..end, &new);
+    }
+}
+
+/// `_xlfn._TRO_ALL` and the others: the operator they stand for and the TRIMRANGE mode.
+fn trim_call_kind(word: &str) -> Option<(&'static str, u8)> {
+    match strip_prefixes(word).to_ascii_uppercase().as_str() {
+        "_TRO_ALL" => Some((".:.", 3)),
+        "_TRO_LEADING" => Some((".:", 1)),
+        "_TRO_TRAILING" => Some((":.", 2)),
+        _ => None,
+    }
+}
+
+/// Whether `text` has a trim reference operator (`.:.` `.:` `:.`) outside its strings: a file's formula never may (Excel cannot read it).
+pub fn has_trim_operator(text: &str) -> bool {
+    (text.contains(".:") || text.contains(":.")) && tokenize(text).map_or(true, |t| t.iter().any(|t| matches!(&t.token, Token::Op(Op::RangeTrimBoth | Op::RangeTrimStart | Op::RangeTrimEnd))))
+}
+
+/// The trim operators the user typed, as the calls the file has (the other direction of `trim_calls_to_operators`).
+fn trim_operators_to_calls(text: &str) -> String {
+    if !text.contains(":.") && !text.contains(".:") { return text.to_string(); }
+    let Ok(mut spans) = parser::trim_spans(text) else {
+        // Excel refuses these when typed, and cannot read the operator's characters in a file: never write them.
+        // A formula that does not parse and still has the operators is saved as the error it is.
+        let has_operator = tokenize(text).map_or(true, |t| t.iter().any(|t| matches!(&t.token, Token::Op(Op::RangeTrimBoth | Op::RangeTrimStart | Op::RangeTrimEnd))));
+        return if has_operator { "#NAME?".to_string() } else { text.to_string() };
+    };
+    spans.sort_by_key(|s| std::cmp::Reverse(s.0));
+    let mut out = text.to_string();
+    // From the last place to the first, so that the places before stay valid; a chain's inner operator is left as it is.
+    let mut done_from = usize::MAX;
+    for &(left, op_start, op_end, right, op) in &spans {
+        if right > done_from { continue; }
+        let name = match op {
+            Op::RangeTrimBoth => "_xlfn._TRO_ALL",
+            Op::RangeTrimStart => "_xlfn._TRO_LEADING",
+            _ => "_xlfn._TRO_TRAILING",
+        };
+        let new = format!("{name}({}:{})", &text[left..op_start], &text[op_end..right]);
+        out.replace_range(left..right, &new);
+        done_from = left;
+    }
     out
 }
 
@@ -991,6 +1077,57 @@ mod tests {
         assert_eq!(transpose("A1*2", 0, 1, 5, 4), "E5*2");
         assert_eq!(transpose("SUM($A$1:B1)", 0, 2, 5, 4), "SUM($A$1:E5)");
         assert_eq!(transpose("$A1+B$2", 3, 3, 3, 3), "A$1+$B2");
+    }
+
+    #[test]
+    fn trim_reference_operators_are_tro_calls_in_the_file_issue_258() {
+        for (shown, file) in [
+            ("A.:.A", "_xlfn._TRO_ALL(A:A)"),
+            ("A.:A", "_xlfn._TRO_LEADING(A:A)"),
+            ("A:.A", "_xlfn._TRO_TRAILING(A:A)"),
+            ("SUM(A1.:.B10)+1", "SUM(_xlfn._TRO_ALL(A1:B10))+1"),
+            ("Sheet1!A1:.A9", "_xlfn._TRO_TRAILING(Sheet1!A1:A9)"),
+            ("SUM(A1.:.B10,C1.:C5)", "SUM(_xlfn._TRO_ALL(A1:B10),_xlfn._TRO_LEADING(C1:C5))"),
+        ] {
+            assert_eq!(to_file(shown), file, "{shown}");
+            assert_eq!(from_file(file), shown, "{file}");
+        }
+        // Not a plain `a:b` inside: the same as TRIMRANGE.
+        assert_eq!(from_file("_xlfn._TRO_ALL(MyRange)"), "TRIMRANGE(MyRange,3,3)");
+        assert_eq!(to_file("TRIMRANGE(A:A)"), "_xlfn.TRIMRANGE(A:A)");
+    }
+
+    #[test]
+    fn trim_operators_follow_excel_precedence_and_ends_issue_258() {
+        // Measured with Excel (tasks/doc/requests/2026-11-19-258-trimref-result.md): what the file has for what was typed.
+        for (shown, file) in [
+            ("A.:.A", "_xlfn._TRO_ALL(A:A)"),
+            ("A1.:B10", "_xlfn._TRO_LEADING(A1:B10)"),
+            ("A1:.B10", "_xlfn._TRO_TRAILING(A1:B10)"),
+            ("Sheet1!A1.:.A10", "_xlfn._TRO_ALL(Sheet1!A1:A10)"),
+            ("A:B.:.C", "A:_xlfn._TRO_ALL(B:C)"),
+            ("A.:.A:B", "_xlfn._TRO_ALL(A:A):B"),
+            ("A:A.:.B:B", "A:_xlfn._TRO_ALL(A:B):B"),
+            ("A1.:.A10:B10", "_xlfn._TRO_ALL(A1:A10):B10"),
+            ("A.:.A B:B", "_xlfn._TRO_ALL(A:A) B:B"),
+            ("COUNT(A:A.:.B:B)", "COUNT(A:_xlfn._TRO_ALL(A:B):B)"),
+            ("SUM(A.:.A B.:.B)", "SUM(_xlfn._TRO_ALL(A:A) _xlfn._TRO_ALL(B:B))"),
+            ("A.:.A+1", "_xlfn._TRO_ALL(A:A)+1"),
+            ("ROWS(A:.A)", "ROWS(_xlfn._TRO_TRAILING(A:A))"),
+        ] {
+            assert_eq!(to_file(shown), file, "{shown}");
+            assert_eq!(from_file(file), shown, "{file}");
+        }
+        // Excel refuses these when typed (0x800A03EC): a function, a name, a range at an end, another trim.
+        for refused in [
+            "INDEX(A:A,1).:.A10", "A1.:.INDEX(A:A,10)", "INDEX(A1:A10,1).:.A10", "INDEX(A:A,1):.A10", "TrimNm.:.TrimNm",
+            "SUM(TrimNm.:.TrimNm)", "A1:A10.:.B10", "SUM(INDEX(B:B,1).:.B30)", "SUM(_xlfn._TRO_ALL(B1:B30).:.C30)", "A1.:.B1.:.C1",
+            "COUNT(B:B.:.C:C)", "COUNT(A:A.:.C:C)", "B:B.:.C:C",
+        ] {
+            assert!(parse(refused).is_err(), "{refused}");
+            let file = to_file(refused);
+            assert!(!file.contains(".:") && !file.contains(":."), "{refused} -> {file}");
+        }
     }
 
     #[test]

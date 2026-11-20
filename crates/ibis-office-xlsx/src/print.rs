@@ -74,7 +74,7 @@ impl SlideEditor {
             return;
         }
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetPrint { slide, print, area })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetPrint { sheet: slide, print, area })]) {
             log::warn!("page setup rejected: {err}");
         }
         cx.notify();
@@ -308,12 +308,18 @@ impl SlideEditor {
         // Printing makes a PDF; where there is no print dialog of the system to give it to, the PDF app prints it.
         #[cfg(not(target_os = "macos"))]
         let body = body.child(div().text_sm().text_color(rgb(0x5f6368)).child(crate::shell::i18n::text("xlsx.print-panel.note")));
-        let footer = crate::shell::chrome::action_bar()
-            .action(crate::shell::chrome::ActionDefinition::new("xlsx-print-apply", crate::shell::i18n::text("docx.print-panel.print"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|this, _, window, cx| {
+        let body = body.child(section("shell.print.cmyk-heading")).child(self.print_cmyk_section("xlsx-print", cx));
+        let footer = crate::shell::print_common::print_action_bar(
+            "xlsx-print",
+            crate::shell::i18n::text("docx.print-panel.print"),
+            cx.listener(|this, _, window, cx| {
+                this.keep_print_cmyk();
                 this.close_xlsx_print_panel(cx);
                 this.print_now(window, cx);
-            })))
-            .action(crate::shell::chrome::ActionDefinition::new("xlsx-print-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|this, _, _, cx| this.close_xlsx_print_panel(cx))));
+            }),
+            cx.listener(|this, _, _, cx| { this.keep_print_cmyk(); this.close_xlsx_print_panel(cx) }),
+            cx.listener(|this, _, _, cx| { this.cancel_print_cmyk(cx); this.close_xlsx_print_panel(cx) }),
+        );
         Some(SidebarPanel::with_footer(crate::shell::i18n::text("xlsx.print-panel.title"), body.into_any_element(), footer))
     }
 

@@ -77,7 +77,10 @@ pub fn register_hooks() {
             extra_images,
             underline_shapes,
         });
-        ibis_office_shell::app_hooks::register(ibis_office_shell::app_hooks::AppHooks { app_init: crate::init, drivers: crate::format_drivers::DRIVERS });
+        ibis_office_shell::app_hooks::register(ibis_office_shell::app_hooks::AppHooks { app_init: crate::init, drivers: crate::format_drivers::DRIVERS,
+            #[cfg(target_family = "wasm")]
+            web_pdf: crate::web_pdf::make,
+        });
         #[cfg(all(any(target_os = "macos", target_os = "windows"), feature = "export"))]
         ibis_office_xlsx::export_hooks::register(preview_pages);
     });
@@ -85,11 +88,11 @@ pub fn register_hooks() {
 
 #[cfg(test)]
 mod tests {
-    /// Every entry point calls `register_hooks`; after it the shell has its three drivers, and a second call changes nothing.
+    /// Every entry point calls `register_hooks`; after it the shell has its four drivers (presentation, workbook, document and the PDF viewer's, `format_drivers.rs`), and a second call changes nothing.
     #[test]
     fn registering_gives_the_shell_its_drivers() {
         super::register_hooks();
         super::register_hooks();
-        assert_eq!(crate::shell::format::drivers().len(), 3);
+        assert_eq!(crate::shell::format::drivers().len(), 4);
     }
 }

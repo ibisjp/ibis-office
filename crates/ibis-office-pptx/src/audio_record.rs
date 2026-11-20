@@ -117,7 +117,7 @@ impl SlideEditor {
             name.trim().to_string()
         };
         let wav_data = generate_recorded_wav(duration_secs);
-        let (poster, _, _) = ibis_pptx::clip_poster(true, 1.0);
+        let (poster, _, _) = ibis_formats::clip_poster(true, 1.0);
         let size = self.presentation().size_of(self.slide());
         let (w, h) = (914_400, 914_400);
         let frame = EmuRect::new(size.width / 20, size.height - h - size.height / 20, w, h);
@@ -150,7 +150,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
         self.run(vec![
-            Command::InsertShape { slide, index, shape },
+            Command::InsertShape { slide, shapes: vec![(index, shape)] },
             Command::SetShapeName { slide, shape: id, name: clean_name.clone() },
             Command::SetAspectLocked { slide, shape: id, locked: true },
         ], cx);

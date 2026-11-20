@@ -10,6 +10,7 @@ pub use ibis_office_base::settings::{get, remove, set};
 /// Run once at application initialization, before any settings are consumed.
 /// Keep the old version until every migration succeeds.
 pub fn migrate_on_startup() {
+    ibis_office_base::settings::migrate_legacy_keys();
     let previous=get("app.last-started-version");
     let current=env!("IBIS_VERSION");
     migrate(previous.as_deref(),current);

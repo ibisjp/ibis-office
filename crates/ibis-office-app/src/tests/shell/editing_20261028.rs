@@ -31,7 +31,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 }
 fn workbook() -> Scenario {
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     s
 }
 fn empty_bar() {
@@ -74,7 +74,7 @@ fn empty_bar() {
 fn ruby() {
     let _probe = buttons::Probe::new();
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Document, w, cx));
     s.type_text("Ruby");
     s.key("cmd-a");
     s.menu("docx.text.ruby");
@@ -84,7 +84,7 @@ fn ruby() {
     s.screenshot("ruby-applied");
 }
 fn shape_click() {
-    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let mut s = Scenario::start_view();
         s.update(|e, w, cx| {
             e.new_file(kind, w, cx);
@@ -93,15 +93,11 @@ fn shape_click() {
             let commands = [1000000, 3500000]
                 .into_iter()
                 .enumerate()
-                .map(|(i, x)| Command::InsertShape {
-                    slide: e.current_slide,
-                    index: first + i,
-                    shape: Shape::text_box(
+                .map(|(i, x)| Command::InsertShape { slide: e.current_slide, shapes: vec![(first + i, Shape::text_box(
                         e.document.ids().new_shape_id(),
                         EmuRect::new(x, 1000000, 1500000, 800000),
                         "Text",
-                    ),
-                })
+                    ))] })
                 .collect();
             e.run(commands, cx);
             e.set_selection(Vec::new());
@@ -109,7 +105,7 @@ fn shape_click() {
         let indices = s.with(|e, _| (e.slide().shapes.len() - 2, e.slide().shapes.len() - 1));
         s.click_shape(indices.0);
         assert!(
-            s.with(|e, _| if kind == ibis_pptx::Kind::Workbook {
+            s.with(|e, _| if kind == ibis_formats::Kind::Workbook {
                 e.editing.is_some()
             } else {
                 e.text_editing().is_some()
@@ -158,7 +154,7 @@ fn shape_click() {
 }
 fn docx_click() {
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Document, w, cx));
     let (p, _) = s.paragraph(0);
     s.update(|e, _, cx| {
         let commands = [1000000, 4000000]
@@ -322,8 +318,8 @@ fn headers() {
             last_column: 2,
         };
         (
-            ibis_pptx::preferred_series_columns(e.presentation(), sheet, r),
-            ibis_pptx::refs_for_range(e.presentation(), sheet, r, true).unwrap(),
+            ibis_formats::preferred_series_columns(e.presentation(), sheet, r),
+            ibis_formats::refs_for_range(e.presentation(), sheet, r, true).unwrap(),
         )
     });
     assert!(by);
@@ -356,10 +352,10 @@ fn workspace_crop(s: &mut Scenario, path: std::path::PathBuf) -> image::RgbImage
     .to_image()
 }
 fn blink() {
-    for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook] {
+    for kind in [ibis_formats::Kind::Document, ibis_formats::Kind::Workbook] {
         let mut s = Scenario::start_view();
         s.update(|e, w, cx| e.new_file(kind, w, cx));
-        if kind == ibis_pptx::Kind::Workbook {
+        if kind == ibis_formats::Kind::Workbook {
             s.click_cell("A1");
         }
         s.type_text("Blink");
@@ -449,7 +445,7 @@ fn segment_motion() {
 fn insert_text() {
     let mut s = Scenario::start_view();
     s.update(|e, w, cx| {
-        e.new_file(ibis_pptx::Kind::Document, w, cx);
+        e.new_file(ibis_formats::Kind::Document, w, cx);
         e.doc_insert_text_box(w, cx);
     });
     assert!(s.with(|e, _| e.doc_state().unwrap().box_edit.is_some()));
@@ -460,18 +456,21 @@ fn insert_text() {
             .is_some_and(|b| b.text().contains("Inserted"))
     }));
     drop(s);
-    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let mut s = Scenario::start_view();
         s.update(|e, w, cx| {
             e.new_file(kind, w, cx);
         });
         s.menu("insert.text-box");
-        if kind == ibis_pptx::Kind::Presentation {
-            let at=s.with(|e,_|{let layout=e.slide_layout().unwrap();(f32::from(layout.origin.x)+150.,f32::from(layout.origin.y)+150.)});
-            s.drag(at,(at.0+140.,at.1+70.));
-        }
+        // The insert mode (K0035 on the sheet): the drag on the page makes the box.
+        let at = if kind == ibis_formats::Kind::Presentation {
+            s.with(|e,_|{let layout=e.slide_layout().unwrap();(f32::from(layout.origin.x)+150.,f32::from(layout.origin.y)+150.)})
+        } else {
+            (500., 400.)
+        };
+        s.drag(at,(at.0+140.,at.1+70.));
         assert!(
-            s.with(|e, _| if kind == ibis_pptx::Kind::Workbook {
+            s.with(|e, _| if kind == ibis_formats::Kind::Workbook {
                 e.editing.is_some()
             } else {
                 e.text_editing().is_some()
@@ -521,21 +520,17 @@ fn live_handles() {
     let _probe = buttons::Probe::new();
     let mut s = Scenario::start_view();
     s.update(|e, w, cx| {
-        e.new_file(ibis_pptx::Kind::Presentation, w, cx);
+        e.new_file(ibis_formats::Kind::Presentation, w, cx);
         e.zoom=Some(1.);
         let first = e.slide().shapes.len();
         let commands = [1000000, 3500000]
             .into_iter()
             .enumerate()
-            .map(|(i, x)| Command::InsertShape {
-                slide: e.current_slide,
-                index: first + i,
-                shape: Shape::text_box(
+            .map(|(i, x)| Command::InsertShape { slide: e.current_slide, shapes: vec![(first + i, Shape::text_box(
                     e.document.ids().new_shape_id(),
                     EmuRect::new(x, 1000000, 1500000, 800000),
                     "Text",
-                ),
-            })
+                ))] })
             .collect();
         e.run(commands, cx);
         e.set_selection(Vec::new());
@@ -577,14 +572,14 @@ fn live_handles() {
 /// K0015: while a shape's text is edited, the hand cursor and the press share one test (`selection_handles::on_border`).
 /// A press within its band (1 to 2.5 px outside the frame) drags the shape; a press well outside does not move it.
 fn frame_band_press() {
-    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let mut s = Scenario::start_view();
         let index = s.update(|e, w, cx| {
             e.new_file(kind, w, cx);
             e.zoom = Some(1.);
             let index = e.slide().shapes.len();
             let shape = Shape::text_box(e.document.ids().new_shape_id(), EmuRect::new(2000000, 3000000, 2400000, 1200000), "Text");
-            e.run(vec![Command::InsertShape { slide: e.current_slide, index, shape }], cx);
+            e.run(vec![Command::InsertShape { slide: e.current_slide, shapes: vec![(index, shape)] }], cx);
             e.set_selection(Vec::new());
             index
         });
@@ -611,7 +606,7 @@ fn frame_band_press() {
 /// K0015, document screen: a floating text box that is selected (its handles shown) is dragged by a press 1 to 2.5 px outside its frame.
 fn docx_frame_band_press() {
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Document, w, cx));
     let (p, _) = s.paragraph(0);
     s.update(|e, _, cx| {
         let mut shape = Shape::text_box(e.document.ids().new_shape_id(), EmuRect::new(0, 0, 2000000, 1000000), "Text");
@@ -650,14 +645,14 @@ fn docx_frame_band_press() {
 /// rectangle) opens the shape's menu: the shape stays selected (it is not given up for the sheet or slide menu) and an edited
 /// text is left (it is not the text's menu).
 fn frame_band_right_click() {
-    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let mut s = Scenario::start_view();
         let index = s.update(|e, w, cx| {
             e.new_file(kind, w, cx);
             e.zoom = Some(1.);
             let index = e.slide().shapes.len();
             let shape = Shape::text_box(e.document.ids().new_shape_id(), EmuRect::new(2000000, 3000000, 2400000, 1200000), "Text");
-            e.run(vec![Command::InsertShape { slide: e.current_slide, index, shape }], cx);
+            e.run(vec![Command::InsertShape { slide: e.current_slide, shapes: vec![(index, shape)] }], cx);
             e.set_selection(Vec::new());
             index
         });

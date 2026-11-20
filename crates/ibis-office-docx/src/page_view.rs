@@ -66,7 +66,15 @@ pub fn page_element(document: &Arc<FlowDocument>, index: usize, frame: EmuRect, 
                     .edited_box
                     .as_ref()
                     .and_then(|(id, pos, _)| (*id == shape.id).then(|| pos.clone()));
-                let elem = crate::render::shape_view::shape_element_with_positions(shape, s_frame, scale, res, None, positions.as_ref());
+                // A text box with a link: where its text is painted is kept, for the link's place in a PDF.
+                let for_links = (positions.is_none() && crate::render::shape_view::recording_links())
+                    .then(|| shape.text_body().filter(|b| b.paragraphs.iter().any(|p| p.runs.iter().any(|r| r.style.link.is_some()))))
+                    .flatten()
+                    .map(|body| (body.clone(), crate::render::rich_text::TextPositions::default()));
+                let elem = crate::render::shape_view::shape_element_with_positions(shape, s_frame, scale, res, None, positions.as_ref().or(for_links.as_ref().map(|(_, p)| p)));
+                if let Some((body, pos)) = for_links {
+                    crate::render::shape_view::record_text_box(body, pos);
+                }
                 let is_behind = shape.floating.as_ref().map_or(false, |f| f.behind_doc);
                 if is_behind {
                     behind_pictures.push(fade_element(elem.into_any_element()));
@@ -218,7 +226,24 @@ pub fn page_element(document: &Arc<FlowDocument>, index: usize, frame: EmuRect, 
                                 {
                                     origin.x += px(size_px / 4.0) - (ink.origin.x + ink.size.width / 2.0);
                                 }
-                                shaped.paint(origin, shaped.ascent + shaped.descent, TextAlign::Left, None, window, cx).ok();
+                                // A PDF being written copies this glyph as the character it was asked for, not as the character the font's cmap gives its glyph id
+                                // (a stand-in for a proportional typeface draws オ, （ and １ with the glyphs of ｵ, ( and 1, `palt` and `pwid`): the glyph is
+                                // painted where `paint` puts it and the character noted for it (`glyph_text`).
+                                if crate::render::glyph_text::recording()
+                                    && s.chars().count() == 1
+                                    && font.features.tag_value_list().iter().any(|(tag, value)| tag == "palt" && *value == 1)
+                                    && shaped.runs.iter().all(|r| r.glyphs.iter().all(|g| !g.is_emoji))
+                                {
+                                    for r in &shaped.runs {
+                                        for g in &r.glyphs {
+                                            let at = point(origin.x + g.position.x, origin.y + shaped.ascent + g.position.y);
+                                            crate::render::glyph_text::note(r.font_id, g.id, at, c);
+                                            let _ = window.paint_glyph(at, r.font_id, g.id, px(size_px), *color);
+                                        }
+                                    }
+                                } else {
+                                    shaped.paint(origin, shaped.ascent + shaped.descent, TextAlign::Left, None, window, cx).ok();
+                                }
                             }
                         }
                         Item::Turned { x, y, text, font, size: font_size, color, turns, xscale } => {
@@ -240,6 +265,9 @@ pub fn page_element(document: &Arc<FlowDocument>, index: usize, frame: EmuRect, 
                                         .rotate(Radians(angle))
                                         .scale(size(*xscale, 1.0))
                                         .translate(point(ScaledPixels(-pivot.x.0), ScaledPixels(-pivot.y.0)));
+                                    if let Some(c) = text.get(glyph.index..).and_then(|t| t.chars().next()) {
+                                        crate::render::glyph_text::note(r.font_id, glyph.id, turned, c);
+                                    }
                                     let _ = window.paint_glyph_transformed(turned, r.font_id, glyph.id, px(font_size * k), *color, transformation);
                                 }
                             }
@@ -260,6 +288,9 @@ pub fn page_element(document: &Arc<FlowDocument>, index: usize, frame: EmuRect, 
                                         .translate(pivot)
                                         .scale(size(*xscale, 1.0))
                                         .translate(point(ScaledPixels(-pivot.x.0), ScaledPixels(-pivot.y.0)));
+                                    if let Some(c) = text.get(glyph.index..).and_then(|t| t.chars().next()) {
+                                        crate::render::glyph_text::note(r.font_id, glyph.id, at, c);
+                                    }
                                     let _ = window.paint_glyph_transformed(at, r.font_id, glyph.id, px(font_size * k), *color, transformation);
                                 }
                             }

@@ -1,0 +1,17 @@
+[package]
+name = "ibis-pdf"
+description = "Lossless PDF container, revision history, incremental update, signature record inspection, and viewer scene model for ibisOffice."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+miniz_oxide = "0.8"
+sha2 = "0.10"
+hayro-interpret = { version = "0.7", features = ["embed-fonts", "embed-cmaps"], optional = true }
+kurbo = { version = "0.13", optional = true }
+
+[features]
+default = []
+interpret = ["dep:hayro-interpret", "dep:kurbo"]

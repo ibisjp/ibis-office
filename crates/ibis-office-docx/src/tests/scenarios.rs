@@ -405,6 +405,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::form016_018_legacy_form_fields", form016_018_legacy_form_fields),
         ("docx::sec014_print_markup", sec014_print_markup),
         ("docx::para019_drop_cap", para019_drop_cap),
+        ("docx::issue191_drop_cap_is_saved_in_words_form", drop_cap_word_form),
         ("docx::shape001_align_text", shape001_align_text),
         ("docx::design002_theme_fonts", design002_theme_fonts),
         ("docx::design003_set_as_default", design003_set_as_default),
@@ -451,7 +452,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     all.extend(issues116_117::all());
     #[cfg(target_os = "macos")]
     all.extend(super::corpus_report::all());
-    all.into_iter().chain(super::typeset68::all()).chain(super::fallback_carry::all()).chain(super::crop_mode::all()).chain(super::tate_chu_yoko_layout_tests::all()).chain(super::vertical_underline_tests::all()).chain(super::shy_hang_tests::all()).chain(super::kinsoku_across_space_tests::all()).chain(super::math_color_tests::all()).chain(super::autospace_letters_tests::all()).chain(super::ms_fixed_advance_tests::all()).chain(super::deleted_marks_tests::all()).chain(super::ivs_tests::all()).collect()
+    all.into_iter().chain(super::typeset68::all()).chain(super::fallback_carry::all()).chain(super::crop_mode::all()).chain(super::tate_chu_yoko_layout_tests::all()).chain(super::vertical_underline_tests::all()).chain(super::shy_hang_tests::all()).chain(super::kinsoku_across_space_tests::all()).chain(super::math_color_tests::all()).chain(super::autospace_letters_tests::all()).chain(super::ms_fixed_advance_tests::all()).chain(super::deleted_marks_tests::all()).chain(super::ivs_tests::all()).chain(super::issue178_tests::all()).chain(super::issue179_tests::all()).chain(super::issue223_tests::all()).chain(super::issue180_tests::all()).chain(super::issue188_tests::all()).chain(super::issue191_tests::all()).chain(super::issue192_tests::all()).chain(super::issue193_tests::all()).chain(super::issue196_tests::all()).chain(super::squeeze_share_tests::all()).chain(super::issue54_punct_tests::all()).chain(super::issue200_tests::all()).chain(super::issue228_tests::all()).chain(super::issue234_tests::all()).chain(super::issue204_tests::all()).chain(super::issue54_pitch_tests::all()).chain(super::issue192_script_tests::all()).chain(super::issue54_mark_room_tests::all()).chain(super::issue54_meiryo_tests::all()).chain(super::issue179_180_rest_tests::all()).chain(super::issue157_fonts_tests::all()).chain(super::issue179_multiple_tests::all()).chain(super::justify_squeeze_tests::all()).collect()
 }
 
 /// The paragraphs directly in the body.
@@ -533,7 +534,7 @@ fn para(doc: &FlowDocument, id: u32) -> &FlowParagraph {
 }
 
 /// The first body paragraph of plain text at least `min` long, by index.
-fn text_paragraph(s: &mut Scenario, min: usize) -> (usize, u32, String) {
+pub(super) fn text_paragraph(s: &mut Scenario, min: usize) -> (usize, u32, String) {
     let doc = s.document();
     let (i, p) = body(&doc).into_iter().enumerate().find(|(_, p)| p.len() >= min && !p.text().contains('\u{fffc}') && p.list.is_none()).expect("a paragraph of text");
     (i, p.id, p.text())
@@ -763,7 +764,7 @@ fn f1_macro_file() {
     let root = crate::shell::scenario::repo_root();
     let input = root.join("target/scenario-input/docx-macro.docm");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
-    std::fs::write(&input, ibis_pptx::test_files::docx_with_macros(&std::fs::read(root.join(REPORT)).unwrap(), b"VBA bytes kept as they are")).unwrap();
+    std::fs::write(&input, ibis_formats::test_files::docx_with_macros(&std::fs::read(root.join(REPORT)).unwrap(), b"VBA bytes kept as they are")).unwrap();
     let mut s = Scenario::open("target/scenario-input/docx-macro.docm");
     assert!(s.with(|e, _| e.status.as_ref().is_some_and(|t| t.contains("マクロは実行されません"))));
     let (_, id, _) = text_paragraph(&mut s, 6);
@@ -773,9 +774,9 @@ fn f1_macro_file() {
     let path = s.with(|e, _| e.path.clone()).unwrap();
     assert_eq!(path.extension().unwrap(), "docm");
     let saved = std::fs::read(&path).unwrap();
-    assert_eq!(ibis_pptx::test_files::part_bytes(&saved, "word/vbaProject.bin").unwrap(), b"VBA bytes kept as they are");
-    assert!(ibis_pptx::test_files::part_text(&saved, "[Content_Types].xml").unwrap().contains("macroEnabled.main+xml"));
-    let reread = ibis_pptx::read(&saved).unwrap();
+    assert_eq!(ibis_formats::test_files::part_bytes(&saved, "word/vbaProject.bin").unwrap(), b"VBA bytes kept as they are");
+    assert!(ibis_formats::test_files::part_text(&saved, "[Content_Types].xml").unwrap().contains("macroEnabled.main+xml"));
+    let reread = ibis_formats::read(&saved).unwrap();
     assert!(ibis_doc_model::flow_command::paragraph(flow(&reread), id).unwrap().text().contains("追記"));
 }
 
@@ -787,7 +788,7 @@ fn f1_macro_file() {
 /// options are saved.
 fn c4_table_style_options() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_styled_table(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_styled_table(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-styled-table.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -801,12 +802,12 @@ fn c4_table_style_options() {
     // The caret in the table; the heading row off: the bands start at the top.
     let first = match &t.rows[1].cells[0].blocks[0] { Block::Paragraph(p) => p.id, _ => unreachable!() };
     s.click_text(FlowPos::new(first, 0));
-    s.menu("docx.table.look.first-row");
+    s.menu("table.header-row");
     let t = table(&s.document());
     assert_eq!(fills(&t), vec![Some(0xE2EFDA), None, Some(0xE2EFDA)]);
     assert!(!bold(&t));
     // The bands off too.
-    s.menu("docx.table.look.row-bands");
+    s.menu("table.banded-rows");
     assert_eq!(fills(&table(&s.document())), vec![None, None, None]);
     s.screenshot("options-off");
     s.save_as("c4.docx");
@@ -821,7 +822,7 @@ fn c4_table_style_options() {
 /// one, a line between them; saved unchanged, the same file.
 fn h6_columns() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_two_columns(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_two_columns(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-columns.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -849,7 +850,7 @@ fn h6_columns() {
 
 fn h6_page_count_fields() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_page_count_footer(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_page_count_footer(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-page-count.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -952,7 +953,7 @@ fn i8_english_ui() {
             for entry in entries {
                 match entry {
                     MenuEntry::Item(i) => {
-                        let own = ["docx.font.", "docx.style.doc.", "docx.cstyle.", "docx.xref.", "docx.date.0", "docx.date.1", "docx.date.2", "docx.date.3", "docx.date.4", "docx.date.5", "docx.date.6", "docx.date.7", "file.recent.", "window.open."].iter().any(|p| i.id.starts_with(p));
+                        let own = ["docx.font.", "docx.style.doc.", "docx.cstyle.", "docx.cross-reference.", "docx.date.0", "docx.date.1", "docx.date.2", "docx.date.3", "docx.date.4", "docx.date.5", "docx.date.6", "docx.date.7", "file.recent.", "window.open."].iter().any(|p| i.id.starts_with(p));
                         if !own {
                             out.push(format!("{}={}", i.id, i18n::text(&i.label)));
                         }
@@ -1205,7 +1206,7 @@ fn f1_save_a_copy() {
     s.with(|e, _| e.copy_to(&copy)).unwrap();
     assert_eq!(s.with(|e, _| e.path.clone()), Some(own.clone()));
     assert_eq!(std::fs::read(&own).unwrap(), original, "the file itself is not saved");
-    let copied = ibis_pptx::read(&std::fs::read(&copy).unwrap()).unwrap();
+    let copied = ibis_formats::read(&std::fs::read(&copy).unwrap()).unwrap();
     assert!(ibis_doc_model::flow_command::paragraph(flow(&copied), id).is_some_and(|p| p.text().contains("コピー")));
 }
 
@@ -1597,7 +1598,7 @@ fn a2_table_of_contents() {
     let chapter2 = find(&s.document(), "第2章 計画").expect("the heading");
     // The table of contents at the document's start.
     s.key("cmd-up");
-    s.menu("docx.toc");
+    s.menu("docx.table-of-contents");
     let toc = |doc: &FlowDocument| -> Vec<(u32, String)> {
         let ps = body(doc);
         let start = ps.iter().position(|p| p.field_start.is_some()).expect("a table of contents");
@@ -1638,10 +1639,10 @@ fn a2_table_of_contents() {
     // The heading changed, the table updated.
     s.key("end");
     s.type_text("の実行");
-    s.menu("docx.toc.update-entire-table");
+    s.menu("docx.table-of-contents.update-entire-table");
     assert!(toc(&s.document()).iter().any(|(_, t)| t.starts_with("第2章 計画の実行")));
     // Headings 1 to 2 only.
-    s.menu("docx.toc.levels-2");
+    s.menu("docx.table-of-contents.levels-2");
     let entries = toc(&s.document());
     assert!(!entries.iter().any(|(_, t)| t.starts_with("1.1.1 背景")), "{entries:?}");
     assert!(entries.iter().any(|(_, t)| t.starts_with("1.1 目的")));
@@ -1679,7 +1680,7 @@ fn h3_changing_a_style() {
         }
     }
     s.key("cmd-up");
-    s.menu("docx.toc");
+    s.menu("docx.table-of-contents");
     let find = |doc: &FlowDocument, text: &str| body(doc).iter().rev().find(|p| p.text() == text).map(|p| p.id).expect("the heading");
     let doc = s.document();
     let (h1, h2, plain) = (find(&doc, "第1章 概要"), find(&doc, "第2章 計画"), find(&doc, "本文の段落"));
@@ -1921,7 +1922,7 @@ fn h1_numbered_headings_and_contents() {
     let want = |parts: &[&str]| -> Vec<String> { parts.iter().map(|p| p.replace("N1", &(n + 1).to_string()).replace('N', &n.to_string())).collect() };
     assert_eq!(got, want(&["N", "N.1", "N.1.1", "N.2", "N1"]));
     s.key("cmd-up");
-    s.menu("docx.toc");
+    s.menu("docx.table-of-contents");
     let entries = |doc: &FlowDocument| -> Vec<String> {
         let ps = body(doc);
         let start = ps.iter().position(|p| p.field_start.as_deref().is_some_and(|f| f.contains("TOC"))).expect("a table of contents");
@@ -1941,7 +1942,7 @@ fn h1_numbered_headings_and_contents() {
     s.toolbar_menu("style", "docx.style.heading2");
     assert_eq!(label_of(&s.document(), "範囲"), want(&["N.2"])[0]);
     assert_eq!(label_of(&s.document(), "計画"), want(&["N.3"])[0]);
-    s.menu("docx.toc.update-entire-table");
+    s.menu("docx.table-of-contents.update-entire-table");
     let toc = entries(&s.document());
     let (range, plan) = (want(&["N.2 範囲"]).remove(0), want(&["N.3 計画"]).remove(0));
     assert!(toc.contains(&range) && toc.contains(&plan), "{toc:?}");
@@ -1953,7 +1954,7 @@ fn h1_numbered_headings_and_contents() {
     s.toolbar_menu("style", "docx.style.heading3");
     assert_eq!(label_of(&s.document(), "詳細"), want(&["N.2.1"])[0]);
     assert_eq!(label_of(&s.document(), "計画"), want(&["N.3"])[0]);
-    s.menu("docx.toc.update-entire-table");
+    s.menu("docx.table-of-contents.update-entire-table");
     let toc = entries(&s.document());
     let detail = want(&["N.2.1 詳細"]).remove(0);
     assert!(toc.contains(&detail), "{detail} in {toc:?}");
@@ -1970,7 +1971,7 @@ fn h1_numbered_headings_and_contents() {
 /// 分離しない and 段落を分割しない switched; saved and read back.
 fn h8_headings_and_page_breaks() {
     let mut s = Scenario::open(REPORT);
-    s.menu("docx.toc");
+    s.menu("docx.table-of-contents");
     let page_of = |s: &mut Scenario, id: u32| s.with(|e, _| e.flow_lines().iter().find(|l| l.para == id).map(|l| l.page)).unwrap();
     // A heading after the first, on the same page as the one before it.
     let doc = s.document();
@@ -1985,22 +1986,22 @@ fn h8_headings_and_page_breaks() {
     };
     let shown_before = toc_page(&s.document(), &text);
     s.click_text(FlowPos::new(id, 0));
-    assert_eq!(s.menu_state("docx.para.page-break-before"), Some((true, false)));
-    s.menu("docx.para.page-break-before");
-    assert_eq!(s.menu_state("docx.para.page-break-before"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.paragraph.page-break-before"), Some((true, false)));
+    s.menu("docx.paragraph.page-break-before");
+    assert_eq!(s.menu_state("docx.paragraph.page-break-before"), Some((true, true)));
     assert_eq!(page_of(&mut s, id), before + 1, "the heading starts the next page");
-    s.menu("docx.toc.update-entire-table");
+    s.menu("docx.table-of-contents.update-entire-table");
     let shown = toc_page(&s.document(), &text);
     assert_eq!(shown.parse::<u32>().unwrap(), shown_before.parse::<u32>().unwrap() + 1, "the table of contents shows the new page");
     s.screenshot("page-break-before");
     // The heading's keep with next (from its style) off, and kept whole.
     let id = s.with(|e, _| body(flow(e.presentation())).iter().find(|p| p.text() == text && p.field_start.is_none() && !p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::PageRef { .. }))).map(|p| p.id)).unwrap();
     s.click_text(FlowPos::new(id, 0));
-    let keep = s.menu_state("docx.para.keep-next").unwrap().1;
-    s.menu("docx.para.keep-next");
-    assert_eq!(s.menu_state("docx.para.keep-next").map(|m| m.1), Some(!keep));
-    let whole = s.menu_state("docx.para.keep-lines").unwrap().1;
-    s.menu("docx.para.keep-lines");
+    let keep = s.menu_state("docx.paragraph.keep-next").unwrap().1;
+    s.menu("docx.paragraph.keep-next");
+    assert_eq!(s.menu_state("docx.paragraph.keep-next").map(|m| m.1), Some(!keep));
+    let whole = s.menu_state("docx.paragraph.keep-lines").unwrap().1;
+    s.menu("docx.paragraph.keep-lines");
     s.save_as("h8.docx");
     let saved = s.reopen();
     let p = body(flow(&saved)).into_iter().find(|p| p.text() == text && !p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::PageRef { .. }))).unwrap().clone();
@@ -2008,7 +2009,7 @@ fn h8_headings_and_page_breaks() {
     // One undo each.
     s.update(|e, window, cx| e.undo(&crate::Undo, window, cx));
     s.update(|e, window, cx| e.undo(&crate::Undo, window, cx));
-    assert_eq!(s.menu_state("docx.para.keep-next").map(|m| m.1), Some(keep));
+    assert_eq!(s.menu_state("docx.paragraph.keep-next").map(|m| m.1), Some(keep));
 }
 
 /// H13: a table changed (a new table, a row, a fill) → a picture inserted
@@ -2045,7 +2046,7 @@ fn h13_undo_edits_across_parts() {
 /// The report's photo (a PNG), for a picture to insert.
 fn report_png() -> Vec<u8> {
     let data = std::fs::read(crate::shell::scenario::repo_root().join(REPORT)).unwrap();
-    let p = ibis_pptx::read(&data).unwrap();
+    let p = ibis_formats::read(&data).unwrap();
     p.media.iter().find(|m| m.format == ibis_doc_model::MediaFormat::Png).map(|m| m.data.to_vec()).expect("a PNG in the report")
 }
 
@@ -2077,7 +2078,7 @@ fn h4_captions_and_cross_references() {
     s.key("enter");
     s.type_text("詳しくは");
     let xref_items = s.with(|e, _| ibis_doc_model::flow_command::captions(flow(e.presentation())).len());
-    s.menu(&format!("docx.xref.{xref_items}"));
+    s.menu(&format!("docx.cross-reference.{xref_items}"));
     s.type_text("を参照。");
     let reference = |doc: &FlowDocument| body(doc).iter().find(|p| p.text().starts_with("詳しくは")).map(|p| p.runs.iter().find_map(|r| if let FlowRunKind::Field { shown, .. } = &r.kind { Some(shown.clone()) } else { None }).unwrap_or_default()).unwrap();
     assert_eq!(reference(&s.document()), "図 2");
@@ -2186,7 +2187,7 @@ fn h6_sections_with_their_own_headers_and_numbers() {
 /// there still.
 fn h12_editing_around_complex_elements() {
     let root = crate::shell::scenario::repo_root();
-    let made = ibis_pptx::test_files::docx_with_complex_paragraph(&std::fs::read(root.join(REPORT)).unwrap());
+    let made = ibis_formats::test_files::docx_with_complex_paragraph(&std::fs::read(root.join(REPORT)).unwrap());
     let dir = root.join("target/scenario-input");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("docx-complex.docx"), &made).unwrap();
@@ -2212,8 +2213,8 @@ fn h12_editing_around_complex_elements() {
     s.screenshot("edited");
     let path = s.save_as("h12.docx");
     let saved = std::fs::read(&path).unwrap();
-    let xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
-    let original = ibis_pptx::test_files::part_text(&made, "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&saved, "word/document.xml").unwrap();
+    let original = ibis_formats::test_files::part_text(&made, "word/document.xml").unwrap();
     for tag in ["<w:commentRangeStart", "<w:commentRangeEnd", "<w:commentReference", "<w:ins ", "<w:del ", "<w:delText", "<w:footnoteReference", "<w:fldSimple"] {
         assert_eq!(xml.matches(tag).count(), original.matches(tag).count(), "{tag}");
     }
@@ -3209,7 +3210,7 @@ fn a6_character_spacing_and_scale() {
     s.key("cmd-shift-z");
     assert_eq!(s.document(), scaled_150);
     let f = s.save_as("a6-scale-150.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("w:w w:val=\"150\""));
     let saved = s.reopen();
     let p = body(flow(&saved)).into_iter().find(|p| p.text() == text).unwrap();
@@ -3222,7 +3223,7 @@ fn a6_character_spacing_and_scale() {
     let run = para(&scaled_200, id).runs.iter().find(|r| matches!(&r.kind, FlowRunKind::Text(t) if t == &selected)).unwrap();
     assert_eq!(run.style.scale, 200);
     let f = s.save_as("a6-scale-200.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("w:w w:val=\"200\""));
 
     // Reset scale to 100% (runs merge back, matching original before state)
@@ -3231,7 +3232,7 @@ fn a6_character_spacing_and_scale() {
     assert_eq!(para(&reset_scale, id), para(&before, id));
     assert_eq!(s.menu_state("docx.text.scale-100"), Some((true, true)));
     let f = s.save_as("a6-scale-reset.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
     assert!(!xml.contains("<w:w "));
     assert!(!xml.contains("<w:w/>"));
 
@@ -3255,7 +3256,7 @@ fn a6_character_spacing_and_scale() {
 
     // Save and reopen verification for spacing
     let f = s.save_as("a6-spacing-expand-1.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("w:spacing w:val=\"20\""));
     let saved = s.reopen();
     let p = body(flow(&saved)).into_iter().find(|p| p.text() == text).unwrap();
@@ -3269,7 +3270,7 @@ fn a6_character_spacing_and_scale() {
     assert_eq!(run.style.spacing, -6_350);
     assert_eq!(s.menu_state("docx.text.spacing-condense-05"), Some((true, true)));
     let f = s.save_as("a6-spacing-condense-05.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("w:spacing w:val=\"-10\""));
 
     // Reset spacing to normal (runs merge back, removing w:spacing element from XML)
@@ -3278,7 +3279,7 @@ fn a6_character_spacing_and_scale() {
     assert_eq!(para(&reset_spacing, id), para(&before, id));
     assert_eq!(s.menu_state("docx.text.spacing-normal"), Some((true, true)));
     let f = s.save_as("a6-spacing-reset.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&f).unwrap(), "word/document.xml").unwrap();
     assert!(!xml.contains("<w:spacing w:val="));
 
     // Pending formatting at caret (typing receives spacing and scale)
@@ -4023,7 +4024,7 @@ fn c4_text_to_table_and_back() {
 
 fn c4_complex_merge_rejected() {
     let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let data=ibis_pptx::test_files::docx_with_wrapped_cell_paragraph(&std::fs::read(root.join(REPORT)).unwrap());
+    let data=ibis_formats::test_files::docx_with_wrapped_cell_paragraph(&std::fs::read(root.join(REPORT)).unwrap());
     let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();
     let path=dir.join("docx-merge-wrapped.docx");std::fs::write(&path,&data).unwrap();
     let mut s=Scenario::open(path.to_str().unwrap());
@@ -4230,7 +4231,7 @@ fn c3_cell_vertical_alignment() {
     let center_path = s.save_as("b8-cell-valign-center.docx");
     assert_eq!(saved_cell(&mut s).anchor, CellAnchor::Center);
     let center_bytes = std::fs::read(center_path).unwrap();
-    let center_xml = ibis_pptx::test_files::part_text(&center_bytes, "word/document.xml").unwrap();
+    let center_xml = ibis_formats::test_files::part_text(&center_bytes, "word/document.xml").unwrap();
     assert!(center_xml.contains(r#"<w:vAlign w:val="center"/>"#));
 
     // Apply Bottom via toolbar_menu
@@ -4250,7 +4251,7 @@ fn c3_cell_vertical_alignment() {
     let bottom_path = s.save_as("b8-cell-valign-bottom.docx");
     assert_eq!(saved_cell(&mut s).anchor, CellAnchor::Bottom);
     let bottom_bytes = std::fs::read(bottom_path).unwrap();
-    let bottom_xml = ibis_pptx::test_files::part_text(&bottom_bytes, "word/document.xml").unwrap();
+    let bottom_xml = ibis_formats::test_files::part_text(&bottom_bytes, "word/document.xml").unwrap();
     assert!(bottom_xml.contains(r#"<w:vAlign w:val="bottom"/>"#));
 
     // Apply Top via toolbar_menu
@@ -4260,7 +4261,7 @@ fn c3_cell_vertical_alignment() {
     let top_path = s.save_as("b8-cell-valign-top.docx");
     assert_eq!(saved_cell(&mut s).anchor, CellAnchor::Top);
     let top_bytes = std::fs::read(top_path).unwrap();
-    let top_xml = ibis_pptx::test_files::part_text(&top_bytes, "word/document.xml").unwrap();
+    let top_xml = ibis_formats::test_files::part_text(&top_bytes, "word/document.xml").unwrap();
     assert!(!top_xml.contains(r#"<w:vAlign w:val="center"/>"#));
     assert!(!top_xml.contains(r#"<w:vAlign w:val="bottom"/>"#));
 }
@@ -4304,7 +4305,7 @@ fn c3_table_borders_and_margins() {
     // 4. Save and verify w:tblStyle and schema validation
     let saved_path = s.save_as("c3-table-inserted.docx");
     let saved_bytes = std::fs::read(&saved_path).unwrap();
-    let saved_xml = ibis_pptx::test_files::part_text(&saved_bytes, "word/document.xml").unwrap();
+    let saved_xml = ibis_formats::test_files::part_text(&saved_bytes, "word/document.xml").unwrap();
     assert!(saved_xml.contains("<w:tblStyle"));
 
     // 5. Undo restores original document byte-for-byte
@@ -4329,7 +4330,7 @@ fn c3_table_borders_and_margins() {
 
 fn c4_wrapped_split_preserved() {
     let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let data=ibis_pptx::test_files::docx_with_wrapped_spanned_cell(&std::fs::read(root.join(REPORT)).unwrap());
+    let data=ibis_formats::test_files::docx_with_wrapped_spanned_cell(&std::fs::read(root.join(REPORT)).unwrap());
     let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-split-wrapped.docx");std::fs::write(&path,&data).unwrap();
     let mut s=Scenario::open(path.to_str().unwrap());
     let before=s.document();let old=before.body.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();let c=&old.rows[0].cells[1];assert_eq!(c.span,2);
@@ -4341,7 +4342,7 @@ fn c4_wrapped_split_preserved() {
     s.key("cmd-shift-z");assert_eq!(s.document(),after);let path=s.save_as("c4-wrapped-split.docx");let saved=s.reopen();
     let t=flow(&saved).body.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();assert_eq!(t.rows[0].cells[1].span,1);
     assert!(t.rows[0].cells[2].blocks.iter().all(|b|matches!(b,Block::Paragraph(p) if p.is_empty())));
-    let original=ibis_pptx::test_files::part_text(&data,"word/document.xml").unwrap();let changed=ibis_pptx::test_files::part_text(&std::fs::read(path).unwrap(),"word/document.xml").unwrap();
+    let original=ibis_formats::test_files::part_text(&data,"word/document.xml").unwrap();let changed=ibis_formats::test_files::part_text(&std::fs::read(path).unwrap(),"word/document.xml").unwrap();
     let wrapped=original.split("<w:sdt>").nth(1).unwrap().split("</w:sdt>").next().unwrap();
     assert!(changed.contains(&format!("<w:sdt>{wrapped}</w:sdt>")));assert_eq!(changed.matches("<w:sdt>").count(),original.matches("<w:sdt>").count());
 }
@@ -4437,7 +4438,7 @@ fn a9_mixed_paragraph_decorations() {
 }
 
 fn a9_nested_table_decorations() {
-    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_formats::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());
     let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-decoration-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
     let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();
     s.menu("docx.paragraph.fill.green");let after=s.document();assert_eq!(s.menu_state("docx.paragraph.fill.green"),Some((true,true)));
@@ -4449,7 +4450,7 @@ fn a9_nested_table_decorations() {
 }
 
 fn a6_font_table_selection() {
-    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-font-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_formats::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-font-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
     let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.toolbar_menu("font","docx.font.custom");custom_font_field(&mut s,0,"Arial");font_apply(&mut s);let after=s.document();assert_ne!(after,before);
     let table=after.body.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();let nested=table.rows[0].cells[0].blocks.iter().find_map(|b|if let Block::Table(t)=b {Some(t)}else{None}).unwrap();
     for t in [table,nested] {for row in &t.rows {for cell in &row.cells {for block in &cell.blocks {if let Block::Paragraph(p)=block {assert_eq!(p.mark.font.as_deref(),Some("Arial"));for run in &p.runs {assert_eq!(run.style.font.as_deref(),Some("Arial"));}}}}}}
@@ -4461,7 +4462,7 @@ fn a6_font_table_selection() {
 
 fn a6_native_table_selection() {
     let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());
+    let data=ibis_formats::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());
     let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-native-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
     let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.key("cmd-b");let after=s.document();assert_ne!(after,before);
     fn check(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>{assert!(p.mark.bold);for run in &p.runs {assert!(run.style.bold);}},Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks);}}}}}
@@ -4474,7 +4475,7 @@ fn a6_native_table_selection() {
 }
 
 fn h9_table_format_rejection() {
-    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-track-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_formats::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-track-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
     s.menu("docx.track.record");let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.key("cmd-b");let after=s.document();
     fn check(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>for run in &p.runs {assert!(run.style.bold);assert!(matches!(run.revision.as_ref().map(|r|&r.kind),Some(ibis_doc_model::RevisionKind::Format(_))));},Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks);}}}}}
     check(&after.body);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("h9-table-format.docx");let saved=s.reopen();check(&flow(&saved).body);
@@ -4483,7 +4484,7 @@ fn h9_table_format_rejection() {
 }
 
 fn h9_table_font_rejection() {
-    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-track-font-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_formats::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-track-font-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
     s.menu("docx.track.record");let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.toolbar_menu("font","docx.font.custom");custom_font_field(&mut s,0,"Arial");custom_font_field(&mut s,1,"Yu Gothic");font_apply(&mut s);let after=s.document();
     fn check(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>for run in &p.runs {assert_eq!(run.style.font.as_deref(),Some("Arial"));assert_eq!(run.style.east_asian_font.as_deref(),Some("Yu Gothic"));assert!(matches!(run.revision.as_ref().map(|r|&r.kind),Some(ibis_doc_model::RevisionKind::Format(_))));},Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks);}}}}}
     check(&after.body);close_modal(&mut s);s.key("cmd-z");assert_eq!(s.document(),before);close_modal(&mut s);s.key("cmd-shift-z");assert_eq!(s.document(),after);s.save_as("h9-table-font.docx");let saved=s.reopen();check(&flow(&saved).body);
@@ -4492,7 +4493,7 @@ fn h9_table_font_rejection() {
 }
 
 fn a9_table_alignment_and_spacing() {
-    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-paragraph-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_formats::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-paragraph-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
     let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.key("cmd-e");let aligned=s.document();
     fn check(blocks:&[Block],line:bool) {for block in blocks {match block {Block::Paragraph(p)=>{assert_eq!(p.align,FlowAlign::Center);if line {assert_eq!(p.line,LineHeight::Auto(360));}},Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks,line);}}}}}check(&aligned.body,false);
     assert_eq!(aligned.header,before.header);assert_eq!(aligned.footer,before.footer);assert_eq!(aligned.styles,before.styles);
@@ -4503,7 +4504,7 @@ fn a9_table_alignment_and_spacing() {
 }
 
 fn a9_table_paragraph_details() {
-    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-details-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
+    let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");let data=ibis_formats::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let dir=root.join("target/scenario-fixtures");std::fs::create_dir_all(&dir).unwrap();let path=dir.join("docx-details-nested.docx");std::fs::write(&path,&data).unwrap();let mut s=Scenario::open(path.to_str().unwrap());
     let first=body(&s.document()).into_iter().find(|p|!p.is_empty()).unwrap().id;s.click_text(FlowPos::new(first,0));s.key("cmd-a");let before=s.document();s.menu("docx.paragraph.details");paragraph_rule(&mut s,super::paragraph_panel::LineRule::Multiple);for (i,value) in ["17","13","24","18","-12","1.5"].into_iter().enumerate() {paragraph_field(&mut s,i,value);}assert_eq!(s.document(),before);paragraph_submit(&mut s);let after=s.document();
     fn check(blocks:&[Block]) {for block in blocks {match block {Block::Paragraph(p)=>assert_eq!(paragraph_metrics(p),(17*12_700,13*12_700,24*12_700,18*12_700,-12*12_700,LineHeight::Auto(360))),Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks);}}}}}check(&after.body);
     assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
@@ -4602,7 +4603,7 @@ fn h9_inserted_typed_replacement() {
 
 fn h9_original_history_typed_replacement() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_original_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_original_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-original-history.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -4618,8 +4619,8 @@ fn h9_original_history_typed_replacement() {
         assert_eq!(after.header, before.header);assert_eq!(after.footer, before.footer);assert_eq!(after.styles, before.styles);
         s.key("cmd-z");assert_eq!(s.document(), before);s.key("cmd-shift-z");assert_eq!(s.document(), after);
         let saved = s.save_as(&format!("h9-original-history-typed-{tracked}.docx"));
-        let xml = ibis_pptx::test_files::part_text(&std::fs::read(saved).unwrap(), "word/document.xml").unwrap();
-        assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML), "old ZIP deletion XML must remain separate and exact");
+        let xml = ibis_formats::test_files::part_text(&std::fs::read(saved).unwrap(), "word/document.xml").unwrap();
+        assert!(xml.contains(ibis_formats::test_files::ORIGINAL_DELETION_XML), "old ZIP deletion XML must remain separate and exact");
         let reread = s.reopen();let p = body(flow(&reread)).into_iter().find(|p| final_text(p) == "aQd").unwrap();assert_eq!(p.runs, para(&after, id).runs);
         if tracked {
             s.menu("docx.track.reject-all");let rejected = s.document();assert_eq!(para(&rejected, id).text(), "abX Ycd");assert!(para(&rejected, id).runs.iter().all(|r|r.revision.is_none()));
@@ -4632,7 +4633,7 @@ fn h9_original_history_typed_replacement() {
 
 fn b7_hidden_history_edges() {
     let root=crate::shell::scenario::repo_root();
-    let data=ibis_pptx::test_files::docx_with_search_history_edges(&std::fs::read(root.join(REPORT)).unwrap());
+    let data=ibis_formats::test_files::docx_with_search_history_edges(&std::fs::read(root.join(REPORT)).unwrap());
     let input=root.join("target/scenario-input/docx-search-history-edges.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
     for tracked in [false,true] {
         let mut s=Scenario::open("target/scenario-input/docx-search-history-edges.docx");
@@ -4644,12 +4645,12 @@ fn b7_hidden_history_edges() {
             find_query(&mut s,query);assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,from),FlowPos::new(id,to))]);s.update(|e,_,cx|e.replace_current("UV",cx));let after=s.document();assert_eq!(final_text(para(&after,id)),"UV");
             assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
             s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);
-            let file=s.save_as(&format!("b7-history-{name}-{tracked}.docx"));let xml=ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();for id in ["841","842","843","844","845"] {assert!(xml.contains(&ibis_pptx::test_files::ORIGINAL_DELETION_XML.replace("841",id)));}let reread=s.reopen();assert!(body(flow(&reread)).iter().any(|p|p.runs==para(&after,id).runs));s.key("cmd-z");assert_eq!(s.document(),before);
+            let file=s.save_as(&format!("b7-history-{name}-{tracked}.docx"));let xml=ibis_formats::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();for id in ["841","842","843","844","845"] {assert!(xml.contains(&ibis_formats::test_files::ORIGINAL_DELETION_XML.replace("841",id)));}let reread=s.reopen();assert!(body(flow(&reread)).iter().any(|p|p.runs==para(&after,id).runs));s.key("cmd-z");assert_eq!(s.document(),before);
         }
         find_query(&mut s,"bc");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(multiple,1),FlowPos::new(multiple,6)),(FlowPos::new(multiple,9),FlowPos::new(multiple,14))]);assert_eq!(s.update(|e,_,cx|e.replace_all("bc","Q",cx)),2);let after=s.document();assert_eq!(final_text(para(&after,multiple)),"aQd aQd");
         assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
         s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before,"both replacements are one undo");s.key("cmd-shift-z");assert_eq!(s.document(),after);
-        let file=s.save_as(&format!("b7-history-multiple-{tracked}.docx"));let xml=ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();for id in ["841","842","843","844","845"] {assert!(xml.contains(&ibis_pptx::test_files::ORIGINAL_DELETION_XML.replace("841",id)),"old deletion {id} changed");}let reread=s.reopen();assert!(body(flow(&reread)).iter().any(|p|p.runs==para(&after,multiple).runs));
+        let file=s.save_as(&format!("b7-history-multiple-{tracked}.docx"));let xml=ibis_formats::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();for id in ["841","842","843","844","845"] {assert!(xml.contains(&ibis_formats::test_files::ORIGINAL_DELETION_XML.replace("841",id)),"old deletion {id} changed");}let reread=s.reopen();assert!(body(flow(&reread)).iter().any(|p|p.runs==para(&after,multiple).runs));
         if tracked {
             let commands=ibis_doc_model::flow_command::resolve_revisions(&before,None,false);let mut base=s.with(|e,_|e.presentation().clone());base.flow=Some(std::sync::Arc::new(before.clone()));let mut expected=ibis_doc_model::Document::new(base);expected.execute(commands.into_iter().map(ibis_doc_model::Command::Flow).collect()).unwrap();
             s.menu("docx.track.reject-all");let rejected=s.document();assert_eq!(rejected.body,flow(expected.presentation()).body);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),after);s.key("cmd-shift-z");assert_eq!(s.document(),rejected);s.save_as("b7-history-multiple-rejected.docx");let reread=s.reopen();assert!(body(flow(&reread)).iter().any(|p|p.text()=="abX Ycd abX Ycd"&&p.runs.iter().all(|r|r.revision.is_none())));
@@ -4659,13 +4660,13 @@ fn b7_hidden_history_edges() {
 }
 
 fn h9_history_adjacent_field() {
-    let root=crate::shell::scenario::repo_root();let data=ibis_pptx::test_files::docx_with_history_adjacent_field(&std::fs::read(root.join(REPORT)).unwrap());
+    let root=crate::shell::scenario::repo_root();let data=ibis_formats::test_files::docx_with_history_adjacent_field(&std::fs::read(root.join(REPORT)).unwrap());
     let input=root.join("target/scenario-input/docx-history-adjacent-field.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();let mut s=Scenario::open("target/scenario-input/docx-history-adjacent-field.docx");
     if s.with(|e, _| e.showing_markup()) {s.menu("docx.track.show");}if s.document().track_changes {s.menu("docx.track.record");}
     let before=s.document();let id=body(&before).into_iter().find(|p|p.text().starts_with("abX Ycd")).unwrap().id;assert_eq!(para(&before,id).len(),8);assert!(matches!(para(&before,id).runs.last().unwrap().kind,FlowRunKind::PageNumber));
     s.click_text(FlowPos::new(id,7));s.key("shift-right");assert_eq!(s.selection(),Some((FlowPos::new(id,7),FlowPos::new(id,8))));s.toolbar("bold");let after=s.document();assert!(para(&after,id).runs.last().unwrap().style.bold);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
-    s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as("h9-history-adjacent-page-bold.docx");let xml=ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));let reread=s.reopen();assert!(body(flow(&reread)).iter().any(|p|p.runs==para(&after,id).runs));s.key("cmd-z");assert_eq!(s.document(),before);
-    s.click_text(FlowPos::new(id,7));s.key("shift-right");s.key("backspace");let removed=s.document();assert_eq!(para(&removed,id).text(),"abX Ycd");s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),removed);let file=s.save_as("h9-history-adjacent-page-deleted.docx");let xml=ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));assert!(!xml.contains(ibis_pptx::test_files::HISTORY_ADJACENT_FIELD_XML));let reread=s.reopen();assert!(body(flow(&reread)).iter().any(|p|p.runs==para(&removed,id).runs));s.menu("docx.track.show");
+    s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as("h9-history-adjacent-page-bold.docx");let xml=ibis_formats::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();assert!(xml.contains(ibis_formats::test_files::ORIGINAL_DELETION_XML));let reread=s.reopen();assert!(body(flow(&reread)).iter().any(|p|p.runs==para(&after,id).runs));s.key("cmd-z");assert_eq!(s.document(),before);
+    s.click_text(FlowPos::new(id,7));s.key("shift-right");s.key("backspace");let removed=s.document();assert_eq!(para(&removed,id).text(),"abX Ycd");s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),removed);let file=s.save_as("h9-history-adjacent-page-deleted.docx");let xml=ibis_formats::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();assert!(xml.contains(ibis_formats::test_files::ORIGINAL_DELETION_XML));assert!(!xml.contains(ibis_formats::test_files::HISTORY_ADJACENT_FIELD_XML));let reread=s.reopen();assert!(body(flow(&reread)).iter().any(|p|p.runs==para(&removed,id).runs));s.menu("docx.track.show");
 }
 
 fn a11_hidden_source() {
@@ -4683,7 +4684,7 @@ fn a11_hidden_source() {
 }
 
 fn a11_tracked_table_rejection() {
-    let root=crate::shell::scenario::repo_root();let data=ibis_pptx::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-brush-tracked-table.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();let mut s=Scenario::open("target/scenario-input/docx-brush-tracked-table.docx");
+    let root=crate::shell::scenario::repo_root();let data=ibis_formats::test_files::docx_with_nested_table(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-brush-tracked-table.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();let mut s=Scenario::open("target/scenario-input/docx-brush-tracked-table.docx");
     let (_,id,text)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,1));for _ in 0..3 {s.key("shift-right");}s.menu("docx.underline.wave");s.menu("docx.underline.red");s.key("cmd-b");let selected=text.chars().skip(1).take(3).collect::<String>();let source=para(&s.document(),id).runs.iter().find(|r|matches!(&r.kind,FlowRunKind::Text(t) if t==&selected)).unwrap().style.clone();
     if !s.document().track_changes {s.menu("docx.track.record");}s.toolbar("format-paint");s.key("cmd-a");let before=s.document();s.menu("docx.format-brush.apply");let after=s.document();
     fn check(blocks:&[Block],style:&ibis_doc_model::FlowRunStyle) {for b in blocks {match b {Block::Paragraph(p)=>for r in &p.runs {assert_eq!(&r.style,style);assert!(matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Format(_))));},Block::Table(t)=>for row in &t.rows {for cell in &row.cells {check(&cell.blocks,style);}}}}}
@@ -4730,7 +4731,7 @@ fn b7_section_story_search() {
     let input=root.join("target/scenario-input/docx-search-section-story-base.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();s.save_as(input.to_str().unwrap());drop(s);let data=std::fs::read(&input).unwrap();let mut s=Scenario::open("target/scenario-input/docx-search-section-story-base.docx");let before=s.document();let section=flow_command::sections(&before)[0];let setup=flow_command::section_setup(&before,section).unwrap();assert!(setup.parts[PartKind::Header.index()].is_some());assert!(before.linked[PartKind::Header.index()]);let blocks=flow_command::resolved_part(&before,section,PartKind::Header);let p=blocks.iter().find_map(|b|if let Block::Paragraph(p)=b&&p.text().contains("SectionNeedle") {Some(p)}else{None}).unwrap();let value=p.text();let start=value[..value.find("SectionNeedle").unwrap()].chars().count();let expected=vec![(FlowPos::new(p.id,start),FlowPos::new(p.id,start+"SectionNeedle".chars().count()))];
     s.menu("edit.find-replace");s.type_text("SectionNeedle");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),expected,"inherited story is one source match");for forward in [true,false,true] {s.update(|e,_,cx|e.find_next(forward,cx));assert_eq!(s.selection(),Some(expected[0]));}
     s.update(|e,_,cx|e.replace_current("SectionChanged",cx));let after=s.document();let mut changed_setup=flow_command::section_setup(&after,section).unwrap();changed_setup.parts[PartKind::Header.index()]=setup.parts[PartKind::Header.index()].clone();assert_eq!(changed_setup,setup);let mut body=after.body.clone();for block in &mut body {if let Block::Paragraph(p)=block&&p.id==section {p.section=para(&before,section).section.clone();}}assert_eq!(body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);
-    s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("b7-section-story-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as("b7-section-story-replaced.docx");let saved_bytes=std::fs::read(file).unwrap();for name in ["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml"] {assert_eq!(ibis_pptx::test_files::part_text(&data,name),ibis_pptx::test_files::part_text(&saved_bytes,name),"outside part changed: {name}");}let saved=s.reopen();let first=flow_command::sections(flow(&saved))[0];let resolved=flow_command::resolved_part(flow(&saved),first,PartKind::Header);assert!(resolved.iter().any(|b|matches!(b,Block::Paragraph(p) if p.text().contains("SectionChanged"))));let inherited=flow_command::resolved_part(flow(&saved),0,PartKind::Header);assert_eq!(resolved,inherited);
+    s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("b7-section-story-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as("b7-section-story-replaced.docx");let saved_bytes=std::fs::read(file).unwrap();for name in ["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml"] {assert_eq!(ibis_formats::test_files::part_text(&data,name),ibis_formats::test_files::part_text(&saved_bytes,name),"outside part changed: {name}");}let saved=s.reopen();let first=flow_command::sections(flow(&saved))[0];let resolved=flow_command::resolved_part(flow(&saved),first,PartKind::Header);assert!(resolved.iter().any(|b|matches!(b,Block::Paragraph(p) if p.text().contains("SectionChanged"))));let inherited=flow_command::resolved_part(flow(&saved),0,PartKind::Header);assert_eq!(resolved,inherited);
 }
 
 fn b7_case_sensitive() {
@@ -4750,9 +4751,9 @@ fn b7_whole_words() {
 }
 
 fn b7_whole_words_history() {
-    let root=crate::shell::scenario::repo_root();let data=ibis_pptx::test_files::docx_with_original_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-whole-word-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
+    let root=crate::shell::scenario::repo_root();let data=ibis_formats::test_files::docx_with_original_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-whole-word-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
     for tracked in [false,true] {
-        let mut s=Scenario::open("target/scenario-input/docx-whole-word-history.docx");if s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}if s.document().track_changes!=tracked{s.menu("docx.track.record");}let before=s.document();let id=body(&before).into_iter().find(|p|p.text()=="abX Ycd").unwrap().id;s.menu("edit.find-replace");s.type_text("bc");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.len()),1);toggle_find_whole_words(&mut s);assert!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.is_empty()),"hidden gap does not make a visible word boundary");find_query(&mut s,"abcd");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,0),FlowPos::new(id,7))]);s.update(|e,_,cx|e.replace_current("Q",cx));let after=s.document();assert_eq!(final_text(para(&after,id)),"Q");assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("b7-whole-word-history-{tracked}.docx"));let xml=ibis_pptx::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));let saved=s.reopen();assert!(body(flow(&saved)).iter().any(|p|p.runs==para(&after,id).runs));
+        let mut s=Scenario::open("target/scenario-input/docx-whole-word-history.docx");if s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}if s.document().track_changes!=tracked{s.menu("docx.track.record");}let before=s.document();let id=body(&before).into_iter().find(|p|p.text()=="abX Ycd").unwrap().id;s.menu("edit.find-replace");s.type_text("bc");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.len()),1);toggle_find_whole_words(&mut s);assert!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.is_empty()),"hidden gap does not make a visible word boundary");find_query(&mut s,"abcd");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),vec![(FlowPos::new(id,0),FlowPos::new(id,7))]);s.update(|e,_,cx|e.replace_current("Q",cx));let after=s.document();assert_eq!(final_text(para(&after,id)),"Q");assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("b7-whole-word-history-{tracked}.docx"));let xml=ibis_formats::test_files::part_text(&std::fs::read(file).unwrap(),"word/document.xml").unwrap();assert!(xml.contains(ibis_formats::test_files::ORIGINAL_DELETION_XML));let saved=s.reopen();assert!(body(flow(&saved)).iter().any(|p|p.runs==para(&after,id).runs));
         if tracked{s.menu("docx.track.reject-all");assert_eq!(para(&s.document(),id).text(),"abX Ycd");}s.menu("docx.track.show");
     }
 }
@@ -4763,15 +4764,15 @@ fn b7_note_story_search() {
     for (menu,at) in [("docx.footnote",3),("docx.endnote",8)]{s.click_text(FlowPos::new(id,at));s.menu(menu);s.type_text("NoteNeedle");}
     let input=root.join("target/scenario-input/docx-search-note-stories.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();s.save_as(input.to_str().unwrap());drop(s);let data=std::fs::read(&input).unwrap();let mut s=Scenario::open("target/scenario-input/docx-search-note-stories.docx");let before=s.document();assert_eq!(before.footnotes.len(),1);assert_eq!(before.endnotes.len(),1);
     let mut expected=Vec::new();for notes in [&before.footnotes,&before.endnotes]{for note in notes{for block in &note.blocks{if let Block::Paragraph(p)=block{let text=p.text();if let Some(at)=text.find("NoteNeedle"){let from=text[..at].chars().count();expected.push((FlowPos::new(p.id,from),FlowPos::new(p.id,from+10)));}}}}}assert_eq!(expected.len(),2);
-    s.menu("edit.find-replace");s.type_text("NoteNeedle");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),expected,"footnote and endnote source stories searched");for forward in [true,false,true]{s.update(|e,_,cx|e.find_next(forward,cx));assert!(expected.contains(&s.selection().unwrap()));}s.update(|e,_,cx|e.find_next(false,cx));assert_eq!(s.selection(),Some(expected[0]),"the footnote is the one shown");find_query(&mut s,"NoteNeedle");s.update(|e,_,cx|e.replace_current("FootChanged",cx));let current=s.document();assert_eq!(current.endnotes,before.endnotes);assert_eq!(current.body,before.body);assert_eq!(current.header,before.header);assert_eq!(current.styles,before.styles);assert!(flow_command::paragraph(&current,expected[0].0.para).unwrap().text().contains("FootChanged"));s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("b7-notes-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),current);let file=s.save_as("b7-note-current.docx");let bytes=std::fs::read(file).unwrap();for name in ["word/document.xml","word/styles.xml","word/endnotes.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&bytes,name),ibis_pptx::test_files::part_text(&data,name),"outside part changed {name}");}let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,current.footnotes[0].blocks);
-    s.key("cmd-z");assert_eq!(s.document(),before);find_query(&mut s,"NoteNeedle");assert_eq!(s.update(|e,_,cx|e.replace_all("NoteNeedle","NoteDone",cx)),2);let after=s.document();assert_eq!(after.body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as("b7-note-all.docx");let bytes=std::fs::read(file).unwrap();for name in ["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&bytes,name),ibis_pptx::test_files::part_text(&data,name));}let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,after.footnotes[0].blocks);assert_eq!(flow(&saved).endnotes[0].blocks,after.endnotes[0].blocks);
+    s.menu("edit.find-replace");s.type_text("NoteNeedle");assert_eq!(s.with(|e,_|e.doc_state().unwrap().find.as_ref().unwrap().matches.clone()),expected,"footnote and endnote source stories searched");for forward in [true,false,true]{s.update(|e,_,cx|e.find_next(forward,cx));assert!(expected.contains(&s.selection().unwrap()));}s.update(|e,_,cx|e.find_next(false,cx));assert_eq!(s.selection(),Some(expected[0]),"the footnote is the one shown");find_query(&mut s,"NoteNeedle");s.update(|e,_,cx|e.replace_current("FootChanged",cx));let current=s.document();assert_eq!(current.endnotes,before.endnotes);assert_eq!(current.body,before.body);assert_eq!(current.header,before.header);assert_eq!(current.styles,before.styles);assert!(flow_command::paragraph(&current,expected[0].0.para).unwrap().text().contains("FootChanged"));s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("b7-notes-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),current);let file=s.save_as("b7-note-current.docx");let bytes=std::fs::read(file).unwrap();for name in ["word/document.xml","word/styles.xml","word/endnotes.xml"]{assert_eq!(ibis_formats::test_files::part_text(&bytes,name),ibis_formats::test_files::part_text(&data,name),"outside part changed {name}");}let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,current.footnotes[0].blocks);
+    s.key("cmd-z");assert_eq!(s.document(),before);find_query(&mut s,"NoteNeedle");assert_eq!(s.update(|e,_,cx|e.replace_all("NoteNeedle","NoteDone",cx)),2);let after=s.document();assert_eq!(after.body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as("b7-note-all.docx");let bytes=std::fs::read(file).unwrap();for name in ["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml"]{assert_eq!(ibis_formats::test_files::part_text(&bytes,name),ibis_formats::test_files::part_text(&data,name));}let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,after.footnotes[0].blocks);assert_eq!(flow(&saved).endnotes[0].blocks,after.endnotes[0].blocks);
 }
 
 fn h9_record_setting_only() {
     let root=crate::shell::scenario::repo_root();let mut source=root.join(REPORT);
     for wanted in [true,false] {
         let data=std::fs::read(&source).unwrap();let mut s=Scenario::open(source.to_str().unwrap());let before=s.document();assert_ne!(before.track_changes,wanted);s.menu("docx.track.record");let after=s.document();assert_eq!(after.track_changes,wanted);let mut untouched=after.clone();untouched.track_changes=before.track_changes;untouched.interaction_mode=before.interaction_mode;assert_eq!(untouched,before,"record setting must not mutate any story or style");
-        s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as(&format!("h9-record-only-undone-{wanted}.docx"));assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let fixed=root.join(format!("target/scenario-input/docx-record-only-{wanted}.docx"));std::fs::create_dir_all(fixed.parent().unwrap()).unwrap();let file=s.save_as(fixed.to_str().unwrap());let bytes=std::fs::read(&file).unwrap();for part in ["word/document.xml","word/styles.xml","word/numbering.xml","word/header1.xml","word/footer1.xml","word/footnotes.xml","word/endnotes.xml","word/comments.xml"] {assert_eq!(ibis_pptx::test_files::part_text(&bytes,part),ibis_pptx::test_files::part_text(&data,part),"setting-only touched {part}");}let saved=s.reopen();assert_eq!(flow(&saved).track_changes,wanted);let mut reread=flow(&saved).clone();let mut expected=after.clone();reread.file_name=None;expected.file_name=None;reread.file_size=expected.file_size;assert_eq!(reread,expected);source=file;
+        s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as(&format!("h9-record-only-undone-{wanted}.docx"));assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let fixed=root.join(format!("target/scenario-input/docx-record-only-{wanted}.docx"));std::fs::create_dir_all(fixed.parent().unwrap()).unwrap();let file=s.save_as(fixed.to_str().unwrap());let bytes=std::fs::read(&file).unwrap();for part in ["word/document.xml","word/styles.xml","word/numbering.xml","word/header1.xml","word/footer1.xml","word/footnotes.xml","word/endnotes.xml","word/comments.xml"] {assert_eq!(ibis_formats::test_files::part_text(&bytes,part),ibis_formats::test_files::part_text(&data,part),"setting-only touched {part}");}let saved=s.reopen();assert_eq!(flow(&saved).track_changes,wanted);let mut reread=flow(&saved).clone();let mut expected=after.clone();reread.file_name=None;expected.file_name=None;reread.file_size=expected.file_size;assert_eq!(reread,expected);source=file;
     }
 }
 
@@ -4780,30 +4781,30 @@ fn e1_note_links() {
     let root=crate::shell::scenario::repo_root();let mut s=Scenario::open(REPORT);let (_,id,_)=text_paragraph(&mut s,12);for (menu,at,text) in [("docx.footnote",3,"NoteLinkA"),("docx.endnote",8,"NoteLinkB")]{s.click_text(FlowPos::new(id,at));s.menu(menu);s.type_text(text);}
     let input=root.join("target/scenario-input/docx-note-links-ui-base.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();s.save_as(input.to_str().unwrap());drop(s);let data=std::fs::read(&input).unwrap();let mut s=Scenario::open("target/scenario-input/docx-note-links-ui-base.docx");let initial=s.document();let mut ids=Vec::new();for notes in [&initial.footnotes,&initial.endnotes]{let p=match &notes[0].blocks[0]{Block::Paragraph(p)=>p,_=>panic!("note paragraph")};ids.push(p.id);}
     for (&id,url) in ids.iter().zip(["https://example.com/ui-foot","https://example.com/ui-end"]){let before=s.document();s.click_text(FlowPos::new(id,2));for _ in 0..9{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(id,2),FlowPos::new(id,11))));s.key("cmd-k");s.type_text(url);s.key("enter");let after=s.document();assert!(flow_command::paragraph(&after,id).unwrap().runs.iter().any(|r|r.link==Some(ibis_doc_model::Link::Url(url.into()))));assert_eq!(after.body,before.body);let mut after_styles=(*after.styles).clone();after_styles.styles.remove("Hyperlink");let mut before_styles=(*before.styles).clone();before_styles.styles.remove("Hyperlink");assert_eq!(after_styles,before_styles);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);}
-    let after=s.document();let fixed=root.join("target/scenario-input/docx-note-links-ui-linked.docx");let file=s.save_as(fixed.to_str().unwrap());let bytes=std::fs::read(&file).unwrap();for part in ["word/document.xml","word/settings.xml","word/numbering.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&data,part),ibis_pptx::test_files::part_text(&bytes,part));}assert!(ibis_pptx::test_files::part_text(&bytes,"word/styles.xml").unwrap().contains("Hyperlink"));let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,after.footnotes[0].blocks);assert_eq!(flow(&saved).endnotes[0].blocks,after.endnotes[0].blocks);drop(s);
+    let after=s.document();let fixed=root.join("target/scenario-input/docx-note-links-ui-linked.docx");let file=s.save_as(fixed.to_str().unwrap());let bytes=std::fs::read(&file).unwrap();for part in ["word/document.xml","word/settings.xml","word/numbering.xml"]{assert_eq!(ibis_formats::test_files::part_text(&data,part),ibis_formats::test_files::part_text(&bytes,part));}assert!(ibis_formats::test_files::part_text(&bytes,"word/styles.xml").unwrap().contains("Hyperlink"));let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,after.footnotes[0].blocks);assert_eq!(flow(&saved).endnotes[0].blocks,after.endnotes[0].blocks);drop(s);
     let _probe=crate::shell::scenario::button_probe::Probe::new();let mut s=Scenario::open("target/scenario-input/docx-note-links-ui-linked.docx");let before=s.document();let id=match &before.footnotes[0].blocks[0]{Block::Paragraph(p)=>p.id,_=>panic!("note")};
     // An ordinary click on a link follows it (hyperlinks.rs), so the caret is put in the linked note text directly.
-    s.update(|e,_,cx|e.set_caret(FlowPos::new(id,2),false,cx));for _ in 0..9{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(id,2),FlowPos::new(id,11))));s.key("cmd-k");s.key("cmd-a");s.type_text("https://example.com/ui-foot-changed");s.key("enter");let changed=s.document();assert_eq!(changed.endnotes,before.endnotes);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("e1-note-link-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),bytes);s.key("cmd-shift-z");assert_eq!(s.document(),changed);let file=s.save_as("e1-note-link-changed.docx");let out=std::fs::read(file).unwrap();for part in ["word/document.xml","word/endnotes.xml","word/_rels/endnotes.xml.rels","word/styles.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&out,part),ibis_pptx::test_files::part_text(&bytes,part));}let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,changed.footnotes[0].blocks);
+    s.update(|e,_,cx|e.set_caret(FlowPos::new(id,2),false,cx));for _ in 0..9{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(id,2),FlowPos::new(id,11))));s.key("cmd-k");s.key("cmd-a");s.type_text("https://example.com/ui-foot-changed");s.key("enter");let changed=s.document();assert_eq!(changed.endnotes,before.endnotes);s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as("e1-note-link-undone.docx");assert_eq!(std::fs::read(undone).unwrap(),bytes);s.key("cmd-shift-z");assert_eq!(s.document(),changed);let file=s.save_as("e1-note-link-changed.docx");let out=std::fs::read(file).unwrap();for part in ["word/document.xml","word/endnotes.xml","word/_rels/endnotes.xml.rels","word/styles.xml"]{assert_eq!(ibis_formats::test_files::part_text(&out,part),ibis_formats::test_files::part_text(&bytes,part));}let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,changed.footnotes[0].blocks);
     s.update(|e,_,cx|e.set_caret(FlowPos::new(id,2),false,cx));for _ in 0..9{s.key("shift-right");}s.key("cmd-k");crate::shell::scenario::button_probe::click(&mut s,"link-remove");let removed=s.document();assert!(flow_command::paragraph(&removed,id).unwrap().runs.iter().all(|r|r.link.is_none()));s.update(|e,w,cx|e.focus_handle.focus(w,cx));s.key("cmd-z");assert_eq!(s.document(),changed);s.key("cmd-shift-z");assert_eq!(s.document(),removed);s.save_as("e1-note-link-removed.docx");let saved=s.reopen();assert_eq!(flow(&saved).footnotes[0].blocks,removed.footnotes[0].blocks);assert_eq!(flow(&saved).endnotes[0].blocks,removed.endnotes[0].blocks);
 }
 
 fn h9_note_original_history() {
     use ibis_doc_model::flow_command;
-    let root=crate::shell::scenario::repo_root();let data=ibis_pptx::test_files::docx_with_note_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-note-original-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
+    let root=crate::shell::scenario::repo_root();let data=ibis_formats::test_files::docx_with_note_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-note-original-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
     for tracked in [false,true] {
         let mut s=Scenario::open("target/scenario-input/docx-note-original-history.docx");if s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}if s.document().track_changes!=tracked{s.menu("docx.track.record");}let before=s.document();let p=match &before.footnotes[0].blocks[0]{Block::Paragraph(p)=>p,_=>panic!("note")};let id=p.id;assert_eq!(final_text(p)," abcd");let old=p.runs.iter().filter(|r|matches!(r.revision.as_ref().map(|v|&v.kind),Some(ibis_doc_model::RevisionKind::Delete))).cloned().collect::<Vec<_>>();assert_eq!(old.iter().map(|r|match &r.kind{FlowRunKind::Text(t)=>t.as_str(),_=>""}).collect::<String>(),"X Y");
-        s.click_text(FlowPos::new(id,3));s.key("shift-right");s.key("shift-right");assert_eq!(s.selection(),Some((FlowPos::new(id,3),FlowPos::new(id,8))));s.type_text("Q");let after=s.document();let p=flow_command::paragraph(&after,id).unwrap();assert_eq!(final_text(p)," aQd");for r in &old{assert!(p.runs.contains(r));}assert_eq!(after.body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.styles,before.styles);assert_eq!(after.comments,before.comments);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-note-history-typed-{tracked}.docx"));let bytes=std::fs::read(file).unwrap();let xml=ibis_pptx::test_files::part_text(&bytes,"word/footnotes.xml").unwrap();assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));for name in ["word/document.xml","word/comments.xml","word/styles.xml","word/numbering.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&bytes,name),ibis_pptx::test_files::part_text(&data,name));}let saved=s.reopen();let saved_note=flow_command::paragraph(flow(&saved),id).unwrap();assert_eq!(saved_note.runs,p.runs);
+        s.click_text(FlowPos::new(id,3));s.key("shift-right");s.key("shift-right");assert_eq!(s.selection(),Some((FlowPos::new(id,3),FlowPos::new(id,8))));s.type_text("Q");let after=s.document();let p=flow_command::paragraph(&after,id).unwrap();assert_eq!(final_text(p)," aQd");for r in &old{assert!(p.runs.contains(r));}assert_eq!(after.body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.styles,before.styles);assert_eq!(after.comments,before.comments);s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-note-history-typed-{tracked}.docx"));let bytes=std::fs::read(file).unwrap();let xml=ibis_formats::test_files::part_text(&bytes,"word/footnotes.xml").unwrap();assert!(xml.contains(ibis_formats::test_files::ORIGINAL_DELETION_XML));for name in ["word/document.xml","word/comments.xml","word/styles.xml","word/numbering.xml"]{assert_eq!(ibis_formats::test_files::part_text(&bytes,name),ibis_formats::test_files::part_text(&data,name));}let saved=s.reopen();let saved_note=flow_command::paragraph(flow(&saved),id).unwrap();assert_eq!(saved_note.runs,p.runs);
         if tracked{s.menu("docx.track.reject-all");let rejected=s.document();let p=flow_command::paragraph(&rejected,id).unwrap();assert_eq!(final_text(p)," abX Ycd");assert!(p.runs.iter().all(|r|r.revision.is_none()));s.key("cmd-z");assert_eq!(s.document(),after);s.key("cmd-shift-z");assert_eq!(s.document(),rejected);s.save_as("h9-note-history-rejected.docx");let saved=s.reopen();assert_eq!(flow_command::paragraph(flow(&saved),id).unwrap().runs,p.runs);}s.menu("docx.track.show");
     }
 }
 
 fn h9_note_selected_history() {
     use ibis_doc_model::flow_command;
-    let root=crate::shell::scenario::repo_root();let data=ibis_pptx::test_files::docx_with_note_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-note-selected-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
+    let root=crate::shell::scenario::repo_root();let data=ibis_formats::test_files::docx_with_note_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());let input=root.join("target/scenario-input/docx-note-selected-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
     for accept in [false,true] {
         let mut s=Scenario::open("target/scenario-input/docx-note-selected-history.docx");if !s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}let before=s.document();let id=match &before.footnotes[0].blocks[0]{Block::Paragraph(p)=>p.id,_=>panic!("note")};s.click_text(FlowPos::new(id,4));for _ in 0..3{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(id,4),FlowPos::new(id,7))));s.menu(if accept{"docx.track.accept"}else{"docx.track.reject"});let after=s.document();let p=flow_command::paragraph(&after,id).unwrap();assert_eq!(final_text(p),if accept{" abcd"}else{" abX Ycd"});assert!(p.runs.iter().all(|r|r.revision.is_none()));assert_eq!(after.body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.comments,before.comments);assert_eq!(after.styles,before.styles);s.key("cmd-z");assert_eq!(s.document(),before);
         s.update(|e,_,_|{let state=e.doc_state_mut().unwrap();state.anchor=None;state.caret=None;});s.menu("docx.track.reject");assert_eq!(s.document(),before,"missing selection must not fall back to resolving all stories");
-        let body_id=body(&before).into_iter().find(|p|p.runs.iter().any(|r|r.revision.is_some())).unwrap().id;s.update(|e,_,cx|{e.set_caret(FlowPos::new(body_id,0),false,cx);e.set_caret(FlowPos::new(id,4),true,cx);});s.menu("docx.track.reject");assert_eq!(s.document(),before,"cross-story selection refuses before any body mutation");assert!(s.with(|e,_|e.status.as_ref().is_some_and(|t|t.contains("同じ本文"))));s.key("cmd-shift-z");assert_eq!(s.document(),after,"refusal preserves redo entry");let file=s.save_as(&format!("h9-note-selected-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for name in ["word/document.xml","word/comments.xml","word/styles.xml","word/numbering.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&bytes,name),ibis_pptx::test_files::part_text(&data,name));}let saved=s.reopen();assert_eq!(flow_command::paragraph(flow(&saved),id).unwrap().runs,p.runs);
+        let body_id=body(&before).into_iter().find(|p|p.runs.iter().any(|r|r.revision.is_some())).unwrap().id;s.update(|e,_,cx|{e.set_caret(FlowPos::new(body_id,0),false,cx);e.set_caret(FlowPos::new(id,4),true,cx);});s.menu("docx.track.reject");assert_eq!(s.document(),before,"cross-story selection refuses before any body mutation");assert!(s.with(|e,_|e.status.as_ref().is_some_and(|t|t.contains("同じ本文"))));s.key("cmd-shift-z");assert_eq!(s.document(),after,"refusal preserves redo entry");let file=s.save_as(&format!("h9-note-selected-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for name in ["word/document.xml","word/comments.xml","word/styles.xml","word/numbering.xml"]{assert_eq!(ibis_formats::test_files::part_text(&bytes,name),ibis_formats::test_files::part_text(&data,name));}let saved=s.reopen();assert_eq!(flow_command::paragraph(flow(&saved),id).unwrap().runs,p.runs);
     }
 }
 
@@ -4836,25 +4837,25 @@ fn h9_root_story_revisions() {
     use ibis_doc_model::{PartKind,flow_command};
     let root=crate::shell::scenario::repo_root();let menus=["docx.section.edit-header","docx.section.edit-footer","docx.section.edit-first-header","docx.section.edit-first-footer","docx.section.edit-even-header","docx.section.edit-even-footer"];let candidates=["word/header1.xml","word/footer1.xml","word/header2.xml","word/footer2.xml","word/header3.xml","word/footer3.xml"];
     let mut s=Scenario::open(REPORT);let (_,id,_)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,1));s.key("cmd-down");for label in ["RootExtraPageA","RootExtraPageB"]{s.menu("docx.page-break");s.type_text(label);}s.click_text(FlowPos::new(id,1));s.menu("docx.section.title-page");s.menu("docx.section.even-odd");for (i,menu) in menus.iter().enumerate(){s.menu(menu);s.type_text(&format!("RootBase{i}"));}s.menu("docx.track.record");assert!(s.document().track_changes);for (i,menu) in menus.iter().enumerate(){s.menu(menu);s.type_text(&format!("RootChange{i}"));}
-    let input=root.join("target/scenario-input/docx-root-story-revisions.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();s.save_as(input.to_str().unwrap());drop(s);let data=std::fs::read(&input).unwrap();let parts:Vec<_>=(0..6).map(|i|{let marker=format!("RootChange{i}");let matches:Vec<_>=candidates.iter().copied().filter(|part|xml_text(&ibis_pptx::test_files::part_text(&data,part).unwrap()).contains(&marker)).collect();assert_eq!(matches.len(),1,"each source story has one physical part");matches[0]}).collect();
+    let input=root.join("target/scenario-input/docx-root-story-revisions.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();s.save_as(input.to_str().unwrap());drop(s);let data=std::fs::read(&input).unwrap();let parts:Vec<_>=(0..6).map(|i|{let marker=format!("RootChange{i}");let matches:Vec<_>=candidates.iter().copied().filter(|part|xml_text(&ibis_formats::test_files::part_text(&data,part).unwrap()).contains(&marker)).collect();assert_eq!(matches.len(),1,"each source story has one physical part");matches[0]}).collect();
     for accept in [false,true] {
         let mut s=Scenario::open("target/scenario-input/docx-root-story-revisions.docx");if !s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}let before=s.document();
-        for (i,kind) in PartKind::ALL.into_iter().enumerate(){let query=format!("RootChange{i}");let blocks=flow_command::resolved_part(&before,0,kind);let p=blocks.iter().find_map(|b|if let Block::Paragraph(p)=b&&p.text().contains(&query){Some(p)}else{None}).unwrap();let text=p.text();let from=text[..text.find(&query).unwrap()].chars().count();s.menu(menus[i]);s.click_text(FlowPos::new(p.id,from));for _ in query.chars(){s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(p.id,from),FlowPos::new(p.id,from+query.chars().count()))));s.menu(if accept{"docx.track.accept"}else{"docx.track.reject"});let after=s.document();let actual=flow_command::paragraph(&after,p.id).unwrap();assert_eq!(actual.text(),if accept{text.clone()}else{text.replace(&query,"")});assert!(actual.runs.iter().all(|r|r.revision.is_none()));assert_eq!(after.body,before.body);assert_eq!(after.styles,before.styles);for other in PartKind::ALL{if other!=kind{assert_eq!(flow_command::resolved_part(&after,0,other),flow_command::resolved_part(&before,0,other));}}s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-root-selected-{i}-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for part in parts.iter().copied().chain(["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml"]){if part!=parts[i]{assert_eq!(ibis_pptx::test_files::part_text(&bytes,part),ibis_pptx::test_files::part_text(&data,part),"outside part changed {part}");}}let saved=s.reopen();assert_eq!(flow_command::resolved_part(flow(&saved),0,kind),flow_command::resolved_part(&after,0,kind));s.key("cmd-z");assert_eq!(s.document(),before);}
-        s.menu(if accept{"docx.track.accept-all"}else{"docx.track.reject-all"});let after=s.document();assert_eq!(after.body,before.body);assert_eq!(after.styles,before.styles);for (i,kind) in PartKind::ALL.into_iter().enumerate(){let blocks=flow_command::resolved_part(&after,0,kind);assert!(blocks.iter().any(|b|matches!(b,Block::Paragraph(p) if p.text().contains(&format!("RootBase{i}")))));assert_eq!(blocks.iter().any(|b|matches!(b,Block::Paragraph(p) if p.text().contains(&format!("RootChange{i}")))),accept);assert!(blocks.iter().all(|b|matches!(b,Block::Paragraph(p) if p.runs.iter().all(|r|r.revision.is_none()))));}s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as(&format!("h9-root-all-undone-{accept}.docx"));assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-root-all-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for part in ["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml"]{assert_eq!(ibis_pptx::test_files::part_text(&bytes,part),ibis_pptx::test_files::part_text(&data,part));}let saved=s.reopen();for kind in PartKind::ALL{assert_eq!(flow_command::resolved_part(flow(&saved),0,kind),flow_command::resolved_part(&after,0,kind));}
+        for (i,kind) in PartKind::ALL.into_iter().enumerate(){let query=format!("RootChange{i}");let blocks=flow_command::resolved_part(&before,0,kind);let p=blocks.iter().find_map(|b|if let Block::Paragraph(p)=b&&p.text().contains(&query){Some(p)}else{None}).unwrap();let text=p.text();let from=text[..text.find(&query).unwrap()].chars().count();s.menu(menus[i]);s.click_text(FlowPos::new(p.id,from));for _ in query.chars(){s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(p.id,from),FlowPos::new(p.id,from+query.chars().count()))));s.menu(if accept{"docx.track.accept"}else{"docx.track.reject"});let after=s.document();let actual=flow_command::paragraph(&after,p.id).unwrap();assert_eq!(actual.text(),if accept{text.clone()}else{text.replace(&query,"")});assert!(actual.runs.iter().all(|r|r.revision.is_none()));assert_eq!(after.body,before.body);assert_eq!(after.styles,before.styles);for other in PartKind::ALL{if other!=kind{assert_eq!(flow_command::resolved_part(&after,0,other),flow_command::resolved_part(&before,0,other));}}s.key("cmd-z");assert_eq!(s.document(),before);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-root-selected-{i}-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for part in parts.iter().copied().chain(["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml"]){if part!=parts[i]{assert_eq!(ibis_formats::test_files::part_text(&bytes,part),ibis_formats::test_files::part_text(&data,part),"outside part changed {part}");}}let saved=s.reopen();assert_eq!(flow_command::resolved_part(flow(&saved),0,kind),flow_command::resolved_part(&after,0,kind));s.key("cmd-z");assert_eq!(s.document(),before);}
+        s.menu(if accept{"docx.track.accept-all"}else{"docx.track.reject-all"});let after=s.document();assert_eq!(after.body,before.body);assert_eq!(after.styles,before.styles);for (i,kind) in PartKind::ALL.into_iter().enumerate(){let blocks=flow_command::resolved_part(&after,0,kind);assert!(blocks.iter().any(|b|matches!(b,Block::Paragraph(p) if p.text().contains(&format!("RootBase{i}")))));assert_eq!(blocks.iter().any(|b|matches!(b,Block::Paragraph(p) if p.text().contains(&format!("RootChange{i}")))),accept);assert!(blocks.iter().all(|b|matches!(b,Block::Paragraph(p) if p.runs.iter().all(|r|r.revision.is_none()))));}s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as(&format!("h9-root-all-undone-{accept}.docx"));assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-root-all-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for part in ["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml"]{assert_eq!(ibis_formats::test_files::part_text(&bytes,part),ibis_formats::test_files::part_text(&data,part));}let saved=s.reopen();for kind in PartKind::ALL{assert_eq!(flow_command::resolved_part(flow(&saved),0,kind),flow_command::resolved_part(&after,0,kind));}
     }
 }
 
 fn h9_section_story_revisions() {
     use ibis_doc_model::{PartKind,flow_command};
-    let root=crate::shell::scenario::repo_root();let mut s=Scenario::open(REPORT);let (_,id,text)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,text.chars().count()/2));s.menu("docx.section-next");s.click_text(FlowPos::new(id,1));s.menu("docx.section.edit-header");s.type_text("OwnedBase");s.menu("docx.track.record");s.type_text("OwnedChange");let input=root.join("target/scenario-input/docx-owned-revision-header.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();s.save_as(input.to_str().unwrap());drop(s);let data=std::fs::read(&input).unwrap();let candidates=["word/header1.xml","word/header2.xml","word/header3.xml"];let affected:Vec<_>=candidates.iter().copied().filter(|n|ibis_pptx::test_files::part_text(&data,n).is_some_and(|x|xml_text(&x).contains("OwnedChange"))).collect();assert_eq!(affected.len(),1);let part=affected[0];
+    let root=crate::shell::scenario::repo_root();let mut s=Scenario::open(REPORT);let (_,id,text)=text_paragraph(&mut s,12);s.click_text(FlowPos::new(id,text.chars().count()/2));s.menu("docx.section-next");s.click_text(FlowPos::new(id,1));s.menu("docx.section.edit-header");s.type_text("OwnedBase");s.menu("docx.track.record");s.type_text("OwnedChange");let input=root.join("target/scenario-input/docx-owned-revision-header.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();s.save_as(input.to_str().unwrap());drop(s);let data=std::fs::read(&input).unwrap();let candidates=["word/header1.xml","word/header2.xml","word/header3.xml"];let affected:Vec<_>=candidates.iter().copied().filter(|n|ibis_formats::test_files::part_text(&data,n).is_some_and(|x|xml_text(&x).contains("OwnedChange"))).collect();assert_eq!(affected.len(),1);let part=affected[0];
     for accept in [false,true] {for all in [false,true] {
-        let mut s=Scenario::open("target/scenario-input/docx-owned-revision-header.docx");if !s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}let before=s.document();assert_eq!(flow_command::sections(&before).len(),2);let section=flow_command::sections(&before)[0];let setup=flow_command::section_setup(&before,section).unwrap();assert!(setup.parts[PartKind::Header.index()].is_some());assert!(before.linked[PartKind::Header.index()]);let owned=flow_command::resolved_part(&before,section,PartKind::Header);assert_eq!(owned,flow_command::resolved_part(&before,0,PartKind::Header));let p=owned.iter().find_map(|b|if let Block::Paragraph(p)=b&&p.text().contains("OwnedChange"){Some(p)}else{None}).unwrap();let text=p.text();let from=text[..text.find("OwnedChange").unwrap()].chars().count();s.click_text(FlowPos::new(p.id,from));for _ in 0..11{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(p.id,from),FlowPos::new(p.id,from+11))));let menu=match(all,accept){(false,false)=>"docx.track.reject",(false,true)=>"docx.track.accept",(true,false)=>"docx.track.reject-all",(true,true)=>"docx.track.accept-all"};s.menu(menu);let after=s.document();let actual=flow_command::paragraph(&after,p.id).unwrap();assert_eq!(actual.text(),if accept{text.clone()}else{text.replace("OwnedChange","")});assert!(actual.runs.iter().all(|r|r.revision.is_none()));assert_eq!(flow_command::resolved_part(&after,section,PartKind::Header),flow_command::resolved_part(&after,0,PartKind::Header));let mut changed_setup=flow_command::section_setup(&after,section).unwrap();changed_setup.parts[PartKind::Header.index()]=setup.parts[PartKind::Header.index()].clone();assert_eq!(changed_setup,setup);let mut body=after.body.clone();for b in &mut body{if let Block::Paragraph(q)=b&&q.id==section{q.section=para(&before,section).section.clone();}}assert_eq!(body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);assert_eq!(after.footnotes,before.footnotes);s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as(&format!("h9-owned-undone-{all}-{accept}.docx"));assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-owned-resolved-{all}-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for name in candidates.iter().copied().chain(["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml","word/footer1.xml","word/footer2.xml","word/footer3.xml"]){if name!=part{assert_eq!(ibis_pptx::test_files::part_text(&bytes,name),ibis_pptx::test_files::part_text(&data,name),"outside owner part changed {name}");}}let saved=s.reopen();let owner=flow_command::sections(flow(&saved))[0];assert_eq!(flow_command::resolved_part(flow(&saved),owner,PartKind::Header),flow_command::resolved_part(&after,section,PartKind::Header));assert_eq!(flow_command::resolved_part(flow(&saved),0,PartKind::Header),flow_command::resolved_part(&after,0,PartKind::Header));
+        let mut s=Scenario::open("target/scenario-input/docx-owned-revision-header.docx");if !s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}let before=s.document();assert_eq!(flow_command::sections(&before).len(),2);let section=flow_command::sections(&before)[0];let setup=flow_command::section_setup(&before,section).unwrap();assert!(setup.parts[PartKind::Header.index()].is_some());assert!(before.linked[PartKind::Header.index()]);let owned=flow_command::resolved_part(&before,section,PartKind::Header);assert_eq!(owned,flow_command::resolved_part(&before,0,PartKind::Header));let p=owned.iter().find_map(|b|if let Block::Paragraph(p)=b&&p.text().contains("OwnedChange"){Some(p)}else{None}).unwrap();let text=p.text();let from=text[..text.find("OwnedChange").unwrap()].chars().count();s.click_text(FlowPos::new(p.id,from));for _ in 0..11{s.key("shift-right");}assert_eq!(s.selection(),Some((FlowPos::new(p.id,from),FlowPos::new(p.id,from+11))));let menu=match(all,accept){(false,false)=>"docx.track.reject",(false,true)=>"docx.track.accept",(true,false)=>"docx.track.reject-all",(true,true)=>"docx.track.accept-all"};s.menu(menu);let after=s.document();let actual=flow_command::paragraph(&after,p.id).unwrap();assert_eq!(actual.text(),if accept{text.clone()}else{text.replace("OwnedChange","")});assert!(actual.runs.iter().all(|r|r.revision.is_none()));assert_eq!(flow_command::resolved_part(&after,section,PartKind::Header),flow_command::resolved_part(&after,0,PartKind::Header));let mut changed_setup=flow_command::section_setup(&after,section).unwrap();changed_setup.parts[PartKind::Header.index()]=setup.parts[PartKind::Header.index()].clone();assert_eq!(changed_setup,setup);let mut body=after.body.clone();for b in &mut body{if let Block::Paragraph(q)=b&&q.id==section{q.section=para(&before,section).section.clone();}}assert_eq!(body,before.body);assert_eq!(after.header,before.header);assert_eq!(after.footer,before.footer);assert_eq!(after.styles,before.styles);assert_eq!(after.footnotes,before.footnotes);s.key("cmd-z");assert_eq!(s.document(),before);let undone=s.save_as(&format!("h9-owned-undone-{all}-{accept}.docx"));assert_eq!(std::fs::read(undone).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);let file=s.save_as(&format!("h9-owned-resolved-{all}-{accept}.docx"));let bytes=std::fs::read(file).unwrap();for name in candidates.iter().copied().chain(["word/document.xml","word/styles.xml","word/settings.xml","word/numbering.xml","word/footer1.xml","word/footer2.xml","word/footer3.xml"]){if name!=part{assert_eq!(ibis_formats::test_files::part_text(&bytes,name),ibis_formats::test_files::part_text(&data,name),"outside owner part changed {name}");}}let saved=s.reopen();let owner=flow_command::sections(flow(&saved))[0];assert_eq!(flow_command::resolved_part(flow(&saved),owner,PartKind::Header),flow_command::resolved_part(&after,section,PartKind::Header));assert_eq!(flow_command::resolved_part(flow(&saved),0,PartKind::Header),flow_command::resolved_part(&after,0,PartKind::Header));
     }}
 }
 
 fn h9_original_history_linked_typing() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_linked_history_tail(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_linked_history_tail(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-history-linked-typing.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -4885,9 +4886,9 @@ fn h9_original_history_linked_typing() {
         s.key("cmd-shift-z"); assert_eq!(s.document(), after);
         let file = s.save_as(&format!("h9-linked-history-typed-{tracked}.docx"));
         let bytes = std::fs::read(file).unwrap();
-        let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
-        assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML), "unchanged original history must survive linked-tail replacement");
-        for part in ["word/_rels/document.xml.rels", "word/styles.xml", "word/numbering.xml"] { assert_eq!(ibis_pptx::test_files::part_text(&bytes, part), ibis_pptx::test_files::part_text(&data, part)); }
+        let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
+        assert!(xml.contains(ibis_formats::test_files::ORIGINAL_DELETION_XML), "unchanged original history must survive linked-tail replacement");
+        for part in ["word/_rels/document.xml.rels", "word/styles.xml", "word/numbering.xml"] { assert_eq!(ibis_formats::test_files::part_text(&bytes, part), ibis_formats::test_files::part_text(&data, part)); }
         let saved = s.reopen(); assert!(body(flow(&saved)).iter().any(|p| p.runs == para(&after, id).runs));
         s.menu("docx.track.show");
     }
@@ -4895,7 +4896,7 @@ fn h9_original_history_linked_typing() {
 
 fn h9_original_history_split() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_original_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_original_deletion_history(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-history-split.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap(); std::fs::write(&input, &data).unwrap();
     for offset in [1, 6] {
@@ -4912,13 +4913,13 @@ fn h9_original_history_split() {
         s.key("cmd-z"); assert_eq!(s.document(), before); let undone = s.save_as(&format!("h9-history-split-undone-{offset}.docx")); assert_eq!(std::fs::read(undone).unwrap(), data);
         s.key("cmd-shift-z"); assert_eq!(s.document(), after);
         let file = s.save_as(&format!("h9-history-split-{offset}.docx")); let bytes = std::fs::read(file).unwrap();
-        let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
-        assert_eq!(xml.matches(ibis_pptx::test_files::ORIGINAL_DELETION_XML).count(), 1, "whole old scope survives a split on either side");
-        for part in ["word/_rels/document.xml.rels", "word/styles.xml", "word/settings.xml", "word/numbering.xml"] { assert_eq!(ibis_pptx::test_files::part_text(&bytes, part), ibis_pptx::test_files::part_text(&data, part)); }
+        let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
+        assert_eq!(xml.matches(ibis_formats::test_files::ORIGINAL_DELETION_XML).count(), 1, "whole old scope survives a split on either side");
+        for part in ["word/_rels/document.xml.rels", "word/styles.xml", "word/settings.xml", "word/numbering.xml"] { assert_eq!(ibis_formats::test_files::part_text(&bytes, part), ibis_formats::test_files::part_text(&data, part)); }
         let saved = s.reopen(); let ps = body(flow(&saved)); for expected in [para(&after,id),para(&after,new_id)] { assert!(ps.iter().any(|p| p.text()==expected.text() && p.runs==expected.runs)); }
         s.click_text(FlowPos::new(new_id,0)); s.key("backspace"); let joined = s.document(); assert_eq!(para(&joined,id).runs, para(&before,id).runs);
         s.key("cmd-z"); assert_eq!(s.document(),after); s.key("cmd-shift-z"); assert_eq!(s.document(),joined);
-        let file=s.save_as(&format!("h9-history-joined-{offset}.docx")); let bytes=std::fs::read(file).unwrap(); let xml=ibis_pptx::test_files::part_text(&bytes,"word/document.xml").unwrap(); assert_eq!(xml.matches(ibis_pptx::test_files::ORIGINAL_DELETION_XML).count(),1);
+        let file=s.save_as(&format!("h9-history-joined-{offset}.docx")); let bytes=std::fs::read(file).unwrap(); let xml=ibis_formats::test_files::part_text(&bytes,"word/document.xml").unwrap(); assert_eq!(xml.matches(ibis_formats::test_files::ORIGINAL_DELETION_XML).count(),1);
         let saved=s.reopen(); assert!(body(flow(&saved)).iter().any(|p|p.runs==para(&before,id).runs));
         s.menu("docx.track.show");
     }
@@ -4926,7 +4927,7 @@ fn h9_original_history_split() {
 
 fn h9_cross_paragraph_history_guard() {
     let root=crate::shell::scenario::repo_root();
-    let data=ibis_pptx::test_files::docx_with_search_history_edges(&std::fs::read(root.join(REPORT)).unwrap());
+    let data=ibis_formats::test_files::docx_with_search_history_edges(&std::fs::read(root.join(REPORT)).unwrap());
     let input=root.join("target/scenario-input/docx-cross-paragraph-history.docx");std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(&input,&data).unwrap();
     for action in ["typing","backspace","delete","cut","paste","plain-paste"] {
         let mut s=Scenario::open("target/scenario-input/docx-cross-paragraph-history.docx");if s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}
@@ -4959,7 +4960,7 @@ fn h11_tracked_paste_original_history() {
 
 fn paste_original_history_cases(tracked: bool) {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_linked_history_tail(
+    let data = ibis_formats::test_files::docx_with_linked_history_tail(
         &std::fs::read(root.join(REPORT)).unwrap(),
     );
     let relative = if tracked {
@@ -5080,18 +5081,18 @@ fn paste_original_history_cases(tracked: bool) {
         assert_eq!(s.document(), after);
         let file = s.save_as(&format!("{prefix}-pasted-{plain}.docx"));
         let bytes = std::fs::read(file).unwrap();
-        let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
-        assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));
+        let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
+        assert!(xml.contains(ibis_formats::test_files::ORIGINAL_DELETION_XML));
         for part in ["word/styles.xml", "word/numbering.xml"] {
             assert_eq!(
-                ibis_pptx::test_files::part_text(&bytes, part),
-                ibis_pptx::test_files::part_text(&data, part)
+                ibis_formats::test_files::part_text(&bytes, part),
+                ibis_formats::test_files::part_text(&data, part)
             );
         }
-        let settings = ibis_pptx::test_files::part_text(&bytes, "word/settings.xml").unwrap();
+        let settings = ibis_formats::test_files::part_text(&bytes, "word/settings.xml").unwrap();
         assert_eq!(
             settings.replace("<w:trackRevisions/>", ""),
-            ibis_pptx::test_files::part_text(&data, "word/settings.xml").unwrap()
+            ibis_formats::test_files::part_text(&data, "word/settings.xml").unwrap()
         );
         assert_eq!(settings.contains("<w:trackRevisions/>"), tracked);
         let saved = s.reopen();
@@ -5129,7 +5130,7 @@ fn paste_original_history_cases(tracked: bool) {
 
 fn h9_original_insertion_format() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_original_insertion_history(
+    let data = ibis_formats::test_files::docx_with_original_insertion_history(
         &std::fs::read(root.join(REPORT)).unwrap(),
     );
     let input = root.join("target/scenario-input/docx-original-insertion-format.docx");
@@ -5182,15 +5183,15 @@ fn h9_original_insertion_format() {
         assert_eq!(s.document(), after);
         let file = s.save_as(&format!("h9-insertion-format-bold-{count}.docx"));
         let bytes = std::fs::read(file).unwrap();
-        let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+        let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
         assert!(xml.contains("w:id=\"941\""));
         assert!(xml.contains("ibis:marker=\"old\""));
         assert!(xml.contains("<!--old history container-->"));
         assert!(xml.contains("w:rsidR=\"12345678\""));
         for part in ["word/styles.xml", "word/settings.xml", "word/numbering.xml"] {
             assert_eq!(
-                ibis_pptx::test_files::part_text(&bytes, part),
-                ibis_pptx::test_files::part_text(&data, part)
+                ibis_formats::test_files::part_text(&bytes, part),
+                ibis_formats::test_files::part_text(&data, part)
             );
         }
         let saved = s.reopen();
@@ -5201,7 +5202,7 @@ fn h9_original_insertion_format() {
 
 fn h9_insertion_unknown_run_save_guard() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_insertion_run_comment(
+    let data = ibis_formats::test_files::docx_with_insertion_run_comment(
         &std::fs::read(root.join(REPORT)).unwrap(),
     );
     let input = root.join("target/scenario-input/docx-insertion-unknown-run.docx");
@@ -5252,7 +5253,7 @@ fn h9_insertion_unknown_run_save_guard() {
 
 fn h9_original_insertion_page() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_insertion_page_field(
+    let data = ibis_formats::test_files::docx_with_insertion_page_field(
         &std::fs::read(root.join(REPORT)).unwrap(),
     );
     let input = root.join("target/scenario-input/docx-insertion-page-field.docx");
@@ -5306,13 +5307,13 @@ fn h9_original_insertion_page() {
     assert_eq!(s.document(), after);
     let file = s.save_as("h9-insertion-page-rejected.docx");
     let bytes = std::fs::read(file).unwrap();
-    let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
     assert!(!xml.contains("w:id=\"941\""));
-    assert!(!xml.contains(ibis_pptx::test_files::INSERTION_COMPLEX_PAGE_XML));
+    assert!(!xml.contains(ibis_formats::test_files::INSERTION_COMPLEX_PAGE_XML));
     for part in ["word/styles.xml", "word/settings.xml", "word/numbering.xml"] {
         assert_eq!(
-            ibis_pptx::test_files::part_text(&bytes, part),
-            ibis_pptx::test_files::part_text(&data, part)
+            ibis_formats::test_files::part_text(&bytes, part),
+            ibis_formats::test_files::part_text(&data, part)
         );
     }
     let saved = s.reopen();
@@ -5327,7 +5328,7 @@ fn h9_original_insertion_page() {
 fn h9_insertion_field_edit() {
     let root = crate::shell::scenario::repo_root();
     for place in 0..3 {
-        let data = ibis_pptx::test_files::docx_with_insertion_page_field_at(
+        let data = ibis_formats::test_files::docx_with_insertion_page_field_at(
             &std::fs::read(root.join(REPORT)).unwrap(),
             place,
         );
@@ -5335,7 +5336,7 @@ fn h9_insertion_field_edit() {
         let input = root.join(&name);
         std::fs::create_dir_all(input.parent().unwrap()).unwrap();
         std::fs::write(&input, &data).unwrap();
-        let xml = ibis_pptx::test_files::part_text(&data, "word/document.xml").unwrap();
+        let xml = ibis_formats::test_files::part_text(&data, "word/document.xml").unwrap();
         let start = xml.find("<w:ins w:id=\"941\"").unwrap();
         let end = start + xml[start..].find("</w:ins>").unwrap() + "</w:ins>".len();
         let raw = xml[start..end].to_owned();
@@ -5405,15 +5406,15 @@ fn h9_insertion_field_edit() {
                 assert_eq!(s.document(), after);
                 let file = s.save_as(&format!("h9-field-outside-bold-{place}.docx"));
                 let bytes = std::fs::read(file).unwrap();
-                let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+                let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
                 assert!(
                     xml.contains(&raw),
                     "unchanged entire original field scope must stay exact"
                 );
                 for part in ["word/styles.xml", "word/settings.xml", "word/numbering.xml"] {
                     assert_eq!(
-                        ibis_pptx::test_files::part_text(&bytes, part),
-                        ibis_pptx::test_files::part_text(&data, part)
+                        ibis_formats::test_files::part_text(&bytes, part),
+                        ibis_formats::test_files::part_text(&data, part)
                     );
                 }
                 let saved = s.reopen();
@@ -5430,13 +5431,13 @@ fn h9_insertion_field_edit() {
 
 fn h9_linked_source_insertion_format() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_linked_insertion_history(
+    let data = ibis_formats::test_files::docx_with_linked_insertion_history(
         &std::fs::read(root.join(REPORT)).unwrap(),
     );
     let input = root.join("target/scenario-input/docx-linked-insertion-history.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
-    let raw = ibis_pptx::test_files::ORIGINAL_DELETION_XML
+    let raw = ibis_formats::test_files::ORIGINAL_DELETION_XML
         .replace("w:delText", "w:t")
         .replace("w:del", "w:ins")
         .replace("841", "941");
@@ -5490,7 +5491,7 @@ fn h9_linked_source_insertion_format() {
         assert_eq!(s.document(), after);
         let file = s.save_as(&format!("h9-linked-insertion-bold-{inside}.docx"));
         let bytes = std::fs::read(file).unwrap();
-        let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+        let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
         if !inside {
             assert!(
                 xml.contains(&raw),
@@ -5509,8 +5510,8 @@ fn h9_linked_source_insertion_format() {
             "word/numbering.xml",
         ] {
             assert_eq!(
-                ibis_pptx::test_files::part_text(&bytes, part),
-                ibis_pptx::test_files::part_text(&data, part)
+                ibis_formats::test_files::part_text(&bytes, part),
+                ibis_formats::test_files::part_text(&data, part)
             );
         }
         let saved = s.reopen();
@@ -5537,8 +5538,8 @@ fn linked_source_insertion_typing_cases(namespace_variant: Option<usize>) {
     let root = crate::shell::scenario::repo_root();
     let report = std::fs::read(root.join(REPORT)).unwrap();
     let data = namespace_variant.map_or_else(
-        || ibis_pptx::test_files::docx_with_linked_insertion_history(&report),
-        |variant| ibis_pptx::test_files::docx_with_link_relationship_namespace(&report, variant),
+        || ibis_formats::test_files::docx_with_linked_insertion_history(&report),
+        |variant| ibis_formats::test_files::docx_with_link_relationship_namespace(&report, variant),
     );
     let relative = namespace_variant.map_or_else(
         || "target/scenario-input/docx-linked-insertion-typing.docx".to_string(),
@@ -5551,11 +5552,11 @@ fn linked_source_insertion_typing_cases(namespace_variant: Option<usize>) {
     let input = root.join(&relative);
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
-    let raw = ibis_pptx::test_files::ORIGINAL_DELETION_XML
+    let raw = ibis_formats::test_files::ORIGINAL_DELETION_XML
         .replace("w:delText", "w:t")
         .replace("w:del", "w:ins")
         .replace("841", "941");
-    let source_xml = ibis_pptx::test_files::part_text(&data, "word/document.xml").unwrap();
+    let source_xml = ibis_formats::test_files::part_text(&data, "word/document.xml").unwrap();
     let begin = source_xml.find("<w:hyperlink ").unwrap();
     let end = source_xml[begin..].find("</w:hyperlink>").unwrap() + begin + "</w:hyperlink>".len();
     let original_link = &source_xml[begin..end];
@@ -5620,7 +5621,7 @@ fn linked_source_insertion_typing_cases(namespace_variant: Option<usize>) {
             assert_eq!(s.document(), after);
             let f = s.save_as(&format!("{prefix}-typed-{at}-{tracked}.docx"));
             let bytes = std::fs::read(f).unwrap();
-            let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+            let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
             assert!(xml.contains(&raw));
             assert!(xml.contains(original_link), "original link XML intact");
             assert!(xml.contains("w:history=\"0\" w:tgtFrame=\"frame\""));
@@ -5630,13 +5631,13 @@ fn linked_source_insertion_typing_cases(namespace_variant: Option<usize>) {
                 "word/numbering.xml",
             ] {
                 assert_eq!(
-                    ibis_pptx::test_files::part_text(&bytes, part),
-                    ibis_pptx::test_files::part_text(&data, part)
+                    ibis_formats::test_files::part_text(&bytes, part),
+                    ibis_formats::test_files::part_text(&data, part)
                 );
             }
-            let settings = ibis_pptx::test_files::part_text(&bytes, "word/settings.xml").unwrap();
+            let settings = ibis_formats::test_files::part_text(&bytes, "word/settings.xml").unwrap();
             let source_settings =
-                ibis_pptx::test_files::part_text(&data, "word/settings.xml").unwrap();
+                ibis_formats::test_files::part_text(&data, "word/settings.xml").unwrap();
             assert_eq!(settings.replace("<w:trackRevisions/>", ""), source_settings);
             assert_eq!(settings.contains("<w:trackRevisions/>"), tracked);
             let saved = s.reopen();
@@ -5658,14 +5659,14 @@ fn h9_note_id_namespace_typing() {
     use ibis_doc_model::flow_command;
     let root=crate::shell::scenario::repo_root();let original=std::fs::read(root.join(REPORT)).unwrap();
     for variant in 0..3 {
-        let data=ibis_pptx::test_files::docx_with_note_id_namespace(&original,variant);let relative=format!("target/scenario-input/docx-note-id-namespace-{variant}.docx");let input=root.join(&relative);std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
+        let data=ibis_formats::test_files::docx_with_note_id_namespace(&original,variant);let relative=format!("target/scenario-input/docx-note-id-namespace-{variant}.docx");let input=root.join(&relative);std::fs::create_dir_all(input.parent().unwrap()).unwrap();std::fs::write(input,&data).unwrap();
         let mut s=Scenario::open(&relative);if s.with(|e, _| e.showing_markup()){s.menu("docx.track.show");}let before=s.document();let note=&before.footnotes[0];let p=match &note.blocks[0]{Block::Paragraph(p)=>p,_=>panic!()};assert_eq!(final_text(p)," abcd");let id=p.id;
         let mut at=0;for run in &p.runs {if matches!(&run.kind,FlowRunKind::Text(t) if t.starts_with(" ab"))&&run.revision.is_none(){at+=1;break;}at+=run.len();}
         s.click_text(FlowPos::new(id,at));s.type_text("Q");let after=s.document();let edited=flow_command::paragraph(&after,id).unwrap();assert_eq!(final_text(edited)," Qabcd");
         let mut outside=after.clone();outside.footnotes=before.footnotes.clone();assert_eq!(outside,before);for old in &before.footnotes {if old.id!=note.id {assert!(after.footnotes.contains(old));}}
         s.key("cmd-z");assert_eq!(s.document(),before);let undo=s.save_as(&format!("h9-note-namespace-{variant}-undone.docx"));assert_eq!(std::fs::read(undo).unwrap(),data);s.key("cmd-shift-z");assert_eq!(s.document(),after);
-        let path=s.save_as(&format!("h9-note-namespace-{variant}-typed.docx"));let bytes=std::fs::read(path).unwrap();let xml=ibis_pptx::test_files::part_text(&bytes,"word/footnotes.xml").unwrap();
-        let source_xml=ibis_pptx::test_files::part_text(&data,"word/footnotes.xml").unwrap();assert_eq!(ibis_pptx::test_files::positive_footnote_ids(&xml),ibis_pptx::test_files::positive_footnote_ids(&source_xml),"source note IDs/order must remain unique");assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));
+        let path=s.save_as(&format!("h9-note-namespace-{variant}-typed.docx"));let bytes=std::fs::read(path).unwrap();let xml=ibis_formats::test_files::part_text(&bytes,"word/footnotes.xml").unwrap();
+        let source_xml=ibis_formats::test_files::part_text(&data,"word/footnotes.xml").unwrap();assert_eq!(ibis_formats::test_files::positive_footnote_ids(&xml),ibis_formats::test_files::positive_footnote_ids(&source_xml),"source note IDs/order must remain unique");assert!(xml.contains(ibis_formats::test_files::ORIGINAL_DELETION_XML));
         let saved=s.reopen();assert_eq!(flow_command::paragraph(flow(&saved),id).unwrap().runs,edited.runs);
         s.menu("docx.track.show");
     }
@@ -5676,7 +5677,7 @@ fn d3_story_reference_settings_preservation() {
     let original = std::fs::read(root.join(REPORT)).unwrap();
     for variant in 0..3 {
         let data =
-            ibis_pptx::test_files::docx_with_story_relationship_namespace(&original, variant);
+            ibis_formats::test_files::docx_with_story_relationship_namespace(&original, variant);
         let relative =
             format!("target/scenario-input/docx-story-settings-namespace-{variant}.docx");
         let input = root.join(&relative);
@@ -5701,11 +5702,11 @@ fn d3_story_reference_settings_preservation() {
         assert_eq!(s.document(), after);
         let path = s.save_as(&format!("d3-story-settings-{variant}-edited.docx"));
         let bytes = std::fs::read(path).unwrap();
-        let before_xml = ibis_pptx::test_files::part_text(&data, "word/document.xml").unwrap();
-        let after_xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+        let before_xml = ibis_formats::test_files::part_text(&data, "word/document.xml").unwrap();
+        let after_xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
         assert_eq!(
-            ibis_pptx::test_files::story_reference_xmls(&after_xml),
-            ibis_pptx::test_files::story_reference_xmls(&before_xml),
+            ibis_formats::test_files::story_reference_xmls(&after_xml),
+            ibis_formats::test_files::story_reference_xmls(&before_xml),
             "unrelated page setting must preserve all original reference scopes"
         );
         let saved = s.reopen();
@@ -5731,12 +5732,12 @@ fn story_relationship_namespace_cases(all_types: bool) {
     use ibis_doc_model::{PartKind, flow_command};
     let root = crate::shell::scenario::repo_root();
     let original = std::fs::read(root.join(REPORT)).unwrap();
-    let reference = ibis_pptx::read_docx(&original).unwrap();
+    let reference = ibis_formats::read_docx(&original).unwrap();
     for variant in 0..3 {
         let data = if all_types {
-            ibis_pptx::test_files::docx_with_all_story_relationship_namespaces(&original, variant)
+            ibis_formats::test_files::docx_with_all_story_relationship_namespaces(&original, variant)
         } else {
-            ibis_pptx::test_files::docx_with_story_relationship_namespace(&original, variant)
+            ibis_formats::test_files::docx_with_story_relationship_namespace(&original, variant)
         };
         let prefix = if all_types {
             "d3-all-story-namespace"
@@ -5830,8 +5831,8 @@ fn story_relationship_namespace_cases(all_types: bool) {
             let path = s.save_as(&format!("{prefix}-{variant}-{}-edited.docx", kind.index()));
             let bytes = std::fs::read(path).unwrap();
             assert_eq!(
-                ibis_pptx::test_files::part_text(&bytes, "word/document.xml"),
-                ibis_pptx::test_files::part_text(&data, "word/document.xml")
+                ibis_formats::test_files::part_text(&bytes, "word/document.xml"),
+                ibis_formats::test_files::part_text(&data, "word/document.xml")
             );
             let saved = s.reopen();
             assert_eq!(
@@ -5846,14 +5847,14 @@ fn h11_picture_relationship_namespace() {
     let root = crate::shell::scenario::repo_root();
     let source = std::fs::read(root.join("test/editing/docx-paste-source.docx")).unwrap();
     let destination = std::fs::read(root.join("test/editing/docx-paste-destination.docx")).unwrap();
-    let reference = ibis_pptx::read_docx(&source).unwrap();
+    let reference = ibis_formats::read_docx(&source).unwrap();
     let expected_png = reference.media[0].data.clone();
-    let foreign = ibis_pptx::read_docx(&destination).unwrap().media[0]
+    let foreign = ibis_formats::read_docx(&destination).unwrap().media[0]
         .data
         .clone();
     assert_ne!(expected_png, foreign);
     for variant in 0..3 {
-        let data = ibis_pptx::test_files::docx_with_picture_relationship_namespace(
+        let data = ibis_formats::test_files::docx_with_picture_relationship_namespace(
             &source, &foreign, variant,
         );
         let relative = format!("target/scenario-input/docx-picture-namespace-{variant}.docx");
@@ -5908,10 +5909,10 @@ fn h11_picture_relationship_namespace() {
         assert_eq!(s.document(), after);
         let saved_path = s.save_as(&format!("h11-picture-namespace-{variant}-edited.docx"));
         let bytes = std::fs::read(saved_path).unwrap();
-        let source_xml = ibis_pptx::test_files::part_text(&data, "word/document.xml").unwrap();
+        let source_xml = ibis_formats::test_files::part_text(&data, "word/document.xml").unwrap();
         let begin = source_xml.find("<a:blip ").unwrap();
         let end = source_xml[begin..].find("/>").unwrap() + begin + 2;
-        let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+        let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
         assert!(
             xml.contains(&source_xml[begin..end]),
             "original drawing reference attrs retained"
@@ -5922,8 +5923,8 @@ fn h11_picture_relationship_namespace() {
             "word/numbering.xml",
         ] {
             assert_eq!(
-                ibis_pptx::test_files::part_text(&bytes, part),
-                ibis_pptx::test_files::part_text(&data, part)
+                ibis_formats::test_files::part_text(&bytes, part),
+                ibis_formats::test_files::part_text(&data, part)
             );
         }
         let saved = s.reopen();
@@ -5942,7 +5943,7 @@ fn h11_picture_relationship_namespace() {
 fn h9_history_namespace_typing() {
     for variant in 0..3 {
         let root = crate::shell::scenario::repo_root();
-        let data = ibis_pptx::test_files::docx_with_history_namespace_attributes(
+        let data = ibis_formats::test_files::docx_with_history_namespace_attributes(
             &std::fs::read(root.join(REPORT)).unwrap(),
             variant,
         );
@@ -5956,7 +5957,7 @@ fn h9_history_namespace_typing() {
             &data,
         )
         .unwrap();
-        let source_xml = ibis_pptx::test_files::part_text(&data, "word/document.xml").unwrap();
+        let source_xml = ibis_formats::test_files::part_text(&data, "word/document.xml").unwrap();
         let begin = source_xml.find("<w:ins ").unwrap();
         let end = source_xml[begin..].find("</w:ins>").unwrap() + begin + "</w:ins>".len();
         let raw = &source_xml[begin..end];
@@ -6015,7 +6016,7 @@ fn h9_history_namespace_typing() {
                 assert_eq!(s.document(), after);
                 let f = s.save_as(&format!("h9-namespace-typed-{variant}-{at}-{tracked}.docx"));
                 let bytes = std::fs::read(f).unwrap();
-                let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+                let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
                 assert!(xml.contains(&raw));
 
                 for part in [
@@ -6024,14 +6025,14 @@ fn h9_history_namespace_typing() {
                     "word/numbering.xml",
                 ] {
                     assert_eq!(
-                        ibis_pptx::test_files::part_text(&bytes, part),
-                        ibis_pptx::test_files::part_text(&data, part)
+                        ibis_formats::test_files::part_text(&bytes, part),
+                        ibis_formats::test_files::part_text(&data, part)
                     );
                 }
                 let settings =
-                    ibis_pptx::test_files::part_text(&bytes, "word/settings.xml").unwrap();
+                    ibis_formats::test_files::part_text(&bytes, "word/settings.xml").unwrap();
                 let source_settings =
-                    ibis_pptx::test_files::part_text(&data, "word/settings.xml").unwrap();
+                    ibis_formats::test_files::part_text(&data, "word/settings.xml").unwrap();
                 assert_eq!(settings.replace("<w:trackRevisions/>", ""), source_settings);
                 assert_eq!(settings.contains("<w:trackRevisions/>"), tracked);
                 let saved = s.reopen();
@@ -6052,7 +6053,7 @@ fn h9_history_namespace_typing() {
 
 fn h9_linked_source_hidden_delete() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_linked_deletion_history(
+    let data = ibis_formats::test_files::docx_with_linked_deletion_history(
         &std::fs::read(root.join(REPORT)).unwrap(),
     );
     let input = root.join("target/scenario-input/docx-linked-hidden-delete.docx");
@@ -6125,8 +6126,8 @@ fn h9_linked_source_hidden_delete() {
             assert_eq!(s.document(), after);
             let f = s.save_as(&format!("h9-linked-hidden-{key}-{tracked}.docx"));
             let bytes = std::fs::read(f).unwrap();
-            let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
-            assert!(xml.contains(ibis_pptx::test_files::ORIGINAL_DELETION_XML));
+            let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
+            assert!(xml.contains(ibis_formats::test_files::ORIGINAL_DELETION_XML));
             assert!(xml.contains("w:history=\"0\" w:tgtFrame=\"frame\""));
             for part in [
                 "word/_rels/document.xml.rels",
@@ -6134,14 +6135,14 @@ fn h9_linked_source_hidden_delete() {
                 "word/numbering.xml",
             ] {
                 assert_eq!(
-                    ibis_pptx::test_files::part_text(&bytes, part),
-                    ibis_pptx::test_files::part_text(&data, part)
+                    ibis_formats::test_files::part_text(&bytes, part),
+                    ibis_formats::test_files::part_text(&data, part)
                 );
             }
-            let settings = ibis_pptx::test_files::part_text(&bytes, "word/settings.xml").unwrap();
+            let settings = ibis_formats::test_files::part_text(&bytes, "word/settings.xml").unwrap();
             assert_eq!(
                 settings.replace("<w:trackRevisions/>", ""),
-                ibis_pptx::test_files::part_text(&data, "word/settings.xml").unwrap()
+                ibis_formats::test_files::part_text(&data, "word/settings.xml").unwrap()
             );
             assert_eq!(settings.contains("<w:trackRevisions/>"), tracked);
             let saved = s.reopen();
@@ -6171,9 +6172,9 @@ fn source_insertion_delete_cases(linked: bool) {
     let root = crate::shell::scenario::repo_root();
     let report = std::fs::read(root.join(REPORT)).unwrap();
     let data = if linked {
-        ibis_pptx::test_files::docx_with_linked_insertion_history(&report)
+        ibis_formats::test_files::docx_with_linked_insertion_history(&report)
     } else {
-        ibis_pptx::test_files::docx_with_original_insertion_history(&report)
+        ibis_formats::test_files::docx_with_original_insertion_history(&report)
     };
     let prefix = if linked {
         "h9-linked-insertion-partial"
@@ -6268,7 +6269,7 @@ fn source_insertion_delete_cases(linked: bool) {
             assert_eq!(s.document(), after);
             let f = s.save_as(&format!("{prefix}-{label}-{tracked}.docx"));
             let bytes = std::fs::read(f).unwrap();
-            let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+            let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
             assert_eq!(
                 xml.matches("w:id=\"941\"").count(),
                 usize::from(count != 3),
@@ -6293,8 +6294,8 @@ fn source_insertion_delete_cases(linked: bool) {
                 "word/numbering.xml",
             ] {
                 assert_eq!(
-                    ibis_pptx::test_files::part_text(&bytes, part),
-                    ibis_pptx::test_files::part_text(&data, part)
+                    ibis_formats::test_files::part_text(&bytes, part),
+                    ibis_formats::test_files::part_text(&data, part)
                 );
             }
             let saved = s.reopen();
@@ -6316,9 +6317,9 @@ fn h9_insertion_partial_delete_save_guard() {
     let report = std::fs::read(root.join(REPORT)).unwrap();
     for field in [false, true] {
         let data = if field {
-            ibis_pptx::test_files::docx_with_insertion_page_field(&report)
+            ibis_formats::test_files::docx_with_insertion_page_field(&report)
         } else {
-            ibis_pptx::test_files::docx_with_insertion_run_comment(&report)
+            ibis_formats::test_files::docx_with_insertion_run_comment(&report)
         };
         let relative = format!("target/scenario-input/docx-insertion-partial-guard-{field}.docx");
         let input = root.join(&relative);
@@ -6378,11 +6379,11 @@ fn source_insertion_replacement_cases(linked: bool, namespace_variant: Option<us
     let root = crate::shell::scenario::repo_root();
     let report = std::fs::read(root.join(REPORT)).unwrap();
     let data = if let Some(variant) = namespace_variant {
-        ibis_pptx::test_files::docx_with_history_namespace_attributes(&report, variant)
+        ibis_formats::test_files::docx_with_history_namespace_attributes(&report, variant)
     } else if linked {
-        ibis_pptx::test_files::docx_with_linked_insertion_history(&report)
+        ibis_formats::test_files::docx_with_linked_insertion_history(&report)
     } else {
-        ibis_pptx::test_files::docx_with_original_insertion_history(&report)
+        ibis_formats::test_files::docx_with_original_insertion_history(&report)
     };
     let relative = if linked {
         "target/scenario-input/docx-linked-insertion-replacement.docx"
@@ -6481,8 +6482,8 @@ fn source_insertion_replacement_cases(linked: bool, namespace_variant: Option<us
             assert_eq!(s.document(), after);
             let f = s.save_as(&format!("{prefix}-{at}-{tracked}.docx"));
             let bytes = std::fs::read(f).unwrap();
-            let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
-            let ids = ibis_pptx::test_files::word_revision_ids(&xml);
+            let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
+            let ids = ibis_formats::test_files::word_revision_ids(&xml);
             assert_eq!(
                 ids.iter().filter(|&&id| id == 941).count(),
                 1,
@@ -6512,14 +6513,14 @@ fn source_insertion_replacement_cases(linked: bool, namespace_variant: Option<us
                 "word/_rels/document.xml.rels",
             ] {
                 assert_eq!(
-                    ibis_pptx::test_files::part_text(&bytes, part),
-                    ibis_pptx::test_files::part_text(&data, part)
+                    ibis_formats::test_files::part_text(&bytes, part),
+                    ibis_formats::test_files::part_text(&data, part)
                 );
             }
-            let settings = ibis_pptx::test_files::part_text(&bytes, "word/settings.xml").unwrap();
+            let settings = ibis_formats::test_files::part_text(&bytes, "word/settings.xml").unwrap();
             assert_eq!(
                 settings.replace("<w:trackRevisions/>", ""),
-                ibis_pptx::test_files::part_text(&data, "word/settings.xml").unwrap()
+                ibis_formats::test_files::part_text(&data, "word/settings.xml").unwrap()
             );
             assert_eq!(settings.contains("<w:trackRevisions/>"), tracked);
             if linked {
@@ -6565,9 +6566,9 @@ fn h9_insertion_replacement_save_guard() {
     for field in [false, true] {
         for tracked in [false, true] {
             let data = if field {
-                ibis_pptx::test_files::docx_with_insertion_page_field(&report)
+                ibis_formats::test_files::docx_with_insertion_page_field(&report)
             } else {
-                ibis_pptx::test_files::docx_with_insertion_run_comment(&report)
+                ibis_formats::test_files::docx_with_insertion_run_comment(&report)
             };
             let relative = format!(
                 "target/scenario-input/docx-insertion-replace-guard-{field}-{tracked}.docx"
@@ -6631,7 +6632,7 @@ fn h9_insertion_replacement_save_guard() {
 
 fn h9_distinct_source_link_frames() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_distinct_link_frames(
+    let data = ibis_formats::test_files::docx_with_distinct_link_frames(
         &std::fs::read(root.join(REPORT)).unwrap(),
     );
     let input = root.join("target/scenario-input/docx-distinct-link-frames.docx");
@@ -6675,7 +6676,7 @@ fn h9_distinct_source_link_frames() {
     assert_eq!(s.document(), after);
     let f = s.save_as("h9-link-frames-edited.docx");
     let bytes = std::fs::read(f).unwrap();
-    let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
     for frame in ["first", "second"] {
         assert_eq!(
             xml.matches(&format!("w:history=\"0\" w:tgtFrame=\"{frame}\""))
@@ -6683,7 +6684,7 @@ fn h9_distinct_source_link_frames() {
             1
         );
     }
-    let first = ibis_pptx::test_files::ORIGINAL_DELETION_XML
+    let first = ibis_formats::test_files::ORIGINAL_DELETION_XML
         .replace("w:delText", "w:t")
         .replace("w:del", "w:ins")
         .replace("841", "941");
@@ -6697,11 +6698,11 @@ fn h9_distinct_source_link_frames() {
     assert!(xml.contains(&second));
     for part in ["word/settings.xml", "word/numbering.xml"] {
         assert_eq!(
-            ibis_pptx::test_files::part_text(&bytes, part),
-            ibis_pptx::test_files::part_text(&data, part)
+            ibis_formats::test_files::part_text(&bytes, part),
+            ibis_formats::test_files::part_text(&data, part)
         );
     }
-    assert!(ibis_pptx::test_files::part_text(&bytes, "word/styles.xml").unwrap().contains("Hyperlink"));
+    assert!(ibis_formats::test_files::part_text(&bytes, "word/styles.xml").unwrap().contains("Hyperlink"));
     let saved = s.reopen();
     assert!(
         body(flow(&saved))
@@ -6903,7 +6904,7 @@ fn watermark_click(s: &mut Scenario, id: &str) {
 /// The parts of a saved file whose text has `needle`.
 fn parts_with(path: &std::path::Path, needle: &str) -> Vec<String> {
     let bytes = std::fs::read(path).unwrap();
-    (1..=6).flat_map(|i| [format!("word/header{i}.xml")]).filter(|name| ibis_pptx::test_files::part_text(&bytes, name).is_some_and(|t| t.contains(needle))).collect()
+    (1..=6).flat_map(|i| [format!("word/header{i}.xml")]).filter(|name| ibis_formats::test_files::part_text(&bytes, name).is_some_and(|t| t.contains(needle))).collect()
 }
 
 /// DOCX-PAGE-019 デザイン > 透かし…: Word's 社外秘, red, horizontal, drawn
@@ -7435,7 +7436,7 @@ fn tblfmt011_cell_text_direction() {
     // 1. Change text direction to vertical right-to-left (tbRl)
     s.menu("docx.cell.direction.tbrl");
     let t_v1 = table(&mut s);
-    assert_eq!(t_v1.rows[0].cells[0].direction, ibis_doc_model::CellDirection::TbRl);
+    assert_eq!(t_v1.rows[0].cells[0].direction, ibis_doc_model::CellDirection::TbRlV);
     assert_eq!(s.menu_state("docx.cell.direction.tbrl"), Some((true, true)));
     assert_eq!(s.menu_state("docx.cell.direction.lrtb"), Some((true, false)));
 
@@ -7449,7 +7450,7 @@ fn tblfmt011_cell_text_direction() {
     // 3. Undo / Redo
     s.key("cmd-z");
     let t_u1 = table(&mut s);
-    assert_eq!(t_u1.rows[0].cells[0].direction, ibis_doc_model::CellDirection::TbRl);
+    assert_eq!(t_u1.rows[0].cells[0].direction, ibis_doc_model::CellDirection::TbRlV);
 
     s.key("cmd-z");
     let t_u2 = table(&mut s);
@@ -7457,14 +7458,14 @@ fn tblfmt011_cell_text_direction() {
 
     s.key("cmd-shift-z");
     let t_r1 = table(&mut s);
-    assert_eq!(t_r1.rows[0].cells[0].direction, ibis_doc_model::CellDirection::TbRl);
+    assert_eq!(t_r1.rows[0].cells[0].direction, ibis_doc_model::CellDirection::TbRlV);
 
     // 4. Save and reopen
     s.save_as("tblfmt011_direction.docx");
     let saved = s.reopen();
     let d = flow(&saved);
     let t_saved = d.body.iter().rev().find_map(|b| if let Block::Table(t) = b { Some(t) } else { None }).unwrap();
-    assert_eq!(t_saved.rows[0].cells[0].direction, ibis_doc_model::CellDirection::TbRl);
+    assert_eq!(t_saved.rows[0].cells[0].direction, ibis_doc_model::CellDirection::TbRlV);
 }
 
 fn tblfmt008_cell_margins() {
@@ -7910,7 +7911,7 @@ fn float003_wrap_tight_through_top_bottom() {
         assert_eq!(s.document(), before, "{menu}: one undo");
         s.key("cmd-shift-z");
         let path = s.save_as(&format!("float003-{xml}.docx"));
-        let xml_text = ibis_pptx::test_files::part_text(&std::fs::read(&path).unwrap(), "word/document.xml").unwrap();
+        let xml_text = ibis_formats::test_files::part_text(&std::fs::read(&path).unwrap(), "word/document.xml").unwrap();
         assert!(xml_text.contains(&format!("<wp:{xml}")), "{menu} is saved as wp:{xml}");
         s.menu("docx.picture.wrap.inline");
     }
@@ -7954,7 +7955,7 @@ fn fcode_document_info_fields() {
     assert!(value("NUMWORDS").trim().parse::<u32>().is_ok_and(|n| n > 0), "NUMWORDS: {}", value("NUMWORDS"));
     assert!(value("NUMCHARS").trim().parse::<u32>().is_ok_and(|n| n > 0), "NUMCHARS: {}", value("NUMCHARS"));
     let path = s.save_as("fcode-info.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&path).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&path).unwrap(), "word/document.xml").unwrap();
     for code in codes {
         assert!(xml.contains(&format!(" {code} ")) || xml.contains(&format!(" {code}\"")) || xml.contains(&format!("{code} \\")) || xml.contains(&format!(">{code}<")) || xml.contains(&format!(" {code}<")), "{code} is kept as a field in the file");
     }
@@ -9180,11 +9181,11 @@ fn float002_picture_wrap_and_floating() {
 
     // 6d. 重なり順（Z-order: front, backward, back, forward）の検証
     let h_init = anchor_fixed.relative_height;
-    s.menu("docx.picture.zorder.front");
+    s.menu("arrange.bring-to-front");
     let anchor_front = s.with(|e, _| e.picture_floating_at_caret()).expect("floating anchor");
     assert!(anchor_front.relative_height > h_init, "最前面へ移動で relative_height が増加");
     let h_front = anchor_front.relative_height;
-    s.menu("docx.picture.zorder.backward");
+    s.menu("arrange.send-backward");
     let anchor_back = s.with(|e, _| e.picture_floating_at_caret()).expect("floating anchor");
     assert!(anchor_back.relative_height < h_front, "背面へ移動で relative_height が減少");
     let h_target = anchor_back.relative_height;
@@ -9493,7 +9494,7 @@ fn ja011_overflow_punct() {
     let mut s = Scenario::open(REPORT);
 
     // 1. 初期状態：句読点のぶら下げは有効（既定値 true）
-    assert_eq!(s.menu_state("docx.para.overflow-punct"), Some((true, true)), "初期状態は句読点のぶら下げ有効");
+    assert_eq!(s.menu_state("docx.paragraph.overflow-punct"), Some((true, true)), "初期状態は句読点のぶら下げ有効");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9501,8 +9502,8 @@ fn ja011_overflow_punct() {
     }
 
     // 2. トグル切替で無効化
-    s.menu("docx.para.overflow-punct");
-    assert_eq!(s.menu_state("docx.para.overflow-punct"), Some((true, false)), "トグルで無効化");
+    s.menu("docx.paragraph.overflow-punct");
+    assert_eq!(s.menu_state("docx.paragraph.overflow-punct"), Some((true, false)), "トグルで無効化");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9512,14 +9513,14 @@ fn ja011_overflow_punct() {
 
     // 3. Undo / Redo 検証
     s.key("cmd-z");
-    assert_eq!(s.menu_state("docx.para.overflow-punct"), Some((true, true)), "Undo で有効に復帰");
+    assert_eq!(s.menu_state("docx.paragraph.overflow-punct"), Some((true, true)), "Undo で有効に復帰");
     {
         let doc = s.document();
         let p = body(&doc)[0];
         assert!(p.overflow_punct);
     }
     s.key("cmd-shift-z");
-    assert_eq!(s.menu_state("docx.para.overflow-punct"), Some((true, false)), "Redo で無効に復帰");
+    assert_eq!(s.menu_state("docx.paragraph.overflow-punct"), Some((true, false)), "Redo で無効に復帰");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9535,8 +9536,8 @@ fn ja011_overflow_punct() {
     assert_eq!(p_saved.direct.overflow_punct, Some(false));
 
     // 5. 再度トグル切替で有効化
-    s.menu("docx.para.overflow-punct");
-    assert_eq!(s.menu_state("docx.para.overflow-punct"), Some((true, true)), "再度トグルで有効化");
+    s.menu("docx.paragraph.overflow-punct");
+    assert_eq!(s.menu_state("docx.paragraph.overflow-punct"), Some((true, true)), "再度トグルで有効化");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9557,8 +9558,8 @@ fn ja013_auto_space() {
     let mut s = Scenario::open(REPORT);
 
     // 1. 初期状態：日本語と英字／数字の間隔自動調整は有効（既定値 true）
-    assert_eq!(s.menu_state("docx.para.auto-space-de"), Some((true, true)), "初期状態はautoSpaceDE有効");
-    assert_eq!(s.menu_state("docx.para.auto-space-dn"), Some((true, true)), "初期状態はautoSpaceDN有効");
+    assert_eq!(s.menu_state("docx.paragraph.auto-space-de"), Some((true, true)), "初期状態はautoSpaceDE有効");
+    assert_eq!(s.menu_state("docx.paragraph.auto-space-dn"), Some((true, true)), "初期状態はautoSpaceDN有効");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9567,10 +9568,10 @@ fn ja013_auto_space() {
     }
 
     // 2. トグル切替で両方無効化
-    s.menu("docx.para.auto-space-de");
-    assert_eq!(s.menu_state("docx.para.auto-space-de"), Some((true, false)), "トグルでautoSpaceDE無効化");
-    s.menu("docx.para.auto-space-dn");
-    assert_eq!(s.menu_state("docx.para.auto-space-dn"), Some((true, false)), "トグルでautoSpaceDN無効化");
+    s.menu("docx.paragraph.auto-space-de");
+    assert_eq!(s.menu_state("docx.paragraph.auto-space-de"), Some((true, false)), "トグルでautoSpaceDE無効化");
+    s.menu("docx.paragraph.auto-space-dn");
+    assert_eq!(s.menu_state("docx.paragraph.auto-space-dn"), Some((true, false)), "トグルでautoSpaceDN無効化");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9582,9 +9583,9 @@ fn ja013_auto_space() {
 
     // 3. Undo / Redo 検証
     s.key("cmd-z");
-    assert_eq!(s.menu_state("docx.para.auto-space-dn"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.paragraph.auto-space-dn"), Some((true, true)));
     s.key("cmd-z");
-    assert_eq!(s.menu_state("docx.para.auto-space-de"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.paragraph.auto-space-de"), Some((true, true)));
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9593,8 +9594,8 @@ fn ja013_auto_space() {
     }
     s.key("cmd-shift-z");
     s.key("cmd-shift-z");
-    assert_eq!(s.menu_state("docx.para.auto-space-de"), Some((true, false)));
-    assert_eq!(s.menu_state("docx.para.auto-space-dn"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.paragraph.auto-space-de"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.paragraph.auto-space-dn"), Some((true, false)));
 
     // 4. 保存と再読込による永続化検証（false の保存）
     s.save_as("ja013_auto_space_off.docx");
@@ -9607,10 +9608,10 @@ fn ja013_auto_space() {
     assert_eq!(p_saved.direct.auto_space_digits, Some(false));
 
     // 5. 再度トグル切替で有効化
-    s.menu("docx.para.auto-space-de");
-    s.menu("docx.para.auto-space-dn");
-    assert_eq!(s.menu_state("docx.para.auto-space-de"), Some((true, true)));
-    assert_eq!(s.menu_state("docx.para.auto-space-dn"), Some((true, true)));
+    s.menu("docx.paragraph.auto-space-de");
+    s.menu("docx.paragraph.auto-space-dn");
+    assert_eq!(s.menu_state("docx.paragraph.auto-space-de"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.paragraph.auto-space-dn"), Some((true, true)));
 
     // 6. 保存と再読込による永続化検証（true の保存）
     s.save_as("ja013_auto_space_on.docx");
@@ -9627,8 +9628,8 @@ fn ja009_kinsoku_word_wrap() {
     let mut s = Scenario::open(REPORT);
 
     // 1. 初期状態：禁則処理・単語途中改行禁止は有効（既定値 true）
-    assert_eq!(s.menu_state("docx.para.kinsoku"), Some((true, true)), "初期状態はkinsoku有効");
-    assert_eq!(s.menu_state("docx.para.word-wrap"), Some((true, true)), "初期状態はwordWrap有効");
+    assert_eq!(s.menu_state("docx.paragraph.kinsoku"), Some((true, true)), "初期状態はkinsoku有効");
+    assert_eq!(s.menu_state("docx.paragraph.word-wrap"), Some((true, true)), "初期状態はwordWrap有効");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9637,10 +9638,10 @@ fn ja009_kinsoku_word_wrap() {
     }
 
     // 2. トグル切替で両方無効化
-    s.menu("docx.para.kinsoku");
-    assert_eq!(s.menu_state("docx.para.kinsoku"), Some((true, false)), "トグルでkinsoku無効化");
-    s.menu("docx.para.word-wrap");
-    assert_eq!(s.menu_state("docx.para.word-wrap"), Some((true, false)), "トグルでwordWrap無効化");
+    s.menu("docx.paragraph.kinsoku");
+    assert_eq!(s.menu_state("docx.paragraph.kinsoku"), Some((true, false)), "トグルでkinsoku無効化");
+    s.menu("docx.paragraph.word-wrap");
+    assert_eq!(s.menu_state("docx.paragraph.word-wrap"), Some((true, false)), "トグルでwordWrap無効化");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9652,9 +9653,9 @@ fn ja009_kinsoku_word_wrap() {
 
     // 3. Undo / Redo 検証
     s.key("cmd-z"); // wordWrap が戻る
-    assert_eq!(s.menu_state("docx.para.word-wrap"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.paragraph.word-wrap"), Some((true, true)));
     s.key("cmd-z"); // kinsoku が戻る
-    assert_eq!(s.menu_state("docx.para.kinsoku"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.paragraph.kinsoku"), Some((true, true)));
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9663,8 +9664,8 @@ fn ja009_kinsoku_word_wrap() {
     }
     s.key("cmd-shift-z");
     s.key("cmd-shift-z");
-    assert_eq!(s.menu_state("docx.para.kinsoku"), Some((true, false)));
-    assert_eq!(s.menu_state("docx.para.word-wrap"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.paragraph.kinsoku"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.paragraph.word-wrap"), Some((true, false)));
 
     // 4. 保存と再読込による永続化検証（false の保存）
     s.save_as("ja009_kinsoku_word_wrap_off.docx");
@@ -9677,10 +9678,10 @@ fn ja009_kinsoku_word_wrap() {
     assert_eq!(p_saved.direct.word_wrap, Some(false));
 
     // 5. 再度トグル切替で有効化
-    s.menu("docx.para.kinsoku");
-    s.menu("docx.para.word-wrap");
-    assert_eq!(s.menu_state("docx.para.kinsoku"), Some((true, true)));
-    assert_eq!(s.menu_state("docx.para.word-wrap"), Some((true, true)));
+    s.menu("docx.paragraph.kinsoku");
+    s.menu("docx.paragraph.word-wrap");
+    assert_eq!(s.menu_state("docx.paragraph.kinsoku"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.paragraph.word-wrap"), Some((true, true)));
 
     // 6. 保存と再読込による永続化検証（true の保存）
     s.save_as("ja009_kinsoku_word_wrap_on.docx");
@@ -9697,7 +9698,7 @@ fn ja017_bidi() {
     let mut s = Scenario::open(REPORT);
 
     // 1. 初期状態：右から左へ記述は無効（既定値 false）
-    assert_eq!(s.menu_state("docx.para.bidi"), Some((true, false)), "初期状態はbidi無効");
+    assert_eq!(s.menu_state("docx.paragraph.bidi"), Some((true, false)), "初期状態はbidi無効");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9705,8 +9706,8 @@ fn ja017_bidi() {
     }
 
     // 2. トグル切替で有効化
-    s.menu("docx.para.bidi");
-    assert_eq!(s.menu_state("docx.para.bidi"), Some((true, true)), "トグルでbidi有効化");
+    s.menu("docx.paragraph.bidi");
+    assert_eq!(s.menu_state("docx.paragraph.bidi"), Some((true, true)), "トグルでbidi有効化");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9716,14 +9717,14 @@ fn ja017_bidi() {
 
     // 3. Undo / Redo 検証
     s.key("cmd-z");
-    assert_eq!(s.menu_state("docx.para.bidi"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.paragraph.bidi"), Some((true, false)));
     {
         let doc = s.document();
         let p = body(&doc)[0];
         assert!(!p.bidi);
     }
     s.key("cmd-shift-z");
-    assert_eq!(s.menu_state("docx.para.bidi"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.paragraph.bidi"), Some((true, true)));
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9739,8 +9740,8 @@ fn ja017_bidi() {
     assert_eq!(p_saved.direct.bidi, Some(true));
 
     // 5. 再度トグル切替で無効化
-    s.menu("docx.para.bidi");
-    assert_eq!(s.menu_state("docx.para.bidi"), Some((true, false)));
+    s.menu("docx.paragraph.bidi");
+    assert_eq!(s.menu_state("docx.paragraph.bidi"), Some((true, false)));
 
     // 6. 保存と再読込による永続化検証（false の保存）
     s.save_as("ja017_bidi_off.docx");
@@ -9755,7 +9756,7 @@ fn ja016_snap_to_grid() {
     let mut s = Scenario::open(REPORT);
 
     // 1. 初期状態：行グリッド線に合わせるは有効（既定値 true）
-    assert_eq!(s.menu_state("docx.para.snap-to-grid"), Some((true, true)), "初期状態はsnapToGrid有効");
+    assert_eq!(s.menu_state("docx.paragraph.snap-to-grid"), Some((true, true)), "初期状態はsnapToGrid有効");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9763,8 +9764,8 @@ fn ja016_snap_to_grid() {
     }
 
     // 2. トグル切替で無効化
-    s.menu("docx.para.snap-to-grid");
-    assert_eq!(s.menu_state("docx.para.snap-to-grid"), Some((true, false)), "トグルでsnapToGrid無効化");
+    s.menu("docx.paragraph.snap-to-grid");
+    assert_eq!(s.menu_state("docx.paragraph.snap-to-grid"), Some((true, false)), "トグルでsnapToGrid無効化");
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9774,14 +9775,14 @@ fn ja016_snap_to_grid() {
 
     // 3. Undo / Redo 検証
     s.key("cmd-z");
-    assert_eq!(s.menu_state("docx.para.snap-to-grid"), Some((true, true)));
+    assert_eq!(s.menu_state("docx.paragraph.snap-to-grid"), Some((true, true)));
     {
         let doc = s.document();
         let p = body(&doc)[0];
         assert!(p.snap_to_grid);
     }
     s.key("cmd-shift-z");
-    assert_eq!(s.menu_state("docx.para.snap-to-grid"), Some((true, false)));
+    assert_eq!(s.menu_state("docx.paragraph.snap-to-grid"), Some((true, false)));
     {
         let doc = s.document();
         let p = body(&doc)[0];
@@ -9797,8 +9798,8 @@ fn ja016_snap_to_grid() {
     assert_eq!(p_saved.direct.snap, Some(false));
 
     // 5. 再度トグル切替で有効化
-    s.menu("docx.para.snap-to-grid");
-    assert_eq!(s.menu_state("docx.para.snap-to-grid"), Some((true, true)));
+    s.menu("docx.paragraph.snap-to-grid");
+    assert_eq!(s.menu_state("docx.paragraph.snap-to-grid"), Some((true, true)));
 
     // 6. 保存と再読込による永続化検証（true の保存）
     s.save_as("ja016_snap_to_grid_on.docx");
@@ -9825,7 +9826,7 @@ fn field010_author_title_docproperty() {
 
     // 1. プロパティの設定
     s.update(|e, _, cx| {
-        e.execute(vec![Command::Flow(FlowCommand::SetDocProperties(props.clone()))], cx);
+        e.execute(vec![Command::Flow(FlowCommand::SetDocumentProperties(props.clone()))], cx);
     });
 
     {
@@ -9995,7 +9996,7 @@ fn ref010_cross_reference_dialog() {
     let mut s = Scenario::open(REPORT);
 
     // 1. メニュー「挿入 > 相互参照…」でダイアログ/サイドバーを開く
-    s.menu("docx.xref.dialog");
+    s.menu("docx.cross-reference.dialog");
     assert!(s.with(|e, _| e.sidebar_open), "sidebar is opened for cross reference");
     assert!(s.with(|e, _| e.doc_state().is_some_and(|st| st.helper.cross_reference.is_some())), "cross_reference panel is present");
 
@@ -10009,7 +10010,7 @@ fn ref010_cross_reference_dialog() {
     s.key("cmd-down");
     s.key("enter");
     s.type_text("参照先：");
-    s.menu("docx.xref.dialog");
+    s.menu("docx.cross-reference.dialog");
     s.update(|e, _, cx| e.apply_cross_reference(cx));
 
     let doc = s.document();
@@ -10030,7 +10031,7 @@ fn ref010_cross_reference_dialog() {
     close_modal(&mut s);
     s.key("enter");
     s.type_text("ページ：");
-    s.menu("docx.xref.dialog");
+    s.menu("docx.cross-reference.dialog");
     s.update(|e, _, cx| {
         e.choose_cross_reference_type(ibis_doc_model::CrossReferenceType::Bookmark, cx);
         e.choose_cross_reference_kind(ibis_doc_model::CrossReferenceKind::PageNumber, cx);
@@ -10060,7 +10061,7 @@ fn ref010_cross_reference_dialog() {
     s.key("cmd-down");
     s.key("enter");
     s.type_text("参照注：");
-    s.menu("docx.xref.dialog");
+    s.menu("docx.cross-reference.dialog");
     s.update(|e, _, cx| {
         e.choose_cross_reference_type(ibis_doc_model::CrossReferenceType::Footnote, cx);
     });
@@ -10255,7 +10256,7 @@ fn ref011_cross_reference_relative_and_captions() {
     s.key("cmd-down");
     s.key("enter");
     s.type_text("参照：");
-    s.menu("docx.xref.dialog");
+    s.menu("docx.cross-reference.dialog");
 
     // 3. 参照する項目で「図表」を選択し、「説明文のみ」を挿入
     s.update(|e, _, cx| {
@@ -10269,7 +10270,7 @@ fn ref011_cross_reference_relative_and_captions() {
     // The dialog is modal: the text is typed with it closed, and it is opened again to insert.
     close_modal(&mut s);
     s.type_text(" (位置: ");
-    s.menu("docx.xref.dialog");
+    s.menu("docx.cross-reference.dialog");
     s.update(|e, _, cx| {
         e.choose_cross_reference_type(ibis_doc_model::CrossReferenceType::Caption, cx);
         e.choose_cross_reference_kind(ibis_doc_model::CrossReferenceKind::RelativePosition, cx);
@@ -10282,7 +10283,7 @@ fn ref011_cross_reference_relative_and_captions() {
     // 5. ドキュメント先頭から相互参照を挿入（上から下への参照なので「下」）
     s.key("cmd-up");
     s.type_text("下記参照 (位置: ");
-    s.menu("docx.xref.dialog");
+    s.menu("docx.cross-reference.dialog");
     s.update(|e, _, cx| {
         e.choose_cross_reference_type(ibis_doc_model::CrossReferenceType::Caption, cx);
         e.choose_cross_reference_kind(ibis_doc_model::CrossReferenceKind::RelativePosition, cx);
@@ -10506,7 +10507,7 @@ fn access001_check_accessibility() {
     let mut s = Scenario::open(REPORT);
 
     // 1. メニュー「ツール > アクセシビリティ チェック…」（docx.accessibility-check）を実行
-    s.menu("docx.accessibility-check");
+    s.menu("review.accessibility-check");
     assert!(
         s.with(|e, _| e.sidebar_open && e.doc_state().is_some_and(|st| st.accessibility_panel)),
         "accessibility panel should be open"
@@ -10541,7 +10542,7 @@ fn access001_check_accessibility() {
     });
 
     // 5. アクセシビリティパネルを再確認し、該当代替テキスト欠落エラーが解消されていることを確認
-    s.menu("docx.accessibility-check");
+    s.menu("review.accessibility-check");
     let issues_after = s.with(|e, _| e.accessibility_issues());
     assert!(
         !issues_after.iter().any(|i| i.at == alt_pos && i.title.contains("代替テキスト")),
@@ -10718,7 +10719,7 @@ fn toc006_update_toc_options() {
 
     // 文書冒頭に移動して目次を挿入
     s.key("cmd-up");
-    s.menu("docx.toc");
+    s.menu("docx.table-of-contents");
 
     let toc_entries = |doc: &FlowDocument| -> Vec<(u32, String)> {
         let ps = body(doc);
@@ -10776,7 +10777,7 @@ fn toc006_update_toc_options() {
     s.toolbar_menu("style", "docx.style.heading1");
 
     // 4. 「目次の更新」ダイアログを開く
-    s.menu("docx.toc.update-dialog");
+    s.menu("docx.table-of-contents.update-dialog");
     assert!(s.with(|e, _| e.sidebar_open), "sidebar should be open for update toc dialog");
     assert_eq!(
         s.with(|e, _| e.update_toc_kind()),
@@ -10788,7 +10789,7 @@ fn toc006_update_toc_options() {
     assert!(!s.with(|e, _| e.sidebar_open), "sidebar should close on cancel");
 
     // 再度ダイアログを開いて「ページ番号だけを更新する」を実行
-    s.menu("docx.toc.update-dialog");
+    s.menu("docx.table-of-contents.update-dialog");
     s.update(|e, _, cx| {
         e.set_update_toc_kind(crate::help_panels::UpdateTocKind::PageNumbersOnly, cx);
         e.apply_update_toc_panel(cx);
@@ -10808,7 +10809,7 @@ fn toc006_update_toc_options() {
     );
 
     // 5. 次に「目次をすべて更新する」を実行
-    s.menu("docx.toc.update-dialog");
+    s.menu("docx.table-of-contents.update-dialog");
     s.update(|e, _, cx| {
         e.set_update_toc_kind(crate::help_panels::UpdateTocKind::EntireTable, cx);
         e.apply_update_toc_panel(cx);
@@ -10828,7 +10829,7 @@ fn toc006_update_toc_options() {
     );
 
     // 6. メニュー直接アクション「docx.toc.update-page-numbers-only」も検証
-    s.menu("docx.toc.update-page-numbers-only");
+    s.menu("docx.table-of-contents.update-page-numbers-only");
 
     // 7. Undo/Redo の検証
     s.key("cmd-z"); // entire update を Undo
@@ -10960,7 +10961,7 @@ fn sec011_018_inspect_document_and_compatibility() {
             name: "ProjectCode".to_string(),
             value: ibis_doc_model::flow::CustomPropertyValue::Text("SECRET-007".to_string()),
         });
-        e.run_flow(vec![ibis_doc_model::FlowCommand::SetDocProperties(props)], cx);
+        e.run_flow(vec![ibis_doc_model::FlowCommand::SetDocumentProperties(props)], cx);
     });
 
     // (b) コメントを追加
@@ -11003,7 +11004,7 @@ fn sec011_018_inspect_document_and_compatibility() {
             q.runs.push(rev_run);
             q.normalize();
             if let Some((container, index)) = ibis_doc_model::flow_command::locate(doc, p.id) {
-                e.run_flow(vec![ibis_doc_model::FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![ibis_doc_model::Block::Paragraph(q)] }], cx);
+                e.run_flow(vec![ibis_doc_model::FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![ibis_doc_model::Block::Paragraph(q)] }], cx);
             }
         }
     });
@@ -11021,7 +11022,7 @@ fn sec011_018_inspect_document_and_compatibility() {
             q.runs.push(hidden_run);
             q.normalize();
             if let Some((container, index)) = ibis_doc_model::flow_command::locate(doc, p.id) {
-                e.run_flow(vec![ibis_doc_model::FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![ibis_doc_model::Block::Paragraph(q)] }], cx);
+                e.run_flow(vec![ibis_doc_model::FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![ibis_doc_model::Block::Paragraph(q)] }], cx);
             }
         }
     });
@@ -11103,13 +11104,13 @@ fn sec011_018_inspect_document_and_compatibility() {
             q.runs.insert(0, math_run);
             q.normalize();
             if let Some((container, index)) = ibis_doc_model::flow_command::locate(doc, p.id) {
-                e.run_flow(vec![ibis_doc_model::FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![ibis_doc_model::Block::Paragraph(q)] }], cx);
+                e.run_flow(vec![ibis_doc_model::FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![ibis_doc_model::Block::Paragraph(q)] }], cx);
             }
         }
     });
 
     // (b) 互換性チェックパネルを開く
-    s.menu("docx.compatibility-check");
+    s.menu("review.compatibility-check");
     assert!(s.with(|e, _| e.sidebar_open), "sidebar is opened for compatibility panel");
     assert!(s.with(|e, _| e.doc_state().and_then(|st| st.compatibility_panel.as_ref()).is_some()), "compatibility_panel state is active");
 
@@ -11507,7 +11508,7 @@ fn toc004_custom_styles_in_toc() {
     assert!(f_start.contains("CustomSection"), "field_start should mention CustomSection: {f_start}");
 
     // 5. 目次の更新（docx.toc.update）を実行し、\t が維持されることを確認
-    s.menu("docx.toc.update-entire-table");
+    s.menu("docx.table-of-contents.update-entire-table");
     let after_update_entries = toc_entries(&s.document());
     assert!(after_update_entries.iter().any(|(_, t)| t.contains(&custom_text)), "TOC after update should contain custom styled paragraph: {after_update_entries:?}");
 
@@ -11914,7 +11915,7 @@ fn field007_format_switches() {
     props.title = Some("quarterly business review".to_string());
     props.creator = Some("jane doe".to_string());
     s.update(|e, _, cx| {
-        e.execute(vec![Command::Flow(FlowCommand::SetDocProperties(props))], cx);
+        e.execute(vec![Command::Flow(FlowCommand::SetDocumentProperties(props))], cx);
     });
 
     let insert_field = |s: &mut Scenario, code: &str| {
@@ -11974,7 +11975,7 @@ fn field007_format_switches() {
     updated_props.title = Some("annual financial report".to_string());
     updated_props.creator = Some("john smith".to_string());
     s.update(|e, _, cx| {
-        e.execute(vec![Command::Flow(FlowCommand::SetDocProperties(updated_props))], cx);
+        e.execute(vec![Command::Flow(FlowCommand::SetDocumentProperties(updated_props))], cx);
         e.update_fields(false, cx);
     });
 
@@ -12103,7 +12104,7 @@ fn field_doc_variable_and_user_fields() {
         let mut vars = std::collections::BTreeMap::new();
         vars.insert("ReleaseVer".to_string(), "v3.5.0".to_string());
         vars.insert("DeptName".to_string(), "engineering dev team".to_string());
-        e.run_flow(vec![ibis_doc_model::flow_command::FlowCommand::SetDocVariables(vars)], cx);
+        e.run_flow(vec![ibis_doc_model::flow_command::FlowCommand::SetDocumentVariables(vars)], cx);
     });
 
     s.key("cmd-down");
@@ -12163,7 +12164,7 @@ fn field_doc_variable_and_user_fields() {
     s.update(|e, _, cx| {
         let mut props = e.flow().unwrap().properties.clone();
         props.creator = Some("Alice Smith".to_string());
-        e.run_flow(vec![ibis_doc_model::flow_command::FlowCommand::SetDocProperties(props)], cx);
+        e.run_flow(vec![ibis_doc_model::flow_command::FlowCommand::SetDocumentProperties(props)], cx);
         e.update_fields(false, cx);
     });
 
@@ -12191,7 +12192,7 @@ fn field_doc_variable_and_user_fields() {
     // 8. 保存と再オープンで OOXML 保持を検証
     let file_path = s.save_as("test-field-docvar-user.docx");
     let bytes = std::fs::read(&file_path).unwrap();
-    let settings_xml = ibis_pptx::test_files::part_text(&bytes, "word/settings.xml").unwrap();
+    let settings_xml = ibis_formats::test_files::part_text(&bytes, "word/settings.xml").unwrap();
     assert!(settings_xml.contains("w:docVars"), "settings.xml should contain w:docVars");
     assert!(settings_xml.contains("w:name=\"ReleaseVer\""), "settings.xml should contain ReleaseVer");
     assert!(settings_xml.contains("w:val=\"v3.5.0\""), "settings.xml should contain v3.5.0");
@@ -12282,7 +12283,7 @@ fn field_quote_symbol_and_set_fields() {
     // 9. 保存と再オープンで OOXML 保持を検証
     let file_path = s.save_as("test-field-quote-symbol-set.docx");
     let bytes = std::fs::read(&file_path).unwrap();
-    let document_xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+    let document_xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
     assert!(document_xml.contains("QUOTE"), "document.xml should contain QUOTE field");
     assert!(document_xml.contains("SYMBOL"), "document.xml should contain SYMBOL field");
     assert!(document_xml.contains("SET"), "document.xml should contain SET field");
@@ -12367,7 +12368,7 @@ fn field_hyperlink_template_advance_fields() {
     // 8. 保存と再オープンで OOXML 保持を検証
     let file_path = s.save_as("test-field-hyperlink-template-advance.docx");
     let bytes = std::fs::read(&file_path).unwrap();
-    let document_xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+    let document_xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
     assert!(document_xml.contains("HYPERLINK"), "document.xml should contain HYPERLINK field");
     assert!(document_xml.contains("TEMPLATE"), "document.xml should contain TEMPLATE field");
     assert!(document_xml.contains("ADVANCE"), "document.xml should contain ADVANCE field");
@@ -12391,7 +12392,7 @@ fn field_nested_and_info_fields() {
         let mut props = e.flow().unwrap().properties.clone();
         props.creator = Some("Scenario Author".to_string());
         props.title = Some("Scenario Title".to_string());
-        e.run_flow(vec![ibis_doc_model::FlowCommand::SetDocProperties(props)], cx);
+        e.run_flow(vec![ibis_doc_model::FlowCommand::SetDocumentProperties(props)], cx);
     });
 
     // 先頭（1ページ目）に移動して段落を作成
@@ -12460,7 +12461,7 @@ fn field_nested_and_info_fields() {
     // 7. 保存と再オープン検証
     let file_path = s.save_as("test-field-nested-and-info.docx");
     let bytes = std::fs::read(&file_path).unwrap();
-    let document_xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+    let document_xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
     assert!(document_xml.contains("INFO Author"), "document.xml contains INFO Author");
 
     let saved = s.reopen();
@@ -12542,7 +12543,7 @@ fn field_ask_and_fillin_fields() {
     // 7. 保存と再オープン検証
     let file_path = s.save_as("test-field-ask-and-fillin.docx");
     let bytes = std::fs::read(&file_path).unwrap();
-    let document_xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").unwrap();
+    let document_xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").unwrap();
     assert!(document_xml.contains("ASK"), "document.xml contains ASK field");
     assert!(document_xml.contains("FILLIN"), "document.xml contains FILLIN field");
 
@@ -12669,7 +12670,7 @@ fn para018_suppress_auto_hyphens() {
     assert!(!para(&s.document(), p.id).suppress_auto_hyphens);
 
     // 2. メニューから「単語の途中で改行しない（ハイフネーションを行わない）」を実行
-    menu_closing(&mut s,"docx.para.suppress-auto-hyphens");
+    menu_closing(&mut s,"docx.paragraph.suppress-auto-hyphens");
     assert!(s.with(|e, _| e.caret_suppress_auto_hyphens()));
     assert!(para(&s.document(), p.id).suppress_auto_hyphens);
     assert_eq!(para(&s.document(), p.id).direct.suppress_auto_hyphens, Some(true));
@@ -12689,7 +12690,7 @@ fn para018_suppress_auto_hyphens() {
     assert_eq!(para(&s.document(), p.id).direct.suppress_auto_hyphens, Some(false));
 
     // 5. 再度メニューから true に切り替え
-    menu_closing(&mut s,"docx.para.suppress-auto-hyphens");
+    menu_closing(&mut s,"docx.paragraph.suppress-auto-hyphens");
     assert!(s.with(|e, _| e.caret_suppress_auto_hyphens()));
     assert!(para(&s.document(), p.id).suppress_auto_hyphens);
 
@@ -12720,7 +12721,7 @@ fn review085_view_state_per_window() {
     use crate::flow_layout::MarkupDisplayMode;
     let mut s = Scenario::open(REPORT);
     let own = s.with_app(|cx| cx.windows());
-    s.with_app(|cx| crate::open_window_with(cx, |e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx)));
+    s.with_app(|cx| crate::open_window_with(cx, |e, w, cx| e.new_file(ibis_formats::Kind::Document, w, cx)));
     let (other, view) = s
         .with_app(|cx| {
             cx.windows().into_iter().filter(|w| !own.contains(w)).find_map(|w| {
@@ -13278,7 +13279,7 @@ fn opt003_user_name_and_author() {
         e.apply_user_info_panel(cx);
     });
     assert_eq!(s.with(|e, _| e.user_name()), crate::shell::user_name::default_user_name());
-    assert_eq!(s.with(|e, _| e.user_initials()), crate::shell::user_name::initials(crate::shell::user_name::default_user_name()));
+    assert_eq!(s.with(|e, _| e.user_initials()), crate::shell::user_name::initials(&crate::shell::user_name::default_user_name()));
 
     // 8. 保存と再読込によるコメントと変更履歴 author の永続化検証
     s.save_as("opt003_user_info.docx");
@@ -13349,7 +13350,7 @@ fn opt009_update_fields_before_printing() {
     let mut initial_props = ibis_doc_model::DocProperties::default();
     initial_props.creator = Some("Original Author".to_string());
     s.update(|e, _, cx| {
-        e.run_flow(vec![FlowCommand::SetDocProperties(initial_props)], cx);
+        e.run_flow(vec![FlowCommand::SetDocumentProperties(initial_props)], cx);
     });
 
     let p_field_id = s.with(|e, _| e.flow().unwrap().new_id());
@@ -13366,14 +13367,14 @@ fn opt009_update_fields_before_printing() {
             ..Default::default()
         };
         let body_len = e.flow().unwrap().body.len();
-        e.run_flow(vec![FlowCommand::ReplaceBlocks { container: ibis_doc_model::flow_command::Container::Body, index: body_len, remove: 0, blocks: vec![Block::Paragraph(para)] }], cx);
+        e.run_flow(vec![FlowCommand::ReplaceBlockRange { container: ibis_doc_model::flow_command::Container::Body, index: body_len, remove: 0, blocks: vec![Block::Paragraph(para)] }], cx);
     });
 
     // プロパティを変更 (AUTHOR -> "New Printed Author")
     let mut updated_props = ibis_doc_model::DocProperties::default();
     updated_props.creator = Some("New Printed Author".to_string());
     s.update(|e, _, cx| {
-        e.run_flow(vec![FlowCommand::SetDocProperties(updated_props)], cx);
+        e.run_flow(vec![FlowCommand::SetDocumentProperties(updated_props)], cx);
     });
 
     // prepare_print_or_export 実行前は shown は "Original Author" のまま
@@ -13503,7 +13504,7 @@ fn opt010_print_backgrounds_and_hidden_text() {
             ..Default::default()
         };
         let body_len = e.flow().unwrap().body.len();
-        e.run_flow(vec![FlowCommand::ReplaceBlocks {
+        e.run_flow(vec![FlowCommand::ReplaceBlockRange {
             container: ibis_doc_model::flow_command::Container::Body,
             index: body_len,
             remove: 0,
@@ -13644,7 +13645,7 @@ fn review005_filter_by_author() {
             ..Default::default()
         };
         let body_len = e.flow().unwrap().body.len();
-        e.run_flow(vec![FlowCommand::ReplaceBlocks {
+        e.run_flow(vec![FlowCommand::ReplaceBlockRange {
             container: ibis_doc_model::flow_command::Container::Body,
             index: body_len,
             remove: 0,
@@ -13818,7 +13819,7 @@ fn review009_resolve_shown_revisions() {
             ..Default::default()
         };
         let body_len = e.flow().unwrap().body.len();
-        e.run_flow(vec![FlowCommand::ReplaceBlocks {
+        e.run_flow(vec![FlowCommand::ReplaceBlockRange {
             container: ibis_doc_model::flow_command::Container::Body,
             index: body_len,
             remove: 0,
@@ -13928,7 +13929,7 @@ fn review009_resolve_shown_revisions() {
             ..Default::default()
         };
         let body_len = e.flow().unwrap().body.len();
-        e.run_flow(vec![FlowCommand::ReplaceBlocks {
+        e.run_flow(vec![FlowCommand::ReplaceBlockRange {
             container: ibis_doc_model::flow_command::Container::Body,
             index: body_len,
             remove: 0,
@@ -13966,7 +13967,7 @@ fn review009_resolve_shown_revisions() {
             ..Default::default()
         };
         let body_len = e.flow().unwrap().body.len();
-        e.run_flow(vec![FlowCommand::ReplaceBlocks {
+        e.run_flow(vec![FlowCommand::ReplaceBlockRange {
             container: ibis_doc_model::flow_command::Container::Body,
             index: body_len,
             remove: 0,
@@ -14033,7 +14034,7 @@ fn review010_lock_tracking() {
     // 4. 保存と再オープンの往復テスト
     let locked_path = s.save_as("review010-locked.docx");
     let locked_bytes = std::fs::read(&locked_path).unwrap();
-    let settings_xml = ibis_pptx::test_files::part_text(&locked_bytes, "word/settings.xml").unwrap();
+    let settings_xml = ibis_formats::test_files::part_text(&locked_bytes, "word/settings.xml").unwrap();
     assert!(settings_xml.contains("documentProtection"), "settings.xml must contain documentProtection");
     assert!(settings_xml.contains("trackedChanges"), "settings.xml must specify edit=\"trackedChanges\"");
     assert!(settings_xml.contains(r#"enforcement="1""#), "settings.xml must specify enforcement=\"1\"");
@@ -14053,7 +14054,7 @@ fn review010_lock_tracking() {
 
     let unlocked_path = s.save_as("review010-unlocked.docx");
     let unlocked_bytes = std::fs::read(&unlocked_path).unwrap();
-    let unlocked_settings_xml = ibis_pptx::test_files::part_text(&unlocked_bytes, "word/settings.xml").unwrap();
+    let unlocked_settings_xml = ibis_formats::test_files::part_text(&unlocked_bytes, "word/settings.xml").unwrap();
     assert!(!unlocked_settings_xml.contains("documentProtection"), "unlocked settings.xml must not contain documentProtection");
 
     // 6. Undo / Redo テスト
@@ -14135,7 +14136,7 @@ fn file018_custom_properties() {
     // 4. 保存と再オープンの永続化検証
     let saved_path = s.save_as("file018_custom_props.docx");
     let bytes = std::fs::read(&saved_path).unwrap();
-    let custom_xml = ibis_pptx::test_files::part_text(&bytes, "docProps/custom.xml").unwrap();
+    let custom_xml = ibis_formats::test_files::part_text(&bytes, "docProps/custom.xml").unwrap();
     assert!(custom_xml.contains(r#"name="ProjectName""#), "custom.xml must contain ProjectName");
     assert!(custom_xml.contains("NextOffice"), "custom.xml must contain NextOffice");
     assert!(custom_xml.contains(r#"name="Department""#), "custom.xml must contain Department");
@@ -14160,7 +14161,7 @@ fn file018_custom_properties() {
 
     let saved_removed_path = s.save_as("file018_custom_props_removed.docx");
     let bytes_removed = std::fs::read(&saved_removed_path).unwrap();
-    let custom_xml_removed = ibis_pptx::test_files::part_text(&bytes_removed, "docProps/custom.xml").unwrap();
+    let custom_xml_removed = ibis_formats::test_files::part_text(&bytes_removed, "docProps/custom.xml").unwrap();
     assert!(custom_xml_removed.contains(r#"name="ProjectName""#));
     assert!(!custom_xml_removed.contains(r#"name="Department""#));
 
@@ -14181,7 +14182,7 @@ fn find010_go_to() {
     let mut s = Scenario::open(REPORT);
 
     // 1. 編集 > ジャンプ… メニューからジャンプパネルを開く
-    s.menu("docx.go-to");
+    s.menu("edit.go-to");
     assert!(
         s.with(|e, _| e.sidebar_open && e.doc_state().is_some_and(|st| st.helper.go_to.is_some())),
         "go_to panel must be open in sidebar"
@@ -14762,7 +14763,7 @@ fn view009_zoom_page_modes() {
     assert!(!s.with(|e, _| e.is_zoom_one_page()), "one-page should not be checked initially");
     assert!(!s.with(|e, _| e.is_zoom_multiple_pages()), "multiple-pages should not be checked initially");
     assert_eq!(s.with(|e, _| e.zoom), Some(1.41));
-    assert_eq!(s.menu_state("docx.view.zoom-100"), Some((true, false)));
+    assert_eq!(s.menu_state("view.zoom-100"), Some((true, false)));
     assert_eq!(s.menu_state("docx.view.page-width"), Some((true, false)));
     assert_eq!(s.menu_state("docx.view.one-page"), Some((true, false)));
     assert_eq!(s.menu_state("docx.view.multiple-pages"), Some((true, false)));
@@ -14775,7 +14776,7 @@ fn view009_zoom_page_modes() {
     assert!(!s.with(|e, _| e.is_zoom_one_page()));
     assert!(!s.with(|e, _| e.is_zoom_multiple_pages()));
     assert_eq!(s.menu_state("docx.view.page-width"), Some((true, true)));
-    assert_eq!(s.menu_state("docx.view.zoom-100"), Some((true, false)));
+    assert_eq!(s.menu_state("view.zoom-100"), Some((true, false)));
     assert_eq!(s.menu_state("docx.view.one-page"), Some((true, false)));
     assert_eq!(s.menu_state("docx.view.multiple-pages"), Some((true, false)));
 
@@ -14787,7 +14788,7 @@ fn view009_zoom_page_modes() {
     assert!(!s.with(|e, _| e.is_zoom_multiple_pages()));
     assert_eq!(s.menu_state("docx.view.one-page"), Some((true, true)));
     assert_eq!(s.menu_state("docx.view.page-width"), Some((true, false)));
-    assert_eq!(s.menu_state("docx.view.zoom-100"), Some((true, false)));
+    assert_eq!(s.menu_state("view.zoom-100"), Some((true, false)));
     assert_eq!(s.menu_state("docx.view.multiple-pages"), Some((true, false)));
     let zoom_1 = s.with(|e, _| e.zoom.expect("one-page zoom factor"));
     assert!(zoom_1 < 1.0, "one-page zoom factor should be less than 1.0 to fit whole page: {zoom_1}");
@@ -14801,15 +14802,15 @@ fn view009_zoom_page_modes() {
     assert_eq!(s.menu_state("docx.view.multiple-pages"), Some((true, true)));
     assert_eq!(s.menu_state("docx.view.one-page"), Some((true, false)));
     assert_eq!(s.menu_state("docx.view.page-width"), Some((true, false)));
-    assert_eq!(s.menu_state("docx.view.zoom-100"), Some((true, false)));
+    assert_eq!(s.menu_state("view.zoom-100"), Some((true, false)));
     let zoom_multi = s.with(|e, _| e.zoom.expect("multiple-pages zoom factor"));
     assert!(zoom_multi < zoom_1, "multiple pages zoom should be smaller than 1 page zoom: {zoom_multi} vs {zoom_1}");
 
     // 5. Switch back to "100%" via View menu
-    s.menu("docx.view.zoom-100");
+    s.menu("view.zoom-100");
     assert!(s.with(|e, _| e.is_zoom_100()), "zoom should be restored to 100%");
     assert_eq!(s.with(|e, _| e.zoom), Some(1.0));
-    assert_eq!(s.menu_state("docx.view.zoom-100"), Some((true, true)));
+    assert_eq!(s.menu_state("view.zoom-100"), Some((true, true)));
     assert_eq!(s.menu_state("docx.view.one-page"), Some((true, false)));
     assert_eq!(s.menu_state("docx.view.multiple-pages"), Some((true, false)));
     assert_eq!(s.menu_state("docx.view.page-width"), Some((true, false)));
@@ -16143,7 +16144,7 @@ fn form008_building_block_gallery_control() {
 
     // 10. Save and Reopen document roundtrip verification
     let saved_file = s.save_as("docx-form008-building-block-gallery.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved_file).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved_file).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:docPartGallery w:val=\"Custom Headers\"/>"), "{xml}");
     assert!(xml.contains("<w:docPartCategory w:val=\"Financial\"/>"), "{xml}");
     assert!(xml.contains("<w:showingPlcHdr/>"), "{xml}");
@@ -16375,7 +16376,7 @@ fn form009_repeating_section_control() {
 
     // 12. Save and Reopen document roundtrip verification
     let saved_file = s.save_as("docx-form009-repeating-section.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved_file).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved_file).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("repeatingSection"), "{xml}");
     assert!(xml.contains("sectionTitle"), "{xml}");
     assert!(xml.contains("明細行"), "{xml}");
@@ -16611,7 +16612,7 @@ fn form014_group_control() {
 
     // 11. Save and Reopen document roundtrip verification
     let saved_file = s.save_as("docx-form014-group-control.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved_file).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved_file).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:sdt>"), "{xml}");
     assert!(xml.contains("<w:group/>"), "{xml}");
     assert!(xml.contains("ProjectGroup"), "{xml}");
@@ -16651,7 +16652,7 @@ fn form011_placeholder_prompt() {
     assert_eq!((text.as_str(), placeholder), (prompt, true));
     assert_eq!(color, Some(ibis_doc_model::Rgb(0x808080)), "the prompt is grey");
     let saved = s.save_as("docx-form011-prompt.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:showingPlcHdr/>"), "{xml}");
 
     // Typing in the prompt replaces it.
@@ -16662,7 +16663,7 @@ fn form011_placeholder_prompt() {
     s.type_text("です");
     assert_eq!(first(&mut s).0, "見積書です");
     let saved = s.save_as("docx-form011-typed.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(!xml.contains("showingPlcHdr"), "{xml}");
     assert!(xml.contains("見積書です"));
     let reopened = s.reopen();
@@ -16727,7 +16728,7 @@ fn form010_control_properties() {
     s.key("backspace");
     assert_eq!(control(&mut s).0, "田中様", "the locked control stays");
     let saved = s.save_as("docx-form010-control.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:alias w:val=\"顧客名\"/>") && xml.contains("<w:tag w:val=\"client\"/>") && xml.contains("<w:lock w:val=\"sdtLocked\"/>"), "{xml}");
     let reopened = s.reopen();
     let run = &para(flow(&reopened), id).runs[0];
@@ -16758,7 +16759,7 @@ fn header014_header_style() {
     s.type_text("社外秘");
     let saved = s.save_as("docx-header014.docx");
     let bytes = std::fs::read(&saved).unwrap();
-    let styles = ibis_pptx::test_files::part_text(&bytes, "word/styles.xml").unwrap();
+    let styles = ibis_formats::test_files::part_text(&bytes, "word/styles.xml").unwrap();
     assert!(styles.contains("w:val=\"header\"") && styles.contains("w:val=\"center\""), "{styles}");
     let reopened = s.reopen();
     let again = flow(&reopened).header.iter().find_map(|b| if let Block::Paragraph(p) = b { Some(p.clone()) } else { None }).unwrap();
@@ -16780,7 +16781,7 @@ fn file007_save_as_template() {
     s.type_text("雛形：");
     let saved = s.save_as("docx-file007.dotx");
     let bytes = std::fs::read(&saved).unwrap();
-    let types = ibis_pptx::test_files::part_text(&bytes, "[Content_Types].xml").unwrap();
+    let types = ibis_formats::test_files::part_text(&bytes, "[Content_Types].xml").unwrap();
     assert!(types.contains("wordprocessingml.template.main+xml"), "{types}");
     assert!(!types.contains("wordprocessingml.document.main+xml"), "{types}");
     let reopened = s.reopen();
@@ -17082,7 +17083,7 @@ fn sec003_protect_formatting() {
         e.run_flow(vec![FlowCommand::SetParagraphFormat {
             first: para_id,
             last: para_id,
-            change: ibis_doc_model::ParaChange::Align(FlowAlign::Center),
+            change: ibis_doc_model::ParaChange::Alignment(FlowAlign::Center),
         }], cx)
     });
     assert!(!align_applied, "paragraph alignment change must be rejected under formatting protection");
@@ -17914,7 +17915,7 @@ fn edit004_typing_paste_and_paragraph_format_in_ranges() {
     assert_eq!(s.document(), before);
     // The alignment of the paragraphs of the ranges: here the one paragraph, centred; the ranges stay.
     select(&mut s);
-    s.update(|e, _, cx| e.apply_para_change(ibis_doc_model::ParaChange::Align(ibis_doc_model::FlowAlign::Center), cx));
+    s.update(|e, _, cx| e.apply_para_change(ibis_doc_model::ParaChange::Alignment(ibis_doc_model::FlowAlign::Center), cx));
     assert_eq!(para(&s.document(), id).align, ibis_doc_model::FlowAlign::Center);
     assert_eq!(s.with(|e, _| e.selection_ranges().len()), 2, "the ranges stay selected");
     s.menu("edit.undo");
@@ -17929,7 +17930,7 @@ fn toc002_manual_toc() {
     s.click_text(FlowPos::new(id, 2));
     let before = s.document();
     let count = body(&before).len();
-    s.menu("docx.toc.manual");
+    s.menu("docx.table-of-contents.manual");
     let after = s.document();
     let paragraphs = body(&after);
     assert_eq!(paragraphs.len(), count + 3);
@@ -17985,7 +17986,7 @@ fn ja019_text_language() {
 /// where the bullet goes, not a character, and keeps the list when saved.
 fn list002_picture_bullet() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_picture_bullet(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_picture_bullet(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-picture-bullet.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -18083,7 +18084,7 @@ fn image015_drag_text_box() {
 /// with what is under it (both from the Format menu), each as one undo step.
 fn toc015_outline_level_and_move() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_outline(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_outline(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-outline.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -18139,7 +18140,7 @@ fn toc015_outline_level_and_move() {
 /// body text; each one undo step, and the order saved.
 fn toc015_outline_keys_drag_and_body_text() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_outline(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_outline(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-outline-keys.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -18195,7 +18196,7 @@ fn toc015_outline_keys_drag_and_body_text() {
 /// with 1-step undo/redo.
 fn toc014_collapse_headings() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_outline(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_outline(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-outline-collapse.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -18244,7 +18245,7 @@ fn toc014_collapse_headings() {
     s.click_text(FlowPos::new(a, 1));
     s.menu("docx.outline.collapse");
     let saved = s.save_as("test-toc014-collapse.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml");
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml");
     assert!(xml.as_deref().is_some_and(|s| s.contains("collapsed")), "persisted w15:collapsed in document.xml");
 
     // Reload saved file and verify it starts collapsed in both model and layout.
@@ -18296,7 +18297,7 @@ fn style010_auto_update_style() {
     assert_eq!(style_of(&s.document()).run.bold, Some(true));
     // Saved: w:autoRedefine, and read again.
     let saved_path = s.save_as("test-style010-auto-update.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(saved_path).unwrap(), "word/styles.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(saved_path).unwrap(), "word/styles.xml").unwrap();
     assert!(xml.contains("autoRedefine"));
     let saved = s.reopen();
     assert!(flow(&saved).styles.styles.get(&style_id).is_some_and(|st| st.auto_update));
@@ -18539,7 +18540,7 @@ fn page022_cover_page() {
     assert_eq!(s.document(), before, "one step of undo");
     s.menu("edit.redo");
     let saved = s.save_as("test-page022-cover.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("サブタイトル") && xml.contains("w:shd"), "the cover is in the file: {}", xml.find("<w:body>").map(|i| xml[i..(i + 1800).min(xml.len())].to_string()).unwrap_or_default());
     let again = s.reopen();
     assert!(body(flow(&again)).iter().any(|p| p.text() == "サブタイトル"));
@@ -18661,7 +18662,7 @@ fn image015_selection_format() {
     assert_eq!(looks(&s.document()).iter().map(|r| r.0.clone()).collect::<String>(), "alpha beta gamma");
     s.menu("edit.redo");
     let saved = s.save_as("test-image015-selection.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:t xml:space=\"preserve\">alpha </w:t>") && xml.contains(">beta</w:t>"), "written run by run");
     let again = looks(flow(&s.reopen()));
     let texts: Vec<&str> = again.iter().map(|r| r.0.as_str()).collect();
@@ -18731,7 +18732,7 @@ fn image014_connectors() {
     let keep = crate::shell::scenario::repo_root().join("target/office-check/ibis-connectors.docx");
     std::fs::create_dir_all(keep.parent().unwrap()).unwrap();
     std::fs::write(&keep, std::fs::read(&saved).unwrap()).unwrap();
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<a:stCxn id=\"") && xml.contains("<a:endCxn id=\""), "the glue is in the file");
     assert!(xml.contains(&format!("<a:stCxn id=\"{}\" idx=\"3\"", a.id.0)), "named by the shape's number in the file");
     assert!(xml.contains(&format!("wp:docPr id=\"{}\"", a.id.0)));
@@ -18875,7 +18876,7 @@ fn header011_chapter_in_page_numbers() {
     }
     // The section's chapter setting is saved as it was.
     let saved = s.save_as("test-header011-chapter.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("w:chapStyle=\"1\"") && xml.contains("w:chapSep=\"hyphen\""));
 }
 
@@ -18893,13 +18894,13 @@ fn header011_chapter_menu() {
     assert_eq!(chapter(&mut s), Some((2, "hyphen".to_string())));
     s.menu("edit.redo");
     let saved = s.save_as("test-header011-chapter-menu.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("w:chapStyle=\"2\"") && xml.contains("w:chapSep=\"colon\""), "the chapter number is in the page numbering");
     assert_eq!(flow(&s.reopen()).page_chapter, Some((2, "colon".to_string())));
     s.menu("docx.section.chapter-none");
     assert_eq!(chapter(&mut s), None);
     let saved = s.save_as("test-header011-chapter-menu-none.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(!xml.contains("w:chapStyle"), "taken away");
 }
 
@@ -18907,7 +18908,7 @@ fn header011_chapter_menu() {
 /// paired moves are resolved together on accept/reject, and both untouched and edited paragraphs save moveFrom/moveTo.
 fn review004_tracked_move_text() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_tracked_move(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_tracked_move(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-tracked-move.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -18940,7 +18941,7 @@ fn review004_tracked_move_text() {
     assert!(has_green_rect, "green underline/strike rect drawn");
     // Untouched: the saved file has the move as it was.
     let saved = s.save_as("review004-move-untouched.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:moveFrom ") && xml.contains("<w:moveTo "), "the move is kept");
     // Paired resolution: selecting MoveTo and accepting resolves both MoveTo (kept) and MoveFrom (removed).
     let doc = s.document();
@@ -18980,7 +18981,7 @@ fn review004_tracked_move_text() {
     s.click_text(FlowPos::new(p_to.id, 0));
     s.type_text("加筆 ");
     let saved_edited = s.save_as("review004-move-edited.docx");
-    let xml_edited = ibis_pptx::test_files::part_text(&std::fs::read(&saved_edited).unwrap(), "word/document.xml").unwrap();
+    let xml_edited = ibis_formats::test_files::part_text(&std::fs::read(&saved_edited).unwrap(), "word/document.xml").unwrap();
     assert!(xml_edited.contains("<w:moveFrom ") && xml_edited.contains("<w:moveTo "), "the move tags are retained when edited");
 }
 
@@ -19162,7 +19163,7 @@ fn ref007_note_separator() {
     s.menu("edit.redo");
     let saved = s.save_as("test-ref007-separator.docx");
     let bytes = std::fs::read(&saved).unwrap();
-    let notes = ibis_pptx::test_files::part_text(&bytes, "word/footnotes.xml").unwrap();
+    let notes = ibis_formats::test_files::part_text(&bytes, "word/footnotes.xml").unwrap();
     let separator = &notes[notes.find("w:type=\"separator\"").unwrap()..];
     let separator = &separator[..separator.find("</w:footnote>").unwrap()];
     assert!(separator.contains("<w:continuationSeparator/>") && !separator.contains("<w:separator/>"), "{separator}");
@@ -19171,7 +19172,7 @@ fn ref007_note_separator() {
     s.menu("docx.notes.separator-none-end");
     assert_eq!(rule_width(&mut s), None, "no line above the footnotes or the endnotes");
     let saved = s.save_as("test-ref007-separator-none.docx");
-    let notes = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/footnotes.xml").unwrap();
+    let notes = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/footnotes.xml").unwrap();
     let separator = &notes[notes.find("w:type=\"separator\"").unwrap()..];
     let separator = &separator[..separator.find("</w:footnote>").unwrap()];
     assert!(!separator.contains("Separator/>") && !separator.contains("<w:separator/>"), "{separator}");
@@ -19207,7 +19208,7 @@ fn ja019_no_proof() {
         assert_eq!(word_issues(&mut s), 0, "marked: not checked");
     }
     let saved = s.save_as("test-ja019-noproof.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:noProof/>"), "saved as w:noProof");
     assert!(para(flow(&s.reopen()), id).runs.iter().any(|r| r.format.no_proof == Some(true)), "read again");
     s.menu("edit.undo");
@@ -19248,7 +19249,7 @@ fn list002_picture_bullet_from_a_file() {
     let keep = crate::shell::scenario::repo_root().join("target/office-check/ibis-picture-bullet.docx");
     std::fs::create_dir_all(keep.parent().unwrap()).unwrap();
     std::fs::write(&keep, &bytes).unwrap();
-    let numbering = ibis_pptx::test_files::part_text(&bytes, "word/numbering.xml").unwrap();
+    let numbering = ibis_formats::test_files::part_text(&bytes, "word/numbering.xml").unwrap();
     assert!(numbering.contains("<w:numPicBullet ") && numbering.contains("v:imagedata") && numbering.contains("<w:lvlPicBulletId"), "{numbering}");
     let reread = s.reopen();
     let again = flow(&reread);
@@ -19292,7 +19293,7 @@ fn image012_shape_dash_gradient_shadow() {
     let keep = crate::shell::scenario::repo_root().join("target/office-check/ibis-shape-effects.docx");
     std::fs::create_dir_all(keep.parent().unwrap()).unwrap();
     std::fs::write(&keep, std::fs::read(&saved).unwrap()).unwrap();
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<a:prstDash val=\"dash\"/>") && xml.contains("<a:gradFill") && xml.contains("<a:outerShdw") && xml.contains("<a:glow") && xml.contains("<a:softEdge") && xml.contains("<a:reflection"), "the look is in the file: {}", xml.find("<wps:spPr").map(|i| xml[i..(i + 900).min(xml.len())].to_string()).unwrap_or_default());
     let reread = auto_of(flow(&s.reopen()));
     assert_eq!(reread.stroke.as_ref().map(|s| s.dash), Some(ibis_doc_model::LineDash::Dash));
@@ -19366,7 +19367,7 @@ fn merge001_mail_merge() {
     let (_, id, _) = text_paragraph(&mut s, 10);
     s.click_text(FlowPos::new(id, 3));
     let before = s.document();
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
     s.update(|e, window, cx| {
         let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
         input.update(cx, |a, cx| a.set_value("氏名,住所\n山田太郎,東京都港区\n鈴木花子,\"大阪府, 北区\"\n", window, cx));
@@ -19470,7 +19471,7 @@ fn merge001_mail_merge() {
     std::fs::create_dir_all(out.parent().unwrap()).unwrap();
     let written = s.update(|e, _, _| e.write_merged_documents(&out));
     assert_eq!(written, Ok(2));
-    let merged = ibis_pptx::read(&std::fs::read(&out).unwrap()).unwrap();
+    let merged = ibis_formats::read(&std::fs::read(&out).unwrap()).unwrap();
     let merged_texts: Vec<String> = body(flow(&merged)).iter().map(|p| p.text()).collect();
     let letters: Vec<usize> = merged_texts.iter().enumerate().filter(|(_, t)| t.contains("山田太郎") || t.contains("鈴木花子")).map(|(i, _)| i).collect();
     assert_eq!(letters.len(), 2, "{merged_texts:?}");
@@ -19486,7 +19487,7 @@ fn merge001_mail_merge() {
 /// comparisons), and the preview goes to the first, last, a numbered or a found recipient.
 fn merge003_recipient_list_edit_filter_and_find() {
     let mut s = Scenario::open(REPORT);
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
     let state = |s: &mut Scenario| s.with(|e, _| e.doc_state().unwrap().merge.as_ref().map(|m| (m.fields.clone(), m.records.clone(), m.included.clone())).unwrap());
     let selected = |s: &mut Scenario| s.with(|e, _| e.doc_state().unwrap().merge.as_ref().unwrap().selected());
     s.update(|e, window, cx| {
@@ -19562,7 +19563,7 @@ fn merge003_recipient_list_edit_filter_and_find() {
 /// (settings.xml), read again, undone and taken away (通常の文書).
 fn merge001_document_type_saved() {
     let mut s = Scenario::open(REPORT);
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
     let kind = |s: &mut Scenario| s.with(|e, _| e.flow().unwrap().mail_merge_type.clone());
     assert_eq!(kind(&mut s), None);
     s.update(|e, _, cx| e.set_mail_merge_type(Some("formLetters"), cx));
@@ -19573,13 +19574,13 @@ fn merge001_document_type_saved() {
     s.menu("edit.redo");
     let path = s.save_as("merge001_type.docx");
     let bytes = std::fs::read(&path).unwrap();
-    let settings = ibis_pptx::test_files::part_text(&bytes, "word/settings.xml").unwrap_or_default();
+    let settings = ibis_formats::test_files::part_text(&bytes, "word/settings.xml").unwrap_or_default();
     assert!(settings.contains("<w:mailMerge><w:mainDocumentType w:val=\"envelopes\"/></w:mailMerge>"), "{settings}");
     let reopened = s.reopen();
     assert_eq!(flow(&reopened).mail_merge_type.as_deref(), Some("envelopes"));
     s.update(|e, _, cx| e.set_mail_merge_type(None, cx));
     let path = s.save_as("merge001_type_none.docx");
-    let settings = ibis_pptx::test_files::part_text(&std::fs::read(&path).unwrap(), "word/settings.xml").unwrap_or_default();
+    let settings = ibis_formats::test_files::part_text(&std::fs::read(&path).unwrap(), "word/settings.xml").unwrap_or_default();
     assert!(!settings.contains("mailMerge"), "{settings}");
     assert_eq!(flow(&s.reopen()).mail_merge_type, None);
 }
@@ -19677,6 +19678,7 @@ fn image006_extended_picture_corrections() {
                         clear: pic.clear.clone(),
                         reflection: pic.reflection.clone(),
                         shadow: pic.shadow.clone(),
+                        effect_extent: [0; 4],
                     })
                 } else {
                     None
@@ -19759,7 +19761,7 @@ fn image006_extended_picture_corrections() {
 fn header006_picture_in_header() {
     let mut s = Scenario::open(REPORT);
     let root = crate::shell::scenario::repo_root();
-    let png = ibis_pptx::test_files::part_bytes(&std::fs::read(root.join(REPORT)).unwrap(), "word/media/image1.png").expect("a picture in the report");
+    let png = ibis_formats::test_files::part_bytes(&std::fs::read(root.join(REPORT)).unwrap(), "word/media/image1.png").expect("a picture in the report");
     s.menu("docx.header-footer");
     let pictures = |doc: &FlowDocument| doc.header.iter().filter(|b| matches!(b, Block::Paragraph(p) if p.runs.iter().any(|r| matches!(r.kind, FlowRunKind::Picture { .. } | FlowRunKind::Shape(_))))).count();
     assert_eq!(pictures(&s.document()), 0);
@@ -19814,7 +19816,7 @@ fn merge006_address_and_greeting() {
     let mut s = Scenario::open(REPORT);
     let (_, id, _) = text_paragraph(&mut s, 10);
     s.click_text(FlowPos::new(id, 0));
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
     s.update(|e, window, cx| {
         let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
         input.update(cx, |a, cx| a.set_value("郵便番号,住所,氏名\n100-0001,東京都千代田区,山田太郎\n530-0001,,鈴木花子\n", window, cx));
@@ -19859,7 +19861,7 @@ fn merge010_rules_and_separate_files() {
     let mut s = Scenario::open(REPORT);
     let (_, id, _) = text_paragraph(&mut s, 10);
     s.click_text(FlowPos::new(id, 0));
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
     s.update(|e, window, cx| {
         let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
         input.update(cx, |a, cx| a.set_value("氏名,年齢\n山田,30\n鈴木,15\n佐藤,5\n", window, cx));
@@ -19902,7 +19904,7 @@ fn merge010_rules_and_separate_files() {
     let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|f| f.unwrap().file_name().to_string_lossy().into_owned()).collect();
     names.sort();
     assert_eq!(names, ["宛名 1.docx", "宛名 2.docx"]);
-    let second = ibis_pptx::read(&std::fs::read(dir.join("宛名 2.docx")).unwrap()).unwrap();
+    let second = ibis_formats::read(&std::fs::read(dir.join("宛名 2.docx")).unwrap()).unwrap();
     let text: String = body(flow(&second)).iter().map(|p| p.text()).collect::<Vec<_>>().join("|");
     assert!(text.contains("未成年") && !text.contains("成人|"), "{text}");
 }
@@ -20073,7 +20075,7 @@ fn merge011_next_record() {
     let mut s = Scenario::open(REPORT);
     let (_, id, _) = text_paragraph(&mut s, 10);
     s.click_text(FlowPos::new(id, 0));
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
     s.update(|e, window, cx| {
         let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
         input.update(cx, |a, cx| a.set_value("氏名\n山田\n鈴木\n佐藤\n高橋\n", window, cx));
@@ -20097,7 +20099,7 @@ fn merge011_next_record() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let count = s.update(|e, _, _| e.write_merged_documents(&path)).unwrap();
     assert_eq!(count, 4);
-    let letters = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let letters = ibis_formats::read(&std::fs::read(&path).unwrap()).unwrap();
     let names: Vec<&str> = body(flow(&letters)).iter().flat_map(|p| ["山田", "鈴木", "佐藤", "高橋"].into_iter().filter(move |n| p.text().starts_with(*n))).collect();
     assert_eq!(names, ["山田", "鈴木", "佐藤", "高橋"], "two records to a copy, each in order");
     let pages = body(flow(&letters)).iter().filter(|p| p.page_break_before).count();
@@ -20108,7 +20110,7 @@ fn merge011_next_record() {
 /// 封筒設定による PageSetup 更新・差出人/受取人ブロック生成・1ステップUndo/Redo・保存再読込・個別文書作成を検証。
 fn merge016_envelope_setup() {
     let mut s = Scenario::open(REPORT);
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
     // Setup recipient list
     s.update(|e, window, cx| {
         let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
@@ -20164,7 +20166,7 @@ fn merge016_envelope_setup() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let count = s.update(|e, _, _| e.write_merged_documents(&path)).unwrap();
     assert_eq!(count, 2, "2 envelopes generated");
-    let letters = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let letters = ibis_formats::read(&std::fs::read(&path).unwrap()).unwrap();
     let letter_texts: Vec<String> = body(flow(&letters)).iter().map(|p| p.text()).collect();
     assert!(letter_texts.iter().any(|t| t.contains("山田太郎") && t.contains("150-0002")));
     assert!(letter_texts.iter().any(|t| t.contains("鈴木花子") && t.contains("530-0001")));
@@ -20174,7 +20176,7 @@ fn merge016_envelope_setup() {
 /// ラベル設定による表生成・NEXTフィールド配置・1ステップUndo/Redo・保存再読込・個別文書作成（シートへの連続展開）を検証。
 fn merge017_label_sheet_setup() {
     let mut s = Scenario::open(REPORT);
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
     // Setup recipient list with 5 recipients
     s.update(|e, window, cx| {
         let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
@@ -20223,7 +20225,7 @@ fn merge017_label_sheet_setup() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let count = s.update(|e, _, _| e.write_merged_documents(&path)).unwrap();
     assert_eq!(count, 5);
-    let letters = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let letters = ibis_formats::read(&std::fs::read(&path).unwrap()).unwrap();
     let mut cell_texts = Vec::new();
     for b in &flow(&letters).body {
         if let ibis_doc_model::flow::Block::Table(t) = b {
@@ -20253,7 +20255,7 @@ fn merge009_match_fields() {
     let mut s = Scenario::open(REPORT);
     let (_, id, _) = text_paragraph(&mut s, 10);
     s.click_text(FlowPos::new(id, 0));
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
 
     // Recipient list with Japanese column headers
     s.update(|e, window, cx| {
@@ -20345,7 +20347,7 @@ fn merge009_match_fields() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let count = s.update(|e, _, _| e.write_merged_documents(&path)).unwrap();
     assert_eq!(count, 2, "2 merged documents created");
-    let letters = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let letters = ibis_formats::read(&std::fs::read(&path).unwrap()).unwrap();
     let letter_texts: Vec<String> = body(flow(&letters)).iter().map(|p| p.text()).collect();
     assert!(letter_texts.iter().any(|t| t.contains("山田太郎") && t.contains("150-0002") && t.contains("アイビス")));
     assert!(letter_texts.iter().any(|t| t.contains("鈴木花子") && t.contains("530-0001") && t.contains("サンプル商事")));
@@ -20361,7 +20363,7 @@ fn merge014_print_merged_documents() {
     let mut s = Scenario::open(REPORT);
     let (_, id, _) = text_paragraph(&mut s, 10);
     s.click_text(FlowPos::new(id, 0));
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
 
     // 1. Verify menu states for merge print and PDF export
     assert_eq!(s.menu_state("docx.merge.print"), Some((true, false)));
@@ -20541,7 +20543,7 @@ fn math_in_text_and_display() {
     let root = crate::shell::scenario::repo_root();
     let input = root.join("target/scenario-input/docx-math.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
-    std::fs::write(&input, ibis_pptx::test_files::docx_with_math(&std::fs::read(root.join(REPORT)).unwrap())).unwrap();
+    std::fs::write(&input, ibis_formats::test_files::docx_with_math(&std::fs::read(root.join(REPORT)).unwrap())).unwrap();
     let mut s = Scenario::open("target/scenario-input/docx-math.docx");
     let doc = s.document();
     let maths: Vec<(u32, bool)> = body(&doc).iter().flat_map(|p| p.runs.iter().filter_map(move |r| match &r.kind { FlowRunKind::Math { display, .. } => Some((p.id, *display)), _ => None })).collect();
@@ -20571,7 +20573,7 @@ fn math_in_text_and_display() {
     s.click_text(FlowPos::new(inline_id, 0));
     s.type_text("前に");
     let saved = s.save_as("docx-math-edited.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<m:oMath") && xml.contains("<m:f>") && xml.contains("<m:oMathPara") && xml.contains("<m:rad>"), "the formulas are kept");
     assert!(xml.contains("前に"));
     let reopened = s.reopen();
@@ -20630,7 +20632,7 @@ fn math_structures_convert_and_quick_parts() {
     let saved = s.save_as("math-quick-parts-roundtrip.docx");
     let bytes = std::fs::read(&saved).expect("saved file exists");
     assert!(!bytes.is_empty());
-    let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").expect("document.xml present");
+    let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").expect("document.xml present");
     assert!(xml.contains("<m:oMath") || xml.contains("<w:fldSimple") || xml.contains("w:instrText"), "saved XML contains inserted math or field elements");
 
     // Reopen and ensure doc loaded cleanly
@@ -20697,7 +20699,7 @@ fn ref012_caption_with_chapter_number() {
     let saved = s.reopen();
     let texts: Vec<String> = body(flow(&saved)).into_iter().map(shown).filter(|t| t.starts_with("図 ")).collect();
     assert_eq!(texts, ["図 2-1 二つ目", "図 2.2 パネル挿入", "図 2-3 追加", "図 3-1 三つ目"]);
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(s.with(|e, _| e.path.clone()).unwrap()).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(s.with(|e, _| e.path.clone()).unwrap()).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("STYLEREF 1") && xml.contains("SEQ 図 \\* ARABIC \\s 1"), "saved as fields");
 }
 
@@ -20805,19 +20807,19 @@ fn fcode066_tc_entries_and_toc_f() {
         word
     }
     let mut s = Scenario::open(REPORT);
-    let first = mark(&mut s, 0, 3, "docx.toc.mark-level-1");
-    let second = mark(&mut s, 1, 2, "docx.toc.mark-level-2");
+    let first = mark(&mut s, 0, 3, "docx.table-of-contents.mark-level-1");
+    let second = mark(&mut s, 1, 2, "docx.table-of-contents.mark-level-2");
     let doc = s.document();
     let tcs: Vec<String> = body(&doc).iter().flat_map(|p| p.runs.iter()).filter_map(|r| match &r.kind { FlowRunKind::Field { instruction, .. } if instruction.starts_with("TC") => Some(instruction.clone()), _ => None }).collect();
     assert_eq!(tcs.len(), 2, "{tcs:?}");
     assert!(tcs[1].contains("\\l 2"), "{tcs:?}");
     s.key("cmd-up");
-    s.menu("docx.toc.from-entries");
+    s.menu("docx.table-of-contents.from-entries");
     let made = entries(&s.document());
     assert_eq!(made.len(), 2, "{made:?}");
     assert!(made[0].starts_with(&first) && made[1].starts_with(&second) && made.iter().all(|t| t.chars().last().is_some_and(|c| c.is_ascii_digit())), "{made:?}");
     // A third entry; the table updated.
-    let third = mark(&mut s, 2, 2, "docx.toc.mark-level-1");
+    let third = mark(&mut s, 2, 2, "docx.table-of-contents.mark-level-1");
     s.update(|e, _, cx| e.update_toc(None, cx));
     let again = entries(&s.document());
     assert_eq!(again.len(), 3, "{again:?}");
@@ -20849,13 +20851,13 @@ fn fcode065_citations_and_table_of_authorities() {
         word
     }
     let mut s = Scenario::open(REPORT);
-    let case = mark(&mut s, 3, "docx.toa.mark-category-1");
-    let statute = mark(&mut s, 2, "docx.toa.mark-category-2");
+    let case = mark(&mut s, 3, "docx.table-of-authorities.mark-category-1");
+    let statute = mark(&mut s, 2, "docx.table-of-authorities.mark-category-2");
     let doc = s.document();
     let tas = body(&doc).iter().flat_map(|p| p.runs.iter()).filter(|r| matches!(&r.kind, FlowRunKind::Field { instruction, .. } if instruction.starts_with("TA"))).count();
     assert_eq!(tas, 2);
     s.key("cmd-up");
-    s.menu("docx.toa");
+    s.menu("docx.table-of-authorities");
     let made = table(&s.document());
     assert_eq!(made.len(), 4, "{made:?}");
     assert_eq!(made[0], "判例");
@@ -20863,7 +20865,7 @@ fn fcode065_citations_and_table_of_authorities() {
     assert_eq!(made[2], "法令");
     assert!(made[3].starts_with(&statute), "{made:?}");
     // A third citation (of the first category); the table made again.
-    let third = mark(&mut s, 2, "docx.toa.mark-category-1");
+    let third = mark(&mut s, 2, "docx.table-of-authorities.mark-category-1");
     s.update(|e, _, cx| e.update_toa(cx));
     let again = table(&s.document());
     assert_eq!(again.len(), 5, "{again:?}");
@@ -20963,7 +20965,7 @@ fn fcode029_include_picture_update() {
     let mut other = tiny.to_vec();
     other[16..20].copy_from_slice(&[0, 0, 0, 2]);
     std::fs::write(&second, &other).unwrap();
-    let data = ibis_pptx::test_files::docx_with_include_picture(&std::fs::read(root.join(REPORT)).unwrap(), &first.display().to_string());
+    let data = ibis_formats::test_files::docx_with_include_picture(&std::fs::read(root.join(REPORT)).unwrap(), &first.display().to_string());
     let input = dir.join("docx-include-picture.docx");
     std::fs::write(&input, &data).unwrap();
     let mut s = Scenario::open("target/scenario-input/docx-include-picture.docx");
@@ -21075,7 +21077,7 @@ fn sec001_open_password() {
     std::fs::create_dir_all(&root).unwrap();
     let plain = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/docx-chapter-pages.docx")).unwrap();
     let mut n = 0u8;
-    let encrypted = ibis_pptx::encrypt(&plain, "ibis123", &mut |b: &mut [u8]| {
+    let encrypted = ibis_formats::encrypt(&plain, "ibis123", &mut |b: &mut [u8]| {
         for x in b.iter_mut() {
             n = n.wrapping_mul(31).wrapping_add(17);
             *x = n;
@@ -21112,12 +21114,12 @@ fn sec001_open_password() {
     s.type_text("確認");
     let saved = s.save_as(root.join("saved.docx").to_str().unwrap());
     let bytes = std::fs::read(&saved).unwrap();
-    assert!(ibis_pptx::is_encrypted(&bytes), "saved protected again");
-    let again = ibis_pptx::read(&ibis_pptx::decrypt(&bytes, "ibis123").unwrap()).unwrap();
+    assert!(ibis_formats::is_encrypted(&bytes), "saved protected again");
+    let again = ibis_formats::read(&ibis_formats::decrypt(&bytes, "ibis123").unwrap()).unwrap();
     assert!(body(flow(&again)).iter().any(|p| p.text().contains("確認")), "the edit is in the decrypted file");
     s.update(|e, w, cx| e.set_protection(None, w, cx));
     let bytes = std::fs::read(&saved).unwrap();
-    assert!(!ibis_pptx::is_encrypted(&bytes) && ibis_pptx::read(&bytes).is_ok(), "saved without the password");
+    assert!(!ibis_formats::is_encrypted(&bytes) && ibis_formats::read(&bytes).is_ok(), "saved without the password");
 }
 
 /// Copy and paste go through the system clipboard: the text copied in the document is on it for other apps, and what another app
@@ -21270,7 +21272,7 @@ fn review014_compare_tables() {
     assert!(cell_runs.iter().all(|r| !matches!(r.revision.as_ref().map(|v| &v.kind), Some(ibis_doc_model::RevisionKind::Delete))), "nothing in the cells was deleted");
     // Saved with the tracked change in the cell, and read again.
     let saved = s.save_as("test-review014-table.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:ins ") && xml.contains("追記"));
 }
 
@@ -21288,7 +21290,7 @@ fn ja010_kinsoku_lists() {
     s.update(|e, _, cx| e.close_kinsoku_panel(cx));
     // Kept in the file, and read back.
     let saved = s.save_as(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/kinsoku.docx").to_str().unwrap());
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/settings.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/settings.xml").unwrap();
     assert!(xml.contains("noLineBreaksBefore") && xml.contains("、。あ") && xml.contains("noLineBreaksAfter"), "{xml}");
     let again = s.reopen();
     let doc = flow(&again);
@@ -21498,7 +21500,7 @@ fn body_charts(doc: &FlowDocument) -> Vec<ibis_doc_model::Chart> {
 /// page, kept by a save (its chart part and workbook in the package, listed by its content types)
 /// and read again with the same series; the file is kept in `target/scenario` for a check in Word.
 fn insert_chart() {
-    use ibis_pptx::NewChartKind;
+    use ibis_formats::NewChartKind;
     let mut s = Scenario::open(REPORT);
     let before = body_charts(&s.document()).len();
     let (_, id, _) = text_paragraph(&mut s, 10);
@@ -21542,7 +21544,7 @@ fn insert_chart() {
     // Saved: the parts are in the package, and the file reads back with the same charts.
     let path = s.save_as("chart-inserted.docx");
     let bytes = std::fs::read(&path).unwrap();
-    let package = ibis_pptx::ibis_ooxml::Package::open(bytes).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(bytes).unwrap();
     let names: Vec<String> = package.names().map(|n| n.to_string()).collect();
     assert!(names.iter().any(|n| n.starts_with("word/charts/chart") && n.ends_with(".xml")), "{names:?}");
     assert!(names.iter().any(|n| n.starts_with("word/embeddings/") && n.ends_with(".xlsx")), "{names:?}");
@@ -21656,14 +21658,14 @@ fn edit_existing_chart() {
     assert_eq!(first(&flow), Some(5.5), "the new value is in the file");
     assert!(matches!(body_charts(&flow)[0].groups[0].kind, ChartType::Line), "the kind is in the file");
     assert_eq!(body_charts(&flow)[0].groups[0].series[0].stroke.as_ref().map(|x| x.color), body_charts(&s.document())[0].groups[0].series[0].stroke.as_ref().map(|x| x.color), "the line's colour");
-    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     for name in package.names().filter(|n| n.starts_with("word/charts/chart") && n.ends_with(".xml")).map(str::to_string).collect::<Vec<_>>() {
         let xml = String::from_utf8(package.read(&name).unwrap()).unwrap();
         assert!(xml.contains("<a:ln") && !xml.contains("<c:ln ") && !xml.contains("<c:ln>") && !xml.contains("<c:round/>"), "a line is DrawingML's a:ln: {name}");
     }
     // The workbook has the value too.
     let book = package.names().find(|n| n.starts_with("word/embeddings/") && n.ends_with(".xlsx")).expect("the workbook").to_string();
-    let workbook = ibis_pptx::ibis_ooxml::Package::open(package.read(&book).unwrap()).unwrap();
+    let workbook = ibis_formats::ibis_ooxml::Package::open(package.read(&book).unwrap()).unwrap();
     let sheet = String::from_utf8(workbook.read("xl/worksheets/sheet1.xml").unwrap()).unwrap();
     assert!(sheet.contains("<v>5.5</v>"), "{sheet}");
     // One more kind from the line chart: a chart of the file changed twice, then back by undo.
@@ -21899,7 +21901,7 @@ fn options012_autorecover_and_save_frequency() {
     assert_eq!(flow_doc.save_frequency, Some(20), "saveFrequency 20 preserved");
 
     // Verify word/settings.xml content
-    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     let settings_xml = String::from_utf8(package.read("word/settings.xml").unwrap()).unwrap();
     assert!(settings_xml.contains("saveFrequency"), "settings.xml contains saveFrequency");
     assert!(settings_xml.contains("val=\"20\""), "settings.xml contains val=\"20\"");
@@ -21913,7 +21915,7 @@ fn options012_autorecover_and_save_frequency() {
     let saved_default = s.reopen();
     assert_eq!(flow(&saved_default).save_frequency, None, "saveFrequency reset to None");
 
-    let default_package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&default_path).unwrap()).unwrap();
+    let default_package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&default_path).unwrap()).unwrap();
     let default_settings_xml = String::from_utf8(default_package.read("word/settings.xml").unwrap()).unwrap();
     assert!(!default_settings_xml.contains("saveFrequency"), "settings.xml does not contain saveFrequency when default");
 
@@ -22030,7 +22032,7 @@ fn options013_font_embedding_and_compatibility() {
     assert!(!flow_doc.do_not_expand_shift_return, "do_not_expand_shift_return false preserved");
 
     // Inspect word/settings.xml package content
-    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     let settings_xml = String::from_utf8(package.read("word/settings.xml").unwrap()).unwrap();
     assert!(settings_xml.contains("embedTrueTypeFonts"), "contains embedTrueTypeFonts");
     assert!(settings_xml.contains("embedSystemFonts"), "contains embedSystemFonts");
@@ -22055,7 +22057,7 @@ fn options013_font_embedding_and_compatibility() {
     assert!(flow(&reset_saved).use_fe_layout);
     assert!(flow(&reset_saved).do_not_expand_shift_return);
 
-    let reset_pkg = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&reset_path).unwrap()).unwrap();
+    let reset_pkg = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&reset_path).unwrap()).unwrap();
     let reset_xml = String::from_utf8(reset_pkg.read("word/settings.xml").unwrap()).unwrap();
     assert!(!reset_xml.contains("embedTrueTypeFonts"), "embedTrueTypeFonts removed");
     assert!(reset_xml.contains("<w:useFELayout"), "useFELayout restored");
@@ -22119,7 +22121,7 @@ fn page006_multiple_pages_and_book_fold() {
     assert!(doc.page.is_mirrored());
 
     // Check saved XML in word/settings.xml
-    let pkg = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let pkg = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     let xml = String::from_utf8(pkg.read("word/settings.xml").unwrap()).unwrap();
     assert!(xml.contains("<w:bookFoldPrinting"), "bookFoldPrinting missing: {xml}");
     assert!(xml.contains("<w:bookFoldPrintingSheets w:val=\"16\"/>"), "bookFoldPrintingSheets missing: {xml}");
@@ -22131,7 +22133,7 @@ fn page006_multiple_pages_and_book_fold() {
     assert!(!s.with(|e, _| e.caret_page().unwrap().is_mirrored()));
 
     let normal_path = s.save_as("docx-page-006-normal.docx");
-    let normal_pkg = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&normal_path).unwrap()).unwrap();
+    let normal_pkg = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&normal_path).unwrap()).unwrap();
     let normal_xml = String::from_utf8(normal_pkg.read("word/settings.xml").unwrap()).unwrap();
     assert!(!normal_xml.contains("bookFoldPrinting"), "bookFoldPrinting removed");
     assert!(!normal_xml.contains("bookFoldPrintingSheets"), "bookFoldPrintingSheets removed");
@@ -22203,7 +22205,7 @@ fn doc_properties_embed_fonts() {
     assert!(flow_doc.embed_system_fonts, "embed_system_fonts preserved");
 
     // Inspect word/settings.xml package content
-    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     let settings_xml = String::from_utf8(package.read("word/settings.xml").unwrap()).unwrap();
     assert!(settings_xml.contains("embedTrueTypeFonts"), "embedTrueTypeFonts in settings.xml");
     assert!(settings_xml.contains("saveSubsetFonts"), "saveSubsetFonts in settings.xml");
@@ -22239,7 +22241,7 @@ fn doc_properties_embed_fonts() {
     assert!(!flow_cleared.save_subset_fonts);
     assert!(!flow_cleared.embed_system_fonts);
 
-    let cleared_pkg = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&cleared_path).unwrap()).unwrap();
+    let cleared_pkg = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&cleared_path).unwrap()).unwrap();
     let cleared_xml = String::from_utf8(cleared_pkg.read("word/settings.xml").unwrap()).unwrap();
     assert!(!cleared_xml.contains("embedTrueTypeFonts"), "embedTrueTypeFonts removed");
 }
@@ -22252,7 +22254,7 @@ fn review017_view_side_by_side_and_sync_scrolling() {
     let mut s = Scenario::open(REPORT);
 
     // 1. Initial menu state with 1 window
-    assert_eq!(s.menu_state("docx.view-side-by-side"), Some((true, false)));
+    assert_eq!(s.menu_state("view.side-by-side"), Some((true, false)));
     assert_eq!(s.menu_state("docx.sync-scrolling"), Some((false, false)));
     assert_eq!(s.menu_state("docx.reset-window-position"), Some((false, false)));
 
@@ -22270,7 +22272,7 @@ fn review017_view_side_by_side_and_sync_scrolling() {
     });
 
     // 3. Activate View Side by Side via menu
-    s.menu("docx.view-side-by-side");
+    s.menu("view.side-by-side");
     s.settle();
 
     // Verify both windows are in side-by-side mode with sync scrolling ON
@@ -22280,7 +22282,7 @@ fn review017_view_side_by_side_and_sync_scrolling() {
     assert!(s.with(|_, app| ed1.read(app).sync_scrolling));
 
     // Verify menu items updated
-    assert_eq!(s.menu_state("docx.view-side-by-side"), Some((true, true)));
+    assert_eq!(s.menu_state("view.side-by-side"), Some((true, true)));
     assert_eq!(s.menu_state("docx.sync-scrolling"), Some((true, true)));
     assert_eq!(s.menu_state("docx.reset-window-position"), Some((true, false)));
 
@@ -22351,19 +22353,19 @@ fn review017_view_side_by_side_and_sync_scrolling() {
     s.settle();
 
     // 7. Deactivate View Side by Side via menu
-    s.menu("docx.view-side-by-side");
+    s.menu("view.side-by-side");
     s.settle();
 
     assert!(!s.with(|e, _| e.side_by_side));
     assert!(!s.with(|e, _| e.sync_scrolling));
     assert!(!s.with(|_, app| ed1.read(app).side_by_side));
     assert!(!s.with(|_, app| ed1.read(app).sync_scrolling));
-    assert_eq!(s.menu_state("docx.view-side-by-side"), Some((true, false)));
+    assert_eq!(s.menu_state("view.side-by-side"), Some((true, false)));
     assert_eq!(s.menu_state("docx.sync-scrolling"), Some((false, false)));
     assert_eq!(s.menu_state("docx.reset-window-position"), Some((false, false)));
 
     // 8. Re-enable side-by-side, then close peer window -> cleans up side-by-side on window 0
-    s.menu("docx.view-side-by-side");
+    s.menu("view.side-by-side");
     s.settle();
     assert!(s.with(|e, _| e.side_by_side));
 
@@ -22575,7 +22577,7 @@ fn form016_018_legacy_form_fields() {
     let reopened_doc = flow(&reopened);
 
     // Check saved XML contains w:ffData, w:textInput, w:checkBox, w:ddList
-    let pkg = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let pkg = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     let doc_xml = String::from_utf8(pkg.read("word/document.xml").unwrap()).unwrap();
     assert!(doc_xml.contains("<w:ffData>"), "missing w:ffData: {doc_xml}");
     assert!(doc_xml.contains("FORMTEXT") && doc_xml.contains("<w:textInput"), "missing textInput");
@@ -23014,6 +23016,81 @@ fn para019_drop_cap() {
     assert_eq!(s.with(|e, _| e.caret_drop_cap()), None);
 }
 
+/// #191: the editor's drop cap is Word's form: the capital is a paragraph of its own (`w:framePr w:dropCap`), the rest of the paragraph the one after it.
+/// Making it, saving and reading it again keep that form and the look; one undo takes it back; taking it away puts one paragraph back.
+fn drop_cap_word_form() {
+    use ibis_doc_model::DropCapLocation;
+    let mut s = Scenario::open(REPORT);
+    let (id0, count, text0) = s.with(|e, _| {
+        let b = body(e.flow().unwrap());
+        (b[0].id, b.len(), b[0].text())
+    });
+    assert!(text0.chars().count() > 3, "the first paragraph has text");
+    let first: String = text0.chars().take(1).collect();
+    let rest: String = text0.chars().skip(1).collect();
+    s.click_text(FlowPos::new(id0, 2));
+    s.menu("docx.drop-cap.drop");
+    // Two paragraphs: the capital with the frame, then the rest; the caret is on the same character (offset 2 of the paragraph is 1 of the rest).
+    let (frame_text, body_text, frame_dc, n) = s.with(|e, _| {
+        let b = body(e.flow().unwrap());
+        (b[0].text(), b[1].text(), b[0].drop_cap, b.len())
+    });
+    assert_eq!(n, count + 1);
+    assert_eq!(frame_text, first);
+    assert_eq!(body_text, rest);
+    let dc = frame_dc.expect("the capital's paragraph has the frame");
+    assert_eq!((dc.location, dc.lines), (DropCapLocation::Drop, 3));
+    assert!(s.with(|e, _| body(e.flow().unwrap())[1].drop_cap.is_none()));
+    let caret = s.with(|e, _| e.text_selection().map(|(_, c)| c.offset));
+    assert_eq!(caret, Some(1));
+    // The capital is drawn `lines` lines high, and the text goes round it.
+    let pages = s.with(|e, _| super::flow_layout::pages(e.flow().unwrap(), &e.resources));
+    let line_h = pages.pages[0].items.iter().find_map(|i| match i { super::flow_layout::Item::Line { para, h, .. } if *para == id0 && *h > 0.0 => Some(*h), _ => None }).expect("a line");
+    let cap = pages.pages[0].items.iter().find_map(|i| match i { super::flow_layout::Item::Text { text, size, .. } if text.as_ref() == first => Some(*size), _ => None }).expect("the capital is drawn");
+    // The frame's line is 3 of Word's `P_dc`: the body's natural line off the grid, the mean of it and the grid's line on one (this body is on the grid: its lines are `line_h`, 60 pt, and
+    // its natural line 46.85 pt, so 53.42 pt).
+    let frame_line = s.with(|e, _| match body(e.flow().unwrap())[0].direct.line { Some(LineHeight::Exact(l)) => l as f32 / 12700.0, other => panic!("the frame's line {other:?}") });
+    assert!(frame_line > 3.0 * 40.0 && frame_line < 3.0 * line_h, "the frame's line {frame_line} pt of 3 x {line_h} pt");
+    assert!((frame_line / 3.0 - (46.85 + line_h) / 2.0).abs() < 0.2, "P_dc {} pt", frame_line / 3.0);
+    // The capital's size is Word's (`drop_cap_size_and_raise`: its ink from the top of the first line's em square to the foot of the third line), not a fraction of the line: here 140.5 pt
+    // in the 160.27 pt, and it is raised by the half-points that put its lowest point on that foot.
+    assert!(cap > frame_line * 0.78 && cap < frame_line, "capital {cap} pt, line {frame_line} pt");
+    let raise = s.with(|e, _| body(e.flow().unwrap())[0].runs[0].format.raise);
+    assert!(raise.is_some_and(|r| r != 0), "the capital is raised: {raise:?}");
+    // More lines: still two paragraphs, one frame.
+    s.menu("docx.drop-cap.lines.4");
+    assert_eq!(s.with(|e, _| body(e.flow().unwrap()).len()), count + 1);
+    assert_eq!(s.with(|e, _| e.caret_drop_cap()).map(|d| d.lines), Some(4));
+    s.key("cmd-z");
+    assert_eq!(s.with(|e, _| e.caret_drop_cap()).map(|d| d.lines), Some(3));
+    // Save and read again: the same two paragraphs.
+    s.save_as("test-drop-cap-word-form.docx");
+    let saved = s.reopen();
+    let b = body(flow(&saved));
+    assert_eq!(b.len(), count + 1);
+    assert_eq!(b[0].text(), first);
+    assert_eq!(b[0].drop_cap.map(|d| (d.location, d.lines)), Some((DropCapLocation::Drop, 3)));
+    assert_eq!(b[1].text(), rest);
+    // One undo takes the whole drop cap back.
+    s.key("cmd-z");
+    let (n, t, dc) = s.with(|e, _| {
+        let b = body(e.flow().unwrap());
+        (b.len(), b[0].text(), b[0].drop_cap)
+    });
+    assert_eq!((n, t, dc), (count, text0.clone(), None));
+    s.key("cmd-shift-z");
+    assert_eq!(s.with(|e, _| body(e.flow().unwrap()).len()), count + 1);
+    // Taking it away makes one paragraph again, with the caret on the same character.
+    s.menu("docx.drop-cap.none");
+    let (n, t, dc) = s.with(|e, _| {
+        let b = body(e.flow().unwrap());
+        (b.len(), b[0].text(), b[0].drop_cap)
+    });
+    assert_eq!((n, t, dc), (count, text0, None));
+    let caret = s.with(|e, _| e.text_selection().map(|(_, c)| c.offset));
+    assert_eq!(caret, Some(2));
+}
+
 /// Shape / Text Box Text Vertical Alignment (テキストの配置):
 /// Format contextual menu: Top, Middle, Bottom (wps:bodyPr/@anchor="t"|"ctr"|"b")
 fn shape001_align_text() {
@@ -23173,14 +23250,14 @@ fn design003_set_as_default() {
     assert_eq!(status.as_ref(), "現在のスタイルとテーマを新しい文書の既定として設定しました。");
 
     // 5. Verify settings were persisted
-    assert_eq!(crate::shell::settings::get("docx.default.theme_fonts").as_deref(), Some("calibri"));
-    assert_eq!(crate::shell::settings::get("docx.default.paragraph_spacing").as_deref(), Some("tight"));
+    assert_eq!(crate::shell::settings::get("docx.default.theme-fonts").as_deref(), Some("calibri"));
+    assert_eq!(crate::shell::settings::get("docx.default.paragraph-spacing").as_deref(), Some("tight"));
 
     // Drop s to release the ONE_AT_A_TIME scenario lock before opening another Scenario
     drop(s);
 
     // 6. Test creating a new document and applying default design
-    let mut s2 = Scenario::new_document(ibis_pptx::Kind::Document);
+    let mut s2 = Scenario::new_document(ibis_formats::Kind::Document);
     s2.update(|e, _window, cx| e.apply_docx_default_design(cx));
 
     assert_eq!(s2.with(|e, _| e.document_paragraph_spacing_preset()), Some(ibis_doc_model::ParagraphSpacingPreset::Tight));
@@ -23258,7 +23335,7 @@ fn design005_theme_effects() {
 
     // 5. Save as docx, verify word/theme/theme1.xml contains <a:fmtScheme name="Aspect">
     let saved = s.save_as("docx-design005-theme-effects.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/theme/theme1.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/theme/theme1.xml").unwrap();
     assert!(xml.contains(r#"<a:fmtScheme name="Aspect""#), "Aspect fmtScheme written to theme1.xml: {xml}");
 
     // 6. Reopen and verify theme_effects loaded
@@ -23267,13 +23344,13 @@ fn design005_theme_effects() {
 
     // 7. Test Set as default
     s.menu("docx.design.set-as-default");
-    assert_eq!(crate::shell::settings::get("docx.default.theme_effects").as_deref(), Some("Aspect"));
+    assert_eq!(crate::shell::settings::get("docx.default.theme-effects").as_deref(), Some("Aspect"));
 
     // Drop s to release the ONE_AT_A_TIME scenario lock before opening another Scenario
     drop(s);
 
     // 8. New document inherits default theme effects
-    let mut s2 = Scenario::new_document(ibis_pptx::Kind::Document);
+    let mut s2 = Scenario::new_document(ibis_formats::Kind::Document);
     s2.update(|e, _window, cx| e.apply_docx_default_design(cx));
     assert!(s2.with(|e, _| e.is_docx_theme_effects_active("aspect")));
 }
@@ -23336,7 +23413,7 @@ fn form020_design_mode() {
 
     // 6. Save and Reopen, verify custom prompt and showingPlcHdr are preserved
     let saved = s.save_as("docx-form020-design-mode.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:showingPlcHdr/>"), "showingPlcHdr is written for custom prompt");
     assert!(xml.contains("【案内】"), "custom prompt is written");
 
@@ -23365,7 +23442,7 @@ fn merge020_check_errors() {
     assert_eq!(s.with(|e, _| e.status.clone()).unwrap().as_ref(), "宛先リストが読み込まれていません。");
 
     // 2. Open merge panel and load recipients
-    s.menu("docx.merge");
+    s.menu("docx.mail-merge");
     s.update(|e, window, cx| {
         let input = e.doc_state().unwrap().merge.as_ref().unwrap().text.clone();
         input.update(cx, |a, cx| {
@@ -23617,7 +23694,7 @@ fn review016_combine_documents() {
             ],
             ..Default::default()
         };
-        e.run_flow(vec![FlowCommand::ReplaceBlocks { container: ibis_doc_model::Container::Body, index: 0, remove: 0, blocks: vec![Block::Paragraph(para)] }], cx);
+        e.run_flow(vec![FlowCommand::ReplaceBlockRange { container: ibis_doc_model::Container::Body, index: 0, remove: 0, blocks: vec![Block::Paragraph(para)] }], cx);
     });
 
     let doc1_path = s1.save_as(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/combine-alice.docx").to_str().unwrap());
@@ -23646,7 +23723,7 @@ fn review016_combine_documents() {
             ],
             ..Default::default()
         };
-        e.run_flow(vec![FlowCommand::ReplaceBlocks { container: ibis_doc_model::Container::Body, index: 0, remove: 0, blocks: vec![Block::Paragraph(para)] }], cx);
+        e.run_flow(vec![FlowCommand::ReplaceBlockRange { container: ibis_doc_model::Container::Body, index: 0, remove: 0, blocks: vec![Block::Paragraph(para)] }], cx);
     });
 
     // 3. Combine document 1 (Alice's file) into document 2 (Bob's document)
@@ -23676,7 +23753,7 @@ fn review016_combine_documents() {
 
     // 7. Save and reopen to verify OOXML document.xml roundtrip
     let saved = s2.save_as("test-review016-combine.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("w:author=\"Alice\""), "Alice's revision saved in XML: {xml}");
     assert!(xml.contains("w:author=\"Bob\""), "Bob's revision saved in XML: {xml}");
 }
@@ -23737,7 +23814,7 @@ fn insert_objects_suite() {
     s.menu("edit.undo");
 
     // 4. 署名欄挿入 (docx.signature-line)
-    s.menu("docx.signature-line");
+    s.menu("insert.signature-line");
     let has_sig = s.with(|e, _| {
         let doc = e.flow().unwrap();
         let p = para(doc, id);
@@ -24088,7 +24165,7 @@ fn math003_builtin_equations_and_structures() {
     let saved = s.save_as("test-math-builtin-roundtrip.docx");
     let bytes = std::fs::read(&saved).expect("saved file exists");
     assert!(!bytes.is_empty());
-    let xml = ibis_pptx::test_files::part_text(&bytes, "word/document.xml").expect("document.xml present");
+    let xml = ibis_formats::test_files::part_text(&bytes, "word/document.xml").expect("document.xml present");
     assert!(xml.contains("<m:oMath"), "saved XML contains m:oMath element");
     assert!(xml.contains("<m:f>"), "saved XML contains m:f element for fraction");
     assert!(xml.contains("<m:rad>"), "saved XML contains m:rad element for radical");
@@ -24935,8 +25012,8 @@ fn opt005_drag_select_options() {
 }
 
 fn file020_open_and_repair() {
-    use ibis_pptx::repair::RepairMode;
-    use ibis_pptx::ibis_ooxml::zip::{EntryMeta, Writer};
+    use ibis_formats::repair::RepairMode;
+    use ibis_formats::ibis_ooxml::zip::{EntryMeta, Writer};
 
     let mut s = Scenario::open(REPORT);
 
@@ -25472,7 +25549,7 @@ fn file011_compatibility_mode_and_convert() {
     s.settle();
     assert_eq!(s.with(|e, _| e.docx_compatibility_mode_name()), "Word 2010");
 
-    s.menu("docx.compatibility-check");
+    s.menu("review.compatibility-check");
     s.settle();
     assert!(s.with(|e, _| e.doc_state().and_then(|st| st.compatibility_panel.as_ref()).is_some()));
 
@@ -26065,7 +26142,7 @@ fn math001_002_023_inplace_edit_and_skewed_linear_frac_roundtrip() {
     // 3. Save and reopen OOXML roundtrip
     let saved = s.save_as("test-math-inplace-and-frac-kinds.docx");
     let bytes = std::fs::read(&saved).expect("read saved docx");
-    let reopened = ibis_pptx::read(&bytes).expect("reopen saved docx");
+    let reopened = ibis_formats::read(&bytes).expect("reopen saved docx");
     let re_p = body(flow(&reopened))
         .into_iter()
         .find(|p| p.id == id)
@@ -26115,7 +26192,7 @@ fn float016_group_and_ungroup_shapes() {
                     fill: Some(Rgb(0x4472c4)),
                     line: Some((Rgb(0x1f4e79), 12_700)),
                 }),
-                Command::Flow(FlowCommand::PlaceShapeOnPage {
+                Command::Flow(FlowCommand::SetShapePagePosition {
                     at: at0,
                     size: EmuSize::new(914_400, 457_200),
                     x: 457_200,
@@ -26128,7 +26205,7 @@ fn float016_group_and_ungroup_shapes() {
                     fill: Some(Rgb(0xed7d31)),
                     line: Some((Rgb(0xc55a11), 12_700)),
                 }),
-                Command::Flow(FlowCommand::PlaceShapeOnPage {
+                Command::Flow(FlowCommand::SetShapePagePosition {
                     at: at1,
                     size: EmuSize::new(685_800, 685_800),
                     x: 1_600_200,
@@ -26185,7 +26262,7 @@ fn float016_group_and_ungroup_shapes() {
     // 3. Save and reopen OOXML roundtrip (<wpg:wgp>)
     let saved = s.save_as("test-float016-wpg-group.docx");
     let bytes = std::fs::read(&saved).expect("read saved docx");
-    let reopened = ibis_pptx::read(&bytes).expect("reopen saved docx");
+    let reopened = ibis_formats::read(&bytes).expect("reopen saved docx");
     assert_eq!(flow(&reopened).shape_groups.len(), 1);
     assert_eq!(flow(&reopened).shape_groups[0].leaf_shape_ids().len(), 2);
 
@@ -26206,7 +26283,7 @@ fn float016_group_and_ungroup_shapes() {
 /// 2. `.doc` (Word 97-2003 OLE2 CFB)、`.rtf`、`.txt`、`.html`、`.odt` の各形式への書き出しと再変換読み込みを検証。
 /// 3. `.pdf` (PDF ストリーム) から Word 文書へのリフロー変換読み込みと `.docx` 保存ラウンドトリップを検証。
 fn file010_012_013_sec019_document_conversions() {
-    use ibis_pptx::docx_convert::DocxConvertFormat;
+    use ibis_formats::docx_convert::DocxConvertFormat;
 
     let mut s = Scenario::open(REPORT);
 
@@ -26238,7 +26315,7 @@ fn file010_012_013_sec019_document_conversions() {
         assert!(written > 0);
         assert!(path.exists());
         let opened=crate::read_file(&path).expect("the ordinary OS Open path must import each document format");
-        assert_eq!(ibis_pptx::Kind::of(&opened.presentation),ibis_pptx::Kind::Document);
+        assert_eq!(ibis_formats::Kind::of(&opened.presentation),ibis_formats::Kind::Document);
         assert!(opened.presentation.flow.is_some(),"external documents open as text documents, not worksheets");
     }
 
@@ -26302,7 +26379,7 @@ endstream\nendobj\n\
     // Save imported PDF as .docx and verify roundtrip
     let saved = s.save_as("test-pdf-converted.docx");
     let bytes = std::fs::read(&saved).expect("read saved docx");
-    let reopened = ibis_pptx::read(&bytes).expect("reopen saved docx");
+    let reopened = ibis_formats::read(&bytes).expect("reopen saved docx");
     let re_texts: Vec<String> = body(flow(&reopened)).iter().map(|p| p.text()).collect();
     assert_eq!(re_texts, pdf_texts);
 }
@@ -26443,8 +26520,8 @@ fn audit_core_editing_formatting_layout_and_review() {
     assert!(!para(&s.document(), p_id).runs.iter().any(|r| r.style.bold), "direct formatting cleared");
 
     // 3. DOCX-PARA-014 (KeepNext) & DOCX-PARA-015 (KeepLines)
-    s.menu("docx.para.keep-next");
-    s.menu("docx.para.keep-lines");
+    s.menu("docx.paragraph.keep-next");
+    s.menu("docx.paragraph.keep-lines");
     let p_after = para(&s.document(), p_id).clone();
     assert_eq!(p_after.direct.keep_next, Some(true), "KeepNext enabled");
     assert_eq!(p_after.direct.keep_lines, Some(true), "KeepLines enabled");
@@ -26480,7 +26557,7 @@ fn audit_core_editing_formatting_layout_and_review() {
 /// header's end), so no body line overlaps a header line.
 fn header015_tall_header_pushes_body_down() {
     let root = crate::shell::scenario::repo_root();
-    let data = ibis_pptx::test_files::docx_with_tall_header(&std::fs::read(root.join(REPORT)).unwrap());
+    let data = ibis_formats::test_files::docx_with_tall_header(&std::fs::read(root.join(REPORT)).unwrap());
     let input = root.join("target/scenario-input/docx-tall-header.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
     std::fs::write(&input, &data).unwrap();
@@ -26832,7 +26909,7 @@ fn toc017_unupdated_toc_is_made_on_open() {
         let file = format!("target/scenario-input/{name}.docx");
         let input = root.join(&file);
         std::fs::create_dir_all(input.parent().unwrap()).unwrap();
-        std::fs::write(&input, ibis_pptx::test_files::docx_with_unupdated_toc(&base, result, dirty, update_fields)).unwrap();
+        std::fs::write(&input, ibis_formats::test_files::docx_with_unupdated_toc(&base, result, dirty, update_fields)).unwrap();
         let mut s = Scenario::open(&file);
         let doc = s.document();
         let entries = table(&doc);
@@ -26846,7 +26923,7 @@ fn toc017_unupdated_toc_is_made_on_open() {
             // Saved and read back: the same table, linked to the headings, and no w:dirty left.
             let path = s.save_as(&format!("{name}.docx"));
             let saved = std::fs::read(path).unwrap();
-            let xml = ibis_pptx::test_files::part_text(&saved, "word/document.xml").unwrap();
+            let xml = ibis_formats::test_files::part_text(&saved, "word/document.xml").unwrap();
             assert!(!xml.contains("w:dirty"), "{name}: the made field is not dirty");
             assert!(xml.contains("PAGEREF _Toc"), "{name}: page numbers are PAGEREF fields");
             assert!(xml.contains("docPartGallery"), "{name}: the content control is kept");

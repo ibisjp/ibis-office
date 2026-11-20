@@ -283,13 +283,11 @@ xlsx.new-window	New Window
 fix.misc.new-window	New Window
 fix.editor.do-you-want-save-changes	Do you want to save changes?
 fix.editor.don-t-save	Don't Save
-xlsx.view-side-by-side	View Side by Side
 xlsx.sync-scrolling	Synchronous Scrolling
 xlsx.reset-window-position	Reset Window Position
 fix.misc.view-side-side	View Side by Side
 fix.misc.synchronous-scrolling	Synchronous Scrolling
 fix.misc.reset-window-position	Reset Window Position
-xlsx.compatibility-check	Check Compatibility…
 xlsx.compatibility.title	Compatibility Checker
 xlsx.compatibility.desc	Scans the workbook for features not supported by earlier versions of Excel (97-2003) and summarizes issues.
 xlsx.compatibility.passed	No compatibility issues found
@@ -445,12 +443,12 @@ pptx.insert-chart.surface-3d	3-D Surface
 pptx.insert-chart.surface-3d-wireframe	3-D Wireframe Surface
 pptx.insert-chart.contour	Contour
 pptx.insert-chart.contour-wireframe	Wireframe Contour
-xlsx.pivot-chart-insert	PivotChart…
+xlsx.insert-pivot-chart	PivotChart…
 xlsx.pivot-chart	PivotChart
 xlsx.pivot-chart-source	Connected PivotTable
 xlsx.pivot-chart-open-fields	PivotTable Fields…
 xlsx.pivot-chart-inserted	PivotChart inserted
-xlsx.phonetic-toggle	Show/Hide Furigana
+xlsx.toggle-phonetic	Show/Hide Furigana
 xlsx.phonetic-edit	Edit Furigana…
 fix.phonetic.edit-furigana	Edit Furigana
 fix.phonetic.furigana	Furigana

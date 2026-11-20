@@ -114,7 +114,7 @@ pub const WORDART_PRESETS: &[WordArtPreset] = &[
 ];
 
 pub fn new_shape(id: ShapeId, preset: &str, frame: EmuRect) -> Shape {
-    let geometry = ibis_pptx::preset_geometry(preset).unwrap_or(Geometry::Rect);
+    let geometry = ibis_formats::preset_geometry(preset).unwrap_or(Geometry::Rect);
     let mut auto = AutoShape::new(geometry, Fill::Solid(Color::opaque(Rgb(0x4472c4))), Some(Stroke::solid(Color::opaque(Rgb(0x2f528f)), 12_700)));
     let style = TextStyle { color: Rgb::WHITE, align: TextAlign::Center, ..TextStyle::default() };
     auto.text = Some(TextBody { anchor: VerticalAnchor::Middle, ..TextBody::plain("", style) });
@@ -183,7 +183,7 @@ pub fn new_connector(
             shape
         }
         LineKind::Bent => {
-            let geom = ibis_pptx::preset_geometry("bentConnector3").unwrap_or(Geometry::Rect);
+            let geom = ibis_formats::preset_geometry("bentConnector3").unwrap_or(Geometry::Rect);
             let auto = AutoShape::new(geom, Fill::None, Some(stroke));
             let mut shape = Shape::new(id, frame, ShapeKind::Auto(auto));
             shape.flip_h = flip_h;
@@ -191,7 +191,7 @@ pub fn new_connector(
             shape
         }
         LineKind::Curved => {
-            let geom = ibis_pptx::preset_geometry("curvedConnector3").unwrap_or(Geometry::Rect);
+            let geom = ibis_formats::preset_geometry("curvedConnector3").unwrap_or(Geometry::Rect);
             let auto = AutoShape::new(geom, Fill::None, Some(stroke));
             let mut shape = Shape::new(id, frame, ShapeKind::Auto(auto));
             shape.flip_h = flip_h;
@@ -522,6 +522,56 @@ pub enum ArrowKind {
     Double,
 }
 
+/// What a tile of the 挿入 > 図形 menu inserts (each screen turns it into its own action: a document draws it on the page, a
+/// presentation arms the drawing tool, a sheet puts it at the selected cell).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShapeTile {
+    /// A closed preset shape (`rect`, `star5`…).
+    Preset(&'static str),
+    /// A line or connector, with its arrow head ([`ArrowKind::None`] or [`ArrowKind::Single`] in this menu).
+    Line(LineKind, ArrowKind),
+}
+
+/// How many tiles a row of the 挿入 > 図形 menu has (K0031).
+pub const SHAPE_TILE_COLUMNS: usize = 4;
+
+/// The 挿入 > 図形 menu of the three screens (K0031): the lines and connectors, then the preset shapes, each a small 4:3 picture over
+/// its name, [`SHAPE_TILE_COLUMNS`] to a row. The screen supplies what choosing a tile does (`insert`) and whether the tiles are enabled.
+pub fn shape_tile_items(enabled: bool, insert: fn(&mut crate::editor::SlideEditor, ShapeTile, &mut gpui_kit::Window, &mut gpui_kit::Context<crate::editor::SlideEditor>)) -> Vec<MenuEntry> {
+    let tile = |id: &'static str, icon: &'static str, kind: ShapeTile| -> MenuEntry {
+        let thumb = match kind {
+            ShapeTile::Preset(preset) => ShapeThumb::Preset(preset),
+            ShapeTile::Line(line, arrow) => ShapeThumb::Line {
+                preset: match line {
+                    LineKind::Bent => "bentConnector3",
+                    LineKind::Curved => "curvedConnector3",
+                    _ => "line",
+                },
+                arrow: arrow != ArrowKind::None,
+            },
+        };
+        MenuItem::tr(id)
+            .icon(icon)
+            .disabled(!enabled)
+            .on(move |this, window, cx| insert(this, kind, window, cx))
+            .thumb(move |editor, width| shape_thumb(editor, thumb, width))
+            .tile_columns(SHAPE_TILE_COLUMNS)
+            .tile_width(crate::menu_tiles::SMALL_TILE_WIDTH)
+            .into()
+    };
+    let mut items = vec![
+        tile("docx.shape.line", "remove", ShapeTile::Line(LineKind::Straight, ArrowKind::None)),
+        tile("docx.shape.arrow", "arrow_right_alt", ShapeTile::Line(LineKind::Straight, ArrowKind::Single)),
+        tile("docx.shape.elbow", "turn_right", ShapeTile::Line(LineKind::Bent, ArrowKind::None)),
+        tile("docx.shape.elbow-arrow", "turn_right", ShapeTile::Line(LineKind::Bent, ArrowKind::Single)),
+        tile("docx.shape.curved", "gesture", ShapeTile::Line(LineKind::Curved, ArrowKind::None)),
+        tile("docx.shape.curved-arrow", "gesture", ShapeTile::Line(LineKind::Curved, ArrowKind::Single)),
+        MenuEntry::Separator,
+    ];
+    items.extend(SHAPES.iter().map(|&(preset, icon, id)| tile(id, icon, ShapeTile::Preset(preset))));
+    items
+}
+
 pub fn smartart_insert_items() -> Vec<MenuEntry> {
     vec![
         MenuItem::tr("pptx.insert.smartart.list").icon("view_list").on(|e, _, cx| e.insert_smartart(crate::smartart::SmartArtKind::BasicBlockList, cx)).into(),
@@ -535,7 +585,7 @@ pub fn smartart_insert_items() -> Vec<MenuEntry> {
         MenuItem::tr("pptx.insert.smartart.relationship").icon("sync_alt").on(|e, _, cx| e.insert_smartart(crate::smartart::SmartArtKind::BasicRelationship, cx)).into(),
         MenuItem::tr("pptx.insert.smartart.matrix").icon("grid_view").on(|e, _, cx| e.insert_smartart(crate::smartart::SmartArtKind::BasicMatrix, cx)).into(),
         MenuItem::tr("pptx.insert.smartart.pyramid").icon("change_history").on(|e, _, cx| e.insert_smartart(crate::smartart::SmartArtKind::BasicPyramid, cx)).into(),
-        MenuItem::tr("pptx.insert.smartart.picture").icon("insert_photo").on(|e, _, cx| e.insert_smartart(crate::smartart::SmartArtKind::PictureList, cx)).into(),
+        MenuItem::tr("pptx.insert.smartart.picture").icon("image").on(|e, _, cx| e.insert_smartart(crate::smartart::SmartArtKind::PictureList, cx)).into(),
     ]
 }
 
@@ -551,7 +601,7 @@ pub enum ShapeThumb {
 }
 
 /// The picture of a shape in a gallery of the menus (挿入 > 図形 of each screen), `width` pixels wide and 4:3: the shape drawn by the
-/// shapes' own drawing (the preset definitions of ECMA-376, `ibis_pptx::preset_geometry`), as it is when inserted (the fill and
+/// shapes' own drawing (the preset definitions of ECMA-376, `ibis_formats::preset_geometry`), as it is when inserted (the fill and
 /// outline of a new shape), inside a margin. The three screens' galleries are made of this one part.
 pub fn shape_thumb(editor: &crate::editor::SlideEditor, thumb: ShapeThumb, width: f32) -> gpui_kit::AnyElement {
     use gpui_kit::{div, IntoElement as _, ParentElement as _, Styled as _};
@@ -566,7 +616,7 @@ pub fn shape_thumb(editor: &crate::editor::SlideEditor, thumb: ShapeThumb, width
     let line_color = Color::opaque(Rgb(0x2F528F));
     let kind = match thumb {
         ShapeThumb::Preset(preset) => {
-            let geometry = ibis_pptx::preset_geometry(preset).unwrap_or(Geometry::Rect);
+            let geometry = ibis_formats::preset_geometry(preset).unwrap_or(Geometry::Rect);
             ShapeKind::Auto(AutoShape::new(geometry, Fill::Solid(fill_color), Some(Stroke::solid(line_color, 12_700))))
         }
         ShapeThumb::Line { preset, arrow } => {
@@ -574,7 +624,7 @@ pub fn shape_thumb(editor: &crate::editor::SlideEditor, thumb: ShapeThumb, width
             if arrow {
                 stroke.tail = ibis_doc_model::LineEnd::parse(Some("triangle"), None, None);
             }
-            match ibis_pptx::preset_geometry(preset).filter(|_| preset != "line") {
+            match ibis_formats::preset_geometry(preset).filter(|_| preset != "line") {
                 Some(geometry) => ShapeKind::Auto(AutoShape::new(geometry, Fill::None, Some(stroke))),
                 None => ShapeKind::Line(stroke),
             }

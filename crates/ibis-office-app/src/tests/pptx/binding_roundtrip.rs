@@ -26,7 +26,7 @@ const INSET:i64=91_441;
 const ROTATION:i32=740_741;
 
 fn unedited_apply(){
-    let mut s=Scenario::new_document(ibis_pptx::Kind::Presentation);
+    let mut s=Scenario::new_document(ibis_formats::Kind::Presentation);
     s.size(1200.,900.);
     let id=s.update(|e,_,cx|{
         let mut auto=AutoShape::new(Geometry::Rect,Fill::Solid(Color::BLACK),None);
@@ -58,7 +58,7 @@ fn unedited_apply(){
 
 /// The slide size panel shows 25.4 x 19.05 cm for 9 144 007 x 6 858 011 EMU; an Apply without an edit keeps the exact size.
 fn unedited_slide_size(){
-    let mut s=Scenario::new_document(ibis_pptx::Kind::Presentation);
+    let mut s=Scenario::new_document(ibis_formats::Kind::Presentation);
     let size=ibis_doc_model::EmuSize::new(9_144_007,6_858_011);
     s.update(|e,_,cx|{e.run(vec![ibis_doc_model::Command::SetSlideSize{size}],cx);});
     let undo_before=s.with(|e,_|e.document.undo_len());
@@ -95,7 +95,7 @@ fn unedited_sheet_frame(){
     let frame=EmuRect::new(1_234_567,2_345_679,3_456_791,987_653);
     s.update(|e,_,cx|{
         e.run_sheet(vec![
-            ibis_doc_model::Command::SetFrame{slide,shape:id,frame},
+            ibis_doc_model::Command::SetFrame { slide, frames: vec![(id, frame)], with_attached: true },
             ibis_doc_model::Command::SetTransform{slide,shape:id,rotation:ROTATION,flip_h:false,flip_v:false},
         ],cx);
     });
@@ -116,8 +116,8 @@ fn unedited_row_col_size(){
     let slide=s.with(|e,_|e.current_slide);
     let (row,column)=(238_126_i64,712_345_i64);
     s.update(|e,_,_|{
-        let _=e.document.execute(vec![Command::Sheet(SheetCommand::SetSize{slide,axis:Axis::Rows,first:0,last:0,size:row})]);
-        let _=e.document.execute(vec![Command::Sheet(SheetCommand::SetSize{slide,axis:Axis::Columns,first:0,last:0,size:column})]);
+        let _=e.document.execute(vec![Command::Sheet(SheetCommand::SetSize{sheet: slide,axis:Axis::Rows,first:0,last:0,size:row})]);
+        let _=e.document.execute(vec![Command::Sheet(SheetCommand::SetSize{sheet: slide,axis:Axis::Columns,first:0,last:0,size:column})]);
     });
     let sizes=|s:&mut Scenario|s.with(|e,_|{let (_,sheet)=e.current_sheet().expect("a sheet");(sheet.rows[0] as i64,sheet.columns[0] as i64)});
     assert_eq!(sizes(&mut s),(row,column));

@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! The right pane follows the current cell into a pivot table (ピボットテーブルのフィールド) and back out
-//! (doc/rule/implimentationRule.md, 「右ペインの自動表示の積み」). The pane that was on show is kept in memory
+//! (docs/rule/implimentationRule.md, 「右ペインの自動表示の積み」). The pane that was on show is kept in memory
 //! (pushed) when the current cell enters a table and is put back (popped) when it leaves.
 
 use gpui_kit::*;

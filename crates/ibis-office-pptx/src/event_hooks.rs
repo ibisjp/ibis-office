@@ -77,20 +77,8 @@ impl SlideEditor {
         false
     }
 
-    /// Escape, after the window's dialogs: the presentation's zoom dialogs, a drag in progress, grid view and notes page view.
+    /// Escape, after the window's dialogs: a drag in progress, grid view and notes page view.
     pub(crate) fn pptx_cancel_tool_late(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.pptx().is_some_and(|p| p.slide_zoom_dialog.is_some()) {
-            self.close_slide_zoom_dialog(cx);
-            return true;
-        }
-        if self.pptx().is_some_and(|p| p.section_zoom_dialog.is_some()) {
-            self.close_section_zoom_dialog(cx);
-            return true;
-        }
-        if self.pptx().is_some_and(|p| p.summary_zoom_dialog.is_some()) {
-            self.close_summary_zoom_dialog(cx);
-            return true;
-        }
         // A drag in progress is dropped (a rubber band, a text selection, a pane's edge, a path being drawn; then the shell's).
         if self.cancel_pptx_drag(cx) || self.cancel_pointer_drag(cx) {
             return true;

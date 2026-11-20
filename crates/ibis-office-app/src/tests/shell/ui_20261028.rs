@@ -102,7 +102,7 @@ fn fixture(
 fn form(config: Form) -> Scenario {
     let mut s = Scenario::start_view();
     s.update(|e, w, cx| {
-        e.new_file(ibis_pptx::Kind::Document, w, cx);
+        e.new_file(ibis_formats::Kind::Document, w, cx);
         e.document_memory.set("ui.form", config);
         let area = cx.new(|cx| TextareaState::new(w, cx));
         e.document_memory.set("ui.area", area);
@@ -230,14 +230,14 @@ fn focus() {
 fn font_sizes() {
     let _probe = buttons::Probe::new();
     for kind in [
-        ibis_pptx::Kind::Document,
-        ibis_pptx::Kind::Workbook,
-        ibis_pptx::Kind::Presentation,
+        ibis_formats::Kind::Document,
+        ibis_formats::Kind::Workbook,
+        ibis_formats::Kind::Presentation,
     ] {
         let mut s = Scenario::start_view();
         s.update(|e, w, cx| e.new_file(kind, w, cx));
         s.size(1400., 850.);
-        if kind == ibis_pptx::Kind::Document {
+        if kind == ibis_formats::Kind::Document {
             s.type_text("AB");
             let (p, _) = s.paragraph(0);
             s.update(|e, _, cx| {
@@ -262,7 +262,7 @@ fn font_sizes() {
                 e.set_caret(FlowPos::new(p, 0), false, cx);
                 e.set_caret(FlowPos::new(p, 2), true, cx);
             });
-        } else if kind == ibis_pptx::Kind::Workbook {
+        } else if kind == ibis_formats::Kind::Workbook {
             s.update(|e, w, cx| {
                 for (cell, size) in [("A1", 1000), ("A2", 2000)] {
                     e.go_to_reference(cell, w, cx);
@@ -293,11 +293,7 @@ fn font_sizes() {
                 ];
                 let index = e.slide().shapes.len();
                 e.run(
-                    vec![Command::InsertShape {
-                        slide: e.current_slide,
-                        index,
-                        shape,
-                    }],
+                    vec![Command::InsertShape { slide: e.current_slide, shapes: vec![(index, shape)] }],
                     cx,
                 );
                 e.set_selection(vec![id]);
@@ -340,7 +336,7 @@ fn font_sizes() {
 }
 fn chart() -> Scenario {
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     for (cell, value) in [
         ("A1", "x"),
         ("B1", "y"),
@@ -406,7 +402,7 @@ fn charts() {
             .get::<usize>("xlsx.chart-format.tab")
             .is_none()
     }));
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     assert!(s.with(|e, _| {
         e.document_memory
             .get::<usize>("xlsx.chart-format.tab")
@@ -416,7 +412,7 @@ fn charts() {
 fn paste() {
     let _reset = Reset;
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     s.click_cell("D5");
     let bytes = s.with(|e, _| {
         let mut p = e.presentation().clone();
@@ -430,14 +426,14 @@ fn paste() {
             EmuRect::new(500000, 600000, 200000, 300000),
             "B",
         );
-        ibis_pptx::shape_clipboard::write_gvml(&p, &[a, b]).unwrap()
+        ibis_formats::shape_clipboard::write_gvml(&p, &[a, b]).unwrap()
     });
     crate::native_shape_clipboard::simulate(Some(bytes));
     let origin = s.with(|e, _| e.sheet_insertion_origin());
     for n in 0..3 {
         assert!(s.update(|e, _, cx| e.paste_office_shapes(cx)));
         let bounds = s.with(|e, _| {
-            ibis_pptx::shape_clipboard::drawing_bounds(
+            ibis_formats::shape_clipboard::drawing_bounds(
                 &e.selected_shapes().into_iter().cloned().collect::<Vec<_>>(),
             )
             .unwrap()
@@ -509,7 +505,7 @@ fn tabs() {
     let _probe = buttons::Probe::new();
     let mut s = Scenario::start_view();
     s.update(|e, w, cx| {
-        e.new_file(ibis_pptx::Kind::Document, w, cx);
+        e.new_file(ibis_formats::Kind::Document, w, cx);
         e.sidebar_open = true;
     });
     chrome::FORCED_SIDEBAR
@@ -529,7 +525,7 @@ fn tabs() {
 fn colors() {
     let _probe = buttons::Probe::new();
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Document, w, cx));
     s.type_text("Colors");
     s.size(1300., 850.);
     let id = buttons::all()
@@ -553,7 +549,7 @@ fn colors() {
 }
 fn additive_selection() {
     let _probe = buttons::Probe::new();
-    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let mut s = Scenario::start_view();
         s.update(|e, w, cx| {
             e.new_file(kind, w, cx);
@@ -562,15 +558,11 @@ fn additive_selection() {
             let mut commands = Vec::new();
             for (i, x) in [1000000, 3500000].into_iter().enumerate() {
                 let id = e.document.ids().new_shape_id();
-                commands.push(Command::InsertShape {
-                    slide: e.current_slide,
-                    index: first + i,
-                    shape: Shape::text_box(
+                commands.push(Command::InsertShape { slide: e.current_slide, shapes: vec![(first + i, Shape::text_box(
                         id,
                         EmuRect::new(x, 1000000, 1500000, 800000),
                         "Selection",
-                    ),
-                });
+                    ))] });
             }
             e.run(commands, cx);
             e.set_selection(Vec::new());
@@ -610,7 +602,7 @@ fn additive_selection() {
 }
 fn docx_selection() {
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Document, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Document, w, cx));
     let (p, _) = s.paragraph(0);
     s.update(|e, _, cx| {
         let mut commands = Vec::new();
@@ -675,10 +667,10 @@ fn raster_paste() {
     let _reset = Reset;
     crate::native_shape_clipboard::simulate(None);
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     s.click_cell("C4");
     let origin = s.with(|e, _| e.sheet_insertion_origin());
-    let (data, _, _) = ibis_pptx::screenshot_snapshot(120, 80);
+    let (data, _, _) = ibis_formats::screenshot_snapshot(120, 80);
     s.update(|_, _, cx| {
         cx.write_to_clipboard(ClipboardItem::new_image(&Image::from_bytes(
             ImageFormat::Png,
@@ -742,7 +734,7 @@ fn field_colors() {
     let _reset = Reset;
     let mut s = Scenario::start_view();
     s.update(|e, w, cx| {
-        e.new_file(ibis_pptx::Kind::Document, w, cx);
+        e.new_file(ibis_formats::Kind::Document, w, cx);
         e.sidebar_open = true;
     });
     chrome::FORCED_SIDEBAR.with(|x| {

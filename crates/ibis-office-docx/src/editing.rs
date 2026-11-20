@@ -658,7 +658,7 @@ impl SlideEditor {
         let mut out = Vec::new();
         for (page, pg) in pagination.pages.iter().enumerate() {
             for item in &pg.items {
-                if let Item::Line { para, x, y, h, stops, vertical, list_tab, base, avail } = item {
+                if let Item::Line { para, x, y, h, stops, vertical, list_tab, base, avail, .. } = item {
                     out.push(LineGeom { page, para: *para, x: *x, y: *y, h: *h, stops: stops.clone(), vertical: *vertical, list_tab: *list_tab, base: *base, avail: *avail });
                 }
             }
@@ -1083,6 +1083,8 @@ impl SlideEditor {
 
     /// Scroll so the caret is in view.
     pub fn scroll_to_caret(&mut self, cx: &mut Context<Self>) {
+        // The pages an edit added are laid out first (they are otherwise on the next frame), or the scroll stops at the old last page (#234).
+        self.relayout_if_changed();
         let Some((_, caret)) = self.text_selection() else { return };
         let lines = self.flow_lines();
         let Some((page, _, y, h)) = self.caret_box(&lines, caret) else { return };
@@ -1102,7 +1104,7 @@ impl SlideEditor {
                 FlowCommand::InsertField { kind, .. } => {
                     matches!(kind, FlowRunKind::CommentStart(_) | FlowRunKind::CommentEnd(_) | FlowRunKind::CommentRef(_))
                 }
-                FlowCommand::ReplaceBlocks { remove: 1, blocks, .. } => {
+                FlowCommand::ReplaceBlockRange { remove: 1, blocks, .. } => {
                     blocks.iter().all(|b| matches!(b, Block::Paragraph(_)))
                 }
                 FlowCommand::Many(subcmds) => subcmds.iter().all(is_comment_command),
@@ -1113,13 +1115,13 @@ impl SlideEditor {
         fn is_formatting_command(cmd: &FlowCommand) -> bool {
             match cmd {
                 FlowCommand::SetRunFormat { .. }
-                | FlowCommand::SetCharStyle { .. }
+                | FlowCommand::SetCharacterStyle { .. }
                 | FlowCommand::SetStyle { .. }
                 | FlowCommand::SetDocumentParagraphSpacing { .. }
                 | FlowCommand::SetNoteStyle { .. }
                 | FlowCommand::TrackFormat { .. } => true,
                 FlowCommand::SetParagraphFormat { change, .. } => {
-                    !matches!(change, ParaChange::AddBookmark(_) | ParaChange::RemoveBookmark(_))
+                    !matches!(change, ParaChange::AddBookmark(_) | ParaChange::DeleteBookmark(_))
                 }
                 FlowCommand::Many(subcmds) => subcmds.iter().any(is_formatting_command),
                 _ => false,
@@ -1218,7 +1220,7 @@ impl SlideEditor {
         for command in commands {
             match command {
                 FlowCommand::SetRunFormat { from, to, .. } if from.para == to.para && from.offset == 0 && flow_command::paragraph(doc, from.para).is_some_and(|p| p.len() == to.offset && to.offset > 0) => out.push(from.para),
-                FlowCommand::SetParagraphFormat { first, last, change } if !matches!(change, ParaChange::Style(_) | ParaChange::List(_) | ParaChange::Level(_) | ParaChange::AddBookmark(_) | ParaChange::RemoveBookmark(_) | ParaChange::SectionBreak(_)) => {
+                FlowCommand::SetParagraphFormat { first, last, change } if !matches!(change, ParaChange::Style(_) | ParaChange::List(_) | ParaChange::Level(_) | ParaChange::AddBookmark(_) | ParaChange::DeleteBookmark(_) | ParaChange::SectionBreak(_)) => {
                     let order = order(doc);
                     if let (Some(a), Some(b)) = (order.iter().position(|p| p == first), order.iter().position(|p| p == last)) {
                         out.extend(order[a.min(b)..=a.max(b)].iter().copied());
@@ -1239,7 +1241,7 @@ impl SlideEditor {
             let Some(doc) = self.flow() else { return };
             let Some((style_id, style, paragraph)) = flow_command::style_matching(doc, id, 0) else { continue };
             let Some((container, index)) = flow_command::locate(doc, id) else { continue };
-            let commands = vec![Command::Flow(FlowCommand::SetStyle { id: style_id, style: Some(style) }), Command::Flow(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(paragraph)] })];
+            let commands = vec![Command::Flow(FlowCommand::SetStyle { id: style_id, style: Some(style) }), Command::Flow(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(paragraph)] })];
             if self.document.amend_last(commands).is_err() {
                 return;
             }
@@ -1299,7 +1301,7 @@ impl SlideEditor {
     /// A broad paragraph deletion would also remove invisible source scopes,
     /// or move them into a different paragraph without their source XML.
     /// Keep the document and redo history intact until that writeback exists.
-    fn reject_hidden_history_range(&mut self, start: FlowPos, end: FlowPos, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn reject_hidden_history_range(&mut self, start: FlowPos, end: FlowPos, cx: &mut Context<Self>) -> bool {
         if start.para == end.para || self.resources.markup_view.showing_markup() { return false; }
         let Some(doc) = self.flow() else { return false; };
         if doc.track_changes { return false; }
@@ -1674,7 +1676,125 @@ impl SlideEditor {
                 }
                 return;
             }
+            // Markdown heading / blockquote autoformat on space at start of paragraph (`# `..`###### `, `> `).
+            if let Some(ref m) = marker {
+                let heading_level = if (1..=6).contains(&m.len()) && m.bytes().all(|b| b == b'#') {
+                    Some(m.len() as u8)
+                } else {
+                    None
+                };
+                if let Some(level) = heading_level {
+                    let style_name = format!("heading {level}");
+                    let mut commands = vec![FlowCommand::Delete { from: FlowPos::new(start.para, 0), to: start }];
+                    let style_id = if let Some(existing) = doc.styles.paragraph_style_named(&style_name) {
+                        existing.to_string()
+                    } else {
+                        let id = format!("Heading{level}");
+                        if !doc.styles.styles.contains_key(&id) {
+                            let size_pt = match level { 1 => 20.0, 2 => 16.0, 3 => 13.5, 4 => 12.0, 5 => 11.0, _ => 10.5 };
+                            let size_hp = (size_pt * 100.0) as u32;
+                            commands.push(FlowCommand::SetStyle {
+                                id: id.clone(),
+                                style: Some(ibis_doc_model::FlowStyle {
+                                    name: style_name,
+                                    kind: ibis_doc_model::StyleKind::Paragraph,
+                                    based_on: doc.styles.default_paragraph.clone(),
+                                    next: doc.styles.default_paragraph.clone(),
+                                    quick: true,
+                                    ui_priority: Some(9),
+                                    auto_update: false,
+                                    conditional: Vec::new(),
+                                    num_id: None,
+                                    para: ibis_doc_model::ParaFormat {
+                                        before: Some(12 * 12_700),
+                                        after: Some(4 * 12_700),
+                                        keep_next: Some(true),
+                                        keep_lines: Some(true),
+                                        ..ibis_doc_model::ParaFormat::default()
+                                    },
+                                    run: ibis_doc_model::RunFormat {
+                                        bold: Some(true),
+                                        size: Some(size_hp),
+                                        cs_size: Some(size_hp),
+                                        ..ibis_doc_model::RunFormat::default()
+                                    },
+                                }),
+                            });
+                        }
+                        id
+                    };
+                    commands.push(FlowCommand::SetParagraphFormat { first: start.para, last: start.para, change: ParaChange::Style(Some(style_id)) });
+                    if self.run_flow(commands, cx) {
+                        self.set_caret(FlowPos::new(start.para, 0), false, cx);
+                    }
+                    return;
+                } else if m == ">" {
+                    let mut commands = vec![FlowCommand::Delete { from: FlowPos::new(start.para, 0), to: start }];
+                    let quote_id = if let Some(existing) = doc.styles.paragraph_style_named("quote") {
+                        existing.to_string()
+                    } else {
+                        let id = "Quote".to_string();
+                        if !doc.styles.styles.contains_key(&id) {
+                            commands.push(FlowCommand::SetStyle {
+                                id: id.clone(),
+                                style: Some(ibis_doc_model::FlowStyle {
+                                    name: "Quote".to_string(),
+                                    kind: ibis_doc_model::StyleKind::Paragraph,
+                                    based_on: doc.styles.default_paragraph.clone(),
+                                    next: doc.styles.default_paragraph.clone(),
+                                    quick: true,
+                                    ui_priority: Some(29),
+                                    auto_update: false,
+                                    conditional: Vec::new(),
+                                    num_id: None,
+                                    para: ibis_doc_model::ParaFormat {
+                                        left: Some(228_600),
+                                        before: Some(6 * 12_700),
+                                        after: Some(6 * 12_700),
+                                        borders: [
+                                            None,
+                                            None,
+                                            None,
+                                            Some(Some(ibis_doc_model::FlowBorder {
+                                                style: ibis_doc_model::BorderStyle::Single,
+                                                width: 18,
+                                                color: ibis_doc_model::Rgb::from_rgb(0x4f, 0x81, 0xbd),
+                                                space: 8,
+                                                art: None,
+                                            })),
+                                        ],
+                                        ..ibis_doc_model::ParaFormat::default()
+                                    },
+                                    run: ibis_doc_model::RunFormat {
+                                        italic: Some(true),
+                                        color: Some(ibis_doc_model::Rgb::from_rgb(0x40, 0x40, 0x40)),
+                                        ..ibis_doc_model::RunFormat::default()
+                                    },
+                                }),
+                            });
+                        }
+                        id
+                    };
+                    commands.push(FlowCommand::SetParagraphFormat { first: start.para, last: start.para, change: ParaChange::Style(Some(quote_id)) });
+                    if self.run_flow(commands, cx) {
+                        self.set_caret(FlowPos::new(start.para, 0), false, cx);
+                    }
+                    return;
+                }
+            }
         }
+        // Inline Markdown autoformat (`**bold**`, `~~strike~~`, `` `code` ``) when typing the closing delimiter.
+        let inline_autoformat = (!replacing && !track && breaks == 0 && typed == 1 && prompt_start.is_none() && !self.doc_state().is_some_and(|s| s.autocorrect_off) && crate::shell::autocorrect::settings().auto_lists)
+            .then(|| {
+                let ch = text.chars().next()?;
+                if !matches!(ch, '*' | '~' | '`') {
+                    return None;
+                }
+                let p = flow_command::paragraph(doc, start.para)?;
+                let before_chars: Vec<char> = p.text().chars().take(start.offset).collect();
+                match_inline_markdown_close(&before_chars, ch)
+            })
+            .flatten();
         // オートコレクト (DOCX-OPTIONS-007): a typed character that ends one of the replaced
         // strings ((c) → ©, --> → →…) replaces it, in the same step.
         let replacement = (!replacing && !track && breaks == 0 && typed == 1 && prompt_start.is_none() && !self.doc_state().is_some_and(|s| s.autocorrect_off)).then(|| {
@@ -1682,6 +1802,35 @@ impl SlideEditor {
             let before: String = p.text().chars().take(start.offset).collect();
             crate::shell::autocorrect::settings().correct_typing(&before, text.chars().next()?)
         }).flatten();
+        if let Some((delim_len, inner_start_char, inner_end_char, change)) = inline_autoformat {
+            let open_start = inner_start_char - delim_len;
+            let close_prefix_start = inner_end_char;
+            let content_len = inner_end_char - inner_start_char;
+            let mut inline_cmds = Vec::new();
+            if close_prefix_start < start.offset {
+                inline_cmds.push(FlowCommand::Delete {
+                    from: FlowPos::new(start.para, close_prefix_start),
+                    to: start,
+                });
+            }
+            inline_cmds.push(FlowCommand::Delete {
+                from: FlowPos::new(start.para, open_start),
+                to: FlowPos::new(start.para, inner_start_char),
+            });
+            inline_cmds.push(FlowCommand::SetRunFormat {
+                from: FlowPos::new(start.para, open_start),
+                to: FlowPos::new(start.para, open_start + content_len),
+                change,
+            });
+            if self.run_flow(inline_cmds, cx) {
+                self.set_caret(FlowPos::new(start.para, open_start + content_len), false, cx);
+                if let Some(state) = self.doc_state_mut() {
+                    state.pending = format;
+                }
+                self.scroll_to_caret(cx);
+                return;
+            }
+        }
         if let Some((length, ref to)) = replacement {
             commands.push(FlowCommand::InsertText { at: start, text: text.clone(), format: format.clone() });
             commands.push(FlowCommand::Delete { from: FlowPos::new(start.para, start.offset + 1 - length), to: FlowPos::new(start.para, start.offset + 1) });
@@ -1865,11 +2014,16 @@ impl SlideEditor {
             };
             let mut before = p.clone();
             before.runs = p.runs_before(start.offset);
+            // At the start of a paragraph (an empty one, or before its text) Word sets the break on that paragraph: no empty paragraph is left
+            // before it (#234). It keeps its formatting; the paragraph after takes the rest.
+            let at_start = start.offset == 0;
             let mut hold = p.clone();
-            bare(&mut hold);
-            hold.id = doc.new_id();
-            hold.style = None;
-            hold.direct = Default::default();
+            if !at_start {
+                bare(&mut hold);
+                hold.id = doc.new_id();
+                hold.style = None;
+                hold.direct = Default::default();
+            }
             hold.runs = vec![FlowRun { kind: FlowRunKind::PageBreak, style, format, char_style, link: None, revision: None, show_field_code: false, field_locked: false, control: None }];
             hold.resolve(&doc.styles);
             let mut after = p.clone();
@@ -1881,7 +2035,8 @@ impl SlideEditor {
             before.normalize();
             after.normalize();
             let after_id = after.id;
-            Some((FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(before), Block::Paragraph(hold), Block::Paragraph(after)] }, after_id))
+            let blocks = if at_start { vec![Block::Paragraph(hold), Block::Paragraph(after)] } else { vec![Block::Paragraph(before), Block::Paragraph(hold), Block::Paragraph(after)] };
+            Some((FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks }, after_id))
         }).flatten();
         let Some((command, after_id)) = parts else { return self.type_text("\u{c}", cx) };
         if self.run_flow(vec![command], cx) {
@@ -1924,7 +2079,7 @@ impl SlideEditor {
         next.direct.borders = Default::default();
         next.resolve(&doc.styles);
         let next_id = next.id;
-        let command = FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(line), Block::Paragraph(next)] };
+        let command = FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(line), Block::Paragraph(next)] };
         if self.run_flow(vec![command], cx) {
             self.set_caret(FlowPos::new(next_id, 0), false, cx);
             self.scroll_to_caret(cx);
@@ -2963,7 +3118,7 @@ impl SlideEditor {
 
     /// Line spacing `lines` times the single (⌘1・⌘5・⌘2): 240 is single, 360 one and a half, 480 double.
     pub(crate) fn set_line_spacing_multiple(&mut self, twips: i64, cx: &mut Context<Self>) {
-        self.apply_para_change(ParaChange::Line(LineHeight::Auto(twips as _)), cx);
+        self.apply_para_change(ParaChange::LineSpacing(LineHeight::Auto(twips as _)), cx);
     }
 
     /// The style named `name` (`heading 1`) for the paragraphs of the selection, or the normal one (`None`).
@@ -3192,17 +3347,17 @@ impl SlideEditor {
 
     pub(crate) fn toggle_strike(&mut self, cx: &mut Context<Self>) {
         let on = self.current_format().is_some_and(|(_, s)| s.strike);
-        self.apply_run_change(RunChange::Strike(!on), cx);
+        self.apply_run_change(RunChange::Strikethrough(!on), cx);
     }
 
     pub(crate) fn toggle_double_strike(&mut self, cx: &mut Context<Self>) {
         let on = self.current_format().is_some_and(|(_, s)| s.double_strike);
-        self.apply_run_change(RunChange::DoubleStrike(!on), cx);
+        self.apply_run_change(RunChange::DoubleStrikethrough(!on), cx);
     }
 
     pub(crate) fn toggle_caps(&mut self, cx: &mut Context<Self>) {
         let on = self.current_format().is_some_and(|(_, s)| s.caps);
-        self.apply_run_change(RunChange::Caps(!on), cx);
+        self.apply_run_change(RunChange::AllCaps(!on), cx);
     }
 
     pub(crate) fn toggle_small_caps(&mut self, cx: &mut Context<Self>) {
@@ -3529,7 +3684,7 @@ impl SlideEditor {
         if self.current_format().is_some_and(|(f, _)| f.kern == kern) {
             return;
         }
-        self.apply_run_change(RunChange::Kern(kern), cx);
+        self.apply_run_change(RunChange::Kerning(kern), cx);
     }
 
     /// The paragraphs the selection touches (their first and last, in one list).
@@ -3601,7 +3756,7 @@ impl SlideEditor {
         if self.active_shape_text_target().is_some() {
             let mut pf = ibis_doc_model::ParagraphFormat::default();
             match &change {
-                ParaChange::Align(a) => {
+                ParaChange::Alignment(a) => {
                     pf.align = Some(match a {
                         FlowAlign::Left => ibis_doc_model::TextAlign::Left,
                         FlowAlign::Center => ibis_doc_model::TextAlign::Center,
@@ -3610,11 +3765,11 @@ impl SlideEditor {
                         FlowAlign::Distribute => ibis_doc_model::TextAlign::Distributed,
                     });
                 }
-                ParaChange::Line(LineHeight::Auto(twips)) => {
+                ParaChange::LineSpacing(LineHeight::Auto(twips)) => {
                     let pct = ((*twips as f64 / 240.0) * 100_000.0).round().max(0.0) as u32;
                     pf.line_spacing = Some(Some(ibis_doc_model::LineSpacing::Percent(pct)));
                 }
-                ParaChange::Line(LineHeight::Exact(emu) | LineHeight::AtLeast(emu)) => {
+                ParaChange::LineSpacing(LineHeight::Exact(emu) | LineHeight::AtLeast(emu)) => {
                     let hundredths_pt = (*emu as f64 / 127.0).round().max(0.0) as u32;
                     pf.line_spacing = Some(Some(ibis_doc_model::LineSpacing::Points(hundredths_pt)));
                 }
@@ -3626,7 +3781,7 @@ impl SlideEditor {
                     let hundredths_pt = (*emu as f64 / 127.0).round().max(0.0) as u32;
                     pf.space_after = Some(hundredths_pt);
                 }
-                ParaChange::Left(emu) => {
+                ParaChange::LeftIndent(emu) => {
                     pf.margin_left = Some(*emu);
                 }
                 _ => return,
@@ -3664,12 +3819,12 @@ impl SlideEditor {
     }
 
     pub(crate) fn set_alignment(&mut self, align: FlowAlign, cx: &mut Context<Self>) {
-        self.apply_para_change(ParaChange::Align(align), cx);
+        self.apply_para_change(ParaChange::Alignment(align), cx);
     }
 
     /// Line spacing as a multiple of single (1.0, 1.15, 1.5, 2.0).
     pub(crate) fn set_line_spacing(&mut self, multiple: f32, cx: &mut Context<Self>) {
-        self.apply_para_change(ParaChange::Line(LineHeight::Auto((multiple * 240.0).round() as u32)), cx);
+        self.apply_para_change(ParaChange::LineSpacing(LineHeight::Auto((multiple * 240.0).round() as u32)), cx);
     }
 
     /// インデント増・減: the left indent by a step of 10.5 pt (Word's with
@@ -3712,7 +3867,7 @@ impl SlideEditor {
         let left = self.paragraph_of(start.para).map_or(0, |p| p.left);
         let step = 420 * 635;
         let to = if increase { (left / step + 1) * step } else { ((left - 1).max(0) / step) * step };
-        self.apply_para_change(ParaChange::Left(to.max(0)), cx);
+        self.apply_para_change(ParaChange::LeftIndent(to.max(0)), cx);
     }
 
     pub(crate) fn apply_style(&mut self, id: Option<String>, cx: &mut Context<Self>) {
@@ -3819,10 +3974,32 @@ impl SlideEditor {
         self.paragraph_of(start.para).map_or(false, |p| p.suppress_auto_hyphens)
     }
 
+    /// The drop cap frame (Word's form: a paragraph of the capital with `w:framePr w:dropCap`, then the paragraph that goes round it) the caret's paragraph is
+    /// the one of or the one after: the container and the index of the frame's paragraph.
+    fn drop_cap_pair(&self, para: u32) -> Option<(Container, usize)> {
+        let doc = self.flow()?;
+        let (container, index) = flow_command::locate(doc, para)?;
+        let list = flow_command::blocks(doc, container)?;
+        let is_frame = |at: usize| matches!(list.get(at), Some(Block::Paragraph(p)) if p.drop_cap.is_some_and(|d| d.location != ibis_doc_model::DropCapLocation::None));
+        let is_paragraph = |at: usize| matches!(list.get(at), Some(Block::Paragraph(_)));
+        if is_frame(index) && is_paragraph(index + 1) {
+            Some((container, index))
+        } else if index > 0 && is_frame(index - 1) && is_paragraph(index) {
+            Some((container, index - 1))
+        } else {
+            None
+        }
+    }
+
     /// キャレット位置の段落のドロップ キャップ設定。
     pub(crate) fn caret_drop_cap(&self) -> Option<ibis_doc_model::DropCap> {
         let (start, _) = self.ordered_selection()?;
-        self.paragraph_of(start.para).and_then(|p| p.drop_cap)
+        let doc = self.flow()?;
+        let (container, index) = self.drop_cap_pair(start.para)?;
+        match flow_command::blocks(doc, container)?.get(index) {
+            Some(Block::Paragraph(frame)) => frame.drop_cap,
+            _ => None,
+        }
     }
 
     /// キャレット位置の段落のドロップ キャップ配置（None / Drop / Margin）。
@@ -3833,34 +4010,196 @@ impl SlideEditor {
     /// ドロップ キャップの配置（なし / ドロップ / 余白）を設定。
     pub(crate) fn set_drop_cap_location(&mut self, location: ibis_doc_model::DropCapLocation, cx: &mut Context<Self>) {
         if location == ibis_doc_model::DropCapLocation::None {
-            self.apply_para_change(ibis_doc_model::ParaChange::DropCap(None), cx);
+            self.edit_drop_cap(None, cx);
         } else {
             let mut dc = self.caret_drop_cap().unwrap_or_default();
             dc.location = location;
-            self.apply_para_change(ibis_doc_model::ParaChange::DropCap(Some(dc)), cx);
+            self.edit_drop_cap(Some(dc), cx);
         }
     }
 
     /// ドロップ キャップの行数を設定（2〜5行など）。
     pub(crate) fn set_drop_cap_lines(&mut self, lines: u32, cx: &mut Context<Self>) {
-        let mut dc = self.caret_drop_cap().unwrap_or(ibis_doc_model::DropCap {
-            location: ibis_doc_model::DropCapLocation::Drop,
-            lines: 3,
-            space: 0,
-        });
+        let mut dc = self.caret_drop_cap().unwrap_or(ibis_doc_model::DropCap { location: ibis_doc_model::DropCapLocation::Drop, ..Default::default() });
         dc.lines = lines.clamp(1, 10);
-        self.apply_para_change(ibis_doc_model::ParaChange::DropCap(Some(dc)), cx);
+        self.edit_drop_cap(Some(dc), cx);
     }
 
     /// ドロップ キャップの本文からの距離を設定（EMU）。
     pub(crate) fn set_drop_cap_distance(&mut self, space: ibis_doc_model::Emu, cx: &mut Context<Self>) {
-        let mut dc = self.caret_drop_cap().unwrap_or(ibis_doc_model::DropCap {
-            location: ibis_doc_model::DropCapLocation::Drop,
-            lines: 3,
-            space: 0,
-        });
+        let mut dc = self.caret_drop_cap().unwrap_or(ibis_doc_model::DropCap { location: ibis_doc_model::DropCapLocation::Drop, ..Default::default() });
         dc.space = space;
-        self.apply_para_change(ibis_doc_model::ParaChange::DropCap(Some(dc)), cx);
+        self.edit_drop_cap(Some(dc), cx);
+    }
+
+    /// The drop cap of `lines` lines that the capital `cap` makes of the body paragraph `body` (whose first run's style is `style`): the line pitch `P_dc` of its frame, the capital's size
+    /// (hundredths of a point) and its raise (half-points). `P_dc` is the body's natural line `P` off a line grid, the mean of it and the line the grid makes of it (`P_grid`, what the body's
+    /// lines take on the grid) on one (Windows Word, 2026-11-14, `tasks/doc/requests/2026-11-14-dropcap-size-result.md`: 128 drop caps, `w:line` within 5 twips). The size and the raise are
+    /// Word's (`flow_layout::drop_cap_size_and_raise`, 2026-11-16: 3790 drop caps). `e` is the foot of the body's single line (the line off the grid) below its baseline.
+    fn drop_cap_geometry(&self, doc: &Arc<FlowDocument>, body: &ibis_doc_model::FlowParagraph, cap: char, style: &ibis_doc_model::FlowRunStyle, lines: u32) -> Option<DropCapGeometry> {
+        let first_line = |pages: &Arc<super::flow_layout::Pagination>| {
+            pages.pages.iter().flat_map(|pg| pg.items.iter()).find_map(|i| match i {
+                Item::Line { para, h, base, .. } if *para == body.id && *h > 0.5 => Some((*h, *base)),
+                _ => None,
+            })
+        };
+        let (grid_pitch, _) = first_line(&pages(doc, &self.resources))?;
+        // The line off the grid, of single spacing where the grid is on (Word's `P_s` and `e_s`).
+        let (natural, base, shift) = if body.snap_to_grid {
+            let mut off = (**doc).clone();
+            if let Some((c, i)) = flow_command::locate(&off, body.id)
+                && let Some(list) = flow_command::blocks_mut(&mut off, c)
+                && let Some(Block::Paragraph(q)) = list.get_mut(i)
+            {
+                q.snap_to_grid = false;
+                if matches!(q.line, LineHeight::Auto(_)) {
+                    q.line = LineHeight::Auto(240);
+                }
+            }
+            let (n, b) = first_line(&pages(&Arc::new(off), &self.resources)).unwrap_or((grid_pitch, 0.0));
+            (n, b, (grid_pitch - n) / 2.0)
+        } else {
+            let (n, b) = first_line(&pages(doc, &self.resources))?;
+            (n, b, 0.0)
+        };
+        let pitch = if body.snap_to_grid { (natural + grid_pitch) / 2.0 } else { natural };
+        let e = natural - base;
+        let body_size = style.size as f32 / 100.0;
+        let face = super::flow_layout::drop_cap_face(&self.resources, style.font_for(cap)?, cap)?;
+        let (size, raise) = super::flow_layout::drop_cap_size_and_raise(&face, body_size, lines, pitch, e, shift)?;
+        Some(DropCapGeometry { pitch: pitch as f64, size: (size * 100.0).round() as u32, raise: (raise != 0.0).then(|| (raise * 2.0).round() as i32) })
+    }
+
+    /// Give the caret's paragraph the drop cap `dc`, or take its drop cap away (`None`), in Word's form, as one step: the capital (the first character) is a
+    /// paragraph of its own with `w:framePr w:dropCap` (its line `lines` of the body's lines high, the character's `w:sz` and `w:position` Word's, `drop_cap_geometry`), the rest of the paragraph
+    /// goes after it and round it. Taking it away puts the character back into the paragraph. The caret and the selection stay on the same characters.
+    fn edit_drop_cap(&mut self, dc: Option<ibis_doc_model::DropCap>, cx: &mut Context<Self>) {
+        use ibis_doc_model::DropCapLocation;
+        let dc = dc.filter(|d| d.location != DropCapLocation::None);
+        let Some((start, _)) = self.ordered_selection() else { return };
+        let keep = self.text_selection();
+        let pair = self.drop_cap_pair(start.para);
+        let Some(doc) = self.flow() else { return };
+        if doc.track_changes || self.doc_state().is_some_and(|s| s.box_edit.is_some() || s.shape_selected) {
+            return;
+        }
+        // The position `pos` has afterwards: `moved(frame_id, body_id, frame_len)` for a pair put together or split.
+        let (command, map): (FlowCommand, Box<dyn Fn(FlowPos) -> FlowPos>) = match (pair, dc) {
+            (None, None) => return,
+            // Split off the first character.
+            (None, Some(dc)) => {
+                let Some((container, index)) = flow_command::locate(doc, start.para) else { return };
+                let Some(Block::Paragraph(p)) = flow_command::blocks(doc, container).and_then(|l| l.get(index)) else { return };
+                let first = p.runs.first();
+                if !first.is_some_and(|r| matches!(&r.kind, FlowRunKind::Text(t) if t.chars().next().is_some_and(|c| !c.is_whitespace()))) || p.drop_cap.is_some() {
+                    return;
+                }
+                // The body's line: the capital is `lines` of them high.
+                let Some(first) = p.runs.first().and_then(|r| match &r.kind {
+                    FlowRunKind::Text(t) => t.chars().next().map(|c| (c, r.style.clone())),
+                    _ => None,
+                }) else {
+                    return;
+                };
+                let Some(geometry) = self.drop_cap_geometry(doc, p, first.0, &first.1, dc.lines) else { return };
+                let pitch = geometry.pitch;
+                let mut frame = p.clone();
+                frame.id = doc.new_id();
+                frame.runs = p.runs_before(1);
+                frame.bookmarks = Vec::new();
+                frame.section_break = ibis_doc_model::SectionBreak::None;
+                frame.section = None;
+                frame.field_start = None;
+                frame.field_end = false;
+                frame.subdoc = None;
+                frame.direct = ibis_doc_model::ParaFormat {
+                    drop_cap: Some(Some(dc)),
+                    line: Some(LineHeight::Exact(crate::paragraph_decorations::drop_cap_line_emu(pitch as f64, dc.lines as u32))),
+                    before: Some(0),
+                    after: Some(0),
+                    page_break_before: p.page_break_before.then_some(true),
+                    keep_next: Some(true),
+                    ..Default::default()
+                };
+                for run in &mut frame.runs {
+                    run.format.size = Some(geometry.size);
+                    run.format.raise = geometry.raise;
+                }
+                frame.resolve(&doc.styles);
+                let mut body = p.clone();
+                body.runs = p.runs_after(1);
+                body.normalize();
+                if p.page_break_before {
+                    body.direct.page_break_before = Some(false);
+                }
+                body.resolve(&doc.styles);
+                let (frame_id, body_id) = (frame.id, body.id);
+                (
+                    FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(frame), Block::Paragraph(body)] },
+                    Box::new(move |pos: FlowPos| if pos.para == body_id && pos.offset >= 1 { FlowPos::new(body_id, pos.offset - 1) } else if pos.para == body_id { FlowPos::new(frame_id, 0) } else { pos }),
+                )
+            }
+            // Put the capital back.
+            (Some((container, index)), None) => {
+                let Some(list) = flow_command::blocks(doc, container) else { return };
+                let (Some(Block::Paragraph(frame)), Some(Block::Paragraph(body))) = (list.get(index), list.get(index + 1)) else { return };
+                let len = frame.len();
+                let mut merged = body.clone();
+                let size_of_body = body.runs.first().and_then(|r| r.format.size);
+                let mut runs = frame.runs.clone();
+                for run in &mut runs {
+                    run.format.size = size_of_body;
+                    run.format.position = None;
+                    run.format.raise = None;
+                }
+                runs.extend(body.runs.iter().cloned());
+                merged.runs = runs;
+                merged.normalize();
+                if frame.page_break_before {
+                    merged.direct.page_break_before = Some(true);
+                }
+                merged.resolve(&doc.styles);
+                let (frame_id, body_id) = (frame.id, body.id);
+                (
+                    FlowCommand::ReplaceBlockRange { container, index, remove: 2, blocks: vec![Block::Paragraph(merged)] },
+                    Box::new(move |pos: FlowPos| if pos.para == frame_id { FlowPos::new(body_id, pos.offset) } else if pos.para == body_id { FlowPos::new(body_id, pos.offset + len) } else { pos }),
+                )
+            }
+            // Change the frame's lines, distance or place: the capital's size and the height of its line follow its lines.
+            (Some((container, index)), Some(dc)) => {
+                let Some(Block::Paragraph(frame)) = flow_command::blocks(doc, container).and_then(|l| l.get(index)) else { return };
+                let old = frame.drop_cap.unwrap_or_default();
+                if old == dc {
+                    return;
+                }
+                let mut frame = frame.clone();
+                frame.direct.drop_cap = Some(Some(dc));
+                if old.lines != dc.lines
+                    && let Some(Block::Paragraph(body)) = flow_command::blocks(doc, container).and_then(|l| l.get(index + 1))
+                    && let Some(first) = frame.runs.first().and_then(|r| match &r.kind {
+                        FlowRunKind::Text(t) => t.chars().next(),
+                        _ => None,
+                    })
+                    && let Some(style) = body.runs.first().map(|r| r.style.clone())
+                    && let Some(geometry) = self.drop_cap_geometry(doc, body, first, &style, dc.lines)
+                {
+                    frame.direct.line = Some(LineHeight::Exact(crate::paragraph_decorations::drop_cap_line_emu(geometry.pitch, dc.lines as u32)));
+                    for run in &mut frame.runs {
+                        run.format.size = Some(geometry.size);
+                        run.format.raise = geometry.raise;
+                    }
+                }
+                frame.resolve(&doc.styles);
+                (FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(frame)] }, Box::new(|pos: FlowPos| pos))
+            }
+        };
+        if self.run_flow(vec![command], cx) {
+            if let (Some((a, c)), Some(state)) = (keep, self.doc_state_mut()) {
+                state.anchor = Some(map(a));
+                state.caret = Some(map(c));
+            }
+            cx.notify();
+        }
     }
 
     /// キャレット位置の図形・テキスト ボックスの垂直配置（上揃え / 中央揃え / 下揃え）。
@@ -4059,7 +4398,7 @@ impl SlideEditor {
             .unwrap_or_else(|| crate::shell::i18n::text("docx.cover.title-placeholder").to_string());
         let date: String = who.date.chars().take(10).collect();
         let blocks = ibis_doc_model::cover::cover_blocks(doc, design, &title, &who.author, &date);
-        if self.run_flow(vec![FlowCommand::ReplaceBlocks { container: Container::Body, index: 0, remove: 0, blocks }], cx) {
+        if self.run_flow(vec![FlowCommand::ReplaceBlockRange { container: Container::Body, index: 0, remove: 0, blocks }], cx) {
             self.status = Some(crate::shell::i18n::text("docx.cover.inserted").into());
             cx.notify();
         }
@@ -4102,7 +4441,7 @@ impl SlideEditor {
 
     /// The changes from the document in the file at `path` to this one, as tracked changes.
     pub(crate) fn compare_with_file(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
-        let original = std::fs::read(path).ok().and_then(|data| ibis_pptx::read(&data).ok()).and_then(|p| p.flow);
+        let original = std::fs::read(path).ok().and_then(|data| ibis_odf::read(&data).ok()).and_then(|p| p.flow);
         let Some(original) = original else {
             self.status = Some(crate::shell::i18n::text("docx.merge-panel.cannot-read-file").into());
             return cx.notify();
@@ -4113,12 +4452,12 @@ impl SlideEditor {
         let compared = ibis_doc_model::compare::compare_documents_with(&original, doc, &who.author, &who.date, &opts);
         let remove = doc.body.len();
         let mut commands = vec![
-            FlowCommand::ReplaceBlocks { container: Container::Body, index: 0, remove, blocks: compared.body },
+            FlowCommand::ReplaceBlockRange { container: Container::Body, index: 0, remove, blocks: compared.body },
             FlowCommand::SetTrackChanges(true),
         ];
         if opts.headers {
-            commands.push(FlowCommand::ReplaceBlocks { container: Container::Header, index: 0, remove: doc.header.len(), blocks: compared.header });
-            commands.push(FlowCommand::ReplaceBlocks { container: Container::Footer, index: 0, remove: doc.footer.len(), blocks: compared.footer });
+            commands.push(FlowCommand::ReplaceBlockRange { container: Container::Header, index: 0, remove: doc.header.len(), blocks: compared.header });
+            commands.push(FlowCommand::ReplaceBlockRange { container: Container::Footer, index: 0, remove: doc.footer.len(), blocks: compared.footer });
         }
         if opts.comments {
             commands.push(FlowCommand::SetComments(compared.comments));
@@ -4174,7 +4513,7 @@ impl SlideEditor {
 
     /// Combines the document in the file at `path` with this one, merging revisions and comments.
     pub(crate) fn combine_with_file(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
-        let other = std::fs::read(path).ok().and_then(|data| ibis_pptx::read(&data).ok()).and_then(|p| p.flow);
+        let other = std::fs::read(path).ok().and_then(|data| ibis_odf::read(&data).ok()).and_then(|p| p.flow);
         let Some(other) = other else {
             self.status = Some(crate::shell::i18n::text("docx.merge-panel.cannot-read-file").into());
             return cx.notify();
@@ -4184,7 +4523,7 @@ impl SlideEditor {
         let opts = self.doc_state().map(|s| s.compare_options).unwrap_or_default();
         let blocks = ibis_doc_model::compare::combine_blocks_with(&other.body, &doc.body, &who.author, &who.date, &opts);
         let remove = doc.body.len();
-        let mut commands = vec![FlowCommand::ReplaceBlocks { container: Container::Body, index: 0, remove, blocks }];
+        let mut commands = vec![FlowCommand::ReplaceBlockRange { container: Container::Body, index: 0, remove, blocks }];
         if !other.comments.is_empty() {
             let mut merged_comments = doc.comments.clone();
             let mut max_comment_id = merged_comments.iter().map(|c| c.id).max().unwrap_or(0);
@@ -5262,7 +5601,7 @@ impl SlideEditor {
     }
 
     pub(crate) fn set_document_style_set(&mut self, preset: ibis_doc_model::StyleSetPreset, cx: &mut Context<Self>) {
-        self.run_flow(vec![ibis_doc_model::FlowCommand::SetDocumentStyleSet { preset: Some(preset), styles: None }], cx);
+        self.run_flow(vec![ibis_doc_model::FlowCommand::ApplyDocumentStyleSet { preset: Some(preset), styles: None }], cx);
     }
 
     /// ドキュメントのテーマ色のプリセットID（DOCX-STYLE-013）。
@@ -5346,7 +5685,7 @@ impl SlideEditor {
             },
         };
         let mut cmds = vec![ibis_doc_model::Command::SetTheme { colors, fonts: Some(fonts) }];
-        if let Some(effect_preset) = ibis_pptx::theme_effects::find_effect_preset(theme.effect_id) {
+        if let Some(effect_preset) = ibis_formats::theme_effects::find_effect_preset(theme.effect_id) {
             cmds.push(ibis_doc_model::Command::SetThemeEffects { name: Some(effect_preset.name.to_string()) });
         }
         let _ = self.document.execute(cmds);
@@ -5505,13 +5844,13 @@ impl SlideEditor {
     /// テーマ効果プリセットが現在アクティブかどうか.
     pub(crate) fn is_docx_theme_effects_active(&self, preset_id: &str) -> bool {
         let current = self.presentation().theme_effects.as_deref().unwrap_or("Office");
-        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return false };
+        let Some(preset) = ibis_formats::theme_effects::find_effect_preset(preset_id) else { return false };
         current.eq_ignore_ascii_case(preset.id) || current.eq_ignore_ascii_case(preset.name)
     }
 
     /// ドキュメントのテーマ効果を適用.
     pub(crate) fn apply_docx_theme_effects(&mut self, preset_id: &str, cx: &mut Context<Self>) {
-        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return };
+        let Some(preset) = ibis_formats::theme_effects::find_effect_preset(preset_id) else { return };
         let _ = self.document.execute(vec![ibis_doc_model::Command::SetThemeEffects { name: Some(preset.name.to_string()) }]);
         self.sync_peers(cx);
         self.status = Some(crate::shell::i18n::format("docx.design.effects.applied", &[("name", &crate::shell::i18n::text(preset.label_key))]).into());
@@ -5521,7 +5860,7 @@ impl SlideEditor {
     /// ドキュメントの書式設定（テーマ、フォント、段落の間隔）を新しい文書の既定として保存（docx.design.set-as-default）。
     pub(crate) fn set_docx_design_as_default(&mut self, cx: &mut Context<Self>) {
         let font_id = self.current_docx_theme_fonts_preset().unwrap_or("office");
-        crate::shell::settings::set("docx.default.theme_fonts", font_id);
+        crate::shell::settings::set("docx.default.theme-fonts", font_id);
 
         let ps = self.document_paragraph_spacing_preset().unwrap_or(ibis_doc_model::ParagraphSpacingPreset::Default);
         let s = match ps {
@@ -5533,7 +5872,7 @@ impl SlideEditor {
             ibis_doc_model::ParagraphSpacingPreset::Relaxed => "relaxed",
             ibis_doc_model::ParagraphSpacingPreset::Double => "double",
         };
-        crate::shell::settings::set("docx.default.paragraph_spacing", s);
+        crate::shell::settings::set("docx.default.paragraph-spacing", s);
 
         let colors = &self.presentation().theme_colors;
         if !colors.is_empty() {
@@ -5542,14 +5881,14 @@ impl SlideEditor {
                 .map(|(k, c)| format!("{}:{:06x}", k, c.0))
                 .collect::<Vec<_>>()
                 .join(";");
-            crate::shell::settings::set("docx.default.theme_colors", &serialized);
+            crate::shell::settings::set("docx.default.theme-colors", &serialized);
         }
 
         let style_set = self.document_style_set_preset().unwrap_or(ibis_doc_model::StyleSetPreset::Default);
-        crate::shell::settings::set("docx.default.style_set", style_set.as_str());
+        crate::shell::settings::set("docx.default.style-set", style_set.as_str());
 
         let effects_id = self.current_docx_theme_effects().unwrap_or("Office");
-        crate::shell::settings::set("docx.default.theme_effects", effects_id);
+        crate::shell::settings::set("docx.default.theme-effects", effects_id);
 
         self.status = Some(crate::shell::i18n::text("docx.design.set-as-default.done"));
         cx.notify();
@@ -5557,10 +5896,10 @@ impl SlideEditor {
 
     /// 新規 Word 文書に既定のドキュメント書式設定（フォント、段落の間隔、テーマ色、スタイルセット、効果）を適用。
     pub(crate) fn apply_docx_default_design(&mut self, cx: &mut Context<Self>) {
-        if let Some(font_id) = crate::shell::settings::get("docx.default.theme_fonts") {
+        if let Some(font_id) = crate::shell::settings::get("docx.default.theme-fonts") {
             self.apply_docx_theme_fonts(&font_id, cx);
         }
-        if let Some(ps_str) = crate::shell::settings::get("docx.default.paragraph_spacing") {
+        if let Some(ps_str) = crate::shell::settings::get("docx.default.paragraph-spacing") {
             let preset = match ps_str.as_str() {
                 "none" => Some(ibis_doc_model::ParagraphSpacingPreset::NoSpace),
                 "compact" => Some(ibis_doc_model::ParagraphSpacingPreset::Compact),
@@ -5575,15 +5914,15 @@ impl SlideEditor {
                 self.set_document_paragraph_spacing(preset, cx);
             }
         }
-        if let Some(set_str) = crate::shell::settings::get("docx.default.style_set") {
+        if let Some(set_str) = crate::shell::settings::get("docx.default.style-set") {
             if let Some(set) = ibis_doc_model::StyleSetPreset::from_str(&set_str) {
                 self.set_document_style_set(set, cx);
             }
         }
-        if let Some(effects_id) = crate::shell::settings::get("docx.default.theme_effects") {
+        if let Some(effects_id) = crate::shell::settings::get("docx.default.theme-effects") {
             self.apply_docx_theme_effects(&effects_id, cx);
         }
-        if let Some(colors_str) = crate::shell::settings::get("docx.default.theme_colors") {
+        if let Some(colors_str) = crate::shell::settings::get("docx.default.theme-colors") {
             let mut colors = Vec::new();
             for part in colors_str.split(';').filter(|s| !s.is_empty()) {
                 if let Some((name, hex)) = part.split_once(':') {
@@ -6110,7 +6449,7 @@ impl SlideEditor {
                 id
             }
         };
-        commands.push(FlowCommand::SetParagraphFormat { first: para, last: para, change: ParaChange::Align(align) });
+        commands.push(FlowCommand::SetParagraphFormat { first: para, last: para, change: ParaChange::Alignment(align) });
         self.run_flow(commands, cx);
     }
 
@@ -6313,10 +6652,10 @@ impl SlideEditor {
             let data = std::fs::read(&full).ok()?;
             let is_docx = full.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("docx"));
             if !is_docx {
-                let text = ibis_pptx::csv::decode(&data).unwrap_or_else(|_| String::from_utf8_lossy(&data).into_owned());
+                let text = ibis_formats::csv::decode(&data).unwrap_or_else(|_| String::from_utf8_lossy(&data).into_owned());
                 return Some(text.lines().map(str::trim_end).collect::<Vec<_>>().join(" ").trim().to_string());
             }
-            let presentation = ibis_pptx::read(&data).ok()?;
+            let presentation = ibis_odf::read(&data).ok()?;
             let doc = presentation.flow.as_ref()?;
             let bookmark = words.get(2).filter(|w| !w.starts_with('\\'));
             let paragraphs: Vec<&ibis_doc_model::FlowParagraph> = doc.body.iter().filter_map(|b| if let Block::Paragraph(p) = b { Some(p) } else { None }).collect();
@@ -6724,10 +7063,10 @@ impl SlideEditor {
             matched = true;
             view.body = story.to_vec();
             for command in flow_command::resolve_revisions_filter(&view, range, accept, filter) {
-                let FlowCommand::ReplaceBlocks { remove, blocks, .. } = command else { return None };
+                let FlowCommand::ReplaceBlockRange { remove, blocks, .. } = command else { return None };
                 let Some(Block::Paragraph(p)) = blocks.first() else { return None };
                 let Some((container, index)) = flow_command::locate(doc, p.id) else { return None };
-                if seen.insert((p.id, remove)) { commands.push(FlowCommand::ReplaceBlocks { container, index, remove, blocks }); }
+                if seen.insert((p.id, remove)) { commands.push(FlowCommand::ReplaceBlockRange { container, index, remove, blocks }); }
             }
         }
         matched.then_some(commands)
@@ -6898,7 +7237,7 @@ impl SlideEditor {
         let first = doc.page.first_page;
         let page_of = |id: u32| lines.iter().find(|l| l.para == id).map(|l| first + l.page as u32);
         let (entries, bookmarks) = flow_command::toc_entries_with_instruction(doc, instruction, &page_of, doc.new_id(), width);
-        Some(FlowCommand::SetToc { before, replace, entries, bookmarks })
+        Some(FlowCommand::SetTableOfContents { before, replace, entries, bookmarks })
     }
 
     /// Put a table of contents with `instruction` before `before` (or in place of
@@ -6959,7 +7298,7 @@ impl SlideEditor {
         let Some(doc) = self.flow() else { return };
         let width = doc.page.size.width - doc.page.left - doc.page.right;
         let entries = flow_command::manual_toc_entries(doc, doc.new_id(), width);
-        let command = FlowCommand::SetToc { before: start.para, replace: false, entries, bookmarks: Vec::new() };
+        let command = FlowCommand::SetTableOfContents { before: start.para, replace: false, entries, bookmarks: Vec::new() };
         let ok = if styled { self.document.amend_last(vec![Command::Flow(command)]).is_ok() } else { self.run_flow(vec![command], cx) };
         if ok {
             self.relayout_if_changed();
@@ -7015,7 +7354,7 @@ impl SlideEditor {
             if let Some((first, instruction)) = self.flow().and_then(|d| super::index_fields::index_field(d)) {
                 let page_of = self.index_page_of();
                 if let Some(doc) = self.flow() {
-                    let again: Vec<Command> = super::index_fields::index_commands(doc, first, true, &instruction, &page_of).into_iter().filter(|c| matches!(c, FlowCommand::SetToc { .. })).map(Command::Flow).collect();
+                    let again: Vec<Command> = super::index_fields::index_commands(doc, first, true, &instruction, &page_of).into_iter().filter(|c| matches!(c, FlowCommand::SetTableOfContents { .. })).map(Command::Flow).collect();
                     let _ = self.document.amend_last(again);
                 }
             }
@@ -7052,7 +7391,7 @@ impl SlideEditor {
             if let Some((first, instruction)) = self.flow().and_then(|d| super::toa_fields::toa_field(d)) {
                 let page_of = self.index_page_of();
                 if let Some(doc) = self.flow() {
-                    let again: Vec<Command> = super::toa_fields::toa_commands(doc, first, true, &instruction, &page_of).into_iter().filter(|c| matches!(c, FlowCommand::SetToc { .. })).map(Command::Flow).collect();
+                    let again: Vec<Command> = super::toa_fields::toa_commands(doc, first, true, &instruction, &page_of).into_iter().filter(|c| matches!(c, FlowCommand::SetTableOfContents { .. })).map(Command::Flow).collect();
                     let _ = self.document.amend_last(again);
                 }
             }
@@ -7215,7 +7554,7 @@ impl SlideEditor {
         let first = doc.page.first_page;
         let page_of = |id: u32| lines.iter().find(|l| l.para == id).map(|l| first + l.page as u32);
         let (entries, bookmarks) = flow_command::table_of_figures_entries(doc, label, &page_of, doc.new_id(), width);
-        Some(FlowCommand::SetToc { before, replace, entries, bookmarks })
+        Some(FlowCommand::SetTableOfContents { before, replace, entries, bookmarks })
     }
 
     fn run_table_of_figures(&mut self, before: u32, replace: bool, label: &str, cx: &mut Context<Self>) -> Option<u32> {
@@ -7230,7 +7569,7 @@ impl SlideEditor {
             return if styled { Some(before) } else { None };
         };
         let first_id = match &command {
-            FlowCommand::SetToc { entries, .. } => entries.first().map(|e| e.id),
+            FlowCommand::SetTableOfContents { entries, .. } => entries.first().map(|e| e.id),
             _ => None,
         };
         let ok = if styled {
@@ -7382,7 +7721,7 @@ impl SlideEditor {
 
         if any_changed {
             let count = end_idx - start_idx + 1;
-            let command = FlowCommand::ReplaceBlocks {
+            let command = FlowCommand::ReplaceBlockRange {
                 container: Container::Body,
                 index: start_idx,
                 remove: count,
@@ -7725,7 +8064,7 @@ impl SlideEditor {
 
     /// 文書のテーマフォント言語・既定言語設定を設定する。
     pub(crate) fn set_theme_font_lang(&mut self, lang: Option<ThemeFontLang>, cx: &mut Context<Self>) {
-        self.run_flow(vec![FlowCommand::SetThemeFontLang(lang)], cx);
+        self.run_flow(vec![FlowCommand::SetThemeFontLanguage(lang)], cx);
     }
 
     /// 現在の選択位置・キャレット位置の書式言語を文書の既定言語（themeFontLang）として設定する（Word の「既定に設定…」）。
@@ -7789,7 +8128,12 @@ impl SlideEditor {
             self.set_interaction_mode(ibis_doc_model::DocumentInteractionMode::Editing, window, cx);
             return;
         }
-        self.cancel_doc_format_brush(cx);
+        if self.doc_state().is_some_and(|s| s.format_brush.is_some()) {
+            self.cancel_doc_format_brush(cx);
+            return;
+        }
+        // Nothing to cancel: in a host (ibisWorks) with a close button Esc closes the editor when nothing is unsaved (K0037).
+        self.host_escape_closes(window, cx);
     }
 
     /// 変更履歴の表示モードを取得。
@@ -8419,4 +8763,97 @@ fn find_bookmark(doc: &FlowDocument, name: &str) -> Option<u32> {
         })
     }
     walk(&doc.body, name)
+}
+
+/// Match closing inline Markdown delimiters (`**bold**`, `~~strike~~`, `` `code` ``) at the end of `before` when `ch` is typed.
+/// Returns `(delim_len, inner_start_char, inner_end_char, RunChange)`.
+fn match_inline_markdown_close(before: &[char], ch: char) -> Option<(usize, usize, usize, RunChange)> {
+    let n = before.len();
+    match ch {
+        '*' => {
+            if n >= 4 && before[n - 1] == '*' {
+                let inner_end = n - 1;
+                // Search backwards for `**`
+                let mut pos = inner_end;
+                while pos >= 2 {
+                    if before[pos - 1] == '*' && before[pos - 2] == '*' {
+                        let inner_start = pos;
+                        if inner_start < inner_end && !before[inner_start].is_whitespace() && !before[inner_end - 1].is_whitespace() {
+                            return Some((2, inner_start, inner_end, RunChange::Bold(true)));
+                        }
+                        break;
+                    }
+                    pos -= 1;
+                }
+            }
+            None
+        }
+        '~' => {
+            if n >= 4 && before[n - 1] == '~' {
+                let inner_end = n - 1;
+                let mut pos = inner_end;
+                while pos >= 2 {
+                    if before[pos - 1] == '~' && before[pos - 2] == '~' {
+                        let inner_start = pos;
+                        if inner_start < inner_end && !before[inner_start].is_whitespace() && !before[inner_end - 1].is_whitespace() {
+                            return Some((2, inner_start, inner_end, RunChange::Strikethrough(true)));
+                        }
+                        break;
+                    }
+                    pos -= 1;
+                }
+            }
+            None
+        }
+        '`' => {
+            if n >= 2 {
+                let inner_end = n;
+                let mut pos = inner_end;
+                while pos >= 1 {
+                    if before[pos - 1] == '`' {
+                        let inner_start = pos;
+                        if inner_start < inner_end {
+                            return Some((1, inner_start, inner_end, RunChange::Font("Consolas".to_string())));
+                        }
+                        break;
+                    }
+                    pos -= 1;
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod markdown_inline_tests {
+    #[test]
+    fn matches_bold_strike_and_code_delimiters() {
+        let bold_before: Vec<char> = "hello **world*".chars().collect();
+        let (d, s, e, ch) = super::match_inline_markdown_close(&bold_before, '*').expect("bold match");
+        assert_eq!((d, s, e), (2, 8, 13));
+        assert!(matches!(ch, super::RunChange::Bold(true)));
+
+        let strike_before: Vec<char> = "old ~~text~".chars().collect();
+        let (d, s, e, ch) = super::match_inline_markdown_close(&strike_before, '~').expect("strike match");
+        assert_eq!((d, s, e), (2, 6, 10));
+        assert!(matches!(ch, super::RunChange::Strikethrough(true)));
+
+        let code_before: Vec<char> = "run `cargo test".chars().collect();
+        let (d, s, e, ch) = super::match_inline_markdown_close(&code_before, '`').expect("code match");
+        assert_eq!((d, s, e), (1, 5, 15));
+        assert!(matches!(ch, super::RunChange::Font(ref f) if f == "Consolas"));
+
+        // Reject whitespace-bounded bold/strike
+        let space_bold: Vec<char> = "** spaced *".chars().collect();
+        assert!(super::match_inline_markdown_close(&space_bold, '*').is_none());
+    }
+}
+
+/// What `drop_cap_geometry` gives: the frame's line pitch (points), the capital's size (hundredths of a point) and its raise (half-points; `None` for none).
+struct DropCapGeometry {
+    pitch: f64,
+    size: u32,
+    raise: Option<i32>,
 }

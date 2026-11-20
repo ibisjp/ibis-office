@@ -64,7 +64,7 @@ impl SlideEditor {
     pub fn color_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let edit = self.doc_state()?.color_edit.as_ref()?;
         let body = v_flex().gap_2().px(px(18.)).py(px(8.))
-            .p_0().child(crate::shell::color_editor::color_editor(&edit.picker, &edit.field, &self.recent_colors, Self::edit_color_picker, None, cx))
+            .p_0().child(crate::shell::color_editor::color_editor(&edit.picker, &edit.field, &self.recent_colors, Self::edit_color_picker, cx))
             .children(edit.error.clone().map(|error| div().text_sm().child(error)));
         let footer = crate::shell::chrome::action_bar()
             .action(crate::shell::chrome::ActionDefinition::new("docx-color-apply", crate::shell::i18n::text("_shell.apply"), crate::shell::chrome::ActionButtonKind::Primary)

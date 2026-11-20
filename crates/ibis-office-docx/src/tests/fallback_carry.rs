@@ -24,7 +24,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 
 /// A one-paragraph document of the runs `runs`.
 fn make(name: &str, runs: &str) -> String {
-    use ibis_pptx::ibis_ooxml::zip::{EntryMeta, Writer};
+    use ibis_formats::ibis_ooxml::zip::{EntryMeta, Writer};
     let ct = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#;
     let rels = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>

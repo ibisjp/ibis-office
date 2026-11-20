@@ -83,8 +83,14 @@ fn ranges_of_the_table() {
 
 #[test]
 fn eastasia_times_new_roman_with_equal_ascii_and_hansi_uses_ascii() {
+    // [MS-OI29500] 2.1.88: the `ascii` typeface is the one used. A Latin-only `ascii` typeface (Arial) has no kana or kanji, and Word draws them in
+    // ＭＳ 明朝 (its XPS for #179, tasks/doc/requests/2026-11-14-179-word-result.md H6b: Arial, Times New Roman, Calibri... as `w:eastAsia` and `ascii`,
+    // kana and kanji all ＭＳ 明朝); a typeface that has them (游明朝) is the one used.
     let s = FlowRunStyle { font: Some("Arial".into()), east_asian_font: Some("Times New Roman".into()), ..Default::default() };
-    assert_eq!(s.font_for('漢'), Some("Arial"));
+    assert_eq!(s.font_for('漢'), Some("ＭＳ 明朝"));
+    assert_eq!(s.font_for('a'), Some("Arial"));
+    let s = FlowRunStyle { font: Some("游明朝".into()), east_asian_font: Some("Times New Roman".into()), ..Default::default() };
+    assert_eq!(s.font_for('漢'), Some("游明朝"));
 }
 
 #[test]

@@ -8,7 +8,7 @@ use crate::shell::scenario::Scenario;
 use crate::ext::*;
 
 pub(crate) fn spill_cursor_cost() {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     s.size(1200., 720.);
     let keys: usize = std::env::var("IBIS_I137_KEYS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
     let t = crate::clock::Instant::now();

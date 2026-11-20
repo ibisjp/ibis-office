@@ -1,0 +1,17 @@
+[package]
+name = "ibis-doc-service"
+description = "The headless document service of ibisOffice: opens, reads, edits and saves docx, xlsx and pptx files through tools (the catalog the MCP server and the assistant share). GitHub issue #159."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-doc-model.workspace = true
+ibis-formats.workspace = true
+ibis-odf.workspace = true
+ibis-calc.workspace = true
+serde_json = "1"
+sha2 = "0.10"
+
+[dev-dependencies]

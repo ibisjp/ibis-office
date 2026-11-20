@@ -11,7 +11,7 @@ use crate::docx::ext::*;
 use crate::xlsx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
-    vec![("shell::i8_language_switch_and_kept", i8_language_switch_and_kept), ("shell::i8_panels_and_status_in_english", i8_panels_and_status_in_english), ("shell::fix16_font_names_in_english", fix16_font_names_in_english), ("shell::i8_docx_panels_in_english", i8_docx_panels_in_english), ("shell::fix34_start_view_in_english", fix34_start_view_in_english), ("shell::fix34_new_file_names_in_english", fix34_new_file_names_in_english), ("shell::fix36_font_lists_from_the_system", fix36_font_lists_from_the_system), ("shell::split_buttons_in_english", split_buttons_in_english), ("shell::fix_font_dialog_item_leads_the_list", fix_font_dialog_item_leads_the_list), ("shell::replace_fonts_document_and_workbook", replace_fonts_document_and_workbook)]
+    vec![("shell::i8_language_switch_and_kept", i8_language_switch_and_kept), ("shell::i8_panels_and_status_in_english", i8_panels_and_status_in_english), ("shell::fix16_font_names_in_english", fix16_font_names_in_english), ("shell::i8_docx_panels_in_english", i8_docx_panels_in_english), ("shell::fix34_start_view_in_english", fix34_start_view_in_english), ("shell::fix34_new_file_names_in_english", fix34_new_file_names_in_english), ("shell::issue206_new_file_numbers", issue206_new_file_numbers), ("shell::fix36_font_lists_from_the_system", fix36_font_lists_from_the_system), ("shell::split_buttons_in_english", split_buttons_in_english), ("shell::fix_font_dialog_item_leads_the_list", fix_font_dialog_item_leads_the_list), ("shell::replace_fonts_document_and_workbook", replace_fonts_document_and_workbook)]
 }
 
 /// The label of the menu item `id` and of the ファイル menu, as shown now.
@@ -24,7 +24,7 @@ fn labels(s: &mut Scenario, id: &str) -> (String, String) {
 }
 
 fn i8_language_switch_and_kept() {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     // The settings are kept in the scenario's folder, not the user's.
     let dir = crate::shell::scenario::repo_root().join("target/scenario/shell::i8_language_switch_and_kept/settings");
     let _ = std::fs::remove_dir_all(&dir);
@@ -60,7 +60,7 @@ fn i8_language_switch_and_kept() {
 /// buttons, the toolbar's tooltips: drawn from the tables by their
 /// Japanese text (a picture to look at).
 fn i8_panels_and_status_in_english() {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     i18n::show(Language::English);
     s.update(|_, _, _| {});
     let status = s.status_texts();
@@ -76,7 +76,7 @@ fn i8_panels_and_status_in_english() {
 /// one (a picture: the font box of a new document), the Japanese UI and the
 /// document keep the Japanese name.
 fn fix16_font_names_in_english() {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Document);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Document);
     i18n::show(Language::English);
     assert_eq!(i18n::font_label("游明朝"), "Yu Mincho");
     assert_eq!(i18n::font_label("ＭＳ ゴシック"), "MS Gothic");
@@ -91,7 +91,7 @@ fn fix16_font_names_in_english() {
 /// A document's page setup panel and watermark panel in English (pictures to
 /// look at): their labels are drawn from the tables by id.
 fn i8_docx_panels_in_english() {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Document);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Document);
     i18n::show(Language::English);
     s.update(|e, window, cx| e.open_page_setup_panel(window, cx));
     s.screenshot("english-page-setup");
@@ -113,7 +113,7 @@ fn fix34_start_view_in_english() {
 /// #34: the names a new file shows until it is saved follow the UI's language
 /// (Word's Document1, PowerPoint's Presentation1; Japanese as before).
 fn fix34_new_file_names_in_english() {
-    use ibis_pptx::Kind;
+    use ibis_formats::Kind;
     i18n::show(Language::English);
     assert_eq!(crate::shell::file_actions::new_file_name(Kind::Document), "Document1.docx");
     assert_eq!(crate::shell::file_actions::new_file_name(Kind::Presentation), "Presentation1.pptx");
@@ -152,13 +152,13 @@ fn split_buttons_in_english() {
             }
         }
     };
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     i18n::show(Language::English);
     s.update(|_, _, _| {});
     check(&mut s, &["borders", "underline", "merge", "functions", "currency"]);
     s.screenshot("english-xlsx-toolbar");
     drop(s);
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Document);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Document);
     i18n::show(Language::English);
     s.update(|_, _, _| {});
     check(&mut s, &["bullets", "numbered", "underline"]);
@@ -215,11 +215,11 @@ fn choose_font(s: &mut Scenario, label: &str) {
 /// the listed name; a document's own font that is not installed shows in the box as it is.
 fn fix36_font_lists_from_the_system() {
     let hiragino = |l: &[String]| l.iter().any(|n| n == "Hiragino Sans" || n == "ヒラギノ角ゴシック");
-    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
-        let mut s = if kind == ibis_pptx::Kind::Presentation { Scenario::open("test/editing/pptx-plan.pptx") } else { Scenario::new_document(kind) };
+    for kind in [ibis_formats::Kind::Workbook, ibis_formats::Kind::Document, ibis_formats::Kind::Presentation] {
+        let mut s = if kind == ibis_formats::Kind::Presentation { Scenario::open("test/editing/pptx-plan.pptx") } else { Scenario::new_document(kind) };
         // A presentation's font box is there while a shape is selected.
         s.update(|e, window, cx| {
-            if kind == ibis_pptx::Kind::Presentation {
+            if kind == ibis_formats::Kind::Presentation {
                 select_a_text_shape(e, window, cx);
             }
         });
@@ -250,7 +250,7 @@ fn fix36_font_lists_from_the_system() {
     assert_eq!(checked, [chosen.clone()]);
     }
     // A workbook: choose Hiragino, the box shows the name it is saved under; a font the system lacks shows as it is.
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     s.update(|_, _, _| {});
     let (_, list, _) = font_box(&mut s);
     let chosen = list.iter().find(|n| *n == "Hiragino Sans" || *n == "ヒラギノ角ゴシック").cloned().unwrap_or_else(|| list[0].clone());
@@ -271,10 +271,10 @@ fn fix36_font_lists_from_the_system() {
 /// document, "Replace Fonts…" for a presentation), then a separator, then the fonts.
 fn fix_font_dialog_item_leads_the_list() {
     use crate::shell::chrome::{MenuEntry, ToolItem};
-    for (kind, id) in [(ibis_pptx::Kind::Document, "docx.font.custom"), (ibis_pptx::Kind::Presentation, "pptx.replace-fonts")] {
-        let mut s = if kind == ibis_pptx::Kind::Presentation { Scenario::open("test/editing/pptx-plan.pptx") } else { Scenario::new_document(kind) };
+    for (kind, id) in [(ibis_formats::Kind::Document, "docx.font.custom"), (ibis_formats::Kind::Presentation, "pptx.replace-fonts")] {
+        let mut s = if kind == ibis_formats::Kind::Presentation { Scenario::open("test/editing/pptx-plan.pptx") } else { Scenario::new_document(kind) };
         s.update(|e, window, cx| {
-            if kind == ibis_pptx::Kind::Presentation {
+            if kind == ibis_formats::Kind::Presentation {
                 select_a_text_shape(e, window, cx);
             }
         });
@@ -309,13 +309,13 @@ fn replace_fonts_document_and_workbook() {
     s.screenshot("replace-fonts-docx");
     drop(s);
     // Workbook.
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     s.update(|e, _, cx| {
         let slide = e.current_slide;
         let range = CellRange { first_row: 0, first_column: 0, last_row: 0, last_column: 1 };
         e.run(vec![
-            Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row: 0, column: 0, input: CellInput::Value(ibis_doc_model::CellValue::Text("a".into())) }, CellEdit { row: 0, column: 1, input: CellInput::Value(ibis_doc_model::CellValue::Text("b".into())) }] }),
-            Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: StyleChange::Font(Some("Courier New".into())) }),
+            Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![CellEdit { row: 0, column: 0, input: CellInput::Value(ibis_doc_model::CellValue::Text("a".into())) }, CellEdit { row: 0, column: 1, input: CellInput::Value(ibis_doc_model::CellValue::Text("b".into())) }] }),
+            Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change: StyleChange::Font(Some("Courier New".into())) }),
         ], cx);
     });
     s.menu("edit.replace-fonts");
@@ -330,4 +330,26 @@ fn replace_fonts_document_and_workbook() {
     let fonts = s.with(|e, _| e.used_fonts());
     assert_eq!(fonts, vec!["Georgia".to_string()]);
     s.screenshot("replace-fonts-xlsx");
+}
+
+/// #206: the new files of one kind are numbered 1, 2, 3 over the session (window title and the Save dialog's default name both come from the
+/// file's name), each kind counted on its own, and a number is not given back.
+fn issue206_new_file_numbers() {
+    use crate::shell::file_actions::next_new_file_name as next;
+    use ibis_formats::Kind;
+    let mut s = Scenario::start_view();
+    s.update(|e, w, cx| e.new_file(Kind::Document, w, cx));
+    s.with(|e, _| assert_eq!(e.file_name.as_deref(), Some("文書 1.docx"), "the first document"));
+    // The second and third go to windows of their own.
+    s.update(|e, w, cx| e.new_file(Kind::Document, w, cx));
+    s.update(|e, w, cx| e.new_file(Kind::Document, w, cx));
+    drop(s);
+    assert_eq!(next(Kind::Document), "文書 4.docx", "three documents were made");
+    assert_eq!(next(Kind::Workbook), "Book1.xlsx", "another kind is counted on its own");
+    assert_eq!(next(Kind::Workbook), "Book2.xlsx");
+    assert_eq!(next(Kind::Presentation), "プレゼンテーション 1.pptx");
+    i18n::show(Language::English);
+    assert_eq!(next(Kind::Document), "Document5.docx");
+    assert_eq!(next(Kind::Presentation), "Presentation2.pptx");
+    i18n::show(Language::Japanese);
 }

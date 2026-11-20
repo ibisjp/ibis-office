@@ -30,7 +30,7 @@ pub(super) fn list_accepts_full_width() {
         let typed = list("\"ABC,def,123,ｱｲｳ,a b\"", 0); // i18n-ok: Japanese test fixture, not a UI label.
         let ranged = list("$D$1:$D$3", 1);
         for rule in [typed, ranged] {
-            e.run_sheet(vec![Command::Sheet(SheetCommand::SetValidation { slide: e.current_slide, ranges: rule.ranges.clone(), rule: Some(rule) })], cx);
+            e.run_sheet(vec![Command::Sheet(SheetCommand::SetValidation { sheet: e.current_slide, ranges: rule.ranges.clone(), rule: Some(rule) })], cx);
         }
     });
     s.click_cell("D1");

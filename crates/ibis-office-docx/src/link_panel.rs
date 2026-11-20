@@ -134,7 +134,7 @@ impl SlideEditor {
                         id
                     });
                 commands.push(FlowCommand::SetLink { from: start, to: end, link: Some(link) });
-                commands.push(FlowCommand::SetCharStyle { from: start, to: end, style: Some(style_id) });
+                commands.push(FlowCommand::SetCharacterStyle { from: start, to: end, style: Some(style_id) });
             }
             None => {
                 commands.push(FlowCommand::SetLink { from: start, to: end, link: None });
@@ -154,7 +154,7 @@ impl SlideEditor {
                         at = run_end;
                     }
                     if has_hyperlink {
-                        commands.push(FlowCommand::SetCharStyle { from: start, to: end, style: None });
+                        commands.push(FlowCommand::SetCharacterStyle { from: start, to: end, style: None });
                     }
                 }
             }
@@ -172,7 +172,7 @@ impl SlideEditor {
             }).collect::<Vec<_>>();
             commands=commands.into_iter().flat_map(|c|match c{
                 FlowCommand::SetLink{link,..}=>ranges.iter().map(|(from,to)|FlowCommand::SetLink{from:*from,to:*to,link:link.clone()}).collect(),
-                FlowCommand::SetCharStyle{style,..}=>ranges.iter().map(|(from,to)|FlowCommand::SetCharStyle{from:*from,to:*to,style:style.clone()}).collect(),
+                FlowCommand::SetCharacterStyle{style,..}=>ranges.iter().map(|(from,to)|FlowCommand::SetCharacterStyle{from:*from,to:*to,style:style.clone()}).collect(),
                 other=>vec![other],
             }).collect();
         }

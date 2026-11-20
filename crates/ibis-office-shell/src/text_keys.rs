@@ -52,6 +52,34 @@ pub fn shortcut_of(k: &Keystroke) -> Option<(u8, String)> {
     Some((bits, key))
 }
 
+/// The arrow `key` pressed in text written as given (`vertical` and its kind, or turned a quarter: `sideways`, `vert` 5 400 000 and
+/// `vert270` 16 200 000) as the arrow of the unturned layout that moves the caret the same way: in that layout "right" is the next
+/// character and "down" the next line. Characters run down in `vert`, `eaVert` and the other vertical kinds (lines go right to left
+/// in `vert`, `eaVert` and `wordArtVertRtl`, left to right in the others) and up in `vert270` (lines go left to right). Other keys
+/// and horizontal text are unchanged.
+pub fn text_arrow_key(vertical: bool, kind: ibis_doc_model::VerticalKind, sideways: i32, key: &str) -> &str {
+    use ibis_doc_model::VerticalKind;
+    if !matches!(key, "left" | "right" | "up" | "down") {
+        return key;
+    }
+    // (characters run down, lines go from right to left)
+    let (down, lines_leftward) = if vertical {
+        (true, matches!(kind, VerticalKind::EastAsian | VerticalKind::WordArtRtl))
+    } else if sideways == 5_400_000 {
+        (true, true)
+    } else if sideways == 16_200_000 {
+        (false, false)
+    } else {
+        return key;
+    };
+    match key {
+        "up" => if down { "left" } else { "right" },
+        "down" => if down { "right" } else { "left" },
+        "left" => if lines_leftward { "down" } else { "up" },
+        _ => if lines_leftward { "up" } else { "down" },
+    }
+}
+
 impl SlideEditor {
     /// Keys while a text is edited: the caret, selection, deleting,
     /// Enter, and the format shortcuts. Characters come through the text
@@ -66,7 +94,32 @@ impl SlideEditor {
         }
         let k = &event.keystroke;
         let command = k.modifiers.platform || (k.modifiers.control && !cfg!(target_os = "macos"));
-        let key = k.key.as_str();
+        // In vertical text the arrows follow the writing: ← → change the line, ↑ ↓ the character (#210). The text is laid out as
+        // horizontal text turned, so the key is turned into the one that moves that way in the unturned text.
+        let key = match self.edited_body() {
+            Some(body) => text_arrow_key(body.vertical, body.vertical_kind, body.sideways, k.key.as_str()),
+            None => k.key.as_str(),
+        };
+        // PowerPoint for Windows (measured, #210): Alt+arrows do nothing; Ctrl+← → move by words and Ctrl+↑ ↓ by paragraphs (the keys of the
+        // characters and of the lines, in the unturned text the arrows were turned into), selecting with Shift.
+        if !cfg!(target_os = "macos") && matches!(key, "left" | "right" | "up" | "down") && (k.modifiers.alt || command) {
+            cx.stop_propagation();
+            if !k.modifiers.alt {
+                let (chars, caret) = match (self.edited_text(), self.text_editing()) {
+                    (Some(text), Some(edit)) => (text.chars().collect::<Vec<char>>(), edit.caret),
+                    _ => return,
+                };
+                let forward = matches!(key, "right" | "down");
+                let to = if matches!(key, "left" | "right") { crate::text_edit::word_start(&chars, caret, forward) } else { crate::text_edit::paragraph_boundary(&chars, caret, forward) };
+                self.shape_move_caret(to, k.modifiers.shift, cx);
+            }
+            return;
+        }
+        // PowerPoint for Windows: in a table's cell Ctrl+Home and Ctrl+End do not move the caret (#210).
+        if !cfg!(target_os = "macos") && matches!(key, "home" | "end") && k.modifiers.control && self.text_editing().is_some_and(|e| e.cell.is_some()) {
+            cx.stop_propagation();
+            return;
+        }
         match key {
             "left" | "right" | "up" | "down" | "home" | "end" => {
                 cx.stop_propagation();

@@ -102,6 +102,13 @@ pub fn outline_of(slide: &Slide) -> (String, Vec<(u8, String)>) {
     (title, body)
 }
 
+/// The left margin and first-line indent (EMU) of each paragraph of a slide's body, in the order of [`outline_of`]'s body: what the slide
+/// master gives its level, or the paragraph's own.
+pub fn body_margins_of(slide: &Slide) -> Vec<(i64, i64)> {
+    let (_, body) = slide_parts(slide);
+    body.and_then(|id| text_body_of(slide, id)).filter(|b| !is_blank(b)).map(|b| b.paragraphs.iter().map(|p| (p.margin_left, p.indent)).collect()).unwrap_or_default()
+}
+
 fn text_body_of(slide: &Slide, shape: ShapeId) -> Option<&TextBody> {
     slide.shape(shape).and_then(|s| s.text_body())
 }
@@ -284,7 +291,7 @@ impl SlideEditor {
             let text = text.replace(['\n', '\r'], " ");
             let at = paragraph_start(body, n1) + o1;
             let end = paragraph_start(body, n2) + o2;
-            let command = Command::EditText { slide: first.slide, shape, at, remove: end - at, insert: text.clone() };
+            let command = Command::ReplaceTextRange { slide: first.slide, shape, at, remove: end - at, insert: text.clone() };
             if self.outline_run(vec![command], false, cx) {
                 self.outline_place(l1, o1 + text.chars().count(), None, cx);
             }
@@ -299,7 +306,7 @@ impl SlideEditor {
         };
         let text = text.replace(['\n', '\r'], " ");
         let range = edit.range();
-        let command = Command::EditText { slide: line.slide, shape, at: base + range.start, remove: range.len(), insert: text.clone() };
+        let command = Command::ReplaceTextRange { slide: line.slide, shape, at: base + range.start, remove: range.len(), insert: text.clone() };
         if self.outline_run(vec![command], true, cx) {
             let at = range.start + text.chars().count();
             if let Some(e) = self.pptx_mut().and_then(|s| s.outline_edit.as_mut()) {
@@ -347,7 +354,7 @@ impl SlideEditor {
             (true, LineKind::Body(n)) if n + 1 < body.paragraphs.len() => (base + len, edit.line, edit.caret),
             _ => return,
         };
-        let command = Command::EditText { slide: line.slide, shape, at, remove, insert: String::new() };
+        let command = Command::ReplaceTextRange { slide: line.slide, shape, at, remove, insert: String::new() };
         if self.outline_run(vec![command], false, cx) {
             self.outline_place(caret_line, caret, None, cx);
         }
@@ -365,7 +372,7 @@ impl SlideEditor {
                 let Some(body) = self.presentation().slide(line.slide).and_then(|s| text_body_of(s, shape)) else { return };
                 let at = paragraph_start(body, n) + edit.range().start;
                 let remove = edit.range().len();
-                let command = Command::EditText { slide: line.slide, shape, at, remove, insert: "\n".into() };
+                let command = Command::ReplaceTextRange { slide: line.slide, shape, at, remove, insert: "\n".into() };
                 if self.outline_run(vec![command], false, cx) {
                     self.outline_place(edit.line + 1, 0, Some(window), cx);
                 }
@@ -378,9 +385,9 @@ impl SlideEditor {
                 let tail: String = chars[end..].iter().collect();
                 let mut commands = Vec::new();
                 if start < chars.len() {
-                    commands.push(Command::EditText { slide: line.slide, shape, at: start, remove: chars.len() - start, insert: String::new() });
+                    commands.push(Command::ReplaceTextRange { slide: line.slide, shape, at: start, remove: chars.len() - start, insert: String::new() });
                 }
-                let layout = self.presentation().slide(line.slide).and_then(|s| s.layout);
+                let layout = self.layout_for_slide_after(line.slide);
                 let id = self.document.ids().new_slide_id();
                 let slide = self.new_slide(index + 1, id, layout);
                 let new_title = slide_parts(&slide).0;
@@ -388,7 +395,7 @@ impl SlideEditor {
                 if let (Some(title), false) = (new_title, tail.is_empty()) {
                     commands.push(Command::SetText { slide: id, shape: title, text: tail });
                 }
-                if self.outline_run(vec![Command::Group(commands)], false, cx) {
+                if self.outline_run(vec![Command::Batch(commands)], false, cx) {
                     // The new slide's title line: after this slide's lines.
                     let lines = self.outline_lines();
                     let at = lines.iter().position(|l| l.slide == id && l.kind == LineKind::Title).unwrap_or(0);
@@ -417,7 +424,7 @@ impl SlideEditor {
                 }
             }
             if !commands.is_empty() {
-                self.outline_run(vec![Command::Group(commands)], false, cx);
+                self.outline_run(vec![Command::Batch(commands)], false, cx);
             }
             return;
         }
@@ -431,7 +438,7 @@ impl SlideEditor {
                 let Some(shape) = line.shape else { return };
                 let Some(body) = self.presentation().slide(line.slide).and_then(|s| text_body_of(s, shape)) else { return };
                 let commands = level_commands(line.slide, shape, body, n, line.level + 1);
-                if self.outline_run(vec![Command::Group(commands)], false, cx) {
+                if self.outline_run(vec![Command::Batch(commands)], false, cx) {
                     self.outline_place(edit.line, edit.caret, None, cx);
                 }
             }
@@ -439,7 +446,7 @@ impl SlideEditor {
                 let Some(shape) = line.shape else { return };
                 let Some(body) = self.presentation().slide(line.slide).and_then(|s| text_body_of(s, shape)) else { return };
                 let commands = level_commands(line.slide, shape, body, n, line.level - 1);
-                if self.outline_run(vec![Command::Group(commands)], false, cx) {
+                if self.outline_run(vec![Command::Batch(commands)], false, cx) {
                     self.outline_place(edit.line, edit.caret, None, cx);
                 }
             }
@@ -486,10 +493,10 @@ impl SlideEditor {
             }
         }
         let first_new = start_paragraph;
-        let commands = vec![Command::SetTextBody { slide: before.id, shape: before_body, body }, Command::RemoveSlide { slide: line.slide }];
+        let commands = vec![Command::SetTextBody { slide: before.id, shape: before_body, body }, Command::DeleteSlide { slide: line.slide }];
         let (before_id, title_id) = (before.id, line.slide);
         let _ = (title_id, line_index);
-        if self.outline_run(vec![Command::Group(commands)], false, cx) {
+        if self.outline_run(vec![Command::Batch(commands)], false, cx) {
             // (A body that is one empty line shows it: the caret is in it.)
             if let Some(e) = self.pptx_mut().and_then(|s| s.outline_edit.as_mut()) {
                 e.blank = Some(before_id);
@@ -507,7 +514,7 @@ impl SlideEditor {
         let Some(shape) = line.shape else { return };
         let Some(old) = self.presentation().slide(line.slide).and_then(|s| text_body_of(s, shape)).cloned() else { return };
         let moved: Vec<ibis_doc_model::Paragraph> = old.paragraphs[n + 1..].to_vec();
-        let layout = self.presentation().slide(line.slide).and_then(|s| s.layout);
+        let layout = self.layout_for_slide_after(line.slide);
         let id = self.document.ids().new_slide_id();
         let mut slide = self.new_slide(index + 1, id, layout);
         let (title, body) = slide_parts(&slide);
@@ -540,9 +547,9 @@ impl SlideEditor {
         let start = paragraph_start(&old, n);
         let total = old.text().chars().count();
         let (at, remove) = if n == 0 { (0, total) } else { (start - 1, total - (start - 1)) };
-        let commands = vec![Command::EditText { slide: line.slide, shape, at, remove, insert: String::new() }, Command::InsertSlide { index: index + 1, slide }];
+        let commands = vec![Command::ReplaceTextRange { slide: line.slide, shape, at, remove, insert: String::new() }, Command::InsertSlide { index: index + 1, slide }];
         let _ = line_index;
-        if self.outline_run(vec![Command::Group(commands)], false, cx) {
+        if self.outline_run(vec![Command::Batch(commands)], false, cx) {
             let lines = self.outline_lines();
             let at = lines.iter().position(|l| l.slide == id && l.kind == LineKind::Title).unwrap_or(0);
             self.outline_place(at, caret, Some(window), cx);

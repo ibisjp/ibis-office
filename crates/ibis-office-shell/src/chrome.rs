@@ -730,7 +730,7 @@ pub enum ToolItem {
 }
 
 impl ToolItem {
-    fn width(&self) -> f32 {
+    pub(crate) fn width(&self) -> f32 {
         match self {
             ToolItem::Button(b) => b.width(),
             ToolItem::Separator => 9.0,
@@ -803,6 +803,11 @@ pub(crate) fn take_panel_backdrop() -> bool { PANEL_BACKDROP.with(|b| b.replace(
 /// Whether the panel being turned into a dialog lets Escape close it (default ON); reading it resets it.
 pub(crate) fn take_panel_esc_closes() -> bool { PANEL_ESC_CLOSES.with(|b| b.replace(true)) }
 
+/// The key of the dialog panel the sidebar chain made this frame (`modal_named` / `modeless_named`); None for a panel without one.
+pub fn current_panel_key() -> Option<&'static str> {
+    PANEL_KEY.with(|key| key.get())
+}
+
 impl SidebarPanel {
     /// The dialog attribute `esc_closes` (default ON): whether Escape closes this modal dialog, as Cancel does. Turn it OFF
     /// only for a dialog that must not be left by Escape (say, one that cannot be cancelled, a process in progress), and
@@ -853,7 +858,7 @@ impl SidebarPanel {
         self.modeless()
     }
     /// Dim the window behind a modal dialog. Default OFF; ON only for a very important question such as the
-    /// save confirmation (doc/rule/implimentationRule.md, the dialog section). Has no effect on modeless / sidebar.
+    /// save confirmation (docs/rule/implimentationRule.md, the dialog section). Has no effect on modeless / sidebar.
     #[allow(dead_code)] // The documented attribute of a dialog (the rule says when to turn it on); no dialog asks for it yet.
     pub(crate) fn backdrop(self, on: bool) -> Self {
         PANEL_BACKDROP.with(|b| b.set(on)); self
@@ -939,6 +944,17 @@ pub fn close_mode_button(id: &'static str, label: &'static str, editor: &WeakEnt
 
 /// A handler as a click listener: it reaches the editor through a weak
 /// handle, so it works in popups too.
+/// The one place a command of the toolbar or of a menu is run by a press (a button, a menu row, a list row, a tile, a colour): the
+/// scenarios count the presses that arrive here (and can leave the command undone, for the buttons whose commands open a dialog or
+/// the system's), so a button that is drawn where a press cannot reach it, or reaches another way, is found.
+pub(crate) fn dispatch(handler: &Handler, this: &mut SlideEditor, window: &mut Window, cx: &mut Context<SlideEditor>) {
+    #[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+    if super::scenario::button_probe::dispatched() {
+        return;
+    }
+    handler(this, window, cx)
+}
+
 pub fn listener(editor: &WeakEntity<SlideEditor>, handler: &Handler) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     let (editor, handler) = (editor.clone(), handler.clone());
     move |event, window, cx| {
@@ -949,7 +965,7 @@ pub fn listener(editor: &WeakEntity<SlideEditor>, handler: &Handler) -> impl Fn(
                 return;
             }
             this.ruler_settings_open = false;
-            handler(this, window, cx)
+            dispatch(&handler, this, window, cx)
         }).ok();
     }
 }
@@ -960,7 +976,7 @@ pub fn listener(editor: &WeakEntity<SlideEditor>, handler: &Handler) -> impl Fn(
 fn is_document_name_item(item: &MenuItem) -> bool {
     NAMES_AS_THEY_ARE.contains(&item.id) || item.id.starts_with("font.section.") || item.id.starts_with("menu-search.") || item.id.starts_with("window.open.")
         || item.id.starts_with("docx.style.doc.") || item.id.starts_with("docx.style.char.") || item.id.starts_with("docx.track.reviewers.author:")
-        || (item.id.starts_with("docx.xref.") && item.id != "docx.xref.dialog" && item.id != "docx.xref.none")
+        || (item.id.starts_with("docx.cross-reference.") && item.id != "docx.cross-reference.dialog" && item.id != "docx.cross-reference.none")
         || (item.id.starts_with("docx.date.") && item.id != "docx.date.update")
         || dropdown::is_font_item_id(item.id)
 }
@@ -1175,7 +1191,7 @@ fn menu_item_row_for_width(item:&MenuItem,editor:&WeakEntity<SlideEditor>,width:
                             .items_center()
                             .gap(px(6.))
                             .when_some(swatch, |d, c| {
-                                d.child(div().w(px(10.)).h(px(10.)).rounded(px(2.)).bg(crate::palette::doc(c.0)).border_1().border_color(crate::palette::shade(0.0, 0.2)))
+                                d.child(div().w(px(10.)).h(px(10.)).rounded(px(2.)).bg(crate::palette::doc(crate::cmyk::shown(c).0)).border_1().border_color(crate::palette::shade(0.0, 0.2)))
                             })
                             .when(!lead.is_empty(), |d| d.child(lead_marks::element(&lead)))
                             .when_some(format_mark, |d, (color, name)| {
@@ -1361,9 +1377,9 @@ pub(crate) fn app_logo_for_height(height:f32)->std::sync::Arc<Image>{
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub(crate) fn office_app_logo(kind: ibis_pptx::Kind) -> std::sync::Arc<Image> {
+pub(crate) fn office_app_logo(kind: ibis_formats::Kind) -> std::sync::Arc<Image> {
     // One image per format for the life of the application, made when first shown.
-    static LOGOS: std::sync::Mutex<Vec<(ibis_pptx::Kind, std::sync::Arc<Image>)>> = std::sync::Mutex::new(Vec::new());
+    static LOGOS: std::sync::Mutex<Vec<(ibis_formats::Kind, std::sync::Arc<Image>)>> = std::sync::Mutex::new(Vec::new());
     let mut logos = LOGOS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((_, logo)) = logos.iter().find(|(k, _)| *k == kind) {
         return logo.clone();
@@ -1633,7 +1649,7 @@ pub(crate) fn render_window_controls(window: &Window, editor: &WeakEntity<SlideE
             // Removing a window directly bypasses the platform close callback.
             // Use the same save guard as its native close button and Alt+F4.
             let _ = editor.update(cx, |editor, cx| {
-                if editor.window_should_close(cx) {
+                if editor.window_should_close(window, cx) {
                     window.remove_window();
                 }
             });
@@ -1671,7 +1687,8 @@ impl SlideEditor {
         let mut menus = crate::chrome_defaults::menus(self);
         with_format!(self, menus(self, &mut menus));
         crate::commands::fill_home_commands(&mut menus, || {
-            let mut tools = self.toolbar_items();
+            // The buttons as the formats make them (not as the user's order of them): the commands are the same either way.
+            let mut tools = self.toolbar_items_default();
             tools.extend(crate::format::with_format!(self, menu_buttons(self)));
             tools
         });
@@ -1711,6 +1728,21 @@ impl SlideEditor {
     /// The toolbar's parts, in order: the left part (the shared buttons with the format's own among them), and the
     /// format's right half for what is selected.
     pub fn toolbar_items(&self) -> Vec<ToolItem> {
+        let items = self.toolbar_items_default();
+        let scene = with_format!(self, toolbar_scene(self));
+        crate::toolbar_layout::record(self.format_info().extension, scene, &items);
+        if scene.is_empty() {
+            return items;
+        }
+        // The order the user saved for this scene (ツール > 設定… > ツールバーのカスタマイズ); none saved: the buttons as they are.
+        let Some(layout) = crate::toolbar_layout::saved(self.format_info().extension, scene) else { return items };
+        let menus = layout.iter().any(|k| k.contains(':')).then(|| self.menus());
+        crate::toolbar_layout::apply(items, &layout, menus.as_ref())
+    }
+
+    /// The toolbar's buttons as the shell and the format make them for what is selected, whatever order the user saved
+    /// (`toolbar_items` is these in that order).
+    pub fn toolbar_items_default(&self) -> Vec<ToolItem> {
         let mut items = crate::chrome_defaults::toolbar_left(self);
         let right = with_format!(self, toolbar_right(self));
         if !right.is_empty() {
@@ -1746,6 +1778,11 @@ impl SlideEditor {
             self.display_title_formatted().into()
         } else {
             self.file_name.clone().unwrap_or_default()
+        };
+        // A workbook with several sheets selected says so after its name (`[グループ]`, as Excel's title bar does).
+        let name: SharedString = match crate::format::with_format!(self, title_suffix(self)) {
+            Some(suffix) => format!("{name} {suffix}").into(),
+            None => name,
         };
         let show_comments = crate::format::with_format!(self, show_comments(self));
         let mut format_buttons = crate::format::with_format!(self, title_buttons(self));
@@ -1865,20 +1902,14 @@ impl SlideEditor {
         crate::qat::commands().len()
     }
 
-    /// The ▾ of the file name's menu (no file path in the browser: none).
+    /// The ▾ of the file name's menu (the browser has it when a host gave `renameFile` or `getFileLocation`).
     fn file_name_menu(&self, editor: &WeakEntity<SlideEditor>) -> Option<AnyElement> {
-        #[cfg(not(target_family = "wasm"))]
-        return self.file_name_menu_button(editor);
-        #[cfg(target_family = "wasm")]
-        {
-            let _ = editor;
-            None
-        }
+        self.file_name_menu_button(editor)
     }
 
-    /// The browser version has no file to rename (`shell/rename_file.rs`).
+    /// The browser version has no password dialog (`shell/password_window.rs`).
     #[cfg(target_family = "wasm")]
-    fn rename_file_panel_if_open(&mut self, _: &mut Context<Self>) -> Option<SidebarPanel> {
+    fn password_panel_if_open(&mut self, _: &mut Context<Self>) -> Option<SidebarPanel> {
         None
     }
 
@@ -1925,10 +1956,14 @@ impl SlideEditor {
             .filter_map(|id| quick_access_item(&menus, id).map(MenuEntry::Item))
             .filter_map(|entry| match entry {
                 MenuEntry::Item(item) => {
-                    let icon_name = item.icon.filter(|n| !n.is_empty())?;
                     let handler = if item.disabled { None } else { item.handler.clone() };
                     let color: Hsla = if handler.is_some() { rgb(ICON).into() } else { disabled_color() };
-                    Some(title_button_icon(item.id, icon(icon_name, 20.0, color), item.id, handler, editor))
+                    // A command without an icon shows a ring (as Office's ○), so the button can be seen.
+                    let mark = match item.icon.filter(|n| !n.is_empty()) {
+                        Some(icon_name) => icon(icon_name, 20.0, color),
+                        None => return Some(title_button_mark(item.id, color, item.id, handler, editor)),
+                    };
+                    Some(title_button_icon(item.id, mark, item.id, handler, editor))
                 }
                 _ => None,
             })
@@ -1979,17 +2014,22 @@ impl SlideEditor {
         }
         let compact = self.chrome_compact || !self.show_menu_bar;
         let more = (!folded.is_empty()).then(|| {
+            // The window's width less the bar's own margin and the ︙ and ^ buttons at its right, and a margin at the left.
+            let overflow_limit = (f32::from(window.viewport_size().width) - paddings_total(window) - 72.).max(120.);
             let folded = Rc::new(folded);
             let editor = editor.clone();
             Popover::new("toolbar-more")
                 .anchor(Anchor::TopRight)
-                .trigger(Button::new("toolbar-more-button").ghost().xsmall().icon(Icon::new(Material("more_vert"))).tooltip(crate::i18n::text("_shell.more")).h(px(28.)).w(px(28.)).rounded(px(4.)))
+                .trigger(probed(Button::new("toolbar-more-button"), "toolbar-more-button".into()).ghost().xsmall().icon(Icon::new(Material("more_vert"))).tooltip(crate::i18n::text("_shell.more")).h(px(28.)).w(px(28.)).rounded(px(4.)))
                 .content(move |_, _, _| {
-                    // The rest of the toolbar in one row, as the mock's ︙.
+                    // The rest of the toolbar in one row, as the mock's ︙, as wide as its buttons need and no wider than the window leaves
+                    // (the row's right end is at the trigger): what does not fit goes on to another line, so no button is out of the window.
                     h_flex()
-                        .h(px(36.))
+                        .min_h(px(36.))
+                        .max_w(px(overflow_limit))
                         .px(px(6.))
                         .gap(px(1.))
+                        .flex_wrap()
                         .items_center()
                         .children(folded.iter().enumerate().map(|(i, item)| tool_item(item, i + 1000, &editor)))
                 })
@@ -2094,6 +2134,9 @@ impl SlideEditor {
                     super::dialog::DialogMode::Modeless => p.modeless_named(key),
                     super::dialog::DialogMode::Sidebar => p,
                 })
+            } else if let Some(panel) = self.toolbar_customize_panel(cx) {
+                // The customization of the toolbar hides the settings dialog it was opened from.
+                Some(panel.modal_named(crate::toolbar_customize::DIALOG_KEY))
             } else if let Some(panel) = self.settings_panel(cx) {
                 Some(panel.modal_named("settings_dialog"))
             } else if let Some(panel)=self.color_picker_dialog(window, cx) {
@@ -2104,8 +2147,14 @@ impl SlideEditor {
                 Some(panel.modal_named("font_setup_dialog"))
             } else if let Some(panel) = self.replace_fonts_panel(cx) {
                 Some(panel.modal_named("replace_fonts_panel"))
+            } else if let Some(panel) = self.host_file_dialog_panel(window, cx) {
+                Some(panel.modal_named("host_file_dialog"))
             } else if let Some(panel) = self.rename_file_panel_if_open(cx) {
                 Some(panel.modal_named("rename_file_panel"))
+            } else if let Some(panel) = self.zoom_panel_if_open(cx) {
+                Some(panel.modal_named("zoom_dialog"))
+            } else if let Some(panel) = self.password_panel_if_open(cx) {
+                Some(panel.modal_named("password_dialog"))
             } else if let Some(panel) = with_format!(self, ruler_panel(self, cx)) {
                 Some(panel)
             } else {
@@ -2386,7 +2435,20 @@ pub(crate) fn title_button(id: &'static str, name: &'static str, tooltip: &'stat
     title_button_icon(id, icon(name, 20.0, color), tooltip, handler, editor)
 }
 
+/// The mark of a command that has no icon: a ring, 14 px, drawn (Office shows ○ for such a command).
+const NO_ICON_RING: f32 = 14.0;
+
+/// A round title-row button whose face is the ring (a command without an icon).
+fn title_button_mark(id: &'static str, color: Hsla, tooltip: &'static str, handler: Option<Handler>, editor: &WeakEntity<SlideEditor>) -> AnyElement {
+    let ring = div().size(px(NO_ICON_RING)).rounded_full().border_2().border_color(color);
+    title_button_face(id, ring.into_any_element(), tooltip, handler, editor)
+}
+
 fn title_button_icon(id: &'static str, icon: Icon, tooltip: &'static str, handler: Option<Handler>, editor: &WeakEntity<SlideEditor>) -> AnyElement {
+    title_button_face(id, icon.into_any_element(), tooltip, handler, editor)
+}
+
+fn title_button_face(id: &'static str, face: AnyElement, tooltip: &'static str, handler: Option<Handler>, editor: &WeakEntity<SlideEditor>) -> AnyElement {
     let enabled = handler.is_some();
     // The tooltip's words are part of the element's id: a tooltip already showing under the pointer keeps the words it was built with
     // (the pointer stays on the button when it is pressed), so a toggle (ノートを表示 / 非表示) would show the opposite of what it
@@ -2400,7 +2462,7 @@ fn title_button_icon(id: &'static str, icon: Icon, tooltip: &'static str, handle
         .justify_center()
         .rounded_full()
         .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(crate::palette::shade(0.27, 0.08))))
-        .child(icon)
+        .child(face)
         .when_some(handler, |d, h| {
             let guarded: Handler = Rc::new(move |this, window, cx| {
                 if !this.dialog_is_modal() { h(this, window, cx); }
@@ -2509,7 +2571,7 @@ pub(crate) fn tool_item(item: &ToolItem, index: usize, editor: &WeakEntity<Slide
             let enabled = !disabled && !menu.is_empty();
             let is_font = *id == "font";
             let label=if is_font {crate::i18n::font_label(value)}else{value.clone()};
-            let button=dropdown_button(SharedString::from(format!("{id}-{index}")),label)
+            let button=probed(dropdown_button(SharedString::from(format!("{id}-{index}")),label),SharedString::from(format!("{id}-{index}")))
                 .h(px(28.)).w(px(*width)).tooltip(crate::i18n::text(tooltip)).disabled(!enabled);
             if enabled {
                 if is_font { FontDropdown::new(id,value,menu.clone(),index,editor).button(button).into_any_element() }
@@ -2520,6 +2582,22 @@ pub(crate) fn tool_item(item: &ToolItem, index: usize, editor: &WeakEntity<Slide
         }
         ToolItem::FontSize { value, smaller, larger } => font_size::FontSizeControl {search:false,value:value.clone(),smaller:smaller.clone(),larger:larger.clone(),index,editor:editor.clone()}.into_any_element(),
     }
+}
+
+/// A toolbar button the scenarios can find by its id (measured where it is drawn, never reached by its handler).
+#[cfg(all(feature = "scenarios", any(target_os = "macos", target_os = "linux")))]
+fn probed(button: Button, id: SharedString) -> Button {
+    super::scenario::button_probe::observe(button, ElementId::Name(id))
+}
+#[cfg(not(all(feature = "scenarios", any(target_os = "macos", target_os = "linux"))))]
+fn probed(button: Button, _id: SharedString) -> Button {
+    button
+}
+
+/// The width of the window's shadow at its sides (Linux CSD draws it inside the viewport).
+fn paddings_total(window: &Window) -> f32 {
+    let paddings = gpui_kit::component::window_paddings(window);
+    f32::from(paddings.left + paddings.right)
 }
 
 fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -> AnyElement {
@@ -2546,7 +2624,7 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
     // A split button: the icon (what was last used is done at once) and the ▼ (the menu) are two buttons side by side,
     // each with its own hover and click.
     if let (Some(menu), Some(quick), true) = (&b.menu, b.left_action(), enabled) {
-        let left = Button::new(SharedString::from(format!("{}-{index}", b.id)))
+        let left = probed(Button::new(SharedString::from(format!("{}-{index}", b.id))), SharedString::from(format!("{}-{index}", b.id)))
             .ghost()
             .xsmall()
             .h(px(28.))
@@ -2568,7 +2646,7 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
             )
             .on_click(listener(editor, quick));
         let (menu, editor) = (Rc::new(menu.clone()), editor.clone());
-        let right = action_button(SharedString::from(format!("{}-{index}-menu", b.id)))
+        let right = probed(action_button(SharedString::from(format!("{}-{index}-menu", b.id))), SharedString::from(format!("{}-{index}-menu", b.id)))
             .ghost()
             .xsmall()
             .h(px(28.))
@@ -2581,7 +2659,7 @@ fn tool_button(b: &ToolButton, index: usize, editor: &WeakEntity<SlideEditor>) -
         let right=if menu.iter().any(|e|matches!(e,MenuEntry::Palette(_))){ColorPaletteDropdown::from_palette(b.id,right,(*menu).clone(),&editor).into_any_element()}else{right.dropdown_menu(move|m,w,cx|fill_menu(m,&menu,&editor,w,cx)).into_any_element()};
         return h_flex().items_center().child(left).child(right).into_any_element();
     }
-    let button = Button::new(SharedString::from(format!("{}-{index}", b.id)))
+    let button = probed(Button::new(SharedString::from(format!("{}-{index}", b.id))), SharedString::from(format!("{}-{index}", b.id)))
         .ghost()
         .xsmall()
         .h(px(28.))
@@ -3295,7 +3373,7 @@ fn render_dropdown(
                                                         this.toolbar_search_open=None;this.toolbar_search_popup_items=None;
                                                         this.toolbar_search_selected.insert(id,None);cx.notify();
                                                     }).ok();
-                                                    let owner=ed_click.clone();let h=h.clone();window.defer(cx,move|w,cx|{owner.update(cx,|e,cx|h(e,w,cx)).ok();});
+                                                    let owner=ed_click.clone();let h=h.clone();window.defer(cx,move|w,cx|{owner.update(cx,|e,cx|dispatch(&h,e,w,cx)).ok();});
                                                 }
                                             };
                                             let has_left=reserve_left;
@@ -3806,7 +3884,7 @@ impl RenderOnce for ColorTextField {
             .w(px(14.))
             .h(px(14.))
             .rounded(px(2.))
-            .bg(crate::palette::doc(crate::cmyk::shown(c).0))
+            .bg(crate::palette::doc(c.0))
             .border_1()
             .border_color(rgb(BORDER)),
         None => div()
@@ -4230,11 +4308,7 @@ mod tests {
         assert!(!doc.is_dirty());
         let slide = doc.presentation().slides[0].id;
         let shape = doc.ids().new_shape_id();
-        doc.execute(vec![ibis_doc_model::Command::InsertShape {
-            slide,
-            index: 0,
-            shape: ibis_doc_model::Shape::text_box(shape, ibis_doc_model::EmuRect::new(0, 0, 100, 50), "a"),
-        }])
+        doc.execute(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(0, ibis_doc_model::Shape::text_box(shape, ibis_doc_model::EmuRect::new(0, 0, 100, 50), "a"))] }])
         .unwrap();
         assert!(doc.is_dirty());
         doc.mark_clean();

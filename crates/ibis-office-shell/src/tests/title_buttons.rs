@@ -6,7 +6,7 @@
 //! button by the one rule of the drop-down buttons (the right edges line up when the list does not fit), Alt+D opens it on Windows and
 //! Linux, the menu bar has no Draw, and a narrow window leaves the Draw button out first and then the comments button.
 use gpui_kit::*;
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 use super::{button_probe as buttons, Scenario};
 use crate::access_key;

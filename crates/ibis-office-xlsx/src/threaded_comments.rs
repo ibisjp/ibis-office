@@ -32,7 +32,7 @@ impl XlsxComments {
 
     fn set(editor: &mut SlideEditor, t: &ThreadedComment, thread: Option<ThreadedComment>) -> bool {
         let slide = editor.current_slide;
-        match editor.document.execute(vec![Command::Sheet(SheetCommand::SetThreadedComment { slide, row: t.row, column: t.column, thread })]) {
+        match editor.document.execute(vec![Command::Sheet(SheetCommand::SetThreadedComment { sheet: slide, row: t.row, column: t.column, thread })]) {
             Ok(_) => true,
             Err(err) => {
                 editor.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
@@ -187,12 +187,12 @@ impl SlideEditor {
         let mut commands: Vec<Command> = Vec::new();
         for c in &sheet.comments {
             if ranges.iter().any(|r| (r.first_row..=r.last_row).contains(&c.row) && (r.first_column..=r.last_column).contains(&c.column)) {
-                commands.push(Command::Sheet(SheetCommand::SetComment { slide, row: c.row, column: c.column, comment: None }));
+                commands.push(Command::Sheet(SheetCommand::SetComment { sheet: slide, row: c.row, column: c.column, comment: None }));
             }
         }
         for t in &sheet.threads {
             if ranges.iter().any(|r| (r.first_row..=r.last_row).contains(&t.row) && (r.first_column..=r.last_column).contains(&t.column)) {
-                commands.push(Command::Sheet(SheetCommand::SetThreadedComment { slide, row: t.row, column: t.column, thread: None }));
+                commands.push(Command::Sheet(SheetCommand::SetThreadedComment { sheet: slide, row: t.row, column: t.column, thread: None }));
             }
         }
         if commands.is_empty() {

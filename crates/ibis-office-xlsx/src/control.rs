@@ -128,16 +128,16 @@ impl SlideEditor {
                     if c.checked != 0 {
                         let mut off = (**c).clone();
                         off.checked = 0;
-                        commands.push(Command::Sheet(SheetCommand::EditControl { slide, shape: other.id, control: off }));
+                        commands.push(Command::Sheet(SheetCommand::EditControl { sheet: slide, shape: other.id, control: off }));
                     }
                 }
             }
             _ => {}
         }
-        commands.push(Command::Sheet(SheetCommand::EditControl { slide, shape, control: next }));
+        commands.push(Command::Sheet(SheetCommand::EditControl { sheet: slide, shape, control: next }));
         if let Some((text, value)) = link {
             if let Some((link_slide, range)) = resolve(self.presentation(), slide, &text) {
-                commands.push(Command::Sheet(SheetCommand::SetCells { slide: link_slide, edits: vec![CellEdit { row: range.first_row, column: range.first_column, input: CellInput::Value(value) }] }));
+                commands.push(Command::Sheet(SheetCommand::SetCells { sheet: link_slide, edits: vec![CellEdit { row: range.first_row, column: range.first_column, input: CellInput::Value(value) }] }));
             }
         }
         self.run_sheet(commands, cx);

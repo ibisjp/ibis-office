@@ -14,7 +14,7 @@ fn edges(id: &str) -> (f32, f32) {
 fn chart_pane() {
     let _probe = buttons::Probe::new();
     let mut s = Scenario::start_view();
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     for (cell, value) in [("A1", "x"), ("B1", "y"), ("A2", "1"), ("B2", "2")] {
         s.click_cell(cell);
         s.enter(value, "enter");
@@ -50,7 +50,7 @@ fn chart_pane() {
 /// (one definition of the corner radius, the padding and the hover colour).
 fn menu_bar_hover() {
     use crate::shell::menu_bar::MENU_BAR_BUTTON_HEIGHT;
-    for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Document, ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let _probe = buttons::Probe::new();
         let mut s = Scenario::start_view();
         s.update(|e, w, cx| e.new_file(kind, w, cx));
@@ -69,7 +69,7 @@ fn menu_bar_hover() {
 }
 /// The format's icon in the title bar is only a mark: it is not a button (the start window opens from the logo).
 fn title_icon_is_not_a_button() {
-    for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Document, ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let _probe = buttons::Probe::new();
         let mut s = Scenario::start_view();
         s.update(|e, w, cx| e.new_file(kind, w, cx));

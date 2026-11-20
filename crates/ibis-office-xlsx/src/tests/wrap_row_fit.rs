@@ -23,7 +23,7 @@ pub(super) fn long_text_grows_the_row() {
     let normal = s.size_pt("2");
     // Wrapping on, then a long text: the row grows by itself, and is not a fixed height.
     s.click_cell("B2");
-    s.update(|e, _, cx| e.format_cells(StyleChange::Wrap(true), cx));
+    s.update(|e, _, cx| e.format_cells(StyleChange::WrapText(true), cx));
     assert_eq!(s.size_pt("2"), normal, "an empty wrapping cell: the row stays");
     s.enter(LONG, "enter");
     let grown = s.size_pt("2");
@@ -47,11 +47,11 @@ pub(super) fn a_row_sized_by_hand_stays() {
     s.size(1200., 800.);
     s.update(|e, _, cx| {
         let slide = e.current_slide;
-        e.run_sheet(vec![Command::Sheet(SheetCommand::SetSize { slide, axis: Axis::Rows, first: 2, last: 2, size: 30 * EMU_PER_POINT })], cx);
+        e.run_sheet(vec![Command::Sheet(SheetCommand::SetSize { sheet: slide, axis: Axis::Rows, first: 2, last: 2, size: 30 * EMU_PER_POINT })], cx);
     });
     assert!(fixed(&mut s, 2));
     s.click_cell("B3");
-    s.update(|e, _, cx| e.format_cells(StyleChange::Wrap(true), cx));
+    s.update(|e, _, cx| e.format_cells(StyleChange::WrapText(true), cx));
     s.enter(LONG, "enter");
     assert_eq!(s.size_pt("3"), 30.0, "a height set by hand is not changed by the text");
     // Excel's 行の高さの自動調整 gives it back to the sheet: it fits, and the mark is gone.
@@ -69,7 +69,7 @@ pub(super) fn wrap_on_off_and_column_width() {
     s.enter(LONG, "enter");
     assert_eq!(s.size_pt("5"), normal, "not wrapping: one line");
     s.click_cell("C5");
-    s.update(|e, _, cx| e.format_cells(StyleChange::Wrap(true), cx));
+    s.update(|e, _, cx| e.format_cells(StyleChange::WrapText(true), cx));
     let wrapped = s.size_pt("5");
     assert!(wrapped > normal * 2.0, "wrapping turned on: {wrapped}");
     s.key("cmd-z");
@@ -87,7 +87,7 @@ pub(super) fn wrap_on_off_and_column_width() {
     assert_eq!(s.size_pt("5"), wrapped, "undo of the width gives the height back");
     // Wrapping off: the row shrinks back.
     s.click_cell("C5");
-    s.update(|e, _, cx| e.format_cells(StyleChange::Wrap(false), cx));
+    s.update(|e, _, cx| e.format_cells(StyleChange::WrapText(false), cx));
     assert_eq!(s.size_pt("5"), normal, "wrapping off: the default height");
 }
 
@@ -96,14 +96,14 @@ pub(super) fn hidden_lines_are_marked_in_the_headers() {
     s.size(1200., 800.);
     s.update(|e, _, cx| {
         let slide = e.current_slide;
-        let hide = |axis, first, last| Command::Sheet(SheetCommand::Hide { slide, axis, first, last, hidden: true });
+        let hide = |axis, first, last| Command::Sheet(SheetCommand::SetHidden { sheet: slide, axis, first, last, hidden: true });
         e.run_sheet(vec![hide(Axis::Rows, 2, 3), hide(Axis::Rows, 6, 6), hide(Axis::Columns, 1, 2), hide(Axis::Columns, 5, 5)], cx);
     });
     s.screenshot("hidden-middle");
     // Hidden from the first row and column.
     s.update(|e, _, cx| {
         let slide = e.current_slide;
-        let hide = |axis, first, last| Command::Sheet(SheetCommand::Hide { slide, axis, first, last, hidden: true });
+        let hide = |axis, first, last| Command::Sheet(SheetCommand::SetHidden { sheet: slide, axis, first, last, hidden: true });
         e.run_sheet(vec![hide(Axis::Rows, 0, 0), hide(Axis::Columns, 0, 0)], cx);
     });
     s.screenshot("hidden-first");

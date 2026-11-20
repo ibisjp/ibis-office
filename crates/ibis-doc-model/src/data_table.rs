@@ -47,7 +47,7 @@ pub fn values(presentation: &Presentation, slide: SlideId, table: &DataTable) ->
                 (None, None) => return Vec::new(),
             };
             let edits = sets.into_iter().map(|((row, column), v)| CellEdit { row, column, input: CellInput::Value(v.clone()) }).collect();
-            let value = match doc.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits })]) {
+            let value = match doc.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })]) {
                 Ok(()) => doc.presentation().slide(slide).and_then(crate::sheet_calc::sheet_of_slide).and_then(|s| s.cell(formula.0, formula.1)).map_or(CellValue::Empty, |c| c.value.clone()),
                 Err(_) => CellValue::Error(crate::sheet::CellError::Value),
             };
@@ -83,7 +83,7 @@ mod tests {
 
     fn set(d: &mut Document, slide: SlideId, cells: &[(u32, u32, CellInput)]) {
         let edits = cells.iter().map(|(row, column, input)| CellEdit { row: *row, column: *column, input: input.clone() }).collect();
-        d.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits })]).unwrap();
+        d.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })]).unwrap();
     }
 
     fn n(v: f64) -> CellInput {
@@ -100,7 +100,7 @@ mod tests {
         // Inputs F1 (row) and F2 (column); the formula in the corner A3; values across B3:D3 and down A4:A5.
         set(&mut d, s, &[(0, 5, n(0.0)), (1, 5, n(0.0)), (2, 0, CellInput::Formula("F1*10+F2".into())), (2, 1, n(1.0)), (2, 2, n(2.0)), (2, 3, n(3.0)), (3, 0, n(1.0)), (4, 0, n(2.0))]);
         let table = DataTable { range: CellRange { first_row: 3, last_row: 4, first_column: 1, last_column: 3 }, row_input: Some((0, 5)), column_input: Some((1, 5)) };
-        d.execute(vec![Command::Sheet(SheetCommand::SetDataTable { slide: s, table: table.clone() })]).unwrap();
+        d.execute(vec![Command::Sheet(SheetCommand::SetDataTable { sheet: s, table: table.clone() })]).unwrap();
         for (row, column, v) in [(3, 1, 11.0), (3, 2, 21.0), (3, 3, 31.0), (4, 1, 12.0), (4, 2, 22.0), (4, 3, 32.0)] {
             assert_eq!(at(&d, s, row, column), CellValue::Number(v), "{row},{column}");
         }
@@ -110,7 +110,7 @@ mod tests {
         set(&mut d, s, &[(2, 1, n(7.0))]);
         assert_eq!(at(&d, s, 3, 1), CellValue::Number(71.0));
         // A result is not changed on its own.
-        assert!(d.execute(vec![Command::Sheet(SheetCommand::SetCells { slide: s, edits: vec![CellEdit { row: 3, column: 1, input: n(1.0) }] })]).is_err());
+        assert!(d.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: s, edits: vec![CellEdit { row: 3, column: 1, input: n(1.0) }] })]).is_err());
         assert!(d.undo());
         assert_eq!(at(&d, s, 3, 1), CellValue::Number(11.0));
         assert!(d.undo());
@@ -123,12 +123,12 @@ mod tests {
         // A column input: the values down A4:A6, the formulas across B3:C3.
         set(&mut d, s, &[(0, 5, n(0.0)), (2, 1, CellInput::Formula("F1*2".into())), (2, 2, CellInput::Formula("F1+100".into())), (3, 0, n(1.0)), (4, 0, n(2.0)), (5, 0, n(3.0))]);
         let by_column = DataTable { range: CellRange { first_row: 3, last_row: 5, first_column: 1, last_column: 2 }, row_input: None, column_input: Some((0, 5)) };
-        d.execute(vec![Command::Sheet(SheetCommand::SetDataTable { slide: s, table: by_column })]).unwrap();
+        d.execute(vec![Command::Sheet(SheetCommand::SetDataTable { sheet: s, table: by_column })]).unwrap();
         assert_eq!((at(&d, s, 3, 1), at(&d, s, 5, 1), at(&d, s, 4, 2)), (CellValue::Number(2.0), CellValue::Number(6.0), CellValue::Number(102.0)));
         // A row input: the values along E9:G9, the formulas down D10:D11.
         set(&mut d, s, &[(8, 4, n(1.0)), (8, 5, n(2.0)), (8, 6, n(3.0)), (9, 3, CellInput::Formula("F1*F1".into())), (10, 3, CellInput::Formula("-F1".into()))]);
         let by_row = DataTable { range: CellRange { first_row: 9, last_row: 10, first_column: 4, last_column: 6 }, row_input: Some((0, 5)), column_input: None };
-        d.execute(vec![Command::Sheet(SheetCommand::SetDataTable { slide: s, table: by_row })]).unwrap();
+        d.execute(vec![Command::Sheet(SheetCommand::SetDataTable { sheet: s, table: by_row })]).unwrap();
         assert_eq!((at(&d, s, 9, 6), at(&d, s, 10, 5)), (CellValue::Number(9.0), CellValue::Number(-2.0)));
     }
 
@@ -137,12 +137,12 @@ mod tests {
         let (mut d, s) = book();
         set(&mut d, s, &[(0, 5, n(0.0)), (1, 5, n(0.0)), (2, 0, CellInput::Formula("F1*10+F2".into())), (2, 1, n(1.0)), (2, 2, n(2.0)), (2, 3, n(3.0)), (3, 0, n(1.0)), (4, 0, n(2.0))]);
         let table = DataTable { range: CellRange { first_row: 3, last_row: 4, first_column: 1, last_column: 3 }, row_input: Some((0, 5)), column_input: Some((1, 5)) };
-        d.execute(vec![Command::Sheet(SheetCommand::SetDataTable { slide: s, table })]).unwrap();
+        d.execute(vec![Command::Sheet(SheetCommand::SetDataTable { sheet: s, table })]).unwrap();
 
         // Insert 1 row at row 0 and 1 column at column 0 -> table shifts to (4..=5, 2..=4), inputs to (1, 6) and (2, 6).
         d.execute(vec![
-            Command::Sheet(SheetCommand::Insert { slide: s, axis: crate::sheet_command::Axis::Rows, at: 0, count: 1 }),
-            Command::Sheet(SheetCommand::Insert { slide: s, axis: crate::sheet_command::Axis::Columns, at: 0, count: 1 }),
+            Command::Sheet(SheetCommand::Insert { sheet: s, axis: crate::sheet_command::Axis::Rows, at: 0, count: 1 }),
+            Command::Sheet(SheetCommand::Insert { sheet: s, axis: crate::sheet_command::Axis::Columns, at: 0, count: 1 }),
         ])
         .unwrap();
         let sheet = crate::sheet_calc::sheet_of_slide(d.presentation().slide(s).unwrap()).unwrap();
@@ -156,7 +156,7 @@ mod tests {
 
         // Move the input cells from G2:G3 ((1,6)..=(2,6)) to H2:H3 ((1,7)..=(2,7)).
         d.execute(vec![Command::Sheet(SheetCommand::MoveCells {
-            slide: s,
+            sheet: s,
             from: CellRange { first_row: 1, last_row: 2, first_column: 6, last_column: 6 },
             row: 1,
             column: 7,

@@ -42,6 +42,13 @@ pub enum InfoBarKind {
     CmykProfileHint,
     /// Every screen: the file was made with an ICC profile this PC does not have.
     CmykProfileMissing,
+    /// Every screen: the file has digital signatures (editing and saving removes them). The button shows what they are.
+    DigitalSignature,
+    /// Every screen: the host that embeds the editor says the document is read-only (the file is open for somebody else, no permission, ...).
+    /// The words are the host's (`host.read_only`); the button is 名前を付けて保存, which opens the host's file window.
+    HostReadOnly,
+    /// Every screen: a notice of the host (`notify`: no connection to the server, the lock was lost, ...); the words are the host's.
+    HostNotice,
 }
 
 /// What one button of a bar does.
@@ -66,6 +73,10 @@ impl InfoBarKind {
     /// The bar's buttons from the left: (button id, label key, what it does). A bar with one button has the one `spec` gives.
     fn buttons(self, first: (&'static str, &'static str)) -> Vec<(&'static str, &'static str, InfoBarAction)> {
         match self {
+            // The words are the host's; there is nothing to press.
+            InfoBarKind::HostNotice => Vec::new(),
+            // 名前を付けて保存 only where the host gave the file window and the save-as.
+            InfoBarKind::HostReadOnly if !(crate::host::capabilities().list_folder && crate::host::capabilities().save_file_as) => Vec::new(),
             InfoBarKind::CmykProfileHint => vec![
                 (first.0, first.1, InfoBarAction::ChooseProfile),
                 ("infobar-btn-cmyk-source", "shell.infobar.cmyk.source", InfoBarAction::OpenProfileSource),
@@ -86,6 +97,9 @@ impl InfoBarKind {
             InfoBarKind::LegacyFormat => ("xlsx-infobar-legacy", "infobar-btn-convert-legacy", "xlsx.infobar.legacy.title", "xlsx.infobar.legacy.message", "xlsx.infobar.legacy.convert"),
             InfoBarKind::CmykProfileHint => ("infobar-cmyk-hint", "infobar-btn-cmyk-choose", "shell.infobar.cmyk.title", "shell.infobar.cmyk.hint.message", "shell.infobar.cmyk.choose"),
             InfoBarKind::CmykProfileMissing => ("infobar-cmyk-missing", "infobar-btn-cmyk-choose", "shell.infobar.cmyk.title", "shell.infobar.cmyk.missing.message", "shell.infobar.cmyk.choose-short"),
+            InfoBarKind::DigitalSignature => ("infobar-signature", "infobar-btn-signature-inspect", "shell.infobar.signature.title", "shell.infobar.signature.message", "shell.infobar.signature.inspect"),
+            InfoBarKind::HostReadOnly => ("host-infobar-readonly", "infobar-btn-host-save-as", "shell.infobar.host.readonly.title", "shell.infobar.host.readonly.message", "shell.infobar.host.save-as"),
+            InfoBarKind::HostNotice => ("host-infobar-notice", "infobar-btn-host-notice", "shell.infobar.host.notice.title", "shell.infobar.host.notice.message", "shell.infobar.host.notice.title"),
             InfoBarKind::ProtectReadOnly => ("docx-infobar-protected-readonly", "infobar-btn-stop-protection", "docx.infobar.protect.readonly.title", "docx.infobar.protect.readonly.message", "docx.infobar.protect.stop"),
             InfoBarKind::ProtectComments => ("docx-infobar-protected-comments", "infobar-btn-stop-protection", "docx.infobar.protect.comments.title", "docx.infobar.protect.comments.message", "docx.infobar.protect.stop"),
             InfoBarKind::ProtectForms => ("docx-infobar-protected-forms", "infobar-btn-stop-protection", "docx.infobar.protect.forms.title", "docx.infobar.protect.forms.message", "docx.infobar.protect.stop"),
@@ -112,7 +126,7 @@ impl SlideEditor {
         let Some(wb) = self.presentation().workbook.as_deref() else { return };
         let mut properties = wb.properties.clone();
         properties.custom.retain(|p| p.name != "_MarkAsFinal");
-        if let Err(err) = self.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetDocProperties(properties))]) {
+        if let Err(err) = self.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetDocumentProperties(properties))]) {
             log::warn!("edit anyway rejected: {err}");
         }
         cx.notify();
@@ -131,6 +145,17 @@ impl SlideEditor {
         if self.is_modify_locked() {
             return Some(InfoBarKind::ModifyPassword);
         }
+        // The host's words come before the file's own bars: a notice of the host (it changes while the document is open), then read-only.
+        if !self.host.notices.is_empty() {
+            return Some(InfoBarKind::HostNotice);
+        }
+        if self.host.read_only.is_some() {
+            return Some(InfoBarKind::HostReadOnly);
+        }
+        // The file's digital signatures come before the bars of the format: they are what an edit loses.
+        if self.signature.present {
+            return Some(InfoBarKind::DigitalSignature);
+        }
         with_format!(self, infobar_kind(self))
     }
 
@@ -142,7 +167,20 @@ impl SlideEditor {
         if let Some(suffix) = with_format!(self, infobar_title_suffix(self, kind)) {
             title = format!("{} ({})", title, suffix).into();
         }
-        let message: SharedString = if kind == InfoBarKind::CmykProfileMissing {
+        // The host's bars: its own words (the notice of the highest level; the read-only reason, or the editor's own words).
+        let host_notice = self.host_notice_shown();
+        if let Some(notice) = host_notice.as_ref().filter(|_| kind == InfoBarKind::HostNotice) {
+            title = crate::i18n::text(match notice.level {
+                crate::host_editor::HostNoticeLevel::Error => "shell.infobar.host.notice.error",
+                crate::host_editor::HostNoticeLevel::Warn => "shell.infobar.host.notice.warn",
+                crate::host_editor::HostNoticeLevel::Info => "shell.infobar.host.notice.info",
+            });
+        }
+        let message: SharedString = if kind == InfoBarKind::HostNotice {
+            host_notice.map(|n| SharedString::from(n.message)).unwrap_or_default()
+        } else if kind == InfoBarKind::HostReadOnly {
+            self.host.read_only.clone().flatten().filter(|m| !m.is_empty()).map(SharedString::from).unwrap_or_else(|| crate::i18n::text(message_key))
+        } else if kind == InfoBarKind::CmykProfileMissing {
             crate::i18n::format(message_key, &[("name", &self.presentation().cmyk.profile.clone().unwrap_or_default())]).into()
         } else {
             crate::i18n::text(message_key)
@@ -217,6 +255,10 @@ impl SlideEditor {
             InfoBarKind::ModifyPassword => self.ask_modify_password_to_unlock(window, cx),
             // The model is already the current format; saving it under a new name (.xlsx / .pptx) makes it so.
             InfoBarKind::LegacyFormat => self.save_as_then(window, cx, |_, _, _| {}),
+            // 名前を付けて保存 of the host's read-only bar: the file window, to save a copy of its own.
+            InfoBarKind::HostReadOnly => self.open_host_file_dialog(crate::host_file_dialog::Mode::SaveAs, None, window, cx),
+            InfoBarKind::HostNotice => {}
+            InfoBarKind::DigitalSignature => self.show_signature_report(cx),
             InfoBarKind::CmykProfileHint | InfoBarKind::CmykProfileMissing => {}
             _ => with_format!(self, infobar_action(self, kind, window, cx)),
         }

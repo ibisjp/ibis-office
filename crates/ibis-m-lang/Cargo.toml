@@ -1,0 +1,9 @@
+[package]
+name = "ibis-m-lang"
+description = "A small interpreter of the Power Query M language for ibisOffice: lexer, parser, lazy evaluator, values and built-in functions (UI-independent, no dependencies)."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]

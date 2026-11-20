@@ -22,7 +22,6 @@ use crate::chrome::virtual_table::{TableColumn, TableRow};
 use crate::chrome::{
     BORDER, Dropdown, DropdownItem, FontDropdown, MenuEntry, MenuItem, SELECTED_ROW_BG, SidebarPanel, TEXT, action_button, checkbox_button, dropdown_row, icon, panel_note, section_heading,
 };
-#[cfg(not(target_family = "wasm"))]
 use crate::chrome::control_row;
 use crate::editor::SlideEditor;
 use crate::i18n::{self, Language, LanguageSetting, text};
@@ -30,13 +29,19 @@ use crate::icons::Material;
 use crate::palette::rgb;
 
 /// The categories on the left (the ids of their names).
-const CATEGORIES: [&str; 6] = ["settings.general", "settings.save", "settings.trust", "settings.qat", "settings.cmyk", "settings.spreadsheet"];
+const CATEGORIES: [&str; 8] =
+    ["settings.general", "settings.save", "settings.trust", "settings.qat", "settings.cmyk", "settings.document", "settings.spreadsheet", "settings.presentation"];
+/// The categories from this one on are the formats' (the others are the whole app's): the list leaves a gap before them.
+const FIRST_FORMAT_CATEGORY: usize = 5;
 /// The index of クイック アクセス ツール バー in [`CATEGORIES`].
 pub(crate) const CATEGORY_QAT: usize = 3;
 /// The index of CMYK のプロファイル in [`CATEGORIES`].
 pub const CATEGORY_CMYK: usize = 4;
 /// The index of スプレッドシート in [`CATEGORIES`].
-pub(crate) const CATEGORY_SPREADSHEET: usize = 5;
+pub const CATEGORY_SPREADSHEET: usize = 6;
+/// The index of ドキュメント and of プレゼンテーション.
+pub(crate) const CATEGORY_DOCUMENT: usize = 5;
+pub(crate) const CATEGORY_PRESENTATION: usize = 7;
 
 /// The key of the left pane's width (px) in the app's settings file; an absent or unreadable value is [`NAV_WIDTH_DEFAULT`].
 pub(crate) const NAV_WIDTH_KEY: &str = "settings.nav-width";
@@ -46,12 +51,6 @@ pub(crate) const NAV_WIDTH_MAX: f32 = 320.;
 /// The dialog's size when it opens (it can be moved and resized as the common dialogs are).
 pub(crate) const DIALOG_WIDTH: f32 = 720.;
 pub(crate) const DIALOG_HEIGHT: f32 = 480.;
-/// The id of the add menu's list (the common searchable list), its width and the most rows it shows.
-const ADD_MENU_ID: &str = "settings-qat-add-menu";
-const ADD_MENU_WIDTH: f32 = 320.;
-const ADD_MENU_ROWS: usize = 10;
-/// The gap the common popover leaves between its anchor and the popup.
-const POPOVER_OFFSET: f32 = 6.;
 
 /// The left pane's width kept in the settings file, within its limits.
 pub(crate) fn nav_width() -> f32 {
@@ -71,8 +70,8 @@ pub struct SettingsDialog {
     pub(crate) nav_width: f32,
     /// The splitter being dragged: where the pointer was (x) and the width then.
     pub(crate) nav_drag: Option<(f32, f32)>,
-    /// The scroll and the row drag of the quick access table.
-    pub(crate) qat_list: ListState,
+    /// ツールバーのカスタマイズ while it is open (it is drawn instead of the settings).
+    pub(crate) customize: Option<crate::toolbar_customize::ToolbarCustomize>,
     /// The CMYK profiles found in the OS's places (scanned when the category is first shown), and what the last choice said.
     pub cmyk_found: Option<Vec<crate::cmyk_profile::ProfileInfo>>,
     pub(crate) cmyk_message: Option<SharedString>,
@@ -143,7 +142,7 @@ pub fn links_warning_enabled() -> bool {
 }
 
 /// The key of 数式バーの英数フォント (GitHub issue #149): the family the formula bar's text is drawn in; absent or empty is the app's font.
-pub(crate) const FORMULA_BAR_FONT_KEY: &str = "sheet.formula-bar-font";
+pub(crate) const FORMULA_BAR_FONT_KEY: &str = "xlsx.formula-bar.font";
 
 /// The family chosen for the formula bar's text, if one is.
 pub fn formula_bar_font() -> Option<String> {
@@ -154,27 +153,55 @@ pub fn formula_bar_font() -> Option<String> {
 /// draws every window again. The first item, 既定（アプリの書体）, takes the setting off (the formula bar is drawn in the app's font, `app_font`),
 /// and is what the button shows while no font is chosen (not the app font's internal name) (GitHub issue #149).
 pub(crate) fn formula_bar_font_menu(app_font: String) -> (String, Vec<MenuEntry>) {
-    let chosen = formula_bar_font();
-    let default_label = text("settings.spreadsheet.formula-bar-font-default");
+    font_setting_menu(FORMULA_BAR_FONT_KEY, "settings-formula-bar-font", "settings-formula-bar-font-default", text("settings.spreadsheet.formula-bar-font-default"), app_font)
+}
+
+/// The font list of a font setting kept under `key` (see [`formula_bar_font_menu`]); `default_label` is the first item, which takes the
+/// setting off, and `app_font` the family that also means "off".
+pub(crate) fn font_setting_menu(key: &'static str, id: &'static str, default_id: &'static str, default_label: SharedString, app_font: String) -> (String, Vec<MenuEntry>) {
+    let chosen = crate::settings::get(key).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let current = chosen.clone().unwrap_or_else(|| default_label.to_string());
-    let default_item: MenuEntry = MenuItem::new("settings-formula-bar-font-default", default_label)
+    let default_item: MenuEntry = MenuItem::new(default_id, default_label)
         .checked(chosen.is_none())
-        .on(|_, _, cx| {
-            crate::settings::remove(FORMULA_BAR_FONT_KEY);
+        .on(move |_, _, cx| {
+            crate::settings::remove(key);
             cx.refresh_windows();
             cx.notify();
         })
         .into();
-    let entries = crate::font_list::build_font_menu_entries("settings-formula-bar-font", vec![default_item], chosen.as_deref(), move |name, _, _, cx| {
+    let entries = crate::font_list::build_font_menu_entries(id, vec![default_item], chosen.as_deref(), move |name, _, _, cx| {
         if name == app_font {
-            crate::settings::remove(FORMULA_BAR_FONT_KEY);
+            crate::settings::remove(key);
         } else {
-            crate::settings::set(FORMULA_BAR_FONT_KEY, name);
+            crate::settings::set(key, name);
         }
         cx.refresh_windows();
         cx.notify();
     });
     (current, entries)
+}
+
+/// The keys of the font a text file (.csv, .tsv, .txt) is shown in when it is opened (GitHub issue #243): the family and the size in points.
+/// Absent is the usual (游ゴシック, 12 pt).
+pub(crate) const CSV_FONT_KEY: &str = "xlsx.csv.font";
+pub(crate) const CSV_FONT_SIZE_KEY: &str = "xlsx.csv.font-size";
+/// The usual size of a text file's cells, and the limits of the size that can be chosen.
+pub(crate) const CSV_FONT_SIZE_DEFAULT: f32 = 12.;
+const CSV_FONT_SIZE_RANGE: (f32, f32) = (1., 409.);
+
+/// The size chosen for a text file's cells (points), within its limits.
+pub fn csv_cell_pt() -> f32 {
+    crate::settings::get(CSV_FONT_SIZE_KEY).and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| v.is_finite()).map_or(CSV_FONT_SIZE_DEFAULT, |v| v.clamp(CSV_FONT_SIZE_RANGE.0, CSV_FONT_SIZE_RANGE.1))
+}
+
+/// The font a text file is opened in: `None` while neither the family nor the size is chosen (the usual font, no extra work on open).
+pub fn csv_font() -> Option<ibis_formats::csv::CsvFont> {
+    let name = crate::settings::get(CSV_FONT_KEY).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let size = crate::settings::get(CSV_FONT_SIZE_KEY).is_some();
+    if name.is_none() && !size {
+        return None;
+    }
+    Some(ibis_formats::csv::CsvFont { name: name.unwrap_or_else(|| ibis_formats::csv::DEFAULT_FONT.to_string()), size_pt: csv_cell_pt() })
 }
 
 /// The key of スクロール バーを常に表示: on when `1` (on by default; an explicitly saved 0 still means hover).
@@ -202,7 +229,7 @@ pub(crate) fn apply_scrollbar_mode_only(cx: &mut App) {
 impl SlideEditor {
     /// Show the settings dialog (modal) with the category `category` selected.
     pub fn open_settings(&mut self, category: usize, _window: &mut Window, cx: &mut Context<Self>) {
-        self.settings = Some(SettingsDialog { category: category.min(CATEGORIES.len() - 1), nav_width: nav_width(), nav_drag: None, qat_list: ListState::default(), cmyk_found: None, cmyk_message: None });
+        self.settings = Some(SettingsDialog { category: category.min(CATEGORIES.len() - 1), nav_width: nav_width(), nav_drag: None, customize: None, cmyk_found: None, cmyk_message: None });
         self.sidebar_open = true;
         self.dialog.bounds = None;
         self.dialog.drag = None;
@@ -223,6 +250,7 @@ impl SlideEditor {
             let selected = i == category;
             div()
                 .id(("settings-category", i))
+                .when(i == FIRST_FORMAT_CATEGORY, |d| d.mt(px(10.)))
                 .px(px(8.))
                 .py(px(5.))
                 .rounded(px(4.))
@@ -241,12 +269,14 @@ impl SlideEditor {
             0 => self.settings_scrolled(self.settings_general(&editor, cx)),
             1 => self.settings_scrolled(self.settings_saving(cx)),
             2 => self.settings_scrolled(self.settings_trust(cx)),
+            CATEGORY_DOCUMENT => self.settings_scrolled(self.settings_toolbar_page(CATEGORY_DOCUMENT, "docx", cx)),
+            CATEGORY_PRESENTATION => self.settings_scrolled(self.settings_toolbar_page(CATEGORY_PRESENTATION, "pptx", cx)),
             CATEGORY_SPREADSHEET => self.settings_scrolled(self.settings_spreadsheet(cx)),
             CATEGORY_CMYK => {
                 let (found, message) = self.settings.as_ref().map(|s| (s.cmyk_found.clone().unwrap_or_default(), s.cmyk_message.clone())).unwrap_or_default();
                 self.settings_scrolled(self.cmyk_profile_controls(&found, message, cx))
             }
-            _ => self.settings_quick_access(&editor, cx),
+            _ => self.settings_scrolled(self.settings_qat_page(cx)),
         };
         let body = div()
             .relative()
@@ -254,7 +284,7 @@ impl SlideEditor {
             .text_sm()
             .text_color(rgb(TEXT))
             .child(h_flex().size_full().items_stretch().child(nav).child(settings_splitter(&editor, cx)).child(v_flex().flex_1().min_w_0().h_full().child(detail)))
-            .when(category == CATEGORY_QAT, |d| d.child(self.settings_add_menu(&editor, cx)));
+;
         Some(SidebarPanel { title: text("settings.title"), body: body.into_any_element() })
     }
 
@@ -295,10 +325,49 @@ impl SlideEditor {
     /// スプレッドシート: the formula bar's font.
     fn settings_spreadsheet(&self, cx: &mut Context<Self>) -> Div {
         let (current, entries) = formula_bar_font_menu(cx.theme().font_family.to_string());
+        let (csv_current, csv_entries) = font_setting_menu(CSV_FONT_KEY, "settings-csv-font", "settings-csv-font-default", text("settings.spreadsheet.csv-font-default"), String::new());
         v_flex()
             .gap_2()
             .child(dropdown_row(text("settings.spreadsheet.formula-bar-font"), FontDropdown::new("settings-formula-bar-font", &current, entries, 0, &cx.weak_entity()).fill_width()))
             .child(panel_note(text("settings.spreadsheet.formula-bar-font-note")))
+            .child(section_heading(text("settings.spreadsheet.csv")))
+            .child(dropdown_row(text("settings.spreadsheet.csv-font"), FontDropdown::new("settings-csv-font", &csv_current, csv_entries, 0, &cx.weak_entity()).fill_width()))
+            .child(control_row(
+                text("settings.spreadsheet.csv-font-size"),
+                crate::chrome::number_stepper("settings-csv-font-size", csv_cell_pt(), cx, |_, size, _, cx| {
+                    crate::settings::set(CSV_FONT_SIZE_KEY, &format!("{}", (size * 10.).round() / 10.));
+                    cx.notify();
+                })
+                .range(CSV_FONT_SIZE_RANGE.0, CSV_FONT_SIZE_RANGE.1)
+                .step(1.)
+                .decimals(1)
+                .unit(text("settings.spreadsheet.csv-font-size-unit")),
+            ))
+            .child(panel_note(text("settings.spreadsheet.csv-note")))
+            .child(self.settings_toolbar_section("xlsx", cx))
+    }
+
+    /// ドキュメント and プレゼンテーション: the format's settings, so far the toolbar's.
+    fn settings_toolbar_page(&self, _category: usize, ext: &'static str, cx: &mut Context<Self>) -> Div {
+        v_flex().gap_2().child(self.settings_toolbar_section(ext, cx))
+    }
+
+    /// The toolbar's section of a format's page: the button that opens ツールバーのカスタマイズ, and whether the toolbar is the
+    /// format's own or customized.
+    fn settings_toolbar_section(&self, ext: &'static str, cx: &mut Context<Self>) -> Div {
+        let state = if crate::toolbar_customize::is_customized(ext) { text("settings.toolbar.customized") } else { text("settings.toolbar.default") };
+        v_flex()
+            .gap_2()
+            .mt_2()
+            .child(section_heading(text("settings.toolbar")))
+            .child(panel_note(text("settings.toolbar.note")))
+            .child(
+                h_flex()
+                    .gap_3()
+                    .items_center()
+                    .child(action_button(SharedString::from(format!("settings-toolbar-customize-{ext}"))).label(text("settings.toolbar.customize")).on_click(cx.listener(move |e, _, window, cx| e.open_toolbar_customize(ext, window, cx))))
+                    .child(panel_note(state)),
+            )
     }
 
     /// 保存: AutoRecover, and the backup copy of a workbook saved over.
@@ -363,126 +432,19 @@ impl SlideEditor {
             .child(panel_note(text("settings.trust.macros-note")))
     }
 
-    /// クイック アクセス ツール バー: the commands of the title row, a table dragged to reorder, with 追加 at its top right.
-    fn settings_quick_access(&mut self, editor: &WeakEntity<SlideEditor>, cx: &mut Context<Self>) -> AnyElement {
-        let chosen = crate::qat::commands();
-        let menus = self.menus();
-        let list = self.settings.as_ref().map(|s| s.qat_list.clone()).unwrap_or_default();
-        // The name and the icon of a command are the menus' (the registry of the open document's commands); a command only another
-        // kind of document has is shown by its id's name, with room for the icon kept.
-        let rows: Rc<Vec<(String, SharedString, Option<&'static str>)>> = Rc::new(
-            chosen
-                .iter()
-                .map(|id| match crate::chrome::quick_access_item(&menus, id) {
-                    Some(item) => (id.clone(), item.label.clone(), item.icon.filter(|n| !n.is_empty())),
-                    None => (id.clone(), text(id), None),
-                })
-                .collect(),
-        );
-        let count = rows.len();
-        let build = {
-            let (rows, editor) = (rows.clone(), editor.clone());
-            move |range: std::ops::Range<usize>, _: &mut Window, _: &mut App| -> Vec<TableRow> {
-                range
-                    .filter_map(|i| rows.get(i).map(|r| (i, r)))
-                    .map(|(i, (id, label, icon_name))| {
-                        let name = h_flex()
-                            .gap(px(8.))
-                            .items_center()
-                            .min_w_0()
-                            .child(div().w(px(20.)).flex_none().children(icon_name.map(|n| icon(n, 18., rgb(TEXT).into()))))
-                            .child(div().flex_1().min_w_0().truncate().child(label.clone()))
-                            .into_any_element();
-                        let (editor, id) = (editor.clone(), id.clone());
-                        TableRow::new(vec![name])
-                            .draggable(i as u64, label.clone())
-                            .drop_between(i as u64)
-                            .action("settings-qat-delete", "delete", text("settings.qat.remove"), move |_, _, cx| {
-                                crate::qat::remove(&id);
-                                cx.refresh_windows();
-                                let _ = editor.update(cx, |_, cx| cx.notify());
-                            })
-                    })
-                    .collect()
-            }
-        };
-        let table = DataTable::reorder_list("settings-qat-table", vec![TableColumn::flex("command")], vec![div().into_any_element()], &list, count, build, |_, from, to, _, cx| {
-            if crate::qat::move_to(from, to) {
-                cx.refresh_windows();
-            }
-            cx.notify();
-        }, cx)
-        .row_actions(1)
-        .headerless()
-        .empty(panel_note(text("settings.qat.empty")).p_3().into_any_element());
-        let add = action_button("settings-qat-add").small().icon(Icon::new(Material("add"))).label(text("settings.qat.add")).on_click(cx.listener(|e, _, window, cx| e.open_settings_add_menu(window, cx)));
-        let reset = action_button("settings-qat-reset").small().label(text("settings.qat.reset")).on_click(cx.listener(|_, _, _, cx| {
-            crate::qat::reset();
-            cx.refresh_windows();
-            cx.notify();
-        }));
+    /// クイック アクセス ツール バー: the commands of the title row, chosen in ツールバーのカスタマイズ (one order for every format).
+    fn settings_qat_page(&self, cx: &mut Context<Self>) -> Div {
+        let state = if crate::qat::commands().is_empty() { text("settings.toolbar.default") } else { text("settings.toolbar.customized") };
         v_flex()
-            .size_full()
             .gap_2()
             .child(panel_note(text("settings.qat.note")))
-            .child(h_flex().items_center().justify_between().child(section_heading(text("settings.qat.order"))).child(h_flex().gap_2().child(add).child(reset)))
-            .child(div().id("settings-qat-table-host").w_full().flex_1().min_h_0().child(table))
-            .into_any_element()
-    }
-
-    /// The commands the add menu offers: every candidate not in the row yet, named and drawn as the menus have it (the icon is the
-    /// menus' too), added at the end of the row by the click or by Enter.
-    pub(crate) fn settings_add_items(&self) -> Vec<MenuItem> {
-        let chosen = crate::qat::commands();
-        let menus = self.menus();
-        crate::qat::CANDIDATES
-            .iter()
-            .filter(|id| !chosen.iter().any(|c| c == *id))
-            .map(|id| {
-                let id: &'static str = id;
-                let mut item = match crate::chrome::quick_access_item(&menus, id) {
-                    Some(found) => {
-                        let item = MenuItem::new(id, found.label.clone());
-                        match found.icon.filter(|n| !n.is_empty()) {
-                            Some(name) => item.icon(name),
-                            None => item,
-                        }
-                    }
-                    None => MenuItem::new(id, text(id)),
-                };
-                item.handler = Some(Rc::new(move |_, _, cx| {
-                    crate::qat::add(id);
-                    cx.refresh_windows();
-                    cx.notify();
-                }));
-                item
-            })
-            .collect()
-    }
-
-    /// 追加: open the common searchable menu over the commands not in the row.
-    fn open_settings_add_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let items = self.settings_add_items();
-        self.open_searchable_list(ADD_MENU_ID, items, ListSpec { always_search: true, rows: Some(ADD_MENU_ROWS) }, window, cx);
-    }
-
-    /// The common searchable list (`Dropdown`, the menu search's list) of the add menu, with its anchor in the dialog's middle: the
-    /// list opens below its anchor, which is put so that the list (the search field and `ADD_MENU_ROWS` rows at most) is centred
-    /// vertically and horizontally in the dialog. The dialog's own button is the add button; the anchor is nothing to click.
-    fn settings_add_menu(&self, editor: &WeakEntity<SlideEditor>, _cx: &mut Context<Self>) -> Div {
-        let items = self.settings_add_items();
-        let rows = items.len().clamp(1, ADD_MENU_ROWS) as f32;
-        // The search field (a button's height and its frame) and the rows, in a frame.
-        let height = crate::chrome::BUTTON_HEIGHT + 2. + rows * crate::chrome::dropdown_row_height(ADD_MENU_ID) + 2.;
-        let bounds = self.dialog.bounds.map_or((DIALOG_WIDTH, DIALOG_HEIGHT), |b| (f32::from(b.size.width), f32::from(b.size.height)));
-        // The body starts under the title (44 px), inside the frame (1 px) and the body's padding.
-        let (inset_x, inset_y) = (1. + crate::chrome::FORM_PADDING, 1. + 44. + crate::chrome::FORM_PADDING);
-        let left = bounds.0 / 2. - inset_x - ADD_MENU_WIDTH / 2.;
-        // The popup stands 6 px below its anchor (the common popover's offset, forks/gpui-component/src/popover.rs).
-        let top = bounds.1 / 2. - inset_y - height / 2. - POPOVER_OFFSET;
-        let anchor = gpui_kit::component::button::Button::new("settings-qat-add-anchor").w(px(0.)).h(px(0.)).p_0();
-        let entries: Vec<MenuEntry> = items.into_iter().map(MenuEntry::from).collect();
-        div().absolute().left(px(left)).top(px(top)).child(Dropdown::with_button(ADD_MENU_ID, anchor, entries, false, 0, editor).list_width(ListWidth::Fixed(px(ADD_MENU_WIDTH))))
+            .child(
+                h_flex()
+                    .gap_3()
+                    .items_center()
+                    .child(action_button("settings-qat-customize").label(text("settings.qat.customize")).on_click(cx.listener(|e, _, window, cx| e.open_toolbar_customize("qat", window, cx))))
+                    .child(panel_note(state)),
+            )
     }
 }
 

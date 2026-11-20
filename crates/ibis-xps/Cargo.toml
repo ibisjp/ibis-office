@@ -1,0 +1,13 @@
+[package]
+name = "ibis-xps"
+description = "Pure-Rust XPS / OpenXPS (ECMA-388) container parser and PageScene renderer for ibisOffice."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-ooxml.workspace = true
+ibis-pdf = { path = "../ibis-pdf" }
+roxmltree = "0.21"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff"] }

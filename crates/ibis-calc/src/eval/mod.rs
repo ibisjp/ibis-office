@@ -426,8 +426,8 @@ pub fn compare(a: &Value, b: &Value) -> std::cmp::Ordering {
         }
         match other {
             Value::Text(_) => Value::Text(String::new()),
-            // In Excel, empty cells compared against Booleans (or numbers/empty) behave as 0.0,
-            // NOT as false. Thus `A1=FALSE` is false (since 0 != FALSE), and `A1<FALSE` is true.
+            // An empty cell (or an omitted argument) is equal to FALSE as it is to 0 and to "" (Excel 365: `FALSE=(A2)` with A2 blank is TRUE; GitHub #250, `isTEST2.xlsx`).
+            Value::Bool(_) => Value::Bool(false),
             _ => Value::Number(0.0),
         }
     };
@@ -600,6 +600,19 @@ impl<'a> Ctx<'a> {
             Value::Lambda(_) => CellValue::Error(CellError::Calc),
             other => other.to_cell(),
         }
+    }
+
+    /// Whether the reference `v` runs to the last row (or column) of its sheet and so cannot be spilled from this cell: it would need more rows
+    /// (columns) than the sheet has below (right of) the formula's cell.
+    pub fn spill_overflows_the_sheet(&self, v: &Value) -> bool {
+        let Value::Ref(areas) = v else { return false };
+        let [area] = areas.as_slice() else { return false };
+        if area.sheet != area.last_sheet || area.is_cell() {
+            return false;
+        }
+        let down = area.last_row == MAX_ROW && area.rows() > 1 && self.row as u64 + area.rows() as u64 - 1 > MAX_ROW as u64;
+        let across = area.last_column == MAX_COLUMN && area.columns() > 1 && self.column as u64 + area.columns() as u64 - 1 > MAX_COLUMN as u64;
+        down || across
     }
 
     /// The cells a dynamic array formula's result fills, if it is an array
@@ -873,6 +886,12 @@ impl<'a> Ctx<'a> {
             Value::Ref(r) if self.in_array_context || self.book.dynamic(self.sheet, self.row, self.column) => self.ref_to_array(&r),
             Value::Ref(r) => self.deref_implicit(&r),
             Value::Omitted => Value::Empty,
+            // An omitted argument inside an array (`IF({1},)`) is the number 0 (Excel: `ISNUMBER(IF({1},))` is TRUE, `""=IF({1},)` and `FALSE=IF({1},)` are FALSE; GitHub #250);
+            // ISODD and ISEVEN read the array as it is (`parity`).
+            Value::Array(a) if a.data.iter().any(|x| matches!(x, Value::Omitted)) => {
+                let data = a.data.iter().map(|x| if matches!(x, Value::Omitted) { Value::Number(0.0) } else { x.clone() }).collect();
+                Value::Array(std::rc::Rc::new(Array::new(a.rows, a.columns, data)))
+            }
             v => v,
         }
     }
@@ -1237,9 +1256,19 @@ pub fn binary_ext(op: BinaryOp, a: &Value, b: &Value, date1904: bool, is_root: b
             if let Value::Error(e) = b {
                 return Value::Error(*e);
             }
-            // A function value is not comparable (Excel: `HSTACK(SUM,MAX)=SUM` is #VALUE! in each element).
-            if matches!(a, Value::Lambda(_)) || matches!(b, Value::Lambda(_)) {
+            // A function value is not comparable (Excel: `HSTACK(SUM,MAX)=SUM` is #VALUE! in each element); nor is a reference that is an element of an array (`0=TAKE(A3:A4,{2;1})` is
+            // #VALUE! in each place; GitHub #250).
+            if matches!(a, Value::Lambda(_) | Value::Ref(_)) || matches!(b, Value::Lambda(_) | Value::Ref(_)) {
                 return Value::Error(CellError::Value);
+            }
+            // An array that is an element of an array (`DROP({1;2},{0;1})` is an array of arrays) stands for its first element.
+            if let Value::Array(x) = a {
+                let first = x.data.first().cloned().unwrap_or(Value::Empty);
+                return binary_ext(op, &first, b, date1904, is_root);
+            }
+            if let Value::Array(y) = b {
+                let first = y.data.first().cloned().unwrap_or(Value::Empty);
+                return binary_ext(op, a, &first, date1904, is_root);
             }
             let ord = compare(a, b);
             use std::cmp::Ordering::*;

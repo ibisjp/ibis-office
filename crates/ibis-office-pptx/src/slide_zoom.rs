@@ -4,13 +4,14 @@
 //! Slide Zoom (PPTX-TRANS-014): insert slide zoom cards linking to other slides,
 //! navigate seamlessly during slide shows, and modal picker dialog UI.
 
-use gpui_kit::component::{h_flex, v_flex, Sizable as _};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use ibis_doc_model::{
     Command, ShapeId, SlideId,
 };
 
+use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 use crate::ext::*;
 
@@ -24,6 +25,10 @@ pub struct SlideZoomDialog {
 impl SlideEditor {
     /// Open the Insert Slide Zoom dialog.
     pub fn open_slide_zoom_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.end_text_edit(window, cx);
+        if self.dialog.active {
+            self.close_dialog(window, cx);
+        }
         let first_other = self
             .presentation()
             .slides
@@ -35,20 +40,17 @@ impl SlideEditor {
                 selected_slide: first_other,
             });
         }
-        self.focus_handle.focus(window, cx);
+        self.sidebar_open = true;
         cx.notify();
     }
 
     /// Close the Insert Slide Zoom dialog.
-    pub(crate) fn close_slide_zoom_dialog(&mut self, cx: &mut Context<Self>) {
-        if let Some(pptx) = self.pptx_mut() {
-            pptx.slide_zoom_dialog = None;
-        }
-        cx.notify();
+    pub(crate) fn close_slide_zoom_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_dialog(window, cx);
     }
 
-    /// Render the Insert Slide Zoom modal dialog if open.
-    pub(crate) fn render_slide_zoom_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The Insert Slide Zoom dialog's panel (the shared modal dialog), if open.
+    pub(crate) fn slide_zoom_panel(&self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let pptx = self.pptx()?;
         let dialog = pptx.slide_zoom_dialog.as_ref()?;
         let selected = dialog.selected_slide;
@@ -121,89 +123,30 @@ impl SlideEditor {
             })
             .collect::<Vec<_>>();
 
-        Some(
-            div()
-                .id("slide-zoom-modal-backdrop")
-                .absolute()
-                .inset_0()
-                .bg(rgba(0x00000088))
-                .flex()
-                .items_center()
-                .justify_center()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(
-                    v_flex()
-                        .w(px(460.))
-                        .max_h(px(480.))
-                        .bg(rgb(0xffffff))
-                        .rounded_xl()
-                        .shadow_lg()
-                        .border_1()
-                        .border_color(rgb(0xdadce0))
-                        .p_5()
-                        .gap_4()
-                        .child(
-                            h_flex()
-                                .justify_between()
-                                .items_center()
-                                .child(
-                                    div()
-                                        .text_base()
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(rgb(0x202124))
-                                        .child(t("pptx.zoom.dialog.title")),
-                                )
-                                .child(
-                                    crate::shell::chrome::action_button("zoom-close")
-                                        .small()
-                                        .label("✕")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_slide_zoom_dialog(cx);
-                                        })),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(0x5f6368))
-                                .child(t("pptx.zoom.dialog.prompt")),
-                        )
-                        .child(
-                            div()
-                                .id("zoom-slide-list")
-                                .flex()
-                                .flex_col()
-                                .max_h(px(260.))
-                                .overflow_y_scroll()
-                                .gap_1()
-                                .children(slides_list),
-                        )
-                        .child(
-                            crate::shell::chrome::action_bar_host(crate::shell::chrome::action_bar()
-                                .action(
-                                    crate::shell::chrome::ActionDefinition::new("zoom-insert", t("pptx.zoom.insert"), crate::shell::chrome::ActionButtonKind::Primary)
-                                        .disabled(selected.is_none())
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if let Some(target) = selected {
-                                                this.insert_slide_zoom(target, cx);
-                                                this.close_slide_zoom_dialog(cx);
-                                            }
-                                        })),
-                                )
-                                .action(
-                                    crate::shell::chrome::ActionDefinition::new("zoom-cancel", t("pptx.zoom.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_slide_zoom_dialog(cx);
-                                        })),
-                                )),
-                        ),
-                )
-                .into_any_element(),
-        )
+        let body = crate::shell::chrome::panel_form()
+            .child(div().text_xs().text_color(rgb(0x5f6368)).child(t("pptx.zoom.dialog.prompt")))
+            .child(div().id("zoom-slide-list").flex().flex_col().max_h(px(260.)).overflow_y_scroll().gap_1().children(slides_list));
+        let actions = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("zoom-insert", t("pptx.zoom.insert"), crate::shell::chrome::ActionButtonKind::Primary)
+                    .disabled(selected.is_none())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if let Some(target) = selected {
+                            this.close_dialog(window, cx);
+                            this.insert_slide_zoom(target, cx);
+                        }
+                    })),
+            )
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(t("pptx.zoom.dialog.title"), body.into_any_element(), actions))
     }
 
     /// Open the Insert Section Zoom dialog.
     pub fn open_section_zoom_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.end_text_edit(window, cx);
+        if self.dialog.active {
+            self.close_dialog(window, cx);
+        }
         let first_section = self
             .presentation()
             .sections
@@ -214,20 +157,17 @@ impl SlideEditor {
                 selected_section_id: first_section,
             });
         }
-        self.focus_handle.focus(window, cx);
+        self.sidebar_open = true;
         cx.notify();
     }
 
     /// Close the Insert Section Zoom dialog.
-    pub(crate) fn close_section_zoom_dialog(&mut self, cx: &mut Context<Self>) {
-        if let Some(pptx) = self.pptx_mut() {
-            pptx.section_zoom_dialog = None;
-        }
-        cx.notify();
+    pub(crate) fn close_section_zoom_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_dialog(window, cx);
     }
 
-    /// Render the Insert Section Zoom modal dialog if open.
-    pub(crate) fn render_section_zoom_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The Insert Section Zoom dialog's panel (the shared modal dialog), if open.
+    pub(crate) fn section_zoom_panel(&self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let pptx = self.pptx()?;
         let dialog = pptx.section_zoom_dialog.as_ref()?;
         let selected = dialog.selected_section_id.clone();
@@ -297,85 +237,22 @@ impl SlideEditor {
             })
             .collect::<Vec<_>>();
 
-        Some(
-            div()
-                .id("section-zoom-modal-backdrop")
-                .absolute()
-                .inset_0()
-                .bg(rgba(0x00000088))
-                .flex()
-                .items_center()
-                .justify_center()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(
-                    v_flex()
-                        .w(px(460.))
-                        .max_h(px(480.))
-                        .bg(rgb(0xffffff))
-                        .rounded_xl()
-                        .shadow_lg()
-                        .border_1()
-                        .border_color(rgb(0xdadce0))
-                        .p_5()
-                        .gap_4()
-                        .child(
-                            h_flex()
-                                .justify_between()
-                                .items_center()
-                                .child(
-                                    div()
-                                        .text_base()
-                                        .font_weight(FontWeight::BOLD)
-                                        .text_color(rgb(0x202124))
-                                        .child(t("pptx.zoom.section.dialog.title")),
-                                )
-                                .child(
-                                    crate::shell::chrome::action_button("section-zoom-close")
-                                        .small()
-                                        .label("✕")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_section_zoom_dialog(cx);
-                                        })),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(0x5f6368))
-                                .child(t("pptx.zoom.section.dialog.prompt")),
-                        )
-                        .child(
-                            div()
-                                .id("zoom-section-list")
-                                .flex()
-                                .flex_col()
-                                .max_h(px(260.))
-                                .overflow_y_scroll()
-                                .gap_1()
-                                .children(sections_list),
-                        )
-                        .child(
-                            crate::shell::chrome::action_bar_host(crate::shell::chrome::action_bar()
-                                .action(
-                                    crate::shell::chrome::ActionDefinition::new("section-zoom-insert", t("pptx.zoom.insert"), crate::shell::chrome::ActionButtonKind::Primary)
-                                        .disabled(selected.is_none())
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if let Some(target) = selected.as_deref() {
-                                                this.insert_section_zoom(target, cx);
-                                                this.close_section_zoom_dialog(cx);
-                                            }
-                                        })),
-                                )
-                                .action(
-                                    crate::shell::chrome::ActionDefinition::new("section-zoom-cancel", t("pptx.zoom.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_section_zoom_dialog(cx);
-                                        })),
-                                )),
-                        ),
-                )
-                .into_any_element(),
-        )
+        let body = crate::shell::chrome::panel_form()
+            .child(div().text_xs().text_color(rgb(0x5f6368)).child(t("pptx.zoom.section.dialog.prompt")))
+            .child(div().id("zoom-section-list").flex().flex_col().max_h(px(260.)).overflow_y_scroll().gap_1().children(sections_list));
+        let actions = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("section-zoom-insert", t("pptx.zoom.insert"), crate::shell::chrome::ActionButtonKind::Primary)
+                    .disabled(selected.is_none())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if let Some(target) = selected.as_deref() {
+                            this.close_dialog(window, cx);
+                            this.insert_section_zoom(target, cx);
+                        }
+                    })),
+            )
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(t("pptx.zoom.section.dialog.title"), body.into_any_element(), actions))
     }
 
     /// Whether the shape has "Return to Zoom" enabled.
@@ -404,7 +281,7 @@ impl SlideEditor {
     pub(crate) fn toggle_shape_zoom_show_bg(&mut self, shape_id: ShapeId, cx: &mut Context<Self>) {
         let current_slide_id = self.current_slide;
         let is_currently = self.shape_zoom_show_bg(shape_id);
-        let cmd = Command::SetShapeZoomShowBg {
+        let cmd = Command::SetShapeZoomShowBackground {
             slide: current_slide_id,
             shape: shape_id,
             show_bg: Some(!is_currently),
@@ -462,7 +339,7 @@ impl SlideEditor {
             let mut picture = old.clone();
             picture.media = media;
             let zoom = ibis_doc_model::ZoomObject { cover_image: true, ..zoom };
-            self.run(vec![Command::SetKind { slide: current_slide_id, shape: shape_id, kind: Box::new(ibis_doc_model::ShapeKind::Picture(picture)) }, Command::SetZoomObject { slide: current_slide_id, shape: shape_id, zoom: Some(zoom) }], cx);
+            self.run(vec![Command::SetShapeKind { slide: current_slide_id, shape: shape_id, kind: Box::new(ibis_doc_model::ShapeKind::Picture(picture)) }, Command::SetZoomObject { slide: current_slide_id, shape: shape_id, zoom: Some(zoom) }], cx);
             return true;
         }
 
@@ -481,7 +358,7 @@ impl SlideEditor {
         picture.stroke = stroke;
         picture.shadow = shadow;
 
-        let cmd = Command::SetKind {
+        let cmd = Command::SetShapeKind {
             slide: current_slide_id,
             shape: shape_id,
             kind: Box::new(ibis_doc_model::ShapeKind::Picture(picture)),
@@ -506,7 +383,7 @@ impl SlideEditor {
             let mut picture = old;
             picture.media = media;
             let zoom = ibis_doc_model::ZoomObject { cover_image: false, ..zoom };
-            self.run(vec![Command::SetKind { slide: current_slide_id, shape: shape_id, kind: Box::new(ibis_doc_model::ShapeKind::Picture(picture)) }, Command::SetZoomObject { slide: current_slide_id, shape: shape_id, zoom: Some(zoom) }], cx);
+            self.run(vec![Command::SetShapeKind { slide: current_slide_id, shape: shape_id, kind: Box::new(ibis_doc_model::ShapeKind::Picture(picture)) }, Command::SetZoomObject { slide: current_slide_id, shape: shape_id, zoom: Some(zoom) }], cx);
             return true;
         }
 
@@ -552,7 +429,7 @@ impl SlideEditor {
         let mut auto = ibis_doc_model::AutoShape::new(ibis_doc_model::Geometry::Rect, fill, Some(stroke));
         auto.text = Some(body);
 
-        let cmd = Command::SetKind {
+        let cmd = Command::SetShapeKind {
             slide: current_slide_id,
             shape: shape_id,
             kind: Box::new(ibis_doc_model::ShapeKind::Auto(auto)),
@@ -596,6 +473,10 @@ impl SlideEditor {
 
     /// Open the Insert Summary Zoom dialog.
     pub fn open_summary_zoom_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.end_text_edit(window, cx);
+        if self.dialog.active {
+            self.close_dialog(window, cx);
+        }
         let current_id = self.current_slide;
         let mut initial = std::collections::HashSet::new();
         for s in &self.presentation().slides {
@@ -608,15 +489,7 @@ impl SlideEditor {
                 selected_slides: initial,
             });
         }
-        self.focus_handle.focus(window, cx);
-        cx.notify();
-    }
-
-    /// Close the Insert Summary Zoom dialog.
-    pub(crate) fn close_summary_zoom_dialog(&mut self, cx: &mut Context<Self>) {
-        if let Some(pptx) = self.pptx_mut() {
-            pptx.summary_zoom_dialog = None;
-        }
+        self.sidebar_open = true;
         cx.notify();
     }
 
@@ -644,8 +517,8 @@ impl SlideEditor {
         self.insert_summary_zoom_for_sections(&chosen, window, cx)
     }
 
-    /// Render the Insert Summary Zoom modal dialog if open.
-    pub(crate) fn render_summary_zoom_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The Insert Summary Zoom dialog's panel (the shared modal dialog), if open.
+    pub(crate) fn summary_zoom_panel(&self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let pptx = self.pptx()?;
         let dialog = pptx.summary_zoom_dialog.as_ref()?;
         let selected = &dialog.selected_slides;
@@ -716,90 +589,21 @@ impl SlideEditor {
         let selected_vec: Vec<SlideId> = selected.iter().copied().collect();
         let count = selected.len();
 
-        Some(
-            div()
-                .id("summary-zoom-modal-scrim")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.close_summary_zoom_dialog(cx);
-                }))
-                .child(
-                    div()
-                        .id("summary-zoom-modal-card")
-                        .w(px(460.))
-                        .max_w_full()
-                        .bg(rgb(0xffffff))
-                        .rounded_xl()
-                        .shadow_lg()
-                        .p_5()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .on_click(|_, _, _| {})
-                        .child(
-                            h_flex()
-                                .justify_between()
-                                .items_center()
-                                .child(
-                                    div()
-                                        .text_base()
-                                        .font_weight(gpui::FontWeight::BOLD)
-                                        .text_color(rgb(0x202124))
-                                        .child(t("pptx.zoom.summary.dialog.title")),
-                                )
-                                .child(
-                                    crate::shell::chrome::action_button("summary-zoom-close-btn")
-                                        .small()
-                                        .label("✕")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_summary_zoom_dialog(cx);
-                                        })),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(0x5f6368))
-                                .child(t("pptx.zoom.summary.dialog.prompt")),
-                        )
-                        .child(
-                            div()
-                                .id("summary-zoom-slide-list")
-                                .flex()
-                                .flex_col()
-                                .max_h(px(280.))
-                                .overflow_y_scroll()
-                                .gap_1()
-                                .children(slides_list),
-                        )
-                        .child(
-                            crate::shell::chrome::action_bar_host(crate::shell::chrome::action_bar()
-                                .action(
-                                    crate::shell::chrome::ActionDefinition::new("summary-zoom-insert", if count > 0 {
-                                            format!("{} ({})", t("pptx.zoom.insert"), count)
-                                        } else {
-                                            t("pptx.zoom.insert").to_string()
-                                        }, crate::shell::chrome::ActionButtonKind::Primary)
-                                        .disabled(count == 0)
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.insert_summary_zoom(&selected_vec, window, cx);
-                                            this.close_summary_zoom_dialog(cx);
-                                        })),
-                                )
-                                .action(
-                                    crate::shell::chrome::ActionDefinition::new("summary-zoom-cancel", t("pptx.zoom.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_summary_zoom_dialog(cx);
-                                        })),
-                                )),
-                        ),
-                )
-                .into_any_element(),
-        )
+        let body = crate::shell::chrome::panel_form()
+            .child(div().text_xs().text_color(rgb(0x5f6368)).child(t("pptx.zoom.summary.dialog.prompt")))
+            .child(div().id("summary-zoom-slide-list").flex().flex_col().max_h(px(280.)).overflow_y_scroll().gap_1().children(slides_list));
+        let insert_label = if count > 0 { format!("{} ({})", t("pptx.zoom.insert"), count) } else { t("pptx.zoom.insert").to_string() };
+        let actions = crate::shell::chrome::action_bar()
+            .action(
+                crate::shell::chrome::ActionDefinition::new("summary-zoom-insert", insert_label, crate::shell::chrome::ActionButtonKind::Primary)
+                    .disabled(count == 0)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.close_dialog(window, cx);
+                        this.insert_summary_zoom(&selected_vec, window, cx);
+                    })),
+            )
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(t("pptx.zoom.summary.dialog.title"), body.into_any_element(), actions))
     }
 }
 

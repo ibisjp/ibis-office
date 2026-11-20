@@ -14,9 +14,9 @@ xlsx.freeze-at-selection	ウィンドウ枠の固定
 xlsx.freeze-top-row	先頭行の固定
 xlsx.freeze-first-column	先頭列の固定
 xlsx.print-area-menu	印刷範囲
-xlsx.print-area-set	印刷範囲の設定
+xlsx.set-print-area	印刷範囲の設定
 xlsx.print-area-add	印刷範囲に追加
-xlsx.print-area-clear	印刷範囲のクリア
+xlsx.clear-print-area	印刷範囲のクリア
 xlsx.cell-link-open	ハイパーリンクを開く
 xlsx.cell-link-edit	ハイパーリンクの編集…
 xlsx.cell-link-remove	ハイパーリンクの削除
@@ -103,7 +103,6 @@ xlsx.move-sheet-right	シートを右へ移動
 xlsx.split	分割
 xlsx.sort-manage	並べ替えの設定…
 xlsx.remove-duplicates	重複の削除…
-xlsx.goto	ジャンプ…
 xlsx.goto-destination	移動先
 xlsx.goto-no-destinations	（名前定義または履歴はありません）
 xlsx.goto-type-name	名前
@@ -116,6 +115,7 @@ xlsx.export-csv	CSV UTF-8（.csv、現在のシート）
 xlsx.export-csv-sjis	CSV Shift_JIS（.csv、現在のシート）
 xlsx.export-tsv	テキスト（.tsv、タブ区切り、現在のシート）
 xlsx.export-ods	OpenDocument スプレッドシート（.ods、ブック全体）
+xlsx.export-html	Web ページ（.html、現在のシート）
 xlsx.insert-cells-right	セルを挿入（右方向にシフト）
 xlsx.delete-cells-left	セルを削除（左方向にシフト）
 xlsx.group	グループ化
@@ -179,10 +179,10 @@ xlsx.cf-date.next-week	来週
 xlsx.cf-date.last-month	先月
 xlsx.cf-date.this-month	今月
 xlsx.cf-date.next-month	来月
-xlsx.calc-options	計算方法の設定
-xlsx.calc-auto	自動
-xlsx.calc-auto-no-table	データ テーブル以外自動
-xlsx.calc-manual	手動
+xlsx.calculate-options	計算方法の設定
+xlsx.calculate-auto	自動
+xlsx.calculate-auto-no-table	データ テーブル以外自動
+xlsx.calculate-manual	手動
 xlsx.calculate-now	再計算実行
 xlsx.calculate-sheet	シート再計算
 xlsx.scenario-manager	シナリオの登録と管理…
@@ -237,10 +237,9 @@ xlsx.alt-text.title	タイトル
 xlsx.alt-text.description	説明
 xlsx.alt-text.hint	スクリーンリーダーで読み上げられる画像や図形の説明文を入力します。
 xlsx.alt-text.apply	適用
-xlsx.comment-delete	コメントの削除
+xlsx.delete-comment	コメントの削除
 xlsx.export-xltx	Excel テンプレート（.xltx）
 xlsx.new-from-template	テンプレートから…
-xlsx.accessibility-check	アクセシビリティ チェック…
 xlsx.accessibility.title	アクセシビリティ
 xlsx.accessibility.desc	ブックのアクセシビリティを検査し、問題を検出します。
 xlsx.accessibility.passed	アクセシビリティの問題は見つかりませんでした。
@@ -294,17 +293,7 @@ _xlsx.place-in-cell	セルに配置
 _xlsx.place-over-cells	セル上に配置
 xlsx.image-file	画像ファイルから挿入
 xlsx.order	順序
-xlsx.order-front	最前面へ移動
-xlsx.order-back	最背面へ移動
-xlsx.order-forward	前面へ移動
-xlsx.order-backward	背面へ移動
 xlsx.align	配置
-xlsx.align.left	左揃え
-xlsx.align.center	左右中央揃え
-xlsx.align.right	右揃え
-xlsx.align.top	上揃え
-xlsx.align.middle	上下中央揃え
-xlsx.align.bottom	下揃え
 xlsx.distribute.horizontal	左右に整列
 xlsx.distribute.vertical	上下に整列
 xlsx.frame-settings	サイズとプロパティ…
@@ -763,6 +752,7 @@ _xlsx.print-area-range	印刷範囲：{range}
 _xlsx.average-average-count-count-sum-sum	平均: {average}　データの個数: {count}　合計: {sum}
 _xlsx.show-rows-where-name	抽出条件の指定：{name}
 _xlsx.couldn-t-export-error	書き出せませんでした: {error}
+_xlsx.html-export-too-large	シートが大きすぎるため、Web ページに書き出せません
 _xlsx.the-minimum-must-be-less-than-the-maximum	最小値は最大値より小さくしてください。
 _xlsx.enter-numbers-for-the-minimum-maximum-and-major	最小値・最大値・目盛間隔には数を入れてください（空なら自動）。
 _xlsx.gridlines	目盛線
@@ -1029,6 +1019,10 @@ _xlsx.edit-hyperlink	ハイパーリンクの編集…
 _xlsx.remove-hyperlink	ハイパーリンクの削除
 _xlsx.define-name	名前の定義…
 _xlsx.protect-sheet	シートの保護…
+_xlsx.group-select-all	すべてのシートを選択
+_xlsx.group-ungroup	シートのグループ解除
+_xlsx.group-title	[グループ]
+_xlsx.group-blocked	このコマンドは、複数のシートを選択している場合は使用できません。1 つのシートだけを選択してから、もう一度やり直してください。
 _xlsx.the-number-in-this-cell-is-formatted-as-text	このセルの数値は、文字列形式で保存されています
 _xlsx.the-formula-in-this-cell-results-in-an-error	このセルの数式の結果はエラーです
 _xlsx.this-formula-differs-from-the-formulas-around-it	この数式は、周囲の数式と異なっています
@@ -1882,7 +1876,7 @@ xlsx.ink.name	インク {n}
 xlsx.ink.message.no-ink	先にインクを選んでください。
 xlsx.ink.message.not-recognized	線・四角形・楕円・三角形には見えないストロークです。
 xlsx.ink.message.converted	インクを図形に変換しました。
-xlsx.slicer-insert	スライサー…
+xlsx.insert-slicer	スライサー…
 xlsx.slicer-insert.title	スライサーの挿入
 xlsx.slicer-insert.select-table	先にテーブルまたはピボットテーブルのセルを選んでください。
 xlsx.slicer-insert.choose	フィールドを 1 つ以上チェックしてください。
@@ -1934,6 +1928,8 @@ query.code-error.source	元の書き方を読み取れません：{detail}
 query.code-error.function	使えない関数です：{detail}
 query.code-error.arguments	{detail} の引数を読み取れません（最初の引数は前の手順の名前にしてください）。
 query.code-error.result	「in」の後には、最後の手順の名前を書いてください：{detail}
+query.code-error.merge	マージは 2 つの手順（Table.NestedJoin と、その入れ子の列の Table.ExpandTableColumn。入れ子の列はマージしたクエリと同じ名前、新しい名前は「クエリ名.列名」）で書いてください：{detail}
+query.code-error.at-line	{line} 行目：{message}
 query.code-applied	コードを手順に反映しました。
 query.code-source-failed	元のデータを読み込めません：{error}
 query.set-parameter	設定
@@ -1984,12 +1980,21 @@ query.op.append	クエリの追加
 query.op.add-column	カスタム列
 query.op.add-conditional	条件列
 query.op.add-index	インデックス列
+query.op.filter-date	日付フィルター
+query.op.transform	変換
+query.op.alternate-rows	代替の行を削除
+query.op.keep-range	行の範囲を保持
+query.op.duplicate-column	列の複製
+query.op.filter-code	行のフィルター（コードで指定）
+query.op.split-code	列の分割（コードで指定）
+query.op.missing-field	列が無いときの扱いを指定した手順
+query.op.group-local	グループ化（隣り合う行）
 query.field.column	列
 query.field.columns	列（カンマで区切る）
 query.field.type	データ型
 query.field.culture	ロケール
-query.field.from	変更前の列名
-query.field.to	新しい列名
+query.field.from	変更前の列名（カンマで区切る）
+query.field.to	新しい列名（カンマで区切り、同じ順序で）
 query.field.comparison	条件
 query.field.value	値
 query.field.count	行数
@@ -2026,6 +2031,14 @@ query.field.output2	2 つ目のときの値
 query.field.otherwise	それ以外の値
 query.field.start	開始値
 query.field.step	増分
+query.field.logic	2 つの条件の結び方
+query.field.when	期間
+query.field.unit	単位
+query.field.function	変換
+query.field.offset	最初に保持する行数
+query.field.skip	削除する行数（繰り返し）
+query.field.take	保持する行数（繰り返し）
+query.field.first-row	最初の行（1 が先頭）
 query.field.parameter-name	パラメーター名
 query.field.parameter-value	現在の値
 query.type.any	任意
@@ -2036,6 +2049,11 @@ query.type.date	日付
 query.type.datetime	日付/時刻
 query.type.time	時刻
 query.type.logical	True/False
+query.type.currency	固定小数点数（通貨）
+query.type.percentage	パーセンテージ
+query.type.int32	整数（32 ビット）
+query.type.datetimezone	日付/時刻/タイム ゾーン
+query.type.duration	期間
 query.culture.invariant	既定
 query.culture.en-us	英語 (米国)
 query.culture.ja-jp	日本語 (日本)
@@ -2053,6 +2071,36 @@ query.cmp.begins-with	で始まる
 query.cmp.ends-with	で終わる
 query.cmp.is-null	null である
 query.cmp.is-not-null	null でない
+query.cmp.does-not-begin-with	で始まらない
+query.cmp.does-not-end-with	で終わらない
+query.logic.and	かつ
+query.logic.or	または
+query.when.previous	前の
+query.when.current	今の（現在の）
+query.when.next	次の
+query.when.year-to-date	年初から今日まで
+query.unit.day	日
+query.unit.week	週
+query.unit.month	月
+query.unit.quarter	四半期
+query.unit.year	年
+query.split.positions	位置（0 始まり、カンマで区切る）
+query.fn.trim	トリム
+query.fn.upper	大文字
+query.fn.lower	小文字
+query.fn.proper	各単語の先頭を大文字
+query.fn.clean	制御文字の削除
+query.fn.length	文字数
+query.fn.round	丸め（値に小数点以下の桁数）
+query.fn.round-up	切り上げ
+query.fn.round-down	切り捨て
+query.fn.abs	絶対値
+query.fn.sqrt	平方根
+query.fn.year	年
+query.fn.month	月
+query.fn.day	日
+query.fn.prefix	先頭に追加（値に文字）
+query.fn.suffix	末尾に追加（値に文字）
 query.agg.sum	合計
 query.agg.average	平均
 query.agg.min	最小
@@ -2106,7 +2154,7 @@ xlsx.timeline.year-quarter	{y}年 第{n}四半期
 xlsx.timeline.year-month	{y}年{n}月
 xlsx.timeline.date	{y}年{m}月{d}日
 xlsx.timeline.range	{a} - {b}
-xlsx.timeline-insert	タイムライン…
+xlsx.insert-timeline	タイムライン…
 xlsx.timeline-insert.title	タイムラインの挿入
 xlsx.timeline-insert.select-pivot	先にピボットテーブルまたはテーブルのセルを選んでください。
 xlsx.timeline-insert.choose	フィールドを 1 つ以上チェックしてください。
@@ -2162,7 +2210,6 @@ xlsx.xml-map-properties.schema	スキーマ
 xlsx.xml-map-properties.validate	スキーマに照らしてデータを検証する
 xlsx.xml-map-properties.overwrite	既存のデータを新しいデータで上書きする
 xlsx.3d-model	3D モデル…
-xlsx.signature-line	署名欄…
 xlsx.chart-ex.totals	合計として設定（ウォーターフォール）
 xlsx.chart-ex.bins	ビンの設定（ヒストグラム）
 xlsx.chart-ex.bin-width	ビンの幅
@@ -2216,10 +2263,7 @@ xlsx.page-orientation	印刷の向き
 xlsx.orientation-portrait	縦
 xlsx.orientation-landscape	横
 xlsx.paper-size	サイズ
-xlsx.paper-a4	A4 (210 x 297 mm)
-xlsx.paper-a3	A3 (297 x 420 mm)
-xlsx.paper-b5	B5 (182 x 257 mm)
-xlsx.paper-letter	レター (8.5 x 11 インチ)
+page.paper-letter	レター (8.5 x 11 インチ)
 xlsx.print-titles	印刷タイトル…
 xlsx.print-titles-dialog	ページ設定（印刷タイトル）…
 xlsx.print-titles-set-rows	選択行をタイトル行に設定
@@ -2448,8 +2492,8 @@ xlsx.scale-width-2	横: 2 ページ
 xlsx.scale-height-auto	縦：自動
 xlsx.scale-height-1	縦：1 ページ
 xlsx.scale-height-2	縦: 2 ページ
-xlsx.scale-100	拡大/縮小: 100%
-xlsx.scale-80	拡大/縮小: 80%
+xlsx.print-scale-100	拡大/縮小: 100%
+xlsx.print-scale-80	拡大/縮小: 80%
 xlsx.scale-50	拡大/縮小: 50%
 xlsx.timeline.show-header	ヘッダー
 xlsx.timeline.show-selection-label	選択ラベル
@@ -2861,3 +2905,110 @@ xlsx.hf.back-to-page-setup	ページ設定に戻る
 xlsx.validation.list-needs-extension	この設定は Excel にない機能です（Excel では入力規則が働きません）。使いますか？
 xlsx.design-mode.close	デザイン モードを閉じる
 xlsx.sheet.delete-ask	シートを削除してよろしいですか？
+xlsx.machine-readability-check	デジタル庁: 機械可読性チェック…
+xlsx.machine.title	機械可読性
+xlsx.machine.desc	デジタル庁の「{rule}」に対応しているかを検査します。 {tool} ver.{version} 相当です。
+xlsx.machine.rule-link	行政データにおける機械可読性に関するルール
+xlsx.machine.tool-link	Harunobu
+xlsx.machine.realtime	リアルタイム検査
+xlsx.machine.passed	機械可読性の問題は見つかりませんでした。
+xlsx.machine.passed-sub	結合セル・非表示の行や列・数式・オブジェクトなどは見つかりませんでした。
+xlsx.machine.scope-note	シートの中身だけで判定できる項目を検査します。コード表の添付、地域コード、単位の記載などは検査しません。
+xlsx.machine.recheck	再検査
+xlsx.machine.recheck-done	再検査が完了しました
+xlsx.machine.issue-title	[{id}] {sheet}：{title}（{count} 件）
+xlsx.machine.examples	例：{cells}
+xlsx.machine.multiple-tables.title	1 つのシートに複数の表があります
+xlsx.machine.multiple-tables.desc	1 つのシートには 1 つの表だけを置きます。表ごとにシートを分けてください。
+xlsx.machine.split-data.title	データが空白の行・列で分断されています
+xlsx.machine.split-data.desc	体裁のための空白の行・列を削除し、表を 1 つながりにしてください。
+xlsx.machine.stray-info.title	表の外にデータと無関係な情報があります
+xlsx.machine.stray-info.desc	メモや注記などは削除するか、別のシートに移してください。
+xlsx.machine.missing-header.title	項目名のない列があります
+xlsx.machine.missing-header.desc	すべての列に、内容が分かる項目名を付けてください。
+xlsx.machine.padded-text.title	スペースや改行で体裁を整えたセルがあります
+xlsx.machine.padded-text.desc	体裁のためのスペース・改行は削除してください。
+xlsx.machine.objects.title	図形・画像・グラフなどのオブジェクトがあります
+xlsx.machine.objects.desc	オブジェクトの中の情報は機械に読み取れません。必要な情報はセルに入力してください。
+xlsx.machine.merged-cells.title	結合したセルがあります
+xlsx.machine.merged-cells.desc	セルの結合を解除し、同じ内容を各セルに入力してください。
+xlsx.machine.hidden-lines.title	非表示の行・列があります
+xlsx.machine.hidden-lines.desc	不要な行・列は非表示にせず、削除してください。
+xlsx.machine.number-as-text.title	数値が文字列になっているセルがあります
+xlsx.machine.number-as-text.desc	単位・カンマ・脚注記号を取り除いて数値にし、単位や注釈は別の列に分けてください。
+xlsx.machine.duplicate-header.title	同じ項目名の列があります
+xlsx.machine.duplicate-header.desc	項目名は列ごとに重ならないようにしてください。
+xlsx.machine.formula.title	数式を使っているセルがあります
+xlsx.machine.formula.desc	数式は「値の貼り付け」で数値に変えてください。
+xlsx.machine.title-row.title	項目名の行より前にタイトルの行があります
+xlsx.machine.title-row.desc	先頭の行を項目名にし、2 行目からデータを入力してください。
+query.step-name.source	ソース
+query.step-name.promoted-headers	昇格されたヘッダー数
+query.step-name.demoted-headers	降格されたヘッダー数
+query.step-name.changed-type	変更された型
+query.step-name.changed-type-locale	ロケールによって変更された型
+query.step-name.removed-other-columns	削除された他の列
+query.step-name.removed-columns	削除された列
+query.step-name.renamed-columns	名前が変更された列 
+query.step-name.reordered-columns	並べ替えられた列
+query.step-name.filtered-rows	フィルターされた行
+query.step-name.sorted-rows	並べ替えられた行
+query.step-name.grouped-rows	グループ化された行
+query.step-name.split-delimiter	区切り記号による列の分割
+query.step-name.split-positions	位置による列の分割
+query.step-name.split-lengths	位置によって分割された列
+query.step-name.split-transition	文字の移行による列の分割
+query.step-name.lowercased-text	小文字テキスト
+query.step-name.uppercased-text	大文字テキスト
+query.step-name.capitalized-each-word	大文字単語
+query.step-name.trimmed-text	トリム テキスト
+query.step-name.cleaned-text	除去されたテキスト
+query.step-name.added-prefix	追加されたプレフィックス
+query.step-name.added-suffix	追加されたサフィックス
+query.step-name.text-length	計算されたテキストの長さ
+query.step-name.reversed-rows	反転された行
+query.step-name.rounded-off	四捨五入
+query.step-name.rounded-up	切り上げ
+query.step-name.rounded-down	切り捨て
+query.step-name.absolute-value	計算された絶対値
+query.step-name.square-root	計算された平方根
+query.step-name.extracted-year	抽出された年
+query.step-name.extracted-month	抽出された月
+query.step-name.extracted-day	抽出された日
+query.step-name.inserted-year	挿入された年
+query.step-name.inserted-month	挿入された月
+query.step-name.inserted-day	挿入された日
+query.step-name.duplicated-column	重複された列
+query.step-name.removed-alternate-rows	削除された代替行
+query.step-name.kept-range	保存された行範囲
+query.step-name.kept-first-rows	保存された先頭行
+query.step-name.kept-last-rows	保持された最後の行
+query.step-name.removed-top-rows	削除された上位の行
+query.step-name.removed-bottom-rows	削除された下位の行
+query.step-name.removed-duplicates	削除された重複
+query.step-name.removed-blank-rows	削除された空白の行
+query.step-name.removed-errors	削除されたエラー
+query.step-name.replaced-errors	置き換えられたエラー
+query.step-name.merged-columns	結合された列
+query.step-name.replaced-value	置き換えられた値
+query.step-name.filled-down	下方向にフィルされた
+query.step-name.filled-up	上方向にフィルされた
+query.step-name.transposed-table	転置されたテーブル
+query.step-name.pivoted-column	ピボットされた列
+query.step-name.unpivoted-columns	ピボット解除された列
+query.step-name.unpivoted-other-columns	ピボット解除された他の列
+query.step-name.merged-queries	マージされたクエリ数
+query.step-name.appended-query	追加されたクエリ
+query.step-name.added-custom	追加されたカスタム
+query.step-name.added-conditional-column	追加された条件列
+query.step-name.added-index	追加されたインデックス
+query.culture.zh-cn	中国語 (簡体字、中国)
+query.step-name.inserted-text-length	挿入されたテキストの長さ
+query.step-name.inserted-absolute-value	挿入された絶対値
+query.step-name.inserted-square-root	挿入された平方根
+query.op.m-code	M のステップ（コード）
+query.m-error.unsupported	{line} 行目：{name} にはまだ対応していません
+query.m-error.syntax	{line} 行目：コードを読み取れません：{message}
+query.m-error.raised	{reason}：{message}
+query.m-error.limit	コードの実行に時間がかかりすぎるか、入れ子が深すぎます：{message}
+query.m-error.not-table	結果が表ではありません（{type} です）。

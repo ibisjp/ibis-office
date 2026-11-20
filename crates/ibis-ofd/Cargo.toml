@@ -1,0 +1,16 @@
+[package]
+name = "ibis-ofd"
+description = "Pure-Rust Chinese OFD (GB/T 33190-2016) container parser and PageScene renderer for ibisOffice."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-ooxml.workspace = true
+ibis-pdf = { path = "../ibis-pdf" }
+roxmltree = "0.21"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+sm2 = { version = "0.13", default-features = false, features = ["dsa", "pkcs8", "alloc"] }
+sm3 = { version = "0.4", default-features = false }
+base64 = "0.22"

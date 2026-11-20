@@ -152,7 +152,7 @@ impl SlideEditor {
         }
     }
 
-    /// Apply the entered document properties via `SheetCommand::SetDocProperties`.
+    /// Apply the entered document properties via `SheetCommand::SetDocumentProperties`.
     pub fn apply_sheet_doc_properties(&mut self, cx: &mut Context<Self>) {
         let (title, creator, subject, keywords, description, category, manager, company, custom) = {
             let Some(p) = self.sheet_state().and_then(|s| s.panels.properties.as_ref()) else { return };
@@ -186,7 +186,7 @@ impl SlideEditor {
         new_props.company = opt(company);
         new_props.custom = custom;
 
-        let command = ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetDocProperties(new_props));
+        let command = ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetDocumentProperties(new_props));
         self.execute(vec![command], cx);
         if let Some(p) = self.sheet_state_mut().and_then(|s| s.panels.properties.as_mut()) {
             p.message = text("docx.properties-panel.document-properties-updated").to_string();

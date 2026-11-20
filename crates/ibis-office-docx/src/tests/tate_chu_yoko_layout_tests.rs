@@ -27,6 +27,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("docx::tate_chu_yoko_every_digit_of_a_run_is_drawn", every_digit_of_a_run_is_drawn),
         ("docx::k0014_tate_chu_yoko_caret_is_a_vertical_bar_and_down_goes_right", k0014_caret_in_tate_chu_yoko),
         ("docx::tate_chu_yoko_wide_run_widens_its_line_when_it_is_not_fitted", a_wide_run_widens_its_line_when_it_is_not_fitted),
+        ("docx::tate_chu_yoko_vert_compress_without_w_is_not_squeezed_and_widens_its_line", vert_compress_without_w_is_not_squeezed_and_widens_its_line),
     ]
 }
 
@@ -219,4 +220,18 @@ fn k0014_caret_in_tate_chu_yoko() {
             }
         }
     }
+}
+
+/// `vertCompress="1"` with no `w:w` squeezes nothing in Word (Windows Word's XPS, 108 paragraphs: every value equals the `vert` run's): six digits of ＭＳ Gothic 12 pt
+/// are 36 pt wide, their line widens to it and the lines before and after are not overlapped (`tate-chu-yoko-msg-compress-no-w-6.docx` is `…-off-6.docx` with the attribute).
+fn vert_compress_without_w_is_not_squeezed_and_widens_its_line() {
+    let off = columns("tate-chu-yoko-msg-off-6.docx");
+    let compress = columns("tate-chu-yoko-msg-compress-no-w-6.docx");
+    assert!(compress.digits.iter().all(|d| near(d.xscale, 1.0, 0.001)), "not squeezed");
+    for k in 0..3 {
+        assert!(near(compress.x[k], off.x[k], 0.05), "line {k}: {} as without the attribute {}", compress.x[k], off.x[k]);
+    }
+    let plain = columns("tate-chu-yoko-msg-plain-0.docx");
+    let pitch = (plain.x[0] - plain.x[2]) / 2.0;
+    assert!(near(compress.x[0] - compress.x[2], pitch + 36.0, 0.3), "the line is as thick as the digits are wide");
 }

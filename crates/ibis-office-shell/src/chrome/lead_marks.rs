@@ -63,7 +63,7 @@ const EFFECT_SQUARE: f32 = 12.0;
 const EFFECT_BASE: u32 = 0x4472c4;
 
 impl EffectSample {
-    /// The sample of one `a:effectStyle` of a theme's effect scheme (`ibis_pptx::theme_effects`).
+    /// The sample of one `a:effectStyle` of a theme's effect scheme (`ibis_formats::theme_effects`).
     pub(crate) fn from_style_xml(xml: &str) -> Self {
         fn attr(xml: &str, tag: &str, name: &str) -> Option<f32> {
             let start = xml.find(&format!("<a:{tag}"))?;
@@ -95,9 +95,9 @@ pub fn accent_chips(colors: &[(&str, Rgb)]) -> Vec<LeadMark> {
     (1..=6).filter_map(|n| colors.iter().find(|(name, _)| name.eq_ignore_ascii_case(&format!("accent{n}"))).map(|(_, rgb)| LeadMark::Chip(*rgb))).collect()
 }
 
-/// The three samples (subtle, moderate, intense) of the effect scheme `id` of `ibis_pptx::theme_effects::THEME_EFFECTS`.
+/// The three samples (subtle, moderate, intense) of the effect scheme `id` of `ibis_formats::theme_effects::THEME_EFFECTS`.
 pub fn effect_samples(id: &str) -> Vec<LeadMark> {
-    let Some(preset) = ibis_pptx::theme_effects::THEME_EFFECTS.iter().find(|p| p.id == id) else { return Vec::new() };
+    let Some(preset) = ibis_formats::theme_effects::THEME_EFFECTS.iter().find(|p| p.id == id) else { return Vec::new() };
     [preset.subtle_effect, preset.moderate_effect, preset.intense_effect].into_iter().map(|xml| LeadMark::Effect(EffectSample::from_style_xml(xml))).collect()
 }
 

@@ -120,8 +120,8 @@ impl SlideEditor {
         if p.masters.len() < 2 || self.master_in_use(master) || p.master(master).is_none() {
             return;
         }
-        let mut commands: Vec<Command> = p.layouts.iter().filter(|l| l.master == Some(master)).map(|l| Command::RemoveLayout { layout: l.id }).collect();
-        commands.push(Command::RemoveMaster { master });
+        let mut commands: Vec<Command> = p.layouts.iter().filter(|l| l.master == Some(master)).map(|l| Command::DeleteLayout { layout: l.id }).collect();
+        commands.push(Command::DeleteMaster { master });
         self.apply_pptx_commands_checked(commands, cx);
     }
 

@@ -81,7 +81,7 @@ fn border_css(side: &str, border: &Option<Border>) -> Option<String> {
 }
 
 /// The declarations of a cell's `style`.
-fn style_css(style: &CellStyle) -> String {
+pub(crate) fn style_css(style: &CellStyle) -> String {
     let mut d: Vec<String> = Vec::new();
     if let Some(font) = &style.font {
         d.push(format!("font-family:\"{}\"", font.replace('"', "")));

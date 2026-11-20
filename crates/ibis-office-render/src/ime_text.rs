@@ -93,6 +93,26 @@ pub fn underline_shapes(style: UnderlineStyle, size_pt: f32, x_pt: f32, width_pt
     (crate::shape_view::format_hooks::hooks().underline_shapes)(style, size_pt, x_pt, width_pt, baseline_pt)
 }
 
+/// The baseline (pixels from the top of the clip) to draw the composing text's underlines at, so that every one of them (the thickest and
+/// the dotted and wavy ones too) ends at least a pixel above `clip_bottom_px`, the bottom edge of what is painted (the formula bar's text is
+/// `overflow_hidden`: a line below it is not seen, K0020 and K0044). `natural_px` is where the typeface's own baseline is (top of the text
+/// plus its ascent); a typeface with a deep descent (Meiryo UI, Yu Gothic UI, Segoe UI) has it low, and the lines come up as far as they
+/// must, whatever the typeface. `size_pt` the font size and `k` pixels to a point.
+pub fn underline_baseline_within(natural_px: f32, clip_bottom_px: f32, size_pt: f32, k: f32) -> f32 {
+    use UnderlineStyle::*;
+    let deepest = [Single, Thick, Dotted, DottedHeavy, Wave, WavyHeavy]
+        .into_iter()
+        .map(|style| {
+            let (boxes, strokes) = underline_shapes(style, size_pt, 0.0, 1.0, 0.0);
+            let a = boxes.iter().map(|[_, y, _, h]| y + h * 1.0);
+            let b = strokes.iter().map(|[_, y, _, y2, w]| y.max(*y2) + w / 2.0);
+            a.chain(b).fold(0.0f32, f32::max)
+        })
+        .fold(0.0f32, f32::max);
+    // Painted at least one pixel tall, and a pixel clear of the edge.
+    natural_px.min(clip_bottom_px - 1.0 - (deepest * k).max(1.0))
+}
+
 /// Draw those shapes with `k` pixels to a point, the point (0, 0) at `origin`, in `color`.
 pub(crate) fn paint_shapes(window: &mut Window, origin: Point<Pixels>, k: f32, shapes: &(Vec<[f32; 4]>, Vec<[f32; 5]>), color: Hsla) {
     for [x, y, w, h] in &shapes.0 {

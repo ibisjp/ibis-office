@@ -206,11 +206,25 @@ impl DataTable {
         commit: impl Fn(&mut SlideEditor, usize, usize, &mut Window, &mut Context<SlideEditor>) + 'static,
         cx: &Context<SlideEditor>,
     ) -> Self {
+        Self::reorder_list_dnd(id, columns, header, list, count, build, move |e, ev, w, cx| commit(e, ev.from as usize, ev.target as usize, w, cx), cx)
+    }
+
+    /// As `reorder_list`, and the drop is handed over whole: rows of another table that shares `list.dnd` (the commands to put in a
+    /// list: `TableRow::draggable` rows of a table with `row_dnd`) can be dropped on the rows, with the insertion line, and `on_drop`
+    /// tells the table the row came from (`RowDropEvent::from_table`). A row of the list itself moves live and `on_drop`'s target is
+    /// the place it took.
+    pub fn reorder_list_dnd(
+        id: &'static str,
+        columns: Vec<super::virtual_table::TableColumn>,
+        header: Vec<AnyElement>,
+        list: &ListState,
+        count: usize,
+        build: impl Fn(std::ops::Range<usize>, &mut Window, &mut App) -> Vec<super::virtual_table::TableRow> + 'static,
+        on_drop: impl Fn(&mut SlideEditor, super::row_dnd::RowDropEvent, &mut Window, &mut Context<SlideEditor>) + 'static,
+        cx: &Context<SlideEditor>,
+    ) -> Self {
         list.id.set(id);
-        Self::virtualized(id, columns, header, list.table.clone(), count, build, cx)
-            .drag_handles()
-            .live_reorder()
-            .row_dnd(list.dnd.clone(), move |e, ev, w, cx| commit(e, ev.from as usize, ev.target as usize, w, cx))
+        Self::virtualized(id, columns, header, list.table.clone(), count, build, cx).drag_handles().live_reorder().row_dnd(list.dnd.clone(), on_drop)
     }
 
     pub fn row_height(mut self, height: f32) -> Self {

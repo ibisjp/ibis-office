@@ -5,7 +5,7 @@
 //! plays them: the effects of its main sequence, in order. They are read
 //! from the file and played; the file's timing is saved as it was.
 
-use crate::ShapeId;
+use crate::{Rgb, ShapeId};
 
 /// What an effect does to its shape (`presetClass`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +112,9 @@ pub enum AnimationRepeat {
     None,
     /// Specific count of times (e.g. 2, 3, 4, 5, 10).
     Count(u32),
+    /// A count that is not whole, in 1000ths of a time (`repeatCount="2500"` is 2.5 times: the last time stops half way). Whole counts
+    /// are `Count`.
+    Thousandths(u32),
     /// Until next click (`"indefinite"`).
     UntilNextClick,
     /// Until end of slide (`"indefinite"`).
@@ -128,8 +131,18 @@ pub enum AnimationAfterEffect {
     Hide,
     /// 次のクリック時に非表示 (Hide on next click).
     HideOnNextClick,
-    /// 淡色表示 (Dim with color).
-    Dim,
+    /// 淡色表示: the shape's fill and text take this colour at the next click (`p:animClr` of `ppt_c` with `masterRel="nextClick"`).
+    Dim(Rgb),
+}
+
+impl AnimationAfterEffect {
+    /// The colour a newly chosen 淡色表示 starts with.
+    pub const DEFAULT_DIM: Rgb = Rgb(0x80_80_80);
+
+    /// Whether `self` and `other` are the same kind (a dimming colour is not part of the kind).
+    pub fn same_kind(self, other: Self) -> bool {
+        std::mem::discriminant(&self) == std::mem::discriminant(&other)
+    }
 }
 
 /// What triggers an animation effect (アニメーションのトリガー).
@@ -145,6 +158,64 @@ pub enum AnimationTrigger {
         shape: ShapeId,
         bookmark: String,
     },
+}
+
+impl Animation {
+    /// One pass of the effect, ms: its `duration` forward, and again back when it runs back (`autoRev`, ECMA-376 19.5.3: the
+    /// simple duration is doubled).
+    pub fn pass_ms(&self) -> u32 {
+        self.duration.saturating_mul(if self.auto_reverse { 2 } else { 1 })
+    }
+
+    /// How long the effect runs once started, ms (`repeatCount` of `pass_ms`; 1000ths of a time are whole times here); `None` while
+    /// it repeats until the next click or the end of the slide (`indefinite`).
+    pub fn active_ms(&self) -> Option<u32> {
+        match self.repeat_count {
+            AnimationRepeat::None => Some(self.pass_ms()),
+            AnimationRepeat::Count(n) => Some(self.pass_ms().saturating_mul(n.max(1))),
+            AnimationRepeat::Thousandths(n) => Some((u64::from(self.pass_ms()) * u64::from(n) / 1000).min(u64::from(u32::MAX)) as u32),
+            AnimationRepeat::UntilNextClick | AnimationRepeat::UntilEndOfSlide => None,
+        }
+    }
+
+    /// How long the effect holds what follows it back (`after previous`, the timeline): its running time, or one pass for an
+    /// effect that repeats without end.
+    pub fn span_ms(&self) -> u32 {
+        self.active_ms().unwrap_or_else(|| self.pass_ms())
+    }
+
+    /// The effect `t` ms after it began (its delay gone): how far through its `duration` it has gone (0 to 1: the same motion again
+    /// for each repetition, and back for the second half of a pass that runs back), and whether it has ended.
+    pub fn clock(&self, t: f32) -> (f32, bool) {
+        let d = self.duration as f32;
+        if d <= 0.0 {
+            return (1.0, true);
+        }
+        if t <= 0.0 {
+            return (0.0, false);
+        }
+        let pass = self.pass_ms() as f32;
+        let ended = self.active_ms().is_some_and(|a| t >= a as f32);
+        // (Ended: the end of the last pass, or where a count that is not whole stops it.)
+        let into = if ended {
+            let last = self.active_ms().unwrap_or(0) as f32 % pass;
+            if last < 0.5 { pass } else { last }
+        } else {
+            t % pass
+        };
+        let q = into / d;
+        let p = if self.auto_reverse && q > 1.0 { 2.0 - q } else { q.min(1.0) };
+        (p.clamp(0.0, 1.0), ended)
+    }
+
+    /// Where the effect leaves what it moves once it has ended: at its end, or, running back, where it began.
+    pub fn settled_progress(&self) -> f32 {
+        match self.active_ms() {
+            Some(active) => self.clock(active as f32).0,
+            None if self.auto_reverse => 0.0,
+            None => 1.0,
+        }
+    }
 }
 
 impl AnimationTrigger {

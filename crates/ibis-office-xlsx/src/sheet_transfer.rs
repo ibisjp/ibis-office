@@ -162,19 +162,19 @@ impl SlideEditor {
                 let Some(base) = self.slide().name.clone() else { return };
                 let name = ibis_doc_model::sheet_ops::copy_sheet_name(self.presentation(), &base);
                 let shape = self.document.ids().new_shape_id();
-                commands.push(Command::Sheet(SheetCommand::CopySheet { slide, name, new_slide, shape }));
+                commands.push(Command::Sheet(SheetCommand::CopySheet { sheet: slide, name, new_slide, shape }));
                 // The copy is made right after the sheet; the place it goes to counts it.
                 let (current, place) = (at + 1, before_pos + usize::from(before_pos > at));
                 let to = if place > current { place - 1 } else { place };
                 if to != current {
-                    commands.push(Command::Sheet(SheetCommand::MoveSheet { slide: new_slide, to }));
+                    commands.push(Command::Sheet(SheetCommand::MoveSheet { sheet: new_slide, to }));
                 }
             } else {
                 let to = if before_pos > at { before_pos - 1 } else { before_pos };
                 if to == at {
                     return cx.notify();
                 }
-                commands.push(Command::Sheet(SheetCommand::MoveSheet { slide, to }));
+                commands.push(Command::Sheet(SheetCommand::MoveSheet { sheet: slide, to }));
             }
             self.run_sheet(commands, cx);
             if copy && self.presentation().slide(new_slide).is_some() {
@@ -316,7 +316,7 @@ impl SlideEditor {
             commands.extend(self.link_new_books_commands(&format!("CHOOSE(1,{})", external.join(","))));
         }
         let (slide, shape) = (self.document.ids().new_slide_id(), self.document.ids().new_shape_id());
-        commands.push(Command::Sheet(SheetCommand::InsertSheetFrom { index, name, slide, shape, content: Arc::new(content) }));
+        commands.push(Command::Sheet(SheetCommand::InsertSheetFrom { index, name, sheet: slide, shape, content: Arc::new(content) }));
         commands.extend(self.brought_commands(brought));
         self.run_sheet(commands, cx);
         let taken = self.presentation().slide(slide).is_some();
@@ -331,7 +331,7 @@ impl SlideEditor {
         if taken && let Some((from, from_slide)) = pending.from {
             cx.defer(move |cx| {
                 if let Some(source) = from.upgrade() {
-                    source.update(cx, |s, cx| s.run_sheet(vec![Command::Sheet(SheetCommand::DeleteSheet { slide: from_slide })], cx));
+                    source.update(cx, |s, cx| s.run_sheet(vec![Command::Sheet(SheetCommand::DeleteSheet { sheet: from_slide })], cx));
                 }
             });
         }

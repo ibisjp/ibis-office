@@ -13,10 +13,12 @@ pub mod chart_view;
 pub(crate) mod fallback_widths;
 pub mod font_metrics;
 pub(crate) mod glyph_outline;
+pub mod glyph_text;
 #[cfg(target_family = "wasm")]
 pub mod browser_raster;
 pub mod bevel;
 pub(crate) mod blur_shadow;
+pub use blur_shadow::bgra_picture;
 pub mod metafile_fonts;
 pub mod picture_svg;
 pub(crate) mod soft_edge;
@@ -30,6 +32,7 @@ pub mod math_view;
 pub mod rich_text;
 pub(crate) mod rotated_text;
 pub mod shape_view;
+pub mod subset_fonts;
 pub mod table_view;
 pub mod web_image;
 

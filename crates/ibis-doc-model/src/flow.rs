@@ -1313,6 +1313,8 @@ pub struct FlowRunStyle {
     /// Word 2010's text effects (`w14:textOutline`, `w14:glow`, `w14:shadow`, `w14:textFill`).
     pub effects: Option<std::sync::Arc<TextEffects>>,
     pub position: VerticalPosition,
+    /// How far the text is raised above its baseline (lowered if negative), in half-points (`w:position`, ECMA-376 17.3.2.24). Apart from `position` (`w:vertAlign`).
+    pub raise: i32,
     /// Added after each character, in EMU (`w:spacing`).
     pub spacing: Emu,
     /// Horizontal scale in percent (`w:w`).
@@ -1382,6 +1384,7 @@ impl Default for FlowRunStyle {
             shd_pattern: None,
             effects: None,
             position: VerticalPosition::Baseline,
+            raise: 0,
             spacing: 0,
             scale: 100,
             fit_text: None,
@@ -1456,12 +1459,23 @@ impl FlowRunStyle {
             FontSlot::EastAsia => {
                 // [MS-OI29500] 2.1.88: with `eastAsia` Times New Roman and `ascii` equal to `hAnsi`, the `ascii` typeface is used.
                 if self.east_asian_font.as_deref() == Some("Times New Roman") && latin.is_some() && self.h_ansi_font.as_deref().is_none_or(|h| Some(h) == latin) {
-                    return latin;
+                    return latin.map(substitute_for_kana);
                 }
-                self.east_asian_font.as_deref().or(latin).or(self.cs_font.as_deref())
+                self.east_asian_font.as_deref().map(substitute_for_kana).or(latin).or(self.cs_font.as_deref())
             }
         }
     }
+}
+
+/// A Latin typeface named as the `w:eastAsia` one has no kana or kanji: Word draws them in ＭＳ 明朝 (the Japanese default of the PC), the line and the glyphs
+/// those of it (Word's XPS, GitHub issue #179: Arial, Times New Roman, Calibri, Century, Cambria, Verdana, Segoe UI and Consolas as `w:eastAsia`, kana and
+/// kanji lines 13.63 pt apart at 10.5 pt). The typefaces are the Latin ones Office ships (the ones with Japanese glyphs, Arial Unicode MS, are not here).
+fn substitute_for_kana(name: &str) -> &str {
+    const LATIN_ONLY: [&str; 24] = [
+        "Arial", "Arial Black", "Arial Narrow", "Times New Roman", "Calibri", "Calibri Light", "Century", "Century Gothic", "Century Schoolbook", "Cambria", "Cambria Math",
+        "Verdana", "Segoe UI", "Consolas", "Courier New", "Tahoma", "Georgia", "Trebuchet MS", "Garamond", "Book Antiqua", "Palatino Linotype", "Comic Sans MS", "Impact", "Aptos",
+    ];
+    if LATIN_ONLY.iter().any(|l| name.trim().eq_ignore_ascii_case(l)) { "\u{ff2d}\u{ff33} \u{660e}\u{671d}" } else { name }
 }
 
 /// The typeface Word draws a character in when the typeface of its font slot has no glyph for it and the character stands apart from the others (no character
@@ -1470,7 +1484,7 @@ impl FlowRunStyle {
 /// range can be widened by a row), made by `scripts/gen-word-fallback-typefaces.py` from Word 365's PDFs on Windows of 2026-11-11
 /// (`tasks/doc/m98-fallback-isolated.tsv`: 1283 characters of nine blocks, 2000 - 206F, 2100 - 218F, 2190 - 22FF, 2460 - 24FF, 25A0 - 27BF, each set apart by
 /// spaces, in `hAnsi` Century and Calibri with `eastAsia` Yu Mincho and MS Mincho; the drawn typeface read from the PDF's BaseFont). Measured and not derived from a
-/// rule (user decision 2026-11-11, doc/rule/implimentationRule.md "測った係数を使ってよい例外"); only the characters measured are in it. Not measured: the table for
+/// rule (user decision 2026-11-11, docs/rule/implimentationRule.md "測った係数を使ってよい例外"); only the characters measured are in it. Not measured: the table for
 /// `hAnsi` typefaces other than Century and Calibri (expected to be this one, as the two agree character for character), `w:hint="eastAsia"`, Complex Script, vertical text.
 const FALLBACK_TYPEFACES_TSV: &str = include_str!("fallback_typefaces.tsv");
 
@@ -1646,6 +1660,8 @@ pub struct PictureLook {
     pub effects: crate::model::BlipEffects,
     /// Preset geometry the picture is cut to (`pic:spPr/a:prstGeom/@prst`), or None for standard rectangle.
     pub geometry: Option<crate::drawing::Geometry>,
+    /// The room a shadow, a line or a turn takes around the picture (`wp:effectExtent` l, t, r, b), in EMU.
+    pub effect_extent: [i64; 4],
 }
 
 impl PictureLook {
@@ -1794,6 +1810,9 @@ pub struct Comment {
 pub struct Note {
     pub id: u32,
     pub blocks: Vec<Block>,
+    /// The reference to it has a mark of its own (`w:customMarkFollows`: the text after the reference is the mark, `*`, `†`): it takes no automatic number, nor does it count
+    /// in the numbering of the others (Word: 1, *, 2).
+    pub custom_mark: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2623,6 +2642,10 @@ pub struct FlowParagraph {
     pub first_line_chars: Option<i32>,
     pub space_before: Emu,
     pub space_after: Emu,
+    /// The space before and after in lines (`w:spacing/@w:beforeLines`, `@w:afterLines`; 1/100 of a line). When present they take
+    /// precedence over `space_before` and `space_after` (ECMA-376 17.3.1.33); the layout turns them into lengths.
+    pub space_before_lines: Option<i32>,
+    pub space_after_lines: Option<i32>,
     pub line: LineHeight,
     /// Lines snap to the page's line grid.
     pub snap_to_grid: bool,
@@ -2676,6 +2699,9 @@ pub struct FlowParagraph {
     /// Bookmarks starting in the paragraph (their names), such as the
     /// `_Toc…` a table of contents links to.
     pub bookmarks: Vec<String>,
+    /// Where each of `bookmarks` starts in the paragraph's text, in characters (as read from the file; editing the paragraph does not move them, so a place is kept to the
+    /// paragraph's length when it is used): the PDF's destination of a link to a bookmark is at the character it starts at. Empty or shorter than `bookmarks`: 0.
+    pub bookmark_at: Vec<usize>,
     /// The bookmarks that end in this paragraph (`w:bookmarkEnd`), by name: a bookmark that spans pages has its end
     /// here (an index entry's page range). Read, not edited.
     pub bookmark_ends: Vec<String>,
@@ -2761,9 +2787,12 @@ pub enum CellDirection {
     /// Across, lines down (`lrTb`).
     #[default]
     LrTb,
-    /// Down, lines right to left; Japanese upright, Latin turned
-    /// clockwise (`tbRl`, `tbRlV`).
+    /// Down, lines right to left, all of it turned clockwise (`tbRl`;
+    /// Word's cell: Japanese lies on its side too).
     TbRl,
+    /// Down, lines right to left; Japanese upright, Latin turned
+    /// clockwise (`tbRlV`).
+    TbRlV,
     /// Up, lines left to right; all turned anticlockwise (`btLr`).
     BtLr,
     /// Across, Japanese turned anticlockwise (`lrTbV`).
@@ -2775,17 +2804,39 @@ pub enum CellDirection {
 impl CellDirection {
     pub fn from_name(name: &str) -> Self {
         match name {
-            "tbRl" | "tbRlV" | "rl" | "tbV" => Self::TbRl,
+            // Word's PDFs of GitHub issue #188 (`n5-vertical.docx`, D7b-D7d): `rlV` reads as `tbRlV`, `lrV` as `tbLrV` and `tbV` as `lrTbV`.
+            "tbRl" | "rl" => Self::TbRl,
+            "tbRlV" | "rlV" => Self::TbRlV,
             "btLr" | "lr" => Self::BtLr,
-            "lrTbV" | "tbLr" => Self::LrTbV,
-            "tbLrV" => Self::TbLrV,
+            "lrTbV" | "tbLr" | "tbV" => Self::LrTbV,
+            "tbLrV" | "lrV" => Self::TbLrV,
             _ => Self::LrTb,
+        }
+    }
+
+    /// A section's direction: `tbRlV` is as `tbRl` there (the page's text is vertical either way).
+    pub fn from_section_name(name: &str) -> Self {
+        match Self::from_name(name) {
+            Self::TbRlV => Self::TbRl,
+            d => d,
+        }
+    }
+
+    /// The `ST_TextDirection` name it is written as (`lrTb` is the default).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::LrTb => "lrTb",
+            Self::TbRl => "tbRl",
+            Self::TbRlV => "tbRlV",
+            Self::BtLr => "btLr",
+            Self::LrTbV => "lrTbV",
+            Self::TbLrV => "tbLrV",
         }
     }
 
     /// Its lines run down or up.
     pub fn vertical(self) -> bool {
-        matches!(self, Self::TbRl | Self::BtLr | Self::TbLrV)
+        matches!(self, Self::TbRl | Self::TbRlV | Self::BtLr | Self::TbLrV)
     }
 }
 
@@ -2836,6 +2887,9 @@ pub struct FlowTable {
     /// An automatically laid out table of no set width (`w:tblLayout` autofit, `w:tblW` auto): wider than the text, its
     /// columns are cut down in proportion (to the text's width), not less than their content's least width.
     pub fit_to_page: bool,
+    /// A fixed layout table (`w:tblLayout` fixed) whose width (`w:tblW`) is in percent (fiftieths of one) of the text's width: `columns` are
+    /// cut or stretched to it in proportion when the text's width is known (a width in twips is already in `columns`; GitHub issue #178).
+    pub fixed_percent: Option<u32>,
     /// セル間隔 (`w:tblCellSpacing`).
     pub cell_spacing: Option<Emu>,
 }
@@ -2849,6 +2903,9 @@ pub enum PreferredWidth {
     /// Fiftieths of a percent (5000: all of it) of the table's width (a
     /// cell's) or of the text's (the table's).
     Percent(u32),
+    /// `nil` (`w:type`): no width of its own, so the grid's (GitHub issue #178: Word keeps a cell of type `nil` as wide as its grid
+    /// column, where `auto` is as wide as its content).
+    Nil,
 }
 
 /// The preferred widths an automatically fitted table is laid out from.
@@ -2860,6 +2917,9 @@ pub struct AutoFit {
     /// The file's grid says the widths (it agrees with the cells' widths and the table's): kept as long as each column holds its content's least width (Word writes the
     /// widths it laid out into the grid, and lays the table out again when it opens it).
     pub grid_trusted: bool,
+    /// The grid (`w:tblGrid`) gives every column a width: a width in percent of the table's (a cell's) is of the grid's total when the
+    /// table has no width of its own (GitHub issue #178), not of the text's.
+    pub grid_given: bool,
 }
 
 impl FlowTable {
@@ -3101,6 +3161,9 @@ pub struct FlowDocument {
     /// 約物を詰める (`w:characterSpacingControl` compressPunctuation): a line that is a little too long fits by squeezing its
     /// stops and brackets to half an em.
     pub compress_punctuation: bool,
+    /// Also the kana (`w:characterSpacingControl` compressPunctuationAndJapaneseKana, which squeezes punctuation too, `compress_punctuation` is on with it): a line that is a
+    /// little too long fits by giving up a sixteenth of an em after each kana.
+    pub compress_kana: bool,
     /// The file's font table (`word/fontTable.xml`, ECMA-376 Part 1 §17.8.3) by typeface name: Word draws a typeface that is not
     /// installed with its `w:altName`s if one is, else with Cambria if the table says `w:family` `roman` or does not list it, and with
     /// Calibri if it lists it otherwise.
@@ -3360,6 +3423,8 @@ pub struct RunFormat {
     /// The text effects (`Some(None)` none).
     pub effects: Option<Option<std::sync::Arc<TextEffects>>>,
     pub position: Option<VerticalPosition>,
+    /// Half-points above the baseline (`w:position`).
+    pub raise: Option<i32>,
     /// EMU.
     pub spacing: Option<Emu>,
     pub scale: Option<u32>,
@@ -3435,6 +3500,7 @@ impl RunFormat {
         set(&mut self.shd_pattern, &other.shd_pattern);
         set(&mut self.effects, &other.effects);
         set(&mut self.position, &other.position);
+        set(&mut self.raise, &other.raise);
         set(&mut self.spacing, &other.spacing);
         set(&mut self.scale, &other.scale);
         set(&mut self.fit_text, &other.fit_text);
@@ -3491,6 +3557,7 @@ impl RunFormat {
         clear(&mut f.shd_pattern, &other.shd_pattern);
         clear(&mut f.effects, &other.effects);
         clear(&mut f.position, &other.position);
+        clear(&mut f.raise, &other.raise);
         clear(&mut f.spacing, &other.spacing);
         clear(&mut f.scale, &other.scale);
         clear(&mut f.fit_text, &other.fit_text);
@@ -3542,6 +3609,7 @@ impl RunFormat {
             shd_pattern: self.shd_pattern.flatten(),
             effects: self.effects.clone().flatten(),
             position: self.position.unwrap_or_default(),
+            raise: self.raise.unwrap_or_default(),
             spacing: self.spacing.unwrap_or(0),
             scale: self.scale.unwrap_or(100),
             fit_text: self.fit_text.flatten(),
@@ -3585,6 +3653,9 @@ pub struct ParaFormat {
     pub first_line_chars: Option<i32>,
     pub before: Option<Emu>,
     pub after: Option<Emu>,
+    /// `w:beforeLines`, `w:afterLines` (1/100 of a line): see `FlowParagraph::space_before_lines`.
+    pub before_lines: Option<i32>,
+    pub after_lines: Option<i32>,
     pub line: Option<LineHeight>,
     pub snap: Option<bool>,
     pub auto_space_letters: Option<bool>,
@@ -3632,6 +3703,13 @@ impl ParaFormat {
         set(&mut self.left_chars, &other.left_chars);
         set(&mut self.right_chars, &other.right_chars);
         set(&mut self.first_line_chars, &other.first_line_chars);
+        // A length set on a later layer replaces the lines of an earlier one, and the other way round.
+        if other.before.is_some() || other.before_lines.is_some() {
+            self.before_lines = other.before_lines;
+        }
+        if other.after.is_some() || other.after_lines.is_some() {
+            self.after_lines = other.after_lines;
+        }
         set(&mut self.before, &other.before);
         set(&mut self.after, &other.after);
         set(&mut self.line, &other.line);
@@ -3692,6 +3770,8 @@ impl ParaFormat {
         p.first_line_chars = self.first_line_chars;
         p.space_before = self.before.unwrap_or(0);
         p.space_after = self.after.unwrap_or(0);
+        p.space_before_lines = self.before_lines;
+        p.space_after_lines = self.after_lines;
         p.line = self.line.unwrap_or_default();
         p.snap_to_grid = self.snap.unwrap_or(true);
         p.auto_space_letters = self.auto_space_letters.unwrap_or(true);
@@ -5196,4 +5276,6 @@ pub struct FontTableEntry {
     pub pitch: String,
     /// `w:panose1` (ten bytes as hex), or empty.
     pub panose: String,
+    /// `w:sig/@w:csb0`: the first 32 bits of the typeface's code page ranges (`OS/2` ulCodePageRange1; bit 17 is Japanese), when the font table has them.
+    pub csb0: Option<u32>,
 }

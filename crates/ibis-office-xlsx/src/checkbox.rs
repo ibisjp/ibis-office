@@ -61,7 +61,7 @@ impl SlideEditor {
             return;
         }
         let edits = cells.into_iter().map(|(row, column)| CellEdit { row, column, input: CellInput::Value(CellValue::Bool(on)) }).collect();
-        self.run_sheet(vec![Command::Sheet(SheetCommand::SetCells { slide: self.current_slide, edits })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::SetCells { sheet: self.current_slide, edits })], cx);
         self.sync_shape_formulas(cx);
     }
 
@@ -73,7 +73,7 @@ impl SlideEditor {
         }
         let ranges = self.selected_ranges();
         let slide = self.current_slide;
-        let mut commands = vec![Command::Sheet(SheetCommand::SetFormat { slide, ranges: ranges.clone(), change: StyleChange::Checkbox(true) })];
+        let mut commands = vec![Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: ranges.clone(), change: StyleChange::Checkbox(true) })];
         if let Some((_, sheet)) = self.current_sheet() {
             let mut edits = Vec::new();
             for r in &ranges {
@@ -86,7 +86,7 @@ impl SlideEditor {
                 }
             }
             if !edits.is_empty() {
-                commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
+                commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits }));
             }
         }
         self.run_sheet(commands, cx);

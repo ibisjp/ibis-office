@@ -13,7 +13,8 @@ ibis-office-shell.workspace = true
 # `#[editor_ext]`: the methods this crate writes for the editor become extension traits (tasks/doc/crate-split-plan.md, 10).
 ibis-office-macros.workspace = true
 ibis-doc-model.workspace = true
-ibis-pptx.workspace = true
+ibis-formats.workspace = true
+ibis-odf.workspace = true
 ibis-emf.workspace = true
 gpui-kit.workspace = true
 log = "0.4"

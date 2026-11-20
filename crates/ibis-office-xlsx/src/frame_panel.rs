@@ -300,7 +300,7 @@ impl SlideEditor {
             commands.push(Command::SetAspectLocked { slide, shape: shape_id, locked });
         }
         if shape.frame != new_frame {
-            commands.push(Command::SetFrame { slide, shape: shape_id, frame: new_frame });
+            commands.push(Command::SetFrame { slide, frames: vec![(shape_id, new_frame)], with_attached: true });
         }
         if shape.rotation != rotation {
             commands.push(Command::SetTransform { slide, shape: shape_id, rotation, flip_h: shape.flip_h, flip_v: shape.flip_v });
@@ -422,7 +422,7 @@ impl SlideEditor {
             if let ibis_doc_model::ShapeKind::Auto(auto) = &shape.kind {
                 let next = model.written_to(&initial, auto);
                 if next != *auto {
-                    commands.push(Command::SetKind { slide, shape: id, kind: Box::new(ibis_doc_model::ShapeKind::Auto(next)) });
+                    commands.push(Command::SetShapeKind { slide, shape: id, kind: Box::new(ibis_doc_model::ShapeKind::Auto(next)) });
                 }
             }
             let text = model.text_change(&initial);

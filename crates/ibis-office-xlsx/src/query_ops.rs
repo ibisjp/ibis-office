@@ -7,7 +7,7 @@
 //! back when it is edited.
 use std::collections::HashMap;
 
-use ibis_doc_model::query::{Agg, Clause, Culture, JoinKind, Op, QTable, QType, SplitBy, Step};
+use ibis_doc_model::query::{Agg, Clause, Cond, Culture, DateFilter, DateUnit, DateWhen, JoinKind, Op, QTable, QType, SplitBy, Step, Transform};
 
 /// An operation of the editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -49,6 +49,18 @@ pub(crate) enum QOp {
     AddColumn,
     AddConditional,
     AddIndex,
+    FilterDate,
+    Transform,
+    AlternateRows,
+    KeepRange,
+    DuplicateColumn,
+    /// A step the code writes that no form edits (its name is shown in the list; the 詳細エディター edits it).
+    FilterCode,
+    SplitCode,
+    MissingField,
+    GroupLocal,
+    /// The code step: the M the steps cannot hold, run by the M interpreter.
+    MCode,
 }
 
 /// The ribbon's groups of operations.
@@ -71,6 +83,9 @@ pub(crate) const TABS: [(&str, &[QOp]); 4] = [
             QOp::RemoveErrors,
             QOp::Sort,
             QOp::Filter,
+            QOp::FilterDate,
+            QOp::KeepRange,
+            QOp::AlternateRows,
         ],
     ),
     (
@@ -86,6 +101,7 @@ pub(crate) const TABS: [(&str, &[QOp]); 4] = [
             QOp::Trim,
             QOp::Upper,
             QOp::Lower,
+            QOp::Transform,
             QOp::Reorder,
             QOp::Transpose,
             QOp::Reverse,
@@ -95,7 +111,7 @@ pub(crate) const TABS: [(&str, &[QOp]); 4] = [
             QOp::GroupBy,
         ],
     ),
-    ("query.tab.add", &[QOp::AddColumn, QOp::AddConditional, QOp::AddIndex]),
+    ("query.tab.add", &[QOp::AddColumn, QOp::AddConditional, QOp::AddIndex, QOp::DuplicateColumn]),
     ("query.tab.combine", &[QOp::Merge, QOp::Append]),
 ];
 
@@ -124,9 +140,23 @@ const fn choice(id: &'static str, options: &'static [&'static str]) -> Field {
     Field { id, kind: Kind::Choice(options) }
 }
 
-pub(crate) const TYPES: [&str; 8] = ["query.type.any", "query.type.text", "query.type.whole", "query.type.decimal", "query.type.date", "query.type.datetime", "query.type.time", "query.type.logical"];
-pub(crate) const CULTURES: [&str; 5] = ["query.culture.invariant", "query.culture.en-us", "query.culture.ja-jp", "query.culture.de-de", "query.culture.fr-fr"];
-pub(crate) const COMPARISONS: [&str; 12] = [
+pub(crate) const TYPES: [&str; 13] = [
+    "query.type.any",
+    "query.type.text",
+    "query.type.whole",
+    "query.type.decimal",
+    "query.type.date",
+    "query.type.datetime",
+    "query.type.time",
+    "query.type.logical",
+    "query.type.currency",
+    "query.type.percentage",
+    "query.type.int32",
+    "query.type.datetimezone",
+    "query.type.duration",
+];
+pub(crate) const CULTURES: [&str; 6] = ["query.culture.invariant", "query.culture.en-us", "query.culture.ja-jp", "query.culture.de-de", "query.culture.fr-fr", "query.culture.zh-cn"];
+pub(crate) const COMPARISONS: [&str; 14] = [
     "query.cmp.equals",
     "query.cmp.not-equals",
     "query.cmp.greater",
@@ -139,11 +169,34 @@ pub(crate) const COMPARISONS: [&str; 12] = [
     "query.cmp.ends-with",
     "query.cmp.is-null",
     "query.cmp.is-not-null",
+    "query.cmp.does-not-begin-with",
+    "query.cmp.does-not-end-with",
+];
+pub(crate) const LOGICS: [&str; 2] = ["query.logic.and", "query.logic.or"];
+pub(crate) const WHENS: [&str; 4] = ["query.when.previous", "query.when.current", "query.when.next", "query.when.year-to-date"];
+pub(crate) const UNITS: [&str; 5] = ["query.unit.day", "query.unit.week", "query.unit.month", "query.unit.quarter", "query.unit.year"];
+pub(crate) const FUNCTIONS: [&str; 16] = [
+    "query.fn.trim",
+    "query.fn.upper",
+    "query.fn.lower",
+    "query.fn.proper",
+    "query.fn.clean",
+    "query.fn.length",
+    "query.fn.round",
+    "query.fn.round-up",
+    "query.fn.round-down",
+    "query.fn.abs",
+    "query.fn.sqrt",
+    "query.fn.year",
+    "query.fn.month",
+    "query.fn.day",
+    "query.fn.prefix",
+    "query.fn.suffix",
 ];
 pub(crate) const AGGREGATES: [&str; 8] = ["query.agg.sum", "query.agg.average", "query.agg.min", "query.agg.max", "query.agg.count", "query.agg.distinct", "query.agg.median", "query.agg.first"];
 pub(crate) const JOINS: [&str; 6] = ["query.join.left", "query.join.right", "query.join.full", "query.join.inner", "query.join.left-anti", "query.join.right-anti"];
 pub(crate) const ORDERS: [&str; 2] = ["query.order.ascending", "query.order.descending"];
-pub(crate) const SPLITS: [&str; 2] = ["query.split.delimiter", "query.split.length"];
+pub(crate) const SPLITS: [&str; 3] = ["query.split.delimiter", "query.split.length", "query.split.positions"];
 
 impl QOp {
     /// The operation's name id (`query.op.<this>`).
@@ -186,17 +239,33 @@ impl QOp {
             Self::AddColumn => "add-column",
             Self::AddConditional => "add-conditional",
             Self::AddIndex => "add-index",
+            Self::FilterDate => "filter-date",
+            Self::Transform => "transform",
+            Self::AlternateRows => "alternate-rows",
+            Self::KeepRange => "keep-range",
+            Self::DuplicateColumn => "duplicate-column",
+            Self::FilterCode => "filter-code",
+            Self::SplitCode => "split-code",
+            Self::MissingField => "missing-field",
+            Self::GroupLocal => "group-local",
+            Self::MCode => "m-code",
         }
     }
 
     /// The fields the operation asks (none: it needs nothing more).
     pub(crate) fn fields(self) -> Vec<Field> {
         match self {
-            Self::PromoteHeaders | Self::DemoteHeaders | Self::RemoveBlankRows | Self::Transpose | Self::Reverse => vec![],
+            Self::PromoteHeaders | Self::DemoteHeaders | Self::RemoveBlankRows | Self::Transpose | Self::Reverse | Self::FilterCode | Self::SplitCode | Self::MissingField | Self::GroupLocal | Self::MCode => vec![],
             Self::ChangeType => vec![text("column"), choice("type", &TYPES), choice("culture", &CULTURES)],
             Self::SelectColumns | Self::RemoveColumns | Self::Reorder | Self::RemoveDuplicates | Self::RemoveErrors | Self::FillDown | Self::FillUp | Self::Trim | Self::Upper | Self::Lower => vec![text("columns")],
             Self::Rename => vec![text("from"), text("to")],
-            Self::Filter => vec![text("column"), choice("comparison", &COMPARISONS), text("value")],
+            // The second comparison is optional (an empty column leaves it out); `logic` joins the two.
+            Self::Filter => vec![text("column"), choice("comparison", &COMPARISONS), text("value"), choice("logic", &LOGICS), text("column2"), choice("comparison2", &COMPARISONS), text("value2")],
+            Self::FilterDate => vec![text("column"), choice("when", &WHENS), choice("unit", &UNITS), text("count")],
+            Self::Transform => vec![text("column"), choice("function", &FUNCTIONS), text("value")],
+            Self::AlternateRows => vec![text("offset"), text("skip"), text("take")],
+            Self::KeepRange => vec![text("first-row"), text("count")],
+            Self::DuplicateColumn => vec![text("column"), text("new-name")],
             Self::KeepTop | Self::KeepBottom | Self::RemoveTop | Self::RemoveBottom => vec![text("count")],
             Self::ReplaceErrors => vec![text("columns"), text("with")],
             Self::Sort => vec![text("column"), choice("order", &ORDERS), text("column2"), choice("order2", &ORDERS)],
@@ -273,18 +342,84 @@ pub(crate) fn build(op: QOp, v: &Values) -> Result<Step, String> {
     Ok(match op {
         QOp::PromoteHeaders => Step::PromoteHeaders,
         QOp::DemoteHeaders => Step::DemoteHeaders,
-        QOp::ChangeType => Step::ChangeType { column: need(v, "column", "column")?, ty: QType::ALL[index(v, "type").min(7)], culture: Culture::ALL[index(v, "culture").min(4)] },
+        QOp::ChangeType => Step::ChangeType { column: need(v, "column", "column")?, ty: QType::ALL[index(v, "type").min(QType::ALL.len() - 1)], culture: Culture::ALL[index(v, "culture").min(Culture::ALL.len() - 1)], apart: false },
         QOp::SelectColumns => Step::SelectColumns(columns("columns")?),
         QOp::RemoveColumns => Step::RemoveColumns(columns("columns")?),
-        QOp::Rename => Step::RenameColumn { from: need(v, "from", "from")?, to: need(v, "to", "to")? },
+        QOp::Rename => {
+            // Several columns at once: the old names and the new names are lists of the same length, in the same order.
+            let (from, to) = (columns("from")?, columns("to")?);
+            if from.len() != to.len() {
+                return Err("to".into());
+            }
+            Step::RenameColumns(from.into_iter().zip(to).collect())
+        }
         QOp::Reorder => Step::ReorderColumns(columns("columns")?),
         QOp::Filter => {
             let op = Op::ALL[index(v, "comparison").min(Op::ALL.len() - 1)];
             if op.takes_value() && get(v, "value").is_empty() {
                 return Err("value".into());
             }
-            Step::FilterRows { column: need(v, "column", "column")?, op, value: get(v, "value").to_string() }
+            let (column, value) = (need(v, "column", "column")?, get(v, "value").to_string());
+            let second = get(v, "column2").trim();
+            if second.is_empty() {
+                Step::FilterRows { column, op, value }
+            } else {
+                let op2 = Op::ALL[index(v, "comparison2").min(Op::ALL.len() - 1)];
+                if op2.takes_value() && get(v, "value2").is_empty() {
+                    return Err("value2".into());
+                }
+                let leaves = vec![Cond::Leaf { column, op, value }, Cond::Leaf { column: second.to_string(), op: op2, value: get(v, "value2").to_string() }];
+                Step::FilterCondition(if index(v, "logic") == 1 { Cond::Or(leaves) } else { Cond::And(leaves) })
+            }
         }
+        QOp::FilterDate => {
+            let when = [DateWhen::Previous, DateWhen::Current, DateWhen::Next, DateWhen::YearToDate][index(v, "when").min(3)];
+            let unit = DateUnit::ALL[index(v, "unit").min(4)];
+            let count = match get(v, "count").trim() {
+                "" => None,
+                n => Some(n.parse::<u32>().ok().filter(|n| *n > 0).ok_or("count")?),
+            };
+            // The current unit and the year to date have no count.
+            let count = if matches!(when, DateWhen::Current | DateWhen::YearToDate) { None } else { count };
+            Step::FilterCondition(Cond::Date { column: need(v, "column", "column")?, filter: DateFilter { when, unit, count } })
+        }
+        QOp::Transform => {
+            let value = get(v, "value");
+            let function = match index(v, "function").min(FUNCTIONS.len() - 1) {
+                0 => Transform::Trim,
+                1 => Transform::Upper,
+                2 => Transform::Lower,
+                3 => Transform::Proper,
+                4 => Transform::Clean,
+                5 => Transform::Length,
+                6 => Transform::Round(if value.trim().is_empty() { 0 } else { value.trim().parse().map_err(|_| "value".to_string())? }),
+                7 => Transform::RoundUp,
+                8 => Transform::RoundDown,
+                9 => Transform::Abs,
+                10 => Transform::Sqrt,
+                11 => Transform::Year,
+                12 => Transform::Month,
+                13 => Transform::Day,
+                14 => Transform::Prefix(value.to_string()),
+                _ => Transform::Suffix(value.to_string()),
+            };
+            Step::Transform { column: need(v, "column", "column")?, function }
+        }
+        QOp::AlternateRows => {
+            let number = |id: &str| get(v, id).trim().parse::<usize>().map_err(|_| id.to_string());
+            Step::AlternateRows { offset: number("offset")?, skip: number("skip")?, take: number("take")? }
+        }
+        QOp::KeepRange => {
+            let first = get(v, "first-row").trim().parse::<usize>().ok().filter(|n| *n >= 1).ok_or("first-row")?;
+            let count = match get(v, "count").trim() {
+                "" => None,
+                n => Some(n.parse::<usize>().map_err(|_| "count".to_string())?),
+            };
+            Step::KeepRange { offset: first - 1, count }
+        }
+        QOp::DuplicateColumn => Step::DuplicateColumn { column: need(v, "column", "column")?, new_name: need(v, "new-name", "new-name")? },
+        // These are not made by a form.
+        QOp::FilterCode | QOp::SplitCode | QOp::MissingField | QOp::GroupLocal | QOp::MCode => return Err("column".into()),
         QOp::KeepTop => Step::KeepTopRows(count(v)?),
         QOp::KeepBottom => Step::KeepBottomRows(count(v)?),
         QOp::RemoveTop => Step::RemoveTopRows(count(v)?),
@@ -302,7 +437,11 @@ pub(crate) fn build(op: QOp, v: &Values) -> Result<Step, String> {
             Step::Sort(keys)
         }
         QOp::Split => {
-            let by = if index(v, "by") == 1 {
+            let by = if index(v, "by") == 2 {
+                // Positions from the start, separated by commas (`0, 3, 5`).
+                let positions: Vec<usize> = names(get(v, "value")).iter().map(|x| x.parse().ok()).collect::<Option<_>>().filter(|p: &Vec<usize>| !p.is_empty()).ok_or("value")?;
+                SplitBy::Positions { positions, from_end: false }
+            } else if index(v, "by") == 1 {
                 SplitBy::Length(get(v, "value").trim().parse::<usize>().ok().filter(|n| *n > 0).ok_or("value")?)
             } else {
                 if get(v, "value").is_empty() {
@@ -310,7 +449,7 @@ pub(crate) fn build(op: QOp, v: &Values) -> Result<Step, String> {
                 }
                 SplitBy::Delimiter(get(v, "value").to_string())
             };
-            Step::SplitColumn { column: need(v, "column", "column")?, by }
+            Step::SplitColumn { column: need(v, "column", "column")?, by, columns: 0 }
         }
         QOp::MergeColumns => Step::MergeColumns { columns: columns("columns")?, separator: get(v, "separator").to_string(), name: need(v, "new-name", "new-name")? },
         QOp::Replace => Step::ReplaceValue { column: need(v, "column", "column")?, find: need(v, "find", "find")?, with: get(v, "with").to_string(), whole_cell: get(v, "whole") == "1" },
@@ -352,7 +491,7 @@ pub(crate) fn build(op: QOp, v: &Values) -> Result<Step, String> {
             Step::Merge { right: need(v, "right", "right")?, left_keys: left, right_keys: right, kind: JoinKind::ALL[index(v, "join").min(5)], expand: columns("expand")? }
         }
         QOp::Append => Step::Append { other: need(v, "other", "other")? },
-        QOp::AddColumn => Step::AddColumn { name: need(v, "new-name", "new-name")?, formula: need(v, "formula", "formula")? },
+        QOp::AddColumn => Step::AddColumn { name: need(v, "new-name", "new-name")?, formula: need(v, "formula", "formula")?, ty: None },
         QOp::AddConditional => {
             let mut clauses = Vec::new();
             clauses.extend(clause(v, ""));
@@ -387,7 +526,7 @@ pub(crate) fn values_of(step: &Step) -> (QOp, Values) {
     let op = match step {
         Step::PromoteHeaders => QOp::PromoteHeaders,
         Step::DemoteHeaders => QOp::DemoteHeaders,
-        Step::ChangeType { column, ty, culture } => {
+        Step::ChangeType { column, ty, culture, .. } => {
             set("column", column.clone());
             set("type", position(&QType::ALL, *ty));
             set("culture", position(&Culture::ALL, *culture));
@@ -401,9 +540,9 @@ pub(crate) fn values_of(step: &Step) -> (QOp, Values) {
             set("columns", join(c));
             QOp::RemoveColumns
         }
-        Step::RenameColumn { from, to } => {
-            set("from", from.clone());
-            set("to", to.clone());
+        Step::RenameColumns(renames) => {
+            set("from", join(&renames.iter().map(|(from, _)| from.clone()).collect::<Vec<_>>()));
+            set("to", join(&renames.iter().map(|(_, to)| to.clone()).collect::<Vec<_>>()));
             QOp::Rename
         }
         Step::ReorderColumns(c) => {
@@ -414,7 +553,75 @@ pub(crate) fn values_of(step: &Step) -> (QOp, Values) {
             set("column", column.clone());
             set("comparison", position(&Op::ALL, *op));
             set("value", value.clone());
+            set("logic", "0".into());
+            set("column2", String::new());
+            set("comparison2", "0".into());
+            set("value2", String::new());
             QOp::Filter
+        }
+        Step::FilterCondition(cond) => match cond {
+            Cond::Date { column, filter } => {
+                set("column", column.clone());
+                set("when", position(&[DateWhen::Previous, DateWhen::Current, DateWhen::Next, DateWhen::YearToDate], filter.when));
+                set("unit", position(&DateUnit::ALL, filter.unit));
+                set("count", filter.count.map(|n| n.to_string()).unwrap_or_default());
+                QOp::FilterDate
+            }
+            Cond::And(parts) | Cond::Or(parts) if matches!(&parts[..], [Cond::Leaf { .. }, Cond::Leaf { .. }]) => {
+                let (Cond::Leaf { column, op, value }, Cond::Leaf { column: column2, op: op2, value: value2 }) = (&parts[0], &parts[1]) else { return (QOp::FilterCode, v) };
+                set("column", column.clone());
+                set("comparison", position(&Op::ALL, *op));
+                set("value", value.clone());
+                set("logic", if matches!(cond, Cond::Or(_)) { "1" } else { "0" }.into());
+                set("column2", column2.clone());
+                set("comparison2", position(&Op::ALL, *op2));
+                set("value2", value2.clone());
+                QOp::Filter
+            }
+            _ => return (QOp::FilterCode, v),
+        },
+        Step::WithMissing { .. } => return (QOp::MissingField, v),
+        Step::Transform { column, function } => {
+            set("column", column.clone());
+            let (index, value) = match function {
+                Transform::Trim => (0, String::new()),
+                Transform::Upper => (1, String::new()),
+                Transform::Lower => (2, String::new()),
+                Transform::Proper => (3, String::new()),
+                Transform::Clean => (4, String::new()),
+                Transform::Length => (5, String::new()),
+                Transform::Round(n) => (6, n.to_string()),
+                Transform::RoundUp => (7, String::new()),
+                Transform::RoundDown => (8, String::new()),
+                Transform::Abs => (9, String::new()),
+                Transform::Sqrt => (10, String::new()),
+                Transform::Year => (11, String::new()),
+                Transform::Month => (12, String::new()),
+                Transform::Day => (13, String::new()),
+                Transform::Prefix(s) => (14, s.clone()),
+                Transform::Suffix(s) => (15, s.clone()),
+            };
+            set("function", index.to_string());
+            set("value", value);
+            QOp::Transform
+        }
+        Step::GroupByLocal { .. } => return (QOp::GroupLocal, v),
+        Step::Code { .. } => return (QOp::MCode, v),
+        Step::AlternateRows { offset, skip, take } => {
+            set("offset", offset.to_string());
+            set("skip", skip.to_string());
+            set("take", take.to_string());
+            QOp::AlternateRows
+        }
+        Step::KeepRange { offset, count } => {
+            set("first-row", (offset + 1).to_string());
+            set("count", count.map(|c| c.to_string()).unwrap_or_default());
+            QOp::KeepRange
+        }
+        Step::DuplicateColumn { column, new_name } => {
+            set("column", column.clone());
+            set("new-name", new_name.clone());
+            QOp::DuplicateColumn
         }
         Step::KeepTopRows(n) => {
             set("count", n.to_string());
@@ -457,7 +664,7 @@ pub(crate) fn values_of(step: &Step) -> (QOp, Values) {
             }
             QOp::Sort
         }
-        Step::SplitColumn { column, by } => {
+        Step::SplitColumn { column, by, .. } => {
             set("column", column.clone());
             match by {
                 SplitBy::Delimiter(d) => {
@@ -468,6 +675,11 @@ pub(crate) fn values_of(step: &Step) -> (QOp, Values) {
                     set("by", "1".into());
                     set("value", n.to_string());
                 }
+                SplitBy::Positions { positions, from_end: false } => {
+                    set("by", "2".into());
+                    set("value", positions.iter().map(usize::to_string).collect::<Vec<_>>().join(", "));
+                }
+                _ => return (QOp::SplitCode, v),
             }
             QOp::Split
         }
@@ -551,7 +763,7 @@ pub(crate) fn values_of(step: &Step) -> (QOp, Values) {
             set("other", other.clone());
             QOp::Append
         }
-        Step::AddColumn { name, formula } => {
+        Step::AddColumn { name, formula, .. } => {
             set("new-name", name.clone());
             set("formula", formula.clone());
             QOp::AddColumn
@@ -585,15 +797,20 @@ pub(crate) fn defaults(op: QOp, selected: &[String], table: &QTable) -> Values {
     for f in op.fields() {
         let value = match (f.id, f.kind) {
             ("columns", _) | ("left-keys", _) => join(selected),
+            ("from", _) if !selected.is_empty() => join(selected),
             ("column", _) | ("from", _) | ("attribute", _) | ("column1", _) => first.clone(),
             ("values", _) => table.columns.iter().rev().find(|c| !selected.contains(&c.name)).map(|c| c.name.clone()).unwrap_or_default(),
+            ("count", _) if op == QOp::FilterDate => String::new(),
             ("count", _) => "10".into(),
+            ("first-row", _) => "1".into(),
+            ("offset", _) | ("skip", _) | ("take", _) => "1".into(),
             ("separator", _) => " ".into(),
             ("new-name", _) => match op {
                 QOp::MergeColumns => "Merged".into(),
                 QOp::AddColumn => "Custom".into(),
                 QOp::AddConditional => "Conditional".into(),
                 QOp::AddIndex => "Index".into(),
+                QOp::DuplicateColumn => format!("Copy of {first}"),
                 _ => String::new(),
             },
             ("attribute-name", _) => "Attribute".into(),
@@ -629,7 +846,7 @@ mod tests {
             for &op in ops {
                 let mut v = defaults(op, &selected, &table);
                 // Fill what the defaults leave empty.
-                for (k, value) in [("find", "x"), ("formula", "[a] + 1"), ("right", "T2"), ("right-keys", "a, b"), ("expand", "c"), ("other", "T2"), ("name2", ""), ("with", "0"), ("value", "1"), ("to", "z"), ("new-name", "N"), ("attribute-name", "A"), ("value-name", "V"), ("column1", "c")] {
+                for (k, value) in [("find", "x"), ("first-row", "1"), ("formula", "[a] + 1"), ("right", "T2"), ("right-keys", "a, b"), ("expand", "c"), ("other", "T2"), ("name2", ""), ("with", "0"), ("value", "1"), ("to", "z, y"), ("new-name", "N"), ("attribute-name", "A"), ("value-name", "V"), ("column1", "c")] {
                     if v.get(k).is_none_or(String::is_empty) && op.fields().iter().any(|f| f.id == k) {
                         v.insert(k.into(), value.into());
                     }
@@ -642,8 +859,14 @@ mod tests {
                 seen += 1;
             }
         }
-        assert_eq!(seen, 37);
+        assert_eq!(seen, 42);
         assert!(matches!(build(QOp::SelectColumns, &defaults(QOp::SelectColumns, &[], &table)), Err(e) if e == "columns"));
+        // Several columns are renamed in one step, the old and the new names in the same order; a different number is refused.
+        let mut rename = defaults(QOp::Rename, &selected, &table);
+        rename.insert("to".into(), "x, y".into());
+        assert_eq!(build(QOp::Rename, &rename).unwrap(), Step::RenameColumns(vec![("a".into(), "x".into()), ("b".into(), "y".into())]));
+        rename.insert("to".into(), "x".into());
+        assert!(matches!(build(QOp::Rename, &rename), Err(e) if e == "to"));
         assert_eq!(build(QOp::KeepTop, &defaults(QOp::KeepTop, &[], &table)).unwrap(), Step::KeepTopRows(10));
     }
 }

@@ -17,7 +17,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 fn workbook() -> Scenario {
     let mut s = Scenario::start_view();
     s.size(1000., 700.);
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     s
 }
 fn editor() {
@@ -99,7 +99,7 @@ fn editor() {
     assert!(s.with(|e, _| e.cell_edit().is_none()));
     s.screenshot("expanded-readonly-wrapped");
     s.update(|e, w, cx| {
-        e.new_file(ibis_pptx::Kind::Workbook, w, cx);
+        e.new_file(ibis_formats::Kind::Workbook, w, cx);
         e.toggle_formula_bar_expanded(cx);
     });
     assert!(
@@ -137,7 +137,7 @@ fn numbers() {
         e.run_sheet(
             vec![ibis_doc_model::Command::Sheet(
                 ibis_doc_model::SheetCommand::SetSize {
-                    slide,
+                    sheet: slide,
                     axis: ibis_doc_model::sheet_command::Axis::Columns,
                     first: 0,
                     last: 0,

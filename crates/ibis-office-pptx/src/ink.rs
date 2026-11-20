@@ -505,7 +505,7 @@ impl SlideEditor {
             let effect_label = text(effect.label_id());
             format!("{} ({})", format("xlsx.ink.name", &[("n", &n)]), effect_label)
         };
-        self.run(vec![Command::InsertShape { slide, index, shape }, Command::SetShapeName { slide, shape: id, name }], cx);
+        self.run(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }, Command::SetShapeName { slide, shape: id, name }], cx);
         id
     }
 
@@ -522,7 +522,7 @@ impl SlideEditor {
             .map(|s| s.id)
             .collect();
         if !hit.is_empty() {
-            self.run(hit.into_iter().map(|shape| Command::RemoveShape { slide, shape }).collect(), cx);
+            self.run(hit.into_iter().map(|shape| Command::DeleteShape { slide, shapes: vec![shape], with_attached: true }).collect(), cx);
         }
     }
 
@@ -548,7 +548,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         let ids = self.pptx_ink_selected_ids();
         if !ids.is_empty() {
-            self.run(ids.into_iter().map(|shape| Command::RemoveShape { slide, shape }).collect(), cx);
+            self.run(ids.into_iter().map(|shape| Command::DeleteShape { slide, shapes: vec![shape], with_attached: true }).collect(), cx);
         }
     }
 
@@ -557,7 +557,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         let ids = self.pptx_ink_ids();
         if !ids.is_empty() {
-            self.run(ids.into_iter().map(|shape| Command::RemoveShape { slide, shape }).collect(), cx);
+            self.run(ids.into_iter().map(|shape| Command::DeleteShape { slide, shapes: vec![shape], with_attached: true }).collect(), cx);
         }
     }
 
@@ -606,7 +606,7 @@ impl SlideEditor {
                 s
             }
         };
-        self.run(vec![Command::RemoveShape { slide, shape: shape.id }, Command::InsertShape { slide, index, shape: replacement }], cx);
+        self.run(vec![Command::DeleteShape { slide, shapes: vec![shape.id], with_attached: true }, Command::InsertShape { slide, shapes: vec![(index, replacement)] }], cx);
         self.set_selection(vec![id]);
         self.pptx_ink_message(text("xlsx.ink.message.converted").to_string(), cx);
     }
@@ -643,7 +643,7 @@ impl SlideEditor {
             ..Default::default()
         }];
         let replacement = Shape::new(id, frame, ShapeKind::TextBox(body));
-        self.run(vec![Command::RemoveShape { slide, shape: shape.id }, Command::InsertShape { slide, index, shape: replacement }], cx);
+        self.run(vec![Command::DeleteShape { slide, shapes: vec![shape.id], with_attached: true }, Command::InsertShape { slide, shapes: vec![(index, replacement)] }], cx);
         self.set_selection(vec![id]);
         self.pptx_ink_message(text("pptx.ink.message.converted-text").to_string(), cx);
     }
@@ -683,7 +683,7 @@ impl SlideEditor {
             ..Default::default()
         }];
         let replacement = Shape::new(id, frame, ShapeKind::TextBox(body));
-        self.run(vec![Command::RemoveShape { slide, shape: shape.id }, Command::InsertShape { slide, index, shape: replacement }], cx);
+        self.run(vec![Command::DeleteShape { slide, shapes: vec![shape.id], with_attached: true }, Command::InsertShape { slide, shapes: vec![(index, replacement)] }], cx);
         self.set_selection(vec![id]);
         self.pptx_ink_message(text("pptx.ink.message.converted-math").to_string(), cx);
     }
@@ -870,7 +870,7 @@ impl SlideEditor {
                 .on(|e, _, cx| e.select_pptx_ink_pen(PenKind::Pen, cx))
                 .into(),
             MenuItem::tr("xlsx.ink.pencil")
-                .icon("create")
+                .icon("edit")
                 .checked(pen == Some(PenKind::Pencil))
                 .on(|e, _, cx| e.select_pptx_ink_pen(PenKind::Pencil, cx))
                 .into(),

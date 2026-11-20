@@ -14,7 +14,7 @@ const IVS_TEXT: &str = "A\u{845b}\u{e0100}B";
 const STANDARD_TEXT: &str = "A\u{845b}\u{fe00}B";
 
 fn editing(text: &str) -> Scenario {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     s.size(1200., 720.);
     s.click_cell("A1");
     s.ime_commit(text);

@@ -10,7 +10,7 @@ fn decodes_every_embedded_font() {
         eprintln!("skipped: IBIS_PRIVATE_PPTX is not set or not found");
         return;
     };
-    let p = ibis_pptx::read(&data).expect("the test data reads");
+    let p = ibis_formats::read(&data).expect("the test data reads");
     assert_eq!(p.fonts.len(), 18);
     let mut families = std::collections::BTreeSet::new();
     for font in &p.fonts {

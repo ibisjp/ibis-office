@@ -15,7 +15,7 @@
 //!   documents it opens (it does not become their default app); without the
 //!   entry the dock shows no icon, so Help's "Add to List of Apps" asks again
 //!   for who said no. The answer
-//!   is kept in the settings (`linux-desktop`: `no`, or the AppImage
+//!   is kept in the settings (`app.linux-desktop`: `no`, or the AppImage
 //!   registered), and Help's 「アプリの一覧に登録」 asks again; an AppImage moved elsewhere is registered again at its
 //!   next start, without asking.
 
@@ -86,9 +86,9 @@ mod prompt {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let theme = cx.theme().clone();
             let default = self.default_answer();
-            // Buttons right-aligned, the default one last and marked (as GNOME puts them).
-            let mut order: Vec<usize> = (0..self.actions.len()).filter(|&i| Some(i) != default).collect();
-            order.extend(default);
+            // Buttons right-aligned, the default (primary) one first and marked, the cancel last, as the shared action bar does (K0034).
+            let mut order: Vec<usize> = default.into_iter().collect();
+            order.extend((0..self.actions.len()).filter(|&i| Some(i) != default));
             let buttons = order.into_iter().map(|ix| {
                 let button = Button::new(("prompt-button", ix)).label(self.actions[ix].label().clone()).on_click(cx.listener(move |_, _, _, cx| {
                     cx.emit(PromptResponse(ix));
@@ -128,7 +128,7 @@ mod prompt {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(gpui_kit::black().opacity(0.3))
+                // No dimming of the window behind: the backdrop is off for a question like this (the dialog attribute `backdrop`).
                 .child(dialog)
         }
     }
@@ -271,7 +271,7 @@ fn remove_old_unpacked(appdir: &std::path::Path) {
 
 /// The settings' key of the answer (`no`, or the AppImage registered).
 #[cfg(target_os = "linux")]
-const KEY: &str = "linux-desktop";
+const KEY: &str = "app.linux-desktop";
 
 #[cfg(target_os = "linux")]
 fn register_logged(appimage: &std::path::Path, appdir: &std::path::Path) -> bool {

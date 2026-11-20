@@ -1,7 +1,8 @@
 /target
 /www/pkg
 /www/assets
-/www/main.js
+/www/*.js
+/www/*.d.ts
 /node_modules
 /test/private/
 __pycache__/

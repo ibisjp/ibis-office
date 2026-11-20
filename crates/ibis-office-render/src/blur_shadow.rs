@@ -191,6 +191,12 @@ pub fn paint_mask(window: &mut Window, key: u64, (left, top): (f32, f32), pitch:
     }
 }
 
+/// A picture of `cols` x `rows` pixels from `bytes` (BGRA, the colour NOT premultiplied; the picture painter multiplies the alpha in).
+pub fn bgra_picture(cols: usize, rows: usize, bytes: Vec<u8>) -> Option<Arc<RenderImage>> {
+    let buffer = image::RgbaImage::from_raw(cols as u32, rows as u32, bytes)?;
+    Some(Arc::new(RenderImage::new([image::Frame::new(buffer)])))
+}
+
 /// The picture of `coverage` in `rgba`: the colour's alpha times the coverage (the colour not premultiplied, see `paint`).
 fn coverage_picture(coverage: &[f32], cols: usize, rows: usize, rgba: Rgba) -> Option<Arc<RenderImage>> {
     let (r, g, b) = ((rgba.r * 255.0).round(), (rgba.g * 255.0).round(), (rgba.b * 255.0).round());

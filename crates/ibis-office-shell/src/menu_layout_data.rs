@@ -70,7 +70,11 @@ pub(super) const DOC: &[MenuSpec] = &[
         LayoutItem::Cmd("edit.redo"),
         LayoutItem::Sep,
         LayoutItem::Cmd("edit.cut"),
-        LayoutItem::Cmd("edit.copy"),
+        // コピー ▸ コピー (⌘C stays the copy), Markdown としてコピー (#226, the user, F63).
+        LayoutItem::Sub { id: None, label_key: "menu.group.copy", items: &[
+            LayoutItem::Cmd("edit.copy"),
+            LayoutItem::Cmd("docx.edit.copy-markdown"),
+        ] },
         LayoutItem::Cmd("edit.paste"),
         LayoutItem::Sub { id: Some("docx.paste-special"), label_key: "docx.paste-special", items: &[
         ] },
@@ -86,7 +90,7 @@ pub(super) const DOC: &[MenuSpec] = &[
         LayoutItem::Cmd("edit.find-replace"),
         LayoutItem::Cmd("docx.find.next"),
         LayoutItem::Cmd("docx.find.previous"),
-        LayoutItem::Cmd("docx.go-to"),
+        LayoutItem::Cmd("edit.go-to"),
         LayoutItem::Sep,
         LayoutItem::Cmd("docx.edit.overtype"),
     ] },
@@ -100,7 +104,7 @@ pub(super) const DOC: &[MenuSpec] = &[
         // K0024: the text box is one item (a horizontal box at the caret), above the pictures; the vertical one is gone from the menu.
         LayoutItem::Cmd("insert.text-box"),
         LayoutItem::Sub { id: Some("insert.image"), label_key: "insert.image", items: &[
-            LayoutItem::Cmd("docx.image.file"),
+            LayoutItem::Cmd("docx.picture.file"),
             LayoutItem::Cmd("docx.insert.icon"),
             LayoutItem::Planned { key: "menu.planned.doc.insert.4" },
             LayoutItem::Planned { key: "menu.planned.doc.insert.5" },
@@ -122,7 +126,7 @@ pub(super) const DOC: &[MenuSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Cmd("insert.link"),
         LayoutItem::Cmd("docx.bookmark"),
-        LayoutItem::Cmd("docx.xref"),
+        LayoutItem::Cmd("docx.cross-reference"),
         LayoutItem::Cmd("insert.comment"),
         LayoutItem::Sep,
         // ヘッダーとフッター enters the header and footer mode (a title row's pill closes it); the page number stays here and
@@ -153,7 +157,7 @@ pub(super) const DOC: &[MenuSpec] = &[
             LayoutItem::Cmd("docx.drop-cap"),
             LayoutItem::Cmd("docx.date"),
             LayoutItem::Cmd("docx.insert.wordart"),
-            LayoutItem::Cmd("docx.signature-line"),
+            LayoutItem::Cmd("insert.signature-line"),
             LayoutItem::Planned { key: "menu.planned.doc.insert.12" },
         ] },
         LayoutItem::Sep,
@@ -225,9 +229,9 @@ pub(super) const DOC: &[MenuSpec] = &[
             LayoutItem::Cmd("docx.page.landscape"),
         ] },
         LayoutItem::Sub { id: None, label_key: "menu.group.size", items: &[
-            LayoutItem::Cmd("docx.page.a4"),
-            LayoutItem::Cmd("docx.page.a3"),
-            LayoutItem::Cmd("docx.page.b5"),
+            LayoutItem::Cmd("page.paper-a4"),
+            LayoutItem::Cmd("page.paper-a3"),
+            LayoutItem::Cmd("page.paper-b5"),
             LayoutItem::Planned { key: "menu.planned.doc.layout.7" },
         ] },
         LayoutItem::Sub { id: Some("docx.columns"), label_key: "docx.columns", items: &[
@@ -249,7 +253,7 @@ pub(super) const DOC: &[MenuSpec] = &[
             LayoutItem::Cmd("docx.section-even"),
         ] },
         LayoutItem::Cmd("docx.line-numbers"),
-        LayoutItem::CmdOrPlanned { id: "docx.para.suppress-auto-hyphens", key: "menu.planned.doc.layout.8" },
+        LayoutItem::CmdOrPlanned { id: "docx.paragraph.suppress-auto-hyphens", key: "menu.planned.doc.layout.8" },
         LayoutItem::Planned { key: "menu.planned.doc.layout.9" },
         LayoutItem::Sep,
         LayoutItem::CmdAs { id: "docx.paragraph.details", label_key: "menu.as.doc.docx.paragraph.details" },
@@ -258,15 +262,15 @@ pub(super) const DOC: &[MenuSpec] = &[
         LayoutItem::Sub { id: None, label_key: "menu.group.table-of-contents", items: &[
             LayoutItem::Planned { key: "menu.planned.doc.references.1" },
             LayoutItem::Planned { key: "menu.planned.doc.references.2" },
-            LayoutItem::CmdOrPlanned { id: "docx.toc", key: "menu.planned.doc.references.3" },
+            LayoutItem::CmdOrPlanned { id: "docx.table-of-contents", key: "menu.planned.doc.references.3" },
             LayoutItem::Planned { key: "menu.planned.doc.references.4" },
             LayoutItem::Sep,
             LayoutItem::Sub { id: None, label_key: "menu.group.add-text", items: &[
-                LayoutItem::Cmd("docx.toc.mark-level-1"),
-                LayoutItem::Cmd("docx.toc.mark-level-2"),
-                LayoutItem::Cmd("docx.toc.mark-level-3"),
+                LayoutItem::Cmd("docx.table-of-contents.mark-level-1"),
+                LayoutItem::Cmd("docx.table-of-contents.mark-level-2"),
+                LayoutItem::Cmd("docx.table-of-contents.mark-level-3"),
             ] },
-            LayoutItem::Cmd("docx.toc.update-menu"),
+            LayoutItem::Cmd("docx.table-of-contents.update-menu"),
         ] },
         LayoutItem::Cmd("docx.footnote"),
         LayoutItem::Cmd("docx.endnote"),
@@ -289,19 +293,19 @@ pub(super) const DOC: &[MenuSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Cmd("docx.caption.insert"),
         LayoutItem::CmdOrPlanned { id: "docx.table-of-figures", key: "menu.planned.doc.references.10" },
-        LayoutItem::Cmd("docx.xref"),
+        LayoutItem::Cmd("docx.cross-reference"),
         LayoutItem::Sep,
         LayoutItem::Cmd("docx.index.mark"),
         LayoutItem::Cmd("docx.index"),
         LayoutItem::Planned { key: "menu.planned.doc.references.11" },
         LayoutItem::Sep,
         LayoutItem::Sub { id: None, label_key: "menu.group.table-of-authorities", items: &[
-            LayoutItem::Cmd("docx.toa"),
-            LayoutItem::CmdOrPlanned { id: "docx.toa.update", key: "menu.planned.doc.references.12" },
+            LayoutItem::Cmd("docx.table-of-authorities"),
+            LayoutItem::CmdOrPlanned { id: "docx.table-of-authorities.update", key: "menu.planned.doc.references.12" },
         ] },
     ] },
     MenuSpec { id: MenuId::Mailings, items: &[
-        LayoutItem::Cmd("docx.merge"),
+        LayoutItem::Cmd("docx.mail-merge"),
         LayoutItem::Sep,
         LayoutItem::CmdOrPlanned { id: "docx.merge.envelopes", key: "menu.planned.doc.mailings.1" },
         LayoutItem::CmdOrPlanned { id: "docx.merge.labels", key: "menu.planned.doc.mailings.2" },
@@ -327,7 +331,7 @@ pub(super) const DOC: &[MenuSpec] = &[
         LayoutItem::Planned { key: "menu.planned.doc.review.1" },
         LayoutItem::Cmd("docx.autocorrect-options"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("docx.accessibility-check"),
+        LayoutItem::Cmd("review.accessibility-check"),
         LayoutItem::CmdAs { id: "docx.inspect-document", label_key: "menu.as.doc.docx.inspect-document" },
         LayoutItem::Sep,
         LayoutItem::Sub { id: Some("file.language"), label_key: "file.language", items: &[
@@ -368,7 +372,7 @@ pub(super) const DOC: &[MenuSpec] = &[
         LayoutItem::Sub { id: None, label_key: "menu.group.protect", items: &[
             LayoutItem::Planned { key: "menu.planned.doc.review.17" },
         ] },
-        LayoutItem::Cmd("docx.compatibility-check"),
+        LayoutItem::Cmd("review.compatibility-check"),
         LayoutItem::CmdOrPlanned { id: "draw.hide-ink", key: "menu.planned.doc.review.18" },
     ] },
     MenuSpec { id: MenuId::View, items: &[
@@ -396,7 +400,7 @@ pub(super) const DOC: &[MenuSpec] = &[
             LayoutItem::Cmd("docx.page-movement.side-to-side"),
         ] },
         LayoutItem::Sub { id: Some("view.zoom"), label_key: "view.zoom", items: &[
-            LayoutItem::Cmd("docx.view.zoom-100"),
+            LayoutItem::Cmd("view.zoom-100"),
             LayoutItem::Cmd("docx.view.one-page"),
             LayoutItem::Cmd("docx.view.multiple-pages"),
             LayoutItem::Cmd("docx.view.page-width"),
@@ -407,12 +411,13 @@ pub(super) const DOC: &[MenuSpec] = &[
         ] },
         LayoutItem::Sep,
         LayoutItem::Cmd("docx.view.dark-page"),
+        LayoutItem::Cmd("view.print-colors"),
         LayoutItem::Cmd("view.menus"),
     ] },
     MenuSpec { id: MenuId::Window, items: &[
         LayoutItem::Cmd("window.list"),
         LayoutItem::Cmd("window.next"),
-        LayoutItem::Cmd("window.prev"),
+        LayoutItem::Cmd("window.previous"),
         LayoutItem::Sep,
         LayoutItem::Dynamic(DynamicKind::Sidebars),
         LayoutItem::Sep,
@@ -424,7 +429,7 @@ pub(super) const DOC: &[MenuSpec] = &[
             LayoutItem::CmdAs { id: "docx.arrange-all", label_key: "menu.as.doc.docx.arrange-all" },
         ] },
         LayoutItem::Sub { id: None, label_key: "menu.group.view-side-by-side", items: &[
-            LayoutItem::CmdOrPlanned { id: "docx.view-side-by-side", key: "menu.planned.doc.window.1" },
+            LayoutItem::CmdOrPlanned { id: "view.side-by-side", key: "menu.planned.doc.window.1" },
             LayoutItem::CmdAs { id: "docx.sync-scrolling", label_key: "menu.as.doc.docx.sync-scrolling" },
             LayoutItem::CmdAs { id: "docx.reset-window-position", label_key: "menu.as.doc.docx.reset-window-position" },
         ] },
@@ -447,6 +452,7 @@ pub(super) const DOC: &[MenuSpec] = &[
         LayoutItem::Cmd("help.register-desktop"),
         LayoutItem::Cmd("help.setup"),
         LayoutItem::Sep,
+        LayoutItem::Cmd("help.source-code"),
         LayoutItem::Cmd("help.about"),
     ] },
 ];
@@ -455,12 +461,12 @@ pub(super) const DOC_CONTEXT: &[ContextSpec] = &[
     ContextSpec { id: ContextMenu::TableDesign, items: &[
         LayoutItem::Sub { id: Some("docx.table.style"), label_key: "docx.table.style", items: &[
         ] },
-        LayoutItem::Cmd("docx.table.look.first-row"),
-        LayoutItem::Cmd("docx.table.look.last-row"),
-        LayoutItem::Cmd("docx.table.look.first-column"),
-        LayoutItem::Cmd("docx.table.look.last-column"),
-        LayoutItem::Cmd("docx.table.look.row-bands"),
-        LayoutItem::Cmd("docx.table.look.column-bands"),
+        LayoutItem::Cmd("table.header-row"),
+        LayoutItem::Cmd("table.total-row"),
+        LayoutItem::Cmd("table.first-column"),
+        LayoutItem::Cmd("table.last-column"),
+        LayoutItem::Cmd("table.banded-rows"),
+        LayoutItem::Cmd("table.banded-columns"),
         LayoutItem::Sep,
         LayoutItem::Sub { id: None, label_key: "menu.group.borders", items: &[
             LayoutItem::Cmd("docx.cell.border.none"),
@@ -471,7 +477,7 @@ pub(super) const DOC_CONTEXT: &[ContextSpec] = &[
         ] },
         LayoutItem::Sep,
         LayoutItem::Sub { id: Some("edit.delete"), label_key: "edit.delete", items: &[
-            LayoutItem::Cmd("docx.table.cell-delete"),
+            LayoutItem::Cmd("docx.table.delete-cell"),
         ] },
         LayoutItem::Sep,
         LayoutItem::Cmd("docx.table.split"),
@@ -506,11 +512,11 @@ pub(super) const DOC_CONTEXT: &[ContextSpec] = &[
             LayoutItem::Cmd("docx.picture.wrap.behind-text"),
             LayoutItem::Cmd("docx.picture.wrap.in-front-of-text"),
         ] },
-        LayoutItem::Sub { id: Some("docx.picture.zorder.forward"), label_key: "docx.picture.zorder.forward", items: &[
-            LayoutItem::Cmd("docx.picture.zorder.front"),
+        LayoutItem::Sub { id: Some("arrange.bring-forward"), label_key: "arrange.bring-forward", items: &[
+            LayoutItem::Cmd("arrange.bring-to-front"),
         ] },
-        LayoutItem::Sub { id: Some("docx.picture.zorder.backward"), label_key: "docx.picture.zorder.backward", items: &[
-            LayoutItem::Cmd("docx.picture.zorder.back"),
+        LayoutItem::Sub { id: Some("arrange.send-backward"), label_key: "arrange.send-backward", items: &[
+            LayoutItem::Cmd("arrange.send-to-back"),
         ] },
         LayoutItem::Sub { id: None, label_key: "menu.group.align", items: &[
             LayoutItem::Cmd("docx.picture.align.center"),
@@ -540,11 +546,11 @@ pub(super) const DOC_CONTEXT: &[ContextSpec] = &[
             LayoutItem::Cmd("docx.picture.wrap.behind-text"),
             LayoutItem::Cmd("docx.picture.wrap.in-front-of-text"),
         ] },
-        LayoutItem::Sub { id: Some("docx.picture.zorder.forward"), label_key: "docx.picture.zorder.forward", items: &[
-            LayoutItem::Cmd("docx.picture.zorder.front"),
+        LayoutItem::Sub { id: Some("arrange.bring-forward"), label_key: "arrange.bring-forward", items: &[
+            LayoutItem::Cmd("arrange.bring-to-front"),
         ] },
-        LayoutItem::Sub { id: Some("docx.picture.zorder.backward"), label_key: "docx.picture.zorder.backward", items: &[
-            LayoutItem::Cmd("docx.picture.zorder.back"),
+        LayoutItem::Sub { id: Some("arrange.send-backward"), label_key: "arrange.send-backward", items: &[
+            LayoutItem::Cmd("arrange.send-to-back"),
         ] },
         LayoutItem::Sub { id: None, label_key: "menu.group.align", items: &[
             LayoutItem::Cmd("docx.picture.align.center"),
@@ -575,8 +581,8 @@ pub(super) const DOC_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Cmd("docx.picture.alt-text"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("docx.picture.zorder.forward"),
-        LayoutItem::Cmd("docx.picture.zorder.backward"),
+        LayoutItem::Cmd("arrange.bring-forward"),
+        LayoutItem::Cmd("arrange.send-backward"),
     ] },
     ContextSpec { id: ContextMenu::Equation, items: &[
         LayoutItem::Sub { id: Some("insert.equation"), label_key: "insert.equation", items: &[
@@ -636,6 +642,7 @@ pub(super) const SHEET: &[MenuSpec] = &[
             LayoutItem::CmdOrPlanned { id: "file.export.pdf", key: "menu.planned.sheet.file.2" },
             LayoutItem::CmdOrPlanned { id: "xlsx.export-csv", key: "menu.planned.sheet.file.3" },
             LayoutItem::CmdOrPlanned { id: "xlsx.export-tsv", key: "menu.planned.sheet.file.4" },
+            LayoutItem::CmdAs { id: "xlsx.export-html", label_key: "xlsx.export-html" },
         ] },
         LayoutItem::Cmd("file.print"),
         LayoutItem::CmdOrPlanned { id: "window.open-in-office", key: "menu.planned.sheet.file.5" },
@@ -683,7 +690,7 @@ pub(super) const SHEET: &[MenuSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Cmd("edit.select-all"),
         LayoutItem::Cmd("edit.find-replace"),
-        LayoutItem::Cmd("xlsx.goto"),
+        LayoutItem::Cmd("edit.go-to"),
         LayoutItem::Sub { id: None, label_key: "menu.group.select", items: &[
             LayoutItem::Cmd("xlsx.select-formulas"),
             LayoutItem::Cmd("xlsx.select-constants"),
@@ -742,8 +749,8 @@ pub(super) const SHEET: &[MenuSpec] = &[
         LayoutItem::Sub { id: Some("xlsx.sparklines"), label_key: "xlsx.sparklines", items: &[
             LayoutItem::Cmd("xlsx.sparkline-winloss"),
         ] },
-        LayoutItem::Cmd("xlsx.slicer-insert"),
-        LayoutItem::Cmd("xlsx.timeline-insert"),
+        LayoutItem::Cmd("xlsx.insert-slicer"),
+        LayoutItem::Cmd("xlsx.insert-timeline"),
         LayoutItem::Sep,
         LayoutItem::Cmd("insert.text-box"),
         LayoutItem::Sub { id: Some("insert.image"), label_key: "insert.image", items: &[
@@ -752,12 +759,8 @@ pub(super) const SHEET: &[MenuSpec] = &[
             LayoutItem::Cmd("xlsx.3d-model"),
             LayoutItem::Cmd("xlsx.screenshot"),
         ] },
-        LayoutItem::Sub { id: None, label_key: "menu.group.shapes", items: &[
-            LayoutItem::Cmd("xlsx.shape.line"),
-            LayoutItem::Cmd("xlsx.shape.rect"),
-            LayoutItem::CmdOrPlanned { id: "insert.shape", key: "menu.planned.sheet.insert.4" },
-            LayoutItem::Cmd("xlsx.shape.callout"),
-        ] },
+        // The shared gallery of pictures (K0031, as the document's K0006): the lines and every shape, four to a row, under the menu's words.
+        LayoutItem::Sub { id: Some("insert.shape"), label_key: "menu.group.shapes", items: &[] },
         LayoutItem::Cmd("insert.smartart"),
         LayoutItem::Sep,
         LayoutItem::Cmd("insert.link"),
@@ -767,7 +770,7 @@ pub(super) const SHEET: &[MenuSpec] = &[
         LayoutItem::Sub { id: None, label_key: "menu.group.text", items: &[
             LayoutItem::Cmd("xlsx.header-footer"),
             LayoutItem::Cmd("xlsx.insert.wordart"),
-            LayoutItem::Cmd("xlsx.signature-line"),
+            LayoutItem::Cmd("insert.signature-line"),
             LayoutItem::Planned { key: "menu.planned.sheet.insert.6" },
         ] },
         LayoutItem::Cmd("insert.symbol"),
@@ -801,14 +804,14 @@ pub(super) const SHEET: &[MenuSpec] = &[
             LayoutItem::Cmd("xlsx.orientation-landscape"),
         ] },
         LayoutItem::Sub { id: Some("xlsx.paper-size"), label_key: "xlsx.paper-size", items: &[
-            LayoutItem::CmdOrPlanned { id: "xlsx.paper-a4", key: "menu.planned.sheet.pagelayout.1" },
-            LayoutItem::CmdOrPlanned { id: "xlsx.paper-a3", key: "menu.planned.sheet.pagelayout.2" },
-            LayoutItem::CmdOrPlanned { id: "xlsx.paper-b5", key: "menu.planned.sheet.pagelayout.3" },
-            LayoutItem::CmdOrPlanned { id: "xlsx.paper-letter", key: "menu.planned.sheet.pagelayout.4" },
+            LayoutItem::CmdOrPlanned { id: "page.paper-a4", key: "menu.planned.sheet.pagelayout.1" },
+            LayoutItem::CmdOrPlanned { id: "page.paper-a3", key: "menu.planned.sheet.pagelayout.2" },
+            LayoutItem::CmdOrPlanned { id: "page.paper-b5", key: "menu.planned.sheet.pagelayout.3" },
+            LayoutItem::CmdOrPlanned { id: "page.paper-letter", key: "menu.planned.sheet.pagelayout.4" },
         ] },
         LayoutItem::Sub { id: Some("xlsx.print-area-menu"), label_key: "xlsx.print-area-menu", items: &[
-            LayoutItem::Cmd("xlsx.print-area-set"),
-            LayoutItem::Cmd("xlsx.print-area-clear"),
+            LayoutItem::Cmd("xlsx.set-print-area"),
+            LayoutItem::Cmd("xlsx.clear-print-area"),
         ] },
         LayoutItem::Sub { id: None, label_key: "menu.group.page-breaks", items: &[
             LayoutItem::Cmd("xlsx.page-break"),
@@ -823,8 +826,8 @@ pub(super) const SHEET: &[MenuSpec] = &[
             LayoutItem::Cmd("xlsx.scale-width-1"),
             LayoutItem::Cmd("xlsx.scale-height-auto"),
             LayoutItem::Cmd("xlsx.scale-height-1"),
-            LayoutItem::Cmd("xlsx.scale-80"),
-            LayoutItem::Cmd("xlsx.scale-100"),
+            LayoutItem::Cmd("xlsx.print-scale-80"),
+            LayoutItem::Cmd("xlsx.print-scale-100"),
         ] },
         LayoutItem::Sub { id: None, label_key: "menu.group.gridlines", items: &[
             LayoutItem::CmdAs { id: "xlsx.gridlines", label_key: "menu.as.sheet.xlsx.gridlines" },
@@ -868,10 +871,10 @@ pub(super) const SHEET: &[MenuSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Cmd("xlsx.calculate-now"),
         LayoutItem::Cmd("xlsx.calculate-sheet"),
-        LayoutItem::Sub { id: Some("xlsx.calc-options"), label_key: "xlsx.calc-options", items: &[
-            LayoutItem::Cmd("xlsx.calc-auto"),
-            LayoutItem::Cmd("xlsx.calc-auto-no-table"),
-            LayoutItem::Cmd("xlsx.calc-manual"),
+        LayoutItem::Sub { id: Some("xlsx.calculate-options"), label_key: "xlsx.calculate-options", items: &[
+            LayoutItem::Cmd("xlsx.calculate-auto"),
+            LayoutItem::Cmd("xlsx.calculate-auto-no-table"),
+            LayoutItem::Cmd("xlsx.calculate-manual"),
             LayoutItem::Sep,
             LayoutItem::CmdAs { id: "xlsx.precision-as-displayed", label_key: "menu.as.sheet.xlsx.precision-as-displayed" },
             LayoutItem::Cmd("xlsx.iterative-calculation"),
@@ -931,6 +934,12 @@ pub(super) const SHEET: &[MenuSpec] = &[
         LayoutItem::Cmd("xlsx.data-analysis"),
     ] },
     MenuSpec { id: MenuId::Review, items: &[
+        // K0055: the protection first, then the proofing, then the checks, then the notes.
+        LayoutItem::Cmd("xlsx.protect-sheet"),
+        LayoutItem::Cmd("xlsx.allow-edit-ranges"),
+        LayoutItem::Cmd("xlsx.lock-cells"),
+        LayoutItem::Cmd("xlsx.hide-formulas"),
+        LayoutItem::Sep,
         LayoutItem::Cmd("xlsx.spelling.check"),
         LayoutItem::Cmd("xlsx.thesaurus"),
         LayoutItem::Cmd("tools.dictionary"),
@@ -938,12 +947,13 @@ pub(super) const SHEET: &[MenuSpec] = &[
         LayoutItem::Planned { key: "menu.planned.sheet.review.2" },
         LayoutItem::Cmd("xlsx.autocorrect"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("xlsx.accessibility-check"),
-        LayoutItem::Cmd("xlsx.compatibility-check"),
+        LayoutItem::Cmd("review.accessibility-check"),
+        LayoutItem::Cmd("xlsx.machine-readability-check"),
+        LayoutItem::Cmd("review.compatibility-check"),
         LayoutItem::Sep,
-        LayoutItem::CmdOrPlanned { id: "xlsx.note-new", key: "menu.planned.sheet.review.3" },
+        LayoutItem::CmdOrPlanned { id: "xlsx.new-note", key: "menu.planned.sheet.review.3" },
         LayoutItem::Sub { id: Some("insert.comment"), label_key: "insert.comment", items: &[
-            LayoutItem::Cmd("xlsx.comment-delete"),
+            LayoutItem::Cmd("xlsx.delete-comment"),
             LayoutItem::CmdOrPlanned { id: "xlsx.previous-comment", key: "menu.planned.sheet.review.4" },
             LayoutItem::CmdOrPlanned { id: "xlsx.next-comment", key: "menu.planned.sheet.review.5" },
         ] },
@@ -951,11 +961,6 @@ pub(super) const SHEET: &[MenuSpec] = &[
             LayoutItem::Cmd("xlsx.show-all-notes"),
             LayoutItem::Planned { key: "menu.planned.sheet.review.6" },
         ] },
-        LayoutItem::Sep,
-        LayoutItem::Cmd("xlsx.protect-sheet"),
-        LayoutItem::Cmd("xlsx.allow-edit-ranges"),
-        LayoutItem::Cmd("xlsx.lock-cells"),
-        LayoutItem::Cmd("xlsx.hide-formulas"),
         LayoutItem::Sep,
         LayoutItem::Cmd("xlsx.hide-ink"),
     ] },
@@ -969,7 +974,7 @@ pub(super) const SHEET: &[MenuSpec] = &[
         LayoutItem::Cmd("xlsx.formula-bar"),
         LayoutItem::Cmd("xlsx.headings"),
         LayoutItem::Cmd("xlsx.show-zeros"),
-        LayoutItem::Cmd("xlsx.phonetic-toggle"),
+        LayoutItem::Cmd("xlsx.toggle-phonetic"),
         LayoutItem::Cmd("xlsx.phonetic-edit"),
         LayoutItem::Sep,
         LayoutItem::Sub { id: Some("xlsx.freeze-panes"), label_key: "xlsx.freeze-panes", items: &[
@@ -989,12 +994,13 @@ pub(super) const SHEET: &[MenuSpec] = &[
             LayoutItem::Cmd("xlsx.zoom-selection"),
         ] },
         LayoutItem::Sep,
+        LayoutItem::Cmd("view.print-colors"),
         LayoutItem::Cmd("view.menus"),
     ] },
     MenuSpec { id: MenuId::Window, items: &[
         LayoutItem::Cmd("window.list"),
         LayoutItem::Cmd("window.next"),
-        LayoutItem::Cmd("window.prev"),
+        LayoutItem::Cmd("window.previous"),
         LayoutItem::Sep,
         LayoutItem::Dynamic(DynamicKind::Sidebars),
         LayoutItem::Sep,
@@ -1006,7 +1012,7 @@ pub(super) const SHEET: &[MenuSpec] = &[
             LayoutItem::Cmd("window.arrange-all"),
         ] },
         LayoutItem::Sub { id: None, label_key: "menu.group.view-side-by-side", items: &[
-            LayoutItem::CmdOrPlanned { id: "xlsx.view-side-by-side", key: "menu.planned.sheet.window.1" },
+            LayoutItem::CmdOrPlanned { id: "view.side-by-side", key: "menu.planned.sheet.window.1" },
             LayoutItem::CmdAs { id: "xlsx.sync-scrolling", label_key: "menu.as.sheet.xlsx.sync-scrolling" },
             LayoutItem::CmdAs { id: "xlsx.reset-window-position", label_key: "menu.as.sheet.xlsx.reset-window-position" },
         ] },
@@ -1030,18 +1036,19 @@ pub(super) const SHEET: &[MenuSpec] = &[
         LayoutItem::Cmd("help.register-desktop"),
         LayoutItem::Cmd("help.setup"),
         LayoutItem::Sep,
+        LayoutItem::Cmd("help.source-code"),
         LayoutItem::Cmd("help.about"),
     ] },
 ];
 
 pub(super) const SHEET_CONTEXT: &[ContextSpec] = &[
     ContextSpec { id: ContextMenu::TableDesign, items: &[
-        LayoutItem::Cmd("xlsx.table-header-row"),
-        LayoutItem::Cmd("xlsx.table-total-row"),
-        LayoutItem::Cmd("xlsx.table-first-column"),
-        LayoutItem::Cmd("xlsx.table-last-column"),
-        LayoutItem::Cmd("xlsx.table-banded-rows"),
-        LayoutItem::Cmd("xlsx.table-banded-columns"),
+        LayoutItem::Cmd("table.header-row"),
+        LayoutItem::Cmd("table.total-row"),
+        LayoutItem::Cmd("table.first-column"),
+        LayoutItem::Cmd("table.last-column"),
+        LayoutItem::Cmd("table.banded-rows"),
+        LayoutItem::Cmd("table.banded-columns"),
         LayoutItem::Cmd("xlsx.table-filter-button"),
         LayoutItem::Cmd("xlsx.table-resize"),
         LayoutItem::Sep,
@@ -1077,7 +1084,7 @@ pub(super) const SHEET_CONTEXT: &[ContextSpec] = &[
             LayoutItem::Cmd("xlsx.pivot-calculated-item"),
             LayoutItem::Cmd("xlsx.pivot-calculated-field"),
         ] },
-        LayoutItem::Cmd("xlsx.pivot-chart-insert"),
+        LayoutItem::Cmd("xlsx.insert-pivot-chart"),
         LayoutItem::Cmd("xlsx.recommended-pivots"),
         LayoutItem::Sub { id: None, label_key: "menu.group.show", items: &[
             LayoutItem::Cmd("xlsx.pivot-drill-buttons"),
@@ -1113,8 +1120,8 @@ pub(super) const SHEET_CONTEXT: &[ContextSpec] = &[
     ContextSpec { id: ContextMenu::Slicer, items: &[
         LayoutItem::Cmd("xlsx.slicer-settings"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("xlsx.order-forward"),
-        LayoutItem::Cmd("xlsx.order-backward"),
+        LayoutItem::Cmd("arrange.bring-forward"),
+        LayoutItem::Cmd("arrange.send-backward"),
         LayoutItem::Cmd("xlsx.align"),
         LayoutItem::Cmd("xlsx.group-shapes"),
         LayoutItem::Sep,
@@ -1135,19 +1142,19 @@ pub(super) const SHEET_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Sub { id: None, label_key: "menu.group.position", items: &[
         ] },
-        LayoutItem::Sub { id: Some("xlsx.order-forward"), label_key: "xlsx.order-forward", items: &[
-            LayoutItem::Cmd("xlsx.order-front"),
+        LayoutItem::Sub { id: Some("arrange.bring-forward"), label_key: "arrange.bring-forward", items: &[
+            LayoutItem::Cmd("arrange.bring-to-front"),
         ] },
-        LayoutItem::Sub { id: Some("xlsx.order-backward"), label_key: "xlsx.order-backward", items: &[
-            LayoutItem::Cmd("xlsx.order-back"),
+        LayoutItem::Sub { id: Some("arrange.send-backward"), label_key: "arrange.send-backward", items: &[
+            LayoutItem::Cmd("arrange.send-to-back"),
         ] },
         LayoutItem::Sub { id: Some("xlsx.align"), label_key: "xlsx.align", items: &[
-            LayoutItem::Cmd("xlsx.align.left"),
-            LayoutItem::Cmd("xlsx.align.center"),
-            LayoutItem::Cmd("xlsx.align.right"),
-            LayoutItem::Cmd("xlsx.align.top"),
-            LayoutItem::Cmd("xlsx.align.middle"),
-            LayoutItem::Cmd("xlsx.align.bottom"),
+            LayoutItem::Cmd("arrange.align-left"),
+            LayoutItem::Cmd("arrange.align-center"),
+            LayoutItem::Cmd("arrange.align-right"),
+            LayoutItem::Cmd("arrange.align-top"),
+            LayoutItem::Cmd("arrange.align-middle"),
+            LayoutItem::Cmd("arrange.align-bottom"),
         ] },
         LayoutItem::Sub { id: Some("xlsx.group-shapes"), label_key: "xlsx.group-shapes", items: &[
             LayoutItem::Cmd("xlsx.group-shapes.ungroup"),
@@ -1168,19 +1175,19 @@ pub(super) const SHEET_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Sub { id: None, label_key: "menu.group.position", items: &[
         ] },
-        LayoutItem::Sub { id: Some("xlsx.order-forward"), label_key: "xlsx.order-forward", items: &[
-            LayoutItem::Cmd("xlsx.order-front"),
+        LayoutItem::Sub { id: Some("arrange.bring-forward"), label_key: "arrange.bring-forward", items: &[
+            LayoutItem::Cmd("arrange.bring-to-front"),
         ] },
-        LayoutItem::Sub { id: Some("xlsx.order-backward"), label_key: "xlsx.order-backward", items: &[
-            LayoutItem::Cmd("xlsx.order-back"),
+        LayoutItem::Sub { id: Some("arrange.send-backward"), label_key: "arrange.send-backward", items: &[
+            LayoutItem::Cmd("arrange.send-to-back"),
         ] },
         LayoutItem::Sub { id: Some("xlsx.align"), label_key: "xlsx.align", items: &[
-            LayoutItem::Cmd("xlsx.align.left"),
-            LayoutItem::Cmd("xlsx.align.center"),
-            LayoutItem::Cmd("xlsx.align.right"),
-            LayoutItem::Cmd("xlsx.align.top"),
-            LayoutItem::Cmd("xlsx.align.middle"),
-            LayoutItem::Cmd("xlsx.align.bottom"),
+            LayoutItem::Cmd("arrange.align-left"),
+            LayoutItem::Cmd("arrange.align-center"),
+            LayoutItem::Cmd("arrange.align-right"),
+            LayoutItem::Cmd("arrange.align-top"),
+            LayoutItem::Cmd("arrange.align-middle"),
+            LayoutItem::Cmd("arrange.align-bottom"),
         ] },
         LayoutItem::Sub { id: Some("xlsx.group-shapes"), label_key: "xlsx.group-shapes", items: &[
             LayoutItem::Cmd("xlsx.group-shapes.ungroup"),
@@ -1215,8 +1222,8 @@ pub(super) const SHEET_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Cmd("xlsx.insert.wordart-styles"),
         LayoutItem::Cmd("xlsx.alt-text"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("xlsx.order-forward"),
-        LayoutItem::Cmd("xlsx.order-backward"),
+        LayoutItem::Cmd("arrange.bring-forward"),
+        LayoutItem::Cmd("arrange.send-backward"),
         LayoutItem::Cmd("xlsx.align"),
         LayoutItem::Sep,
         LayoutItem::Cmd("xlsx.paper-size"),
@@ -1250,6 +1257,7 @@ pub(super) const SLIDE: &[MenuSpec] = &[
             LayoutItem::CmdOrPlanned { id: "pptx.export-gif", key: "menu.planned.slide.file.5" },
             LayoutItem::CmdOrPlanned { id: "file.export.svg", key: "menu.planned.slide.file.6" },
             LayoutItem::Cmd("file.export.odp"),
+            LayoutItem::CmdAs { id: "pptx.export-html", label_key: "pptx.export-html" },
         ] },
         LayoutItem::Cmd("file.print"),
         LayoutItem::CmdOrPlanned { id: "window.open-in-office", key: "menu.planned.slide.file.7" },
@@ -1330,13 +1338,12 @@ pub(super) const SLIDE: &[MenuSpec] = &[
             LayoutItem::Cmd("pptx.insert.screenshot"),
             LayoutItem::Cmd("pptx.photo-album"),
         ] },
-        LayoutItem::Sub { id: None, label_key: "menu.group.shapes", items: &[
-            LayoutItem::Cmd("pptx.lines-and-connectors"),
-            LayoutItem::Cmd("shape.rect"),
-            LayoutItem::CmdOrPlanned { id: "insert.shape", key: "menu.planned.slide.insert.7" },
-            LayoutItem::Cmd("shape.wedgeRectCallout"),
+        // The shared gallery of pictures (K0031, as the document's K0006): the lines and every shape, four to a row, then the action buttons
+        // (the old item, under the menu's words). The lines with double arrows and the freehand line stay in their own submenu.
+        LayoutItem::Sub { id: Some("insert.shape"), label_key: "menu.group.shapes", items: &[
             LayoutItem::CmdAs { id: "pptx.action-buttons", label_key: "menu.as.slide.pptx.action-buttons" },
         ] },
+        LayoutItem::Cmd("pptx.lines-and-connectors"),
         LayoutItem::Cmd("insert.smartart"),
         LayoutItem::Sub { id: Some("insert.chart"), label_key: "insert.chart", items: &[
             LayoutItem::Cmd("pptx.insert-chart.line"),
@@ -1388,7 +1395,7 @@ pub(super) const SLIDE: &[MenuSpec] = &[
         LayoutItem::Cmd("pptx.theme.save-theme"),
     ] },
     MenuSpec { id: MenuId::Transitions, items: &[
-        LayoutItem::Cmd("pptx.anim.preview"),
+        LayoutItem::Cmd("pptx.animation.preview"),
         LayoutItem::Sub { id: Some("pptx.transition"), label_key: "menu.as.slide.pptx.transition", items: &[
             LayoutItem::Cmd("transition.none"),
             LayoutItem::Cmd("transition.morph"),
@@ -1416,26 +1423,26 @@ pub(super) const SLIDE: &[MenuSpec] = &[
         ] },
     ] },
     MenuSpec { id: MenuId::Animations, items: &[
-        LayoutItem::Cmd("pptx.anim.preview"),
+        LayoutItem::Cmd("pptx.animation.preview"),
         LayoutItem::Sub { id: None, label_key: "pptx.menu.animation", items: &[
-            LayoutItem::Cmd("pptx.anim.entrance"),
-            LayoutItem::Cmd("pptx.anim.emphasis"),
-            LayoutItem::Cmd("pptx.anim.exit"),
-            LayoutItem::Cmd("pptx.anim.path"),
+            LayoutItem::Cmd("pptx.animation.entrance"),
+            LayoutItem::Cmd("pptx.animation.emphasis"),
+            LayoutItem::Cmd("pptx.animation.exit"),
+            LayoutItem::Cmd("pptx.animation.path"),
         ] },
-        LayoutItem::Cmd("pptx.anim.options"),
+        LayoutItem::Cmd("pptx.animation.options"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("pptx.anim.add"),
-        LayoutItem::Cmd("pptx.anim.trigger"),
-        LayoutItem::Cmd("pptx.anim.copy"),
-        LayoutItem::Cmd("pptx.anim.paste"),
+        LayoutItem::Cmd("pptx.animation.add"),
+        LayoutItem::Cmd("pptx.animation.trigger"),
+        LayoutItem::Cmd("pptx.animation.copy"),
+        LayoutItem::Cmd("pptx.animation.paste"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("pptx.anim.start"),
-        LayoutItem::Cmd("pptx.anim.duration"),
-        LayoutItem::Cmd("pptx.anim.delay"),
+        LayoutItem::Cmd("pptx.animation.start"),
+        LayoutItem::Cmd("pptx.animation.duration"),
+        LayoutItem::Cmd("pptx.animation.delay"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("pptx.anim.order.earlier"),
-        LayoutItem::Cmd("pptx.anim.order.later"),
+        LayoutItem::Cmd("pptx.animation.order.earlier"),
+        LayoutItem::Cmd("pptx.animation.order.later"),
     ] },
     MenuSpec { id: MenuId::SlideShow, items: &[
         LayoutItem::Cmd("slideshow.from-start"),
@@ -1463,9 +1470,9 @@ pub(super) const SLIDE: &[MenuSpec] = &[
         LayoutItem::Cmd("tools.word-count"),
         LayoutItem::Cmd("pptx.autocorrect-options"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("pptx.check-accessibility"),
+        LayoutItem::Cmd("review.accessibility-check"),
         LayoutItem::Cmd("pptx.inspect-document"),
-        LayoutItem::Cmd("pptx.compatibility-check"),
+        LayoutItem::Cmd("review.compatibility-check"),
         LayoutItem::Sep,
         LayoutItem::Sub { id: Some("file.language"), label_key: "file.language", items: &[
             LayoutItem::Cmd("pptx.proofing-language"),
@@ -1522,12 +1529,13 @@ pub(super) const SLIDE: &[MenuSpec] = &[
             LayoutItem::Planned { key: "menu.planned.slide.view.9" },
         ] },
         LayoutItem::Sep,
+        LayoutItem::Cmd("view.print-colors"),
         LayoutItem::Cmd("view.menus"),
     ] },
     MenuSpec { id: MenuId::Window, items: &[
         LayoutItem::Cmd("window.list"),
         LayoutItem::Cmd("window.next"),
-        LayoutItem::Cmd("window.prev"),
+        LayoutItem::Cmd("window.previous"),
         LayoutItem::Sep,
         LayoutItem::Dynamic(DynamicKind::Sidebars),
         LayoutItem::Sep,
@@ -1555,6 +1563,7 @@ pub(super) const SLIDE: &[MenuSpec] = &[
         LayoutItem::Cmd("help.register-desktop"),
         LayoutItem::Cmd("help.setup"),
         LayoutItem::Sep,
+        LayoutItem::Cmd("help.source-code"),
         LayoutItem::Cmd("help.about"),
     ] },
 ];
@@ -1587,19 +1596,19 @@ pub(super) const SLIDE_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Sub { id: None, label_key: "menu.group.position", items: &[
         ] },
-        LayoutItem::Sub { id: Some("pptx.order.forward"), label_key: "pptx.order.forward", items: &[
-            LayoutItem::Cmd("pptx.order.front"),
+        LayoutItem::Sub { id: Some("arrange.bring-forward"), label_key: "arrange.bring-forward", items: &[
+            LayoutItem::Cmd("arrange.bring-to-front"),
         ] },
-        LayoutItem::Sub { id: Some("pptx.order.backward"), label_key: "pptx.order.backward", items: &[
-            LayoutItem::Cmd("pptx.order.back"),
+        LayoutItem::Sub { id: Some("arrange.send-backward"), label_key: "arrange.send-backward", items: &[
+            LayoutItem::Cmd("arrange.send-to-back"),
         ] },
         LayoutItem::Sub { id: Some("pptx.align"), label_key: "pptx.align", items: &[
-            LayoutItem::Cmd("pptx.align.left"),
-            LayoutItem::Cmd("pptx.align.center"),
-            LayoutItem::Cmd("pptx.align.right"),
-            LayoutItem::Cmd("pptx.align.top"),
-            LayoutItem::Cmd("pptx.align.middle"),
-            LayoutItem::Cmd("pptx.align.bottom"),
+            LayoutItem::Cmd("arrange.align-left"),
+            LayoutItem::Cmd("arrange.align-center"),
+            LayoutItem::Cmd("arrange.align-right"),
+            LayoutItem::Cmd("arrange.align-top"),
+            LayoutItem::Cmd("arrange.align-middle"),
+            LayoutItem::Cmd("arrange.align-bottom"),
         ] },
         LayoutItem::Sub { id: Some("pptx.group"), label_key: "pptx.group", items: &[
             LayoutItem::Cmd("pptx.ungroup"),
@@ -1626,19 +1635,19 @@ pub(super) const SLIDE_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Sub { id: None, label_key: "menu.group.position", items: &[
         ] },
-        LayoutItem::Sub { id: Some("pptx.order.forward"), label_key: "pptx.order.forward", items: &[
-            LayoutItem::Cmd("pptx.order.front"),
+        LayoutItem::Sub { id: Some("arrange.bring-forward"), label_key: "arrange.bring-forward", items: &[
+            LayoutItem::Cmd("arrange.bring-to-front"),
         ] },
-        LayoutItem::Sub { id: Some("pptx.order.backward"), label_key: "pptx.order.backward", items: &[
-            LayoutItem::Cmd("pptx.order.back"),
+        LayoutItem::Sub { id: Some("arrange.send-backward"), label_key: "arrange.send-backward", items: &[
+            LayoutItem::Cmd("arrange.send-to-back"),
         ] },
         LayoutItem::Sub { id: Some("pptx.align"), label_key: "pptx.align", items: &[
-            LayoutItem::Cmd("pptx.align.left"),
-            LayoutItem::Cmd("pptx.align.center"),
-            LayoutItem::Cmd("pptx.align.right"),
-            LayoutItem::Cmd("pptx.align.top"),
-            LayoutItem::Cmd("pptx.align.middle"),
-            LayoutItem::Cmd("pptx.align.bottom"),
+            LayoutItem::Cmd("arrange.align-left"),
+            LayoutItem::Cmd("arrange.align-center"),
+            LayoutItem::Cmd("arrange.align-right"),
+            LayoutItem::Cmd("arrange.align-top"),
+            LayoutItem::Cmd("arrange.align-middle"),
+            LayoutItem::Cmd("arrange.align-bottom"),
         ] },
         LayoutItem::Sub { id: Some("pptx.group"), label_key: "pptx.group", items: &[
             LayoutItem::Cmd("pptx.ungroup"),
@@ -1655,12 +1664,12 @@ pub(super) const SLIDE_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Cmd("pptx.wrap.menu"),
     ] },
     ContextSpec { id: ContextMenu::TableDesign, items: &[
-        LayoutItem::Cmd("pptx.table.first-row"),
-        LayoutItem::Cmd("pptx.table.last-row"),
-        LayoutItem::Cmd("pptx.table.band-row"),
-        LayoutItem::Cmd("pptx.table.first-col"),
-        LayoutItem::Cmd("pptx.table.last-col"),
-        LayoutItem::Cmd("pptx.table.band-col"),
+        LayoutItem::Cmd("table.header-row"),
+        LayoutItem::Cmd("table.total-row"),
+        LayoutItem::Cmd("table.banded-rows"),
+        LayoutItem::Cmd("table.first-column"),
+        LayoutItem::Cmd("table.last-column"),
+        LayoutItem::Cmd("table.banded-columns"),
         LayoutItem::Sep,
         LayoutItem::Cmd("table.borders"),
         LayoutItem::Sep,
@@ -1685,8 +1694,8 @@ pub(super) const SLIDE_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Cmd("pptx.align"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("pptx.order.forward"),
-        LayoutItem::Cmd("pptx.order.backward"),
+        LayoutItem::Cmd("arrange.bring-forward"),
+        LayoutItem::Cmd("arrange.send-backward"),
     ] },
     ContextSpec { id: ContextMenu::ChartDesign, items: &[
         LayoutItem::Sub { id: None, label_key: "menu.group.add-chart-element", items: &[
@@ -1703,8 +1712,8 @@ pub(super) const SLIDE_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Cmd("pptx.insert.wordart-styles"),
         LayoutItem::Cmd("pptx.alt-text"),
         LayoutItem::Sep,
-        LayoutItem::Cmd("pptx.order.forward"),
-        LayoutItem::Cmd("pptx.order.backward"),
+        LayoutItem::Cmd("arrange.bring-forward"),
+        LayoutItem::Cmd("arrange.send-backward"),
         LayoutItem::Cmd("pptx.align"),
     ] },
     ContextSpec { id: ContextMenu::SmartArtDesign, items: &[
@@ -1725,8 +1734,8 @@ pub(super) const SLIDE_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Cmd("pptx.insert.wordart-styles"),
         LayoutItem::Sep,
         LayoutItem::Cmd("pptx.alt-text"),
-        LayoutItem::Cmd("pptx.order.forward"),
-        LayoutItem::Cmd("pptx.order.backward"),
+        LayoutItem::Cmd("arrange.bring-forward"),
+        LayoutItem::Cmd("arrange.send-backward"),
         LayoutItem::Cmd("pptx.align"),
     ] },
     ContextSpec { id: ContextMenu::VideoFormat, items: &[
@@ -1737,8 +1746,8 @@ pub(super) const SLIDE_CONTEXT: &[ContextSpec] = &[
         LayoutItem::Sep,
         LayoutItem::Cmd("pptx.media.compress"),
         LayoutItem::Cmd("pptx.alt-text"),
-        LayoutItem::Cmd("pptx.order.forward"),
-        LayoutItem::Cmd("pptx.order.backward"),
+        LayoutItem::Cmd("arrange.bring-forward"),
+        LayoutItem::Cmd("arrange.send-backward"),
         LayoutItem::Cmd("pptx.align"),
         LayoutItem::Cmd("pptx.clip.trim"),
         LayoutItem::Cmd("pptx.wrap.menu"),

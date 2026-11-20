@@ -69,7 +69,6 @@ pub fn gradient_slider<T: 'static>(
             let width = (bounds.size.width - inset * 2.).max(px(1.));
             let origin = bounds.origin + point(inset, px(3.));
             let bar = Bounds::new(origin, size(width, px(20.)));
-            // A file with the CMYK mode on shows the stops as the press prints them (`shell::cmyk`), the bar between them too.
             let color = |c: Color| rgba(((crate::cmyk::shown(c.rgb).0 & 0xffffff) << 8) | c.alpha as u32);
             let mut points = stops.clone();
             points.sort_by_key(|s| s.position);

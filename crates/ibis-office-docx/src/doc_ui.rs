@@ -626,13 +626,14 @@ impl SlideEditor {
                         let b = self.caret_box(&lines, c)?;
                         Some((line.vertical, b, (line.x, line.y, line.base, line.avail)))
                     }).filter(|(_, b, _)| b.0 == index).map(|(vertical, (_, x, y, h), (line_x, line_y, base, avail))| {
+                        let caret_color = crate::shell::caret::color_over(self.flow().and_then(|d| d.page_color), ibis_doc_model::Rgb::WHITE);
                         let bar = if vertical { caret.and_then(|c| self.tate_chu_yoko_caret(&lines, c)).filter(|b| b.0 == index) } else { None };
                         let caret = if let Some((_, bx, by, bh)) = bar {
-                            div().absolute().left(px(bx * k - 0.5)).top(px(by * k)).w(px(1.5)).h(px(bh * k)).bg(crate::shell::palette::doc(0x000000))
+                            div().absolute().left(px(bx * k - 0.5)).top(px(by * k)).w(px(1.5)).h(px(bh * k)).bg(caret_color)
                         } else if vertical {
-                            div().absolute().left(px(x * k)).top(px(y * k - 0.5)).w(px(h * k)).h(px(1.5)).bg(crate::shell::palette::doc(0x000000))
+                            div().absolute().left(px(x * k)).top(px(y * k - 0.5)).w(px(h * k)).h(px(1.5)).bg(caret_color)
                         } else {
-                            div().absolute().left(px(x * k - 0.5)).top(px(y * k)).w(px(1.5)).h(px(h * k)).bg(crate::shell::palette::doc(0x000000))
+                            div().absolute().left(px(x * k - 0.5)).top(px(y * k)).w(px(1.5)).h(px(h * k)).bg(caret_color)
                         };
                         let spans = marked_spans.clone();
                         match &marked {
@@ -665,6 +666,8 @@ impl SlideEditor {
                         }
                     }))
                     .when(self.link_hover,|d|d.cursor_pointer())
+                    // The insert mode of a shape or a table (the one cursor of the three screens).
+                    .when(self.doc_state().is_some_and(|s| s.draw_table_mode || s.draw_shape.is_some()), |d| d.cursor(crate::shell::insert_band::insert_cursor()))
                     .on_mouse_down(MouseButton::Right,cx.listener(move|e,event:&MouseDownEvent,w,cx|{
                         if let Some(pos)=e.page_point_pane(index,event.position,is_top).and_then(|(x,y)|e.doc_link_position_at_point(index,x,y)){
                             if let Some((a,b,_))=e.doc_link_range(pos){e.set_caret(a,false,cx);e.set_caret(b,true,cx);let entries=e.doc_hyperlink_menu();e.open_hyperlink_context(event.position,entries,w,cx);cx.stop_propagation();return;}
@@ -1713,11 +1716,9 @@ impl SlideEditor {
                         }
                     }
 
-                    // 2. 段落末尾の段落記号（Japanese: ↵, else ¶）。A line that ends with a page or column break has none: Word's mark stands
-                    // at the end of the dashes there (and hidden), not after them.
-                    let ends_with_break = line.stops.first().zip(line.stops.last()).is_some_and(|(a, b)| a.0 < b.0)
-                        && line.stops.last().is_some_and(|s| matches!(line.chars.get(s.0.wrapping_sub(1)), Some('\u{c}' | '\u{e}')));
-                    if line.is_last_line && options.is_paragraph_marks_visible(all_open) && !ends_with_break {
+                    // 2. 段落末尾の段落記号（Japanese: ↵, else ¶）。A line that ends with a page or column break has it after the dashes
+                    // (the line's last stop is where they end), where the caret after the break stands too (#234).
+                    if line.is_last_line && options.is_paragraph_marks_visible(all_open) {
                         let end_x_offset = line.stops.last().map_or(0.0, |s| s.1);
                         let font_size_px = (line.h * 0.75 * k).clamp(8.0, 16.0);
                         let shaped = shape_mark(window, &font, paragraph_glyph, font_size_px, mark_color.into());

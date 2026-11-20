@@ -18,6 +18,14 @@ static CMYK_CACHE: Mutex<Option<HashMap<u32, Cmyk>>> = Mutex::new(None);
 /// Whether the screen shows colours as the press prints them now (the open file has the CMYK mode on); set at each draw.
 static DISPLAY_GAMUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Counts the converters put in use (pictures made with a converter are kept by it).
+static CONVERTER_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Which converter is in use now (changes whenever `set_converter` is called).
+pub fn converter_generation() -> u64 {
+    CONVERTER_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The conversion in use: the open model until the user chooses an ICC profile (`shell::cmyk_profile`).
 pub fn converter() -> Arc<dyn CmykConverter> {
     CONVERTER.read().ok().and_then(|c| c.clone()).unwrap_or_else(|| Arc::new(OpenCmykConverter))
@@ -25,6 +33,7 @@ pub fn converter() -> Arc<dyn CmykConverter> {
 
 /// Puts `converter` in use.
 pub fn set_converter(converter: Arc<dyn CmykConverter>) {
+    CONVERTER_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Ok(mut c) = CONVERTER.write() {
         *c = Some(converter);
     }

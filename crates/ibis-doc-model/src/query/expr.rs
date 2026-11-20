@@ -107,6 +107,29 @@ fn lex(text: &str) -> Result<Vec<Tok>, String> {
             }
             i += 1;
             out.push(Tok::Str(s));
+        } else if c == '[' && chars.get(i + 1) == Some(&'#') && chars.get(i + 2) == Some(&'"') {
+            // `[#"Any name"]`
+            let mut name = String::new();
+            let mut k = i + 3;
+            loop {
+                match chars.get(k) {
+                    Some('"') if chars.get(k + 1) == Some(&'"') => {
+                        name.push('"');
+                        k += 2;
+                    }
+                    Some('"') => break,
+                    Some(c) => {
+                        name.push(*c);
+                        k += 1;
+                    }
+                    None => return Err("文字列が閉じていません".into()),
+                }
+            }
+            if chars.get(k + 1) != Some(&']') {
+                return Err("] がありません".into());
+            }
+            out.push(Tok::Col(name));
+            i = k + 2;
         } else if c == '[' {
             let end = chars[i..].iter().position(|&x| x == ']').ok_or("] がありません")? + i;
             out.push(Tok::Col(chars[i + 1..end].iter().collect()));
@@ -469,7 +492,7 @@ impl Expr {
     }
 }
 
-fn call(name: &str, a: &[CellValue]) -> CellValue {
+pub(super) fn call(name: &str, a: &[CellValue]) -> CellValue {
     let err = || CellValue::Error(CellError::Value);
     if let Some(CellValue::Error(e)) = a.iter().find(|v| matches!(v, CellValue::Error(_))) {
         return CellValue::Error(*e);

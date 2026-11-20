@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! 表示形式 > セルのスタイル: Excel's built-in cell styles (良い, 悪い,
-//! 見出し, アクセント, 桁区切り, …; `ibis_pptx::preset_cell_styles`, from
+//! 見出し, アクセント, 桁区切り, …; `ibis_formats::preset_cell_styles`, from
 //! ECMA-376's data with the workbook's theme) put on the selected cells as
 //! their formats, in one step.
 use crate::shell::chrome::{MenuEntry, MenuItem, Submenu};
@@ -45,18 +45,18 @@ pub(crate) struct NewCellStylePanel {
 #[ibis_office_macros::editor_ext(CellStyles)]
 impl SlideEditor {
     /// The built-in cell styles with this workbook's theme.
-    pub(crate) fn cell_styles(&self) -> Option<std::rc::Rc<Vec<ibis_pptx::PresetCellStyle>>> {
+    pub(crate) fn cell_styles(&self) -> Option<std::rc::Rc<Vec<ibis_formats::PresetCellStyle>>> {
         let state = self.sheet_state()?;
         let mut cached = state.panels.cell_styles.borrow_mut();
         if cached.is_none() {
             let styles = if let Some(w) = self.presentation().workbook.as_ref() {
                 if !w.theme_colors.is_empty() {
-                    ibis_pptx::preset_cell_styles_with_theme(&w.theme_colors, w.theme_fonts.as_ref())
+                    ibis_formats::preset_cell_styles_with_theme(&w.theme_colors, w.theme_fonts.as_ref())
                 } else {
-                    ibis_pptx::preset_cell_styles_of(self.source.as_deref())
+                    ibis_formats::preset_cell_styles_of(self.source.as_deref())
                 }
             } else {
-                ibis_pptx::preset_cell_styles_of(self.source.as_deref())
+                ibis_formats::preset_cell_styles_of(self.source.as_deref())
             };
             *cached = Some(std::rc::Rc::new(styles));
         }
@@ -79,13 +79,13 @@ impl SlideEditor {
         let changes = if key == "normal" {
             use ibis_doc_model::{Edge, StyleChange as C};
             let d = self.presentation().workbook.as_ref().and_then(|w| w.default_style.clone()).unwrap_or_default();
-            let mut changes = vec![C::NumberFormat("General".into()), C::Font(d.font.clone()), C::FontSize(d.font_size), C::Bold(d.bold), C::Italic(d.italic), C::UnderlineKind(d.underline), C::Strike(d.strike), C::Color(d.color), C::Fill(None)];
+            let mut changes = vec![C::NumberFormat("General".into()), C::Font(d.font.clone()), C::FontSize(d.font_size), C::Bold(d.bold), C::Italic(d.italic), C::UnderlineKind(d.underline), C::Strikethrough(d.strike), C::Color(d.color), C::Fill(None)];
             changes.extend([Edge::Left, Edge::Right, Edge::Top, Edge::Bottom].map(|e| C::Border(e, None)));
             changes
         } else {
             style.changes
         };
-        let commands: Vec<Command> = changes.into_iter().map(|change| Command::Sheet(SheetCommand::SetFormat { slide, ranges: ranges.clone(), change })).collect();
+        let commands: Vec<Command> = changes.into_iter().map(|change| Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: ranges.clone(), change })).collect();
         if let Err(err) = self.document.execute(commands) {
             self.status = Some(crate::shell::i18n::format("_xlsx.this-action-is-unavailable-err", &[("err", &err)]).into());
         }
@@ -112,7 +112,7 @@ impl SlideEditor {
         let changes = custom_style.to_style_changes();
         let commands: Vec<Command> = changes
             .into_iter()
-            .map(|change| Command::Sheet(SheetCommand::SetFormat { slide, ranges: ranges.clone(), change }))
+            .map(|change| Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: ranges.clone(), change }))
             .collect();
         if let Err(err) = self.document.execute(commands) {
             self.status = Some(crate::shell::i18n::format("_xlsx.this-action-is-unavailable-err", &[("err", &err)]).into());

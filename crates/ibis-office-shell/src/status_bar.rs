@@ -24,6 +24,7 @@ impl SlideEditor {
         let index = self.presentation().slide_index(self.current_slide).unwrap_or(0);
         let hint: SharedString = match (self.tool, self.editing.is_some(), &self.status) {
             (Tool::TextBox, _, _) => crate::i18n::text("status.hint.textbox"),
+            (Tool::Shape(_) | Tool::Line { .. }, _, _) => crate::i18n::text("status.hint.shape"),
             (_, true, _) => crate::i18n::text("status.hint.esc"),
             (_, _, Some(status)) => status.clone(),
             // The screen's own hint (`FormatEditor::status_hint`; a sheet's cell being typed into), then the notice of

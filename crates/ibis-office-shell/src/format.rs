@@ -26,7 +26,7 @@ use std::ops::Range;
 
 use gpui_kit::*;
 use ibis_doc_model::{EmuRect, Presentation, SlideId};
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 use crate::chrome::{Menus, SidebarPanel, ToolItem};
 use crate::editor::{SlideEditor, WorkspaceContent};
@@ -43,8 +43,8 @@ pub struct ExtraDialog {
 
 /// What the PDF made for printing or export is made from (`FormatEditor::pdf_job`): the file's bytes, the pages asked for (1-based)
 /// when it is not all of them, the export's format (`pdf` or `pdf-image`) and the arguments the print settings give it.
-/// Not on the web: the PDF is made by this program's `--export` run (`SlideEditor::write_pdf_with`), which the web has not.
-#[cfg(not(target_family = "wasm"))]
+/// On the desktop the PDF is made by this program's `--export` run (`SlideEditor::write_pdf_with`); in the browser by the app's own
+/// export in the page (`app_hooks::web_pdf`).
 pub struct PdfJob {
     pub bytes: Vec<u8>,
     pub slides: Option<Vec<usize>>,
@@ -75,8 +75,27 @@ pub struct SheetOverlays {
 pub trait FormatState: std::any::Any {
     /// The kind of document this is the state of.
     fn kind(&self) -> Kind;
+    /// What a touch gesture on the page can change in this state, as it is now (`GestureView`; `shell/gesture.rs`).
+    fn gesture_view(&self) -> Box<dyn std::any::Any>;
+    /// Put back what `gesture_view` returned.
+    fn restore_gesture_view(&mut self, view: Box<dyn std::any::Any>);
     fn as_any(&self) -> &dyn std::any::Any;
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+}
+
+/// What a touch gesture on the page can change in a format's state: the selection, the caret, the drag in progress, the
+/// scroll. **Every format's state implements this** (`impl_format_state!` requires it), so a touch that a second finger
+/// cancels can put the window back as it was before the finger went down (`shell/gesture.rs`, #209).
+///
+/// Implement `gesture_snapshot` by destructuring the state struct **without `..`**: a field added later does not compile
+/// until its author decides whether a touch can change it (name it and put it in the snapshot) or not (`field: _`).
+pub trait GestureView {
+    /// What `gesture_snapshot` keeps.
+    type Snapshot: 'static;
+    /// What a touch gesture can change, as it is now.
+    fn gesture_snapshot(&self) -> Self::Snapshot;
+    /// Put back what `gesture_snapshot` kept.
+    fn gesture_restore(&mut self, snapshot: Self::Snapshot);
 }
 
 /// `impl FormatState for $state`, for the document of `$kind`.
@@ -86,8 +105,16 @@ pub trait FormatState: std::any::Any {
 macro_rules! impl_format_state {
     ($state:ty, $kind:expr) => {
         impl $crate::format::FormatState for $state {
-            fn kind(&self) -> ibis_pptx::Kind {
+            fn kind(&self) -> ibis_formats::Kind {
                 $kind
+            }
+            fn gesture_view(&self) -> Box<dyn std::any::Any> {
+                Box::new(<$state as $crate::format::GestureView>::gesture_snapshot(self))
+            }
+            fn restore_gesture_view(&mut self, view: Box<dyn std::any::Any>) {
+                if let Ok(view) = view.downcast::<<$state as $crate::format::GestureView>::Snapshot>() {
+                    <$state as $crate::format::GestureView>::gesture_restore(self, *view);
+                }
             }
             fn as_any(&self) -> &dyn std::any::Any {
                 self
@@ -102,7 +129,9 @@ pub use crate::impl_format_state;
 
 /// The state for `presentation`, just read: its kind is told by its content (worksheets, a flowing document, or slides).
 pub(crate) fn state_for_model(presentation: &Presentation, window: &mut Window, cx: &mut Context<SlideEditor>) -> Box<dyn FormatState> {
-    let kind = if presentation.flow.is_some() {
+    let kind = if presentation.pdf_bytes.is_some() {
+        Kind::Pdf
+    } else if presentation.flow.is_some() {
         Kind::Document
     } else if presentation.slides.iter().any(|slide| crate::editor::sheet_of(slide).is_some()) {
         Kind::Workbook
@@ -464,6 +493,12 @@ pub trait FormatEditor {
         None
     }
 
+    /// The report of the open file's digital signatures, in words, for a format that is not a package the shell can inspect (a PDF, XPS or OFD viewer): `None` leaves it to
+    /// `ibis_ooxml::signature` (`shell/signature.rs`).
+    fn signature_report(_editor: &SlideEditor) -> Option<String> {
+        None
+    }
+
     /// What the button of one of the format's bars does.
     fn infobar_action(_editor: &mut SlideEditor, _kind: crate::infobar::InfoBarKind, _window: &mut Window, _cx: &mut Context<SlideEditor>) {}
 
@@ -671,6 +706,12 @@ pub trait FormatEditor {
     /// a screen whose text is elsewhere says its own (a document's text runs, a workbook's cells).
     fn used_fonts(editor: &SlideEditor) -> Vec<String> {
         crate::replace_fonts::presentation_used_fonts(editor.presentation())
+    }
+
+    /// The text of the open file (its characters are what matters), for the blocks of the browser version's fonts that have them
+    /// (GitHub issue #157, stage 2). By default the shapes' text.
+    fn used_text(editor: &SlideEditor) -> Option<String> {
+        Some(crate::replace_fonts::presentation_used_text(editor.presentation()))
     }
 
     /// Replace the font `target` by `replacement` in the whole file, as one step of the undo history; how many places
@@ -1002,13 +1043,13 @@ pub trait FormatEditor {
 
     /// The data of chart `shape` as the file has it (its workbook, or one made from its cached values), for the data
     /// grid. By default the chart is a shape of page `slide`; a document's is in its text.
-    fn read_chart_data(editor: &SlideEditor, source: &ibis_pptx::Source, slide: SlideId, shape: ibis_doc_model::ShapeId) -> Result<ibis_pptx::ChartData, ibis_pptx::Error> {
+    fn read_chart_data(editor: &SlideEditor, source: &ibis_formats::Source, slide: SlideId, shape: ibis_doc_model::ShapeId) -> Result<ibis_formats::ChartData, ibis_formats::Error> {
         source.chart_data(editor.presentation(), slide, shape)
     }
 
     /// The data grid of chart `shape` changed: the chart is made anew from `data` (`book`: the grid's workbook model).
     /// By default the chart is a shape of page `slide` (`SlideEditor::apply_shape_chart_data`).
-    fn apply_chart_data(editor: &mut SlideEditor, slide: SlideId, shape: ibis_doc_model::ShapeId, book: &Presentation, data: ibis_pptx::ChartData, cx: &mut Context<SlideEditor>) {
+    fn apply_chart_data(editor: &mut SlideEditor, slide: SlideId, shape: ibis_doc_model::ShapeId, book: &Presentation, data: ibis_formats::ChartData, cx: &mut Context<SlideEditor>) {
         editor.apply_shape_chart_data(slide, shape, book, data, cx)
     }
 
@@ -1022,7 +1063,7 @@ pub trait FormatEditor {
     /// (lt1, dk1, lt2, dk2, accent1–6). Office's own by default, as it was before the hook: only a workbook's theme
     /// reaches the palettes (the file was asked for a workbook's theme part, which a presentation and a document lack).
     fn palette_theme_colors(_editor: &SlideEditor) -> [ibis_doc_model::Rgb; 10] {
-        ibis_pptx::workbook_theme_colors(None)
+        ibis_formats::workbook_theme_colors(None)
     }
 
     /// The palettes the format offers: the id, the i18n key of the name, the colours by their scheme names (`dk1`, `accent1`, …).
@@ -1050,7 +1091,6 @@ pub trait FormatEditor {
     fn prepare_print_or_export(_editor: &mut SlideEditor, _cx: &mut Context<SlideEditor>) {}
 
     /// What the PDF of the file, for printing (`printing`) or for export, is made from.
-    #[cfg(not(target_family = "wasm"))]
     fn pdf_job(editor: &SlideEditor, _printing: bool) -> Result<PdfJob, String> {
         Ok(PdfJob { bytes: editor.current_bytes()?, slides: None, format: "pdf", args: None })
     }
@@ -1059,7 +1099,7 @@ pub trait FormatEditor {
     /// presentation as .ppsx, a template): None for the format's own (`Source::save` of `model_for_save`, which the file's
     /// password encrypts). `copy`: the file is written beside its own (the AutoRecover snapshot, a backup), not saved.
     #[cfg(not(target_family = "wasm"))]
-    fn bytes_for_path(_editor: &SlideEditor, _path: &std::path::Path, _source: &ibis_pptx::Source, _copy: bool) -> Option<Result<FileBytes, String>> {
+    fn bytes_for_path(_editor: &SlideEditor, _path: &std::path::Path, _source: &ibis_formats::Source, _copy: bool) -> Option<Result<FileBytes, String>> {
         None
     }
 
@@ -1185,6 +1225,11 @@ pub trait FormatEditor {
         Vec::new()
     }
 
+    /// Words after the file name in the title row (a workbook with several sheets selected: `[グループ]`).
+    fn title_suffix(_editor: &SlideEditor) -> Option<String> {
+        None
+    }
+
     /// The screen's own lines of the commands' table at `part` (`chrome_defaults::menus`): what only this screen has in a
     /// shared menu, and the whole of a menu only it has. They are placeholders as the shared ones are (`menus` connects them).
     fn menu_items(_editor: &SlideEditor, _part: crate::chrome::MenuPart) -> Vec<crate::chrome::MenuEntry> {
@@ -1200,6 +1245,12 @@ pub trait FormatEditor {
     /// The toolbar's right half, for what is selected. Empty: the toolbar ends with its left part.
     fn toolbar_right(_editor: &SlideEditor) -> Vec<ToolItem> {
         Vec::new()
+    }
+
+    /// The scene the toolbar is in (what is selected makes the right half of the toolbar differ): one of the ids
+    /// `toolbar_layout::scenes` lists for the format. Empty: the toolbar of this state cannot be customized.
+    fn toolbar_scene(_editor: &SlideEditor) -> &'static str {
+        ""
     }
 
     /// After a model is read (a file opened or loaded again): the format lays out or fills in what its pages need before they are
@@ -1309,6 +1360,7 @@ pub trait FormatDriver: Sync {
     fn panel_message_anchored(&self, _editor: &SlideEditor) -> bool;
     fn panel_message_measured(&self, _editor: &mut SlideEditor, _bounds: Bounds<Pixels>, _cx: &mut Context<SlideEditor>);
     fn infobar_kind(&self, _editor: &SlideEditor) -> Option<crate::infobar::InfoBarKind>;
+    fn signature_report(&self, _editor: &SlideEditor) -> Option<String>;
     fn infobar_action(&self, _editor: &mut SlideEditor, _kind: crate::infobar::InfoBarKind, _window: &mut Window, _cx: &mut Context<SlideEditor>);
     fn infobar_spec(&self, _kind: crate::infobar::InfoBarKind) -> Option<crate::infobar::InfoBarSpec>;
     fn infobar_title_suffix(&self, _editor: &SlideEditor, _kind: crate::infobar::InfoBarKind) -> Option<String>;
@@ -1352,6 +1404,8 @@ pub trait FormatDriver: Sync {
     fn autorecover_minutes(&self, _editor: &SlideEditor) -> Option<u32>;
     fn set_autorecover_minutes(&self, _editor: &mut SlideEditor, _minutes: u32, _cx: &mut Context<SlideEditor>);
     fn used_fonts(&self, _editor: &SlideEditor) -> Vec<String>;
+    #[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
+    fn used_text(&self, _editor: &SlideEditor) -> Option<String>;
     fn replace_fonts(&self, _editor: &mut SlideEditor, _target: &str, _replacement: &str, _cx: &mut Context<SlideEditor>) -> usize;
     fn page_when_current_gone(&self, _editor: &SlideEditor) -> Option<SlideId>;
     fn history_applied_early(&self, _editor: &mut SlideEditor, _window: &mut Window, _cx: &mut Context<SlideEditor>);
@@ -1418,8 +1472,8 @@ pub trait FormatDriver: Sync {
     fn theme_panel_apply(&self, _editor: &mut SlideEditor, _window: &mut Window, _cx: &mut Context<SlideEditor>);
     fn chart_data_window<'a>(&self, _editor: &'a SlideEditor) -> Option<&'a crate::chart_data::DataWindow>;
     fn chart_data_slot<'a>(&self, _editor: &'a mut SlideEditor) -> Option<&'a mut Option<crate::chart_data::DataWindow>>;
-    fn read_chart_data(&self, _editor: &SlideEditor, _source: &ibis_pptx::Source, _slide: SlideId, _shape: ibis_doc_model::ShapeId) -> Result<ibis_pptx::ChartData, ibis_pptx::Error>;
-    fn apply_chart_data(&self, _editor: &mut SlideEditor, _slide: SlideId, _shape: ibis_doc_model::ShapeId, _book: &Presentation, _data: ibis_pptx::ChartData, _cx: &mut Context<SlideEditor>);
+    fn read_chart_data(&self, _editor: &SlideEditor, _source: &ibis_formats::Source, _slide: SlideId, _shape: ibis_doc_model::ShapeId) -> Result<ibis_formats::ChartData, ibis_formats::Error>;
+    fn apply_chart_data(&self, _editor: &mut SlideEditor, _slide: SlideId, _shape: ibis_doc_model::ShapeId, _book: &Presentation, _data: ibis_formats::ChartData, _cx: &mut Context<SlideEditor>);
     fn chart_panel_apply(&self, _editor: &mut SlideEditor, _window: &mut Window, _cx: &mut Context<SlideEditor>);
     fn palette_theme_colors(&self, _editor: &SlideEditor) -> [ibis_doc_model::Rgb; 10];
     fn theme_palettes(&self) -> Vec<(&'static str, &'static str, Vec<(&'static str, ibis_doc_model::Rgb)>)>;
@@ -1427,10 +1481,9 @@ pub trait FormatDriver: Sync {
     fn new_file_shown(&self, _editor: &mut SlideEditor, _cx: &mut Context<SlideEditor>);
     fn open_print_panel(&self, _editor: &mut SlideEditor, _window: &mut Window, _cx: &mut Context<SlideEditor>) -> bool;
     fn prepare_print_or_export(&self, _editor: &mut SlideEditor, _cx: &mut Context<SlideEditor>);
-    #[cfg(not(target_family = "wasm"))]
     fn pdf_job(&self, editor: &SlideEditor, _printing: bool) -> Result<PdfJob, String>;
     #[cfg(not(target_family = "wasm"))]
-    fn bytes_for_path(&self, _editor: &SlideEditor, _path: &std::path::Path, _source: &ibis_pptx::Source, _copy: bool) -> Option<Result<FileBytes, String>>;
+    fn bytes_for_path(&self, _editor: &SlideEditor, _path: &std::path::Path, _source: &ibis_formats::Source, _copy: bool) -> Option<Result<FileBytes, String>>;
     #[cfg(not(target_family = "wasm"))]
     fn new_file_save_folder(&self, _editor: &SlideEditor) -> Option<std::path::PathBuf>;
     fn export_args(&self, _editor: &SlideEditor) -> Vec<&'static str>;
@@ -1456,8 +1509,10 @@ pub trait FormatDriver: Sync {
     fn add_comment(&self, _editor: &SlideEditor) -> Option<crate::chrome::Handler>;
     fn show_comments(&self, _editor: &SlideEditor) -> Option<(bool, crate::chrome::Handler)>;
     fn title_buttons(&self, _editor: &SlideEditor) -> Vec<TitleButton>;
+    fn title_suffix(&self, _editor: &SlideEditor) -> Option<String>;
     fn toolbar_left(&self, _editor: &SlideEditor) -> Vec<ToolItem>;
     fn toolbar_right(&self, _editor: &SlideEditor) -> Vec<ToolItem>;
+    fn toolbar_scene(&self, _editor: &SlideEditor) -> &'static str;
     fn menu_items(&self, _editor: &SlideEditor, _part: crate::chrome::MenuPart) -> Vec<crate::chrome::MenuEntry>;
     fn prepare_model(&self, _presentation: &mut Presentation, _resources: &crate::render::shape_view::Resources, _text_system: &TextSystem, _file_name: Option<&str>, _reloaded: bool);
     fn menu_buttons(&self, _editor: &SlideEditor) -> Vec<ToolItem>;
@@ -1628,6 +1683,9 @@ impl<F: FormatEditor> FormatDriver for Driver<F> {
     fn infobar_kind(&self, _editor: &SlideEditor) -> Option<crate::infobar::InfoBarKind> {
         F::infobar_kind(_editor)
     }
+    fn signature_report(&self, _editor: &SlideEditor) -> Option<String> {
+        F::signature_report(_editor)
+    }
     fn infobar_action(&self, _editor: &mut SlideEditor, _kind: crate::infobar::InfoBarKind, _window: &mut Window, _cx: &mut Context<SlideEditor>) {
         F::infobar_action(_editor, _kind, _window, _cx)
     }
@@ -1756,6 +1814,9 @@ impl<F: FormatEditor> FormatDriver for Driver<F> {
     }
     fn used_fonts(&self, _editor: &SlideEditor) -> Vec<String> {
         F::used_fonts(_editor)
+    }
+    fn used_text(&self, _editor: &SlideEditor) -> Option<String> {
+        F::used_text(_editor)
     }
     fn replace_fonts(&self, _editor: &mut SlideEditor, _target: &str, _replacement: &str, _cx: &mut Context<SlideEditor>) -> usize {
         F::replace_fonts(_editor, _target, _replacement, _cx)
@@ -1950,10 +2011,10 @@ impl<F: FormatEditor> FormatDriver for Driver<F> {
     fn chart_data_slot<'a>(&self, _editor: &'a mut SlideEditor) -> Option<&'a mut Option<crate::chart_data::DataWindow>> {
         F::chart_data_slot(_editor)
     }
-    fn read_chart_data(&self, _editor: &SlideEditor, _source: &ibis_pptx::Source, _slide: SlideId, _shape: ibis_doc_model::ShapeId) -> Result<ibis_pptx::ChartData, ibis_pptx::Error> {
+    fn read_chart_data(&self, _editor: &SlideEditor, _source: &ibis_formats::Source, _slide: SlideId, _shape: ibis_doc_model::ShapeId) -> Result<ibis_formats::ChartData, ibis_formats::Error> {
         F::read_chart_data(_editor, _source, _slide, _shape)
     }
-    fn apply_chart_data(&self, _editor: &mut SlideEditor, _slide: SlideId, _shape: ibis_doc_model::ShapeId, _book: &Presentation, _data: ibis_pptx::ChartData, _cx: &mut Context<SlideEditor>) {
+    fn apply_chart_data(&self, _editor: &mut SlideEditor, _slide: SlideId, _shape: ibis_doc_model::ShapeId, _book: &Presentation, _data: ibis_formats::ChartData, _cx: &mut Context<SlideEditor>) {
         F::apply_chart_data(_editor, _slide, _shape, _book, _data, _cx)
     }
     fn chart_panel_apply(&self, _editor: &mut SlideEditor, _window: &mut Window, _cx: &mut Context<SlideEditor>) {
@@ -1977,12 +2038,11 @@ impl<F: FormatEditor> FormatDriver for Driver<F> {
     fn prepare_print_or_export(&self, _editor: &mut SlideEditor, _cx: &mut Context<SlideEditor>) {
         F::prepare_print_or_export(_editor, _cx)
     }
-    #[cfg(not(target_family = "wasm"))]
     fn pdf_job(&self, editor: &SlideEditor, _printing: bool) -> Result<PdfJob, String> {
         F::pdf_job(editor, _printing)
     }
     #[cfg(not(target_family = "wasm"))]
-    fn bytes_for_path(&self, _editor: &SlideEditor, _path: &std::path::Path, _source: &ibis_pptx::Source, _copy: bool) -> Option<Result<FileBytes, String>> {
+    fn bytes_for_path(&self, _editor: &SlideEditor, _path: &std::path::Path, _source: &ibis_formats::Source, _copy: bool) -> Option<Result<FileBytes, String>> {
         F::bytes_for_path(_editor, _path, _source, _copy)
     }
     #[cfg(not(target_family = "wasm"))]
@@ -2054,11 +2114,17 @@ impl<F: FormatEditor> FormatDriver for Driver<F> {
     fn title_buttons(&self, _editor: &SlideEditor) -> Vec<TitleButton> {
         F::title_buttons(_editor)
     }
+    fn title_suffix(&self, _editor: &SlideEditor) -> Option<String> {
+        F::title_suffix(_editor)
+    }
     fn toolbar_left(&self, _editor: &SlideEditor) -> Vec<ToolItem> {
         F::toolbar_left(_editor)
     }
     fn toolbar_right(&self, _editor: &SlideEditor) -> Vec<ToolItem> {
         F::toolbar_right(_editor)
+    }
+    fn toolbar_scene(&self, _editor: &SlideEditor) -> &'static str {
+        F::toolbar_scene(_editor)
     }
     fn menu_items(&self, _editor: &SlideEditor, _part: crate::chrome::MenuPart) -> Vec<crate::chrome::MenuEntry> {
         F::menu_items(_editor, _part)
@@ -2115,6 +2181,11 @@ pub(crate) fn infos() -> Vec<(Kind, &'static FormatInfo)> {
     let mut all: Vec<(Kind, &'static FormatInfo)> = drivers().iter().map(|(kind, driver)| (*kind, driver.info())).collect();
     all.sort_by_key(|(_, info)| info.order);
     all
+}
+
+/// Formats offered for creating a new blank document (excluding read-oriented formats like PDF).
+pub(crate) fn creatable_infos() -> Vec<(Kind, &'static FormatInfo)> {
+    infos().into_iter().filter(|(kind, _)| *kind != Kind::Pdf).collect()
 }
 
 impl SlideEditor {

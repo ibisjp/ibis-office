@@ -66,7 +66,7 @@ impl SlideEditor {
                 Block::Table(_)=>super::block_tree::each_paragraph(std::slice::from_mut(block),&mut |p| {let end=p.len();apply(p,0,end);}),
             }
         }
-        self.run_flow(vec![FlowCommand::ReplaceBlocks { container, index: first, remove: last - first + 1, blocks }], cx)
+        self.run_flow(vec![FlowCommand::ReplaceBlockRange { container, index: first, remove: last - first + 1, blocks }], cx)
     }
 
     pub(crate) fn toggle_doc_format_brush(&mut self, cx: &mut Context<Self>) {
@@ -140,10 +140,10 @@ impl SlideEditor {
             }
             if let Some(para) = &brush.para {
                 let mut changes = Vec::new();
-                if let Some(align) = para.align { changes.push(ibis_doc_model::flow_command::ParaChange::Align(align)); }
+                if let Some(align) = para.align { changes.push(ibis_doc_model::flow_command::ParaChange::Alignment(align)); }
                 if let Some(before) = para.before { changes.push(ibis_doc_model::flow_command::ParaChange::SpaceBefore(before)); }
                 if let Some(after) = para.after { changes.push(ibis_doc_model::flow_command::ParaChange::SpaceAfter(after)); }
-                if let Some(line) = para.line { changes.push(ibis_doc_model::flow_command::ParaChange::Line(line)); }
+                if let Some(line) = para.line { changes.push(ibis_doc_model::flow_command::ParaChange::LineSpacing(line)); }
                 if !changes.is_empty() {
                     let commands: Vec<_> = changes.into_iter().map(|change| {
                         FlowCommand::SetParagraphFormat { first: start.para, last: end.para, change }
@@ -181,8 +181,8 @@ impl SlideEditor {
             if let Some(para) = &brush.para {
                 if let Some(align) = para.align { p.align = align; p.direct.align = Some(align); }
                 if let Some(line) = para.line { p.line = line; p.direct.line = Some(line); }
-                if let Some(before) = para.before { p.space_before = before; p.direct.before = Some(before); }
-                if let Some(after) = para.after { p.space_after = after; p.direct.after = Some(after); }
+                if let Some(before) = para.before { p.space_before = before; p.direct.before = Some(before); p.space_before_lines = None; p.direct.before_lines = None; }
+                if let Some(after) = para.after { p.space_after = after; p.direct.after = Some(after); p.space_after_lines = None; p.direct.after_lines = None; }
                 if let Some(left) = para.left { p.left = left; p.direct.left = Some(left); }
                 if let Some(right) = para.right { p.right = right; p.direct.right = Some(right); }
                 if let Some(first_line) = para.first_line { p.first_line = first_line; p.direct.first_line = Some(first_line); }
@@ -201,7 +201,7 @@ impl SlideEditor {
                 }),
             }
         }
-        self.run_flow(vec![FlowCommand::ReplaceBlocks { container, index: first, remove: last - first + 1, blocks }], cx)
+        self.run_flow(vec![FlowCommand::ReplaceBlockRange { container, index: first, remove: last - first + 1, blocks }], cx)
     }
 
     pub(crate) fn finish_doc_format_brush(&mut self, cx: &mut Context<Self>) {

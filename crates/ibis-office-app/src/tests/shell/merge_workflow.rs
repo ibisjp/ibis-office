@@ -53,10 +53,10 @@ fn files_and_drafts() {
             "recipients.tsv",
             b"Name\tCompany\tAddress\nAlice\tAoba\t00123\nBob\tSakura\tOsaka\n".to_vec(),
         ),
-        ("sjis.csv", ibis_pptx::csv::encode_sjis(csv)),
+        ("sjis.csv", ibis_formats::csv::encode_sjis(csv)),
         (
             "recipients.xlsx",
-            ibis_pptx::csv::workbook_from(csv, "Recipients").unwrap(),
+            ibis_formats::csv::workbook_from(csv, "Recipients").unwrap(),
         ),
     ] {
         let path = dir.join(name);
@@ -108,9 +108,9 @@ fn files_and_drafts() {
             );
         }
     }
-    let book = ibis_pptx::read(&ibis_pptx::csv::workbook_from(csv, "Recipients").unwrap()).unwrap();
+    let book = ibis_formats::read(&ibis_formats::csv::workbook_from(csv, "Recipients").unwrap()).unwrap();
     let xls = dir.join("legacy.xls");
-    std::fs::write(&xls, ibis_pptx::write_xls(&book).unwrap()).unwrap();
+    std::fs::write(&xls, ibis_formats::write_xls(&book).unwrap()).unwrap();
     s.update(|e, w, cx| {
         e.read_merge_file(&xls, w, cx);
         e.confirm_merge_import(w, cx);
@@ -203,7 +203,7 @@ fn files_and_drafts() {
             .unwrap()),
         1
     );
-    let doc = ibis_pptx::read(&std::fs::read(&file).unwrap()).unwrap();
+    let doc = ibis_formats::read(&std::fs::read(&file).unwrap()).unwrap();
     let text = format!("{:?}", doc.flow.unwrap().body);
     assert!(text.contains("Bob Sato") && !text.contains("Alice Yamada"));
     assert_eq!(
@@ -268,7 +268,7 @@ fn screens() {
     assert!(!s.with(|e, _| e.dialog_is_modal()));
     shot(&mut s, "01-start");
     let path = s.screenshot_path("recipients").with_extension("xlsx");
-    std::fs::write(&path,ibis_pptx::csv::workbook_from("Name,Company,Address\nAlice Yamada,Aoba Trading,Tokyo\nBob Sato,Sakura Design,Osaka\nCarol Suzuki,Minato Works,Nagoya","Recipients").unwrap()).unwrap();
+    std::fs::write(&path,ibis_formats::csv::workbook_from("Name,Company,Address\nAlice Yamada,Aoba Trading,Tokyo\nBob Sato,Sakura Design,Osaka\nCarol Suzuki,Minato Works,Nagoya","Recipients").unwrap()).unwrap();
     s.update(|e, w, cx| e.read_merge_file(&path, w, cx));
     assert!(s.with(|e, _| e.dialog_is_modal()));
     shot(&mut s, "02-import");
@@ -620,7 +620,7 @@ fn review_import_save_and_replace() {
         bytes.starts_with(b"PK"),
         "save writes an actual XLSX package"
     );
-    let sheet = ibis_pptx::test_files::part_text(&bytes, "xl/worksheets/sheet1.xml").unwrap();
+    let sheet = ibis_formats::test_files::part_text(&bytes, "xl/worksheets/sheet1.xml").unwrap();
     assert!(
         !sheet.contains("<f>"),
         "recipient text must not become formulas"

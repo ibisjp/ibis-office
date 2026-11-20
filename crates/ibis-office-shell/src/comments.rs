@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! コメント: the one component of the comments' panel for the documents, the workbooks and the
-//! presentations (doc/rule/implimentationRule.md; tasks/doc/reports/2026-11-02-comments-common-component.md).
+//! presentations (docs/rule/implimentationRule.md; tasks/doc/reports/2026-11-02-comments-common-component.md).
 //!
 //! A format (docx `comments.xml`, pptx modern comments, xlsx threaded comments) implements
 //! [`CommentFormat`]: it lists its threads as plain data ([`CommentThread`]) and does the

@@ -67,7 +67,7 @@ fn question_is_asked_once() {
     assert!(s.with(|e, _| e.ask.is_none()));
     // The first use asks; キャンセル does nothing.
     s.update(|e, _, cx| e.set_selected_wrap(Some(ObjectWrapKind::Square), None, cx));
-    assert_eq!(s.with(|e, _| e.ask.as_ref().map(|a| (a.title.to_string(), a.message.to_string()))), Some(("ibisOffice の機能".to_string(), "この機能は PowerPoint にない機能です。有効にしますか？".to_string()))); // i18n-ok (Japanese text under test or a name table that matches labels)
+    assert_eq!(s.with(|e, _| e.ask.as_ref().map(|a| (a.title.to_string(), a.message.to_string()))), Some(("ibisOffice の機能".to_string(), "この機能は Microsoft Office にない機能です。有効にしますか？".to_string()))); // i18n-ok (Japanese text under test or a name table that matches labels)
     s.screenshot("ibis-feature-question");
     answer(&mut s, false);
     assert!(s.with(|e, _| e.ask.is_none() && !e.presentation().ibis_extensions && e.slide().ibis_wrap.is_empty()), "キャンセル: nothing is done"); // i18n-ok (Japanese text under test or a name table that matches labels)
@@ -212,7 +212,7 @@ fn wrap_round_trip() {
     assert_eq!(slide.ibis_wrap_ignore.len(), 1);
     // PowerPoint skips what it does not know: the extensions are `ext` elements with a uri of their own, inside the
     // `extLst` of the presentation and of the shapes' `cNvPr`; the rest of the part is as before.
-    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     let presentation = String::from_utf8(package.read("ppt/presentation.xml").unwrap()).unwrap();
     assert!(presentation.contains("{1B15C0DE-0001-4B15-9E77-1B15A0F0C001}") && presentation.contains("ibis:features"), "{presentation}");
     let part = (1..=20).filter_map(|n| package.read(&format!("ppt/slides/slide{n}.xml")).ok()).map(|b| String::from_utf8(b).unwrap()).find(|x| x.contains("ibis:shape")).expect("a slide with the shapes' extension");
@@ -223,7 +223,7 @@ fn wrap_round_trip() {
     s.update(|e, _, _| e.set_selection(vec![text]));
     s.update(|e, _, cx| e.toggle_selected_ignore_wrap(cx));
     let path = s.save_as("ibis-wrap-off.pptx");
-    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     assert!((1..=20).filter_map(|n| package.read(&format!("ppt/slides/slide{n}.xml")).ok()).all(|b| !String::from_utf8(b).unwrap().contains("ibis:shape")));
 }
 
@@ -237,6 +237,9 @@ pub(crate) fn chain_tests() -> Vec<(&'static str, fn())> {
         ("pptx::ibis_features_the_overflow_mark_shows_for_a_selected_box_that_does_not_hold_its_text", overflow_mark),
         ("pptx::ibis_features_wrap_works_with_a_middle_anchor_and_a_turned_text_box", wrap_anchor_and_turned),
         ("pptx::ibis_features_the_panel_sets_the_wrap_and_its_four_distances", panel_distances),
+        ("pptx::ibis_features_text_in_columns_wraps_round_a_picture_horizontal_and_vertical", columns_wrap),
+        ("pptx::ibis_features_a_chain_sends_on_what_the_wrap_leaves_no_room_for", chain_wrap),
+        ("pptx::ibis_features_columns_in_a_chain_wrap_round_a_picture_and_send_text_on", chain_columns_wrap),
     ]
 }
 
@@ -339,7 +342,7 @@ fn chain_auto_and_copies() {
         let slide = e.slide().id;
         let mut frame = e.slide().shape(a).unwrap().frame;
         frame.height = 2_400_000;
-        e.run(vec![ibis_doc_model::Command::SetFrame { slide, shape: a, frame }], cx);
+        e.run(vec![ibis_doc_model::Command::SetFrame { slide, frames: vec![(a, frame)], with_attached: true }], cx);
     });
     let after = paragraphs_of(&mut s, a).join("").chars().count();
     assert!(after > before, "{before} {after}");
@@ -448,7 +451,117 @@ fn panel_distances() {
     let saved = s.reopen();
     let slide = saved.slides.iter().find(|sl| !sl.ibis_wrap.is_empty()).expect("a wrap is read");
     assert_eq!(slide.ibis_wrap.values().next().unwrap().margins, [1_800_000, 0, 1_800_000, 270_000]);
-    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     let part = (1..=20).filter_map(|n| package.read(&format!("ppt/slides/slide{n}.xml")).ok()).map(|b| String::from_utf8(b).unwrap()).find(|x| x.contains("ibis:shape")).unwrap();
     assert!(part.contains("marginL=\"1800000\"") && part.contains("marginT=\"0\"") && part.contains("marginR=\"1800000\"") && part.contains("marginB=\"270000\""), "{part}");
+}
+
+// ----- Wrap with text in columns and with linked boxes (#132, reported after 0.8.7) -----------------------------------------
+
+/// A text box of `columns` columns over the picture (as `picture_and_text`, the picture across the middle of the columns).
+fn columns_box(s: &mut Scenario, vertical: bool, columns: u32) -> (ShapeId, ShapeId) {
+    let (picture, text) = picture_and_text(s, vertical);
+    s.update(|e, _, cx| {
+        let slide = e.slide().id;
+        let mut shape = e.slide().shape(text).unwrap().clone();
+        if let Some(body) = shape.text_body_mut() {
+            body.columns = columns;
+            body.column_spacing = 180_000;
+        }
+        let paragraphs = shape.text_body().unwrap().paragraphs.clone();
+        let _ = paragraphs;
+        e.run(vec![ibis_doc_model::Command::SetTextBody { slide, shape: text, body: shape.text_body().unwrap().clone() }], cx);
+    });
+    s.update(|e, _, _| e.set_selection(vec![picture]));
+    (picture, text)
+}
+
+fn columns_wrap() {
+    for vertical in [false, true] {
+        let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+        let (picture, text) = columns_box(&mut s, vertical, 2);
+        let free = painted(&mut s, text);
+        let rect = picture_rect(&mut s, picture);
+        assert!(free.iter().any(|c| overlaps(*c, rect)), "without a wrap some characters of the columns are under the picture (vertical {vertical})");
+        s.update(|e, _, _| e.set_selection(vec![picture]));
+        wrap_with(&mut s, ObjectWrapKind::Square);
+        let wrapped = painted(&mut s, text);
+        s.screenshot(if vertical { "wrap-columns-vertical" } else { "wrap-columns" });
+        let inside: Vec<_> = wrapped.iter().filter(|c| overlaps_by(**c, rect, 2.0)).take(3).collect();
+        assert!(inside.is_empty(), "no character of the columns is in the picture's rectangle (vertical {vertical}): {rect:?} {inside:?}");
+        assert_eq!(wrapped.len(), free.len(), "all the text is still there (vertical {vertical})");
+        // The picture crosses both columns: the characters keep off it in each of them, and both have some.
+        let (left, right) = (wrapped.iter().filter(|c| c[0] < rect[0] + (rect[2] - rect[0]) / 2.0).count(), wrapped.iter().filter(|c| c[0] >= rect[0] + (rect[2] - rect[0]) / 2.0).count());
+        assert!(left > 0 && right > 0, "text on both sides of the picture's middle: {left} {right}");
+    }
+}
+
+/// Two linked boxes, the first over the picture (long text), the second below it: `columns` columns in the first.
+fn chain_over_picture(s: &mut Scenario, columns: u32) -> (ShapeId, ShapeId, ShapeId) {
+    let picture = s.update(|e, _, cx| e.insert_picture("p.png", png([200, 40, 40, 255]), cx)).expect("a picture");
+    let frame = s.with(|e, _| e.slide().shape(picture).unwrap().frame);
+    let (a, b) = s.update(|e, _, cx| {
+        let (a, b) = (e.document.ids().new_shape_id(), e.document.ids().new_shape_id());
+        let area = EmuRect::new(frame.x - 1_800_000, frame.y - 600_000, frame.width + 3_600_000, frame.height + 1_200_000);
+        let mut first = Shape::text_box(a, area, SENTENCE.repeat(7));
+        let mut second = Shape::text_box(b, EmuRect::new(area.x, area.y + area.height + 200_000, area.width, 6_000_000), "");
+        for shape in [&mut first, &mut second] {
+            if let Some(body) = shape.text_body_mut() {
+                body.wrap = true;
+                body.columns = columns;
+                body.column_spacing = 180_000;
+            }
+        }
+        e.insert_shape(first, cx);
+        e.insert_shape(second, cx);
+        (a, b)
+    });
+    s.update(|e, _, cx| e.link_text_boxes(a, b, cx));
+    answer(s, true);
+    (picture, a, b)
+}
+
+fn chars_of(s: &mut Scenario, id: ShapeId) -> usize {
+    paragraphs_of(s, id).join("").chars().count()
+}
+
+fn chain_wrap() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let (picture, a, b) = chain_over_picture(&mut s, 1);
+    let whole = chars_of(&mut s, a) + chars_of(&mut s, b);
+    let free_a = chars_of(&mut s, a);
+    assert!(chars_of(&mut s, b) > 0, "the long text goes on in the second box");
+    s.update(|e, _, _| e.set_selection(vec![picture]));
+    wrap_with(&mut s, ObjectWrapKind::Square);
+    // The picture leaves the lines beside it less room: less of the text fits the first box, and the rest goes on in the second.
+    let wrapped_a = chars_of(&mut s, a);
+    assert!(wrapped_a < free_a, "the first box holds less once the text wraps round the picture: {free_a} then {wrapped_a}");
+    assert_eq!(wrapped_a + chars_of(&mut s, b), whole, "no text is lost");
+    // What the first box holds keeps off the picture and fits it.
+    let rect = picture_rect(&mut s, picture);
+    let boxes = painted(&mut s, a);
+    assert!(boxes.iter().all(|c| !overlaps_by(*c, rect, 2.0)), "no character of the first box is in the picture's rectangle");
+    s.screenshot("wrap-chain");
+    assert!(!s.with(|e, _| e.box_overflows(e.slide().shape(a).unwrap())), "the first box holds what it was given");
+    // No wrap: the text comes back to the first box.
+    s.update(|e, _, _| e.set_selection(vec![picture]));
+    wrap_with(&mut s, ObjectWrapKind::None);
+    assert_eq!(chars_of(&mut s, a), free_a);
+}
+
+fn chain_columns_wrap() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    let (picture, a, b) = chain_over_picture(&mut s, 2);
+    let whole = chars_of(&mut s, a) + chars_of(&mut s, b);
+    let free_a = chars_of(&mut s, a);
+    s.update(|e, _, _| e.set_selection(vec![picture]));
+    wrap_with(&mut s, ObjectWrapKind::Square);
+    let wrapped_a = chars_of(&mut s, a);
+    assert!(wrapped_a < free_a, "the first box of columns holds less once the text wraps round the picture: {free_a} then {wrapped_a}");
+    assert_eq!(wrapped_a + chars_of(&mut s, b), whole, "no text is lost");
+    let rect = picture_rect(&mut s, picture);
+    let boxes = painted(&mut s, a);
+    assert!(boxes.iter().all(|c| !overlaps_by(*c, rect, 2.0)), "no character of the columns is in the picture's rectangle");
+    s.screenshot("wrap-chain-columns");
+    assert!(!s.with(|e, _| e.box_overflows(e.slide().shape(a).unwrap())), "the first box holds what it was given");
 }

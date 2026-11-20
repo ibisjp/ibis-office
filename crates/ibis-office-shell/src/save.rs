@@ -3,9 +3,9 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! ファイル > 保存 (⌘S) and 名前を付けて保存… (⌘⇧S).
 //!
-//! The file is written by `ibis_pptx::Source::save`: the original file with
+//! The file is written by `ibis_formats::Source::save`: the original file with
 //! the edits made since it was opened written into it (see
-//! `ibis-pptx/src/save/mod.rs`). An edit the format cannot save yet is
+//! `ibis-formats/src/save/mod.rs`). An edit the format cannot save yet is
 //! reported in the status bar and nothing is written, so no edit is lost
 //! silently. The file is written next to its destination and then moved
 //! over it, so a failed save never leaves a half-written file.
@@ -75,6 +75,14 @@ impl SlideEditor {
         if self.refuse_save(cx) {
             return;
         }
+        // A signed file that was edited: asked first (キャンセル stops here; OK comes back).
+        if self.confirm_signature_loss(crate::signature::SignatureWay::Save, window, cx, |this, window, cx| this.save(&Save, window, cx)) {
+            return;
+        }
+        // A host that keeps the file takes the save (`saveFile`, or the file window for a document that is not its own).
+        if self.host_save(crate::host::SaveTrigger::User, window, cx, &mut None) {
+            return;
+        }
         #[cfg(not(target_family = "wasm"))]
         // A file opened read-only for its password to modify is not written over: 名前を付けて保存 (as Office does).
         match self.path.clone().filter(|_| !self.is_modify_locked()) {
@@ -101,6 +109,22 @@ impl SlideEditor {
     pub(crate) fn save_as_then(&mut self, window: &mut Window, cx: &mut Context<Self>, then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static) {
         self.commit_pending_edit(window, cx);
         if self.refuse_save(cx) {
+            return;
+        }
+        // A signed file that was edited: asked first; `then` goes on after the answer OK and the save.
+        let then = std::rc::Rc::new(std::cell::RefCell::new(Some(then)));
+        let later = then.clone();
+        if self.confirm_signature_loss(crate::signature::SignatureWay::Save, window, cx, move |this, window, cx| {
+            if let Some(then) = later.borrow_mut().take() {
+                this.save_as_then(window, cx, then);
+            }
+        }) {
+            return;
+        }
+        let Some(then) = then.borrow_mut().take() else { return };
+        // A host that keeps the files: the file window asks where (in its storage), and the bytes go to `saveFileAs`.
+        if crate::host::capabilities().list_folder && crate::host::capabilities().save_file_as {
+            self.open_host_file_dialog(crate::host_file_dialog::Mode::SaveAs, Some(Box::new(then)), window, cx);
             return;
         }
         if self.source.is_none() {
@@ -158,6 +182,23 @@ impl SlideEditor {
         if self.refuse_save(cx) {
             return;
         }
+        // A signed file that was edited: asked first; `then` goes on after the answer OK and the save.
+        let then = std::rc::Rc::new(std::cell::RefCell::new(Some(then)));
+        let later = then.clone();
+        if self.confirm_signature_loss(crate::signature::SignatureWay::Save, window, cx, move |this, window, cx| {
+            if let Some(then) = later.borrow_mut().take() {
+                this.save_then(window, cx, then);
+            }
+        }) {
+            return;
+        }
+        let Some(then) = then.borrow_mut().take() else { return };
+        // A host that keeps the file: `saveFile` (or the file window), and `then` once it accepted.
+        let mut then: Option<Box<dyn FnOnce(&mut Self, &mut Window, &mut Context<Self>)>> = Some(Box::new(then));
+        if self.host_save(crate::host::SaveTrigger::User, window, cx, &mut then) {
+            return;
+        }
+        let then = then.take().expect("kept when the host did not take the save");
         #[cfg(not(target_family = "wasm"))]
         {
             if let Some(path) = self.path.clone().filter(|_| !self.is_modify_locked()) {
@@ -256,8 +297,11 @@ impl SlideEditor {
                 }
                 (other.bytes, other.protect)
             }
-            None => (source.save(&self.presentation_for_save(), ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?, true),
+            None => (source.save(&self.presentation_for_save(), ibis_formats::SaveOptions::default()).map_err(|e| e.to_string())?, true),
         };
+        // A signed file that was edited (or is written as another kind of file): written without the signatures, as Office does.
+        let other_kind = self.path.as_deref().and_then(|own| own.extension()).map(|e| e.to_ascii_lowercase()) != path.extension().map(|e| e.to_ascii_lowercase());
+        let (bytes, signatures_removed) = self.without_signatures(bytes, other_kind);
         // 常にバックアップ コピーを作成する: what the file is now is kept, where the format has the option.
         crate::format::with_format!(self, backup_before_write(self, &path));
         // Protected with the password the file has (パスワードを使用して暗号化).
@@ -276,6 +320,9 @@ impl SlideEditor {
         // The file as written here: the watching for other apps' changes (shell/file_watch.rs) does not take it for one.
         self.watch.known = crate::file_watch::DiskStamp::after_write(&path, &bytes);
         self.watch.asked = None;
+        if signatures_removed {
+            self.signatures_removed();
+        }
         self.document.mark_clean();
         self.cleanup_active_autorecover_file();
         self.is_recovered = false;
@@ -285,6 +332,10 @@ impl SlideEditor {
 
     #[cfg(not(target_family = "wasm"))]
     fn report_save(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
+        // A file saved for the first time is among the recent files: the system's menu lists them (macOS).
+        if result.is_ok() {
+            crate::app::set_app_menus(cx);
+        }
         self.status = Some(match result {
             Ok(()) => self.save_note.take().unwrap_or_else(|| crate::i18n::text("_shell.saved").into()),
             Err(err) => crate::i18n::format("file.save-failed", &[("error", &err)]).into(),
@@ -298,7 +349,7 @@ impl SlideEditor {
 pub(crate) fn protect(package: &[u8], password: &str) -> Result<Vec<u8>, String> {
     // The OS's random generator (getrandom: BCryptGenRandom on Windows, which has no /dev/urandom; #M146).
     let mut failed = false;
-    let encrypted = ibis_pptx::encrypt(package, password, &mut |bytes: &mut [u8]| {
+    let encrypted = ibis_formats::encrypt(package, password, &mut |bytes: &mut [u8]| {
         if getrandom::fill(bytes).is_err() {
             failed = true;
         }
@@ -315,7 +366,13 @@ pub fn write_replacing(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let temporary = path.with_file_name(format!(".{name}.ibis-saving"));
     let moved = std::fs::write(&temporary, bytes).and_then(|()| std::fs::rename(&temporary, path));
-    let Err(error) = moved else { return Ok(()) };
+    let Err(error) = moved else {
+        #[cfg(target_os = "android")]
+        gpui_android::sync_saved_file(path);
+        #[cfg(target_os = "ios")]
+        gpui_ios::sync_saved_file(path);
+        return Ok(());
+    };
     let _ = std::fs::remove_file(&temporary);
     // Only "not found" is met by writing in place: a folder a sync client keeps (OneDrive) can take the new file away
     // before it is moved (os error 2, GitHub issue #144; the cause is a guess, not seen on OneDrive itself). Any other
@@ -323,7 +380,12 @@ pub fn write_replacing(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<
     if !falls_back_to_writing_in_place(&error) {
         return Err(error);
     }
-    write_in_place(path, bytes)
+    write_in_place(path, bytes)?;
+    #[cfg(target_os = "android")]
+    gpui_android::sync_saved_file(path);
+    #[cfg(target_os = "ios")]
+    gpui_ios::sync_saved_file(path);
+    Ok(())
 }
 
 /// Whether a failed save by a new file beside the target is tried again by writing the target itself.
@@ -439,8 +501,8 @@ mod protect_tests {
         let package = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test/editing/docx-report.docx")).expect("the sample");
         let locked = super::protect(&package, "ibis123").expect("random bytes from the OS");
         assert_ne!(locked, package);
-        let opened = ibis_pptx::decrypt(&locked, "ibis123").expect("opens with the password");
+        let opened = ibis_formats::decrypt(&locked, "ibis123").expect("opens with the password");
         assert_eq!(opened, package);
-        assert!(ibis_pptx::decrypt(&locked, "wrong").is_err());
+        assert!(ibis_formats::decrypt(&locked, "wrong").is_err());
     }
 }

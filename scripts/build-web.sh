@@ -25,6 +25,11 @@ elif ! rustup target list --installed --toolchain "$RUSTUP_TOOLCHAIN" | grep -qx
   rustup target add wasm32-unknown-unknown --toolchain "$RUSTUP_TOOLCHAIN"
 fi
 
+# The browser version runs in a host's page under a strict Content-Security-Policy and shares its origin: no coupling to a host, no HTML built
+# from a string, no eval (scripts/check-web-sources.py; a line with a reason carries `host-lint-allow: <reason>`).
+python3 scripts/check-web-sources.py --self-test
+python3 scripts/check-web-sources.py
+
 PROFILE=debug
 FLAGS=()
 if [[ "${1:-}" == "--release" ]]; then PROFILE=release; FLAGS=(--release); fi
@@ -55,7 +60,18 @@ if [[ ! -x node_modules/.bin/tsc ]]; then
   echo "TypeScript is not installed; run: npm ci" >&2
   exit 1
 fi
+# The version of this build, for the loader to check a loader-manifest.json against (the parts of the wasm are of one build: scripts/web-loader-setup.mjs).
+printf "export const APP_VERSION = '%s';\n" "$(awk -F'\t' '$1 == "wasm" { sub(/\r$/, "", $2); print $2 }' version.txt)" > www/build-info.ts
 node_modules/.bin/tsc -p www
+# tsc keeps the copyright header of ibisoffice-host.ts in the .js but drops it from the .d.ts: the same header (the first three lines of the
+# source) goes on the .d.ts, as it ships in the Web archive.
+{ head -n 3 www/ibisoffice-host.ts; echo; grep -v '^// \(SPDX-License-Identifier\|Copyright (c)\|Additional terms\)' www/ibisoffice-host.d.ts; } > www/ibisoffice-host.d.ts.new
+mv www/ibisoffice-host.d.ts.new www/ibisoffice-host.d.ts
+# The loader and the host bridge's own tests (node; the same TypeScript).
+scripts/test-web.sh
+
+# The same checks on what was built (wasm-bindgen's JavaScript shows what the Rust calls: a `new Function` there would need `unsafe-eval`).
+python3 scripts/check-web-sources.py --dist
 
 # Icons are fetched on demand from /assets/icons/*.svg.
 ASSETS_DIR=$(cargo metadata --format-version 1 | python3 -c '
@@ -71,7 +87,7 @@ cp -R "$ASSETS_DIR/icons" www/assets/icons
 # unmodified (fetched one by one when a document uses them), with the notice.
 rm -rf www/assets/artborders
 mkdir -p www/assets/artborders
-unzip -q -o crates/ibis-pptx/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip -d www/assets/artborders
-cp crates/ibis-pptx/data/artborders/ECMA-NOTICE.txt www/assets/artborders/
+unzip -q -o crates/ibis-formats/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip -d www/assets/artborders
+cp crates/ibis-formats/data/artborders/ECMA-NOTICE.txt www/assets/artborders/
 
 echo "Built www/ ($PROFILE). Serve it, e.g.: python3 -m http.server -d www 8080"

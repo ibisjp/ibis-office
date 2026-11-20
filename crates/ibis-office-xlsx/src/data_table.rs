@@ -94,7 +94,7 @@ impl SlideEditor {
         let results = CellRange { first_row: range.first_row + 1, first_column: range.first_column + 1, ..range };
         let table = DataTable { range: results, row_input, column_input };
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetDataTable { slide, table })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetDataTable { sheet: slide, table })]) {
             return self.data_table_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);
         }
         self.wb_mut().panels.data_table = None;

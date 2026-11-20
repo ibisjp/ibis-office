@@ -43,6 +43,9 @@ impl SlideEditor {
             "crop_panel" => { self.shape_edit.crop_panel = None; }
             "cell_size_panel" => { state.cell_size_panel = None; }
             "header_footer_panel" => { self.shape_edit.header_footer = None; }
+            "slide_zoom_dialog" => { state.slide_zoom_dialog = None; }
+            "section_zoom_dialog" => { state.section_zoom_dialog = None; }
+            "summary_zoom_dialog" => { state.summary_zoom_dialog = None; }
             "slide_link_panel" => { state.link_panel = None; }
             "theme_panel" => { self.shape_edit.theme_panel = None; }
             "slide_size_panel" => { self.shape_edit.size_panel = None; }

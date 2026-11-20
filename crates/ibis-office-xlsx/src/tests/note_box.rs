@@ -22,7 +22,7 @@ fn put_note(s: &mut Scenario, row: u32, column: u32, text: &str) {
     let slide = s.with(|e, _| e.current_slide);
     let comment = SheetComment { row, column, author: "Tester".into(), text: text.into(), ..Default::default() };
     s.update(|e, _, _| {
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment { slide, row, column, comment: Some(comment) })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment { sheet: slide, row, column, comment: Some(comment) })]).unwrap();
     });
 }
 
@@ -46,7 +46,7 @@ pub(super) fn new_note_text_and_caret() {
     let mut s = super::new_sheet();
     s.size(1200., 800.);
     s.click_cell("C3");
-    s.menu("xlsx.note-new");
+    s.menu("xlsx.new-note");
     let name = crate::shell::user_name::user_name();
     let (text, caret, is_note) = s.with(|e, _| {
         let c = e.cell_edit().unwrap();
@@ -77,7 +77,7 @@ pub(super) fn new_note_text_and_caret() {
     s.key("cmd-z");
     assert!(note_on(&mut s, 2, 2).is_none(), "one undo step");
     // The right pane has no panel for it.
-    s.menu("xlsx.note-new");
+    s.menu("xlsx.new-note");
     assert!(!s.with(|e, _| e.sidebar_open));
     s.key("escape");
 }
@@ -158,7 +158,7 @@ pub(super) fn resize_and_move() {
     let mut s = super::new_sheet();
     s.size(1200., 800.);
     s.click_cell("C3");
-    s.menu("xlsx.note-new");
+    s.menu("xlsx.new-note");
     let start = rect_of(&mut s);
     let scale = s.with(|e, _| e.slide_layout().unwrap().scale);
     let emu = |px: f32| (px / scale).round() as i64;
@@ -207,7 +207,7 @@ pub(super) fn text_formats() {
     let mut s = super::new_sheet();
     s.size(1200., 800.);
     s.click_cell("B2");
-    s.menu("xlsx.note-new");
+    s.menu("xlsx.new-note");
     s.type_text("Plain bold red");
     // Select "bold" and make it bold, italic, underlined, red, 14 pt.
     s.update(|e, _, cx| {
@@ -244,7 +244,7 @@ pub(super) fn saved_and_read_back() {
     let mut s = super::new_sheet();
     s.size(1200., 800.);
     s.click_cell("B2");
-    s.menu("xlsx.note-new");
+    s.menu("xlsx.new-note");
     s.type_text("Red bold");
     s.update(|e, _, cx| {
         let name = crate::shell::user_name::user_name();
@@ -290,7 +290,7 @@ pub(super) fn long_text_past_the_box() {
     let mut s = super::new_sheet();
     s.size(1200., 800.);
     s.click_cell("C3");
-    s.menu("xlsx.note-new");
+    s.menu("xlsx.new-note");
     for i in 0..9 {
         s.type_text(&format!("Line number {i}"));
         s.key("enter");

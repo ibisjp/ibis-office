@@ -29,8 +29,8 @@ pub fn crop_commands(slide: SlideId, shape: &ibis_doc_model::Shape, picture: &ib
     let mut picture = picture.clone();
     picture.crop = crop;
     let frame = crate::crop_mode::recropped_frame(shape.frame, shape.rotation, shape.flip_h, shape.flip_v, match &shape.kind { ShapeKind::Picture(p) => p.crop, _ => crop }, crop);
-    commands.push(Command::SetKind { slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) });
-    if let Some(frame) = frame && frame != shape.frame { commands.push(Command::SetFrame { slide, shape: shape.id, frame }); }
+    commands.push(Command::SetShapeKind { slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) });
+    if let Some(frame) = frame && frame != shape.frame { commands.push(Command::SetFrame { slide, frames: vec![(shape.id, frame)], with_attached: true }); }
     commands
 }
 
@@ -92,7 +92,7 @@ impl SlideEditor {
             }
         }
         // The sections or the slides' order changed: the summary zooms follow (`refresh_summary_zooms`).
-        let structural = commands.iter().any(|c| matches!(c, Command::SetSections { .. } | Command::InsertSlide { .. } | Command::RemoveSlide { .. } | Command::MoveSlide { .. } | Command::SlideStructure { .. }));
+        let structural = commands.iter().any(|c| matches!(c, Command::SetSections { .. } | Command::InsertSlide { .. } | Command::DeleteSlide { .. } | Command::MoveSlide { .. } | Command::SlideStructure { .. }));
         let flows = !commands.iter().all(|c| matches!(c, Command::SetTextChains { .. }));
         if let Err(err) = self.document.execute(commands) {
             log::warn!("edit rejected: {err}");
@@ -123,7 +123,7 @@ impl SlideEditor {
         }
         let slide = self.current_slide;
         let selected = self.selected_ids();
-        let mut commands: Vec<Command> = selected.iter().map(|&shape| Command::RemoveShape { slide, shape }).collect();
+        let mut commands: Vec<Command> = selected.iter().map(|&shape| Command::DeleteShape { slide, shapes: vec![shape], with_attached: true }).collect();
         // Boxes of a chain deleted: the text they hold flows on through the boxes that are left (it is not deleted with them).
         for chain in self.slide().text_chains.clone() {
             if !chain.boxes.iter().any(|b| selected.contains(b)) {
@@ -149,7 +149,7 @@ impl SlideEditor {
         let selected = self.selected_shapes();
         let mut commands: Vec<Command> = selected
             .iter()
-            .map(|s| Command::SetFrame { slide, shape: s.id, frame: s.frame.translated(dx * step, dy * step) })
+            .map(|s| Command::SetFrame { slide, frames: vec![(s.id, s.frame.translated(dx * step, dy * step))], with_attached: true })
             .collect();
         let current_slide = self.slide();
         let updated_shapes: Vec<Shape> = current_slide.shapes.iter().map(|s| {
@@ -206,7 +206,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         let id = shape.id;
         let index = self.slide().shapes.len();
-        let mut commands = vec![Command::InsertShape { slide, index, shape }];
+        let mut commands = vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }];
         if locked {
             commands.push(Command::SetAspectLocked { slide, shape: id, locked: true });
         }
@@ -216,7 +216,7 @@ impl SlideEditor {
     }
 
     pub fn can_copy_shapes(shapes: &[Shape]) -> bool {
-        !shapes.is_empty() && shapes.iter().all(|s| ibis_pptx::save::check_shape_insertion(s).is_ok())
+        !shapes.is_empty() && shapes.iter().all(|s| ibis_formats::save::check_shape_insertion(s).is_ok())
     }
 
     pub fn extract_groups_for_shapes(groups: &[ibis_doc_model::ShapeGroup], shape_ids: &[ShapeId]) -> Vec<ibis_doc_model::ShapeGroup> {
@@ -321,7 +321,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         let start = self.slide().shapes.len();
         let ids: Vec<ShapeId> = copies.iter().map(|s| s.id).collect();
-        let mut commands: Vec<Command> = copies.into_iter().enumerate().map(|(i, shape)| Command::InsertShape { slide, index: start + i, shape }).collect();
+        let mut commands: Vec<Command> = copies.into_iter().enumerate().map(|(i, shape)| Command::InsertShape { slide, shapes: vec![(start + i, shape)] }).collect();
         if !copied_groups.is_empty() {
             let mut new_groups = self.slide().groups.clone();
             new_groups.extend(copied_groups);
@@ -333,7 +333,7 @@ impl SlideEditor {
             chains.extend(chain_copies);
             commands.push(Command::SetTextChains { slide, chains, bodies: Vec::new() });
         }
-        if self.apply_pptx_commands_checked(vec![Command::Group(commands)], cx) {
+        if self.apply_pptx_commands_checked(vec![Command::Batch(commands)], cx) {
             self.set_selection(ids);
         }
     }
@@ -485,7 +485,7 @@ impl SlideEditor {
                     Align::Middle => (0, area.y + area.height / 2 - (b.y + b.height / 2)),
                     Align::Bottom => (0, area.bottom() - b.bottom()),
                 };
-                ((dx, dy) != (0, 0)).then(|| Command::SetFrame { slide, shape: id, frame: frame.translated(dx, dy) })
+                ((dx, dy) != (0, 0)).then(|| Command::SetFrame { slide, frames: vec![(id, frame.translated(dx, dy))], with_attached: true })
             })
             .collect();
         self.run(commands, cx);
@@ -504,7 +504,7 @@ impl SlideEditor {
         let b = shapes.iter().map(|s| s.2.bottom()).max().unwrap_or(0);
         let (dx, dy) = if horizontal { ((size.width - (r - l)) / 2 - l, 0) } else { (0, (size.height - (b - t)) / 2 - t) };
         let slide = self.current_slide;
-        let commands = shapes.into_iter().map(|(id, frame, _)| Command::SetFrame { slide, shape: id, frame: frame.translated(dx, dy) }).collect();
+        let commands = shapes.into_iter().map(|(id, frame, _)| Command::SetFrame { slide, frames: vec![(id, frame.translated(dx, dy))], with_attached: true }).collect();
         self.run(commands, cx);
     }
 
@@ -666,7 +666,7 @@ impl SlideEditor {
         });
 
         let new_selection = target_leaves.clone();
-        if self.apply_pptx_commands_checked(vec![Command::Group(commands)], cx) {
+        if self.apply_pptx_commands_checked(vec![Command::Batch(commands)], cx) {
             self.set_selection(new_selection);
         }
     }
@@ -904,10 +904,10 @@ impl SlideEditor {
         let slide = self.current_slide;
         let mut commands = Vec::new();
         if let Some(old) = replaced {
-            commands.push(Command::RemoveShapes { slide, shapes: vec![old] });
+            commands.push(Command::DeleteShape { slide, shapes: vec![old], with_attached: false });
         }
         let index = self.slide().shapes.len() - usize::from(replaced.is_some());
-        commands.push(Command::InsertShape { slide, index, shape });
+        commands.push(Command::InsertShape { slide, shapes: vec![(index, shape)] });
         commands.push(Command::SetAspectLocked { slide, shape: id, locked: true });
         self.run(commands, cx);
         self.set_selection(vec![id]);
@@ -944,7 +944,7 @@ impl SlideEditor {
                 }
             }
         }
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(shaped.kind) }, Command::SetFrame { slide, shape: id, frame: shaped.frame }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(shaped.kind) }, Command::SetFrame { slide, frames: vec![(id, shaped.frame)], with_attached: true }], cx);
         if editing.is_some() {
             self.begin_table_cell_edit(id, next, window, cx);
         }
@@ -979,10 +979,10 @@ impl SlideEditor {
         let slide = self.current_slide;
         let mut commands = Vec::new();
         if let Some(old) = replaced {
-            commands.push(Command::RemoveShapes { slide, shapes: vec![old] });
+            commands.push(Command::DeleteShape { slide, shapes: vec![old], with_attached: false });
         }
         let index = self.slide().shapes.len() - usize::from(replaced.is_some());
-        commands.push(Command::InsertShape { slide, index, shape });
+        commands.push(Command::InsertShape { slide, shapes: vec![(index, shape)] });
         self.run(commands, cx);
         self.set_selection(vec![id]);
         if contents.is_none() {
@@ -1040,7 +1040,7 @@ impl SlideEditor {
             if picture.corner == corner { return None; }
             let mut picture = picture.clone();
             picture.corner = corner;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
         }).collect();
         self.run(commands, cx);
     }
@@ -1052,7 +1052,7 @@ impl SlideEditor {
             if picture.duotone == duotone { return None; }
             let mut picture = picture.clone();
             picture.duotone = duotone;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
         }).collect();
         self.run(commands, cx);
     }
@@ -1064,7 +1064,7 @@ impl SlideEditor {
             if picture.luminance == luminance { return None; }
             let mut picture = picture.clone();
             picture.luminance = luminance;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
         }).collect();
         self.run(commands, cx);
     }
@@ -1084,7 +1084,7 @@ impl SlideEditor {
             }
         }
         if let Some(source)=&self.source {
-            if let Err(error)=source.save(&preview,ibis_pptx::SaveOptions::default()) {log::warn!("Cannot apply the edit: {error}");return false;}
+            if let Err(error)=source.save(&preview,ibis_formats::SaveOptions::default()) {log::warn!("Cannot apply the edit: {error}");return false;}
         }
         self.run(commands,cx);
         true
@@ -1116,7 +1116,7 @@ impl SlideEditor {
             picture.reflection = None;
             picture.soft_edge = None;
             picture.artistic_effect = None;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
         }).collect();
         self.run(commands, cx);
     }
@@ -1129,7 +1129,7 @@ impl SlideEditor {
             if picture.clear == clear { return None; }
             let mut picture = picture.clone();
             picture.clear = clear;
-            Some(Command::SetKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
+            Some(Command::SetShapeKind { slide: self.current_slide, shape: shape.id, kind: Box::new(ShapeKind::Picture(picture)) })
         }).collect();
         self.run(commands, cx);
     }
@@ -1192,7 +1192,7 @@ impl SlideEditor {
     }
 
     /// Runs `then` for a feature PowerPoint does not have. In a file that has not turned them on yet, asks first ("この機能は
-    /// PowerPoint にない機能です。有効にしますか？"): OK turns them on for the whole file (saved in it) and runs `then`;
+    /// Microsoft Office にない機能です。有効にしますか？"): OK turns them on for the whole file (saved in it) and runs `then`;
     /// キャンセル does nothing. Once on, the file is not asked again.
     pub fn require_ibis_extensions(&mut self, then: impl Fn(&mut Self, &mut Context<Self>) + 'static, cx: &mut Context<Self>) {
         self.require_ibis_extensions_asking("shell.ibis-ext.message", then, cx);
@@ -1210,7 +1210,7 @@ impl SlideEditor {
             crate::i18n::text("shell.ibis-ext.title"),
             crate::i18n::text(message_key),
             std::rc::Rc::new(move |this: &mut Self, cx: &mut Context<Self>| {
-                this.run(vec![ibis_doc_model::Command::SetIbisExtensions { enabled: true }], cx);
+                this.run(vec![ibis_doc_model::Command::SetExtendedFeatures { enabled: true }], cx);
                 if this.ibis_extensions_on() {
                     (*then)(this, cx);
                 }

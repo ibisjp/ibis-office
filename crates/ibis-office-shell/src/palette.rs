@@ -108,6 +108,15 @@ pub(crate) fn darker(hex: u32) -> u32 {
     byte(r2) << 16 | byte(g2) << 8 | byte(b2)
 }
 
+/// Runs `f` and leaves the chrome's appearance as it was: a headless app started inside `f` follows its own (light) window
+/// appearance, and the appearance is one for the whole process (the chrome of a window that is dark would turn light).
+pub fn keep_appearance<T>(f: impl FnOnce() -> T) -> T {
+    let dark = DARK.load(Ordering::Relaxed);
+    let out = f();
+    DARK.store(dark, Ordering::Relaxed);
+    out
+}
+
 /// The theme of the components (buttons, inputs, menus) and the colours the chrome sets over it, for the appearance now.
 pub fn apply_theme(window: Option<&mut Window>, cx: &mut App) {
     Theme::change(if is_dark() { ThemeMode::Dark } else { ThemeMode::Light }, window, cx);
@@ -139,11 +148,27 @@ pub(crate) fn watch(window: &mut Window, _cx: &mut App) {
     window.observe_window_appearance(|window, cx| follow(window.appearance(), None, cx)).detach();
 }
 
+/// The host's `theme` (`light` or `dark`; `None`: the system's, `auto`) is the appearance, over the system's. Set before the editor
+/// starts (`host::install`); the chrome follows it from the first frame.
+pub(crate) fn set_host_theme(dark: Option<bool>) {
+    FORCED.store(match dark { None => 0, Some(false) => 1, Some(true) => 2 }, Ordering::Relaxed);
+}
+
 /// The appearance set by hand (the scenarios).
 #[cfg(feature = "scenarios")]
 pub fn force(dark: bool, cx: &mut App) {
     FORCED.store(if dark { 2 } else { 1 }, Ordering::Relaxed);
     follow(if dark { WindowAppearance::Dark } else { WindowAppearance::Light }, None, cx);
+}
+
+/// The system is dark, as on a real machine whose window appearance is dark: the chrome is dark, with nothing forced (so a later
+/// `follow` of another window's appearance can still change it).
+#[cfg(feature = "scenarios")]
+pub fn system_dark(cx: &mut App) {
+    FORCED.store(0, Ordering::Relaxed);
+    DARK.store(true, Ordering::Relaxed);
+    apply_theme(None, cx);
+    cx.refresh_windows();
 }
 
 /// The system's appearance is followed again (after `force`).

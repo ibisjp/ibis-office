@@ -196,7 +196,7 @@ impl SlideEditor {
         };
 
         let slide = p.slide;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::ApplySubtotal { slide, params })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::ApplySubtotal { sheet: slide, params })], cx);
 
         if let Some(s) = self.sheet_state_mut() {
             s.panels.subtotal = None;
@@ -213,7 +213,7 @@ impl SlideEditor {
         let range = self.resolve_subtotal_range(&range_str).unwrap_or(p.fallback_range);
         let slide = p.slide;
 
-        self.run_sheet(vec![Command::Sheet(SheetCommand::RemoveSubtotal { slide, range })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::RemoveSubtotal { sheet: slide, range })], cx);
 
         if let Some(s) = self.sheet_state_mut() {
             s.panels.subtotal = None;

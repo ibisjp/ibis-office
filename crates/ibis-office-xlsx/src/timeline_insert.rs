@@ -195,7 +195,7 @@ impl SlideEditor {
             let id = self.document.ids().new_shape_id();
             let frame = EmuRect::new(origin.0, origin.1 + k as i64 * (HEIGHT + GAP), WIDTH, HEIGHT);
             let shape = Shape::new(id, frame, ShapeKind::Timeline(Arc::new(timeline)));
-            commands.push(Command::InsertShape { slide, index, shape });
+            commands.push(Command::InsertShape { slide, shapes: vec![(index, shape)] });
             index += 1;
             commands.push(Command::Sheet(SheetCommand::SetName {
                 name: cache,
@@ -283,7 +283,7 @@ mod tests {
             include_str!("../../ibis-office-base/i18n/en/xlsx.tsv"),
         ] {
             for id in [
-                "xlsx.timeline-insert",
+                "xlsx.insert-timeline",
                 "xlsx.timeline-insert.title",
                 "xlsx.timeline-insert.select-pivot",
                 "xlsx.timeline-insert.choose",

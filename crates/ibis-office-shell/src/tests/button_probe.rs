@@ -5,6 +5,7 @@
 use super::Scenario;
 use gpui_kit::component::button::Button;
 use gpui_kit::*;
+use std::cell::Cell;
 use std::collections::BTreeMap;
 thread_local! {
     static ENABLED:std::cell::Cell<bool>=const{std::cell::Cell::new(false)};
@@ -14,20 +15,39 @@ thread_local! {
     static FOCUS:std::cell::RefCell<BTreeMap<String,FocusHandle>>=const{std::cell::RefCell::new(BTreeMap::new())};
     static BOUNDS:std::cell::RefCell<BTreeMap<String,Bounds<Pixels>>>=const{std::cell::RefCell::new(BTreeMap::new())};
 }
-pub struct Probe { previous: bool }
+pub struct Probe { previous: bool, previous_dry: bool }
 impl Probe {
     pub fn new() -> Self {
         let previous=ENABLED.with(|x| x.replace(true));
+        // A probe starts with its presses run (not a dry run): the dry run of an earlier probe must not reach this one (it did: `toolbar_overflow_every_button_works` set it and the
+        // menu grid scenarios after it pressed Enter and inserted nothing).
+        let previous_dry=DRY.with(|d|d.replace(false));
         clear();
-        Self { previous }
+        DISPATCHED.with(|d|d.set(0));
+        Self { previous, previous_dry }
     }
 }
 impl Drop for Probe {
     fn drop(&mut self) {
         ENABLED.with(|x| x.set(self.previous));
+        DRY.with(|d|d.set(self.previous_dry));
         clear();
     }
 }
+thread_local! {
+    static DISPATCHED:std::cell::Cell<usize>=const{std::cell::Cell::new(0)};
+    static DRY:std::cell::Cell<bool>=const{std::cell::Cell::new(false)};
+}
+/// A press reached `chrome::dispatch`: counted. `true`: the command is not to be run (a dry run).
+pub(crate) fn dispatched()->bool{
+    if !ENABLED.with(|x|x.get()){return false;}
+    DISPATCHED.with(|d|d.set(d.get()+1));
+    DRY.with(Cell::get)
+}
+/// How many presses have reached `chrome::dispatch` since the probe began.
+pub fn dispatch_count()->usize{DISPATCHED.with(Cell::get)}
+/// Presses are counted and their commands left undone (so a scenario can press every button, even those that open the system's dialogs).
+pub fn dry_run(on:bool){DRY.with(|d|d.set(on));}
 pub fn clear() {
     FOCUS.with(|m| m.borrow_mut().clear());
     BOUNDS.with(|m| m.borrow_mut().clear());

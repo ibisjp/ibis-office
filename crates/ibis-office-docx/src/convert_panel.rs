@@ -5,9 +5,25 @@
 //! filenames are selected by the operating system, without a conversion dialog.
 use std::path::Path;
 use gpui_kit::*;
-use ibis_pptx::docx_convert::{DocxConvertFormat, export_docx_format, import_docx_format};
+use ibis_formats::docx_convert::DocxConvertFormat;
 use crate::shell::editor::SlideEditor;
 use crate::shell::i18n::text;
+
+/// `ibis_formats::docx_convert::export_docx_format`; `.odt` is written by `ibis-odf` (which sits above `ibis-formats`).
+fn export_docx_format(presentation: &ibis_doc_model::Presentation, format: DocxConvertFormat) -> Result<Vec<u8>, ibis_formats::Error> {
+    match format {
+        DocxConvertFormat::Odt => ibis_odf::export_docx_to_odt(presentation),
+        _ => ibis_formats::docx_convert::export_docx_format(presentation, format),
+    }
+}
+
+/// `ibis_formats::docx_convert::import_docx_format`; `.odt` is read by `ibis-odf`.
+fn import_docx_format(data: &[u8], format: DocxConvertFormat) -> Result<ibis_formats::Opened, ibis_formats::Error> {
+    match format {
+        DocxConvertFormat::Odt => ibis_odf::import_odt(data),
+        _ => ibis_formats::docx_convert::import_docx_format(data, format),
+    }
+}
 
 #[ibis_office_macros::editor_ext(ConvertPanel)]
 impl SlideEditor {
@@ -30,8 +46,24 @@ impl SlideEditor {
         }
         #[cfg(target_family = "wasm")]
         {
-            let _ = format;
-            self.report(Err(text("_shell.exporting-is-not-yet-available-in-the-browser-ve").into()), cx);
+            let (stem, _) = self.name_parts();
+            let name = format!("{stem}.{}", format.extension());
+            let mime = match format {
+                DocxConvertFormat::Html => "text/html;charset=utf-8",
+                DocxConvertFormat::Txt => "text/plain;charset=utf-8",
+                DocxConvertFormat::Rtf => "application/rtf",
+                DocxConvertFormat::Markdown => "text/markdown;charset=utf-8",
+                _ => "application/octet-stream",
+            };
+            match export_docx_format(&self.presentation().clone(), format) {
+                Ok(bytes) => {
+                    // A host that keeps the files takes the export in its file window; else it is downloaded.
+                    if !self.browser_export(name.clone(), mime, bytes, window, cx) {
+                        self.set_status(format!("{}: {name}", text("docx.convert.exported")), cx);
+                    }
+                }
+                Err(error) => self.set_status(error.to_string(), cx),
+            }
         }
     }
 

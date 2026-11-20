@@ -149,7 +149,7 @@ impl SlideEditor {
             return;
         };
 
-        let crtx_bytes = match ibis_pptx::chart_to_crtx(chart) {
+        let crtx_bytes = match ibis_formats::chart_to_crtx(chart) {
             Ok(bytes) => bytes,
             Err(e) => {
                 if let Some(p) = self.wb_mut().panels.chart_template.as_mut() {
@@ -248,13 +248,13 @@ impl SlideEditor {
 
     /// Reads `.crtx` bytes, parses the chart, and applies it to the active chart with Undo/Redo.
     pub(crate) fn apply_chart_template_bytes(&mut self, bytes: &[u8], window: &mut Window, cx: &mut Context<Self>) -> Result<(), String> {
-        let template = ibis_pptx::read_crtx(bytes).map_err(|e| e.to_string())?;
+        let template = ibis_formats::read_crtx(bytes).map_err(|e| e.to_string())?;
         if self.sheet_chart().is_none() {
             return Err(crate::shell::i18n::text("_xlsx.no-chart-is-selected").to_string());
         }
 
         self.change_sheet_chart(|target| {
-            ibis_pptx::apply_chart_template(target, &template);
+            ibis_formats::apply_chart_template(target, &template);
         }, cx);
 
         // Re-open chart panel to reflect updated properties if open

@@ -52,6 +52,8 @@ enum Mark {
     /// cut (`None`): the series are drawn inside the plot area, as Office
     /// cuts a line past the axis's maximum.
     Clip(Option<(f32, f32, f32, f32)>),
+    /// The foreground cells of a pattern fill (`Fill::Pattern`), painted over the area's own fill (the pattern's background colour).
+    Pattern(Vec<(f32, f32)>, Fill),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -188,14 +190,16 @@ fn wrap_category_label(text: &str, max_width: f32, style: &ChartText, px_per_poi
 fn ellipsize_category_label(text: &str, max_width: f32, style: &ChartText, px_per_point: f32, res: &Resources) -> String {
     let size = style.size as f32 / 100.0 * px_per_point;
     let font = chart_font(style, text, res);
-    if max_width <= 0.0 || res.text_width(text, &font, size) <= max_width {
+    // The width of a text, with the character spacing (`spc`) added after each character.
+    let spaced = |t: &str| res.text_width(t, &font, size) + style.spacing as f32 / 100.0 * px_per_point * t.chars().count() as f32;
+    if max_width <= 0.0 || spaced(text) <= max_width {
         return text.to_string();
     }
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.len() > 1 {
         for count in (1..words.len()).rev() {
             let candidate = format!("{}…", words[..count].join(" "));
-            if res.text_width(&candidate, &font, size) <= max_width {
+            if spaced(&candidate) <= max_width {
                 return candidate;
             }
         }
@@ -204,11 +208,55 @@ fn ellipsize_category_label(text: &str, max_width: f32, style: &ChartText, px_pe
     for count in (1..chars.len()).rev() {
         let prefix: String = chars[..count].iter().collect();
         let candidate = format!("{}…", prefix.trim_end());
-        if res.text_width(&candidate, &font, size) <= max_width {
+        if spaced(&candidate) <= max_width {
             return candidate;
         }
     }
     "…".to_string()
+}
+
+/// A horizontal-bar category label that does not fit `max_width`, in a place with room for `lines_fit` lines of its text. Measured on PowerPoint for Windows (a chart of its own, Arial and Meiryo UI
+/// text, frames of 80 to 283.5 pt; `tasks/doc/requests/2026-11-18-098-chart-windows-result.md` 1-2): where more than one line fits (4 categories in 187 pt: about 40 pt each) the label is
+/// wrapped, at a space when there is one, else in the middle of a word (a Japanese text anywhere), and when the lines do not fit the last one that does ends with "…" ("ABCDEFGHIJKLMNOPQ /
+/// RSTUVWXYZABCDEFGH / IJKL" in three lines; "WXYZAB…" for what is left of a fourth); where one line fits (17 categories in 153 pt: 9 pt each) it is not wrapped but ends with "…" ("ゴー…", a
+/// single character where even "…" does not fit).
+fn fit_category_label(text: &str, max_width: f32, lines_fit: usize, style: &ChartText, px_per_point: f32, res: &Resources) -> String {
+    let size = style.size as f32 / 100.0 * px_per_point;
+    let font = chart_font(style, text, res);
+    let spaced = |t: &str| res.text_width(t, &font, size) + style.spacing as f32 / 100.0 * px_per_point * t.chars().count() as f32;
+    if lines_fit <= 1 || max_width <= 0.0 || spaced(text) <= max_width {
+        return ellipsize_category_label(text, max_width, style, px_per_point, res);
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut rest: &str = text;
+    while !rest.is_empty() && lines.len() + 1 < lines_fit {
+        // The longest start of `rest` that fits; at the last space in it when there is one (and it is not the start).
+        let chars: Vec<(usize, char)> = rest.char_indices().collect();
+        let mut end = 0;
+        for k in 1..=chars.len() {
+            let upto = chars.get(k).map_or(rest.len(), |c| c.0);
+            if spaced(&rest[..upto]) > max_width {
+                break;
+            }
+            end = upto;
+        }
+        if end == 0 {
+            end = chars.get(1).map_or(rest.len(), |c| c.0);
+        }
+        let mut cut = end;
+        if end < rest.len()
+            && let Some(space) = rest[..end].rfind(' ')
+            && space > 0
+        {
+            cut = space + 1;
+        }
+        lines.push(rest[..cut].trim_end().to_string());
+        rest = rest[cut..].trim_start();
+    }
+    if !rest.is_empty() {
+        lines.push(ellipsize_category_label(rest, max_width, style, px_per_point, res));
+    }
+    lines.join("\n")
 }
 
 /// Wraps `text` onto lines of at most `max_width` using measured glyph widths.
@@ -688,7 +736,7 @@ pub fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Resources)
     } else {
         chart.plot_area.map(|r| Area::of(r, w, h)).unwrap_or_else(|| automatic_plot(chart, w, h, px_per_point, res))
     };
-    let plot = side_axes_layout(chart, plot, w, px_per_point);
+    let plot = side_axes_layout(chart, plot, w, px_per_point, res);
     let plot = slanted_labels_layout(chart, plot, h, px_per_point);
     let mut plot = plot;
     if chart.data_table.is_some() {
@@ -732,6 +780,8 @@ pub fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Resources)
         plot = Area { x: plot.x, y: plot.y + dy, w: (plot.w - dx).max(10.0), h: (plot.h - dy).max(10.0) };
     }
     let mut marks = Vec::new();
+    // The bars with a shadow inside (`a:innerShdw` of the series): their rectangles (x, y, w, h) and the shadow.
+    let mut inner_shadows: Vec<((f32, f32, f32, f32), ibis_doc_model::Shadow)> = Vec::new();
     let mut labels = Vec::new();
     let mut rotated = Vec::new();
     if let Some((dx, dy)) = depth {
@@ -878,7 +928,7 @@ pub fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Resources)
                 let gap = (4.0 + if axis.ticks_outside { 3.75 } else { 0.0 }) * px_per_point;
                 // PowerPoint leaves out tick labels that do not fit in the frame.
                 let width = number_width(&text) * axis.text.size as f32 / 100.0 * px_per_point;
-                let side = axis_label_side(axis, horizontal);
+                let side = axis_label_side(chart, axis, horizontal);
                 let fits = match (horizontal, side) {
                     (true, _) => true,
                     (false, Side::Right) => plot.right() + gap + width <= w,
@@ -1177,6 +1227,14 @@ pub fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Resources)
                         }
                         if let Some(bg) = background(point_fill(series, ci)) {
                             marks.push(Mark::Fill(corners.clone(), bg));
+                            if matches!(point_fill(series, ci), Fill::Pattern { .. }) {
+                                marks.push(Mark::Pattern(corners.clone(), point_fill(series, ci).clone()));
+                            }
+                            if let Some(shadow) = series.inner_shadow {
+                                let (x0, x1) = corners.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.0), b.max(p.0)));
+                                let (y0, y1) = corners.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
+                                inner_shadows.push(((x0, y0, x1 - x0, y1 - y0), shadow));
+                            }
                         }
                         if let Some(stroke) = point_stroke(series, ci) {
                             let mut outline = corners.clone();
@@ -2347,7 +2405,18 @@ pub fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Resources)
                 push_stroke(&mut marks, points, line.width as f32 * scale, line);
             }
             if axis.show_labels {
-                let gap = 4.0 * px_per_point;
+                // The distance of the labels from the axis (`lblOffset`, ECMA-376 21.2.2.101: a percentage of the default distance). PowerPoint for Windows (the axis's place for
+                // lblOffset 0, 50, 100, 200, 500, 1000 on a chart of its own, text of 6 to 10 pt and Meiryo UI 7 pt: a straight line, 3.0 pt for each 100): the distance grows by 3.0 pt
+                // per 100 per cent. At 100 it is the 4 pt measured before (the value axes' labels' too), so there are 1 pt at 0 (`tasks/doc/requests/2026-11-18-098-chart-windows-result.md` 2). For
+                // text over 10.7 pt the step per 100 grows with the size (0.279 of it, Arial): not applied, its cause is not known.
+                let gap = (1.0 + 3.0 * axis.label_offset as f32 / 100.0) * px_per_point;
+                // A presentation's horizontal bar chart: the category labels end a gap of their typeface before the axis (Windows PowerPoint, `category_gap_px`), not 4 pt.
+                let gap = if horizontal && axis.kind != AxisKind::Value && !chart.excel_layout {
+                    let sample = category_names.iter().find(|n| !n.is_empty()).map_or("A", |n| n.as_str());
+                    category_gap_px(&axis.text, sample, px_per_point, res) + (3.0 * (axis.label_offset as f32 - 100.0) / 100.0) * px_per_point
+                } else {
+                    gap
+                };
                 // Like PowerPoint, labels of a horizontal axis that do not fit
                 // side by side are turned to read upwards, and then thinned out
                 // if even that leaves them overlapping.
@@ -2478,8 +2547,11 @@ pub fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Resources)
                         continue;
                     }
                     let label = if horizontal {
-                        let room = (plot.x - gap - CHART_PADDING_PT * px_per_point).max(0.0);
-                        let text = ellipsize_category_label(name, room, &axis.text, px_per_point, res);
+                        // The text starts 6.9 pt from the frame's left side whatever its width (PowerPoint for Windows, Meiryo UI 7 pt, frames of 110 to 283.5 pt), and may reach the axis:
+                        // corpus 098's "ゴール10" (24.7 pt) is whole at an axis 31.4 pt from the left.
+                        let room = (plot.x - CATEGORY_LABEL_LEFT_PT * px_per_point).max(0.0);
+                        let lines_fit = (len / text_height(&axis.text, px_per_point)).floor() as usize;
+                        let text = fit_category_label(name, room, lines_fit, &axis.text, px_per_point, res);
                         Label::plain(plot.x - gap, start + len / 2.0, text, axis.text.clone(), Anchor::End)
                     } else {
                         let text = if (axis.fixed_label_rotation || !axis.category_levels.is_empty()) && !axis.stagger_labels {
@@ -2561,6 +2633,13 @@ pub fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Resources)
         }
     });
     let canvas_marks = std::rc::Rc::new(marks);
+    // Where a pattern fill's 6 pt tile (16 pixels of 0.375 pt) starts, from the chart's top left (pixels): the top left of the plot area, rounded down to the 6 pt grid of the slide
+    // (PowerPoint for Windows' PDF, 16 positions of a frame and of a manual plot area on a pptx of its own: `tasks/doc/requests/2026-11-18-098-chart-windows-result.md` 3).
+    let pattern_origin = {
+        let (frame_x, frame_y) = (frame.x as f32 / EMU_PER_POINT as f32, frame.y as f32 / EMU_PER_POINT as f32);
+        let grid = |slide_pt: f32| (slide_pt / 6.0).floor() * 6.0;
+        ((grid(frame_x + plot.x / px_per_point) - frame_x) * px_per_point, (grid(frame_y + plot.y / px_per_point) - frame_y) * px_per_point)
+    };
     let container = div()
         .absolute()
         .left_0()
@@ -2607,13 +2686,30 @@ pub fn chart_element(chart: &Chart, frame: EmuRect, scale: f32, res: &Resources)
                                     None => window.paint_path(path, *bg),
                                 }
                             }
+                            Painted::Pattern(pts, fill) => {
+                                let at: Vec<Point<Pixels>> = pts.iter().map(|p| *p + o).collect();
+                                match clip {
+                                    Some(bounds) => window.with_content_mask(Some(ContentMask { bounds }), |window| crate::shape_view::paint_pattern(window, fill, &[at], o + point(px(pattern_origin.0), px(pattern_origin.1)), scale)),
+                                    None => crate::shape_view::paint_pattern(window, fill, &[at], o + point(px(pattern_origin.0), px(pattern_origin.1)), scale),
+                                }
+                            }
                         }
                     }
                 },
             )
             .absolute()
             .size_full(),
-        );
+        )
+        // The bars' inner shadows over their fills (`a:innerShdw` of the series), blurred as a shape's inner shadow and the outer one are (`shape_view`: GPUI's `blur_radius` is the
+        // Gaussian's deviation, a third of PowerPoint's radius). GPUI moves the hole by the offset, so the shadow falls on the other side. Corpus 098 p12 (PowerPoint for Windows PDF):
+        // bars of 6.1 pt with `blurRad` 9 pt, accent 1, distance 0: the shadow at the middle of a bar is 0.30 (the light stripe 222,235,247 -> 182,209,238); a deviation of a third of
+        // the radius gives 0.32, half of it 0.58, the whole 0.78.
+        .children(inner_shadows.into_iter().map(|((x, y, bw, bh), shadow)| {
+            let angle = (shadow.direction as f32 / 60_000.0).to_radians();
+            let distance = shadow.distance as f32 * scale;
+            let inner = BoxShadow { color: hsla(shadow.color), offset: point(px(-distance * angle.cos()), px(-distance * angle.sin())), blur_radius: px(shadow.blur as f32 * scale / 3.0), spread_radius: px(0.), inset: true };
+            div().absolute().left(px(x)).top(px(y)).w(px(bw)).h(px(bh)).shadow(vec![inner])
+        }));
     let rotated_titles = axis_title_rotated(chart, plot, px_per_point, res);
     let container = container
         .children(labels.into_iter().chain(title_label(chart, w, h, px_per_point, res)).chain(axis_title_labels(chart, plot, w, h, px_per_point, res)).filter_map(|l| label_element(l, px_per_point, res)))
@@ -2704,6 +2800,7 @@ fn laid_out(chart: &Chart, size: (f32, f32), plot: Area, marks: &[Mark], labels:
 enum Painted {
     Path(Path<Pixels>, Background),
     Clip(Option<(f32, f32, f32, f32)>),
+    Pattern(Vec<Point<Pixels>>, Fill),
 }
 
 thread_local! {
@@ -2743,10 +2840,11 @@ fn cached_paths(marks: &[Mark], scale_factor: f32) -> std::rc::Rc<Vec<Painted>> 
                 crate::shape_view::dashed_line_path(&to_px(pts), px(width.max(1.0 / scale_factor)), pattern, 0.0).map(|p| Painted::Path(p, (*color).into()))
             }
             Mark::Clip(r) => Some(Painted::Clip(*r)),
+            Mark::Pattern(pts, fill) => Some(Painted::Pattern(to_px(pts), fill.clone())),
         })
         .collect();
     let painted = std::rc::Rc::new(painted);
-    let weight: usize = marks.iter().map(|m| match m { Mark::Fill(p, _) | Mark::Stroke(p, _, _) => p.len(), Mark::Dashed(p, _, _, _) => p.len(), Mark::Clip(_) => 1 }).sum();
+    let weight: usize = marks.iter().map(|m| match m { Mark::Fill(p, _) | Mark::Stroke(p, _, _) => p.len(), Mark::Dashed(p, _, _, _) => p.len(), Mark::Clip(_) => 1, Mark::Pattern(p, _) => p.len() }).sum();
     PAINTED.with(|c| {
         let mut c = c.borrow_mut();
         while !c.is_empty() && (c.len() >= CACHED_CHARTS || c.iter().map(|(_, w, _)| *w).sum::<usize>() + weight > CACHED_POINTS) {
@@ -2852,6 +2950,11 @@ fn marks_hash(marks: &[Mark], scale_factor: f32) -> u64 {
                 [color.h, color.s, color.l, color.a].iter().for_each(|v| add(v.to_bits()));
                 add(pattern.len() as u32);
                 pattern.iter().for_each(|l| add(l.to_bits()));
+            }
+            Mark::Pattern(pts, fill) => {
+                add(4);
+                points(pts, &mut add);
+                format!("{fill:?}").bytes().for_each(|b| add(b as u32));
             }
             Mark::Clip(r) => {
                 add(2);
@@ -3061,6 +3164,40 @@ fn serial_of(y: i64, m: i64, d: i64) -> f64 {
 
 /// Padding of the chart area, in points.
 const CHART_PADDING_PT: f32 = 7.0;
+/// How far from the chart frame's left side the category labels of a horizontal bar chart start (Windows PowerPoint's PDFs, 4,395 charts:
+/// 6.51 pt, whatever the frame, the typeface and the size; `tasks/doc/requests/2026-11-18-098-plot-left-result.md`).
+const CATEGORY_LABEL_LEFT_PT: f32 = 6.51;
+
+/// The distance from the end of a horizontal bar chart's category labels (the end of their advances, not their ink) to the category axis, at `lblOffset` 100, in pixels:
+/// `size x (5/6 x usWinAscent + 1/2 x usWinDescent) / unitsPerEm` of the labels' typeface (Windows PowerPoint, 18 typefaces x 7, 10 and 14 pt, 156 points within 0.027 pt;
+/// `tasks/doc/requests/2026-11-19-098-gapr-fonts-result.md`). Where the typeface's Windows values are not known the font drawn's own ascent and descent stand in.
+fn category_gap_px(style: &ChartText, text: &str, px_per_point: f32, res: &Resources) -> f32 {
+    let size = style.size as f32 / 100.0 * px_per_point;
+    let (ascent, descent) = style
+        .font_for(text)
+        .and_then(|name| crate::font_metrics::office_metrics(&name))
+        .unwrap_or_else(|| {
+            let (a, d, _) = res.line_metrics(&chart_font(style, text, res));
+            (a, d)
+        });
+    size * gap_em(ascent, descent)
+}
+
+/// The gap in ems of the labels' typeface from its Windows ascent and descent (in ems): 5/6 of the ascent and 1/2 of the descent.
+fn gap_em(win_ascent: f32, win_descent: f32) -> f32 {
+    5.0 / 6.0 * win_ascent + 0.5 * win_descent
+}
+
+/// The category axis of a horizontal bar chart in a presentation is `6.51 + (the widest label's advances) + gap` from the frame's left side (the automatic layout), in pixels.
+fn horizontal_category_left_px(axis: &Axis, names: &[String], px_per_point: f32, res: &Resources) -> f32 {
+    let size = axis.text.size as f32 / 100.0 * px_per_point;
+    let (widest_line, widest) = names
+        .iter()
+        .flat_map(|n| n.lines())
+        .map(|l| (l.to_string(), res.text_width(l, &chart_font(&axis.text, l, res), size)))
+        .fold((String::new(), 0.0f32), |best, (l, w)| if w > best.1 { (l, w) } else { best });
+    CATEGORY_LABEL_LEFT_PT * px_per_point + widest + category_gap_px(&axis.text, &widest_line, px_per_point, res) + (3.0 * (axis.label_offset as f32 - 100.0) / 100.0) * px_per_point
+}
 
 /// The gap between a value axis's labels and the chart's edge, in the text's
 /// size, as Excel's engine lays it out (a worksheet's and Word's charts);
@@ -3331,9 +3468,13 @@ fn automatic_plot(chart: &Chart, w: f32, h: f32, px_per_point: f32, res: &Resour
             ticks + size * 1.7
         });
         // (Value labels at the top, over reversed categories, take their room there.)
-        let on_top = value.is_some_and(|a| axis_label_side(a, true) == Side::Top);
+        let on_top = value.is_some_and(|a| axis_label_side(chart, a, true) == Side::Top);
         let (below, value_top) = if on_top { (0.0, value_band) } else { (value_band, 0.0) };
-        let x = pad + left + legend_left;
+        // A presentation's horizontal bar chart (PowerPoint's own layout): the axis is 6.51 pt + the widest label + a gap of the typeface from the frame's left side.
+        let x = match category.filter(|_| !chart.excel_layout) {
+            Some(axis) => legend_left + horizontal_category_left_px(axis, &names, px_per_point, res),
+            None => pad + left + legend_left,
+        };
         // A title at the top pushes the plot down by its lines.
         let title = title_band(pad);
         let top = pad + legend_top + title + value_top;
@@ -3421,7 +3562,7 @@ fn value_label_widths(chart: &Chart, px_per_point: f32, gap: f32) -> (f32, f32) 
     (left, right)
 }
 
-fn side_axes_layout(chart: &Chart, plot: Area, w: f32, px_per_point: f32) -> Area {
+fn side_axes_layout(chart: &Chart, plot: Area, w: f32, px_per_point: f32, res: &Resources) -> Area {
     let horizontal_bars = chart.groups.iter().any(|g| matches!(g.kind, ChartType::Bar { horizontal: true, .. }));
     let has_value_axis = chart.axes.iter().any(|a| a.kind == AxisKind::Value && !a.deleted);
     if horizontal_bars || chart.plot_area.is_none() || !has_value_axis {
@@ -3433,6 +3574,31 @@ fn side_axes_layout(chart: &Chart, plot: Area, w: f32, px_per_point: f32) -> Are
     let (left, right) = value_label_widths(chart, px_per_point, 0.5);
     let (fit_left, fit_right) = value_label_widths(chart, px_per_point, 1.0);
     let pad = CHART_PADDING_PT * px_per_point;
+    // With no value labels at the right, the plot's right end is kept where the last category label's right end stays a padding inside the frame:
+    // a plot that asks for more is moved left (keeping its width) to there, or, when it is wider than the room from the labels to there, takes all of it.
+    // PowerPoint for Windows, a stacked column chart of 27 categories (labels every second one) at 8 pt, `inner` layouts of different `x` and `w` in frames of 840,
+    // 1467 and 1890 px at 2560 across, value labels of 4, 8 and 16 pt: the axis' ends were where this puts them within 2 px in all 14 (K0050).
+    if right == 0.0 && chart.legend.as_ref().is_none_or(|l| !(l.side == Side::Right && l.overlay != Some(true))) {
+        // (Only a label that stands out past the plot's right end moves it: with labels inside, as of quarters under their columns, PowerPoint keeps the layout
+        // up to the frame's edge: pages 7 and 24 of the 2026/12 deck and 11 and 17 of the 2023/12 one.)
+        if let Some(overhang) = last_category_label_overhang(chart, px_per_point, res).filter(|overhang| overhang(plot.w) > 0.0) {
+            let x_min = pad + left;
+            let right_max = |plot_w: f32| w - pad - overhang(plot_w).max(0.0);
+            let mut fill = w - pad;
+            for _ in 0..4 {
+                fill = right_max((fill - x_min).max(1.0));
+            }
+            let fill_w = (fill - x_min).max(w * 0.2);
+            if fit_left > plot.x || plot.right() > right_max(plot.w) {
+                return if plot.w >= fill_w {
+                    Area { x: x_min, w: fill_w, ..plot }
+                } else {
+                    Area { x: plot.x.clamp(x_min, (right_max(plot.w) - plot.w).max(x_min)), ..plot }
+                };
+            }
+            return plot;
+        }
+    }
     if fit_left <= plot.x && fit_right <= w - plot.right() {
         return plot;
     }
@@ -3447,6 +3613,28 @@ fn side_axes_layout(chart: &Chart, plot: Area, w: f32, px_per_point: f32) -> Are
     };
     let width = (right_limit - x).max(w * 0.2);
     Area { x, w: width, ..plot }
+}
+
+/// How far the right end of the last shown category label of an upright axis is beyond the plot's right end, for a plot `plot_w` wide: half the label's width
+/// less the distance from the middle of its slot to that end (the label of slot `i` is centred on it; the axis shows every `skip`-th label). `None` for
+/// charts whose category labels are not drawn upright below the plot.
+fn last_category_label_overhang(chart: &Chart, px_per_point: f32, res: &Resources) -> Option<impl Fn(f32) -> f32> {
+    let horizontal_bars = chart.groups.iter().any(|g| matches!(g.kind, ChartType::Bar { horizontal: true, .. }));
+    let axis = chart.axes.iter().find(|a| a.kind == AxisKind::Category && !a.deleted && a.show_labels)?;
+    if horizontal_bars || axis.label_rotation != 0 || axis.fixed_label_rotation || axis.date || !axis.category_levels.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = chart.groups.iter().flat_map(|g| &g.series).map(|s| s.categories.clone()).find(|c| !c.is_empty())?;
+    let count = category_count(chart).max(1);
+    let skip = axis.label_skip.max(1) as usize;
+    let last = ((count - 1) / skip) * skip;
+    let name = names.get(last)?;
+    let size = axis.text.size as f32 / 100.0 * px_per_point;
+    let half = res.text_width(name, &chart_font(&axis.text, name, res), size) / 2.0;
+    let slots_after = (count - 1 - last) as f32 + 0.5;
+    // Labels wider than their band turn (or shrink) to fit: they do not stand out past the plot as upright ones do.
+    let widest = names.iter().map(|n| res.text_width(n, &chart_font(&axis.text, n, res), size)).fold(0.0, f32::max);
+    Some(move |plot_w: f32| if widest > plot_w / count as f32 * skip as f32 { 0.0 } else { half - slots_after * plot_w / count as f32 })
 }
 
 /// A plot area whose category labels turn is shortened from below until
@@ -3707,8 +3895,8 @@ fn number_width(text: &str) -> f32 {
 /// as the font size, East Asian characters a full size.
 fn text_width(text: &str, style: &ChartText, px_per_point: f32) -> f32 {
     let size = style.size as f32 / 100.0 * px_per_point;
-    let longest = text.lines().map(|l| l.chars().map(|c| if (c as u32) < 0x2e80 { 0.6 } else { 1.0 }).sum::<f32>()).fold(0.0, f32::max);
-    longest * size
+    let longest = text.lines().map(|l| l.chars().map(|c| if (c as u32) < 0x2e80 { 0.6 } else { 1.0 }).sum::<f32>() * size + l.chars().count() as f32 * style.spacing as f32 / 100.0 * px_per_point).fold(0.0, f32::max);
+    longest
 }
 
 fn text_height(style: &ChartText, px_per_point: f32) -> f32 {
@@ -3810,10 +3998,18 @@ fn push_label(
     labels.push(Label { x, y, text, style, anchor, fill, border });
 }
 
-/// The side on which a value axis places its tick labels (`c:tickLblPos`).
-fn axis_label_side(axis: &Axis, horizontal: bool) -> Side {
+/// The side on which a value axis places its tick labels (`c:tickLblPos`). "Low" is the low end of the crossing axis, which is at the top (or the right) when that
+/// axis is reversed (`orientation maxMin`: the first category at the top of a bar chart): PowerPoint draws the labels of corpus 098's bar charts (the value axis
+/// `crosses max`, `tickLblPos low`, the categories reversed) above the plot.
+fn axis_label_side(chart: &Chart, axis: &Axis, horizontal: bool) -> Side {
     if axis.labels_low {
-        if horizontal { Side::Bottom } else { Side::Left }
+        let crossing_reversed = axis.cross_axis_id.and_then(|id| chart.axes.iter().find(|b| b.source_id == Some(id) || b.id == id)).is_some_and(|b| b.reversed);
+        match (horizontal, crossing_reversed) {
+            (true, false) => Side::Bottom,
+            (true, true) => Side::Top,
+            (false, false) => Side::Left,
+            (false, true) => Side::Right,
+        }
     } else {
         axis.side
     }
@@ -3845,7 +4041,15 @@ fn text_div(text: &str, style: &ChartText, px_per_point: f32, res: &Resources) -
             .line_height(relative(1.2))
             .text_color(hsla(color))
             .whitespace_nowrap()
-            .children(text.lines().map(|l| div().child(SharedString::from(l.to_string())))),
+            .children(text.lines().map(|l| {
+                if style.spacing == 0 {
+                    div().child(SharedString::from(l.to_string()))
+                } else {
+                    // Character spacing: each character is its own box, followed by the spacing.
+                    let gap = style.spacing as f32 / 100.0 * px_per_point;
+                    div().flex().flex_row().children(l.chars().map(|c| div().mr(px(gap)).child(SharedString::from(c.to_string()))))
+                }
+            })),
     )
 }
 
@@ -4612,6 +4816,7 @@ fn draw_data_table(
         color: cat_text.and_then(|t| t.color).or(Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x333333)))),
         font: cat_text.and_then(|t| t.font.clone()),
         east_asian_font: cat_text.and_then(|t| t.east_asian_font.clone()),
+        spacing: cat_text.map_or(0, |t| t.spacing),
     };
 
     // 4. 各行（系列）のデータ
@@ -5176,6 +5381,7 @@ fn draw_trendline(
             color: Some(ibis_doc_model::Color::opaque(ibis_doc_model::Rgb(0x333333))),
             font: None,
             east_asian_font: None,
+            spacing: 0,
         };
         labels.push(Label::plain(
             label_x,
@@ -5184,6 +5390,36 @@ fn draw_trendline(
             style,
             Anchor::Center,
         ));
+    }
+}
+
+#[cfg(test)]
+mod plot_left_tests {
+    use super::gap_em;
+    use crate::font_metrics::office_metrics;
+
+    /// Windows PowerPoint's gap between the category labels and the axis of a horizontal bar chart, in ems of its size (the measured value over the size; 18 typefaces x 3 sizes in
+    /// `tasks/doc/requests/2026-11-19-098-gapr-fonts-result.md`, the first column of each pair): the formula from the typeface's Windows ascent and descent gives it to 0.002 em.
+    #[test]
+    fn the_gap_follows_the_typefaces_windows_ascent_and_descent() {
+        for (name, measured) in [
+            ("Arial", 0.8592),
+            ("Calibri", 0.9265),
+            ("Times New Roman", 0.8499),
+            ("Century", 0.9283),
+            ("Consolas", 0.8915),
+            ("Verdana", 0.9419),
+            ("Meiryo UI", 0.9874),
+            ("Meiryo", 1.1021),
+            ("游ゴシック", 0.9706), // i18n-ok（書体名）
+            ("BIZ UDPゴシック", 0.7924), // i18n-ok（書体名）
+            ("ＭＳ ゴシック", 0.7857), // i18n-ok（書体名）
+            ("游明朝", 0.9740), // i18n-ok（書体名）
+        ] {
+            let (a, d) = office_metrics(name).unwrap_or_else(|| panic!("{name} has Windows values"));
+            let got = gap_em(a, d);
+            assert!((got - measured).abs() < 0.002, "{name}: {got} against {measured}");
+        }
     }
 }
 
@@ -5241,6 +5477,7 @@ mod marker_tests {
             name: "S1".into(), categories: vec![], values: vec![], format: "General".into(),
             fill: blue, stroke: None, point_fills: vec![(1, green.clone()), (2, Fill::None)],
             point_strokes: vec![], explosion: 0, point_explosions: vec![], marker: Some(marker.clone()), labels: None, trendline: None, error_bars: None, x_values: vec![], bubble_sizes: vec![], bubble_3d: false,
+            inner_shadow: None,
         };
         assert_eq!(marker_fill(&series, 0, &marker), &red);
         assert_eq!(marker_fill(&series, 1, &marker), &green);

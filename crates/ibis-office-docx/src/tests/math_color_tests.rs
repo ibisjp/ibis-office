@@ -11,6 +11,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
         ("docx::math_colour_is_saved_and_read_again", the_colour_of_a_formula_is_saved_and_read_again),
         ("docx::math_runs_have_each_their_colour", the_runs_of_a_formula_have_each_their_colour),
+        ("docx::math_colour_of_the_structures_is_saved_and_read_again", the_colour_of_the_structures_of_a_formula_is_saved_and_read_again),
         ("docx::math_colour_of_the_whole_formula_replaces_those_of_its_runs", a_colour_for_the_whole_formula_replaces_those_of_its_runs),
     ]
 }
@@ -38,7 +39,7 @@ fn the_runs_of_a_formula_have_each_their_colour() {
     assert_eq!(colour_of(items, '\u{1d450}'), ibis_doc_model::Rgb(0x008000), "c in the fraction is green");
     // Saved without a change: each run keeps its colour.
     let saved = s.save_as("docx-math-run-colors-saved.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:color w:val=\"FF0000\"/>") && xml.contains("<w:color w:val=\"0000FF\"/>") && xml.contains("<w:color w:val=\"008000\"/>"), "the runs' colours are in the file");
 }
 
@@ -54,7 +55,7 @@ fn a_colour_for_the_whole_formula_replaces_those_of_its_runs() {
     }
     // Saved: every run of the formulas has it (the colours it had are gone).
     let saved = s.save_as("docx-math-run-colors-whole.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     let start = xml.find("<m:oMath").expect("a formula");
     let formulas = &xml[start..];
     assert!(!formulas.contains("FF0000") && !formulas.contains("0000FF") && !formulas.contains("008000"), "the old colours are gone");
@@ -67,12 +68,12 @@ fn the_colour_of_a_formula_is_saved_and_read_again() {
     let root = crate::shell::scenario::repo_root();
     let input = root.join("target/scenario-input/docx-math-color.docx");
     std::fs::create_dir_all(input.parent().unwrap()).unwrap();
-    std::fs::write(&input, ibis_pptx::test_files::docx_with_math(&std::fs::read(root.join("test/editing/docx-report.docx")).unwrap())).unwrap();
+    std::fs::write(&input, ibis_formats::test_files::docx_with_math(&std::fs::read(root.join("test/editing/docx-report.docx")).unwrap())).unwrap();
     let mut s = Scenario::open("target/scenario-input/docx-math-color.docx");
     s.key("cmd-a");
     s.update(|e, _, cx| e.set_text_color(ibis_doc_model::Rgb(0xff0000), cx));
     let saved = s.save_as("docx-math-color-saved.docx");
-    let xml = ibis_pptx::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
     assert!(xml.contains("<w:color w:val=\"FF0000\"/>") && xml.matches("<m:r>").count() > 0, "the colour is in the file");
     // Each formula's runs carry it.
     let m_start = xml.find("<m:oMath").expect("a formula");
@@ -89,7 +90,9 @@ fn reopened_run_colours(p: &ibis_doc_model::Presentation) -> Vec<Option<ibis_doc
     fn runs(m: &Math, out: &mut Vec<Option<ibis_doc_model::Rgb>>) {
         match m {
             Math::Text(_) => out.push(None),
-            Math::Colored { color, .. } => out.push(Some(*color)),
+            Math::Colored { color, body } if matches!(**body, Math::Text(_)) => out.push(Some(*color)),
+            Math::Colored { body, .. } => runs(body, out),
+            Math::Delimited { items, .. } => items.iter().for_each(|i| runs(i, out)),
             Math::Row(items) => items.iter().for_each(|i| runs(i, out)),
             Math::Frac { num, den, .. } => {
                 runs(num, out);
@@ -111,4 +114,49 @@ fn reopened_run_colours(p: &ibis_doc_model::Presentation) -> Vec<Option<ibis_doc
         }
     }
     out
+}
+
+/// A formula's structures (its brackets, fraction bar and radical) have a colour of their own in the control properties (`m:ctrlPr/w:rPr/w:color`) of their `m:dPr`, `m:fPr`
+/// and `m:radPr` (GitHub issue #197: after the whole formula was coloured, saved and opened again, the brackets, the bar and the radical were black).
+fn the_colour_of_the_structures_of_a_formula_is_saved_and_read_again() {
+    use super::flow_layout::Item;
+    let mut s = Scenario::open("test/editing/docx-math-structures.docx");
+    s.key("cmd-a");
+    s.update(|e, _, cx| e.set_text_color(ibis_doc_model::Rgb(0xff0000), cx));
+    let saved = s.save_as("docx-math-structures-saved.docx");
+    let xml = ibis_formats::test_files::part_text(&std::fs::read(&saved).unwrap(), "word/document.xml").unwrap();
+    for tag in ["dPr", "fPr", "radPr"] {
+        let at = xml.find(&format!("<m:{tag}>")).unwrap_or_else(|| panic!("<m:{tag}> in the file"));
+        let end = at + xml[at..].find(&format!("</m:{tag}>")).unwrap();
+        assert!(xml[at..end].contains("<m:ctrlPr>") && xml[at..end].contains("<w:color w:val=\"FF0000\"/>"), "{tag} has the colour: {}", &xml[at..end]);
+    }
+    // The properties it had (the control properties' font and italic) are kept beside the colour... or at least the file is read again with the colours.
+    let again = s.reopen();
+    let pages = s.with(|e, _| super::flow_layout::pages(again.flow.as_ref().expect("a document"), &e.resources));
+    let items: Vec<Item> = pages.pages.iter().flat_map(|p| p.items.iter().cloned()).collect();
+    let red = |c: gpui_kit::Hsla| {
+        let c = gpui_kit::Rgba::from(c);
+        (c.r * 255.0).round() as u32 == 0xff && (c.g * 255.0).round() as u32 == 0 && (c.b * 255.0).round() as u32 == 0
+    };
+    let (mut bars, mut strokes, mut texts) = (0, 0, 0);
+    for it in &items {
+        match it {
+            Item::Rect { color, h, .. } if *h < 3.0 && *h > 0.0 => {
+                // The fraction bar and the radical's bar (the page's other rectangles are not this thin and in the formulas' place).
+                if red(*color) {
+                    bars += 1;
+                }
+            }
+            Item::Stroke { color, .. } => {
+                strokes += 1;
+                assert!(red(*color), "the radical's strokes are red");
+            }
+            Item::Text { text, color, .. } if text.chars().any(|c| matches!(c, '(' | ')' | '\u{1d453}' | '\u{1d465}' | '=')) => {
+                texts += 1;
+                assert!(red(*color), "{text} is red");
+            }
+            _ => {}
+        }
+    }
+    assert!(bars >= 2 && strokes >= 3 && texts >= 4, "bars {bars}, strokes {strokes}, texts {texts}");
 }

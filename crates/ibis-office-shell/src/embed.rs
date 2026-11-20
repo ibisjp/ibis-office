@@ -4,7 +4,7 @@
 //! The browser version embedded in another page (a cloud service's preview):
 //! the 閉じる and ダウンロード buttons at the top right, shown only when the
 //! page asks (`www/main.ts`: `?close=1&download=1` or `window.ibisOfficeOptions`,
-//! see `publish/doc/web-embedding.md`). A press hands the embedding page an
+//! see `publish/docs/web-embedding.md`). A press hands the embedding page an
 //! event (`www/main.ts`: `ibisOfficeEmbedAction`), which does the closing or
 //! the saving itself. The desktop apps have neither button.
 
@@ -23,6 +23,34 @@ static DOWNLOAD: AtomicBool = AtomicBool::new(false);
 static VIEW_ONLY: AtomicBool = AtomicBool::new(false);
 static SHOW_MENU_BAR: AtomicBool = AtomicBool::new(true);
 static SHOW_TOOL_BAR: AtomicBool = AtomicBool::new(true);
+static FONT_PROMPT: AtomicBool = AtomicBool::new(true);
+
+/// Whether the browser version leads the user to the fonts that can be downloaded (`?fd=0` turns it off; default on): the
+/// セットアップ dialog that opens by itself at the first start of a version, and the ヘルプ > セットアップ entry. Called by
+/// `www/main.ts` before `run`. The playground (GitHub Pages) starts with it off.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub fn set_font_prompt(on: bool) {
+    FONT_PROMPT.store(on, Ordering::Relaxed);
+}
+
+/// See [`set_font_prompt`].
+pub fn font_prompt() -> bool {
+    // A host that switched `features.fontDownload` off has no downloads of fonts (nor the guidance to them).
+    FONT_PROMPT.load(Ordering::Relaxed) && crate::host::options().font_download
+}
+
+/// `?fd=` of a query string with the rules of `www/main.ts`: on unless `0`, `false`, `no` or `off`.
+#[allow(dead_code)]
+pub fn resolve_font_prompt_query(query: &str) -> bool {
+    let q = query.strip_prefix('?').unwrap_or(query);
+    for pair in q.split('&').filter(|s| !s.is_empty()) {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        if k == "fd" {
+            return !matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off");
+        }
+    }
+    true
+}
 
 /// Whether the page shows the close button and the download button (both off
 /// by default), whether it runs in read-only viewing mode (`?view=1`), and
@@ -99,6 +127,11 @@ impl SlideEditor {
     /// The close button: the embedding page is told to close the preview.
     pub(crate) fn embed_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_edit(window, cx);
+        // With a host, the question about unsaved changes comes first, and the host is told to close once it is answered.
+        if crate::host::is_connected() {
+            self.host_after_unsaved_check(crate::host_editor::HostAfter::Close, window, cx);
+            return;
+        }
         embed_action_js("close", "", None);
     }
 
@@ -110,7 +143,7 @@ impl SlideEditor {
             self.status = Some(crate::i18n::text("_shell.saving-new-documents-is-not-yet-supported").into());
             return cx.notify();
         };
-        match source.save(&self.presentation_for_save(), ibis_pptx::SaveOptions::default()) {
+        match source.save(&self.presentation_for_save(), ibis_formats::SaveOptions::default()) {
             Ok(bytes) => embed_action_js("download", self.file_name.as_deref().unwrap_or(""), Some(bytes)),
             Err(err) => {
                 self.status = Some(crate::i18n::format("file.save-failed", &[("error", &err)]).into());

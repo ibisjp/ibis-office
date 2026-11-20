@@ -36,8 +36,19 @@ impl Encoding {
 
 /// Largest rasterized size, in pixels; bigger pictures are drawn smaller.
 const MAX_PIXELS: f64 = 16_000_000.0;
-/// Width the frame gets when the picture's own size is unknown.
+/// Width the frame gets when the picture's own size is unknown, at most (a picture as wide as the page).
 const FALLBACK_WIDTH: f64 = 2048.0;
+/// EMU a pixel is when the picture's own size is unknown (a metafile): 100 pixels an inch. PowerPoint for Windows rasterizes a metafile (to give it a shadow, a contrast,
+/// a brightness...) at about this resolution in its PDF: of the 53 presentations of the corpus (158) that hold metafiles and have images in the PDF it made (`pdfimages
+/// -list`), the most common resolution of the images is 94 to 103 pixels an inch in 31 (exactly 100 in 19, 96 in 6); the 85 pt metafiles with a shadow of slide 1 of one of
+/// them are 118 pixels wide. A frame of 85 pt was made 2048 pixels wide (24 pixels a point), a picture's SVG filtered and blurred for its contrast and its shadow: eight
+/// such pictures took 2.6 GB of the 4.2 GB a slide needed. Never more than `FALLBACK_WIDTH`, nor less than the export resolution the callers keep (two pixels a point where
+/// they say so).
+const UNKNOWN_EMU_PER_PIXEL: f64 = 9_144.0;
+/// Or as many pixels as the place it is drawn in has (`device_px_per_emu` a frame's width: a metafile in a window zoomed to 400 % is sharp), whichever is more.
+fn unknown_size_px(frame_emu: f64, device_px_per_emu: f64) -> f64 {
+    (frame_emu / UNKNOWN_EMU_PER_PIXEL).max(frame_emu * device_px_per_emu.max(0.0)).clamp(16.0, FALLBACK_WIDTH)
+}
 
 /// The size an SVG says it is, for `pixels` rasterized: GPUI rasterizes an
 /// SVG picture at twice its size (`SvgRenderer::render_single_frame`, by
@@ -85,7 +96,7 @@ pub(crate) fn rotated_picture(
     let frac = |v: i32| v as f64 / 100_000.0;
     let visible_w = (1.0 - frac(crop.left) - frac(crop.right)).max(0.01);
     let visible_h = (1.0 - frac(crop.top) - frac(crop.bottom)).max(0.01);
-    let frame_px = pixel_size(data, encoding).map(|(w, _)| w as f64 * visible_w).unwrap_or(FALLBACK_WIDTH).max(16.0);
+    let frame_px = pixel_size(data, encoding).map(|(w, _)| w as f64 * visible_w).unwrap_or_else(|| unknown_size_px(fw_emu, look.device_px_per_emu)).max(16.0);
     let mut k = frame_px / fw_emu; // pixels per EMU
     let pixels = bw_emu * k * bh_emu * k;
     if pixels > MAX_PIXELS {
@@ -176,9 +187,10 @@ pub(crate) fn rotated_picture(
 /// shape's outline: `subpaths` are the outline's closed parts, as points
 /// relative to the frame in EMU. The SVG covers the frame. The picture is mirrored (`flip_h`, `flip_v`) as its shape is (PowerPoint flips a
 /// picture fill with the shape; the outline in `subpaths` is already flipped).
-pub(crate) fn clipped_picture(data: &[u8], encoding: Encoding, width: i64, height: i64, subpaths: &[Vec<(f64, f64)>], flip_h: bool, flip_v: bool) -> Vec<u8> {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn clipped_picture(data: &[u8], encoding: Encoding, width: i64, height: i64, subpaths: &[Vec<(f64, f64)>], flip_h: bool, flip_v: bool, device_px_per_emu: f64) -> Vec<u8> {
     let (fw_emu, fh_emu) = (width.max(1) as f64, height.max(1) as f64);
-    let frame_px = pixel_size(data, encoding).map(|(w, _)| w as f64).unwrap_or(FALLBACK_WIDTH).max(16.0);
+    let frame_px = pixel_size(data, encoding).map(|(w, _)| w as f64).unwrap_or_else(|| unknown_size_px(fw_emu, device_px_per_emu)).max(16.0);
     let mut k = frame_px / fw_emu;
     let pixels = fw_emu * k * fh_emu * k;
     if pixels > MAX_PIXELS {
@@ -387,6 +399,21 @@ fn pixel_size(data: &[u8], encoding: Encoding) -> Option<(u32, u32)> {
 mod tests {
     use super::*;
 
+    /// A picture of unknown size (a metafile) is made at 100 pixels an inch as PowerPoint's PDF has it (an 85 pt frame is 118 px wide, not 2048), a page-wide one at most 2048.
+    #[test]
+    fn a_picture_of_unknown_size_is_made_as_large_as_its_frame_needs() {
+        assert_eq!(unknown_size_px(1_080_006.0, 0.0).round(), 118.0);
+        assert_eq!(unknown_size_px(12_192_000.0, 0.0).round(), 1333.0);
+        assert_eq!(unknown_size_px(100_000_000.0, 0.0), FALLBACK_WIDTH);
+        assert_eq!(unknown_size_px(1.0, 0.0), 16.0);
+        // Where it is drawn with more pixels (an 85 pt frame zoomed to 400 % on a retina screen: 2 x 4 x 85 x 4/3 px a pt...), as many as that shows, up to 2048; with fewer
+        // (a PDF page drawn at one pixel a point), the 100 pixels an inch.
+        let at_zoom = |px_per_pt: f64| unknown_size_px(1_080_006.0, px_per_pt / 12_700.0);
+        assert_eq!(at_zoom(2.0 * 5.33).round(), 907.0);
+        assert_eq!(at_zoom(1.0).round(), 118.0);
+        assert_eq!(at_zoom(1000.0), FALLBACK_WIDTH);
+    }
+
     #[test]
     fn base64_pads() {
         let mut out = Vec::new();
@@ -438,6 +465,21 @@ mod tests {
         assert!(svg.contains(r#"mask="url(#soft-edge)""#) && svg.contains("<mask id=\"soft-edge\""), "{svg}");
     }
 
+    /// A frame that shows 5 % of a 2518 px wide picture is as many pixels wide as the source has in that part (126), not as the whole picture (the canvas
+    /// was 2518 px wide with the picture 20 times that inside it: 4 GB for a frame of 43 x 61 pt).
+    #[test]
+    fn a_cropped_picture_is_made_as_large_as_its_visible_part() {
+        let png = [0x89, b'P', b'N', b'G', 13, 10, 26, 10, 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 0x09, 0xd6, 0, 0, 0x07, 0x07];
+        let crop = Crop { left: 81_134, top: 3_109, right: 13_216, bottom: 85_553 };
+        // (A frame of 43 x 61 pt, in EMU, shows 5.65 % of the width: 142 px of 2518.)
+        let svg = String::from_utf8(styled_picture(&png, Encoding::Png, 546_100, 774_700, None, crop, None, None, &Look { luminance: None, ..Look::default() })).unwrap();
+        let width: f64 = svg.split("width=\"").nth(1).and_then(|r| r.split('"').next()).and_then(|v| v.parse().ok()).unwrap();
+        assert!(width < 200.0, "the canvas is {width} px wide: {}", &svg[..200.min(svg.len())]);
+        let whole = String::from_utf8(styled_picture(&png, Encoding::Png, 546_100, 774_700, None, Crop::default(), None, None, &Look::default())).unwrap();
+        let whole_width: f64 = whole.split("width=\"").nth(1).and_then(|r| r.split('"').next()).and_then(|v| v.parse().ok()).unwrap();
+        assert!((whole_width - 2518.0).abs() < 1.0 || whole_width > 1000.0, "{whole_width}");
+    }
+
     /// A shadow's blur spills past the picture (it is not an erosion like a soft edge): the picture sits in the enlarged frame by `fill_rect`,
     /// the filter blurs it with a region wider than the picture, and the frame (not the picture's area) is what the image is cut to.
     #[test]
@@ -483,6 +525,8 @@ pub struct Look {
     /// A Gaussian blur of this deviation (EMU) over the picture, spilling past the area it covers into the frame (a shadow's blur: the frame is
     /// the area enlarged by the spill, the area given as `fill_rect`). Only in [`styled_picture`].
     pub blur: Option<f64>,
+    /// Device pixels an EMU is where the picture is drawn (0: not known): a picture whose own size is not known is made with as many pixels as that shows, up to 2048.
+    pub device_px_per_emu: f64,
 }
 
 fn rgb_text(c: ibis_doc_model::Rgb) -> String {
@@ -653,11 +697,14 @@ pub(crate) fn styled_picture(data: &[u8], encoding: Encoding, width: i64, height
     let (fw_emu, fh_emu) = (width.max(1) as f64, height.max(1) as f64);
     // A tiled picture repeats across the frame, so each tile keeps the picture's own pixels; at least two
     // pixels a point (the export resolution) so upscaling does not sample adjacent atlas tiles at the edges.
+    // A cropped picture shows `visible_w` of its width in the frame: the frame has as many pixels as the source has in that part (the canvas of a frame
+    // that shows 5 % of a 2518 px picture was 2518 px wide, with the picture 20 times that inside it: 4 GB for a frame of 43 x 61 pt).
+    let visible_w = (1.0 - crop.left as f64 / 100_000.0 - crop.right as f64 / 100_000.0).max(0.01);
     let natural_px = pixel_size(data, encoding).map(|(w, _)| match tile {
         Some(t) if t.width > 0.0 => w as f64 * (fw_emu / t.width).max(1.0),
-        _ => w as f64,
+        _ => w as f64 * visible_w,
     });
-    let frame_px = natural_px.unwrap_or(FALLBACK_WIDTH).max(fw_emu / 6_350.0).max(16.0);
+    let frame_px = natural_px.unwrap_or_else(|| unknown_size_px(fw_emu, look.device_px_per_emu)).max(fw_emu / 6_350.0).max(16.0);
     let mut k = frame_px / fw_emu;
     let pixels = fw_emu * k * fh_emu * k;
     if pixels > MAX_PIXELS {
@@ -668,7 +715,6 @@ pub(crate) fn styled_picture(data: &[u8], encoding: Encoding, width: i64, height
     // The area the picture covers: the frame, or the fill rectangle in it.
     let [rl, rt, rr, rb] = fill_rect.unwrap_or([0; 4]);
     let (ax, ay, aw, ah) = (frac(rl) * fw, frac(rt) * fh, (1.0 - frac(rl) - frac(rr)) * fw, (1.0 - frac(rt) - frac(rb)) * fh);
-    let visible_w = (1.0 - frac(crop.left) - frac(crop.right)).max(0.01);
     let visible_h = (1.0 - frac(crop.top) - frac(crop.bottom)).max(0.01);
     let (ix, iy, iw, ih) = (ax - frac(crop.left) / visible_w * aw, ay - frac(crop.top) / visible_h * ah, aw / visible_w, ah / visible_h);
     let mut clip = String::new();

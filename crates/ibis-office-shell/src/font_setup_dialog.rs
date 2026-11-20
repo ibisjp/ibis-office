@@ -64,23 +64,29 @@ type Shared = Rc<RefCell<SetupState>>;
 // ---- The list and what is installed ------------------------------------------
 
 /// The fonts of the list and the file names of the ones installed (read off the main thread).
+///
+/// A font whose family the PC already has (the text system lists the installed families) counts as installed, as one downloaded does:
+/// it is not offered (GitHub issue #233). The browser version knows the families of the viewer's PC when it was allowed to list them.
 async fn load_entries(cx: &AsyncApp) -> Result<(Vec<FontEntry>, HashSet<String>), String> {
+    let os_families: HashSet<String> = cx.update(|app| app.text_system().all_font_names().into_iter().collect::<HashSet<String>>());
     #[cfg(not(target_family = "wasm"))]
     {
         cx.background_executor()
-            .spawn(async {
+            .spawn(async move {
                 let list = font_setup::fetch_list()?;
-                let installed = list.iter().filter(|e| font_setup::is_installed(e)).map(|e| e.file.clone()).collect();
+                let installed = list.iter().filter(|e| font_setup::is_installed(e) || font_setup::is_installed_on_pc(e, &os_families)).map(|e| e.file.clone()).collect();
                 Ok((list, installed))
             })
             .await
     }
     #[cfg(target_family = "wasm")]
     {
-        let _ = cx;
-        let text = crate::web::font_fetch_text(&font_setup::LIST_URL).await?;
-        let installed = crate::web::fonts_installed().await.unwrap_or_default().into_iter().collect();
-        Ok((font_setup::parse_list(&text), installed))
+        let url = font_setup::list_url();
+        let text = crate::web::font_fetch_text(&url).await?;
+        let list = font_setup::parse_list_at(&text, Some(&url));
+        let mut installed: HashSet<String> = crate::web::fonts_installed().await.unwrap_or_default().into_iter().collect();
+        installed.extend(list.iter().filter(|e| font_setup::is_installed_on_pc(e, &os_families)).map(|e| e.file.clone()));
+        Ok((list, installed))
     }
 }
 
@@ -96,6 +102,10 @@ fn rows_for(entries: &[FontEntry], installed: &HashSet<String>) -> Vec<Row> {
 /// background, and the dialog is opened if it has a font that is neither installed nor skipped. A list that cannot be read is
 /// only logged: the next start asks again. Not in the tests (no network) unless `IBIS_FONT_LIST_URL` names a local list.
 pub fn start(cx: &mut App) {
+    // `?fd=0` (the playground): no guidance to the downloads.
+    if !crate::embed::font_prompt() {
+        return;
+    }
     #[cfg(any(test, feature = "scenarios"))]
     if std::env::var_os("IBIS_FONT_LIST_URL").is_none_or(|v| v.is_empty()) {
         let _ = &cx;

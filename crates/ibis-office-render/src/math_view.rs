@@ -21,9 +21,9 @@ pub enum Piece {
     /// `color`: the colour of its run (`Math::Colored`); none: the formula's.
     Text { x: f32, y: f32, text: String, size: f32, italic: bool, color: Option<ibis_doc_model::drawing::Rgb> },
     /// A filled rectangle.
-    Rule { x: f32, y: f32, w: f32, h: f32 },
+    Rule { x: f32, y: f32, w: f32, h: f32, color: Option<ibis_doc_model::drawing::Rgb> },
     /// A straight line of a thickness.
-    Line { x0: f32, y0: f32, x1: f32, y1: f32, t: f32 },
+    Line { x0: f32, y0: f32, x1: f32, y1: f32, t: f32, color: Option<ibis_doc_model::drawing::Rgb> },
 }
 
 /// A typeset formula.
@@ -172,8 +172,10 @@ fn math_italic(c: char) -> char {
 /// `boxed` with the text in the colour `color` (a run's own colour).
 fn colored(mut boxed: MathBox, color: ibis_doc_model::drawing::Rgb) -> MathBox {
     for piece in &mut boxed.pieces {
-        if let Piece::Text { color: c, .. } = piece {
-            *c = Some(color);
+        // Only what has no colour of its own (a run inside keeps its own).
+        match piece {
+            Piece::Text { color: c, .. } | Piece::Rule { color: c, .. } | Piece::Line { color: c, .. } if c.is_none() => *c = Some(color),
+            _ => {}
         }
     }
     boxed
@@ -212,7 +214,7 @@ fn lay(math: &Math, size: f32, upright: bool, m: Measure) -> MathBox {
                 let mut out = MathBox::default();
                 let (nw, dw) = (n.width, d.width);
                 out.put(n, 0.0, -size * 0.4);
-                out.pieces.push(Piece::Line { x0: nw + size * 0.02, y0: size * 0.3, x1: nw + size * 0.02 + slash_w, y1: -size * 1.0, t: size * mx().rule });
+                out.pieces.push(Piece::Line { x0: nw + size * 0.02, y0: size * 0.3, x1: nw + size * 0.02 + slash_w, y1: -size * 1.0, t: size * mx().rule, color: None });
                 out.ascent = out.ascent.max(size * 1.0);
                 out.descent = out.descent.max(size * 0.3);
                 out.put(d, nw + slash_w * 0.8, size * 0.45);
@@ -231,7 +233,7 @@ fn lay(math: &Math, size: f32, upright: bool, m: Measure) -> MathBox {
                 let down = (size * mx().den_down).max(thick / 2.0 - axis + gap + d.ascent);
                 let mut out = MathBox { width: w, ..Default::default() };
                 if bar {
-                    out.pieces.push(Piece::Rule { x: 0.0, y: -axis - thick / 2.0, w, h: thick });
+                    out.pieces.push(Piece::Rule { x: 0.0, y: -axis - thick / 2.0, w, h: thick, color: None });
                 }
                 out.ascent = axis + thick / 2.0;
                 out.descent = thick / 2.0 - axis;
@@ -305,10 +307,10 @@ fn lay(math: &Math, size: f32, upright: bool, m: Measure) -> MathBox {
             let mut out = MathBox::default();
             // The tick, the long stroke, and the bar over the body.
             let bottom = b.descent + size * 0.05;
-            out.pieces.push(Piece::Line { x0, y0: -top * 0.45, x1: x0 + sign_w * 0.2, y1: -top * 0.5, t: bar });
-            out.pieces.push(Piece::Line { x0: x0 + sign_w * 0.2, y0: -top * 0.5, x1: x0 + sign_w * 0.5, y1: bottom, t: bar * 1.5 });
-            out.pieces.push(Piece::Line { x0: x0 + sign_w * 0.5, y0: bottom, x1: x0 + sign_w, y1: -top + bar / 2.0, t: bar });
-            out.pieces.push(Piece::Rule { x: x0 + sign_w, y: -top, w: b.width + pad * 2.0, h: bar });
+            out.pieces.push(Piece::Line { x0, y0: -top * 0.45, x1: x0 + sign_w * 0.2, y1: -top * 0.5, t: bar, color: None });
+            out.pieces.push(Piece::Line { x0: x0 + sign_w * 0.2, y0: -top * 0.5, x1: x0 + sign_w * 0.5, y1: bottom, t: bar * 1.5, color: None });
+            out.pieces.push(Piece::Line { x0: x0 + sign_w * 0.5, y0: bottom, x1: x0 + sign_w, y1: -top + bar / 2.0, t: bar, color: None });
+            out.pieces.push(Piece::Rule { x: x0 + sign_w, y: -top, w: b.width + pad * 2.0, h: bar, color: None });
             out.width = x0 + sign_w;
             out.ascent = top;
             out.descent = bottom;
@@ -433,7 +435,7 @@ fn lay(math: &Math, size: f32, upright: bool, m: Measure) -> MathBox {
             let overline = matches!(mark.as_str(), "\u{305}" | "\u{332}" | "‾" | "¯" | "_");
             if overline {
                 let y = if *over { -(ba + size * 0.08) } else { bd + size * 0.08 };
-                out.put(MathBox { width: w, pieces: vec![Piece::Rule { x: 0.0, y: 0.0, w, h: size * mx().rule }], ..Default::default() }, 0.0, y);
+                out.put(MathBox { width: w, pieces: vec![Piece::Rule { x: 0.0, y: 0.0, w, h: size * mx().rule, color: None }], ..Default::default() }, 0.0, y);
                 out.ascent = out.ascent.max(-y + size * mx().rule);
                 out.descent = out.descent.max(y + size * mx().rule);
             } else if mark.chars().count() == 1 && mark.chars().next().is_some_and(is_accent_char) {
@@ -657,9 +659,9 @@ fn brackets(inner: MathBox, open: &str, close: &str, size: f32, m: Measure) -> M
         if scale > 1.2 && (glyph == "[" || glyph == "]") {
             let (stem, serif, w) = (size * 0.11, size * 0.055, size * 0.33);
             let (stem_x, serif_x) = if glyph == "[" { (*x + size * 0.11, *x + size * 0.11) } else { (*x + w - size * 0.11 - stem, *x + w - size * 0.11 - size * 0.22) };
-            out.pieces.push(Piece::Rule { x: stem_x, y: top, w: stem, h: bottom - top });
-            out.pieces.push(Piece::Rule { x: serif_x, y: top, w: size * 0.22, h: serif });
-            out.pieces.push(Piece::Rule { x: serif_x, y: bottom - serif, w: size * 0.22, h: serif });
+            out.pieces.push(Piece::Rule { x: stem_x, y: top, w: stem, h: bottom - top, color: None });
+            out.pieces.push(Piece::Rule { x: serif_x, y: top, w: size * 0.22, h: serif, color: None });
+            out.pieces.push(Piece::Rule { x: serif_x, y: bottom - serif, w: size * 0.22, h: serif, color: None });
             out.ascent = out.ascent.max(-top);
             out.descent = out.descent.max(bottom);
             *x += w;
@@ -696,10 +698,12 @@ pub fn paint(boxed: &MathBox, origin: Point<Pixels>, color: Hsla, font: &Font, w
                 let at = point(origin.x + px(*x), origin.y + px(*y) - shaped.ascent);
                 let _ = shaped.paint(at, px(*size * 1.2), gpui_kit::TextAlign::Left, None, window, cx);
             }
-            Piece::Rule { x, y, w, h } => {
+            Piece::Rule { x, y, w, h, color: own } => {
+                let color = own.map_or(color, |c| crate::shape_view::hsla(ibis_doc_model::Color::opaque(c)));
                 window.paint_quad(fill(Bounds::new(point(origin.x + px(*x), origin.y + px(*y)), size(px(*w), px(*h))), color));
             }
-            Piece::Line { x0, y0, x1, y1, t } => {
+            Piece::Line { x0, y0, x1, y1, t, color: own } => {
+                let color = own.map_or(color, |c| crate::shape_view::hsla(ibis_doc_model::Color::opaque(c)));
                 let mut path = Path::new(point(origin.x + px(*x0), origin.y + px(*y0)));
                 // A thin parallelogram along the line.
                 let (dx, dy) = (x1 - x0, y1 - y0);

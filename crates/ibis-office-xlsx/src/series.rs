@@ -241,7 +241,7 @@ impl SlideEditor {
             }
             if !cells.is_empty() {
                 let slide = self.current_slide;
-                if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::PutCells { slide, cells })]) {
+                if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::PasteCells { sheet: slide, cells })]) {
                     return self.series_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);
                 }
             }
@@ -306,10 +306,10 @@ impl SlideEditor {
                 return self.series_message(text("_xlsx.enter-a-number-in-the-first-cell"), cx);
             }
             let slide = self.current_slide;
-            let mut commands = vec![Command::Sheet(SheetCommand::SetCells { slide, edits })];
+            let mut commands = vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })];
             let first = self.current_sheet().and_then(|(_, s)| s.cell(range.first_row, range.first_column).map(|c| s.styles[c.style as usize].number_format.clone()));
             if let Some(code) = first.filter(|c| c != "General") {
-                commands.push(Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: ibis_doc_model::StyleChange::NumberFormat(code) }));
+                commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change: ibis_doc_model::StyleChange::NumberFormat(code) }));
             }
             if let Err(err) = self.document.execute(commands) {
                 return self.series_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);
@@ -375,10 +375,10 @@ impl SlideEditor {
         }
         // The series takes the first cell's number format (a date stays a date).
         let slide = self.current_slide;
-        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { slide, edits: edits.clone() })];
+        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: edits.clone() })];
         let first = self.current_sheet().and_then(|(_, s)| s.cell(range.first_row, range.first_column).map(|c| s.styles[c.style as usize].number_format.clone()));
         if let Some(code) = first.filter(|c| c != "General") {
-            commands.push(Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: ibis_doc_model::StyleChange::NumberFormat(code) }));
+            commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change: ibis_doc_model::StyleChange::NumberFormat(code) }));
         }
         if let Err(err) = self.document.execute(commands) {
             return self.series_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);

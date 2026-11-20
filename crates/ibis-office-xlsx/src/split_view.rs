@@ -60,7 +60,7 @@ impl SlideEditor {
         let slide = self.current_slide;
         if self.split_panes().is_some() {
             self.wb_mut().panels.splits.remove(&slide);
-            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::Split { slide, split: None })]) {
+            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::Split { sheet: slide, split: None })]) {
                 log::warn!("un-splitting rejected: {err}");
             }
             return cx.notify();
@@ -80,7 +80,7 @@ impl SlideEditor {
             (column, row)
         };
         if sheet.frozen.is_some() {
-            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::Freeze { slide, frozen: None })]) {
+            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::Freeze { sheet: slide, frozen: None })]) {
                 log::warn!("unfreezing rejected: {err}");
             }
         }
@@ -89,7 +89,7 @@ impl SlideEditor {
         let main_lead = Point::default();
         let active_pane = (column >= at.0, row >= at.1);
         self.wb_mut().panels.splits.insert(slide, SplitPanes { at, shift, main_lead, active_pane });
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::Split { slide, split: Some(at) })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::Split { sheet: slide, split: Some(at) })]) {
             log::warn!("splitting rejected: {err}");
         }
         cx.notify();
@@ -199,7 +199,7 @@ impl SlideEditor {
                     p.at = at;
                 }
             }
-            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::Split { slide, split: new_split })]) {
+            if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::Split { sheet: slide, split: new_split })]) {
                 log::warn!("split removal rejected: {err}");
             }
             return cx.notify();
@@ -392,7 +392,7 @@ impl SlideEditor {
             self.wb_mut().panels.splits.remove(&slide);
         }
 
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::Split { slide, split: new_split })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::Split { sheet: slide, split: new_split })]) {
             log::warn!("split move rejected: {err}");
         }
         cx.notify();

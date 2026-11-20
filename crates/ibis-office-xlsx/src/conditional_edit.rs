@@ -226,11 +226,11 @@ impl SlideEditor {
         style.bold = if bold { Some(true) } else { style.bold.filter(|&b| !b) };
         style.italic = if italic { Some(true) } else { style.italic.filter(|&i| !i) };
         let command = if as_copy {
-            SheetCommand::AddConditional { slide: p.slide, format }
+            SheetCommand::AddConditional { sheet: p.slide, format }
         } else {
             match &p.editing {
-                Some((index, _)) => SheetCommand::UpdateConditional { slide: p.slide, index: *index, format },
-                None => SheetCommand::AddConditional { slide: p.slide, format },
+                Some((index, _)) => SheetCommand::UpdateConditional { sheet: p.slide, index: *index, format },
+                None => SheetCommand::AddConditional { sheet: p.slide, format },
             }
         };
         if let Err(err) = self.document.execute(vec![Command::Sheet(command)]) {
@@ -258,7 +258,7 @@ impl SlideEditor {
     pub(crate) fn clear_conditional_selection(&mut self, cx: &mut Context<Self>) {
         self.commit_cell_edit(cx);
         let Some(range) = self.selected_range() else { return };
-        let command = SheetCommand::ClearConditional { slide: self.current_slide, ranges: vec![range] };
+        let command = SheetCommand::ClearConditional { sheet: self.current_slide, ranges: vec![range] };
         if let Err(err) = self.document.execute(vec![Command::Sheet(command)]) {
             self.status = Some(crate::shell::i18n::format("_xlsx.there-are-no-rules-to-delete-err", &[("err", &err)]).into());
         }

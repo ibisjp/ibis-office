@@ -127,7 +127,7 @@ impl SlideEditor {
     /// Update document styles from an external template file (.dotx, .dotm, .docx).
     pub(crate) fn update_docx_styles_from_template_file(&mut self, path: &Path, cx: &mut Context<Self>) -> Result<usize, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {}", path.display(), e))?;
-        let presentation = ibis_pptx::read(&bytes).map_err(|e| crate::shell::i18n::format("docx.template.parse-error", &[("error", &e)]))?;
+        let presentation = ibis_odf::read(&bytes).map_err(|e| crate::shell::i18n::format("docx.template.parse-error", &[("error", &e)]))?;
         let foreign_flow = presentation.flow.ok_or_else(|| crate::shell::i18n::text("docx.template.no-word-data").to_string())?;
 
         let current_flow = self.flow().ok_or_else(|| crate::shell::i18n::text("docx.template.no-document").to_string())?;

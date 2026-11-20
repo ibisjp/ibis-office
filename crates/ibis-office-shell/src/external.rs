@@ -58,7 +58,25 @@ pub fn take_launched() -> Vec<String> {
 }
 
 /// `url` opened by the system (the browser, or the app of a file URL), through the gate.
+///
+/// With a host (`host.rs`) the link is the host's to open (`openUrl`: it checks the scheme and opens the tab with `noopener,noreferrer`, so
+/// that is in one place); a host that gave no `openUrl`, or switched `features.openLinks` off, has no links to open. Only https, http and
+/// mailto go to the host.
 pub fn open_url(url: &str, cx: &App) {
+    if crate::host::is_connected() {
+        if !crate::host::options().open_links || !crate::host::is_allowed_url(url) {
+            return;
+        }
+        let Some(bridge) = crate::host::bridge_with(|c| c.open_url) else { return };
+        let url = url.to_string();
+        cx.spawn(async move |_| {
+            if let Err(failure) = bridge.open_url(url).await {
+                log::warn!("the host did not open the link: {:?}", failure.message);
+            }
+        })
+        .detach();
+        return;
+    }
     if may_launch(|| format!("url {url}")) {
         cx.open_url(url);
     }

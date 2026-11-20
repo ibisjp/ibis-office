@@ -87,7 +87,7 @@ impl SlideEditor {
             table.rows.push(row);
         }
         table.resolve_borders();
-        let command = FlowCommand::ReplaceBlocks { container: Container::Body, index: first, remove: last - first + 1, blocks: vec![Block::Table(table)] };
+        let command = FlowCommand::ReplaceBlockRange { container: Container::Body, index: first, remove: last - first + 1, blocks: vec![Block::Table(table)] };
         self.replace_converted(command, cx);
     }
 
@@ -123,7 +123,7 @@ impl SlideEditor {
         if blocks.is_empty() {
             return;
         }
-        let command = FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks };
+        let command = FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks };
         self.replace_converted(command, cx);
     }
 
@@ -207,7 +207,7 @@ impl SlideEditor {
             blocks.push(Block::Table(bottom_table));
         }
 
-        let command = FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks };
+        let command = FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks };
         self.replace_converted(command, cx);
     }
 
@@ -218,7 +218,7 @@ impl SlideEditor {
             if candidate.execute(vec![ibis_doc_model::Command::Flow(command.clone())]).is_err() {
                 return;
             }
-            if let Err(error) = source.save(candidate.presentation(), ibis_pptx::SaveOptions::default()) {
+            if let Err(error) = source.save(candidate.presentation(), ibis_formats::SaveOptions::default()) {
                 self.status = Some(crate::shell::i18n::format("docx.table-convert.document-cannot-save-table-text", &[("error", &error)]).into());
                 cx.notify();
                 return;

@@ -109,7 +109,7 @@ impl SlideEditor {
         let pivots = self.pivots_of(slide);
         let index = pivots.iter().position(|p| contains(&p.location, row, column) || page_block(p).is_some_and(|b| contains(&b, row, column)))?;
         let mut pivot = pivots[index].clone();
-        if let Some(data) = ibis_pptx::pivot_data(self.presentation(), slide, index) {
+        if let Some(data) = ibis_formats::pivot_data(self.presentation(), slide, index) {
             pivot.fill_shared(&data);
             let built = marked(&pivot).build(&data);
             let Some(cell) = built.cells.iter().find(|c| c.row == row && c.column == column) else {

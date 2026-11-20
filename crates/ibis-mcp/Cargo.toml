@@ -1,0 +1,15 @@
+[package]
+name = "ibis-mcp"
+description = "The MCP server of ibisOffice (GitHub issue #159): JSON-RPC over stdio in front of ibis-doc-service. `ibisOffice --mcp`, and `ibisOffice-mcp` for Windows (whose ibisOffice.exe has no standard input and output)."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ibisOffice-mcp"
+path = "src/main.rs"
+
+[dependencies]
+ibis-doc-service.workspace = true
+serde_json = "1"

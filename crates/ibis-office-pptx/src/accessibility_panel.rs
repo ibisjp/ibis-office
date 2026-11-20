@@ -590,7 +590,7 @@ impl SlideEditor {
             IssueFixType::EnableTableHeader => {
                 entries.push(MenuEntry::Separator);
                 entries.push(
-                    MenuItem::tr("pptx.table.first-row")
+                    MenuItem::tr("table.header-row")
                         .icon("table_rows")
                         .on(move |e, _, cx| e.enable_accessibility_issue_table_header(issue_idx, cx))
                         .into(),
@@ -777,7 +777,7 @@ impl SlideEditor {
                                 .when(issue.fix_type == IssueFixType::EnableTableHeader, |el| {
                                     el.child(
                                         crate::shell::chrome::action_button(("enable-table-header", ix))
-                                            .label(text("pptx.table.first-row"))
+                                            .label(text("table.header-row"))
                                             .small()
                                             .on_click(cx.listener(move |this, _, _window, cx| {
                                                 this.enable_accessibility_issue_table_header(ix, cx);

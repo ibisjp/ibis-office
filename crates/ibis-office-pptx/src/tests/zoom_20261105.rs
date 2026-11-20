@@ -133,7 +133,7 @@ fn new_cards_round_trip() {
         e.insert_section_zoom(&section, cx);
     });
     let bytes = s.with(|e, _| e.current_bytes()).expect("saved");
-    let after = ibis_pptx::read(&bytes).unwrap();
+    let after = ibis_formats::read(&bytes).unwrap();
     assert_eq!(after.sections.len(), 4);
     assert_eq!(after.slides[0].zoom_objects.len(), 2, "the summary's two cards");
     let on_slide = after.slides.iter().find(|sl| sl.zoom_objects.values().any(|z| matches!(z.target, ibis_doc_model::ZoomTarget::Slide { .. }))).expect("the slide zoom is read back");

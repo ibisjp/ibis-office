@@ -339,7 +339,7 @@ impl SlideEditor {
         let commands = vec![
             FlowCommand::SetMailMergeType(Some("envelopes".to_string())),
             FlowCommand::SetPage { page: preset.page_setup() },
-            FlowCommand::ReplaceBlocks { container: Container::Body, index: 0, remove: body_len, blocks },
+            FlowCommand::ReplaceBlockRange { container: Container::Body, index: 0, remove: body_len, blocks },
         ];
         self.run_flow(commands, cx);
     }
@@ -374,7 +374,7 @@ impl SlideEditor {
         let commands = vec![
             FlowCommand::SetMailMergeType(Some("mailingLabels".to_string())),
             FlowCommand::SetPage { page: preset.page_setup() },
-            FlowCommand::ReplaceBlocks { container: Container::Body, index: 0, remove: body_len, blocks },
+            FlowCommand::ReplaceBlockRange { container: Container::Body, index: 0, remove: body_len, blocks },
         ];
         self.run_flow(commands, cx);
     }
@@ -653,7 +653,7 @@ impl SlideEditor {
         let (merged,count)=self.merged_document_for_range(range)?;
         let source=self.source.clone().ok_or_else(||crate::shell::i18n::text("_shell.saving-new-documents-is-not-yet-supported").to_string())?;
         let mut presentation=self.presentation().clone();presentation.flow=Some(Arc::new(merged));
-        let bytes=source.save(&presentation,ibis_pptx::SaveOptions::default()).map_err(|e|e.to_string())?;
+        let bytes=source.save(&presentation,ibis_formats::SaveOptions::default()).map_err(|e|e.to_string())?;
         crate::shell::save::write_replacing(path,&bytes).map_err(|e|e.to_string())?;
         Ok(count)
     }
@@ -792,7 +792,7 @@ impl SlideEditor {
             let merged = ibis_doc_model::merge::merged_letters(&doc, &fields, std::slice::from_ref(record));
             let mut presentation = self.presentation().clone();
             presentation.flow = Some(Arc::new(merged));
-            let bytes = source.save(&presentation, ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?;
+            let bytes = source.save(&presentation, ibis_formats::SaveOptions::default()).map_err(|e| e.to_string())?;
             crate::shell::save::write_replacing(&directory.join(format!("{stem} {count}.docx")), &bytes).map_err(|e| e.to_string())?;
         }
         Ok(count)
@@ -903,7 +903,7 @@ impl SlideEditor {
 
         let mut presentation = self.presentation().clone();
         presentation.flow = Some(Arc::new(merged));
-        let docx_bytes = source.save(&presentation, ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?;
+        let docx_bytes = source.save(&presentation, ibis_formats::SaveOptions::default()).map_err(|e| e.to_string())?;
 
         let dir = std::env::temp_dir().join(format!("ibisoffice-merge-pdf-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

@@ -68,7 +68,7 @@ pub(crate) fn fields_follow_undo_and_redo() {
         ("font", StyleChange::Font(Some("Arial".into())), "Arial"),
         ("size", StyleChange::FontSize(2050), "20.5"),
         ("rotation", StyleChange::Rotation(135), "-45"),
-        ("indent", StyleChange::Indent(3), "3"),
+        ("indent", StyleChange::IndentLevel(3), "3"),
         ("font-color", StyleChange::Color(ibis_doc_model::Rgb(0x112233)), "112233"),
         ("fill-color", StyleChange::Fill(Some(ibis_doc_model::Rgb(0xAABBCC))), "AABBCC"),
     ];

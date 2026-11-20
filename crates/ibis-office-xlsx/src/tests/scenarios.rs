@@ -238,17 +238,32 @@ impl SheetSteps for Scenario {
 #[path="header_menu_click.rs"] mod header_menu_click;
 #[path="open_wide_table.rs"] mod open_wide_table;
 #[path="issue137_spill_cursor.rs"] mod issue137_spill_cursor;
+#[path="issue199_edit_text.rs"] mod issue199_edit_text;
 #[path="issue176_spill_copy.rs"] mod issue176_spill_copy;
 #[path="issue183_184_error_check.rs"] mod issue183_184_error_check;
 #[path="issue158_ivs.rs"] mod issue158_ivs;
+#[path="k0020_candidate_rect.rs"] mod k0020_candidate_rect;
+#[path="k0020_enter_mode_clauses.rs"] mod k0020_enter_mode_clauses;
+#[path="k0044_bar_clause.rs"] mod k0044_bar_clause;
+#[path="k0032_chart_menu.rs"] mod k0032_chart_menu;
+#[path="issue157_fonts_late.rs"] mod issue157_fonts_late;
+#[path="k0055_machine_readability.rs"] mod k0055_machine_readability;
+#[path="issue238_group.rs"] mod issue238_group;
+#[path="issue202_ime_commit.rs"] mod issue202_ime_commit;
+#[path="issue240_fullwidth.rs"] mod issue240_fullwidth;
 #[path="copy_outline.rs"] mod copy_outline;
+#[path="k0035_insert_drag.rs"] mod k0035_insert_drag;
 #[path="issue145_sheet_view.rs"] mod issue145_sheet_view;
+#[path="issue195_active_tab.rs"] mod issue195_active_tab;
+#[path="issue214_active_tab.rs"] mod issue214_active_tab;
 #[path="issue186_drag_autoscroll.rs"] mod issue186_drag_autoscroll;
 #[path="issue185_formula_case.rs"] mod issue185_formula_case;
+#[path="issue148_at_pointing.rs"] mod issue148_at_pointing;
 #[path="sheet_tab_visibility.rs"] mod sheet_tab_visibility;
 #[path="tab_dnd_and_shift_select.rs"] mod tab_dnd_and_shift_select;
 #[path="issue100_paste_names.rs"] mod issue100_paste_names;
 #[path="clipboard_html.rs"] mod clipboard_html;
+#[path="issue208_sheet_html.rs"] mod issue208_sheet_html;
 #[path="clipboard_native.rs"] mod clipboard_native;
 #[path="issue134_paste_special_formats.rs"] mod issue134_paste_special_formats;
 #[path="paste_special_matrix.rs"] mod paste_special_matrix;
@@ -289,7 +304,15 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::issue183_error_button_beside_frozen_columns",issue183_184_error_check::error_button_stays_reachable_beside_frozen_columns),
         ("xlsx::issue184_spilled_texts_have_no_number_as_text",issue183_184_error_check::spilled_texts_have_no_number_as_text),
         ("xlsx::issue137_spill_cursor_cost",issue137_spill_cursor::spill_cursor_cost),
+        ("xlsx::issue240_fullwidth_digits_become_numbers",issue240_fullwidth::fullwidth_digits_become_numbers),
+        ("xlsx::issue240_fullwidth_in_text_and_number_cells",issue240_fullwidth::fullwidth_in_text_and_number_cells),
+        ("xlsx::issue199_edit_text_of_date_time_percent",issue199_edit_text::edit_text_of_date_time_percent),
         ("xlsx::copy_shows_the_outline_until_esc_or_typing",copy_outline::copy_shows_the_outline_until_esc_or_typing),
+        ("xlsx::k0035_insert_shape_mode_and_drag_bounds",k0035_insert_drag::insert_shape_starts_the_mode_and_a_drag_takes_its_bounds),
+        ("xlsx::k0035_click_puts_usual_size",k0035_insert_drag::a_plain_click_puts_the_shape_at_its_usual_size),
+        ("xlsx::k0035_esc_cancels_the_drag",k0035_insert_drag::esc_during_the_drag_cancels_it),
+        ("xlsx::k0035_line_and_text_box",k0035_insert_drag::a_line_and_a_text_box_use_the_mode_too),
+        ("xlsx::k0035_three_screens_one_component",k0035_insert_drag::the_three_screens_use_the_same_component),
         ("xlsx::issue158_caret_moves_over_the_pair",issue158_ivs::caret_moves_over_the_pair),
         ("xlsx::issue158_shift_arrows_select_the_pair",issue158_ivs::shift_arrows_select_the_pair),
         ("xlsx::issue158_backspace_and_delete_take_the_pair",issue158_ivs::backspace_and_delete_take_the_pair),
@@ -320,8 +343,13 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::issue186_column_header_drag_goes_on_past_the_allocated_columns",issue186_drag_autoscroll::column_header_drag_goes_on_past_the_allocated_columns),
         ("xlsx::issue186_row_header_drag_goes_on_past_the_allocated_rows",issue186_drag_autoscroll::row_header_drag_goes_on_past_the_allocated_rows),
         ("xlsx::issue186_fill_handle_goes_on_past_the_allocated_rows",issue186_drag_autoscroll::fill_handle_goes_on_past_the_allocated_rows),
+        ("xlsx::issue148_a_range_is_pointed_at_with_the_keys_after_an_at_a_plus_a_minus_and_an_equals",issue148_at_pointing::keys),
+        ("xlsx::issue148_a_range_is_pointed_at_with_the_mouse_after_an_at_a_plus_a_minus_and_an_equals",issue148_at_pointing::mouse),
         ("xlsx::issue185_typed_formulas_are_stored_in_upper_case",issue185_formula_case::typed_formulas_are_stored_in_upper_case),
         ("xlsx::issue185_defined_names_keep_their_case",issue185_formula_case::defined_names_keep_their_case),
+        ("xlsx::issue195_active_sheet_and_cell_round_trip_through_the_file",issue195_active_tab::active_sheet_and_cell_round_trip_through_the_file),
+        ("xlsx::issue214_a_file_saved_on_the_third_sheet_opens_on_it",issue214_active_tab::a_file_saved_on_the_third_sheet_opens_on_it),
+        ("xlsx::issue214_a_new_workbook_saved_on_the_third_sheet_opens_on_it",issue214_active_tab::a_new_workbook_saved_on_the_third_sheet_opens_on_it),
         ("xlsx::issue145_sheets_keep_their_scroll",issue145_sheet_view::sheets_keep_their_scroll),
         ("xlsx::k0025_deleting_the_other_sheet_keeps_the_scroll",issue145_sheet_view::deleting_the_other_sheet_keeps_the_scroll),
         ("xlsx::k0025_current_slide_is_assigned_only_by_the_setter",issue145_sheet_view::current_slide_is_assigned_only_by_the_setter),
@@ -435,6 +463,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::n5_validation_formula", n5_validation_formula::run),
         ("xlsx::issue154_list_source_judge", issue154_compat_notice::judge),
         ("xlsx::issue154_compat_notice", issue154_compat_notice::run),
+        ("xlsx::issue260_formula_list_keeps_its_equals", issue154_compat_notice::formula_list_keeps_its_equals_issue_260),
+        ("xlsx::issue208_sheet_html", issue208_sheet_html::run),
         ("xlsx::clipboard_html_excel_mac_table", clipboard_html::excel_mac_table),
         ("xlsx::clipboard_html_attributes_and_spans", clipboard_html::attributes_and_spans),
         ("xlsx::clipboard_html_windows_format", clipboard_html::windows_format),
@@ -562,6 +592,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::xsc31_hyperlinks", xsc31_hyperlinks),
         ("xlsx::opt005_autolink", opt005_autolink),
         ("xlsx::options007_settings", options007_settings),
+        ("xlsx::issue205_quick_access_no_icon_ring", issue205_quick_access_no_icon_ring),
         ("xlsx::chtype028_box_treemap_sunburst_in_a_workbook", chtype028_box_treemap_sunburst_in_a_workbook),
         ("xlsx::view002_page_layout", view002_page_layout),
         ("xlsx::view002b_header_footer_pane", view002b_header_footer_pane),
@@ -685,6 +716,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::query_steps_scroll_issue_172", query_steps_scroll_issue_172),
         ("xlsx::query_layout_issue_173", query_layout_issue_173),
         ("xlsx::query002_blank_query", query002_blank_query),
+        ("xlsx::issue211_queries_pane_closes_empty", issue211_queries_pane_closes_empty),
         ("xlsx::ui_english_panels_2", ui_english_panels_2),
         ("xlsx::options006_error_check", options006_error_check),
         ("xlsx::error_menu_closes_on_selection_change", error_menu_closes_on_selection_change),
@@ -883,6 +915,14 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("xlsx::sheet032_overwrite_question_and_text_paste", sheet032_overwrite_question_and_text_paste),
     ];
     all.extend(dropdown_position_20261106::all());
+    all.extend(k0020_candidate_rect::all());
+    all.extend(k0020_enter_mode_clauses::all());
+    all.extend(k0044_bar_clause::all());
+    all.extend(k0032_chart_menu::all());
+    all.extend(issue157_fonts_late::all());
+    all.extend(k0055_machine_readability::all());
+    all.extend(issue238_group::all());
+    all.extend(issue202_ime_commit::all());
     all
 }
 
@@ -1415,6 +1455,12 @@ fn new_sheet() -> Scenario {
     s
 }
 
+/// Go to the `index`-th sheet (a file opens on the sheet it was left on, #195, so a test that starts on a sheet says which).
+fn select_sheet_at(s: &mut Scenario, index: usize) {
+    let id = s.with(|e, _| e.presentation().slides[index].id);
+    s.update(move |e, window, cx| e.select_slide(id, window, cx));
+}
+
 /// The number format of a cell of the current sheet.
 fn number_format(s: &mut Scenario, reference: &str) -> String {
     let (column, row) = parse(reference);
@@ -1677,13 +1723,13 @@ fn xsc37_one_number() {
     // Compared here, in the process (ibis_ooxml::canon, what the ibis-ooxml-diff tool prints):
     // the check used to run target/release/ibis-ooxml-diff and was skipped without a word when it had not been built.
     let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
-    let report = ibis_pptx::ibis_ooxml::canon::diff_packages(&original, &std::fs::read(&path).unwrap(), &[]).unwrap();
+    let report = ibis_formats::ibis_ooxml::canon::diff_packages(&original, &std::fs::read(&path).unwrap(), &[]).unwrap();
     let text = report.to_json();
     assert!(text.contains("xl/worksheets/sheet1.xml"), "{text}");
     // The chart's cache holds the new number: the only difference in its part.
     let chart = report.differences.iter().find(|(part, _)| part == "xl/charts/chart1.xml").map(|(_, d)| d);
     assert!(
-        matches!(chart, Some(ibis_pptx::ibis_ooxml::canon::PartDiff::Xml { b, differing: 1, a_items, b_items, .. }) if b == "\"1260000\"" && a_items == b_items),
+        matches!(chart, Some(ibis_formats::ibis_ooxml::canon::PartDiff::Xml { b, differing: 1, a_items, b_items, .. }) if b == "\"1260000\"" && a_items == b_items),
         "{text}"
     );
     for part in ["xl/drawings/", "xl/styles.xml", "xl/sharedStrings.xml", "xl/workbook.xml"] {
@@ -3795,7 +3841,7 @@ fn xlsx_reapply_filter_selection_pane_and_sparkline_points() {
                 data: CellRange { first_row: 9, last_row: 9, first_column: 1, last_column: 4 },
             }],
         };
-        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddSparklineGroup { slide, group })], cx);
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddSparklineGroup { sheet: slide, group })], cx);
     });
     assert_eq!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().sparklines.len()), 1);
 
@@ -3988,7 +4034,7 @@ fn xsc27_chart_format() {
     // Moved down a row's height and more.
     let (slide, id, frame) = s.with(|e, _| { let sh = &e.slide().shapes[index]; (e.current_slide, sh.id, sh.frame) });
     let moved = ibis_doc_model::EmuRect::new(frame.x + 200_000, frame.y + 300_000, frame.width, frame.height);
-    s.update(|e, _, cx| { e.document.execute(vec![ibis_doc_model::Command::SetFrame { slide, shape: id, frame: moved }]).unwrap(); cx.notify(); });
+    s.update(|e, _, cx| { e.document.execute(vec![ibis_doc_model::Command::SetFrame { slide, frames: vec![(id, moved)], with_attached: true }]).unwrap(); cx.notify(); });
     s.save_as("xsc27-chart.xlsx");
     let mut saved = s.reopen();
     // As a window opens it: the rows are measured, and the chart follows its cells.
@@ -5618,7 +5664,7 @@ fn chedit002_scatter_switch_row_column() {
     s.key("shift-down");
 
     // Insert Scatter Chart
-    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Scatter, w, cx));
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_formats::NewChartKind::Scatter, w, cx));
     s.settle();
 
     // Select inserted chart (last chart)
@@ -5706,7 +5752,7 @@ fn chedit002_bubble_switch_row_column() {
     s2.key("shift-down");
 
     // Insert Bubble Chart
-    s2.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Bubble, w, cx));
+    s2.update(|e, w, cx| e.insert_sheet_chart(ibis_formats::NewChartKind::Bubble, w, cx));
     s2.settle();
 
     let idx = s2.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
@@ -5799,7 +5845,7 @@ fn chedit001_headerless_scatter() {
     s.key("shift-down");
 
     // Insert Scatter Chart over headerless G1:H4
-    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Scatter, w, cx));
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_formats::NewChartKind::Scatter, w, cx));
     s.settle();
 
     // Select the inserted scatter chart
@@ -5897,7 +5943,7 @@ fn chedit001_headerless_bubble() {
     s.key("shift-down");
 
     // Insert Bubble Chart
-    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Bubble, w, cx));
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_formats::NewChartKind::Bubble, w, cx));
     s.settle();
 
     let b_idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
@@ -6004,7 +6050,7 @@ fn chedit001_stock_charts() {
     s.key("shift-down");
 
     // Insert StockHLC Chart
-    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::StockHLC, w, cx));
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_formats::NewChartKind::StockHLC, w, cx));
     s.settle();
 
     let chart_idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
@@ -6074,7 +6120,7 @@ fn chedit001_radar_surface_combo_charts() {
     s.key("shift-down");
 
     // 1. Insert Radar chart
-    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Radar, w, cx));
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_formats::NewChartKind::Radar, w, cx));
     s.settle();
 
     let chart_idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
@@ -6121,7 +6167,7 @@ fn chedit001_radar_surface_combo_charts() {
     s.key("shift-down");
     s.key("shift-down");
     s.key("shift-down");
-    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::ComboColumnLine, w, cx));
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_formats::NewChartKind::ComboColumnLine, w, cx));
     s.settle();
 
     let combo_idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
@@ -6143,7 +6189,7 @@ fn chedit001_radar_surface_combo_charts() {
     s.key("shift-down");
     s.key("shift-down");
     s.key("shift-down");
-    s.update(|e, w, cx| e.insert_sheet_chart(ibis_pptx::NewChartKind::Surface3D, w, cx));
+    s.update(|e, w, cx| e.insert_sheet_chart(ibis_formats::NewChartKind::Surface3D, w, cx));
     s.settle();
 
     let surface_idx = s.with(|e, _| e.slide().shapes.iter().rposition(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
@@ -6179,9 +6225,9 @@ fn cell005_rich_text() {
 fn cell005_rich_text_wrapped() {
     let mut s = Scenario::open("test/editing/xlsx-rich-text.xlsx");
     s.click_cell("A4");
-    s.update(|e, _, cx| e.format_cells(ibis_doc_model::StyleChange::Wrap(true), cx));
+    s.update(|e, _, cx| e.format_cells(ibis_doc_model::StyleChange::WrapText(true), cx));
     let slide = s.with(|e, _| e.current_slide);
-    s.update(move |e, _, cx| e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize { slide, axis: ibis_doc_model::sheet_command::Axis::Rows, first: 3, last: 3, size: 60 * 12_700 })], cx));
+    s.update(move |e, _, cx| e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize { sheet: slide, axis: ibis_doc_model::sheet_command::Axis::Rows, first: 3, last: 3, size: 60 * 12_700 })], cx));
     s.screenshot("wrapped");
     assert!(s.with(|e, _| e.current_sheet().and_then(|(_, sheet)| sheet.cell(3, 0).map(|c| c.runs.is_some()))).unwrap());
 }
@@ -6285,7 +6331,7 @@ fn options006_error_options() {
     s.menu("xlsx.error-options");
     s.update(|e, _, cx| {
         let slide = e.current_slide;
-        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::ResetIgnoredErrors { slide })], cx);
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::ResetIgnoredErrors { sheet: slide })], cx);
     });
     assert_eq!(flagged(&mut s).len(), 2);
     // Background checking off: nothing is marked.
@@ -6634,14 +6680,14 @@ fn slicer002_insert() {
     let slicers = |s: &mut Scenario| -> Vec<String> { s.with(|e, _| e.presentation().slides.iter().flat_map(|sl| sl.shapes.iter()).filter_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Slicer(x) => Some(x.name.clone()), _ => None }).collect()) };
     assert_eq!(slicers(&mut s).len(), 2);
     // Nothing selected in a table: told so.
-    s.menu("xlsx.slicer-insert");
+    s.menu("xlsx.insert-slicer");
     s.update(|e, _, cx| e.apply_slicer_insert_panel(cx));
     s.update(|e, _, _| e.wb_mut().panels.slicer_insert = None);
     // The table's sheet: a slicer for 売上.
     let table_slide = s.with(|e, _| e.presentation().slides.iter().find(|sl| sl.name.as_deref() == Some("データ")).map(|sl| sl.id)).expect("the sheet");
     s.update(move |e, window, cx| e.select_slide(table_slide, window, cx));
     s.click_cell("B3");
-    s.menu("xlsx.slicer-insert");
+    s.menu("xlsx.insert-slicer");
     let fields = s.with(|e, _| e.wb().panels.slicer_insert.as_ref().unwrap().fields.clone());
     assert_eq!(fields, ["地域", "商品", "売上"]);
     s.update(|e, _, cx| {
@@ -6665,7 +6711,7 @@ fn slicer002_insert() {
     let pivot_slide = s.with(|e, _| e.presentation().slides.iter().find(|sl| sl.name.as_deref() == Some("Sheet2")).map(|sl| sl.id)).expect("the pivot's sheet");
     s.update(move |e, window, cx| e.select_slide(pivot_slide, window, cx));
     s.click_cell("A5");
-    s.menu("xlsx.slicer-insert");
+    s.menu("xlsx.insert-slicer");
     s.update(|e, _, cx| {
         let p = e.wb_mut().panels.slicer_insert.as_mut().unwrap();
         assert_eq!(p.fields, ["地域", "商品"], "the number field has no items to make buttons of");
@@ -6676,7 +6722,7 @@ fn slicer002_insert() {
     // Saved: the parts and the references.
     let path = s.save_as("slicer002.xlsx");
     let bytes = std::fs::read(&path).expect("the saved file");
-    let package = ibis_pptx::ibis_ooxml::Package::open(bytes).expect("a package");
+    let package = ibis_formats::ibis_ooxml::Package::open(bytes).expect("a package");
     let caches = package.names().filter(|n| n.starts_with("xl/slicerCaches/")).count();
     assert_eq!(caches, 5, "{:?}", package.names().collect::<Vec<_>>());
     let workbook = String::from_utf8(package.read("xl/workbook.xml").unwrap()).unwrap();
@@ -6741,7 +6787,7 @@ fn slicer003_settings() {
     assert_eq!((slicer.name.as_str(), slicer.style.as_str(), slicer.caption.as_str(), slicer.show_caption, slicer.columns, slicer.row_height, slicer.descending), ("商品スライサー", "SlicerStyleDark2", "Product", false, 2, 254_000, true));
     assert_eq!(slicer.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>(), rev_items, "the buttons are remade in descending order");
     let path = s.save_as("slicer003.xlsx");
-    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     let part = (1..=2).map(|n| String::from_utf8(package.read(&format!("xl/slicers/slicer{n}.xml")).unwrap()).unwrap()).find(|x| x.contains("商品スライサー")).expect("the slicers part");
     assert!(part.contains("name=\"商品スライサー\"") && part.contains("style=\"SlicerStyleDark2\"") && part.contains("caption=\"Product\"") && part.contains("columnCount=\"2\"") && part.contains("rowHeight=\"254000\"") && part.contains("showCaption=\"0\""), "{part}");
     let cache_part = (1..=2).map(|n| String::from_utf8(package.read(&format!("xl/slicerCaches/slicerCache{n}.xml")).unwrap()).unwrap()).find(|x| x.contains("sortOrder=\"descending\"")).expect("the slicer cache with descending sortOrder");
@@ -6772,8 +6818,8 @@ fn slicer003_settings() {
             last_column: 10,
         };
         sheet.pivots.push(p2);
-        let rebuilt = ibis_pptx::rebuilt_pivot(e.presentation(), slide, 1, sheet.pivots.get(1).cloned()).unwrap_or(sheet);
-        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::ReplaceSheet { slide, sheet: Box::new(rebuilt) })], cx);
+        let rebuilt = ibis_formats::rebuilt_pivot(e.presentation(), slide, 1, sheet.pivots.get(1).cloned()).unwrap_or(sheet);
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::ReplaceSheet { sheet: slide, replacement: Box::new(rebuilt) })], cx);
     });
     s.update(move |e, _, _| e.selection = Some(id));
     s.menu("xlsx.slicer-settings");
@@ -6811,7 +6857,7 @@ fn slicer003_settings() {
     });
     assert_eq!(kept_counts, vec![1, 1], "clicking the slicer button filters both connected PivotTables");
     let path2 = s.save_as("slicer003_multi_pivot.xlsx");
-    let pkg2 = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path2).unwrap()).unwrap();
+    let pkg2 = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path2).unwrap()).unwrap();
     let multi_cache = (1..=2)
         .map(|n| String::from_utf8(pkg2.read(&format!("xl/slicerCaches/slicerCache{n}.xml")).unwrap()).unwrap())
         .find(|x| x.contains("ピボットテーブル2"))
@@ -6902,7 +6948,7 @@ fn whatif002_data_table() {
             .into_iter()
             .map(|(row, column, input)| ibis_doc_model::CellEdit { row, column, input })
             .collect();
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { sheet: slide, edits })]).unwrap();
         cx.notify();
     });
     s.click_cell("H3");
@@ -7296,8 +7342,8 @@ fn spark002_style_color_display_hidden() {
     s.update(|e, _, cx| {
         let slide = e.current_slide;
         e.run_sheet(
-            vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Hide {
-                slide,
+            vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetHidden {
+                sheet: slide,
                 axis: ibis_doc_model::sheet_command::Axis::Columns,
                 first: 2,
                 last: 2,
@@ -7492,7 +7538,7 @@ fn spark003_date_axis_and_cross_sheet() {
             data: ibis_doc_model::CellRange { first_row: 1, last_row: 1, first_column: 0, last_column: 2 },
         });
         e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::EditSparklineGroup {
-            slide,
+            sheet: slide,
             index: 0,
             group,
         })], cx);
@@ -7709,7 +7755,7 @@ fn pivot014_filters() {
 
 /// The chart of xlsx-sales.xlsx as read.
 fn chart_of_file() -> ibis_doc_model::Chart {
-    let p = ibis_pptx::read(&std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap()).unwrap();
+    let p = ibis_formats::read(&std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap()).unwrap();
     p.slides[0].shapes.iter().find_map(|x| match &x.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap()
 }
 
@@ -8143,7 +8189,7 @@ fn pivot018_refresh() {
     assert_eq!(s.value("F23"), CellValue::Number(151819.0));
     let saved = s.save_as("pivot018.xlsx");
     let data = std::fs::read(&saved).unwrap();
-    let zip = ibis_pptx::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition1.xml").expect("the cache's definition");
+    let zip = ibis_formats::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition1.xml").expect("the cache's definition");
     assert!(zip.contains("refreshOnLoad=\"1\""), "Excel builds it again on opening");
     let reopened = s.reopen();
     let sh = sheet_of_slide(&reopened.slides[0]).unwrap();
@@ -8198,9 +8244,9 @@ fn pivot001_create() {
     s.screenshot("created");
     let saved = s.save_as("pivot001.xlsx");
     let data = std::fs::read(&saved).unwrap();
-    let table = ibis_pptx::test_files::part_text(&data, "xl/pivotTables/pivotTable2.xml").expect("the new table's part");
+    let table = ibis_formats::test_files::part_text(&data, "xl/pivotTables/pivotTable2.xml").expect("the new table's part");
     assert!(table.contains(r#"<rowFields count="1"><field x="2"/></rowFields>"#) && table.contains(r#"<colFields count="1"><field x="1"/></colFields>"#), "{table}");
-    let cache = ibis_pptx::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition2.xml").expect("its cache");
+    let cache = ibis_formats::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition2.xml").expect("its cache");
     assert!(cache.contains(r#"refreshOnLoad="1""#) && cache.contains(r#"sheet="ピボット""#));
     let reopened = s.reopen();
     let sh = sheet_of_slide(&reopened.slides[1]).unwrap();
@@ -8420,7 +8466,7 @@ fn pivot003_value_field_settings() {
     s.screenshot("pivot003_percent_of_total");
     let saved = s.save_as("pivot003.xlsx");
     let data = std::fs::read(&saved).unwrap();
-    let table = ibis_pptx::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("table xml");
+    let table = ibis_formats::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("table xml");
     assert!(table.contains(r#"showDataAs="percentOfTotal""#), "{table}");
     assert!(table.contains(r#"name="売上合計""#), "{table}");
     assert!(table.contains(r#"numFmtId="#), "{table}");
@@ -8524,7 +8570,7 @@ fn pivot013_buttons() {
 /// undo.
 fn pq001_import_text() {
     let mut s = new_sheet();
-    let data = ibis_pptx::csv::encode_sjis("コード,名称,数量,日付\r\n00123,りんご,3,2026/1/5\r\n00456,みかん,5,2026/2/6\r\n");
+    let data = ibis_formats::csv::encode_sjis("コード,名称,数量,日付\r\n00123,りんご,3,2026/1/5\r\n00456,みかん,5,2026/2/6\r\n");
     s.click_cell("B2");
     s.update(|e, window, cx| e.show_import_text_panel(window, cx));
     s.update(move |e, _, cx| e.set_import_text_data("goods.csv".into(), data, cx));
@@ -8700,7 +8746,7 @@ fn auto006_form_controls() {
             let mut next_frame = sh.frame;
             next_frame.x += 457200;
             next_frame.width += 228600;
-            e.run_sheet(vec![ibis_doc_model::Command::SetFrame { slide, shape: btn_id, frame: next_frame }], cx);
+            e.run_sheet(vec![ibis_doc_model::Command::SetFrame { slide, frames: vec![(btn_id, next_frame)], with_attached: true }], cx);
         }
     });
 
@@ -8719,7 +8765,7 @@ fn auto006_form_controls() {
     s.update(move |e, _, cx| {
         e.insert_form_control(ControlKind::CheckBox, cx);
         let slide = e.current_slide;
-        e.run_sheet(vec![ibis_doc_model::Command::RemoveShape { slide, shape: label_id }], cx);
+        e.run_sheet(vec![ibis_doc_model::Command::DeleteShape { slide, shapes: vec![label_id], with_attached: true }], cx);
     });
 
     s.screenshot("operated");
@@ -8795,7 +8841,7 @@ fn pivot016_timeline_selected() {
     let march = t.periods(2)[2];
     assert_eq!(t.selection, Some((march.start, march.end)), "March 2026, from its first day to the day after the last");
     let saved = s.save_as("timeline-selected.xlsx");
-    let back = ibis_pptx::read(&std::fs::read(&saved).unwrap()).unwrap();
+    let back = ibis_formats::read(&std::fs::read(&saved).unwrap()).unwrap();
     let kept: Vec<_> = back.slides.iter().flat_map(|sl| &sl.shapes).filter_map(|sh| match &sh.kind { ShapeKind::Timeline(t) => Some(t.selection), _ => None }).collect();
     assert_eq!(kept, vec![Some((march.start, march.end))]);
 }
@@ -8869,7 +8915,7 @@ fn formula006_external_links() {
     assert_eq!(s.with(|e, _| e.live_external_books().iter().map(|(_, b)| b.name.clone()).collect::<Vec<_>>()), ["予算.xlsx", "actual.xlsx"]);
     assert_eq!(s.value("J45"), CellValue::Number(60.0));
     // 値の更新 from a workbook with Data!A1:A3 = 1, 2, 3 and B1 = "x".
-    let update = ibis_pptx::csv::workbook_from("1,x\n2\n3\n", "Data").expect("a workbook");
+    let update = ibis_formats::csv::workbook_from("1,x\n2\n3\n", "Data").expect("a workbook");
     s.update(move |e, _, cx| e.refresh_external_book_from(0, &update, cx));
     assert_eq!(s.value("J45"), CellValue::Number(6.0), "SUM of the new cached cells");
     assert_eq!(s.value("K45"), CellValue::Text("x".into()));
@@ -8877,7 +8923,7 @@ fn formula006_external_links() {
     close_modal_panel(&mut s); // the links panel is a modal dialog; Undo is the sheet's
     s.key("cmd-z");
     // リンク元の変更: change source of 予算.xlsx to 予算2026.xlsx
-    let new_source = ibis_pptx::csv::workbook_from("10,南部\n20\n30\n", "Data").expect("a workbook");
+    let new_source = ibis_formats::csv::workbook_from("10,南部\n20\n30\n", "Data").expect("a workbook");
     s.update(|e, _, cx| {
         e.change_external_book_source(
             0,
@@ -8905,7 +8951,7 @@ fn formula006_external_links() {
 
     // Save with changed source and reopen to verify roundtrip
     let saved_changed = s.save_as("formula006_changed.xlsx");
-    let back = ibis_pptx::open(std::fs::read(&saved_changed).unwrap()).unwrap();
+    let back = ibis_formats::open(std::fs::read(&saved_changed).unwrap()).unwrap();
     let wb = back.presentation.workbook.as_ref().unwrap();
     assert_eq!(wb.external_books[0].name, "予算2026.xlsx");
     assert_eq!(wb.external_books[0].path, "/path/to/予算2026.xlsx");
@@ -8914,7 +8960,7 @@ fn formula006_external_links() {
     assert_eq!(sh0.cell(44, 10).and_then(|c| c.formula.clone()).as_deref(), Some("[予算2026.xlsx]Data!B1"));
 
     // 外部ブックのリンクを追加 (add link)
-    let extra_bytes = ibis_pptx::csv::workbook_from("100\n", "Sheet1").expect("extra bytes");
+    let extra_bytes = ibis_formats::csv::workbook_from("100\n", "Sheet1").expect("extra bytes");
     s.update(|e, _, cx| {
         e.add_external_link("追加.xlsx".into(), "追加.xlsx".into(), &extra_bytes, cx)
     });
@@ -9098,7 +9144,7 @@ fn options006_error_check() {
             filter: None,
             totals: Vec::new(),
         };
-        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetTable { slide, index: 0, table: Some(table), cells: Vec::new() })], cx);
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetTable { sheet: slide, index: 0, table: Some(table), cells: Vec::new() })], cx);
     });
     s.click_cell("C10"); s.enter("Qty", "enter");
     s.click_cell("D10"); s.enter("Total", "enter");
@@ -9133,7 +9179,7 @@ fn options006_error_check() {
             prompt: None,
             error: None,
         };
-        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetValidation { slide, ranges: rule.ranges.clone(), rule: Some(rule) })], cx);
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetValidation { sheet: slide, ranges: rule.ranges.clone(), rule: Some(rule) })], cx);
     });
     s.click_cell("A16");
     assert_eq!(s.with(|e, _| e.current_error()), Some(ibis_doc_model::error_check::ErrorKind::ListDataValidation));
@@ -9303,7 +9349,7 @@ fn image47_web_images() {
     })));
     let mut s = Scenario::open("test/editing/xlsx-table.xlsx");
     let slide = s.with(|e, _| e.slide().id);
-    let size = |axis, first, last, points: i64| ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize { slide, axis, first, last, size: points * 12_700 });
+    let size = |axis, first, last, points: i64| ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize { sheet: slide, axis, first, last, size: points * 12_700 });
     s.update(move |e, _, cx| {
         e.run_sheet(vec![size(ibis_doc_model::sheet_command::Axis::Rows, 9, 14, 70), size(ibis_doc_model::sheet_command::Axis::Rows, 2, 2, 50), size(ibis_doc_model::sheet_command::Axis::Columns, 0, 6, 100)], cx)
     });
@@ -9529,7 +9575,7 @@ fn image003_cell_images_manipulation() {
     // 5. Insert row above row 1 (XLSX-IMAGE-007)
     s.update(|e, _, cx| {
         let slide = e.current_slide;
-        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Insert { slide, axis: Axis::Rows, at: 1, count: 1 })], cx);
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Insert { sheet: slide, axis: Axis::Rows, at: 1, count: 1 })], cx);
     });
     let cell_images_shifted = s.with(|e, _| e.current_sheet().map(|(_, sh)| sh.cell_images.clone())).unwrap_or_default();
     assert!(cell_images_shifted.iter().any(|i| i.column == 0 && i.row == 0), "(0, 0) stayed");
@@ -9751,18 +9797,18 @@ fn sec006_open_password() {
     s.enter("確認", "enter");
     let saved = s.save_as(root.join("saved.xlsx").to_str().unwrap());
     let bytes = std::fs::read(&saved).unwrap();
-    assert!(ibis_pptx::is_encrypted(&bytes), "saved protected again");
-    let plain = ibis_pptx::decrypt(&bytes, "ibis123").unwrap();
-    let again = ibis_pptx::read(&plain).unwrap();
+    assert!(ibis_formats::is_encrypted(&bytes), "saved protected again");
+    let plain = ibis_formats::decrypt(&bytes, "ibis123").unwrap();
+    let again = ibis_formats::read(&plain).unwrap();
     assert_eq!(again.slides.len(), sheets);
     assert_eq!(sheet_of_slide(&again.slides[0]).unwrap().cell(0, 9).map(|c| c.value.clone()), Some(CellValue::Text("確認".into())));
     // Taken off: saved in the clear.
     s.update(|e, w, cx| e.set_protection(None, w, cx));
     let bytes = std::fs::read(&saved).unwrap();
-    assert!(!ibis_pptx::is_encrypted(&bytes) && ibis_pptx::read(&bytes).unwrap().slides.len() == sheets, "saved without the password");
+    assert!(!ibis_formats::is_encrypted(&bytes) && ibis_formats::read(&bytes).unwrap().slides.len() == sheets, "saved without the password");
     // A new password.
     s.update(|e, w, cx| e.set_protection(Some("新しい".into()), w, cx));
-    assert!(ibis_pptx::is_encrypted(&std::fs::read(&saved).unwrap()));
+    assert!(ibis_formats::is_encrypted(&std::fs::read(&saved).unwrap()));
 }
 
 /// The middle of button `item` of the slicer `name`, in the window.
@@ -10319,35 +10365,35 @@ fn table_design_ribbon_commands() {
 
     // 2. Table total row toggle
     let totals_before = table(&mut s).unwrap().totals_rows;
-    s.menu("xlsx.table-total-row");
+    s.menu("table.total-row");
     let totals_after = table(&mut s).unwrap().totals_rows;
     assert_ne!(totals_before, totals_after, "total row toggled on");
     assert_eq!(totals_after, 1);
-    s.menu("xlsx.table-total-row");
+    s.menu("table.total-row");
     assert_eq!(table(&mut s).unwrap().totals_rows, 0, "total row toggled off");
 
     // 3. Banded rows toggle
     let st = table(&mut s).unwrap().style.unwrap();
     let row_stripes_before = st.row_stripes;
-    s.menu("xlsx.table-banded-rows");
+    s.menu("table.banded-rows");
     let row_stripes_after = table(&mut s).unwrap().style.unwrap().row_stripes;
     assert_eq!(row_stripes_after, !row_stripes_before, "banded rows toggled");
 
     // 4. Banded columns toggle
     let col_stripes_before = table(&mut s).unwrap().style.unwrap().column_stripes;
-    s.menu("xlsx.table-banded-columns");
+    s.menu("table.banded-columns");
     let col_stripes_after = table(&mut s).unwrap().style.unwrap().column_stripes;
     assert_eq!(col_stripes_after, !col_stripes_before, "banded columns toggled");
 
     // 5. First column toggle
     let first_col_before = table(&mut s).unwrap().style.unwrap().first_column;
-    s.menu("xlsx.table-first-column");
+    s.menu("table.first-column");
     let first_col_after = table(&mut s).unwrap().style.unwrap().first_column;
     assert_eq!(first_col_after, !first_col_before, "first column toggled");
 
     // 6. Last column toggle
     let last_col_before = table(&mut s).unwrap().style.unwrap().last_column;
-    s.menu("xlsx.table-last-column");
+    s.menu("table.last-column");
     let last_col_after = table(&mut s).unwrap().style.unwrap().last_column;
     assert_eq!(last_col_after, !last_col_before, "last column toggled");
 
@@ -10398,9 +10444,9 @@ fn table_design_ribbon_commands() {
 
     // 11. Print area set & clear
     s.click_cell("A1");
-    s.menu("xlsx.print-area-set");
+    s.menu("xlsx.set-print-area");
     assert!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().print_area.is_some()), "print area set");
-    s.menu("xlsx.print-area-clear");
+    s.menu("xlsx.clear-print-area");
     assert!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().print_area.is_none()), "print area cleared");
 
     // 12. Page break
@@ -10685,7 +10731,7 @@ fn xsc23_sort() {
     s.update(|e, _, cx| {
         let slide = e.current_slide;
         let range = e.selected_range().unwrap();
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Sort { slide, range, keys: vec![(1, false)], header: true })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Sort { sheet: slide, range, keys: vec![(1, false)], header: true })]).unwrap();
         cx.notify();
     });
     assert_eq!(s.value("A4"), CellValue::Text("駅前店".into()));
@@ -11203,9 +11249,9 @@ fn cf011_threshold_types() {
 
     s.update(|e, _, cx| {
         e.document.execute(vec![
-            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { slide: slide_id, format: color_scale_format }),
-            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { slide: slide_id, format: data_bar_format }),
-            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { slide: slide_id, format: icon_set_format }),
+            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { sheet: slide_id, format: color_scale_format }),
+            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { sheet: slide_id, format: data_bar_format }),
+            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { sheet: slide_id, format: icon_set_format }),
         ]).unwrap();
         cx.notify();
     });
@@ -11737,7 +11783,7 @@ fn xsc23_sort_keys() {
     s.update(|e, _, cx| {
         let slide = e.current_slide;
         let ranges = [2u32, 5].map(|r| ibis_doc_model::CellRange { first_row: r, last_row: r, first_column: 0, last_column: 1 }).to_vec();
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetFormat { slide, ranges, change: ibis_doc_model::StyleChange::Fill(Some(ibis_doc_model::Rgb(0xFFFF00))) })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetFormat { sheet: slide, ranges, change: ibis_doc_model::StyleChange::Fill(Some(ibis_doc_model::Rgb(0xFFFF00))) })]).unwrap();
         cx.notify();
     });
     s.click_cell("A1");
@@ -11776,7 +11822,7 @@ fn xsc23_sort_manage() {
 
 fn xsc23_sort_filter() {
     let mut s=new_sheet();for (address,text) in [("A1","数"),("A2","2"),("A3","4"),("A4","6"),("C1","=SUBTOTAL(9,A2:A4)")]{s.click_cell(address);s.enter(text,"enter");}s.click_cell("A1");for _ in 0..3{s.key("shift-down");}s.menu("xlsx.filter");s.update(|e,_,cx|e.filter_column(0,Some(ibis_doc_model::ColumnFilter::Values(vec!["4".into(),"6".into()])),cx));assert_eq!(s.value("C1"),CellValue::Number(10.0));s.click_cell("A1");s.menu("xlsx.sort-manage");sort_field(&mut s,"range","A1:A4");sort_field(&mut s,"column-0","A");assert!(s.with(|e,_|e.wb().sort_edit.as_ref().unwrap().header));sort_click(&mut s,"order-0");sort_click(&mut s,"apply");for (address,n) in [("A2",2.),("A3",6.),("A4",4.),("C1",10.)]{assert_eq!(s.value(address),CellValue::Number(n));}s.click_cell("A1");s.key("cmd-z");assert_eq!(s.value("A3"),CellValue::Number(4.0));s.key("cmd-shift-z");assert_eq!(s.value("A3"),CellValue::Number(6.0));
-    s.save_as("xsc23-sort-filter-before-edit.xlsx");let p=s.reopen();assert_eq!(sheet_of_slide(&p.slides[1]).unwrap().filtered_rows.iter().copied().collect::<Vec<_>>(),vec![1]);let slide=p.slides[1].id;let mut d=ibis_doc_model::Document::new(p);d.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {slide,edits:vec![ibis_doc_model::CellEdit {row:3,column:0,input:ibis_doc_model::CellInput::Value(CellValue::Number(3.0))}]})]).unwrap();assert_eq!(sheet_of_slide(&d.presentation().slides[1]).unwrap().cell(0,2).unwrap().value,CellValue::Number(9.0));s.click_cell("A4");s.enter("3","enter");assert_eq!(s.value("C1"),CellValue::Number(9.0));s.key("cmd-z");assert_eq!(s.value("C1"),CellValue::Number(10.0));s.key("cmd-shift-z");assert_eq!(s.value("C1"),CellValue::Number(9.0));s.save_as("xsc23-sort-filter-after-edit.xlsx");let p=s.reopen();let sh=sheet_of_slide(&p.slides[1]).unwrap();assert_eq!(sh.filtered_rows.iter().copied().collect::<Vec<_>>(),vec![1]);assert_eq!(sh.cell(0,2).unwrap().value,CellValue::Number(9.0));
+    s.save_as("xsc23-sort-filter-before-edit.xlsx");let p=s.reopen();assert_eq!(sheet_of_slide(&p.slides[1]).unwrap().filtered_rows.iter().copied().collect::<Vec<_>>(),vec![1]);let slide=p.slides[1].id;let mut d=ibis_doc_model::Document::new(p);d.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {sheet: slide,edits:vec![ibis_doc_model::CellEdit {row:3,column:0,input:ibis_doc_model::CellInput::Value(CellValue::Number(3.0))}]})]).unwrap();assert_eq!(sheet_of_slide(&d.presentation().slides[1]).unwrap().cell(0,2).unwrap().value,CellValue::Number(9.0));s.click_cell("A4");s.enter("3","enter");assert_eq!(s.value("C1"),CellValue::Number(9.0));s.key("cmd-z");assert_eq!(s.value("C1"),CellValue::Number(10.0));s.key("cmd-shift-z");assert_eq!(s.value("C1"),CellValue::Number(9.0));s.save_as("xsc23-sort-filter-after-edit.xlsx");let p=s.reopen();let sh=sheet_of_slide(&p.slides[1]).unwrap();assert_eq!(sh.filtered_rows.iter().copied().collect::<Vec<_>>(),vec![1]);assert_eq!(sh.cell(0,2).unwrap().value,CellValue::Number(9.0));
 }
 
 fn xsc55_spill_structure() {
@@ -12030,7 +12076,8 @@ fn xsc55_dynamic_reopen() {
     check(&mut s, 1);
     s.save_as("xsc55-dynamic-reopen-source.xlsx");
     s.reload_saved();
-    s.click_cell("A1"); s.key("ctrl-pagedown");
+    s.click_cell("A1");
+    // The file opens on the sheet it was saved on (#195), the new sheet.
     assert_eq!(s.with(|e, _| e.document.presentation().slides.iter().position(|slide| slide.id == e.current_slide)), Some(1));
     check(&mut s, 1);
     s.click_cell("A1"); s.enter("3", "enter"); check(&mut s, 2);
@@ -12055,7 +12102,7 @@ fn xsc39_week_return_types() {
     for (r, f) in cases.iter().enumerate() { s.click_cell(&format!("A{}", r + 1)); s.enter(&format!("={}", f[0]), "enter"); }
     let check = |s: &mut Scenario, col: usize| { for (r, f) in cases.iter().enumerate() { let expected = f[col].parse::<f64>().map(CellValue::Number).unwrap_or(CellValue::Error(ibis_doc_model::CellError::Num)); assert_eq!(s.value(&format!("A{}", r + 1)), expected, "{}", f[0]); } };
     check(&mut s, 1); s.save_as("xsc39-week-return-types-before.xlsx");
-    s.reload_saved(); s.click_cell("A1"); s.key("ctrl-pagedown"); check(&mut s, 1);
+    s.reload_saved(); s.click_cell("A1"); check(&mut s, 1);
     s.click_cell("B1"); s.enter("=DATE(2021,1,4)", "enter"); check(&mut s, 2);
     s.key("cmd-z"); check(&mut s, 1); s.key("cmd-shift-z"); check(&mut s, 2);
     s.save_as("xsc39-week-return-types-after.xlsx"); let p = s.reopen(); let sh = sheet_of_slide(&p.slides[1]).unwrap();
@@ -12068,7 +12115,7 @@ fn xsc39_day_count_options() {
     s.click_cell("B1"); s.enter("=DATE(2019,1,1)", "enter"); s.click_cell("C1"); s.enter("=DATE(2020,1,1)", "enter");
     for (r, f) in cases.iter().enumerate() { s.click_cell(&format!("A{}", r + 1)); s.enter(&format!("={}", f[0]), "enter"); }
     let check = |s: &mut Scenario, col: usize| { for (r, f) in cases.iter().enumerate() { let expected = f[col].parse::<f64>().map(CellValue::Number).unwrap_or(CellValue::Error(ibis_doc_model::CellError::Num)); assert_eq!(s.value(&format!("A{}", r + 1)), expected, "{}", f[0]); } };
-    check(&mut s, 1); s.save_as("xsc39-day-count-before.xlsx"); s.reload_saved(); s.click_cell("A1"); s.key("ctrl-pagedown"); check(&mut s, 1);
+    check(&mut s, 1); s.save_as("xsc39-day-count-before.xlsx"); s.reload_saved(); s.click_cell("A1"); check(&mut s, 1);
     s.click_cell("C1"); s.enter("=DATE(2021,1,1)", "enter"); s.click_cell("B1"); s.enter("=DATE(2020,1,1)", "enter"); check(&mut s, 2);
     s.key("cmd-z"); s.key("cmd-z"); check(&mut s, 1); s.key("cmd-shift-z"); s.key("cmd-shift-z"); check(&mut s, 2);
     s.save_as("xsc39-day-count-after.xlsx"); let p = s.reopen(); let sh = sheet_of_slide(&p.slides[1]).unwrap();
@@ -12081,7 +12128,7 @@ fn xsc55_new_dynamic_metadata() {
     assert_eq!(s.with(|e,_|e.slide().name.clone()),Some("新dynamic保持".into()));
     for (address,formula,n) in [("F10","SEQUENCE(A1)",1.),("H10","F10#*2",2.)] {s.click_cell(address);s.enter(&format!("={formula}"),"enter");assert_eq!(s.value(address),CellValue::Number(n));s.key("cmd-z");assert_eq!(s.value(address),CellValue::Empty);s.key("cmd-shift-z");assert_eq!(s.value(address),CellValue::Number(n));}
     let check=|s:&mut Scenario,size:u32| {s.with(|e,_| {let sh=sheet_of_slide(e.slide()).unwrap();assert!(!sh.spills.contains_key(&(1,1)));assert!(sh.spills.contains_key(&(9,5)));assert!(sh.spills.contains_key(&(9,7)));});assert_eq!(s.value("B2"),CellValue::Number(1.));assert_eq!(s.value("B3"),CellValue::Empty);for r in 0..3 {let expected=if r<size{CellValue::Number((r+1)as f64)}else{CellValue::Empty};assert_eq!(s.value(&format!("F{}",r+10)),expected);assert_eq!(s.value(&format!("H{}",r+10)),if r<size{CellValue::Number(((r+1)*2)as f64)}else{CellValue::Empty});}};
-    check(&mut s,1);s.save_as("xsc55-new-dynamic-one.xlsx");s.reload_saved();s.click_cell("A1");s.key("ctrl-pagedown");check(&mut s,1);
+    check(&mut s,1);s.save_as("xsc55-new-dynamic-one.xlsx");s.reload_saved();s.click_cell("A1");check(&mut s,1);
     s.click_cell("A1");s.enter("3","enter");check(&mut s,3);s.key("cmd-z");check(&mut s,1);s.key("cmd-shift-z");check(&mut s,3);
     s.save_as("xsc55-new-dynamic-three.xlsx");let p=s.reopen();let sh=sheet_of_slide(&p.slides[1]).unwrap();assert!(!sh.spills.contains_key(&(1,1)));for(c,f)in[(5,"SEQUENCE(A1)"),(7,"F10#*2")] {assert!(sh.spills.contains_key(&(9,c)));assert_eq!(sh.cell(9,c).unwrap().formula.as_deref(),Some(f));for r in 0..3 {assert_eq!(sh.cell(r+9,c).unwrap().value,CellValue::Number(((r+1)*if c==5{1}else{2})as f64));}}
 }
@@ -12094,13 +12141,13 @@ fn xsc55_composite_formula_literal() {
     let check_literal=|s:&mut Scenario| {assert_eq!(s.value("B2"),CellValue::Number(42.));assert_eq!(s.shown("D3"),"#REF!");s.with(|e,_|{let sh=sheet_of_slide(e.slide()).unwrap();assert!(!sh.spills.contains_key(&(1,1)));assert!(sh.cell(1,1).unwrap().formula.is_none());});};
     check_formula(&mut s,1.); s.click_cell("B2"); s.enter("=SEQUENCE(A1)*3","enter"); check_formula(&mut s,3.);
     s.key("cmd-z"); check_formula(&mut s,1.); s.key("cmd-shift-z"); check_formula(&mut s,3.);
-    s.save_as("xsc55-composite-rewritten.xlsx"); s.reload_saved(); s.click_cell("A1"); s.key("ctrl-pagedown"); check_formula(&mut s,3.);
+    s.save_as("xsc55-composite-rewritten.xlsx"); s.reload_saved(); s.click_cell("A1"); check_formula(&mut s,3.);
     s.click_cell("B2"); s.enter("42","enter"); check_literal(&mut s); s.key("cmd-z"); check_formula(&mut s,3.); s.key("cmd-shift-z"); check_literal(&mut s);
-    s.save_as("xsc55-composite-literal.xlsx"); s.reload_saved(); s.click_cell("A1"); s.key("ctrl-pagedown"); check_literal(&mut s);
+    s.save_as("xsc55-composite-literal.xlsx"); s.reload_saved(); s.click_cell("A1"); check_literal(&mut s);
     s.click_cell("B2"); s.enter("=SEQUENCE(A1)*5","enter"); check_formula(&mut s,5.); s.key("cmd-z"); check_literal(&mut s); s.key("cmd-shift-z"); check_formula(&mut s,5.);
-    s.save_as("xsc55-composite-reactivated.xlsx"); s.reload_saved(); s.click_cell("A1"); s.key("ctrl-pagedown"); check_formula(&mut s,5.);
+    s.save_as("xsc55-composite-reactivated.xlsx"); s.reload_saved(); s.click_cell("A1"); check_formula(&mut s,5.);
     s.click_cell("A1");s.enter("3","enter");assert_eq!(s.value("B4"),CellValue::Number(15.));
-    s.save_as("xsc55-composite-reactivated-grown.xlsx");s.reload_saved();s.click_cell("A1");s.key("ctrl-pagedown");assert_eq!(s.value("B4"),CellValue::Number(15.));
+    s.save_as("xsc55-composite-reactivated-grown.xlsx");s.reload_saved();s.click_cell("A1");assert_eq!(s.value("B4"),CellValue::Number(15.));
 }
 
 fn xsc55_compatibility_whitespace() {
@@ -12122,9 +12169,9 @@ fn xsc39_aggregate_count_options() {
     check(&mut s,false,false);s.save_as("xsc39-aggregate-count-shown.xlsx");
     s.click_cell("A2");s.key("ctrl-9");check(&mut s,true,false);s.key("cmd-z");check(&mut s,false,false);s.key("cmd-shift-z");check(&mut s,true,false);
     s.click_cell("A8");s.key("ctrl-9");check(&mut s,true,true);s.key("cmd-z");check(&mut s,true,false);s.key("cmd-shift-z");check(&mut s,true,true);
-    s.save_as("xsc39-aggregate-count-hidden.xlsx");s.reload_saved();s.click_cell("A1");s.key("ctrl-pagedown");check(&mut s,true,true);
+    s.save_as("xsc39-aggregate-count-hidden.xlsx");s.reload_saved();s.click_cell("A1");check(&mut s,true,true);
     s.click_cell("A1");for _ in 0..7 {s.key("shift-down");}s.key("ctrl-shift-9");check(&mut s,false,false);s.key("cmd-z");check(&mut s,true,true);s.key("cmd-shift-z");check(&mut s,false,false);
-    s.save_as("xsc39-aggregate-count-restored.xlsx");s.reload_saved();s.click_cell("A1");s.key("ctrl-pagedown");check(&mut s,false,false);
+    s.save_as("xsc39-aggregate-count-restored.xlsx");s.reload_saved();s.click_cell("A1");check(&mut s,false,false);
 }
 
 fn xsc25_conditional_cell_is() {
@@ -12137,19 +12184,19 @@ fn xsc25_conditional_cell_is() {
         let expected=cf_model(&mut s);assert_eq!(expected.len(),1);assert_eq!(expected[0].rules[0].kind,ibis_doc_model::CfKind::CellIs {operator:op.into(),formulas:if i>=6 {vec!["15".into(),"20".into()]}else{vec!["15".into()]}});assert_eq!(expected[0].rules[0].priority,1);assert_eq!(expected[0].rules[0].stop,i%2==0);
         for(row,hold)in holds.into_iter().enumerate(){if hold {cf_drawn(&mut s,row as u32,0xFFC7CE);}else{s.with(|e,_|{let(sh,_)=super::conditional::apply(sheet_of_slide(e.slide()).unwrap()).unwrap();let c=sh.cell(row as u32,0).unwrap();assert_ne!(sh.styles[c.style as usize].fill,Some(ibis_doc_model::Rgb(0xFFC7CE)));});}}
         s.click_cell("A1");s.key("cmd-z");assert_eq!(cf_model(&mut s),previous);s.key("cmd-shift-z");assert_eq!(cf_model(&mut s),expected);
-        s.save_as(&format!("xsc25-cellis-{op}.xlsx"));s.reload_saved();s.click_cell("A1");s.key("ctrl-pagedown");assert_eq!(cf_model(&mut s),expected);
+        s.save_as(&format!("xsc25-cellis-{op}.xlsx"));s.reload_saved();s.click_cell("A1");assert_eq!(cf_model(&mut s),expected);
     }
     s.menu("xlsx.conditional");cf_click(&mut s,"edit-0");cf_field(&mut s,"formula","10");cf_field(&mut s,"formula2","22");cf_field(&mut s,"fill","FFFF00");cf_field(&mut s,"range","A2:A3");cf_click(&mut s,"apply");let edited=cf_model(&mut s);assert_eq!(edited[0].ranges[0].first_row,1);cf_drawn(&mut s,2,0xFFFF00);
-    s.click_cell("A1");s.key("cmd-z");assert_eq!(cf_model(&mut s)[0].ranges[0].first_row,0);s.key("cmd-shift-z");assert_eq!(cf_model(&mut s),edited);s.save_as("xsc25-cellis-edited.xlsx");s.reload_saved();s.click_cell("A1");s.key("ctrl-pagedown");assert_eq!(cf_model(&mut s),edited);
-    s.click_cell("A2");s.key("shift-down");s.menu("xlsx.conditional");cf_click(&mut s,"clear");assert!(cf_model(&mut s).is_empty());s.click_cell("A2");s.key("cmd-z");assert_eq!(cf_model(&mut s),edited);s.key("cmd-shift-z");assert!(cf_model(&mut s).is_empty());s.save_as("xsc25-cellis-deleted.xlsx");s.reload_saved();s.click_cell("A1");s.key("ctrl-pagedown");assert!(cf_model(&mut s).is_empty());
+    s.click_cell("A1");s.key("cmd-z");assert_eq!(cf_model(&mut s)[0].ranges[0].first_row,0);s.key("cmd-shift-z");assert_eq!(cf_model(&mut s),edited);s.save_as("xsc25-cellis-edited.xlsx");s.reload_saved();s.click_cell("A1");assert_eq!(cf_model(&mut s),edited);
+    s.click_cell("A2");s.key("shift-down");s.menu("xlsx.conditional");cf_click(&mut s,"clear");assert!(cf_model(&mut s).is_empty());s.click_cell("A2");s.key("cmd-z");assert_eq!(cf_model(&mut s),edited);s.key("cmd-shift-z");assert!(cf_model(&mut s).is_empty());s.save_as("xsc25-cellis-deleted.xlsx");s.reload_saved();s.click_cell("A1");assert!(cf_model(&mut s).is_empty());
 }
 
 fn xsc25_conditional_opaque_edit() {
     let mut s=Scenario::open("test/editing/xlsx-conditional-opaque.xlsx");s.click_cell("A1");s.key("ctrl-pagedown");let old=cf_model(&mut s);assert_eq!(old.len(),1);cf_drawn(&mut s,1,0xFFC7CE);cf_drawn(&mut s,2,0xFFC7CE);
     s.menu("xlsx.conditional");cf_click(&mut s,"edit-0");cf_choose_kind(&mut s,"conditional.greater-equal");cf_field(&mut s,"formula","20");cf_field(&mut s,"range","A2:A3");cf_click(&mut s,"stop");cf_click(&mut s,"apply");let edited=cf_model(&mut s);assert_eq!(edited[0].rules[0].kind,ibis_doc_model::CfKind::CellIs {operator:"greaterThanOrEqual".into(),formulas:vec!["20".into()]});assert_eq!(edited[0].rules[0].style,old[0].rules[0].style);assert_eq!(edited[0].source_index,old[0].source_index);assert_eq!(edited[0].ranges[0].first_row,1);assert!(edited[0].rules[0].stop);cf_drawn(&mut s,2,0xFFC7CE);
     s.click_cell("A1");s.key("cmd-z");assert_eq!(cf_model(&mut s),old);s.key("cmd-shift-z");assert_eq!(cf_model(&mut s),edited);
-    s.save_as("xsc25-opaque-edited.xlsx");s.reload_saved();s.click_cell("A1");s.key("ctrl-pagedown");assert_eq!(cf_model(&mut s),edited);cf_drawn(&mut s,2,0xFFC7CE);
-    s.menu("xlsx.conditional");cf_click(&mut s,"edit-0");cf_field(&mut s,"fill","00B050");cf_click(&mut s,"apply");let colored=cf_model(&mut s);assert_eq!(colored[0].rules[0].style.as_ref().unwrap().fill,Some(ibis_doc_model::Rgb(0x00B050)));cf_drawn(&mut s,2,0x00B050);s.click_cell("A1");s.key("cmd-z");assert_eq!(cf_model(&mut s),edited);s.key("cmd-shift-z");assert_eq!(cf_model(&mut s),colored);s.save_as("xsc25-opaque-colored.xlsx");s.reload_saved();s.click_cell("A1");s.key("ctrl-pagedown");assert_eq!(cf_model(&mut s),colored);cf_drawn(&mut s,2,0x00B050);
+    s.save_as("xsc25-opaque-edited.xlsx");s.reload_saved();s.click_cell("A1");assert_eq!(cf_model(&mut s),edited);cf_drawn(&mut s,2,0xFFC7CE);
+    s.menu("xlsx.conditional");cf_click(&mut s,"edit-0");cf_field(&mut s,"fill","00B050");cf_click(&mut s,"apply");let colored=cf_model(&mut s);assert_eq!(colored[0].rules[0].style.as_ref().unwrap().fill,Some(ibis_doc_model::Rgb(0x00B050)));cf_drawn(&mut s,2,0x00B050);s.click_cell("A1");s.key("cmd-z");assert_eq!(cf_model(&mut s),edited);s.key("cmd-shift-z");assert_eq!(cf_model(&mut s),colored);s.save_as("xsc25-opaque-colored.xlsx");s.reload_saved();s.click_cell("A1");assert_eq!(cf_model(&mut s),colored);cf_drawn(&mut s,2,0x00B050);
 }
 
 fn xsc05_cell_comments() {
@@ -12159,7 +12206,7 @@ fn xsc05_cell_comments() {
     let slide = s.with(|e, _| e.slide().id);
     s.update(|e, _, _| {
         e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment {
-            slide,
+            sheet: slide,
             row: 1,
             column: 1,
             comment: Some(ibis_doc_model::SheetComment {
@@ -12714,7 +12761,7 @@ fn cell018_goto_special() {
     close_modal_panel(&mut s);
 
     // Insert a shape, then select objects: shape is selected.
-    s.menu("xlsx.shape.rect");
+    s.menu("shape.rect"); s.place_armed();
     assert!(s.with(|e, _| e.selected_sheet_shape()).is_some());
     s.click_cell("A1");
     s.menu("xlsx.goto-special");
@@ -13563,8 +13610,8 @@ fn valid012_paste_and_recalc_bypass() {
 fn sec009_notes() {
     let mut s = new_sheet();
     s.click_cell("B2");
-    assert!(s.menu_state("xlsx.note-new").is_some_and(|m| m.0));
-    s.menu("xlsx.note-new");
+    assert!(s.menu_state("xlsx.new-note").is_some_and(|m| m.0));
+    s.menu("xlsx.new-note");
     s.type_text("Check this");
     s.key("escape");
     let note = |s: &mut Scenario, r: u32, c: u32| s.with(move |e, _| e.current_sheet().and_then(|(_, sh)| sh.comment_at(r, c).map(|n| (n.author.clone(), n.text.clone()))));
@@ -13581,7 +13628,7 @@ fn sec009_notes() {
     s.key("escape");
     assert_eq!(note(&mut s, 1, 1).map(|n| n.1).as_deref(), Some("Checked"));
     s.click_cell("C3");
-    s.menu("xlsx.note-new");
+    s.menu("xlsx.new-note");
     s.type_text("Second");
     s.key("escape");
     let saved = s.save_as("sec009.xlsx");
@@ -13613,7 +13660,7 @@ fn sec009_notes() {
     // shapes as they were), one shape added.
     let first = vml.split("<v:shape ").nth(1).map(|x| x.split('"').nth(1).unwrap_or("").to_string()).unwrap_or_default();
     s.update(|e, window, cx| e.go_to_reference("D4", window, cx));
-    s.menu("xlsx.note-new");
+    s.menu("xlsx.new-note");
     s.type_text("Third");
     s.key("escape");
     let saved3 = s.save_as("sec009-three.xlsx");
@@ -14941,14 +14988,14 @@ fn formula016_calculation_options() {
     assert_eq!(s.value("B1"), CellValue::Number(20.0));
 
     // Verify initial calculation mode is Auto (checked and disabled)
-    assert_eq!(s.menu_state("xlsx.calc-auto"), Some((false, true)));
-    assert_eq!(s.menu_state("xlsx.calc-manual"), Some((true, false)));
-    assert_eq!(s.menu_state("xlsx.calc-auto-no-table"), Some((true, false)));
+    assert_eq!(s.menu_state("xlsx.calculate-auto"), Some((false, true)));
+    assert_eq!(s.menu_state("xlsx.calculate-manual"), Some((true, false)));
+    assert_eq!(s.menu_state("xlsx.calculate-auto-no-table"), Some((true, false)));
 
     // Switch to Manual mode via menu
-    s.menu("xlsx.calc-manual");
-    assert_eq!(s.menu_state("xlsx.calc-manual"), Some((false, true)));
-    assert_eq!(s.menu_state("xlsx.calc-auto"), Some((true, false)));
+    s.menu("xlsx.calculate-manual");
+    assert_eq!(s.menu_state("xlsx.calculate-manual"), Some((false, true)));
+    assert_eq!(s.menu_state("xlsx.calculate-auto"), Some((true, false)));
 
     // Edit A1 = 50: B1 must NOT recalculate in Manual mode
     s.click_cell("A1");
@@ -14978,8 +15025,8 @@ fn formula016_calculation_options() {
     assert_eq!(s.value("B1"), CellValue::Number(140.0));
 
     // Switch to AutoNoTable
-    s.menu("xlsx.calc-auto-no-table");
-    assert_eq!(s.menu_state("xlsx.calc-auto-no-table"), Some((false, true)));
+    s.menu("xlsx.calculate-auto-no-table");
+    assert_eq!(s.menu_state("xlsx.calculate-auto-no-table"), Some((false, true)));
 
     // In AutoNoTable, regular formulas auto-calculate
     s.click_cell("A1");
@@ -14987,8 +15034,8 @@ fn formula016_calculation_options() {
     assert_eq!(s.value("B1"), CellValue::Number(10.0));
 
     // Switch back to Auto
-    s.menu("xlsx.calc-auto");
-    assert_eq!(s.menu_state("xlsx.calc-auto"), Some((false, true)));
+    s.menu("xlsx.calculate-auto");
+    assert_eq!(s.menu_state("xlsx.calculate-auto"), Some((false, true)));
 
     // Save and reopen in Auto mode
     s.save_as("formula016-calc-mode-auto.xlsx");
@@ -14996,7 +15043,7 @@ fn formula016_calculation_options() {
     assert_eq!(p.workbook.as_deref().unwrap().calc_mode, ibis_doc_model::CalcMode::Auto);
 
     // Switch to Manual and save
-    s.menu("xlsx.calc-manual");
+    s.menu("xlsx.calculate-manual");
     s.save_as("formula016-calc-mode-manual.xlsx");
     let p2 = s.reopen();
     assert_eq!(p2.workbook.as_deref().unwrap().calc_mode, ibis_doc_model::CalcMode::Manual);
@@ -15613,10 +15660,10 @@ fn pivot009_group_and_ungroup() {
     s.screenshot("pivot009_grouped");
     let saved = s.save_as("pivot009.xlsx");
     let data = std::fs::read(&saved).unwrap();
-    let cache = ibis_pptx::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition1.xml").expect("cache xml");
+    let cache = ibis_formats::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition1.xml").expect("cache xml");
     assert!(cache.contains("<fieldGroup") && cache.contains(r#"<rangePr groupBy="months" startDate="2026-01-05T00:00:00" endDate="2026-12-22T00:00:00""#), "cache has fieldGroup rangePr with startDate/endDate: {cache}");
     assert!(cache.contains(r#"<groupItems count="14">"#), "cache has groupItems count=14: {cache}");
-    let table = ibis_pptx::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("table xml");
+    let table = ibis_formats::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("table xml");
     assert!(table.contains(r#"<items count="15">"#), "table has 14 group items + 1 default subtotal: {table}");
 
     let reopened = s.reopen();
@@ -15707,7 +15754,7 @@ fn pivot010_options() {
     s.screenshot("pivot010_options");
     let saved = s.save_as("pivot010.xlsx");
     let data = std::fs::read(&saved).unwrap();
-    let pivot_xml = ibis_pptx::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("pivot table xml");
+    let pivot_xml = ibis_formats::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("pivot table xml");
     assert!(pivot_xml.contains(r#"name="売上サマリー""#), "xml has name: {pivot_xml}");
     assert!(pivot_xml.contains(r#"mergeItem="1""#), "xml has mergeItem: {pivot_xml}");
     assert!(pivot_xml.contains(r#"applyWidthHeightFormats="0""#), "xml has applyWidthHeightFormats 0: {pivot_xml}");
@@ -16051,11 +16098,11 @@ fn pivot012_calculated_item() {
     s.screenshot("pivot012_calculated_item");
     let saved = s.save_as("pivot012_calculated_item.xlsx");
     let data = std::fs::read(&saved).unwrap();
-    let cache = ibis_pptx::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition1.xml").expect("cache xml");
+    let cache = ibis_formats::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition1.xml").expect("cache xml");
     assert!(cache.contains(r#"<s v="北日本" f="1"/>"#), "cache sharedItems has calculated item with f=1: {cache}");
     assert!(cache.contains(r#"<calculatedItem field="2" formula="北海道"><pivotArea field="2""#), "cache has ECMA-376 calculatedItem with pivotArea: {cache}");
     assert!(!cache.contains(r#"<calculatedItem field="2" name="#), "calculatedItem does not emit non-standard name attribute: {cache}");
-    let table = ibis_pptx::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("table xml");
+    let table = ibis_formats::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("table xml");
     assert!(table.contains(r#"<items count="7">"#), "table has 5 base items + 1 calculated item + 1 default subtotal: {table}");
 
     let reopened = s.reopen();
@@ -16322,7 +16369,7 @@ fn pivot001_table_source() {
     s.screenshot("pivot001_table_source");
     let saved = s.save_as("pivot001_table_source.xlsx");
     let data = std::fs::read(&saved).unwrap();
-    let cache_xml = ibis_pptx::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition2.xml").expect("pivot cache xml exists");
+    let cache_xml = ibis_formats::test_files::part_text(&data, "xl/pivotCache/pivotCacheDefinition2.xml").expect("pivot cache xml exists");
     assert!(cache_xml.contains(r#"name="テーブル1""#), "cache xml has table name: {cache_xml}");
     assert!(!cache_xml.contains(r#"ref=""#), "cache xml has no ref attribute when name is set: {cache_xml}");
 
@@ -16409,7 +16456,7 @@ fn cell003_long_numbers_precision() {
     // 保存ファイルの XML 検証
     let data = std::fs::read(&path).unwrap();
     let has_rounded = (1..=10).any(|i| {
-        ibis_pptx::test_files::part_text(&data, &format!("xl/worksheets/sheet{i}.xml"))
+        ibis_formats::test_files::part_text(&data, &format!("xl/worksheets/sheet{i}.xml"))
             .is_some_and(|xml| xml.contains("9876543210987650"))
     });
     assert!(has_rounded, "saved sheet XML contains 15-digit rounded number 9876543210987650");
@@ -16499,7 +16546,7 @@ fn pivot010_options_and_field_settings() {
     s.screenshot("pivot010_field_settings");
     let saved = s.save_as("pivot010_field_settings.xlsx");
     let data = std::fs::read(&saved).unwrap();
-    let pivot_xml = ibis_pptx::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("pivot table xml exists");
+    let pivot_xml = ibis_formats::test_files::part_text(&data, "xl/pivotTables/pivotTable1.xml").expect("pivot table xml exists");
     assert!(pivot_xml.contains(r#"grandTotalCaption="総合計""#), "XML contains grandTotalCaption: {pivot_xml}");
     assert!(pivot_xml.contains(r#"rowHeaderCaption="区分""#), "XML contains rowHeaderCaption: {pivot_xml}");
     assert!(pivot_xml.contains(r#"defaultSubtotal="0""#), "XML contains defaultSubtotal=0: {pivot_xml}");
@@ -16612,12 +16659,12 @@ fn format016_theme_palette_and_colors() {
     s.update(|e, _, cx| {
         e.run_sheet(vec![
             ibis_doc_model::Command::Sheet(ibis_doc_model::sheet_command::SheetCommand::SetFormat {
-                slide,
+                sheet: slide,
                 ranges: vec![r1],
                 change: ibis_doc_model::sheet_command::StyleChange::FillTheme(orig_accent1, ThemeColor { index: 4, tint: 0 }),
             }),
             ibis_doc_model::Command::Sheet(ibis_doc_model::sheet_command::SheetCommand::SetFormat {
-                slide,
+                sheet: slide,
                 ranges: vec![r2],
                 change: ibis_doc_model::sheet_command::StyleChange::ColorTheme(orig_accent2, ThemeColor { index: 5, tint: 0 }),
             }),
@@ -16786,7 +16833,7 @@ fn cf012_databar_negative_and_axis() {
     };
     s.update(|e, _, cx| {
         e.document.execute(vec![
-            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { slide: slide_id, format: custom_databar_format }),
+            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { sheet: slide_id, format: custom_databar_format }),
         ]).unwrap();
         cx.notify();
     });
@@ -16910,7 +16957,7 @@ fn cf010_icon_sets_shapes_and_custom() {
     };
     s.update(|e, _, cx| {
         e.document.execute(vec![
-            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { slide: slide_id, format: custom_icon_format }),
+            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { sheet: slide_id, format: custom_icon_format }),
         ]).unwrap();
         cx.notify();
     });
@@ -16983,7 +17030,7 @@ fn table011_icon_filter_and_sort() {
     };
     s.update(|e, _, cx| {
         e.document.execute(vec![
-            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { slide: slide_id, format: icon_format }),
+            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::AddConditional { sheet: slide_id, format: icon_format }),
         ]).unwrap();
         cx.notify();
     });
@@ -17029,8 +17076,8 @@ fn table011_icon_filter_and_sort() {
     let range = ibis_doc_model::CellRange { first_row: 0, last_row: 5, first_column: 0, last_column: 0 };
     s.update(|e, _, cx| {
         e.document.execute(vec![
-            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SortBy {
-                slide: slide_id,
+            ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SortByKeys {
+                sheet: slide_id,
                 range,
                 keys: vec![(0, ibis_doc_model::sheet_command::SortBy::Icon {
                     icon_set: "3TrafficLights1".into(),
@@ -17133,11 +17180,11 @@ fn view016_custom_views_register_show_delete_and_table_exclusion() {
     s.update(|e, _, cx| {
         let slide = e.current_slide;
         e.run_sheet(vec![
-            Command::Sheet(ibis_doc_model::SheetCommand::SetZoom { slide, zoom: Some(150) }),
-            Command::Sheet(ibis_doc_model::SheetCommand::SetGridLines { slide, shown: false }),
-            Command::Sheet(ibis_doc_model::SheetCommand::SetHeadings { slide, shown: false }),
-            Command::Sheet(ibis_doc_model::SheetCommand::Hide {
-                slide,
+            Command::Sheet(ibis_doc_model::SheetCommand::SetZoom { sheet: slide, zoom: Some(150) }),
+            Command::Sheet(ibis_doc_model::SheetCommand::SetGridLines { sheet: slide, shown: false }),
+            Command::Sheet(ibis_doc_model::SheetCommand::SetHeadings { sheet: slide, shown: false }),
+            Command::Sheet(ibis_doc_model::SheetCommand::SetHidden {
+                sheet: slide,
                 axis: ibis_doc_model::sheet_command::Axis::Rows,
                 first: 2,
                 last: 2,
@@ -17239,7 +17286,7 @@ fn view016_custom_views_register_show_delete_and_table_exclusion() {
             totals: Vec::new(),
         };
         e.run_sheet(vec![Command::Sheet(ibis_doc_model::SheetCommand::SetTable {
-            slide,
+            sheet: slide,
             index: 0,
             table: Some(table),
             cells: Vec::new(),
@@ -17999,7 +18046,7 @@ fn chedit021_chart_templates() {
     // Read and verify .crtx is a valid OPC package
     let crtx_bytes = std::fs::read(&tmpl_path).expect("read saved crtx");
     assert_eq!(&crtx_bytes[..2], b"PK", "crtx must be zip");
-    let loaded_chart = ibis_pptx::read_crtx(&crtx_bytes).expect("read_crtx succeeds");
+    let loaded_chart = ibis_formats::read_crtx(&crtx_bytes).expect("read_crtx succeeds");
     assert_eq!(loaded_chart.groups[0].kind, orig_chart.groups[0].kind);
 
     // 3. Mutate target chart: change style
@@ -18108,7 +18155,7 @@ fn chtype022_radar_chart_styles_and_rendering() {
 
     let xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:radarChart><c:radarStyle val="standard"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>S1</c:v></c:tx><c:cat><c:strLit><c:ptCount val="3"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt><c:pt idx="2"><c:v>C</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt><c:pt idx="2"><c:v>30</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="111"/><c:axId val="222"/></c:radarChart><c:catAx><c:axId val="111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="222"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="111"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend></c:chart></c:chartSpace>"#;
     let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
-    let bytes = ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
+    let bytes = ibis_formats::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
     std::fs::write(&source, bytes).unwrap();
 
     let mut s = Scenario::open("target/scenario-input/chtype022-radar.xlsx");
@@ -18181,7 +18228,7 @@ fn chtype011_of_pie_chart_styles_and_rendering() {
 
     let xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:ofPieChart><c:ofPieType val="pie"/><c:splitType val="pos"/><c:splitPos val="2"/><c:secondPieSize val="75"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>S1</c:v></c:tx><c:cat><c:strLit><c:ptCount val="4"/><c:pt idx="0"><c:v>A</c:v></c:pt><c:pt idx="1"><c:v>B</c:v></c:pt><c:pt idx="2"><c:v>C</c:v></c:pt><c:pt idx="3"><c:v>D</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="4"/><c:pt idx="0"><c:v>40</c:v></c:pt><c:pt idx="1"><c:v>30</c:v></c:pt><c:pt idx="2"><c:v>20</c:v></c:pt><c:pt idx="3"><c:v>10</c:v></c:pt></c:numLit></c:val></c:ser></c:ofPieChart></c:plotArea><c:legend><c:legendPos val="r"/><c:overlay val="0"/></c:legend></c:chart></c:chartSpace>"#;
     let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
-    let bytes = ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
+    let bytes = ibis_formats::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
     std::fs::write(&source, bytes).unwrap();
 
     let mut s = Scenario::open("target/scenario-input/chtype011-of-pie.xlsx");
@@ -18268,7 +18315,7 @@ fn chtype018_stock_chart_hlc_and_ohlc() {
 
     let xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:stockChart><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>高値</c:v></c:tx><c:cat><c:strLit><c:ptCount val="2"/><c:pt idx="0"><c:v>日1</c:v></c:pt><c:pt idx="1"><c:v>日2</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>30</c:v></c:pt><c:pt idx="1"><c:v>35</c:v></c:pt></c:numLit></c:val></c:ser><c:ser><c:idx val="1"/><c:order val="1"/><c:tx><c:v>安値</c:v></c:tx><c:cat><c:strLit><c:ptCount val="2"/><c:pt idx="0"><c:v>日1</c:v></c:pt><c:pt idx="1"><c:v>日2</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>20</c:v></c:pt><c:pt idx="1"><c:v>22</c:v></c:pt></c:numLit></c:val></c:ser><c:ser><c:idx val="2"/><c:order val="2"/><c:tx><c:v>終値</c:v></c:tx><c:cat><c:strLit><c:ptCount val="2"/><c:pt idx="0"><c:v>日1</c:v></c:pt><c:pt idx="1"><c:v>日2</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>25</c:v></c:pt><c:pt idx="1"><c:v>31</c:v></c:pt></c:numLit></c:val></c:ser><c:hiLowLines/><c:axId val="100000001"/><c:axId val="100000002"/></c:stockChart><c:catAx><c:axId val="100000001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="100000002"/></c:catAx><c:valAx><c:axId val="100000002"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:crossAx val="100000001"/></c:valAx></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend></c:chart></c:chartSpace>"#;
     let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
-    let bytes = ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
+    let bytes = ibis_formats::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
     std::fs::write(&source, bytes).unwrap();
 
     let mut s = Scenario::open("target/scenario-input/chtype018-stock.xlsx");
@@ -18369,7 +18416,7 @@ fn chtype020_stock_chart_volume_vhlc_and_vohlc() {
 
     let xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>出来高</c:v></c:tx><c:cat><c:strLit><c:ptCount val="2"/><c:pt idx="0"><c:v>日1</c:v></c:pt><c:pt idx="1"><c:v>日2</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>1000</c:v></c:pt><c:pt idx="1"><c:v>1500</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="100000001"/><c:axId val="100000002"/></c:barChart><c:stockChart><c:ser><c:idx val="1"/><c:order val="1"/><c:tx><c:v>高値</c:v></c:tx><c:cat><c:strLit><c:ptCount val="2"/><c:pt idx="0"><c:v>日1</c:v></c:pt><c:pt idx="1"><c:v>日2</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>30</c:v></c:pt><c:pt idx="1"><c:v>35</c:v></c:pt></c:numLit></c:val></c:ser><c:ser><c:idx val="2"/><c:order val="2"/><c:tx><c:v>安値</c:v></c:tx><c:cat><c:strLit><c:ptCount val="2"/><c:pt idx="0"><c:v>日1</c:v></c:pt><c:pt idx="1"><c:v>日2</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>20</c:v></c:pt><c:pt idx="1"><c:v>22</c:v></c:pt></c:numLit></c:val></c:ser><c:ser><c:idx val="3"/><c:order val="3"/><c:tx><c:v>終値</c:v></c:tx><c:cat><c:strLit><c:ptCount val="2"/><c:pt idx="0"><c:v>日1</c:v></c:pt><c:pt idx="1"><c:v>日2</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="2"/><c:pt idx="0"><c:v>25</c:v></c:pt><c:pt idx="1"><c:v>31</c:v></c:pt></c:numLit></c:val></c:ser><c:hiLowLines/><c:axId val="100000001"/><c:axId val="100000003"/></c:stockChart><c:catAx><c:axId val="100000001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="100000002"/></c:catAx><c:valAx><c:axId val="100000002"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:crossAx val="100000001"/></c:valAx><c:valAx><c:axId val="100000003"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="r"/><c:crossAx val="100000001"/><c:crosses val="max"/></c:valAx></c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend></c:chart></c:chartSpace>"#;
     let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
-    let bytes = ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
+    let bytes = ibis_formats::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
     std::fs::write(&source, bytes).unwrap();
 
     let mut s = Scenario::open("target/scenario-input/chtype020-volume-stock.xlsx");
@@ -18485,7 +18532,7 @@ fn chtype021_surface_and_contour_charts() {
 
     let xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:surface3DChart><c:wireframe val="0"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>系列1</c:v></c:tx><c:cat><c:strLit><c:ptCount val="3"/><c:pt idx="0"><c:v>X1</c:v></c:pt><c:pt idx="1"><c:v>X2</c:v></c:pt><c:pt idx="2"><c:v>X3</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt><c:pt idx="2"><c:v>15</c:v></c:pt></c:numLit></c:val></c:ser><c:ser><c:idx val="1"/><c:order val="1"/><c:tx><c:v>系列2</c:v></c:tx><c:cat><c:strLit><c:ptCount val="3"/><c:pt idx="0"><c:v>X1</c:v></c:pt><c:pt idx="1"><c:v>X2</c:v></c:pt><c:pt idx="2"><c:v>X3</c:v></c:pt></c:strLit></c:cat><c:val><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val="3"/><c:pt idx="0"><c:v>30</c:v></c:pt><c:pt idx="1"><c:v>25</c:v></c:pt><c:pt idx="2"><c:v>35</c:v></c:pt></c:numLit></c:val></c:ser><c:axId val="111"/><c:axId val="222"/><c:axId val="333"/></c:surface3DChart><c:catAx><c:axId val="111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="222"/></c:catAx><c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:crossAx val="111"/></c:valAx><c:serAx><c:axId val="333"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="222"/></c:serAx></c:plotArea><c:legend><c:legendPos val="r"/><c:overlay val="0"/></c:legend></c:chart></c:chartSpace>"#;
     let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
-    let bytes = ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
+    let bytes = ibis_formats::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", xml);
     std::fs::write(&source, bytes).unwrap();
 
     let mut s = Scenario::open("target/scenario-input/chtype021-surface-scenario.xlsx");
@@ -18889,7 +18936,7 @@ fn view011_new_window_for_same_workbook() {
             input: ibis_doc_model::CellInput::Value(CellValue::Text("FromWin2".into())),
         }];
         e.document.execute(vec![ibis_doc_model::Command::Sheet(
-            ibis_doc_model::SheetCommand::SetCells { slide, edits }
+            ibis_doc_model::SheetCommand::SetCells { sheet: slide, edits }
         )]).unwrap();
         e.sync_peers(cx);
         cx.notify();
@@ -18935,7 +18982,7 @@ fn view013_view_side_by_side_and_sync_scrolling() {
     let mut s = new_sheet();
 
     // 1. Initial menu state with 1 window
-    assert_eq!(s.menu_state("xlsx.view-side-by-side"), Some((true, false)));
+    assert_eq!(s.menu_state("view.side-by-side"), Some((true, false)));
     assert_eq!(s.menu_state("xlsx.sync-scrolling"), Some((false, false)));
     assert_eq!(s.menu_state("xlsx.reset-window-position"), Some((false, false)));
 
@@ -18953,7 +19000,7 @@ fn view013_view_side_by_side_and_sync_scrolling() {
     });
 
     // 3. Activate View Side by Side via menu
-    s.menu("xlsx.view-side-by-side");
+    s.menu("view.side-by-side");
     s.settle();
 
     // Verify both windows are in side-by-side mode with sync scrolling ON
@@ -18963,7 +19010,7 @@ fn view013_view_side_by_side_and_sync_scrolling() {
     assert!(s.with(|_, app| ed1.read(app).sync_scrolling));
 
     // Verify menu items updated
-    assert_eq!(s.menu_state("xlsx.view-side-by-side"), Some((true, true)));
+    assert_eq!(s.menu_state("view.side-by-side"), Some((true, true)));
     assert_eq!(s.menu_state("xlsx.sync-scrolling"), Some((true, true)));
     assert_eq!(s.menu_state("xlsx.reset-window-position"), Some((true, false)));
 
@@ -19036,19 +19083,19 @@ fn view013_view_side_by_side_and_sync_scrolling() {
     s.settle();
 
     // 7. Deactivate View Side by Side via menu
-    s.menu("xlsx.view-side-by-side");
+    s.menu("view.side-by-side");
     s.settle();
 
     assert!(!s.with(|e, _| e.side_by_side));
     assert!(!s.with(|e, _| e.sync_scrolling));
     assert!(!s.with(|_, app| ed1.read(app).side_by_side));
     assert!(!s.with(|_, app| ed1.read(app).sync_scrolling));
-    assert_eq!(s.menu_state("xlsx.view-side-by-side"), Some((true, false)));
+    assert_eq!(s.menu_state("view.side-by-side"), Some((true, false)));
     assert_eq!(s.menu_state("xlsx.sync-scrolling"), Some((false, false)));
     assert_eq!(s.menu_state("xlsx.reset-window-position"), Some((false, false)));
 
     // 8. Re-enable side-by-side, then close peer window -> cleans up side-by-side on window 0
-    s.menu("xlsx.view-side-by-side");
+    s.menu("view.side-by-side");
     s.settle();
     assert!(s.with(|e, _| e.side_by_side));
 
@@ -19072,7 +19119,7 @@ fn file013_compatibility_check() {
     let mut s = new_sheet();
 
     // 1. 初期状態（クリーンな新規ブック）での互換性チェック
-    s.menu("xlsx.compatibility-check");
+    s.menu("review.compatibility-check");
     s.settle();
 
     assert!(s.with(|e, _| e.wb().panels.compatibility.is_some()), "compatibility panel opened");
@@ -19157,7 +19204,7 @@ fn file013_compatibility_check() {
     s.settle();
 
     // 3. 互換性チェック パネルを開いて再検査
-    s.menu("xlsx.compatibility-check");
+    s.menu("review.compatibility-check");
     s.settle();
 
     let report = s.with(|e, _| e.wb().panels.compatibility.as_ref().unwrap().report.clone());
@@ -19389,7 +19436,7 @@ fn file019_backup_and_save_location() {
 
     // 5. バックアップファイルの内容を検証（上書き前の初版データが保持されていること）
     let backup_loaded = crate::read_file(&backup_file).expect("backup file can be read as workbook");
-    assert_eq!(ibis_pptx::Kind::of(&backup_loaded.presentation), ibis_pptx::Kind::Workbook, "backup file is valid workbook");
+    assert_eq!(ibis_formats::Kind::of(&backup_loaded.presentation), ibis_formats::Kind::Workbook, "backup file is valid workbook");
 
     // 6. 手動バックアップ作成ボタンをテスト
     s.update(|e, _, cx| {
@@ -19414,8 +19461,8 @@ fn file019_backup_and_save_location() {
 }
 
 fn file020_open_and_repair_damaged_workbook() {
-    use ibis_pptx::repair::RepairMode;
-    use ibis_pptx::ibis_ooxml::zip::{EntryMeta, Writer};
+    use ibis_formats::repair::RepairMode;
+    use ibis_formats::ibis_ooxml::zip::{EntryMeta, Writer};
 
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
 
@@ -19654,7 +19701,7 @@ fn pivot020_pivot_chart_create_and_sync() {
 
     // 1. ピボットテーブル上のセル B4 を選択し、メニュー「xlsx.pivot-chart-insert」からピボットグラフを挿入
     s.click_cell("B4");
-    s.menu("xlsx.pivot-chart-insert");
+    s.menu("xlsx.insert-pivot-chart");
 
     // ピボットグラフが生成・配置され、選択状態になっていることを検証
     let (chart_id, chart) = s.with(|e, _| {
@@ -19804,7 +19851,7 @@ fn cell006_phonetic_edit_and_formula_sync() {
 
     // 5. ふりがなの表示/非表示トグル
     assert!(!s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_phonetic));
-    s.menu("xlsx.phonetic-toggle");
+    s.menu("xlsx.toggle-phonetic");
     assert!(s.with(|e, _| sheet_of_slide(e.slide()).unwrap().show_phonetic));
 
     // 6. 元に戻す (Undo)
@@ -20235,7 +20282,7 @@ fn spelling_range_shapes_undo() {
     s.update(|e, _, cx| {
         let slide = e.current_slide;
         let shape = ibis_doc_model::Shape::text_box(ibis_doc_model::ShapeId(9001), ibis_doc_model::EmuRect::new(0, 0, 1_000_000, 500_000), "a recieve box");
-        e.document.execute(vec![ibis_doc_model::Command::InsertShape { slide, index: 1, shape }]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(1, shape)] }]).unwrap();
         cx.notify();
     });
     let box_text = |s: &mut Scenario| {
@@ -20301,7 +20348,7 @@ fn chtype003_three_d_charts() {
     let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
     for (name, xml) in cases {
         let path = dir.join(format!("chtype003-{name}3d.xlsx"));
-        std::fs::write(&path, ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", &xml)).unwrap();
+        std::fs::write(&path, ibis_formats::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", &xml)).unwrap();
         let mut s = Scenario::open(&format!("target/scenario-input/chtype003-{name}3d.xlsx"));
         s.settle();
         let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
@@ -20334,7 +20381,7 @@ fn chtype003_3d_rotation_settings_and_series_depth() {
 
     let original = std::fs::read(crate::shell::scenario::repo_root().join("test/editing/xlsx-sales.xlsx")).unwrap();
     let path = dir.join("chtype003-series-depth.xlsx");
-    std::fs::write(&path, ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", &chart_xml)).unwrap();
+    std::fs::write(&path, ibis_formats::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", &chart_xml)).unwrap();
 
     let mut s = Scenario::open("target/scenario-input/chtype003-series-depth.xlsx");
     s.settle();
@@ -20387,7 +20434,7 @@ fn chtype003_3d_rotation_settings_and_series_depth() {
 /// 3-D ビュー設定、保存・再読込ラウンドトリップ、Undo/Redo を検証.
 fn chtype009_010_015_insert_3d_line_pie_area() {
     use ibis_doc_model::{ChartType, ShapeKind, View3D};
-    use ibis_pptx::NewChartKind;
+    use ibis_formats::NewChartKind;
 
     for kind in [NewChartKind::Line3D, NewChartKind::Pie3D, NewChartKind::Area3D] {
         let mut s = new_sheet();
@@ -20494,7 +20541,7 @@ fn chtype017_bubble_spheres() {
         let ser = format!(r#"<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>S</c:v></c:tx>{}{}{}<c:bubble3D val="{}"/></c:ser>"#, lit("xVal", &[1.0, 2.0, 3.0]), lit("yVal", &[3.0, 5.0, 4.0]), lit("bubbleSize", &[10.0, 30.0, 20.0]), u8::from(on));
         let xml = format!(r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:bubbleChart>{ser}<c:axId val="111"/><c:axId val="222"/></c:bubbleChart><c:valAx><c:axId val="111"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:crossAx val="222"/></c:valAx><c:valAx><c:axId val="222"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:crossAx val="111"/></c:valAx></c:plotArea></c:chart></c:chartSpace>"#);
         let path = dir.join(format!("chtype017-{name}.xlsx"));
-        std::fs::write(&path, ibis_pptx::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", &xml)).unwrap();
+        std::fs::write(&path, ibis_formats::test_files::xlsx_with_chart_xml(&original, "xl/charts/chart1.xml", &xml)).unwrap();
         let mut s = Scenario::open(&format!("target/scenario-input/chtype017-{name}.xlsx"));
         s.settle();
         let index = s.with(|e, _| e.slide().shapes.iter().position(|sh| matches!(sh.kind, ShapeKind::Chart(_)))).unwrap();
@@ -20647,7 +20694,7 @@ fn analysis020_forecast_sheet() {
 /// as ファイル > 開く does; the kind comes from the extension.
 fn file_open_csv_and_tsv() {
     for (extension, text) in [("csv", "名前,数量\r\nりんご,3\r\nみかん,5\r\n"), ("tsv", "名前\t数量\r\nりんご\t3\r\nみかん\t5\r\n"), ("tab", "名前\t数量\r\nりんご\t3\r\nみかん\t5\r\n")] {
-        assert_eq!(ibis_pptx::Kind::from_extension(extension), Some(ibis_pptx::Kind::Workbook), "{extension}");
+        assert_eq!(ibis_formats::Kind::from_extension(extension), Some(ibis_formats::Kind::Workbook), "{extension}");
         let dir = crate::shell::scenario::repo_root().join("target/scenario-input");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(format!("file-open.{extension}")), text).unwrap();
@@ -20829,7 +20876,7 @@ fn cell_edit_fullwidth_lines_move() {
 /// selected cells, drawn as chartEx charts, kept on a save.
 fn chtype027_chart_ex_kinds_in_a_workbook() {
     use ibis_doc_model::ShapeKind;
-    for kind in [ibis_pptx::NewChartKind::Waterfall, ibis_pptx::NewChartKind::Histogram, ibis_pptx::NewChartKind::Pareto, ibis_pptx::NewChartKind::Funnel] {
+    for kind in [ibis_formats::NewChartKind::Waterfall, ibis_formats::NewChartKind::Histogram, ibis_formats::NewChartKind::Pareto, ibis_formats::NewChartKind::Funnel] {
         let mut s = new_sheet();
         s.click_cell("A1");
         s.enter("項目", "tab");
@@ -20901,7 +20948,7 @@ fn formula006_typed_external_reference() {
     assert!(books[0].1 >= 1 && books[0].2 == 1, "{books:?}");
     let saved = s.save_as("external-saved.xlsx");
     let bytes = std::fs::read(&saved).unwrap();
-    let again = ibis_pptx::open(bytes.clone()).unwrap();
+    let again = ibis_formats::open(bytes.clone()).unwrap();
     let wb = again.presentation.workbook.as_ref().unwrap();
     assert_eq!(wb.external_books.len(), 1);
     assert_eq!(wb.external_books[0].name, "Budget.xlsx");
@@ -21012,7 +21059,7 @@ fn chtype_ex_waterfall_settings() {
     s.key("enter");
     assert_eq!(series(&mut s, "合計")[0], Some(250.0), "the chart follows its cells");
     let saved = s.save_as("waterfall-settings.xlsx");
-    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let back = ibis_formats::open(std::fs::read(&saved).unwrap()).unwrap();
     let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
     assert_eq!(chart.ex_source.unwrap().0.options().subtotals, vec![0, 5]);
     assert_eq!(chart.title.as_ref().map(|t| t.text.as_str()), Some("損益推移"));
@@ -21044,7 +21091,7 @@ fn chtype_ex_histogram_settings() {
     s.key("enter");
     assert!(bins(&mut s)[0].starts_with("[30"), "{:?}", bins(&mut s));
     let saved = s.save_as("histogram-settings.xlsx");
-    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let back = ibis_formats::open(std::fs::read(&saved).unwrap()).unwrap();
     let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
     assert_eq!(chart.ex_source.unwrap().0.options().bin_by, ibis_doc_model::BinBy::Width(ibis_doc_model::Number(10.0)));
 }
@@ -21093,7 +21140,7 @@ fn chtype_ex_boxwhisker_settings() {
     assert!(options(&mut s).box_inclusive);
 
     let saved = s.save_as("boxwhisker-settings.xlsx");
-    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let back = ibis_formats::open(std::fs::read(&saved).unwrap()).unwrap();
     let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
     let back_opts = chart.ex_source.unwrap().0.options();
     assert!(!back_opts.box_mean_marker);
@@ -21128,7 +21175,7 @@ fn chtype_ex_treemap_settings() {
     assert!(!options(&mut s).treemap_overlapping);
 
     let saved = s.save_as("treemap-settings.xlsx");
-    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let back = ibis_formats::open(std::fs::read(&saved).unwrap()).unwrap();
     let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
     let back_opts = chart.ex_source.unwrap().0.options();
     assert!(!back_opts.treemap_overlapping);
@@ -21160,7 +21207,7 @@ fn chtype_ex_funnel_settings() {
     assert_eq!(options(&mut s).gap_width, Some(30));
 
     let saved = s.save_as("funnel-settings.xlsx");
-    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let back = ibis_formats::open(std::fs::read(&saved).unwrap()).unwrap();
     let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
     let back_opts = chart.ex_source.unwrap().0.options();
     assert_eq!(back_opts.gap_width, Some(30));
@@ -21192,7 +21239,7 @@ fn chtype_ex_pareto_settings() {
     assert_eq!(options(&mut s).gap_width, Some(45));
 
     let saved = s.save_as("pareto-settings.xlsx");
-    let back = ibis_pptx::open(std::fs::read(&saved).unwrap()).unwrap();
+    let back = ibis_formats::open(std::fs::read(&saved).unwrap()).unwrap();
     let chart = back.presentation.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind { ibis_doc_model::ShapeKind::Chart(c) => Some((**c).clone()), _ => None }).unwrap();
     let back_opts = chart.ex_source.unwrap().0.options();
     assert_eq!(back_opts.gap_width, Some(45));
@@ -21222,14 +21269,15 @@ fn chart_follows_its_cells() {
     s.type_text("9000000");
     s.key("enter");
     let saved = s.save_as("chart-follows.xlsx");
-    let back = ibis_pptx::read(&std::fs::read(&saved).unwrap()).unwrap();
+    let back = ibis_formats::read(&std::fs::read(&saved).unwrap()).unwrap();
     assert_eq!(first_value(&charts(&back)[0]), Some(9_000_000.0), "the saved chart holds the new value");
 }
 
 /// XLSX-FILE-010, a binary workbook (.xlsb) is opened as a new workbook: values, formulas, styles, merges and the
 /// frozen pane come across; saving as .xlsx and opening again keeps them.
 fn file010_open_xlsb() {
-    let mut s = Scenario::open("crates/ibis-pptx/tests/fixtures/generated.xlsb");
+    let mut s = Scenario::open("crates/ibis-formats/tests/fixtures/generated.xlsb");
+    select_sheet_at(&mut s, 0);
     s.screenshot("opened");
     let sheets = s.with(|e, _| e.presentation().slides.len());
     assert_eq!(sheets, 2);
@@ -21250,7 +21298,7 @@ fn file010_open_xlsb() {
     assert_eq!(col_breaks, vec![2]);
     assert!(wb_protected);
     let path = s.save_as("file010-xlsb.xlsx");
-    let back = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let back = ibis_formats::read(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(back.slides.len(), 2);
     let back_sh0 = sheet_of_slide(&back.slides[0]).unwrap();
     assert_eq!(back_sh0.print.row_breaks, vec![4]);
@@ -21263,6 +21311,7 @@ fn file010_open_xlsb() {
 /// formulas that name another sheet): all of it comes across.
 fn file010_open_xlsb_excel_features() {
     let mut s = Scenario::open("test/editing/xlsb-features.xlsb");
+    select_sheet_at(&mut s, 0);
     s.screenshot("opened");
     let (validations, cf, notes, filter) = s.with(|e, _| {
         let sh = sheet_of_slide(e.slide()).unwrap();
@@ -21281,6 +21330,7 @@ fn file010_open_xlsb_excel_features() {
 /// XLSX-FILE-010, the sales book Excel saved as .xlsb (four sheets, a chart, a picture, formulas across sheets).
 fn file010_open_xlsb_excel_sales() {
     let mut s = Scenario::open("test/editing/xlsb-sales.xlsb");
+    select_sheet_at(&mut s, 0);
     s.screenshot("opened");
     assert_eq!(s.with(|e, _| e.presentation().slides.len()), 4);
     assert_eq!(s.value("E4"), CellValue::Number(3_750_000.0));
@@ -21293,7 +21343,7 @@ fn file010_open_xlsb_excel_sales() {
 /// XLSX-FILE-012 ODF（.ods）を開く: a spreadsheet LibreOffice Calc made is read
 /// as a new workbook (saving asks where, as with an old .xls).
 fn file012_open_ods() {
-    let mut s = Scenario::open("crates/ibis-pptx/tests/fixtures/libreoffice_small.ods");
+    let mut s = Scenario::open("crates/ibis-formats/tests/fixtures/libreoffice_small.ods");
     let sheets = s.with(|e, _| e.presentation().slides.len());
     assert_eq!(sheets, 2);
     let cell = |s: &mut Scenario, r: u32, c: u32| s.with(|e, _| ibis_doc_model::sheet_calc::sheet_of_slide(e.slide()).and_then(|sh| sh.cell(r, c)).map(|x| (x.text.clone(), x.formula.clone())));
@@ -21301,13 +21351,14 @@ fn file012_open_ods() {
     assert_eq!(cell(&mut s, 2, 1).and_then(|x| x.1).as_deref(), Some("SUM(B2,B2*2)"));
     // Saved as .xlsx and read again.
     let path = s.save_as("file012.xlsx");
-    let back = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let back = ibis_formats::read(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(back.slides.len(), 2);
     // Saved as .ods (ファイル > 書き出し > OpenDocument スプレッドシート) and read again.
     let ods = s.save_as("file012.ods");
     let bytes = std::fs::read(&ods).unwrap();
     assert!(bytes.starts_with(b"PK") && bytes.windows(46).any(|w| w == b"application/vnd.oasis.opendocument.spreadsheet"));
-    let again = ibis_pptx::read(&bytes).unwrap();
+    // (ODF is read by `ibis-odf` since it was split off `ibis-formats`.)
+    let again = ibis_odf::read(&bytes).unwrap();
     let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&again.slides[0]).unwrap();
     assert_eq!(sheet.cell(1, 1).map(|c| c.text.clone()).as_deref(), Some("1,234.50"));
     assert_eq!(sheet.cell(2, 1).and_then(|c| c.formula.clone()).as_deref(), Some("SUM(B2,B2*2)"));
@@ -21324,7 +21375,7 @@ fn formula006_links_banner() {
     assert_eq!(s.value("J45"), CellValue::Number(60.0));
     // One of the two linked workbooks beside this one.
     let dir = s.with(|e, _| e.file_path().and_then(|p| p.parent().map(std::path::Path::to_path_buf))).expect("the copy's folder");
-    std::fs::write(dir.join("予算.xlsx"), ibis_pptx::csv::workbook_from("1,x\n2\n3\n", "Data").expect("a workbook")).unwrap();
+    std::fs::write(dir.join("予算.xlsx"), ibis_formats::csv::workbook_from("1,x\n2\n3\n", "Data").expect("a workbook")).unwrap();
     s.update(|e, _, cx| e.update_all_links(cx));
     assert_eq!(s.value("J45"), CellValue::Number(6.0));
     assert!(s.with(|e, _| e.status.as_ref().is_some_and(|m| m.contains("actual.xlsx") && m.contains('1'))));
@@ -21413,12 +21464,14 @@ fn query_code_edit_issue_173() {
     };
     s.update(|e, window, cx| e.query_toggle_code(window, cx));
     let code = s.with(|e, cx| e.wb().panels.query_editor.as_ref().unwrap().code.read(cx).value().to_string());
-    assert!(code.starts_with("let") && code.contains("Table.PromoteHeaders(Source"), "{code}");
+    assert!(code.starts_with("let") && code.contains("Table.PromoteHeaders("), "{code}");
     let before = steps(&mut s);
     let rows_before = rows(&mut s);
     assert!(before.contains(&Step::PromoteHeaders));
     // Edited code: a step added at the end is read back, and the table follows.
-    let edited = code.replace("\nin\n", ",\n    #\"Kept First Rows\" = Table.FirstN(#\"Promoted Headers\", 2)\nin\n").replace(&format!("in\n    {}", "#\"Promoted Headers\""), "in\n    #\"Kept First Rows\"");
+    // The step names are the screen's language: the code's last step is the one the new step goes on from.
+    let last = code.lines().last().unwrap().trim().to_string();
+    let edited = code.replace(&format!("\nin\n    {last}"), &format!(",\n    #\"Kept First Rows\" = Table.FirstN({last}, 2)\nin\n    #\"Kept First Rows\""));
     set_code(&mut s, edited);
     s.update(|e, _, cx| e.query_apply_code(cx));
     assert_eq!(steps(&mut s).last(), Some(&Step::KeepTopRows(2)), "{}", message(&mut s));
@@ -21427,8 +21480,7 @@ fn query_code_edit_issue_173() {
     let applied = steps(&mut s);
     for (bad, expect) in [
         ("let Source = 1 in Source", "1"),
-        ("let\n  Source = #table({}, {}),\n  A = Table.Frobnicate(Source)\nin A", "Table.Frobnicate"),
-        ("let\n  Source = #table({}, {}),\n  A = Table.FirstN(Other, 1)\nin A", "Table.FirstN"),
+        ("let\n  Source = #table({}, {}),\n  A = Table.FirstN(Source, 1\nin A", "in"),
         ("not code", "let"),
     ] {
         set_code(&mut s, bad.to_string());
@@ -21439,6 +21491,12 @@ fn query_code_edit_issue_173() {
         assert_eq!(rows(&mut s), 2, "{bad}");
     }
     let _ = rows_before;
+    // Code the steps cannot hold (K0039) is read, kept as written, and a function the interpreter does not have yet is told with its line.
+    set_code(&mut s, "let\n  Source = #table({}, {}),\n  A = Table.Frobnicate(Source)\nin A".to_string());
+    s.update(|e, _, cx| e.query_apply_code(cx));
+    assert!(matches!(steps(&mut s).last(), Some(Step::Code { .. })), "{:?}", steps(&mut s));
+    let m = message(&mut s);
+    assert!(m.contains("Table.Frobnicate") && m.contains("3"), "{m}");
 }
 
 /// GitHub issue #172: with many steps, the pane of the applied steps scrolls (the wheel over it moves it).
@@ -21552,8 +21610,8 @@ fn query001_editor() {
     assert!(s.with(|e, _| e.wb().panels.query_editor.as_ref().unwrap().form.is_some()), "the value is missing: the form stays");
     s.update(|e, _, cx| {
         e.query_add_step(Step::FilterRows { column: "店舗".into(), op: Op::DoesNotContain, value: "合計".into() }, None, cx);
-        e.query_add_step(Step::ChangeType { column: "4月".into(), ty: QType::Whole, culture: ibis_doc_model::query::Culture::Invariant }, None, cx);
-        e.query_add_step(Step::AddColumn { name: "傾向".into(), formula: "if [6月] > [4月] then \"増\" else \"減\"".into() }, None, cx);
+        e.query_add_step(Step::ChangeType { column: "4月".into(), ty: QType::Whole, culture: ibis_doc_model::query::Culture::Invariant, apart: false }, None, cx);
+        e.query_add_step(Step::AddColumn { name: "傾向".into(), formula: "if [6月] > [4月] then \"増\" else \"減\"".into(), ty: None }, None, cx);
         e.query_add_step(Step::Sort(vec![("6月".into(), false)]), None, cx);
     });
     let (names, rows, error, message) = shown(&mut s);
@@ -21574,7 +21632,7 @@ fn query001_editor() {
     assert!(shown(&mut s).2.is_none());
     // The M code of the steps.
     let m = s.with(|e, _| ibis_doc_model::query::query_to_m(&e.wb().panels.query_editor.as_ref().unwrap().query));
-    assert!(m.contains("Table.PromoteHeaders(Source") && m.contains("Table.Sort(") && m.contains("Table.AddColumn("), "{m}");
+    assert!(m.contains("Table.PromoteHeaders(") && m.contains("Table.Sort(") && m.contains("Table.AddColumn("), "{m}");
     // 閉じて読み込む.
     let sheets_before = s.with(|e, _| e.presentation().slides.len());
     s.update(|e, window, cx| e.query_close_and_load(window, cx));
@@ -21622,6 +21680,28 @@ fn query001_editor() {
     assert!(s.with(|e, _| e.presentation().workbook.as_ref().unwrap().queries.is_empty()));
 }
 
+
+/// #211: クエリと接続 (and the query editor) closed leaves no 「セルの書式設定」 pane behind.
+fn issue211_queries_pane_closes_empty() {
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    // The list closed by its 閉じる button (not by close_dialog).
+    s.update(|e, _, cx| e.open_queries_panel(cx));
+    s.screenshot("issue211-queries");
+    assert!(s.with(|e, _| e.sidebar_open && e.wb().panels.queries.is_some()));
+    s.update(|e, _, cx| { e.wb_mut().panels.queries = None; cx.notify(); });
+    s.screenshot("issue211-closed");
+    assert!(s.with(|e, _| !e.sidebar_open && e.sheet_state().is_some_and(|st| st.custom_format.is_none())), "no cell format pane after the list is closed");
+    // The query editor closed (キャンセル): same.
+    s.update(|e, window, cx| e.open_blank_query(window, cx));
+    s.screenshot("issue211-editor");
+    s.update(|e, _, cx| e.query_cancel(cx));
+    s.screenshot("issue211-editor-closed");
+    assert!(s.with(|e, _| !e.sidebar_open && e.sheet_state().is_some_and(|st| st.custom_format.is_none())), "no cell format pane after the editor is closed");
+    // A pane the user opens (the cell format) stays.
+    s.update(|e, window, cx| e.open_custom_format_unfocused(window, cx));
+    s.screenshot("issue211-format");
+    assert!(s.with(|e, _| e.sidebar_open && e.sheet_state().is_some_and(|st| st.custom_format.is_some())));
+}
 
 /// XLSX-PQ-008 空のクエリを作る: データ > クエリと接続 > 空のクエリ.
 /// Opens a blank query with an initial empty table, adds steps, views the M code (#table({}, {})),
@@ -21723,7 +21803,7 @@ fn options007_settings() {
     assert_eq!(buttons(&mut s), 2, "the command the workbook does not have is not shown");
     s.screenshot("quick-access");
     // Kept in the file, and reordered.
-    assert!(std::fs::read_to_string(dir.join("settings.txt")).unwrap_or_default().contains("qat=file.save,xlsx.freeze"));
+    assert!(std::fs::read_to_string(dir.join("settings.txt")).unwrap_or_default().contains("app.quick-access-toolbar=file.save,xlsx.freeze"));
     // Reorder: move down and move up.
     assert!(crate::shell::qat::move_to(0, 1));
     assert_eq!(crate::shell::qat::commands(), ["xlsx.freeze", "file.save", "pptx.start-slideshow"]);
@@ -21748,9 +21828,9 @@ fn options007_settings() {
 /// sizes last), drawn as chartEx charts, kept on a save.
 fn chtype028_box_treemap_sunburst_in_a_workbook() {
     use ibis_doc_model::ShapeKind;
-    for kind in [ibis_pptx::NewChartKind::BoxWhisker, ibis_pptx::NewChartKind::Treemap, ibis_pptx::NewChartKind::Sunburst] {
+    for kind in [ibis_formats::NewChartKind::BoxWhisker, ibis_formats::NewChartKind::Treemap, ibis_formats::NewChartKind::Sunburst] {
         let mut s = new_sheet();
-        let hierarchy = !matches!(kind, ibis_pptx::NewChartKind::BoxWhisker);
+        let hierarchy = !matches!(kind, ibis_formats::NewChartKind::BoxWhisker);
         let rows: Vec<(&str, &str, f64)> = vec![("果物", "りんご", 40.0), ("果物", "みかん", 25.0), ("野菜", "にんじん", 20.0), ("野菜", "だいこん", 15.0), ("野菜", "ねぎ", 12.0), ("肉", "鶏", 30.0), ("肉", "豚", 18.0)];
         if hierarchy {
             s.click_cell("A1");
@@ -21787,9 +21867,9 @@ fn chtype028_box_treemap_sunburst_in_a_workbook() {
         assert_eq!(ex, Some(true), "{kind:?}: a chartEx chart is on the sheet");
         let kind_ok = s.with(move |e, _| e.slide().shapes.iter().any(|sh| match &sh.kind {
             ShapeKind::Chart(c) => match (&c.ex, kind) {
-                (Some(ibis_doc_model::ChartEx::Box { boxes, .. }), ibis_pptx::NewChartKind::BoxWhisker) => boxes.len() == 3,
-                (Some(ibis_doc_model::ChartEx::Treemap { nodes: t, .. }), ibis_pptx::NewChartKind::Treemap) => t.len() == 3,
-                (Some(ibis_doc_model::ChartEx::Sunburst(t)), ibis_pptx::NewChartKind::Sunburst) => t.len() == 3 && t[0].children.len() == 2,
+                (Some(ibis_doc_model::ChartEx::Box { boxes, .. }), ibis_formats::NewChartKind::BoxWhisker) => boxes.len() == 3,
+                (Some(ibis_doc_model::ChartEx::Treemap { nodes: t, .. }), ibis_formats::NewChartKind::Treemap) => t.len() == 3,
+                (Some(ibis_doc_model::ChartEx::Sunburst(t)), ibis_formats::NewChartKind::Sunburst) => t.len() == 3 && t[0].children.len() == 2,
                 _ => false,
             },
             _ => false,
@@ -21928,7 +22008,7 @@ fn xlsx_comments_page_setup_and_insert_function() {
         e.document
             .execute(vec![
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment {
-                    slide,
+                    sheet: slide,
                     row: 3,
                     column: 1, // B4
                     comment: Some(ibis_doc_model::SheetComment {
@@ -21938,7 +22018,7 @@ fn xlsx_comments_page_setup_and_insert_function() {
                         text: "東町メモ".into(), ..Default::default() }),
                 }),
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment {
-                    slide,
+                    sheet: slide,
                     row: 5,
                     column: 3, // D6
                     comment: Some(ibis_doc_model::SheetComment {
@@ -22000,14 +22080,14 @@ fn xlsx_comments_page_setup_and_insert_function() {
     );
 
     // Paper size
-    s.menu("xlsx.paper-a3");
+    s.menu("page.paper-a3");
     s.settle();
     assert_eq!(
         s.with(|e, _| e.current_print().map(|p| p.paper)),
         Some((297 * 36_000, 420 * 36_000)),
         "paper size set to A3"
     );
-    s.menu("xlsx.paper-letter");
+    s.menu("page.paper-letter");
     s.settle();
     assert_eq!(
         s.with(|e, _| e.current_print().map(|p| p.paper)),
@@ -22087,7 +22167,7 @@ fn file008_macro_workbook_save() {
     assert_eq!(cell(&back), Some(CellValue::Text("kept".into())), "the change is in the saved file");
     // Without macros.
     let bytes = s
-        .with(|e, _| e.source.clone().expect("a source").save_without_macros(e.presentation(), ibis_pptx::SaveOptions::default()))
+        .with(|e, _| e.source.clone().expect("a source").save_without_macros(e.presentation(), ibis_formats::SaveOptions::default()))
         .expect("saved without macros");
     let plain = saved.with_file_name("plain.xlsx");
     std::fs::write(&plain, &bytes).unwrap();
@@ -22097,7 +22177,7 @@ fn file008_macro_workbook_save() {
     assert!(!types.contains("macroEnabled") && !types.contains("PartName=\"/xl/vbaProject"), "a plain workbook: {types}");
     let rels = String::from_utf8_lossy(&part(&plain, "xl/_rels/workbook.xml.rels")).into_owned();
     assert!(!rels.contains("vbaProject"), "no relationship to the macros");
-    let reread = ibis_pptx::read(&bytes).expect("the workbook without macros opens");
+    let reread = ibis_formats::read(&bytes).expect("the workbook without macros opens");
     assert_eq!(cell(&reread), Some(CellValue::Text("kept".into())), "the change is in it");
 }
 
@@ -23070,7 +23150,7 @@ fn xlsx_pivot_source_drill_theme_and_charts() {
 
     // 24. 署名欄 (xlsx.signature-line)
     let shapes_before_sig = s.with(|e, _| e.slide().shapes.len());
-    s.menu("xlsx.signature-line");
+    s.menu("insert.signature-line");
     s.settle();
     let shapes_after_sig = s.with(|e, _| e.slide().shapes.len());
     assert_eq!(shapes_after_sig, shapes_before_sig + 1, "signature line shape inserted");
@@ -23324,11 +23404,7 @@ pub(crate) fn xlsx_chart_quick_layout_and_picture_compress() {
     s.update(|e, _, cx| {
         let slide = e.current_slide;
         e.run_sheet(
-            vec![ibis_doc_model::Command::SetFrame {
-                slide,
-                shape: pic_id,
-                frame: ibis_doc_model::EmuRect::new(0, 0, 2 * 914_400, 2 * 914_400),
-            }],
+            vec![ibis_doc_model::Command::SetFrame { slide, frames: vec![(pic_id, ibis_doc_model::EmuRect::new(0, 0, 2 * 914_400, 2 * 914_400))], with_attached: true }],
             cx,
         );
         e.crop_selected_pictures(
@@ -23640,7 +23716,7 @@ fn page_setup_and_insert_ribbon_commands() {
 
     // 図形挿入（四角形）
     let shapes_before = s.with(|e, _| e.slide().shapes.len());
-    s.menu("xlsx.shape.rect");
+    s.menu("shape.rect"); s.place_armed();
     let shapes_after = s.with(|e, _| e.slide().shapes.len());
     assert_eq!(shapes_after, shapes_before + 1, "shape inserted");
 
@@ -23913,7 +23989,7 @@ fn mark_as_final_infobar() {
         s.update(|e, _, _| {
             let mut properties = e.presentation().workbook.as_deref().unwrap().properties.clone();
             properties.custom.push(CustomProperty { name: "_MarkAsFinal".into(), value: CustomPropertyValue::Bool(true) });
-            e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetDocProperties(properties))]).unwrap();
+            e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetDocumentProperties(properties))]).unwrap();
         });
     };
     mark(&mut s);
@@ -24110,15 +24186,15 @@ fn default_xlsx_path() -> Option<String> {
 /// and a merged cell. The screenshots of both are in target/scenario.
 fn fix73_edit_text_stays_put() {
     let cases: Vec<(&str, Option<ibis_doc_model::StyleChange>, Option<ibis_doc_model::StyleChange>, bool)> = vec![
-        ("left", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Left)), None, false),
-        ("center", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Center)), None, false),
-        ("right", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Right)), None, false),
-        ("short-top", None, Some(ibis_doc_model::StyleChange::Vertical(ibis_doc_model::CellVerticalAlign::Top)), false),
-        ("short-middle", None, Some(ibis_doc_model::StyleChange::Vertical(ibis_doc_model::CellVerticalAlign::Center)), false),
-        ("short-bottom", None, Some(ibis_doc_model::StyleChange::Vertical(ibis_doc_model::CellVerticalAlign::Bottom)), false),
-        ("short-right", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Right)), None, false),
-        ("short-center", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Center)), None, false),
-        ("merged-center", Some(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Center)), None, true),
+        ("left", Some(ibis_doc_model::StyleChange::HorizontalAlignment(ibis_doc_model::CellAlign::Left)), None, false),
+        ("center", Some(ibis_doc_model::StyleChange::HorizontalAlignment(ibis_doc_model::CellAlign::Center)), None, false),
+        ("right", Some(ibis_doc_model::StyleChange::HorizontalAlignment(ibis_doc_model::CellAlign::Right)), None, false),
+        ("short-top", None, Some(ibis_doc_model::StyleChange::VerticalAlignment(ibis_doc_model::CellVerticalAlign::Top)), false),
+        ("short-middle", None, Some(ibis_doc_model::StyleChange::VerticalAlignment(ibis_doc_model::CellVerticalAlign::Center)), false),
+        ("short-bottom", None, Some(ibis_doc_model::StyleChange::VerticalAlignment(ibis_doc_model::CellVerticalAlign::Bottom)), false),
+        ("short-right", Some(ibis_doc_model::StyleChange::HorizontalAlignment(ibis_doc_model::CellAlign::Right)), None, false),
+        ("short-center", Some(ibis_doc_model::StyleChange::HorizontalAlignment(ibis_doc_model::CellAlign::Center)), None, false),
+        ("merged-center", Some(ibis_doc_model::StyleChange::HorizontalAlignment(ibis_doc_model::CellAlign::Center)), None, true),
     ];
     let mut report = Vec::new();
     for (label, align, vertical, merge) in cases {
@@ -24258,7 +24334,7 @@ fn fix73_edit_click_places_caret() {
     s.key("escape");
 
     // Floating text box: insert enters edit mode immediately, 5+ lines keeps user-specified rectangle size, double-click places caret at click.
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     assert!(s.with(|e, _| e.editing.is_some()), "insert.text-box immediately enters edit mode");
     let h0 = s.with(|e, _| e.slide().shapes.last().unwrap().frame.height);
@@ -24338,7 +24414,7 @@ fn sheet008_autofit_row_height_double_click() {
     s.update(|e, _, _| {
         let slide = e.current_slide;
         let _ = e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize {
-            slide,
+            sheet: slide,
             axis: ibis_doc_model::sheet_command::Axis::Rows,
             first: 2,
             last: 2,
@@ -24372,7 +24448,7 @@ fn sheet008_autofit_row_height_double_click() {
     s.update(|e, _, _| {
         let slide = e.current_slide;
         let _ = e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize {
-            slide,
+            sheet: slide,
             axis: ibis_doc_model::sheet_command::Axis::Rows,
             first: 3,
             last: 3,
@@ -24406,14 +24482,14 @@ fn sheet008_autofit_row_height_double_click() {
         let slide = e.current_slide;
         let _ = e.document.execute(vec![
             ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize {
-                slide,
+                sheet: slide,
                 axis: ibis_doc_model::sheet_command::Axis::Rows,
                 first: 4,
                 last: 4,
                 size: 10 * ibis_doc_model::EMU_PER_POINT,
             }),
             ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize {
-                slide,
+                sheet: slide,
                 axis: ibis_doc_model::sheet_command::Axis::Rows,
                 first: 5,
                 last: 5,
@@ -24574,7 +24650,7 @@ fn sheet007_row_height_column_width_dialog() {
     assert_eq!(r2_pt, on_pixels(40.0), "row 2 preserved");
     assert_eq!(r3_pt, on_pixels(35.0), "row 3 preserved");
     let saved = std::fs::read(s.with(|e, _| e.path.clone()).expect("the saved file")).expect("read the saved file");
-    let written = (1..=8).filter_map(|n| ibis_pptx::test_files::part_text(&saved, &format!("xl/worksheets/sheet{n}.xml"))).collect::<String>();
+    let written = (1..=8).filter_map(|n| ibis_formats::test_files::part_text(&saved, &format!("xl/worksheets/sheet{n}.xml"))).collect::<String>();
     assert!(written.contains("ht=\"40\" customHeight=\"1\"") && written.contains("ht=\"35\" customHeight=\"1\""), "the rows are saved with the heights set: {written}");
     assert!((cb_pt - expected_b).abs() < 1.0, "column B preserved: {cb_pt} vs {expected_b}");
     assert!((cc_pt - expected_c).abs() < 1.0, "column C preserved: {cc_pt} vs {expected_c}");
@@ -24661,7 +24737,7 @@ fn sheet012_paste_special_dialog_and_options() {
             column: 4, // E1
             input: ibis_doc_model::CellInput::Formula("100*2".into()),
         }];
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { sheet: slide, edits })]).unwrap();
         cx.notify();
     });
     s.click_cell("E1");
@@ -24740,7 +24816,7 @@ fn sheet012_paste_special_dialog_and_options() {
     s.update(|e, _, cx| {
         let slide = e.current_slide;
         let _ = e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment {
-            slide,
+            sheet: slide,
             row: 0,
             column: 0,
             comment: Some(ibis_doc_model::SheetComment {
@@ -24784,7 +24860,7 @@ fn sheet012_paste_special_dialog_and_options() {
             ibis_doc_model::CellEdit { row: 1, column: 8, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(80.0)) }, // I2
             ibis_doc_model::CellEdit { row: 0, column: 9, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(100.0)) }, // J1
         ];
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { sheet: slide, edits })]).unwrap();
         cx.notify();
     });
 
@@ -24829,7 +24905,7 @@ fn sheet012_paste_special_dialog_and_options() {
             ibis_doc_model::CellEdit { row: 1, column: 11, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(5.0)) }, // L2
             ibis_doc_model::CellEdit { row: 1, column: 12, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(6.0)) }, // M2
         ];
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { sheet: slide, edits })]).unwrap();
         cx.notify();
     });
 
@@ -24912,7 +24988,7 @@ fn sheet013_find_and_replace_options() {
             ibis_doc_model::CellEdit { row: 3, column: 3, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(40.0)) },
             ibis_doc_model::CellEdit { row: 4, column: 3, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(50.0)) },
         ];
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { sheet: slide, edits })]).unwrap();
         cx.notify();
     });
 
@@ -25147,7 +25223,7 @@ fn sheet014_pick_from_drop_down_list() {
             ibis_doc_model::CellEdit { row: 2, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("ぶどう".into())) },
             ibis_doc_model::CellEdit { row: 3, column: 0, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("りんご".into())) },
         ];
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { sheet: slide, edits })]).unwrap();
         cx.notify();
     });
 
@@ -25191,7 +25267,7 @@ fn sheet014_pick_from_drop_down_list() {
             column: 0,
             input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Text("みかん".into())),
         };
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits: vec![edit] })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { sheet: slide, edits: vec![edit] })]).unwrap();
         if let Some(st) = e.sheet_state_mut() {
             st.list_popup = None;
         }
@@ -25308,7 +25384,7 @@ fn sheet016_print_area_add_and_clear() {
     );
 
     // 3. 印刷範囲の設定（xlsx.print-area-set）
-    s.menu("xlsx.print-area-set");
+    s.menu("xlsx.set-print-area");
     assert_eq!(
         print_area(&mut s),
         Some(ibis_doc_model::CellRange {
@@ -25381,7 +25457,7 @@ fn sheet016_print_area_add_and_clear() {
     );
 
     // 9. 印刷範囲のクリア（xlsx.print-area-clear）
-    s.menu("xlsx.print-area-clear");
+    s.menu("xlsx.clear-print-area");
     assert_eq!(print_area(&mut s), None);
 
     // 10. 1 手の Undo（⌘Z）でクリア前の A2:F10 に戻ること
@@ -25554,7 +25630,7 @@ fn sheet018_comments_and_notes_context_menu_and_shortcuts() {
     assert!(ids_initial.contains(&"xlsx.cell-comment-new".to_string()), "{ids_initial:?}");
     assert!(!ids_initial.contains(&"xlsx.cell-comment-reply".to_string()), "{ids_initial:?}");
     assert!(!ids_initial.contains(&"xlsx.cell-comment-delete".to_string()), "{ids_initial:?}");
-    assert!(ids_initial.contains(&"xlsx.note-new".to_string()), "{ids_initial:?}");
+    assert!(ids_initial.contains(&"xlsx.new-note".to_string()), "{ids_initial:?}");
     assert!(!ids_initial.contains(&"xlsx.note-edit".to_string()), "{ids_initial:?}");
     assert!(!ids_initial.contains(&"xlsx.note-delete".to_string()), "{ids_initial:?}");
 
@@ -26255,7 +26331,7 @@ fn sheet022_chart_context_menu_and_operations() {
     };
 
     // 1. 非グラフ図形（四角形）を選択した場合、グラフ専用メニュー項目が含まれないこと
-    s.menu("xlsx.shape.rect");
+    s.menu("shape.rect"); s.place_armed();
     s.settle();
     let rect_ids = top_menu_ids(&mut s);
     assert!(
@@ -26643,7 +26719,7 @@ fn sheet023_slicer_timeline_control_and_shape_context_menu() {
             _ => panic!("expected auto shape"),
         }
     });
-    assert_eq!(Some(geometry), ibis_pptx::preset_geometry("ellipse"));
+    assert_eq!(Some(geometry), ibis_formats::preset_geometry("ellipse"));
     assert!(matches!(fill, Fill::Solid(_)), "shape fill applied");
 }
 
@@ -27104,7 +27180,7 @@ fn options001_format_as_table_find_select_and_scale_to_fit() {
         e.document
             .execute(vec![
                 Command::Sheet(SheetCommand::SetComment {
-                    slide: slide_id,
+                    sheet: slide_id,
                     row: 1,
                     column: 0,
                     comment: Some(SheetComment {
@@ -27114,7 +27190,7 @@ fn options001_format_as_table_find_select_and_scale_to_fit() {
                         text: "Check price".into(), ..Default::default() }),
                 }),
                 Command::Sheet(SheetCommand::AddConditional {
-                    slide: slide_id,
+                    sheet: slide_id,
                     format: ConditionalFormat {
                         source_index: None,
                         ranges: vec![b2_b3],
@@ -27130,7 +27206,7 @@ fn options001_format_as_table_find_select_and_scale_to_fit() {
                     },
                 }),
                 Command::Sheet(SheetCommand::SetValidation {
-                    slide: slide_id,
+                    sheet: slide_id,
                     ranges: vec![b2_b3],
                     rule: Some(Validation {
                         ranges: vec![b2_b3],
@@ -27232,7 +27308,7 @@ fn options001_format_as_table_find_select_and_scale_to_fit() {
     s.menu("xlsx.scale-height-2");
     assert_eq!(s.with(|e, _| e.current_print().unwrap().fit_to), Some((1, 2)));
 
-    s.menu("xlsx.scale-80");
+    s.menu("xlsx.print-scale-80");
     assert_eq!(s.with(|e, _| e.current_print().unwrap().fit_to), None);
     assert_eq!(s.with(|e, _| e.current_print().unwrap().scale), 80);
 
@@ -28022,7 +28098,7 @@ fn table022_slicer003_timeline003_context_menus_and_quick_actions() {
     });
     let grouped_filtered_ok = s.with(|e, _| {
         let (_, sh) = e.current_sheet().unwrap();
-        let data = ibis_pptx::pivot_source(e.presentation(), sh, &sh.pivots[0]).unwrap();
+        let data = ibis_formats::pivot_source(e.presentation(), sh, &sh.pivots[0]).unwrap();
         let built = sh.pivots[0].build(&data);
         // With 1 month selected, the grouped PivotTable must still have data rows (not all hidden)
         built.cells.len() >= 3
@@ -28048,11 +28124,7 @@ fn table022_slicer003_timeline003_context_menus_and_quick_actions() {
         new_frame.y += 228600;
         new_frame.width += 304800;
         e.execute(
-            vec![ibis_doc_model::Command::SetFrame {
-                slide: slide_id,
-                shape: timeline_id,
-                frame: new_frame,
-            }],
+            vec![ibis_doc_model::Command::SetFrame { slide: slide_id, frames: vec![(timeline_id, new_frame)], with_attached: true }],
             cx,
         );
     });
@@ -28348,7 +28420,7 @@ fn cf019_validation015_audit005_context_menus_and_quick_actions() {
         };
         e.run_sheet(
             vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetValidation {
-                slide,
+                sheet: slide,
                 ranges,
                 rule: Some(rule),
             })],
@@ -28391,7 +28463,7 @@ fn cf019_validation015_audit005_context_menus_and_quick_actions() {
         let slide = e.current_slide;
         e.run_sheet(
             vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
-                slide,
+                sheet: slide,
                 edits: vec![ibis_doc_model::CellEdit {
                     row: 2,
                     column: 8,
@@ -28413,7 +28485,7 @@ fn cf019_validation015_audit005_context_menus_and_quick_actions() {
         e.run_sheet(
             vec![
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
-                    slide,
+                    sheet: slide,
                     edits: vec![
                         ibis_doc_model::CellEdit {
                             row: 0,
@@ -28501,7 +28573,7 @@ fn table009_sort_filter_context_menu_and_panel_copy_icon() {
         e.run_sheet(
             vec![
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
-                    slide,
+                    sheet: slide,
                     edits: vec![
                         ibis_doc_model::CellEdit {
                             row: 0,
@@ -28556,7 +28628,7 @@ fn table009_sort_filter_context_menu_and_panel_copy_icon() {
                     ],
                 }),
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetFormat {
-                    slide,
+                    sheet: slide,
                     ranges: vec![CellRange {
                         first_row: 2,
                         last_row: 2,
@@ -28566,7 +28638,7 @@ fn table009_sort_filter_context_menu_and_panel_copy_icon() {
                     change: ibis_doc_model::StyleChange::Fill(Some(ibis_doc_model::Rgb(0xFFFF00))),
                 }),
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetFormat {
-                    slide,
+                    sheet: slide,
                     ranges: vec![CellRange {
                         first_row: 2,
                         last_row: 2,
@@ -28787,7 +28859,7 @@ fn cell017_018_021_find_workbook_links_tooltip_and_select_special() {
         e.run_sheet(
             vec![
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
-                    slide: slide1,
+                    sheet: slide1,
                     edits: vec![
                         // H1 (col 7, row 0), I1 (col 8, row 0), H2 (col 7, row 1)
                         ibis_doc_model::CellEdit {
@@ -28808,7 +28880,7 @@ fn cell017_018_021_find_workbook_links_tooltip_and_select_special() {
                     ],
                 }),
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetComment {
-                    slide: slide1,
+                    sheet: slide1,
                     row: 2,
                     column: 7, // H3 note
                     comment: Some(ibis_doc_model::SheetComment {
@@ -28818,7 +28890,7 @@ fn cell017_018_021_find_workbook_links_tooltip_and_select_special() {
                         text: "TargetNote memo".into(), ..Default::default() }),
                 }),
                 ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
-                    slide: slide2,
+                    sheet: slide2,
                     edits: vec![ibis_doc_model::CellEdit {
                         row: 0,
                         column: 0, // A1 on sheet 2
@@ -30014,4 +30086,39 @@ fn edit_single_line_arrows_and_status() {
     assert!(s.with(|e, _| e.cell_edit().is_none()));
     assert_eq!(s.selected(), "B4");
     assert_eq!(s.shown("B3"), "abc");
+}
+
+
+/// #205: a command with no icon (印刷の拡大縮小 80%) put in the quick access toolbar is drawn as a ring (Office's ○), not as nothing,
+/// and a click on it runs the command.
+fn issue205_quick_access_no_icon_ring() {
+    use crate::shell::scenario::button_probe as buttons;
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.size(1200., 800.);
+    let dir = crate::shell::scenario::repo_root().join("target/scenario/xlsx::issue205_quick_access_no_icon_ring/settings");
+    let _ = std::fs::remove_dir_all(&dir);
+    // SAFETY: the scenarios run one at a time on the main thread; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("IBIS_SETTINGS_DIR", &dir) };
+    crate::shell::qat::reload();
+    let _probe = buttons::Probe::new();
+    let menus = s.with(|e, _| e.menus());
+    match menus.find_entry("xlsx.print-scale-80") {
+        Some(crate::shell::chrome::MenuEntry::Item(item)) => assert!(item.icon.is_none_or(str::is_empty), "the command has no icon"),
+        _ => panic!("the command is a menu item"),
+    }
+    crate::shell::qat::toggle("xlsx.print-scale-80");
+    s.update(|_, _, cx| cx.notify());
+    s.settle();
+    assert_eq!(s.update(|e, _, cx| e.quick_access_buttons(&cx.entity().downgrade()).len()), 1, "a button for the command without an icon");
+    let id = buttons::all().into_iter().find(|id| id.contains("xlsx.print-scale-80")).unwrap_or_else(|| panic!("the button is drawn: {:?}", buttons::all()));
+    let b = buttons::bounds(&id).unwrap();
+    assert!(f32::from(b.size.width) > 20. && f32::from(b.size.height) > 20., "{b:?}");
+    s.screenshot("ring");
+    let scale = |s: &mut Scenario| s.with(|e, _| e.current_print().map(|p| p.scale));
+    assert_ne!(scale(&mut s), Some(80));
+    buttons::click(&mut s, &id);
+    s.settle();
+    assert_eq!(scale(&mut s), Some(80), "a click runs the command");
+    unsafe { std::env::remove_var("IBIS_SETTINGS_DIR") };
+    crate::shell::qat::reload();
 }

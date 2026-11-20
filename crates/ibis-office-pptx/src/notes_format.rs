@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! ノートの文字の書式 (表示 > ノートの書式編集): the notes page of the slide shown
-//! edited as a slide (`ibis_pptx::notes_page`): its text can be made bold,
+//! edited as a slide (`ibis_formats::notes_page`): its text can be made bold,
 //! given a size, a colour, a bullet and the like with the tools of any text.
 //! When the view is closed the text goes into the notes page of the file; the
 //! file is then read again from what the program holds (what was not saved
@@ -19,7 +19,7 @@ use crate::ext::*;
 pub(crate) enum PageKind {
     /// The notes page of the slide shown.
     Notes,
-    /// 配布資料マスター: where a handout's header, date, footer and number go (`ibis_pptx::handout_master`).
+    /// 配布資料マスター: where a handout's header, date, footer and number go (`ibis_formats::handout_master`).
     Handout,
     /// ノート マスター: the page's image, the notes, the header, date, footer and number places (`master_page::build_notes_master`).
     NotesMaster,
@@ -95,17 +95,17 @@ impl SlideEditor {
         let Some(source) = self.source.clone() else {
             return self.set_status(crate::shell::i18n::text("pptx.notes-format.notes-document-cannot-formatted").to_string(), cx);
         };
-        let bytes = match source.save(self.presentation(), ibis_pptx::SaveOptions::default()) {
+        let bytes = match source.save(self.presentation(), ibis_formats::SaveOptions::default()) {
             Ok(bytes) => bytes,
             Err(err) => return self.set_status(crate::shell::i18n::format("file.save-failed", &[("error", &err)]), cx),
         };
         let slide_index = self.presentation().slide_index(self.current_slide).unwrap_or(0);
         let built = match kind {
-            PageKind::Notes => ibis_pptx::notes_page::build(&bytes, slide_index),
-            PageKind::Handout => ibis_pptx::handout_master::build(&bytes),
-            PageKind::NotesMaster => ibis_pptx::master_page::build_notes_master(&bytes),
+            PageKind::Notes => ibis_formats::notes_page::build(&bytes, slide_index),
+            PageKind::Handout => ibis_formats::handout_master::build(&bytes),
+            PageKind::NotesMaster => ibis_formats::master_page::build_notes_master(&bytes),
         };
-        let opened = built.map_err(|e| e.to_string()).and_then(|temp| ibis_pptx::open(temp).map_err(|e| e.to_string()));
+        let opened = built.map_err(|e| e.to_string()).and_then(|temp| ibis_formats::open(temp).map_err(|e| e.to_string()));
         let opened = match opened {
             Ok(opened) => opened,
             Err(err) => return self.set_status(err, cx),
@@ -141,13 +141,13 @@ impl SlideEditor {
             .source
             .clone()
             .ok_or_else(|| crate::shell::i18n::text("_pptx.can-t-save").to_string())
-            .and_then(|source| source.save(self.presentation(), ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string()))
+            .and_then(|source| source.save(self.presentation(), ibis_formats::SaveOptions::default()).map_err(|e| e.to_string()))
             .and_then(|edited| match view.kind {
-                PageKind::Notes => ibis_pptx::notes_page::apply(&view.base, &edited, view.slide_index),
-                PageKind::Handout => ibis_pptx::handout_master::apply(&view.base, &edited),
-                PageKind::NotesMaster => ibis_pptx::master_page::apply_notes_master(&view.base, &edited),
+                PageKind::Notes => ibis_formats::notes_page::apply(&view.base, &edited, view.slide_index),
+                PageKind::Handout => ibis_formats::handout_master::apply(&view.base, &edited),
+                PageKind::NotesMaster => ibis_formats::master_page::apply_notes_master(&view.base, &edited),
             }.map_err(|e| e.to_string()))
-            .and_then(|bytes| ibis_pptx::open(bytes).map_err(|e| e.to_string()));
+            .and_then(|bytes| ibis_formats::open(bytes).map_err(|e| e.to_string()));
         let opened = match merged {
             Ok(opened) => opened,
             Err(err) => {

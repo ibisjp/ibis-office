@@ -22,7 +22,7 @@ fn tabs_book() -> (Scenario, Vec<SlideId>) {
         while e.presentation().slides.len() < 7 {
             e.insert_sheet(w, cx);
         }
-        let commands = e.presentation().slides.iter().enumerate().map(|(i, sl)| Command::Sheet(SheetCommand::RenameSheet { slide: sl.id, name: format!("Tab_{i}_data") })).collect();
+        let commands = e.presentation().slides.iter().enumerate().map(|(i, sl)| Command::Sheet(SheetCommand::RenameSheet { sheet: sl.id, name: format!("Tab_{i}_data") })).collect();
         e.run_sheet(commands, cx);
         let first = e.presentation().slides[0].id;
         e.select_slide(first, w, cx);
@@ -197,7 +197,7 @@ fn stretch(frozen: Option<(u32, u32)>, zoom: Option<u16>) {
     s.size(900., 700.);
     s.update(|e, _, cx| {
         let slide = e.current_slide;
-        e.run_sheet(vec![Command::Sheet(SheetCommand::SetZoom { slide, zoom }), Command::Sheet(SheetCommand::Freeze { slide, frozen })], cx);
+        e.run_sheet(vec![Command::Sheet(SheetCommand::SetZoom { sheet: slide, zoom }), Command::Sheet(SheetCommand::Freeze { sheet: slide, frozen })], cx);
         // The view's own zoom (the status bar's), which the sheet's saved zoom sets when the sheet is shown.
         e.zoom = Some(zoom.map_or(1.0, |z| f32::from(z) / 100.));
         cx.notify();
@@ -272,11 +272,11 @@ pub(super) fn shift_arrows_follow_past_hidden_and_merged() {
     s.update(|e, _, cx| {
         let slide = e.current_slide;
         let mut commands = vec![
-            Command::Sheet(SheetCommand::Hide { slide, axis: Axis::Rows, first: 10, last: 14, hidden: true }),
-            Command::Sheet(SheetCommand::Hide { slide, axis: Axis::Columns, first: 8, last: 10, hidden: true }),
+            Command::Sheet(SheetCommand::SetHidden { sheet: slide, axis: Axis::Rows, first: 10, last: 14, hidden: true }),
+            Command::Sheet(SheetCommand::SetHidden { sheet: slide, axis: Axis::Columns, first: 8, last: 10, hidden: true }),
         ];
         // A merged range tall as three rows, in the way down.
-        commands.push(Command::Sheet(SheetCommand::Merge { slide, range: CellRange { first_row: 39, last_row: 41, first_column: 1, last_column: 2 }, center: false }));
+        commands.push(Command::Sheet(SheetCommand::Merge { sheet: slide, range: CellRange { first_row: 39, last_row: 41, first_column: 1, last_column: 2 }, center: false }));
         e.run_sheet(commands, cx);
     });
     s.settle();

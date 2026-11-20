@@ -35,7 +35,7 @@ fn chart_data_in_the_workbook() {
     let set = |row: u32, column: u32, value: CellValue| CellEdit { row, column, input: CellInput::Value(value) };
     s.update(|_, _, cx| view.update(cx, |d, cx| {
         let slide = d.current_slide;
-        d.run(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![set(3, 2, CellValue::Number(9.5))] })], cx);
+        d.run(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![set(3, 2, CellValue::Number(9.5))] })], cx);
     }));
     let chart = |s: &mut Scenario| {
         s.with(move |e, _| match &e.slide().shape(shape).unwrap().kind {
@@ -48,9 +48,9 @@ fn chart_data_in_the_workbook() {
     s.update(|_, _, cx| view.update(cx, |d, cx| {
         let slide = d.current_slide;
         let input = CellInput::Value(CellValue::Text("分類 5".into()));
-        d.run(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row: 5, column: 0, input: input.clone() }] })], cx);
+        d.run(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![CellEdit { row: 5, column: 0, input: input.clone() }] })], cx);
         d.after_table_entry(slide, 5, 0, &input, cx);
-        d.run(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: (1..=3).map(|c| set(5, c, CellValue::Number(c as f64))).collect() })], cx);
+        d.run(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: (1..=3).map(|c| set(5, c, CellValue::Number(c as f64))).collect() })], cx);
     }));
     let grown = s.with(|_, cx| view.read(cx).chart_ranges.clone()).unwrap();
     assert_eq!(grown[0].values.as_deref(), Some("Sheet1!$B$2:$B$6"));

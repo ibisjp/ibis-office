@@ -372,7 +372,7 @@ pub(crate) fn build_print_cli_args(
 
     let page_list = pages.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",");
     if !is_all_pages_once {
-        args.extend(["--slides".to_string(), page_list]);
+        args.extend(["--range".to_string(), page_list]);
     }
 
     // 1枚に複数ページ (N-up: DOCX-SEC-016)
@@ -467,6 +467,15 @@ impl SlideEditor {
             focus.update(cx, |f, cx| f.focus(window, cx));
         }
         cx.notify();
+    }
+
+    /// 設定を保存: the page range typed is kept (nothing printed) and the panel closed.
+    pub(crate) fn save_docx_print_panel(&mut self, cx: &mut Context<Self>) {
+        let custom = self.doc_state().and_then(|s| s.print_panel.as_ref().map(|p| p.custom_input.read(cx).value().to_string()));
+        if let (Some(custom), Some(s)) = (custom, self.doc_state_mut()) {
+            s.print_settings.custom_range = custom;
+        }
+        self.close_doc_print_panel(cx);
     }
 
     /// 印刷設定パネルを閉じる
@@ -660,6 +669,9 @@ impl SlideEditor {
                 ),
         );
 
+        // The file's CMYK setting (shared with the other screens' print panels).
+        body = body.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(text("shell.print.cmyk-heading"))).child(self.print_cmyk_section("docx-print", cx));
+
         // --- セクション 2: 部数・両面印刷 (DOCX-SEC-015) ---
         body = body.child(
             v_flex()
@@ -832,19 +844,13 @@ impl SlideEditor {
         body = body.child(div().text_sm().text_color(cx.theme().muted_foreground).child(summary_text));
 
         // アクションボタン
-        let footer = crate::shell::chrome::action_bar()
-            .action(
-                crate::shell::chrome::ActionDefinition::new("docx-print-apply", text("docx.print-panel.print"), crate::shell::chrome::ActionButtonKind::Primary)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.apply_docx_print_panel(window, cx);
-                    })),
-            )
-            .action(
-                crate::shell::chrome::ActionDefinition::new("docx-print-cancel", text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.close_doc_print_panel(cx);
-                    })),
-            );
+        let footer = crate::shell::print_common::print_action_bar(
+            "docx-print",
+            text("docx.print-panel.print"),
+            cx.listener(|this, _, window, cx| { this.keep_print_cmyk(); this.apply_docx_print_panel(window, cx) }),
+            cx.listener(|this, _, _, cx| { this.keep_print_cmyk(); this.save_docx_print_panel(cx) }),
+            cx.listener(|this, _, _, cx| { this.cancel_print_cmyk(cx); this.close_doc_print_panel(cx) }),
+        );
 
         let panel_terminal_actions = footer;
         Some(SidebarPanel::with_footer(text("docx.print-panel.title"), body.into_any_element(), panel_terminal_actions))
@@ -946,7 +952,7 @@ mod tests {
         let (slides, args) = build_print_cli_args(&[1, 3], &settings, 5);
         assert_eq!(slides, Some(vec![1, 3]));
         let args = args.unwrap();
-        assert!(args.contains(&"--slides".to_string()));
+        assert!(args.contains(&"--range".to_string()));
         assert!(args.contains(&"1,3".to_string()));
         assert!(args.contains(&"--handout".to_string()));
         assert!(args.contains(&"2".to_string()));

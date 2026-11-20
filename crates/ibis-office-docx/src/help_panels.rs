@@ -843,7 +843,7 @@ impl SlideEditor {
         let mut commands = Vec::new();
         for (n, para) in bookmarks(doc) {
             if n == name && para != start.para {
-                commands.push(ibis_doc_model::FlowCommand::SetParagraphFormat { first: para, last: para, change: ibis_doc_model::ParaChange::RemoveBookmark(name.clone()) });
+                commands.push(ibis_doc_model::FlowCommand::SetParagraphFormat { first: para, last: para, change: ibis_doc_model::ParaChange::DeleteBookmark(name.clone()) });
             }
         }
         commands.push(ibis_doc_model::FlowCommand::SetParagraphFormat { first: start.para, last: start.para, change: ibis_doc_model::ParaChange::AddBookmark(name.clone()) });
@@ -858,7 +858,7 @@ impl SlideEditor {
     pub(crate) fn delete_bookmark(&mut self, cx: &mut Context<Self>) {
         let Some(name) = self.doc_state().and_then(|s| s.helper.bookmarks.as_ref()).and_then(|p| p.chosen.clone()) else { return };
         let Some(doc) = self.flow() else { return };
-        let commands: Vec<_> = bookmarks(doc).into_iter().filter(|(n, _)| *n == name).map(|(_, para)| ibis_doc_model::FlowCommand::SetParagraphFormat { first: para, last: para, change: ibis_doc_model::ParaChange::RemoveBookmark(name.clone()) }).collect();
+        let commands: Vec<_> = bookmarks(doc).into_iter().filter(|(n, _)| *n == name).map(|(_, para)| ibis_doc_model::FlowCommand::SetParagraphFormat { first: para, last: para, change: ibis_doc_model::ParaChange::DeleteBookmark(name.clone()) }).collect();
         if commands.is_empty() {
             return;
         }
@@ -1872,7 +1872,7 @@ impl SlideEditor {
         }
     }
 
-    /// Apply the entered document properties via `FlowCommand::SetDocProperties` and font embedding settings.
+    /// Apply the entered document properties via `FlowCommand::SetDocumentProperties` and font embedding settings.
     pub(crate) fn apply_doc_properties(&mut self, cx: &mut Context<Self>) {
         let (title, creator, subject, keywords, description, category, manager, company, custom, embed_tt, save_sub, embed_sys) = {
             let Some(p) = self.doc_state().and_then(|s| s.helper.properties.as_ref()) else { return };
@@ -1905,7 +1905,7 @@ impl SlideEditor {
         new_props.company = opt(company);
         new_props.custom = custom;
 
-        let mut commands = vec![ibis_doc_model::FlowCommand::SetDocProperties(new_props)];
+        let mut commands = vec![ibis_doc_model::FlowCommand::SetDocumentProperties(new_props)];
         if let Some(doc) = self.flow() {
             if doc.embed_true_type_fonts != embed_tt || doc.embed_system_fonts != embed_sys || doc.save_subset_fonts != save_sub {
                 commands.push(ibis_doc_model::FlowCommand::SetFontEmbedding {
@@ -2258,7 +2258,7 @@ impl SlideEditor {
         if self.run_flow(commands, cx) {
             self.set_caret(ibis_doc_model::FlowPos::new(start.para, start.offset + 1), false, cx);
             if let Some(panel) = self.doc_state_mut().and_then(|s| s.helper.cross_reference.as_mut()) {
-                panel.message = text("docx.xref.inserted").to_string();
+                panel.message = text("docx.cross-reference.inserted").to_string();
             }
         }
         cx.notify();
@@ -2297,16 +2297,16 @@ impl SlideEditor {
 
         // 1. 参照する項目（Reference Type）
         let types: [(ibis_doc_model::CrossReferenceType, &'static str); 5] = [
-            (ibis_doc_model::CrossReferenceType::Heading, "docx.xref.type.heading"),
-            (ibis_doc_model::CrossReferenceType::Bookmark, "docx.xref.type.bookmark"),
-            (ibis_doc_model::CrossReferenceType::Footnote, "docx.xref.type.footnote"),
-            (ibis_doc_model::CrossReferenceType::Endnote, "docx.xref.type.endnote"),
-            (ibis_doc_model::CrossReferenceType::Caption, "docx.xref.type.caption"),
+            (ibis_doc_model::CrossReferenceType::Heading, "docx.cross-reference.type.heading"),
+            (ibis_doc_model::CrossReferenceType::Bookmark, "docx.cross-reference.type.bookmark"),
+            (ibis_doc_model::CrossReferenceType::Footnote, "docx.cross-reference.type.footnote"),
+            (ibis_doc_model::CrossReferenceType::Endnote, "docx.cross-reference.type.endnote"),
+            (ibis_doc_model::CrossReferenceType::Caption, "docx.cross-reference.type.caption"),
         ];
         let mut type_buttons = radio_group().layout(RadioGroupLayout::Flow);
         for (t, label_key) in types {
             let is_sel = ref_type == t;
-            let btn_id = format!("xref-type-{}", label_key.strip_prefix("docx.xref.type.").unwrap_or(label_key));
+            let btn_id = format!("xref-type-{}", label_key.strip_prefix("docx.cross-reference.type.").unwrap_or(label_key));
             type_buttons = type_buttons.child(
                 mark(&btn_id,
                     radio_button(SharedString::from(btn_id.clone()), is_sel, false, text(label_key), cx.listener(move |this, _, _, cx| {
@@ -2318,40 +2318,40 @@ impl SlideEditor {
         }
         body = body.child(
             v_flex().gap_1()
-                .child(div().text_sm().text_color(theme.muted_foreground).child(text("docx.xref.type")))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text("docx.cross-reference.type")))
                 .child(type_buttons)
         );
 
         // 2. 挿入する参照内容（Reference Content Kind）
         let available_kinds: Vec<(ibis_doc_model::CrossReferenceKind, &'static str)> = match ref_type {
             ibis_doc_model::CrossReferenceType::Heading => vec![
-                (ibis_doc_model::CrossReferenceKind::Text, "docx.xref.kind.text"),
-                (ibis_doc_model::CrossReferenceKind::PageNumber, "docx.xref.kind.page"),
-                (ibis_doc_model::CrossReferenceKind::ParagraphNumber, "docx.xref.kind.paragraph"),
-                (ibis_doc_model::CrossReferenceKind::RelativePosition, "docx.xref.kind.relative"),
+                (ibis_doc_model::CrossReferenceKind::Text, "docx.cross-reference.kind.text"),
+                (ibis_doc_model::CrossReferenceKind::PageNumber, "docx.cross-reference.kind.page"),
+                (ibis_doc_model::CrossReferenceKind::ParagraphNumber, "docx.cross-reference.kind.paragraph"),
+                (ibis_doc_model::CrossReferenceKind::RelativePosition, "docx.cross-reference.kind.relative"),
             ],
             ibis_doc_model::CrossReferenceType::Bookmark => vec![
-                (ibis_doc_model::CrossReferenceKind::Text, "docx.xref.kind.text"),
-                (ibis_doc_model::CrossReferenceKind::PageNumber, "docx.xref.kind.page"),
-                (ibis_doc_model::CrossReferenceKind::RelativePosition, "docx.xref.kind.relative"),
+                (ibis_doc_model::CrossReferenceKind::Text, "docx.cross-reference.kind.text"),
+                (ibis_doc_model::CrossReferenceKind::PageNumber, "docx.cross-reference.kind.page"),
+                (ibis_doc_model::CrossReferenceKind::RelativePosition, "docx.cross-reference.kind.relative"),
             ],
             ibis_doc_model::CrossReferenceType::Footnote | ibis_doc_model::CrossReferenceType::Endnote => vec![
-                (ibis_doc_model::CrossReferenceKind::NoteNumber, "docx.xref.kind.note"),
-                (ibis_doc_model::CrossReferenceKind::PageNumber, "docx.xref.kind.page"),
-                (ibis_doc_model::CrossReferenceKind::RelativePosition, "docx.xref.kind.relative"),
+                (ibis_doc_model::CrossReferenceKind::NoteNumber, "docx.cross-reference.kind.note"),
+                (ibis_doc_model::CrossReferenceKind::PageNumber, "docx.cross-reference.kind.page"),
+                (ibis_doc_model::CrossReferenceKind::RelativePosition, "docx.cross-reference.kind.relative"),
             ],
             ibis_doc_model::CrossReferenceType::Caption => vec![
-                (ibis_doc_model::CrossReferenceKind::LabelAndNumber, "docx.xref.kind.label_number"),
-                (ibis_doc_model::CrossReferenceKind::Text, "docx.xref.kind.entire_caption"),
-                (ibis_doc_model::CrossReferenceKind::CaptionText, "docx.xref.kind.caption_text"),
-                (ibis_doc_model::CrossReferenceKind::PageNumber, "docx.xref.kind.page"),
-                (ibis_doc_model::CrossReferenceKind::RelativePosition, "docx.xref.kind.relative"),
+                (ibis_doc_model::CrossReferenceKind::LabelAndNumber, "docx.cross-reference.kind.label_number"),
+                (ibis_doc_model::CrossReferenceKind::Text, "docx.cross-reference.kind.entire_caption"),
+                (ibis_doc_model::CrossReferenceKind::CaptionText, "docx.cross-reference.kind.caption_text"),
+                (ibis_doc_model::CrossReferenceKind::PageNumber, "docx.cross-reference.kind.page"),
+                (ibis_doc_model::CrossReferenceKind::RelativePosition, "docx.cross-reference.kind.relative"),
             ],
         };
         let mut kind_buttons = radio_group().layout(RadioGroupLayout::Flow);
         for (k, label_key) in available_kinds {
             let is_sel = ref_kind == k;
-            let btn_id = format!("xref-kind-{}", label_key.strip_prefix("docx.xref.kind.").unwrap_or(label_key));
+            let btn_id = format!("xref-kind-{}", label_key.strip_prefix("docx.cross-reference.kind.").unwrap_or(label_key));
             kind_buttons = kind_buttons.child(
                 mark(&btn_id,
                     radio_button(SharedString::from(btn_id.clone()), is_sel, false, text(label_key), cx.listener(move |this, _, _, cx| {
@@ -2363,14 +2363,14 @@ impl SlideEditor {
         }
         body = body.child(
             v_flex().gap_1()
-                .child(div().text_sm().text_color(theme.muted_foreground).child(text("docx.xref.kind")))
+                .child(div().text_sm().text_color(theme.muted_foreground).child(text("docx.cross-reference.kind")))
                 .child(kind_buttons)
         );
 
         // 3. ハイパーリンクチェックボックス
         body = body.child(mark(
             "xref-hyperlink",
-            Checkbox::new("xref-hyperlink").checked(hyperlink).label(text("docx.xref.hyperlink"))
+            Checkbox::new("xref-hyperlink").checked(hyperlink).label(text("docx.cross-reference.hyperlink"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.toggle_cross_reference_hyperlink(cx);
                 }))
@@ -2387,7 +2387,7 @@ impl SlideEditor {
                     .py(px(4.))
                     .text_sm()
                     .text_color(theme.muted_foreground)
-                    .child(text("docx.xref.empty"))
+                    .child(text("docx.cross-reference.empty"))
             );
         } else {
             for (idx, target) in targets.into_iter().enumerate() {
@@ -2420,7 +2420,7 @@ impl SlideEditor {
         // 5. アクションボタン
         let mut actions = crate::shell::chrome::action_bar();
         if chosen_index.is_some() {
-            actions = actions.action(mark_action("xref-insert", crate::shell::chrome::ActionDefinition::new("xref-insert", text("docx.xref.insert"), crate::shell::chrome::ActionButtonKind::Primary)
+            actions = actions.action(mark_action("xref-insert", crate::shell::chrome::ActionDefinition::new("xref-insert", text("docx.cross-reference.insert"), crate::shell::chrome::ActionButtonKind::Primary)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.apply_cross_reference(cx);
                     }))));
@@ -2428,7 +2428,7 @@ impl SlideEditor {
         actions = actions.action(crate::shell::chrome::dialog_cancel_definition(cx));
 
 
-        Some(SidebarPanel::with_footer(text("docx.xref.title"), body.into_any_element(), actions))
+        Some(SidebarPanel::with_footer(text("docx.cross-reference.title"), body.into_any_element(), actions))
     }
 
     /// 挿入 > 目次 > 目次の更新…: Word の「目次の更新」ダイアログ（パネル）を開く。
@@ -2505,19 +2505,19 @@ impl SlideEditor {
             div()
                 .text_sm()
                 .text_color(theme.foreground)
-                .child(text("docx.toc.update-dialog.prompt"))
+                .child(text("docx.table-of-contents.update-dialog.prompt"))
         );
 
         // 2. ラジオ選択肢: ページ番号だけを更新する
         let is_pages = current_kind == UpdateTocKind::PageNumbersOnly;
-        let pages_btn = radio_button("toc-update-radio-pages", is_pages, false, text("docx.toc.update-page-numbers-only"), cx.listener(|this, _, _, cx| {
+        let pages_btn = radio_button("toc-update-radio-pages", is_pages, false, text("docx.table-of-contents.update-page-numbers-only"), cx.listener(|this, _, _, cx| {
                 this.set_update_toc_kind(UpdateTocKind::PageNumbersOnly, cx);
             }));
 
 
         // 3. ラジオ選択肢: 目次をすべて更新する
         let is_entire = current_kind == UpdateTocKind::EntireTable;
-        let entire_btn = radio_button("toc-update-radio-entire", is_entire, false, text("docx.toc.update-entire-table"), cx.listener(|this, _, _, cx| {
+        let entire_btn = radio_button("toc-update-radio-entire", is_entire, false, text("docx.table-of-contents.update-entire-table"), cx.listener(|this, _, _, cx| {
                 this.set_update_toc_kind(UpdateTocKind::EntireTable, cx);
             }));
         body = body.child(radio_group().child(pages_btn).child(entire_btn));
@@ -2525,20 +2525,20 @@ impl SlideEditor {
         // 4. アクションボタン: OK / キャンセル
         let actions = crate::shell::chrome::action_bar()
             .action(
-                crate::shell::chrome::ActionDefinition::new("toc-update-ok", text("docx.toc.update-ok"), crate::shell::chrome::ActionButtonKind::Primary)
+                crate::shell::chrome::ActionDefinition::new("toc-update-ok", text("docx.table-of-contents.update-ok"), crate::shell::chrome::ActionButtonKind::Primary)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.apply_update_toc_panel(cx);
                     }))
             )
             .action(
-                crate::shell::chrome::ActionDefinition::new("toc-update-cancel", text("docx.toc.update-cancel"), crate::shell::chrome::ActionButtonKind::Normal)
+                crate::shell::chrome::ActionDefinition::new("toc-update-cancel", text("docx.table-of-contents.update-cancel"), crate::shell::chrome::ActionButtonKind::Normal)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.close_update_toc_panel(cx);
                     }))
             );
 
 
-        Some(SidebarPanel::with_footer(text("docx.toc.update-dialog.title"), body.into_any_element(), actions))
+        Some(SidebarPanel::with_footer(text("docx.table-of-contents.update-dialog.title"), body.into_any_element(), actions))
     }
 }
 
@@ -2616,10 +2616,10 @@ impl SlideEditor {
     pub(crate) fn reset_user_info_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_user_info(None, None, cx);
         let def_name = crate::shell::user_name::default_user_name();
-        let def_inits = crate::shell::user_name::initials(def_name);
+        let def_inits = crate::shell::user_name::initials(&def_name);
 
         if let Some(p) = self.doc_state().and_then(|s| s.helper.user_info.as_ref()) {
-            p.name_input.update(cx, |i, cx| i.set_value(def_name, window, cx));
+            p.name_input.update(cx, |i, cx| i.set_value(&def_name, window, cx));
             p.initials_input.update(cx, |i, cx| i.set_value(&def_inits, window, cx));
         }
         cx.notify();

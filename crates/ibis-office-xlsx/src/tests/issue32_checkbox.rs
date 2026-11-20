@@ -36,10 +36,10 @@ pub(super) fn run() {
         let col = |c: u32| CellRange { first_row: 0, last_row: 2, first_column: c, last_column: c };
         e.run_sheet(
             vec![
-                Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![col(1)], change: StyleChange::Align(ibis_doc_model::CellAlign::Left) }),
-                Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![col(2)], change: StyleChange::Align(ibis_doc_model::CellAlign::Right) }),
-                Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![CellRange { first_row: 1, last_row: 1, first_column: 0, last_column: 0 }], change: StyleChange::FontSize(1800) }),
-                Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![CellRange { first_row: 1, last_row: 1, first_column: 1, last_column: 1 }], change: StyleChange::Fill(Some(ibis_doc_model::Rgb(0xFFFF00))) }),
+                Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![col(1)], change: StyleChange::HorizontalAlignment(ibis_doc_model::CellAlign::Left) }),
+                Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![col(2)], change: StyleChange::HorizontalAlignment(ibis_doc_model::CellAlign::Right) }),
+                Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![CellRange { first_row: 1, last_row: 1, first_column: 0, last_column: 0 }], change: StyleChange::FontSize(1800) }),
+                Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![CellRange { first_row: 1, last_row: 1, first_column: 1, last_column: 1 }], change: StyleChange::Fill(Some(ibis_doc_model::Rgb(0xFFFF00))) }),
             ],
             cx,
         );

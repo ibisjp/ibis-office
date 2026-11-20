@@ -148,7 +148,7 @@ impl SlideEditor {
         let mut dup = sc;
         dup.name = new_name;
         let slide = self.current_slide;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::AddScenario { slide, scenario: dup })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::AddScenario { sheet: slide, scenario: dup })], cx);
         let total = self
             .presentation()
             .slide(slide)
@@ -214,14 +214,14 @@ impl SlideEditor {
         let Some(p) = self.sheet_state().and_then(|s| s.panels.scenario_manager.as_ref()) else { return };
         let Some(idx) = p.selected_index else { return };
         let slide = self.current_slide;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::ShowScenario { slide, index: idx })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::ShowScenario { sheet: slide, index: idx })], cx);
     }
 
     pub(crate) fn delete_selected_scenario(&mut self, cx: &mut Context<Self>) {
         let Some(p) = self.sheet_state().and_then(|s| s.panels.scenario_manager.as_ref()) else { return };
         let Some(idx) = p.selected_index else { return };
         let slide = self.current_slide;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::DeleteScenario { slide, index: idx })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::DeleteScenario { sheet: slide, index: idx })], cx);
         let total = self.presentation().slide(slide).and_then(sheet_of).and_then(|s| s.1.scenarios.as_ref()).map(|sc| sc.scenarios.len()).unwrap_or(0);
         if let Some(p) = self.wb_mut().panels.scenario_manager.as_mut() {
             if total == 0 {
@@ -352,8 +352,8 @@ impl SlideEditor {
         let slide = self.current_slide;
         let edit_index = p.selected_index;
         let cmd = match edit_index {
-            Some(idx) => SheetCommand::EditScenario { slide, index: idx, scenario },
-            None => SheetCommand::AddScenario { slide, scenario },
+            Some(idx) => SheetCommand::EditScenario { sheet: slide, index: idx, scenario },
+            None => SheetCommand::AddScenario { sheet: slide, scenario },
         };
         self.run_sheet(vec![Command::Sheet(cmd)], cx);
         let total = self.presentation().slide(slide).and_then(sheet_of).and_then(|s| s.1.scenarios.as_ref()).map(|sc| sc.scenarios.len()).unwrap_or(1);
@@ -397,7 +397,7 @@ impl SlideEditor {
             return cx.notify();
         }
         let slide = self.current_slide;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::CreateScenarioSummary { slide, result_cells })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::CreateScenarioSummary { sheet: slide, result_cells })], cx);
         if let Some(p) = self.wb_mut().panels.scenario_manager.as_mut() {
             p.mode = ScenarioDialogMode::List;
             p.message.clear();
@@ -427,7 +427,7 @@ impl SlideEditor {
             return;
         };
         let slide = self.current_slide;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::MergeScenarios { slide, from_slide })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::MergeScenarios { sheet: slide, from_slide })], cx);
         if let Some(p) = self.wb_mut().panels.scenario_manager.as_mut() {
             p.mode = ScenarioDialogMode::List;
             p.message.clear();

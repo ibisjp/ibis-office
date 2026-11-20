@@ -48,7 +48,7 @@ fn bands(image: &image::RgbaImage, px_per_pt: f64, (x, y, w, h): (f64, f64, f64,
 #[cfg_attr(windows, test)]
 fn a_zero_text_rectangle_of_a_custom_shape_is_one_line() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/corpus-report/pptx/custgeom-zero-text-rect.pptx");
-    let presentation = ibis_pptx::read(&std::fs::read(&path).expect("the test file")).expect("a presentation");
+    let presentation = ibis_formats::read(&std::fs::read(&path).expect("the test file")).expect("a presentation");
     let slide_width = presentation.size_of(&presentation.slides[0]).width as f64;
     let out_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/pptx-text-rect");
     let _ = std::fs::remove_dir_all(&out_dir);

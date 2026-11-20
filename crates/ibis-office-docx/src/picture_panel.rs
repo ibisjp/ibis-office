@@ -225,6 +225,7 @@ impl SlideEditor {
                             clear: pic.clear,
                             effects: pic.effects,
                             geometry: pic.geometry.clone(),
+                            effect_extent: [0; 4],
                         });
                     }
                 }
@@ -790,7 +791,7 @@ impl SlideEditor {
         self.change_picture_look(|l| {
             l.geometry = match preset {
                 None | Some("rect") => None,
-                Some(name) => ibis_pptx::geometry::preset(name),
+                Some(name) => ibis_formats::geometry::preset(name),
             };
         }, cx);
     }

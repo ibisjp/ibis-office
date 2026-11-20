@@ -197,7 +197,7 @@ impl SlideEditor {
                     PhotoAlbumFrame::FrameStyle2 => {
                         // 角丸長方形
                         picture.corner = 16_667;
-                        picture.geometry = ibis_pptx::preset_geometry("roundRect");
+                        picture.geometry = ibis_formats::preset_geometry("roundRect");
                     }
                     PhotoAlbumFrame::FrameStyle3 => {
                         // 単純な枠、白

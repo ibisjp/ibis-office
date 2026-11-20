@@ -202,7 +202,7 @@ pub(crate) fn decode_building_blocks(s: &str) -> Vec<BuildingBlock> {
 }
 
 /// グローバル保存キー (settings)
-const GLOBAL_BUILDING_BLOCKS_KEY: &str = "docx.building_blocks.library";
+const GLOBAL_BUILDING_BLOCKS_KEY: &str = "docx.building-blocks.library";
 /// 文書内保存キー (doc_variables)
 pub(crate) const DOC_BUILDING_BLOCKS_VAR: &str = "_building_blocks";
 
@@ -272,7 +272,7 @@ pub(crate) fn save_document_building_blocks_command(
     let data = encode_building_blocks(blocks);
     let mut vars = doc.doc_variables.clone();
     vars.insert(DOC_BUILDING_BLOCKS_VAR.to_string(), data);
-    Some(FlowCommand::SetDocVariables(vars))
+    Some(FlowCommand::SetDocumentVariables(vars))
 }
 
 /// 全文書パーツ（グローバル＋文書限定）の統合読込
@@ -1031,7 +1031,7 @@ mod tests {
         ];
 
         let cmd = save_document_building_blocks_command(&doc, &blocks).expect("command generated");
-        if let FlowCommand::SetDocVariables(vars) = cmd {
+        if let FlowCommand::SetDocumentVariables(vars) = cmd {
             doc.doc_variables = vars;
         }
 

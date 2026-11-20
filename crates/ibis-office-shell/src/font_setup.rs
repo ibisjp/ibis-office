@@ -19,7 +19,7 @@
 //! Nothing here stops the start: a list that cannot be read, a download that fails or runs out of disk only says so in the
 //! dialog (or the log), and the font is asked about again.
 
-/// The public repository's list. `IBIS_FONT_LIST_URL` replaces it (the tests; a local server, or a file's address).
+/// The public repository's list. The host's `resources.fontListUrl` replaces it, and so does `IBIS_FONT_LIST_URL` (the tests; a local server, or a file's address; not in the browser).
 pub const LIST_URL: &str = "https://raw.githubusercontent.com/ibisjp/ibis-office/main/docs/font-list.txt";
 
 /// The setting that records the version whose start has asked about the fonts.
@@ -66,26 +66,26 @@ impl FontEntry {
 }
 
 /// A name that is one plain path component: ASCII letters, digits, `.`, `_`, `-`, and not beginning with a dot.
-fn safe_name(name: &str) -> bool {
+pub(crate) fn safe_name(name: &str) -> bool {
     !name.is_empty() && !name.starts_with('.') && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
 /// An address the app may fetch: https, or a loopback server (the tests).
-fn safe_url(url: &str) -> bool {
+pub(crate) fn safe_url(url: &str) -> bool {
     url.starts_with("https://") || url.starts_with("http://127.0.0.1") || url.starts_with("http://localhost")
 }
 
 // ---- JSON Lines ----------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
-enum Json {
+pub(crate) enum Json {
     Str(String),
     Num(f64),
     Other,
 }
 
 /// A line of a flat JSON object (string, number, true/false/null values) as its pairs; `None` when it is not one.
-fn parse_object(line: &str) -> Option<Vec<(String, Json)>> {
+pub(crate) fn parse_object(line: &str) -> Option<Vec<(String, Json)>> {
     let mut chars = line.trim().chars().peekable();
     let skip_ws = |chars: &mut std::iter::Peekable<std::str::Chars>| {
         while chars.peek().is_some_and(|c| c.is_whitespace()) {
@@ -185,6 +185,12 @@ fn parse_object(line: &str) -> Option<Vec<(String, Json)>> {
 /// line that is not a font (not JSON, a required key missing, a name or an address that is not plain), which does not stop the
 /// others. A font file name that is listed twice is listed once (the first).
 pub fn parse_list(text: &str) -> Vec<FontEntry> {
+    parse_list_at(text, None)
+}
+
+/// `parse_list` for a list read from `base`: an address of a line that is not absolute (`url`, `license_url`) is taken against `base`
+/// (a host that serves the list serves the font files beside it).
+pub fn parse_list_at(text: &str, base: Option<&str>) -> Vec<FontEntry> {
     let mut out: Vec<FontEntry> = Vec::new();
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
         let Some(pairs) = parse_object(line) else {
@@ -202,7 +208,12 @@ pub fn parse_list(text: &str) -> Vec<FontEntry> {
         };
         let extension_ok = file.rsplit_once('.').is_some_and(|(_, e)| matches!(e.to_ascii_lowercase().as_str(), "ttf" | "otf" | "ttc"));
         let id = string("id").unwrap_or_else(|| file.rsplit_once('.').map_or(file.clone(), |(stem, _)| stem.to_ascii_lowercase()));
+        let absolute = |u: String| match base {
+            Some(base) => crate::resource_list::resolve_url(base, &u).unwrap_or(u),
+            None => u,
+        };
         let license_url = string("license_url").unwrap_or_default();
+        let (url, license_url) = (absolute(url), if license_url.is_empty() { license_url } else { absolute(license_url) });
         if !safe_name(&file) || !extension_ok || !safe_name(&id) || !safe_url(&url) || (!license_url.is_empty() && !safe_url(&license_url)) {
             log::warn!("font-list.txt: a name or an address that is not allowed: {line}");
             continue;
@@ -261,6 +272,22 @@ pub fn is_installed(entry: &FontEntry) -> bool {
     font_folder(entry)
         .and_then(|dir| std::fs::metadata(dir.join(&entry.file)).ok())
         .is_some_and(|m| m.is_file() && (entry.size == 0 || m.len() == entry.size))
+}
+
+/// A family name as compared: lower case, without spaces, hyphens and underscores (`BIZ UDGothic` = `biz-ud-gothic`).
+fn family_key(name: &str) -> String {
+    name.chars().filter(|c| !c.is_whitespace() && !matches!(c, '-' | '_' | '\u{3000}')).flat_map(char::to_lowercase).collect()
+}
+
+/// Whether the PC has the family of `entry` among the families it has installed (`os_families`, as the text system lists them): by the
+/// name in English or in Japanese, not by the file. A font the PC already has is not offered for download (GitHub issue #233: BIZ UD
+/// Gothic and Mincho come with Windows 10 1809 and later).
+pub fn is_installed_on_pc(entry: &FontEntry, os_families: &std::collections::HashSet<String>) -> bool {
+    let keys = [family_key(&entry.name_en), family_key(&entry.name_ja)];
+    os_families.iter().any(|f| {
+        let f = family_key(f);
+        !f.is_empty() && keys.iter().any(|k| !k.is_empty() && *k == f)
+    })
 }
 
 // ---- The rows of the dialog -----------------------------------------------
@@ -334,17 +361,25 @@ pub fn size_text(bytes: u64) -> String {
 
 // ---- The list and the files, over the network (not in the browser) ----------
 
-/// The address of the list.
-#[cfg(not(target_family = "wasm"))]
+/// The address of the list: the host's (`resources.fontListUrl` of its options), else `IBIS_FONT_LIST_URL` (the tests; a local server; not in the browser), else the public repository's.
 pub fn list_url() -> String {
-    std::env::var("IBIS_FONT_LIST_URL").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| LIST_URL.to_string())
+    if let Some(url) = crate::host::options().font_list_url {
+        return url;
+    }
+    #[cfg(not(target_family = "wasm"))]
+    if let Some(url) = std::env::var("IBIS_FONT_LIST_URL").ok().filter(|v| !v.is_empty()) {
+        return url;
+    }
+    LIST_URL.to_string()
 }
+
 
 /// Read and parse the list (run off the main thread). The error is a line for the log and the dialog.
 #[cfg(not(target_family = "wasm"))]
 pub fn fetch_list() -> Result<Vec<FontEntry>, String> {
-    let text = fetch_text_from(&list_url())?;
-    Ok(parse_list(&text))
+    let url = list_url();
+    let text = fetch_text_from(&url)?;
+    Ok(parse_list_at(&text, Some(&url)))
 }
 
 /// Why a transfer did not end in a file.
@@ -483,6 +518,56 @@ fn finish(result: Result<(), DownloadError>, part: &std::path::Path, to: &std::p
     })
 }
 
+// ---- The browser version's PDF: the fonts it fetches by itself (K0037) -----------
+
+/// The gothic font the browser version's PDF falls back to for a character the viewer's PC has no font for: its id in `font-list.txt`
+/// and its file's name (BIZ UDGothic, SIL OFL 1.1; the licence lets the PDF embed a subset).
+pub const PDF_FALLBACK_GOTHIC: (&str, &str) = ("BIZUDGothic", "BIZUDGothic-Regular.ttf");
+/// The mincho (serif) one: BIZ UDMincho.
+pub const PDF_FALLBACK_MINCHO: (&str, &str) = ("BIZUDMincho", "BIZUDMincho-Regular.ttf");
+
+/// The fallback font for text asked in `families` (first to last): mincho when a family is a serif face (名に「明朝」「mincho」「serif」…),
+/// else gothic.
+pub fn pdf_fallback_for(families: &[String]) -> (&'static str, &'static str) {
+    let serif = families.iter().any(|f| {
+        let f = f.to_lowercase();
+        let generic_serif = f == "serif" || f.contains("times") || f.contains("georgia") || f.contains("garamond") || f.contains("cambria");
+        generic_serif || f.contains("mincho") || f.contains("\u{660e}\u{671d}") || f.contains("ming") || f.contains("song")
+    });
+    if serif { PDF_FALLBACK_MINCHO } else { PDF_FALLBACK_GOTHIC }
+}
+
+/// The font file `file` of the list's font `id`, for the PDF: the copy already kept (`load`) is used as it is; else the list is read
+/// (`list`), the font is downloaded as セットアップ does (`download`, which keeps it where `load` finds it) and loaded. `None` when
+/// the list cannot be read or does not name the font, the download fails, or the file is not there after it (the PDF is then written
+/// without the font, as it was).
+pub async fn obtain_font<F1, F2, F3>(id: &str, file: &str, load: impl Fn(String) -> F1, list: impl Fn() -> F2, download: impl Fn(FontEntry) -> F3) -> Option<Vec<u8>>
+where
+    F1: std::future::Future<Output = Option<Vec<u8>>>,
+    F2: std::future::Future<Output = Result<String, String>>,
+    F3: std::future::Future<Output = Result<(), String>>,
+{
+    if let Some(bytes) = load(file.to_string()).await {
+        return Some(bytes);
+    }
+    let text = match list().await {
+        Ok(text) => text,
+        Err(e) => {
+            log::warn!("PDF font {id}: the font list could not be read: {e}");
+            return None;
+        }
+    };
+    let Some(entry) = parse_list_at(&text, Some(&list_url())).into_iter().find(|e| e.id == id && e.file == file) else {
+        log::warn!("PDF font {id}: not in the font list");
+        return None;
+    };
+    if let Err(e) = download(entry).await {
+        log::warn!("PDF font {id}: the download failed: {e}");
+        return None;
+    }
+    load(file.to_string()).await
+}
+
 /// A small HTTP server on 127.0.0.1 for the tests (the list, font files, a 404, a transfer that stalls): the tests never use the
 /// internet. It stops when it is dropped.
 #[cfg(all(any(test, feature = "scenarios"), not(target_family = "wasm")))]
@@ -578,10 +663,40 @@ pub mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::{all_checked, build_rows, has_new, parse_list, size_text, toggle_all, FontEntry};
+    use super::{all_checked, build_rows, has_new, is_installed_on_pc, list_url, obtain_font, parse_list, parse_list_at, pdf_fallback_for, size_text, toggle_all, FontEntry};
 
     fn entry(file: &str) -> FontEntry {
         parse_list(&format!("{{\"name_en\":\"N\",\"file\":\"{file}\",\"url\":\"https://example.com/{file}\"}}")).remove(0)
+    }
+
+    #[test]
+    fn relative_addresses_of_a_font_are_taken_against_the_lists_own() {
+        let base = "https://works.example.com/office/fonts/font-list.txt";
+        let line = "{\"name_en\":\"N\",\"file\":\"n.ttf\",\"url\":\"n/n.ttf\",\"license_url\":\"/office/n/LICENSE\"}";
+        assert!(parse_list(line).is_empty(), "a relative address with no base is not one the app may fetch");
+        let list = parse_list_at(line, Some(base));
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].url, "https://works.example.com/office/fonts/n/n.ttf");
+        assert_eq!(list[0].license_url, "https://works.example.com/office/n/LICENSE");
+        let absolute = parse_list_at("{\"name_en\":\"N\",\"file\":\"n.ttf\",\"url\":\"https://cdn.example.com/n.ttf\"}", Some(base));
+        assert_eq!(absolute[0].url, "https://cdn.example.com/n.ttf");
+        assert!(parse_list_at("{\"name_en\":\"N\",\"file\":\"n.ttf\",\"url\":\"n.ttf\"}", Some("ftp://x/list.txt")).is_empty(), "a list that is not at an http address gives no relative address");
+    }
+
+    #[test]
+    fn the_hosts_font_list_address_comes_first_and_the_default_remains() {
+        use crate::host::{self, HostCapabilities, HostOptions, MemoryHost};
+        use std::rc::Rc;
+        if std::env::var_os("IBIS_FONT_LIST_URL").is_some_and(|v| !v.is_empty()) {
+            return; // the tests of the dialog name a local list
+        }
+        assert_eq!(list_url(), super::LIST_URL);
+        let options = HostOptions { font_list_url: Some("https://works.example.com/office/font-list.txt".to_string()), ..HostOptions::default() };
+        host::install(Rc::new(MemoryHost::new()), HostCapabilities::all(), options);
+        assert_eq!(list_url(), "https://works.example.com/office/font-list.txt");
+        host::install(Rc::new(MemoryHost::new()), HostCapabilities::all(), HostOptions::default());
+        assert_eq!(list_url(), super::LIST_URL, "a host that gave no address leaves the public list");
+        host::uninstall();
     }
 
     #[test]
@@ -626,6 +741,18 @@ mod tests {
         assert_eq!(list.iter().map(|f| f.file.as_str()).collect::<Vec<_>>(), ["l.ttf"], "one font, the first of the same file name");
     }
 
+    /// #233: a font the PC already has (by its family's name, English or Japanese) is not offered.
+    #[test]
+    fn a_family_the_pc_has_is_installed() {
+        let biz = parse_list("{\"id\":\"BIZUDGothic\",\"name_en\":\"BIZ UDGothic\",\"name_ja\":\"BIZ UD\\u30b4\\u30b7\\u30c3\\u30af\",\"file\":\"BIZUDGothic-Regular.ttf\",\"url\":\"https://x.example/a.ttf\"}").remove(0);
+        let has = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<std::collections::HashSet<_>>();
+        assert!(is_installed_on_pc(&biz, &has(&["Arial", "BIZ UDGothic"])), "the English name");
+        assert!(is_installed_on_pc(&biz, &has(&["BIZ UD\u{30b4}\u{30b7}\u{30c3}\u{30af}"])), "the Japanese name (Windows)");
+        assert!(is_installed_on_pc(&biz, &has(&["biz ud-gothic"])), "case, spaces and hyphens do not count");
+        assert!(!is_installed_on_pc(&biz, &has(&["BIZ UDMincho", "Arial"])), "another family");
+        assert!(!is_installed_on_pc(&biz, &has(&[])));
+    }
+
     #[test]
     fn rows_leave_out_the_installed_and_put_the_skipped_last_and_off() {
         let all: Vec<FontEntry> = ["a.ttf", "b.ttf", "c.ttf", "d.ttf"].iter().map(|f| entry(f)).collect();
@@ -667,9 +794,82 @@ mod tests {
     }
 
     #[cfg(not(target_family = "wasm"))]
+    /// Runs a future that never waits for anything else (the closures of these tests answer at once).
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        struct Nop;
+        impl std::task::Wake for Nop {
+            fn wake(self: std::sync::Arc<Self>) {}
+        }
+        let waker = std::task::Waker::from(std::sync::Arc::new(Nop));
+        let mut cx = std::task::Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            if let std::task::Poll::Ready(v) = future.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
+
+    const LIST: &str = "{\"id\":\"BIZUDGothic\",\"name_en\":\"G\",\"file\":\"BIZUDGothic-Regular.ttf\",\"url\":\"https://example.com/g.ttf\"}\n";
+
+    #[test]
+    fn the_pdf_fallback_is_mincho_for_a_serif_request_and_gothic_otherwise() {
+        let f = |names: &[&str]| pdf_fallback_for(&names.iter().map(|n| n.to_string()).collect::<Vec<_>>()).0;
+        assert_eq!(f(&["\u{6e38}\u{660e}\u{671d}", "serif"]), "BIZUDMincho");
+        assert_eq!(f(&["Times New Roman"]), "BIZUDMincho");
+        assert_eq!(f(&["\u{30e1}\u{30a4}\u{30ea}\u{30aa}", "sans-serif"]), "BIZUDGothic");
+        assert_eq!(f(&[]), "BIZUDGothic");
+    }
+
+    #[test]
+    fn a_kept_font_is_used_without_asking_the_list() {
+        let got = block_on(obtain_font(
+            "BIZUDGothic",
+            "BIZUDGothic-Regular.ttf",
+            |_| async { Some(vec![1, 2, 3]) },
+            || async { panic!("the list is not needed") },
+            |_| async { panic!("no download is needed") },
+        ));
+        assert_eq!(got, Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn a_font_not_kept_is_downloaded_once_and_then_loaded() {
+        let kept = std::cell::RefCell::new(None);
+        let downloads = std::cell::Cell::new(0);
+        let got = block_on(obtain_font(
+            "BIZUDGothic",
+            "BIZUDGothic-Regular.ttf",
+            |_| {
+                let v = kept.borrow().clone();
+                async move { v }
+            },
+            || async { Ok(LIST.to_string()) },
+            |entry| {
+                assert_eq!(entry.url, "https://example.com/g.ttf");
+                downloads.set(downloads.get() + 1);
+                *kept.borrow_mut() = Some(vec![9]);
+                async { Ok(()) }
+            },
+        ));
+        assert_eq!((got, downloads.get()), (Some(vec![9]), 1));
+    }
+
+    #[test]
+    fn no_font_comes_when_the_list_or_the_download_fails_or_the_list_lacks_it() {
+        let none = |list: Result<String, String>, download: Result<(), String>| {
+            block_on(obtain_font("BIZUDGothic", "BIZUDGothic-Regular.ttf", |_| async { None }, || std::future::ready(list.clone()), |_| std::future::ready(download.clone())))
+        };
+        assert_eq!(none(Err("offline".into()), Ok(())), None);
+        assert_eq!(none(Ok("# nothing\n".into()), Ok(())), None);
+        assert_eq!(none(Ok(LIST.into()), Err("404".into())), None);
+        // The download said it worked but the file is not there.
+        assert_eq!(none(Ok(LIST.into()), Ok(())), None);
+    }
+
     mod download {
         use super::super::test_support::{Route, Server};
-        use super::super::{download, font_folder, is_installed, is_skipped, parse_list, set_skipped, DownloadError, FontEntry};
+        use super::super::{download, font_folder, is_installed, is_skipped, parse_list, set_skipped, DownloadError, FontEntry, PDF_FALLBACK_GOTHIC, PDF_FALLBACK_MINCHO};
         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
         fn entry(server: &Server, id: &str, file: &str, size: usize, sha256: Option<&str>) -> FontEntry {
@@ -758,8 +958,16 @@ mod tests {
 
         #[test]
         fn the_list_in_the_repository_is_a_valid_list_and_starts_with_ipamj_mincho() {
-            let list = parse_list(include_str!("../../../publish/doc/font-list.txt"));
-            assert_eq!(list.len(), 1);
+            let list = parse_list(include_str!("../../../publish/docs/font-list.txt"));
+            // IPAmj Mincho, then the Digital Agency's Add Character_GJMincho (the characters MJ lacks, #158).
+            assert_eq!(list.len(), 4);
+            let b = list.iter().find(|e| e.id == PDF_FALLBACK_GOTHIC.0).unwrap();
+            assert_eq!((b.file.as_str(), b.size, b.license.as_str()), (PDF_FALLBACK_GOTHIC.1, 4_667_380, "SIL OFL 1.1"));
+            let b = list.iter().find(|e| e.id == PDF_FALLBACK_MINCHO.0).unwrap();
+            assert_eq!((b.file.as_str(), b.size, b.license.as_str()), (PDF_FALLBACK_MINCHO.1, 6_153_932, "SIL OFL 1.1"));
+            let g = &list[1];
+            assert_eq!((g.id.as_str(), g.file.as_str(), g.size), ("ACGJMincho", "acgjm.ttf", 5_302_608));
+            assert!(g.url.ends_with("/fonts/ACGJMincho/acgjm.ttf"));
             let f = &list[0];
             assert_eq!((f.id.as_str(), f.file.as_str(), f.name_en.as_str()), ("IPAmjMincho", "ipamjm.ttf", "IPAmj Mincho"));
             assert_eq!(f.license_file(), "LICENSE");

@@ -477,7 +477,7 @@ pub(crate) struct BarSlot {
 }
 
 /// Which of the static menus are used least, in the order they fold (spec 4.3).
-fn static_fold_rank(kind: ibis_pptx::Kind, id: MenuId) -> Fold {
+fn static_fold_rank(kind: ibis_formats::Kind, id: MenuId) -> Fold {
     let order: &[MenuId] = crate::format::info(kind).fold_order;
     match id {
         MenuId::Help => Fold::Rank(0),
@@ -486,7 +486,7 @@ fn static_fold_rank(kind: ibis_pptx::Kind, id: MenuId) -> Fold {
 }
 
 /// The slots of the bar's menus, in the bar's order (the static menus, then the context menus: these fold from the right).
-fn bar_slots(items: &[(BarMenu, Vec<MenuEntry>)], kind: ibis_pptx::Kind, window: &Window) -> Vec<BarSlot> {
+fn bar_slots(items: &[(BarMenu, Vec<MenuEntry>)], kind: ibis_formats::Kind, window: &Window) -> Vec<BarSlot> {
     let contexts = items.iter().filter(|(m, _)| matches!(m, BarMenu::Context(_))).count();
     let mut seen_contexts = 0;
     items
@@ -623,6 +623,10 @@ impl SlideEditor {
     /// The menus of the bar in the order of `open_menu_at`'s index: the static menus, then the context menus of the
     /// selection.
     pub fn bar_items(&self) -> Vec<(BarMenu, Vec<MenuEntry>)> {
+        // The start window (no file open) has the menus of `start_menu.rs`.
+        if !self.has_document {
+            return self.start_menus().into_iter().map(|(id, entries)| (BarMenu::Static(id), entries)).collect();
+        }
         let bar = self.menu_bar_all();
         let mut items: Vec<(BarMenu, Vec<MenuEntry>)> = bar.statics.menus.into_iter().map(|(id, entries)| (BarMenu::Static(id), entries)).collect();
         items.extend(bar.contexts.into_iter().map(|(id, entries)| (BarMenu::Context(id), entries)));
@@ -781,12 +785,22 @@ impl SlideEditor {
                     crate::editor::bounds_observer(move |b, _, _| bounds.set(Some(b)))
                 }).child({
                     let logo = menu_bar_button("editor-app-logo".into()).child(crate::chrome::brand_logo("editor-app-logo-image", logo_height, false));
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let logo = logo.cursor_pointer().tooltip(crate::i18n::text("shell.start-window")).on_click(cx.listener(|_, _, _, cx| crate::app::open_editor(None, None, cx)));
-                    // The Web version has one editor in a page: the start view is this page in another tab (K0016).
-                    #[cfg(target_arch = "wasm32")]
-                    let logo = logo.cursor_pointer().tooltip(crate::i18n::text("shell.start-window")).on_click(cx.listener(|_, _, _, _| crate::web::open_in_new_tab("")));
-                    logo
+                    // With a host (ibisWorks) the logo opens the start view the host gave (`startUrl`) in a new tab; a host without one
+                    // has a logo that does nothing (no cursor, no tooltip). K0037.
+                    if crate::host::is_connected() {
+                        match crate::host::options().start_url {
+                            Some(url) => logo.cursor_pointer().tooltip(crate::i18n::text("shell.start-window")).on_click(cx.listener(move |_, _, _, cx| crate::external::open_url(&url, cx))).into_any_element(),
+                            // No start view: the logo is only a picture, not a button (no highlight under the pointer, no click; K0037).
+                            None => div().h(px(MENU_BAR_BUTTON_HEIGHT)).px(px(MENU_BAR_BUTTON_PADDING)).flex().items_center().child(crate::chrome::brand_logo("editor-app-logo-image", logo_height, false)).into_any_element(),
+                        }
+                    } else {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let logo = logo.cursor_pointer().tooltip(crate::i18n::text("shell.start-window")).on_click(cx.listener(|_, _, _, cx| crate::app::open_editor(None, None, cx)));
+                        // The Web version has one editor in a page: the start view is this page in another tab (K0016).
+                        #[cfg(target_arch = "wasm32")]
+                        let logo = logo.cursor_pointer().tooltip(crate::i18n::text("shell.start-window")).on_click(cx.listener(|_, _, _, _| crate::web::open_in_new_tab("")));
+                        logo.into_any_element()
+                    }
                 }))
             })
             .children(main.iter().copied().flat_map(|ix| {

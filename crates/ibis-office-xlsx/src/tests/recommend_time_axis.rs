@@ -6,7 +6,7 @@
 //! cells. The synthetic workbook is `test/editing/xlsx-recommend-time-axis.xlsx` (`scripts/gen-recommend-time-axis-xlsx.py`);
 //! the private workbook `test/private/graph/graph.xlsx` is checked only where it exists.
 use crate::shell::scenario::Scenario;
-use ibis_pptx::NewChartKind;
+use ibis_formats::NewChartKind;
 use ibis_doc_model::{CellRange, ShapeKind};
 use crate::ext::*;
 
@@ -100,7 +100,7 @@ pub(crate) fn private_graph() {
     let sheets = s.with(|e, _| e.presentation().slides.len());
     for index in 0..sheets {
         let used = s.with(move |e, _| {
-            let sheet = ibis_pptx::sheet_of(e.presentation(), &ibis_pptx::quote_sheet(e.presentation().slides[index].name.as_deref().unwrap_or_default()))?;
+            let sheet = ibis_formats::sheet_of(e.presentation(), &ibis_formats::quote_sheet(e.presentation().slides[index].name.as_deref().unwrap_or_default()))?;
             let cells = sheet.cells.iter().filter(|c| !matches!(c.value, ibis_doc_model::CellValue::Empty));
             let (mut r0, mut c0, mut r1, mut c1) = (u32::MAX, u32::MAX, 0, 0);
             for c in cells {

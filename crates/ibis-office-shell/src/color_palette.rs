@@ -33,7 +33,7 @@ impl Swatch {
     /// A square that picks `rgb` through `pick`; `id` is its item's.
     pub fn with_id(id: &'static str, rgb: Rgb, label: impl Into<SharedString>, checked: bool, pick: &PickColor) -> Self {
         let pick = pick.clone();
-        Self { rgb, item: MenuItem::new(id, label).checked(checked).on(move |e, w, cx| { let chosen = e.chosen_color(rgb); pick(e, Some(chosen), w, cx) }) }
+        Self { rgb, item: MenuItem::new(id, label).checked(checked).on(move |e, w, cx| { pick(e, Some(rgb), w, cx) }) }
     }
 
     pub fn new(rgb: Rgb, label: impl Into<SharedString>, checked: bool, pick: &PickColor) -> Self {
@@ -100,7 +100,7 @@ fn row(swatches: Vec<Swatch>, editor: &WeakEntity<SlideEditor>, id: &'static str
                 editor
                     .update(cx, |this, cx| {
                         this.note_recent_color(rgb);
-                        handler(this, window, cx)
+                        crate::chrome::dispatch(&handler, this, window, cx)
                     })
                     .ok();
             })
@@ -203,7 +203,7 @@ pub fn theme_rows(colors: &[Rgb; 10], pick: &PickColor, current: Option<Rgb>) ->
             (0..10)
                 .map(|column| {
                     let tint = THEME_TINTS[column][row];
-                    let rgb = ibis_pptx::tinted(colors[column], tint);
+                    let rgb = ibis_formats::tinted(colors[column], tint);
                     let name = crate::i18n::text(THEME_NAME_IDS[column]);
                     let label = match tint {
                         0 => name.to_string(),

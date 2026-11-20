@@ -219,7 +219,7 @@ impl SlideEditor {
                     None => changed.kind,
                 };
                 if self.presentation().slide(slide).and_then(|s| s.shape(shape)).is_some_and(|s| s.kind != kind) {
-                    self.run(vec![Command::SetKind { slide, shape, kind: Box::new(kind) }], cx);
+                    self.run(vec![Command::SetShapeKind { slide, shape, kind: Box::new(kind) }], cx);
                 }
             }
             LinkTarget::CellText { shape, row, col, start, end } => {
@@ -259,7 +259,7 @@ impl SlideEditor {
                     None => changed.kind,
                 };
                 if self.presentation().slide(slide).and_then(|s| s.shape(shape)).is_some_and(|s| s.kind != kind) {
-                    self.run(vec![Command::SetKind { slide, shape, kind: Box::new(kind) }], cx);
+                    self.run(vec![Command::SetShapeKind { slide, shape, kind: Box::new(kind) }], cx);
                 }
             }
         }

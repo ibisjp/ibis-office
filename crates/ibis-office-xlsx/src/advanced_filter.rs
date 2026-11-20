@@ -142,7 +142,7 @@ impl SlideEditor {
 
         let slide = self.current_slide;
         match self.document.execute(vec![Command::Sheet(SheetCommand::AdvancedFilter {
-            slide,
+            sheet: slide,
             list_range,
             criteria_range,
             copy_to,

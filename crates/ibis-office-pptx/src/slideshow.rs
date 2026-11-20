@@ -118,19 +118,23 @@ pub struct Slideshow {
     /// The slide the shown one is coming in over, and a number for each
     /// change (each runs its own animation).
     came_from: Option<ibis_doc_model::SlideId>,
+    /// The slides left by going on or jumping, last first out: a way back goes through them (PowerPoint: slides seen, hidden ones too, can be gone back through), and before any, to the shown slide before.
+    history: Vec<ibis_doc_model::SlideId>,
     /// 変形: when the slide that came in began to (by `changes`), for its progress.
     morph_clock: std::cell::RefCell<Option<(usize, crate::clock::Instant)>>,
+    /// ランダム: the draw that picked the effect of the slide that came in (by `changes`), so that the frames of one transition are one effect.
+    random_draw: std::cell::Cell<Option<(usize, u64)>>,
     /// When the animations last played (by `played`) began, for their progress: they are drawn for the time since, each frame.
     anim_clock: std::cell::RefCell<Option<(usize, crate::clock::Instant)>>,
     /// The slides whose text has been rasterized ahead (`glyph_prewarm`), so that a moving text finds its glyphs ready.
     prewarmed: std::cell::RefCell<std::collections::HashSet<ibis_doc_model::SlideId>>,
     /// The time (ms since the animations began) the show draws, as the scenarios set it to compare a frame with PowerPoint's;
     /// `None` runs on the clock.
-    pub(crate) anim_at: Option<f32>,
+    pub anim_at: Option<f32>,
     /// The time (ms since the slide came in) the slide's transition (変形 and the others) is drawn at, instead of the clock's: `--export ui`'s
     /// `transition-at:<ms>` sets it, so that the same moment of an effect can be compared on any machine; `None` runs on the clock.
     pub transition_at: Option<f32>,
-    changes: usize,
+    pub(crate) changes: usize,
     /// Counts each slide shown, so that a timer set for one (`advTm`) does
     /// nothing once another is shown.
     shown: usize,
@@ -440,6 +444,14 @@ impl SlideEditor {
         cx.notify();
     }
 
+    /// Move to the first slide a show plays (a hidden first slide is passed over), for 最初から.
+    pub(crate) fn select_first_show_slide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_slide_number(1, window, cx);
+        if let Some(&first) = presentation_show_slides(self.presentation(), None).first() {
+            self.current_slide = first;
+        }
+    }
+
     fn start_show(&mut self, fullscreen_main: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.start_show_mode(fullscreen_main, None, false, window, cx);
     }
@@ -467,7 +479,13 @@ impl SlideEditor {
         }
         // If slide range or custom show is specified, jump into the sequence if current slide is outside.
         let show_slides = presentation_show_slides(self.presentation(), custom_show);
-        if !show_slides.is_empty() && !show_slides.contains(&self.current_slide) {
+        // A hidden slide chosen to start from plays (PowerPoint's 現在のスライドから開始 does), as long as no custom show decides
+        // the slides; the way on from it goes to the visible slides around it. 最初から goes through `select_first_show_slide`.
+        let keeps_hidden = self.presentation().slide(self.current_slide).is_some_and(|s| s.hidden) && custom_show.is_none() && !matches!(self.presentation().show_properties.slide_range, ibis_doc_model::ShowSlideRange::Custom(_)) && {
+            let (min_idx, max_idx) = presentation_slide_bounds(self.presentation());
+            self.presentation().slide_index(self.current_slide).is_some_and(|i| (min_idx..=max_idx).contains(&i))
+        };
+        if !keeps_hidden && !show_slides.is_empty() && !show_slides.contains(&self.current_slide) {
             if let Some(&target) = show_slides.first() {
                 self.current_slide = target;
             }
@@ -477,7 +495,9 @@ impl SlideEditor {
             made_fullscreen,
             blank: None,
             came_from: None,
+            history: Vec::new(),
             morph_clock: std::cell::RefCell::new(None),
+            random_draw: std::cell::Cell::new(None),
             anim_clock: std::cell::RefCell::new(None),
             prewarmed: std::cell::RefCell::new(std::collections::HashSet::new()),
             anim_at: None,
@@ -526,7 +546,7 @@ impl SlideEditor {
         if self.slideshow().is_some() || !self.has_document || self.loading || !self.pages_are_slides() {
             return;
         }
-        self.show_slide_number(1, window, cx);
+        self.select_first_show_slide(window, cx);
         self.start_show(false, window, cx);
         let Some(show) = Slideshow::of_mut(&mut *self.format) else { return };
         let now = crate::clock::Instant::now();
@@ -845,6 +865,7 @@ impl SlideEditor {
         let Some(show) = self.pptx_mut().and_then(|s| s.slideshow.take()) else { return };
         self.shape_edit.popup = None;
         self.stop_clips(cx);
+        self.stop_transition_sound();
         self.close_show_windows(show.external.map(|e| e.windows).unwrap_or_default(), cx);
         if show.made_fullscreen && window.is_fullscreen() {
             window.toggle_fullscreen();
@@ -999,11 +1020,7 @@ impl SlideEditor {
             for stroke in strokes {
                 let shape_id = self.document.ids().new_shape_id();
                 if let Some(shape) = ink_stroke_to_shape(&stroke, slide_size, shape_id) {
-                    commands.push(Command::InsertShape {
-                        slide: slide_id,
-                        index,
-                        shape,
-                    });
+                    commands.push(Command::InsertShape { slide: slide_id, shapes: vec![(index, shape)] });
                     index += 1;
                 }
             }
@@ -1031,8 +1048,22 @@ impl SlideEditor {
         let show_slides = presentation_show_slides(self.document.presentation(), show.custom_show);
         let first_in_range = show_slides.first().copied();
         let cur_pos = show_slides.iter().position(|&id| id == self.current_slide);
-        let next = cur_pos.and_then(|pos| show_slides.get(pos + 1)).copied();
-        let previous = cur_pos.and_then(|pos| if pos > 0 { show_slides.get(pos - 1).copied() } else { None });
+        let mut next = cur_pos.and_then(|pos| show_slides.get(pos + 1)).copied();
+        let mut previous = cur_pos.and_then(|pos| if pos > 0 { show_slides.get(pos - 1).copied() } else { None });
+        // A hidden slide: the way on is the slide next to it, hidden or not (PowerPoint, measured: from the hidden 6 the next is the hidden 7,
+        // then 8); the way back is the shown slide before it. Past a custom show's list a slide is out of the show: next/previous are by position.
+        if cur_pos.is_none() && let Some(at) = self.document.presentation().slide_index(self.current_slide) {
+            let pres = self.document.presentation();
+            let index_of = |id: &ibis_doc_model::SlideId| pres.slide_index(*id).unwrap_or(usize::MAX);
+            let (_, max_idx) = presentation_slide_bounds(pres);
+            next = if show.custom_show.is_none() && at < max_idx { pres.slides.get(at + 1).map(|s| s.id) } else { show_slides.iter().copied().find(|id| index_of(id) > at) };
+            previous = show_slides.iter().rev().copied().find(|id| index_of(id) < at);
+        }
+        // Going back goes through the slides seen (so the hidden ones seen are gone back through); with none seen, it is the shown slide before.
+        let seen_at = if forward { None } else { show.history.iter().rposition(|&id| id != self.current_slide && self.document.presentation().slide(id).is_some()) };
+        if let Some(i) = seen_at {
+            previous = Some(show.history[i]);
+        }
 
         // The slide's animations first: the next group, or back one (unless animations disabled).
         if !show.at_end && show_anim {
@@ -1067,6 +1098,7 @@ impl SlideEditor {
                         rehearsal.slide_paused = None;
                     }
                     show.came_from = Some(self.current_slide);
+ show.history.push(self.current_slide);
                     show.changes += 1;
                     // The slide shrinks back into the card it grew from.
                     show.zoom_anim = ret.card.filter(|(_, d)| *d > 0).map(|(frame, duration_ms)| ZoomAnim { grows: false, other: self.current_slide, frame, duration_ms, changes: show.changes });
@@ -1104,6 +1136,7 @@ impl SlideEditor {
                         rehearsal.slide_paused = None;
                     }
                     show.came_from = Some(self.current_slide);
+ show.history.push(self.current_slide);
                     show.changes += 1;
                     self.current_slide = id;
                     self.enter_slide_animations(true, cx);
@@ -1118,6 +1151,7 @@ impl SlideEditor {
                     }
                     if is_loop {
                         show.came_from = Some(self.current_slide);
+ show.history.push(self.current_slide);
                         show.changes += 1;
                         self.current_slide = first_in_range.unwrap_or(self.current_slide);
                         self.enter_slide_animations(true, cx);
@@ -1134,6 +1168,9 @@ impl SlideEditor {
                         rehearsal.slide_paused = None;
                     }
                     show.came_from = None;
+                    if let Some(i) = seen_at {
+                        show.history.truncate(i);
+                    }
                     self.current_slide = id;
                     self.enter_slide_animations(false, cx);
                 }
@@ -1218,8 +1255,13 @@ impl SlideEditor {
         show.step = if !show_anim || !fresh { groups.len() } else { groups.iter().take_while(|g| g.auto).count() };
         show.played += 1;
         show.triggered_played.clear();
+        // A slide that comes in by a change (not the first one of the show, not one a scenario draws at a set time) plays its transition's sound.
+        let transition_sound = fresh && show.changes > 0 && show.transition_at.is_none();
         if fresh {
             self.play_automatic_clips(cx);
+        }
+        if transition_sound {
+            self.play_transition_sound(cx);
         }
     }
 
@@ -1465,6 +1507,7 @@ impl SlideEditor {
         show.at_end = false;
         show.blank = None;
         show.came_from = Some(self.current_slide);
+ show.history.push(self.current_slide);
         show.changes += 1;
         show.zoom = 1.0;
         show.pan = (0.0, 0.0);
@@ -1578,6 +1621,7 @@ impl SlideEditor {
         let zoom_card = from_shape.filter(|id| matches!(link, L::Slide(_)) && (self.slide().zoom_objects.contains_key(id) || self.slide().shape_return_to_zoom.contains(id))).and_then(|id| self.slide().shape(id).map(|sh| (sh.frame, zoom_duration(self.slide(), id))));
         let Some(show) = Slideshow::of_mut(&mut *self.format) else { return };
         show.came_from = Some(origin_slide);
+ show.history.push(origin_slide);
         show.changes += 1;
         show.zoom_anim = zoom_card.filter(|(_, d)| *d > 0).map(|(frame, duration_ms)| ZoomAnim { grows: true, other: origin_slide, frame, duration_ms, changes: show.changes });
         if zoom_return_state.is_some() {
@@ -1758,7 +1802,7 @@ impl SlideEditor {
         let page_at = |slide: &ibis_doc_model::Slide, zoomed_scale: f32| page_layers(slide, zoomed_scale, true, false);
         let page = |slide: &ibis_doc_model::Slide| page_at(slide, zoomed_scale);
         let before = show.came_from.and_then(|id| self.presentation().slide(id));
-        let transition = slide.transition.as_ref().filter(|t| !t.effect.is_empty() && t.effect != "cut" && t.duration > 0);
+        let transition = slide.transition.as_ref().filter(|t| !t.effect.is_empty() && (t.effect != "cut" || t.direction.as_deref() == Some("thruBlk")) && t.duration > 0);
         // A ズーム being played: the card's rectangle grows into the slide (or the slide shrinks into it), the slide that is
         // not the card's drawn at its place, over the other one. Its time is counted from when the move on was made.
         let zoom_playing = show.zoom_anim.as_ref().filter(|z| z.changes == show.changes).and_then(|z| {
@@ -1806,13 +1850,31 @@ impl SlideEditor {
                 let progress = (elapsed / t.duration.max(1) as f32).min(1.0);
                 if progress < 1.0 {
                     window.request_animation_frame();
-                    self.morph_page(old, slide, ease_in_out(progress), zoomed_scale)
+                    self.morph_page(old, slide, ease_in_out(progress), progress, zoomed_scale)
                 } else {
                     page(slide).into_any_element()
                 }
             }
             (Some(old), Some(t)) => {
                 use ibis_doc_model::transition_plan::{TransitionPlan, plan};
+                // ランダム: each time the slide comes in, one effect of the gallery is drawn (the draw is kept for the whole transition; a
+                // transition set to a time, as the scenarios do, is drawn from the change's number).
+                let picked;
+                let t = if t.effect == "random" {
+                    let seed = match show.random_draw.get() {
+                        Some((changes, seed)) if changes == show.changes => seed,
+                        _ => {
+                            let seed = if show.transition_at.is_some() { show.changes as u64 } else { crate::clock::unix_millis() ^ ((show.changes as u64) << 40) };
+                            show.random_draw.set(Some((show.changes, seed)));
+                            seed
+                        }
+                    };
+                    let (effect, direction) = ibis_doc_model::transition_plan::random_effect(seed);
+                    picked = ibis_doc_model::Transition { effect: effect.to_string(), direction: direction.map(str::to_string), ..t.clone() };
+                    &picked
+                } else {
+                    t
+                };
                 // Drawn again for each moment of the time since the slide came in (as 変形 is).
                 let elapsed = {
                     let mut clock = show.morph_clock.borrow_mut();
@@ -1826,19 +1888,37 @@ impl SlideEditor {
                     page(slide).into_any_element()
                 } else {
                     window.request_animation_frame();
-                    let q = ibis_doc_model::transition_plan::progress(&t.effect, f64::from(progress)).map_or_else(|| ease_in_out(progress), |p| p as f32);
+                    let q = ibis_doc_model::transition_plan::progress_with(&t.effect, t.direction.as_deref(), f64::from(progress)).map_or_else(|| ease_in_out(progress), |p| p as f32);
                     match plan(&t.effect, t.direction.as_deref(), f64::from(q), f64::from(zw / zh.max(1.0))) {
-                        TransitionPlan::Fade { through_black: false } => page(slide).opacity(q).into_any_element(),
-                        TransitionPlan::Fade { through_black: true } => {
-                            // The old slide goes black, then the new one comes out of it.
-                            let (shown_slide, dark) = if q < 0.5 { (old, q * 2.0) } else { (slide, 2.0 - q * 2.0) };
-                            div().absolute().top_0().left_0().size_full().bg(black()).child(page(shown_slide).opacity(1.0 - dark)).into_any_element()
+                        TransitionPlan::Fade { through_black } => {
+                            // A plain fade brings the new slide in over the old; through black, the old goes out to black and the new
+                            // comes out of it, each half on its own curve (`fade_look`, measured on PowerPoint).
+                            let (new_shown, opacity) = ibis_doc_model::transition_plan::fade_look(through_black, f64::from(q));
+                            // The faded slide is painted once to a texture and drawn at the opacity as a whole: `.opacity()` on the page
+                            // would apply to each of its elements (the paper and each fill over it), which lets the slide below
+                            // through the fills in turn (a plain fade measured 0.035 of the squared error at half time against PowerPoint's
+                            // plain mix of the two; the same through black).
+                            let shown = if !through_black || new_shown { slide } else { old };
+                            let fade_id = OffscreenId(0x5312);
+                            let texture = div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(offscreen(fade_id, div().relative().w(px(zw)).h(px(zh)).child(page_layers(shown, zoomed_scale, true, false))));
+                            let base = div().absolute().top_0().left_0().size_full();
+                            let base = if through_black { base.bg(black()) } else { base.child(page(old)) };
+                            base.child(texture)
+                                .child(
+                                    canvas(
+                                        |_, _, _| (),
+                                        move |bounds, _, window, _| {
+                                            let frame = Bounds { origin: bounds.origin, size: gpui_kit::size(px(zw), px(zh)) };
+                                            window.paint_textured_quad(fade_id, frame, Transform3D::identity(), opacity as f32, 1.0, [0.0, 0.0, 1.0, 1.0], false);
+                                        },
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                )
+                                .into_any_element()
                         }
-                        TransitionPlan::FadeWhite => {
-                            // The old slide goes white, then the new one comes out of it.
-                            let (shown_slide, glow) = if q < 0.5 { (old, q * 2.0) } else { (slide, 2.0 - q * 2.0) };
-                            div().absolute().top_0().left_0().size_full().bg(white()).child(page(shown_slide).opacity(1.0 - glow)).into_any_element()
-                        }
+                        // カット through black: a black screen for the transition's length.
+                        TransitionPlan::BlackScreen => div().absolute().top_0().left_0().size_full().bg(black()).into_any_element(),
                         TransitionPlan::Scaled { old: old_look, new: new_look, new_on_top } => {
                             // Each slide at its size about the middle, clipped to the show's frame.
                             let sized = |s: &ibis_doc_model::Slide, (k, alpha): (f64, f64)| {
@@ -1859,6 +1939,40 @@ impl SlideEditor {
                             let mut stack = div().absolute().top_0().left_0().size_full().overflow_hidden();
                             stack = if new_on_top { stack.child(old_el).child(new_el) } else { stack.child(new_el).child(old_el) };
                             stack.into_any_element()
+                        }
+                        // ズーム: the slide that scales (the old one shrinking, the new one growing) is painted once to a texture and drawn in
+                        // pieces at their own opacity, so that its edge is soft (as PowerPoint's is); the other slide stands whole under it.
+                        TransitionPlan::SoftScaled { old: old_k, new: new_k, .. } => {
+                            let (k, scaling, standing, id) = match (old_k, new_k) {
+                                (Some(k), _) => (k, old, slide, OffscreenId(0x5321)),
+                                (None, Some(k)) => (k, slide, old, OffscreenId(0x5322)),
+                                (None, None) => (0.0, slide, old, OffscreenId(0x5322)),
+                            };
+                            let pieces = ibis_doc_model::transition_plan::soft_scaled_pieces(k);
+                            let texture = div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(offscreen(id, div().relative().w(px(zw)).h(px(zh)).child(page_layers(scaling, zoomed_scale, true, false))));
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .overflow_hidden()
+                                .child(page(standing))
+                                .child(texture)
+                                .child(
+                                    canvas(
+                                        |_, _, _| (),
+                                        move |bounds, _, window, _| {
+                                            for (r, uv, alpha) in pieces.iter() {
+                                                let frame = Bounds { origin: gpui_kit::point(bounds.origin.x + px(r[0] as f32 * zw), bounds.origin.y + px(r[1] as f32 * zh)), size: gpui_kit::size(px((r[2] - r[0]) as f32 * zw), px((r[3] - r[1]) as f32 * zh)) };
+                                                let uv = [uv[0] as f32, uv[1] as f32, (uv[2] - uv[0]) as f32, (uv[3] - uv[1]) as f32];
+                                                window.paint_textured_quad(id, frame, Transform3D::identity(), *alpha as f32, 1.0, uv, false);
+                                            }
+                                        },
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                )
+                                .into_any_element()
                         }
                         // 立方体 and 反転: each slide painted to a texture, drawn as a card turned in perspective (GPUI's
                         // offscreen passes; see `turn3d.rs`).
@@ -1890,13 +2004,21 @@ impl SlideEditor {
                                 (None, Turn3dKind::PageCurlDouble) => turn3d::page_curl_double(motion, q, zw, zh),
                                 (None, Turn3dKind::Airplane) => turn3d::airplane(motion, q, zw, zh),
                                 (None, Turn3dKind::Origami) => turn3d::origami(motion, q, zw, zh),
+                                (None, Turn3dKind::Ripple) => crate::turn3d_ripple::ripple(motion, q, zw, zh),
+                                (None, Turn3dKind::Comb) => crate::turn3d_tiles::comb(motion.0 != 0.0, q, zw, zh),
+                                (None, Turn3dKind::Doors { window }) => crate::turn3d_tiles::doors(window, motion.0 != 0.0, q, zw, zh),
+                                (None, Turn3dKind::Honeycomb) => crate::turn3d_tiles::honeycomb(q, zw, zh),
+                                (None, Turn3dKind::Vortex) => crate::turn3d_tiles::vortex(motion, q, zw, zh),
+                                (None, Turn3dKind::Shred { particle }) => crate::turn3d_tiles::shred(particle, q, zw, zh),
+                                (None, Turn3dKind::Checker) => crate::turn3d_tiles::checker(motion.0 != 0.0, q, zw, zh),
+                                (None, Turn3dKind::Blinds) => crate::turn3d_tiles::blinds(motion.0 != 0.0, if motion.0 != 0.0 { ibis_doc_model::transition_plan::BLINDS_HORIZONTAL } else { ibis_doc_model::transition_plan::BLINDS_VERTICAL }, q, zw, zh),
                                 (None, _) if rigid.is_some() => turn3d::rigid(rigid.unwrap_or(turn3d::Rigid::Switch), motion, q, zw, zh),
                                 _ => turn3d::flip(motion, q, zw, zh).to_vec(),
                             };
                             // Rotate and orbit turn the shapes alone, over the slide's own background.
                             let content_only = prism.is_some_and(Prism::content_only) || kind == Turn3dKind::Conveyor;
                             // Black behind the cube, the box, the flip, the gallery and the switch (as in PowerPoint's video), white behind the others.
-                            let dark_background = !content_only && rigid.map_or(matches!(kind, Turn3dKind::Cube | Turn3dKind::Box | Turn3dKind::Flip | Turn3dKind::Gallery), turn3d::Rigid::dark_background);
+                            let dark_background = !content_only && rigid.map_or(matches!(kind, Turn3dKind::Cube | Turn3dKind::Box | Turn3dKind::Flip | Turn3dKind::Gallery | Turn3dKind::Ripple | Turn3dKind::Checker | Turn3dKind::Honeycomb | Turn3dKind::Shred { .. } | Turn3dKind::Vortex | Turn3dKind::Doors { .. }), turn3d::Rigid::dark_background);
                             let (old_id, new_id, white_id) = (OffscreenId(0x5301), OffscreenId(0x5302), OffscreenId(0x5303));
                             let texture = |id: OffscreenId, s: &ibis_doc_model::Slide| {
                                 div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(offscreen(id, div().relative().w(px(zw)).h(px(zh)).child(page_layers(s, zoomed_scale, !content_only, false))))
@@ -1911,7 +2033,17 @@ impl SlideEditor {
                                 .overflow_hidden()
                                 // The cube and the box turn in the dark (black, measured on PowerPoint's video); rotate and orbit over
                                 // the slide's own background.
-                                .bg(if dark_background { black() } else { white() })
+                                .bg(match rigid.and_then(|r| r.background_mix(q)) {
+                                    Some(mix) => {
+                                        let own = |s: &ibis_doc_model::Slide| SlideEditor::slide_backdrop_rgb(s, &self.resources).unwrap_or(ibis_doc_model::Rgb::WHITE);
+                                        let (a, b) = (own(old), own(slide));
+                                        let channel = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * mix).round().clamp(0.0, 255.0) as u8;
+                                        let c = ibis_doc_model::Rgb::from_rgb(channel(a.r(), b.r()), channel(a.g(), b.g()), channel(a.b(), b.b()));
+                                        rgb(((c.r() as u32) << 16) | ((c.g() as u32) << 8) | c.b() as u32).into()
+                                    }
+                                    None if dark_background => black(),
+                                    None => white(),
+                                })
                                 .when(content_only, |d| d.child(div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(slide_backdrop(behind, zoomed_scale, &self.resources))))
                                 .child(texture(old_id, old))
                                 .child(texture(new_id, slide))
@@ -1932,7 +2064,7 @@ impl SlideEditor {
                                                         // The mesh's points are the slide's own pixels about its own origin; its transform is the card's
                                                         // (the sheet's vertices already sit relative to the slide's middle where the card says so).
                                                         let placed = card.transform.then(to_window);
-                                                        window.paint_textured_mesh(id, &mesh.vertices, &mesh.indices, placed, 1.0, card.shade, card.cull_back);
+                                                        window.paint_textured_mesh(id, &mesh.vertices, &mesh.indices, placed, card.opacity, card.shade, card.cull_back);
                                                         if card.white > 0.0 {
                                                             window.paint_textured_mesh(white_id, &mesh.vertices, &mesh.indices, placed, card.white, 1.0, card.cull_back);
                                                         }
@@ -1966,25 +2098,70 @@ impl SlideEditor {
                             stack = if new_on_top { stack.child(old_page).child(new_page) } else { stack.child(new_page).child(old_page) };
                             stack.into_any_element()
                         }
+                        TransitionPlan::StripMix { strips, backdrop } => {
+                            // Both slides are painted once to a texture; each vertical strip of them is drawn over a flat backdrop at its own
+                            // weights (as a texture's opacity is the slide's as a whole, not each of its elements').
+                            let (old_id, new_id) = (OffscreenId(0x5313), OffscreenId(0x5314));
+                            let texture = |id: OffscreenId, s: &ibis_doc_model::Slide| div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(offscreen(id, div().relative().w(px(zw)).h(px(zh)).child(page_layers(s, zoomed_scale, true, false))));
+                            let grey = backdrop as f32;
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .bg(rgb(((grey * 255.0).round() as u32) * 0x010101))
+                                .child(texture(old_id, old))
+                                .child(texture(new_id, slide))
+                                .child(
+                                    canvas(
+                                        |_, _, _| (),
+                                        move |bounds, _, window, _| {
+                                            for m in strips.iter() {
+                                                let r = m.rect;
+                                                let frame = Bounds { origin: gpui_kit::point(bounds.origin.x + px(r[0] as f32 * zw), bounds.origin.y + px(r[1] as f32 * zh)), size: gpui_kit::size(px((r[2] - r[0]) as f32 * zw), px((r[3] - r[1]) as f32 * zh)) };
+                                                let uv = [r[0] as f32, r[1] as f32, (r[2] - r[0]) as f32, (r[3] - r[1]) as f32];
+                                                if m.old > 0.0 {
+                                                    window.paint_textured_quad(old_id, frame, Transform3D::identity(), m.old as f32, 1.0, uv, false);
+                                                }
+                                                if m.new > 0.0 {
+                                                    window.paint_textured_quad(new_id, frame, Transform3D::identity(), m.new as f32, 1.0, uv, false);
+                                                }
+                                            }
+                                        },
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                )
+                                .into_any_element()
+                        }
                         TransitionPlan::SoftWindows(rects) => {
-                            // The new slide shows through the strips at each one's opacity (a soft edge), over the old one.
-                            let mut stack = div().absolute().top_0().left_0().size_full().child(page(old));
-                            for (r, alpha) in rects {
-                                let (rx, ry) = (r[0] as f32 * zw, r[1] as f32 * zh);
-                                let (rw, rh) = ((r[2] - r[0]) as f32 * zw, (r[3] - r[1]) as f32 * zh);
-                                stack = stack.child(
-                                    div()
-                                        .absolute()
-                                        .left(px(rx))
-                                        .top(px(ry))
-                                        .w(px(rw))
-                                        .h(px(rh))
-                                        .overflow_hidden()
-                                        .opacity(alpha as f32)
-                                        .child(div().absolute().left(px(-rx)).top(px(-ry)).w(px(zw)).h(px(zh)).child(page(slide))),
-                                );
-                            }
-                            stack.into_any_element()
+                            // The new slide is painted once to a texture, and the old one has the windows of it drawn over at each one's
+                            // opacity (a soft edge). Opacity on the slide's own elements would apply to each of them (the paper and its
+                            // fill both, which lightens the band); a texture's is the slide's as a whole.
+                            let new_id = OffscreenId(0x5311);
+                            let texture = div().absolute().top_0().left_0().w(px(zw)).h(px(zh)).child(offscreen(new_id, div().relative().w(px(zw)).h(px(zh)).child(page_layers(slide, zoomed_scale, true, false))));
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .child(page(old))
+                                .child(texture)
+                                .child(
+                                    canvas(
+                                        |_, _, _| (),
+                                        move |bounds, _, window, _| {
+                                            for (r, alpha) in rects.iter() {
+                                                let frame = Bounds { origin: gpui_kit::point(bounds.origin.x + px(r[0] as f32 * zw), bounds.origin.y + px(r[1] as f32 * zh)), size: gpui_kit::size(px((r[2] - r[0]) as f32 * zw), px((r[3] - r[1]) as f32 * zh)) };
+                                                let uv = [r[0] as f32, r[1] as f32, (r[2] - r[0]) as f32, (r[3] - r[1]) as f32];
+                                                window.paint_textured_quad(new_id, frame, Transform3D::identity(), *alpha as f32, 1.0, uv, false);
+                                            }
+                                        },
+                                    )
+                                    .absolute()
+                                    .size_full(),
+                                )
+                                .into_any_element()
                         }
                         TransitionPlan::Windows(rects) => {
                             // The new slide shows through the windows, over the old one.
@@ -2668,156 +2845,38 @@ impl SlideEditor {
     }
 
     fn rehearsal_dialog(&self, rehearsal: &Rehearsal, cx: &mut Context<Self>) -> AnyElement {
+        use crate::shell::chrome::{ActionButtonKind, ActionDefinition, action_bar};
         let total_secs = rehearsal.total_elapsed().as_secs();
         let total_time = format!("{}:{:02}:{:02}", total_secs / 3600, (total_secs / 60) % 60, total_secs % 60);
         let prompt_text = crate::shell::i18n::format("slideshow.rehearsal.prompt", &[("time", &total_time)]);
-
-        div()
-            .id("rehearsal-dialog")
-            .absolute()
-            .inset_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .w(px(480.))
-                    .p_6()
-                    .rounded(px(8.))
-                    .bg(rgb(0x282a2d))
-                    .border_1()
-                    .border_color(rgb(0x3c4043))
-                    .shadow_lg()
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .text_color(white())
-                    .child(
-                        div()
-                            .text_size(px(16.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(crate::shell::i18n::text("slideshow.rehearse-timings")),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .line_height(relative(1.4))
-                            .text_color(rgb(0xbdc1c6))
-                            .child(prompt_text),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .id("rehearsal-dialog-save")
-                                    .px_4()
-                                    .py_2()
-                                    .rounded(px(4.))
-                                    .cursor_pointer()
-                                    .bg(rgb(0x1a73e8))
-                                    .hover(|s| s.bg(rgb(0x1b66c9)))
-                                    .text_size(px(13.))
-                                    .text_color(white())
-                                    .child(crate::shell::i18n::text("slideshow.rehearsal.yes"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.save_rehearsal_timings(window, cx))),
-                            )
-                            .child(
-                                div()
-                                    .id("rehearsal-dialog-discard")
-                                    .px_4()
-                                    .py_2()
-                                    .rounded(px(4.))
-                                    .cursor_pointer()
-                                    .bg(rgb(0x3c4043))
-                                    .hover(|s| s.bg(rgb(0x4a4d52)))
-                                    .text_size(px(13.))
-                                    .text_color(white())
-                                    .child(crate::shell::i18n::text("slideshow.rehearsal.no"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.discard_rehearsal_timings(window, cx))),
-                            ),
-                    ),
-            )
-            .into_any_element()
+        // The shared message box and action bar (K0034): the primary button first, Alt access keys, Enter, Esc.
+        let actions = action_bar()
+            .action(ActionDefinition::new("rehearsal-dialog-save", crate::shell::i18n::text("slideshow.rehearsal.yes"), ActionButtonKind::Primary)
+                .on_click(cx.listener(|this, _, window, cx| this.save_rehearsal_timings(window, cx))))
+            .action(ActionDefinition::new("rehearsal-dialog-discard", crate::shell::i18n::text("slideshow.rehearsal.no"), ActionButtonKind::Normal)
+                .on_click(cx.listener(|this, _, window, cx| this.discard_rehearsal_timings(window, cx))));
+        self.render_message_box("rehearsal-dialog", crate::shell::i18n::text("slideshow.rehearse-timings"), prompt_text.into(), actions, false, cx).into_any_element()
     }
 
     /// Dialog asking whether to keep ink annotations drawn during the slideshow.
     fn ink_dialog(&self, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .id("ink-dialog")
-            .absolute()
-            .inset_0()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x00000088))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .w(px(480.))
-                    .p_6()
-                    .rounded(px(8.))
-                    .bg(rgb(0x282a2d))
-                    .border_1()
-                    .border_color(rgb(0x3c4043))
-                    .shadow_lg()
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .text_color(white())
-                    .child(
-                        div()
-                            .text_size(px(16.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(crate::shell::i18n::text("slideshow.ink.title")),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .line_height(relative(1.4))
-                            .text_color(rgb(0xbdc1c6))
-                            .child(crate::shell::i18n::text("slideshow.ink.prompt")),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .gap_3()
-                            .child(
-                                div()
-                                    .id("ink-dialog-keep")
-                                    .px_4()
-                                    .py_2()
-                                    .rounded(px(4.))
-                                    .cursor_pointer()
-                                    .bg(rgb(0x1a73e8))
-                                    .hover(|s| s.bg(rgb(0x1b66c9)))
-                                    .text_size(px(13.))
-                                    .text_color(white())
-                                    .child(crate::shell::i18n::text("slideshow.ink.keep"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.end_slideshow_with_ink_choice(true, window, cx))),
-                            )
-                            .child(
-                                div()
-                                    .id("ink-dialog-discard")
-                                    .px_4()
-                                    .py_2()
-                                    .rounded(px(4.))
-                                    .cursor_pointer()
-                                    .bg(rgb(0x3c4043))
-                                    .hover(|s| s.bg(rgb(0x4a4d52)))
-                                    .text_size(px(13.))
-                                    .text_color(white())
-                                    .child(crate::shell::i18n::text("slideshow.ink.discard"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.end_slideshow_with_ink_choice(false, window, cx))),
-                            ),
-                    ),
-            )
-            .into_any_element()
+        use crate::shell::chrome::{ActionButtonKind, ActionDefinition, action_bar};
+        let actions = action_bar()
+            .action(ActionDefinition::new("ink-dialog-keep", crate::shell::i18n::text("slideshow.ink.keep"), ActionButtonKind::Primary)
+                .on_click(cx.listener(|this, _, window, cx| this.end_slideshow_with_ink_choice(true, window, cx))))
+            .action(ActionDefinition::new("ink-dialog-discard", crate::shell::i18n::text("slideshow.ink.discard"), ActionButtonKind::Normal)
+                .on_click(cx.listener(|this, _, window, cx| this.end_slideshow_with_ink_choice(false, window, cx))));
+        self.render_message_box("ink-dialog", crate::shell::i18n::text("slideshow.ink.title"), crate::shell::i18n::text("slideshow.ink.prompt"), actions, false, cx).into_any_element()
+    }
+
+    /// Whether a question of the slide show (the rehearsal's timings, the ink annotations) is showing.
+    pub(crate) fn slideshow_question_open(&self) -> bool {
+        self.slideshow().is_some_and(|show| show.ink_dialog_open || show.rehearsal.as_ref().is_some_and(|r| r.dialog_open))
+    }
+
+    /// A key while a question of the slide show is showing: the message box's (Alt access keys, Tab, Enter, Esc).
+    pub(crate) fn slideshow_question_key(&mut self, keystroke: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.slideshow_question_open() && self.message_box_keystroke(keystroke, window, cx)
     }
 }
 
@@ -2849,12 +2908,8 @@ pub(crate) fn animation_groups(animations: &[ibis_doc_model::Animation]) -> Vec<
             (AnimationStart::WithPrevious, Some(_)) => previous_begin,
             (AnimationStart::AfterPrevious, Some(_)) => ended,
         };
-        let repeat_factor = match a.repeat_count {
-            ibis_doc_model::AnimationRepeat::None => 1,
-            ibis_doc_model::AnimationRepeat::Count(n) => n.max(1),
-            ibis_doc_model::AnimationRepeat::UntilNextClick | ibis_doc_model::AnimationRepeat::UntilEndOfSlide => 1,
-        };
-        let anim_dur = a.duration * repeat_factor;
+        // (An effect repeating without end holds the ones after it for one pass: how PowerPoint chains them is to be checked.)
+        let anim_dur = a.span_ms();
         let begin = start + a.delay;
         let end = begin + anim_dur;
         previous_begin = start;
@@ -3339,6 +3394,21 @@ pub(crate) fn paragraph_view(shape: &ibis_doc_model::Shape, hidden: &dyn Fn(usiz
 
 /// What the slide show draws of `shape` for `target`: as it is at `step`.
 #[allow(clippy::too_many_arguments)]
+/// The shapes of `slide` that are not there before their first effect brings them in (an entrance effect on the shape as a whole):
+/// what `animated_view` draws at the start of the slide's animations, and what a 変形 into the slide must not show while it plays.
+pub(crate) fn hidden_before_animation(slide: &ibis_doc_model::Slide) -> std::collections::HashSet<ibis_doc_model::ShapeId> {
+    let variant = iterate_variant();
+    let mut hidden = std::collections::HashSet::new();
+    for shape in slide.shown_shapes() {
+        let mine: Vec<&ibis_doc_model::Animation> = slide.animations.iter().enumerate().filter(|(i, a)| Target::Whole.moves(*i, a, shape.id)).map(|(_, a)| a).collect();
+        let first_moving = mine.iter().copied().find(|a| !(a.text_unit.is_some() && variant == 0));
+        if first_moving.is_some_and(|a| a.class == ibis_doc_model::AnimationClass::Entrance) {
+            hidden.insert(shape.id);
+        }
+    }
+    hidden
+}
+
 fn animated_view(
     slide: &ibis_doc_model::Slide,
     shape: &ibis_doc_model::Shape,
@@ -3354,6 +3424,7 @@ fn animated_view(
         }
         let (w, h) = (size.width as f32 * scale, size.height as f32 * scale);
         let frame = (shape.frame.x as f32 * scale, shape.frame.y as f32 * scale, shape.frame.width as f32 * scale, shape.frame.height as f32 * scale);
+        let size_pt = (shape.frame.width as f64 / 12_700.0, shape.frame.height as f64 / 12_700.0);
         // Hidden before its first effect if that brings it in.
         // (An effect by words or letters leaves the shape itself shown and where it is: `shape_looks_only`.)
         let whole = matches!(target, Target::Whole);
@@ -3383,11 +3454,14 @@ fn animated_view(
                 if target.moves(i, &slide.animations[i], shape.id) {
                     if !slide.animations[i].rewind {
                         if !shape_looks_only(&slide.animations[i]) {
-                            base = motion_at(&slide.animations[i], base, 1.0, frame, (w, h));
+                            base = settled_motion(&slide.animations[i], base, frame, (w, h));
                         }
-                        done.extend(preset_state(&slide.animations[i], 1.0, frame, (w, h)).map(|st| scoped(st, StyleScope::of(&slide.animations[i], &target))));
+                        done.extend(preset_state(&slide.animations[i], slide.animations[i].settled_progress(), frame, (w, h)).map(|st| scoped(st, StyleScope::of(&slide.animations[i], &target))));
                         if slide.animations[i].after_effect == ibis_doc_model::AnimationAfterEffect::HideOnNextClick {
                             base.opacity = 0.0;
+                        }
+                        if let ibis_doc_model::AnimationAfterEffect::Dim(c) = slide.animations[i].after_effect {
+                            done.push(scoped(dim_state(c), StyleScope::of(&slide.animations[i], &target)));
                         }
                     }
                 }
@@ -3402,11 +3476,14 @@ fn animated_view(
             if let Some(a) = slide.animations.get(i).filter(|a| target.moves(i, a, shape.id)) {
                 if !a.rewind {
                     if !shape_looks_only(a) {
-                        base = motion_at(a, base, 1.0, frame, (w, h));
+                        base = settled_motion(a, base, frame, (w, h));
                     }
-                    done.extend(preset_state(a, 1.0, frame, (w, h)).map(|st| scoped(st, StyleScope::of(a, &target))));
+                    done.extend(preset_state(a, a.settled_progress(), frame, (w, h)).map(|st| scoped(st, StyleScope::of(a, &target))));
                     if a.after_effect == ibis_doc_model::AnimationAfterEffect::HideOnNextClick {
                         base.opacity = 0.0;
+                    }
+                    if let ibis_doc_model::AnimationAfterEffect::Dim(c) = a.after_effect {
+                        done.push(scoped(dim_state(c), StyleScope::of(a, &target)));
                     }
                 }
             }
@@ -3437,28 +3514,34 @@ fn animated_view(
             return place(holder, base).into_any_element();
         }
         let total = playing.iter().map(|(_, _, e)| *e).max().unwrap_or(0).max(1);
+        let endless = playing.iter().any(|(a, ..)| a.active_ms().is_none());
         let styles_done = done.clone();
         let scope_target = target.clone();
         let state = move |ms: f32| {
             let mut m = base;
             let mut reveal = None;
             let mut styles = styles_done.clone();
-            for (a, begin, end) in &playing {
-                let p = if ms <= *begin as f32 { 0.0 } else if *end <= *begin { 1.0 } else { ((ms - *begin as f32) / (*end - *begin) as f32).min(1.0) };
-                let eased_p = apply_timing_easing(p, a.accel, a.decel);
+            for (a, begin, _) in &playing {
+                // The same motion again for each repetition, and back when the effect runs back.
+                let (p, ended) = a.clock(ms - *begin as f32);
+                // A preset's smooth start and end go to each of its behaviours (`sample_eased`), not to the effect as a whole.
+                let eased_p = if a.look == ibis_doc_model::AnimationLook::Preset { p } else if a.class == ibis_doc_model::AnimationClass::Path { path_progress(p, a.accel, a.decel) } else { apply_timing_easing(p, a.accel, a.decel) };
                 // An effect not begun yet leaves an entering shape hidden.
                 if ms >= *begin as f32 {
                     if !shape_looks_only(a) {
                         let before = m;
                         m = motion_at(a, m, eased_p, frame, (w, h));
+                        if ended && p < 1.0 {
+                            m = after_effect_look(a, m);
+                        }
                         if variant >= 3 && matches!(scope_target, Target::Unit { .. }) {
                             (m.dx, m.dy, m.grow) = (before.dx, before.dy, before.grow);
                         }
                         if variant >= 1 && a.text_unit.is_some() && matches!(scope_target, Target::Unit { .. }) {
                             // The letters ride on the shape: its own motion by the effect's time, with the letters' own on top.
                             let off = scope_target.offset() as f32;
-                            let (bb, be) = (*begin as f32 - off, *end as f32 - off);
-                            let pb = if ms <= bb { 0.0 } else if be <= bb { 1.0 } else { ((ms - bb) / (be - bb)).min(1.0) };
+                            let bb = *begin as f32 - off;
+                            let pb = a.clock(ms - bb).0;
                             let from = ShapeMotion::at_rest(if a.class == ibis_doc_model::AnimationClass::Entrance { 0.0 } else { 1.0 });
                             let mb = if ms >= bb { motion_at(a, from, apply_timing_easing(pb, a.accel, a.decel), frame, (w, h)) } else { from };
                             m.dx += mb.dx;
@@ -3467,7 +3550,7 @@ fn animated_view(
                             m.grow = (m.grow.0 * mb.grow.0, m.grow.1 * mb.grow.1);
                             m.opacity *= mb.opacity;
                         }
-                        if let Some(rects) = preset_reveal(a, eased_p, frame) {
+                        if let Some(rects) = preset_reveal(a, eased_p, frame, size_pt) {
                             reveal = Some(rects);
                         }
                     }
@@ -3481,37 +3564,71 @@ fn animated_view(
             // uncovered smoothly, as the running time says.
             let ms = clock.map_or(0.0, |(elapsed, _)| elapsed);
             if let Some((elapsed, animating)) = clock {
-                if elapsed < total as f32 {
+                // (An effect repeating without end keeps drawing until the next click or the end of the slide.)
+                if elapsed < total as f32 || endless {
                     animating.set(true);
                 }
             }
             let (m, reveal, styles) = state(ms);
+            if reveal.is_some() || m.grow != (1.0, 1.0) {
+                // Resized or uncovered: the shape and its text are painted once, as they are at their own size (nothing is laid out
+                // again at the new size), and that picture is what is scaled (a negative factor turns it over, as the turn effect's
+                // middle does), turned and shown through windows. A resize of the text's frame would break its lines.
+                if m.grow.0 == 0.0 || m.grow.1 == 0.0 {
+                    return div().absolute().top_0().left_0().size_full().into_any_element();
+                }
+                let flat = ShapeMotion { turn: 0.0, grow: (1.0, 1.0), ..m };
+                let (shown, shear) = styled_shape(shape, flat, &styles);
+                let id = OffscreenId(0x6000_0000 | ((shape.id.0 as u32).wrapping_mul(2_654_435_761) ^ target.key() as u32) & 0x0FFF_FFFF);
+                let picture = div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w(px(w))
+                    .h(px(h))
+                    .child(offscreen(id, div().relative().w(px(w)).h(px(h)).child(crate::render::shape_view::with_shear(shear, || element(&shown)))));
+                // The windows, as fractions of the picture (the slide's size); the frame's own fractions are those of the shape.
+                let windows: Vec<([f32; 4], f32)> = match &reveal {
+                    None => vec![([0.0, 0.0, 1.0, 1.0], 1.0)],
+                    Some(rects) => rects
+                        .iter()
+                        .filter_map(|(r, level)| {
+                            let (x0, y0) = ((frame.0 + r[0] as f32 * frame.2) / w, (frame.1 + r[1] as f32 * frame.3) / h);
+                            let (x1, y1) = ((frame.0 + r[2] as f32 * frame.2) / w, (frame.1 + r[3] as f32 * frame.3) / h);
+                            let (x0, y0, x1, y1) = (x0.clamp(0.0, 1.0), y0.clamp(0.0, 1.0), x1.clamp(0.0, 1.0), y1.clamp(0.0, 1.0));
+                            (x1 > x0 && y1 > y0).then_some(([x0, y0, x1, y1], *level as f32))
+                        })
+                        .collect(),
+                };
+                let (cx, cy) = (frame.0 + frame.2 / 2.0, frame.1 + frame.3 / 2.0);
+                // About the middle, in the shape's own axes: back to unturned, resized, turned again by its own turn and the effect's.
+                let own = shape.rotation as f32 / 60_000.0;
+                let local = Transform3D::translate(-cx, -cy, 0.0)
+                    .then(Transform3D::rotate_z(-own.to_radians()))
+                    .then(Transform3D::scale(m.grow.0, m.grow.1, 1.0))
+                    .then(Transform3D::rotate_z((own + m.turn).to_radians()))
+                    .then(Transform3D::translate(cx, cy, 0.0));
+                let opacity = m.opacity;
+                let holder = div().absolute().top_0().left_0().size_full().child(picture).child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, _, window, _| {
+                            let o = bounds.origin;
+                            let transform = Transform3D::translate(-f32::from(o.x), -f32::from(o.y), 0.0).then(local).then(Transform3D::translate(f32::from(o.x), f32::from(o.y), 0.0));
+                            for (r, level) in &windows {
+                                let quad = Bounds { origin: gpui_kit::point(o.x + px(r[0] * w), o.y + px(r[1] * h)), size: gpui_kit::size(px((r[2] - r[0]) * w), px((r[3] - r[1]) * h)) };
+                                window.paint_textured_quad(id, quad, transform, opacity * level, 1.0, [r[0], r[1], r[2] - r[0], r[3] - r[1]], false);
+                            }
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                );
+                return place(holder, ShapeMotion { opacity: 1.0, ..m }).into_any_element();
+            }
             let (shown, shear) = styled_shape(shape, m, &styles);
             let element = |s: &ibis_doc_model::Shape| crate::render::shape_view::with_shear(shear, || element(s));
-            let mut holder = div().absolute().top_0().left_0().size_full();
-            match reveal {
-                None => holder = holder.child(element(&shown)),
-                Some(rects) => {
-                    // The frame as it is now (resized about its centre); each rectangle is a window on the shape.
-                    let (cx, cy) = (frame.0 + frame.2 / 2.0, frame.1 + frame.3 / 2.0);
-                    let (fw, fh) = (frame.2 * m.grow.0, frame.3 * m.grow.1);
-                    let (x0, y0) = (cx - fw / 2.0, cy - fh / 2.0);
-                    for r in rects {
-                        let (rx, ry) = (x0 + r[0] as f32 * fw, y0 + r[1] as f32 * fh);
-                        let (rw, rh) = ((r[2] - r[0]) as f32 * fw, (r[3] - r[1]) as f32 * fh);
-                        holder = holder.child(
-                            div()
-                                .absolute()
-                                .left(px(rx))
-                                .top(px(ry))
-                                .w(px(rw))
-                                .h(px(rh))
-                                .overflow_hidden()
-                                .child(div().absolute().left(px(-rx)).top(px(-ry)).w(px(w)).h(px(h)).child(element(&shown))),
-                        );
-                    }
-                }
-            }
+            let holder = div().absolute().top_0().left_0().size_full().child(element(&shown));
             return place(holder, ShapeMotion { opacity: m.opacity, ..m }).into_any_element();
         }
         let start = state(0.0).0;
@@ -3595,7 +3712,7 @@ fn preset_state(a: &ibis_doc_model::Animation, p: f32, frame: (f32, f32, f32, f3
         w: f64::from(frame.2) / f64::from(slide.0.max(1.0)),
         h: f64::from(frame.3) / f64::from(slide.1.max(1.0)),
     };
-    let s = sample(&a.behaviors, f64::from(p) * f64::from(a.duration), b);
+    let s = ibis_doc_model::animation_preset::sample_eased(&a.behaviors, f64::from(p) * f64::from(a.duration), b, (a.accel, a.decel));
     let styled = !s.colors.is_empty() || s.shear.is_some() || s.fill_on.is_some() || s.line_on.is_some() || s.font_scale.is_some() || s.bold.is_some() || s.italic.is_some() || s.underline.is_some() || s.font.is_some();
     styled.then_some(s)
 }
@@ -3694,7 +3811,7 @@ pub(crate) fn styled_shape(shape: &ibis_doc_model::Shape, motion: ShapeMotion, s
 
 /// The rectangles (fractions of the frame) a filter effect `a` shows at `p` of its time; `None` when the shape is drawn whole
 /// (no filter, or one without rectangles, which fades).
-pub(crate) fn preset_reveal(a: &ibis_doc_model::Animation, p: f32, frame: (f32, f32, f32, f32)) -> Option<Vec<[f64; 4]>> {
+pub(crate) fn preset_reveal(a: &ibis_doc_model::Animation, p: f32, frame: (f32, f32, f32, f32), size_pt: (f64, f64)) -> Option<Vec<([f64; 4], f64)>> {
     use ibis_doc_model::{AnimationClass, AnimationLook, AnimationSide};
     if p >= 1.0 {
         return None;
@@ -3707,15 +3824,15 @@ pub(crate) fn preset_reveal(a: &ibis_doc_model::Animation, p: f32, frame: (f32, 
             AnimationSide::Bottom => "down",
             AnimationSide::Left => "left",
         };
-        return ibis_doc_model::animation_preset::reveal_rects(&format!("wipe({dir})"), a.class == AnimationClass::Entrance, f64::from(p), f64::from(frame.2 / frame.3.max(f32::MIN_POSITIVE)));
+        return ibis_doc_model::animation_preset::reveal_windows(&format!("wipe({dir})"), a.class == AnimationClass::Entrance, f64::from(p), f64::from(frame.2 / frame.3.max(f32::MIN_POSITIVE)));
     }
     if a.look != AnimationLook::Preset {
         return None;
     }
     let b = ibis_doc_model::animation_preset::PptBox { x: 0.0, y: 0.0, w: 1.0, h: 1.0 };
-    let state = ibis_doc_model::animation_preset::sample(&a.behaviors, f64::from(p) * f64::from(a.duration), b);
+    let state = ibis_doc_model::animation_preset::sample_eased(&a.behaviors, f64::from(p) * f64::from(a.duration), b, (a.accel, a.decel));
     let r = state.reveal?;
-    ibis_doc_model::animation_preset::reveal_rects(&r.filter, r.enter, r.progress, f64::from(frame.2 / frame.3.max(f32::MIN_POSITIVE)))
+    ibis_doc_model::animation_preset::reveal_windows_sized(&r.filter, r.enter, r.progress, f64::from(frame.2 / frame.3.max(f32::MIN_POSITIVE)), Some(size_pt))
 }
 
 /// Where `p` (0 to 1) of the way along a path from (0, 0) through `points`
@@ -3744,7 +3861,7 @@ pub(crate) fn point_on_path(points: &[(i32, i32)], p: f32, slide: (f32, f32)) ->
 /// Shape `frame` (x, y, width, height, pixels) on a slide `slide` (width,
 /// height) after effect `a` has run `p` (0 to 1) of its time, from `from`.
 pub(crate) fn motion_at(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32, frame: (f32, f32, f32, f32), slide: (f32, f32)) -> ShapeMotion {
-    use ibis_doc_model::{AnimationAfterEffect, AnimationClass, AnimationLook, AnimationSide as Side};
+    use ibis_doc_model::{AnimationClass, AnimationLook, AnimationSide as Side};
     let off = |side: Side| match side {
         Side::Left => (-(frame.0 + frame.2), 0.0),
         Side::Right => (slide.0 - frame.0, 0.0),
@@ -3802,13 +3919,31 @@ pub(crate) fn motion_at(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32
         if a.rewind {
             return from;
         }
-        match a.after_effect {
-            AnimationAfterEffect::Hide => res.opacity = 0.0,
-            AnimationAfterEffect::Dim => res.opacity = 0.3,
-            _ => {}
-        }
+        res = after_effect_look(a, res);
     }
     res
+}
+
+/// 淡色表示: from the next click on, the shape's fill and its text are in the colour `c` (`p:animClr` `ppt_c`, `masterRel="nextClick"`).
+fn dim_state(c: ibis_doc_model::Rgb) -> ibis_doc_model::animation_preset::PresetState {
+    use ibis_doc_model::animation_color::{AnimColor, ColorChange, ColorSlot};
+    let change = |slot| ColorChange { slot, from: None, to: Some(AnimColor::Rgb(c)), by_hsl: None, by_rgb: None, hsl: false, ccw: false, steps: Vec::new(), discrete: false, q: 1.0 };
+    ibis_doc_model::animation_preset::PresetState { colors: vec![change(ColorSlot::Fill), change(ColorSlot::Text)], ..Default::default() }
+}
+
+/// What the shape looks like once effect `a` has ended, in `res`: hidden (アニメーションの後で非表示) or dimmed.
+fn after_effect_look(a: &ibis_doc_model::Animation, mut res: ShapeMotion) -> ShapeMotion {
+    match a.after_effect {
+        ibis_doc_model::AnimationAfterEffect::Hide => res.opacity = 0.0,
+        _ => {}
+    }
+    res
+}
+
+/// Where effect `a` leaves the shape when it has ended (`from` before it): at its end, or, if it ran back, as it began.
+pub(crate) fn settled_motion(a: &ibis_doc_model::Animation, from: ShapeMotion, frame: (f32, f32, f32, f32), slide: (f32, f32)) -> ShapeMotion {
+    let m = motion_at(a, from, a.settled_progress(), frame, slide);
+    if a.settled_progress() < 1.0 { after_effect_look(a, m) } else { m }
 }
 
 /// An entrance or exit effect played as the behaviours of the file say (`AnimationLook::Preset`): where the shape is, how
@@ -3823,7 +3958,7 @@ fn preset_motion(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32, frame
         w: f64::from(frame.2) / f64::from(slide.0.max(1.0)),
         h: f64::from(frame.3) / f64::from(slide.1.max(1.0)),
     };
-    let s = sample(&a.behaviors, f64::from(p) * f64::from(a.duration), b);
+    let s = ibis_doc_model::animation_preset::sample_eased(&a.behaviors, f64::from(p) * f64::from(a.duration), b, (a.accel, a.decel));
     let mut m = from;
     let emphasis = a.class == ibis_doc_model::AnimationClass::Emphasis;
     m.opacity = match (entering, s.visible) {
@@ -3871,6 +4006,14 @@ fn preset_motion(a: &ibis_doc_model::Animation, from: ShapeMotion, p: f32, frame
         m.opacity = 0.0;
     }
     m
+}
+
+/// How far along its path a motion path (`a:animMotion`) is when it has run `p` (0 to 1) of its time: the smooth start and end as they are
+/// written (the half-cosine ramp of `ease`). PowerPoint's videos of the paths 1, 8 and 17 with nine settings of (accel, decel) at 1 s and 2 s
+/// (Windows, 2026-11-18, #89) agree with it to 0.8 to 1 px. (The earlier fit, a move in the middle 86 % of the time with four fifths of the
+/// smooth start and end, was this ramp seen through a straight one.)
+pub(crate) fn path_progress(p: f32, accel: u32, decel: u32) -> f32 {
+    apply_timing_easing(p, accel, decel)
 }
 
 /// Apply SMIL/PowerPoint animation acceleration and deceleration easing to progress `p` (0.0 to 1.0).

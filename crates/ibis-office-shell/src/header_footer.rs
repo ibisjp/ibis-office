@@ -235,7 +235,7 @@ impl SlideEditor {
                 .on(|this, w, cx| this.apply_header_footer(true, w, cx))
                 .into(),
             MenuItem::tr("pptx.find.clear")
-                .icon("clear")
+                .icon("close")
                 .on(|this, _, cx| this.clear_header_footer(cx))
                 .into(),
             MenuEntry::Separator,

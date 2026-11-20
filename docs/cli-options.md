@@ -75,8 +75,8 @@ Runs completely in the background without opening any GUI window. Documents are 
 | `--export` | `<format>` | Export format (required).<br>• `pdf`: High-quality vector PDF with embedded fonts and graphics.<br>• `png`: Raster image sequence for each page or slide.<br>• `pdf-image`: PDF containing full-page rasterized images.<br>• `ui`: Snapshot of the editor UI window. |
 | `--out-dir` | `<dir>` | Target output directory (default: current directory `.`). Created automatically if it does not exist. |
 | `--width` | `<px>` | Width of PNG export in pixels (default: `1920`). Aspect ratio is preserved. |
-| `--slides` | `<range>` | Slide or page range to export (e.g., `1`, `1,3-5`, `2-`). Exports all pages/slides if omitted. |
-| `--layout` | (none) | Include layout information when exporting slides. |
+| `--range` | `<range>` | Slide or page range to export (e.g., `1`, `1,3-5`, `2-`). The old name `--slides` still works but prints a warning. Exports all pages/slides if omitted. |
+| `--include-layout` | (none) | Include layout information when exporting slides. The old name `--layout` still works but prints a warning. |
 
 **Examples:**
 ```bash
@@ -84,7 +84,7 @@ Runs completely in the background without opening any GUI window. Documents are 
 ibisOffice --export pdf presentation.pptx
 
 # Export pages 1 to 3 as 2560px wide PNG images into dist/
-ibisOffice --export png --out-dir dist/ --width 2560 --slides 1-3 document.docx
+ibisOffice --export png --out-dir dist/ --width 2560 --range 1-3 document.docx
 ```
 
 ---
@@ -119,6 +119,7 @@ ibisOffice --export pdf --print-backgrounds --no-print-markup report.docx
 |---|---|---|
 | `--handout` | `<n>` | Export as a handout with multiple slides per page.<br>Supported values: `1`, `2`, `3`, `4`, `6`, `8`, `9`, `16`. |
 | `--handout-landscape` | (none) | Render handout pages in landscape orientation. |
+| `--handout-order` | `horizontal` \| `vertical` | The order of the slides on a handout page (default: `horizontal`, as PowerPoint). `horizontal` fills a row before the next; `vertical` fills a column before the next (4, 6, 9 to a page). |
 | `--print-frame` | (none) | Draw a thin frame border around each slide. |
 | `--notes-pages` | (none) | Export as Notes Pages (speaker notes placed beneath each slide). |
 | `--outline-pages` | (none) | Export presentation text outline only. |
@@ -127,9 +128,11 @@ ibisOffice --export pdf --print-backgrounds --no-print-markup report.docx
 | Option | Argument | Description |
 |---|---|---|
 | `--handout-header` | `<text>` | Text for the handout header. |
-| `--handout-date` | `<text>` | Text for the handout date. |
+| `--handout-date` | `<text>` | Text for the handout date (default: today's date, unless the handout master's header/footer settings turn the date off). |
 | `--handout-footer` | `<text>` | Text for the handout footer. |
-| `--handout-number` | (none) | Print page numbers on handout pages. |
+| `--handout-number` | (none) | Print page numbers on handout pages (on by default, unless the handout master's header/footer settings turn them off; this option prints them anyway). |
+| `--no-handout-date` | (none) | Print no date on handout, notes and outline pages. |
+| `--no-handout-number` | (none) | Print no page number on handout, notes and outline pages. |
 
 **Examples:**
 ```bash
@@ -219,7 +222,7 @@ done
 ### 2. Generate High-Resolution Web Thumbnail
 ```bash
 # Export slide 1 as 1920px PNG into thumbnails/
-ibisOffice --export png --slides 1 --width 1920 --out-dir thumbnails/ presentation.pptx
+ibisOffice --export png --range 1 --width 1920 --out-dir thumbnails/ presentation.pptx
 ```
 
 ### 3. Generate 2-in-1 Grayscale Meeting Handouts

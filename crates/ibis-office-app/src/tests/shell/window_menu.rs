@@ -6,7 +6,7 @@
 //! previous window, the list at the bottom of the menu (at most five, a mark for unsaved changes, the format's icon),
 //! keys that do not collide, and a menu that other windows' drawing does not close. Pictures: `target/scenario/shell__window_*/`.
 use gpui_kit::*;
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 use super::Scenario;
 use crate::xlsx::scenarios::SheetSteps;
@@ -269,7 +269,7 @@ fn keys_no_conflict() {
             reg.commands.iter().map(|c| (c.id, c.shortcut)).collect()
         });
         let key_of = |id: &str| all.iter().find(|(i, _)| *i == id).and_then(|(_, k)| *k).unwrap_or_else(|| panic!("{file}: {id} has no key"));
-        let keys = [key_of("window.list"), key_of("window.next"), key_of("window.prev")];
+        let keys = [key_of("window.list"), key_of("window.next"), key_of("window.previous")];
         for key in keys {
             // `xlsx.show-formulas` is labelled ⌘` but is bound to Ctrl+` (xlsx/mod.rs): the system's ⌘` is not taken.
             let users: Vec<&str> = all.iter().filter(|(i, k)| *k == Some(key) && *i != "xlsx.show-formulas").map(|(i, _)| *i).collect();
@@ -339,13 +339,13 @@ fn menu_layout() {
         s.size(1400., 900.);
         let entries = window_entries(&mut s);
         let ids: Vec<&str> = entries.iter().filter_map(|e| match e { MenuEntry::Item(i) => Some(i.id), MenuEntry::Submenu(sub) => Some(sub.id), _ => None }).collect();
-        assert_eq!(&ids[..3], ["window.list", "window.next", "window.prev"], "{name}: the window commands first: {ids:?}");
+        assert_eq!(&ids[..3], ["window.list", "window.next", "window.previous"], "{name}: the window commands first: {ids:?}");
         assert!(ids.contains(&"view.fullscreen"), "{name}: full screen: {ids:?}");
         assert!(ids.iter().any(|i| i.starts_with("window.open.")), "{name}: the open windows at the bottom");
         assert!(window_rows(&entries) <= 20, "{name}: {} rows", window_rows(&entries));
         // With one window the next and previous are not available.
         let disabled = |id: &str| entries.iter().any(|e| matches!(e, MenuEntry::Item(i) if i.id == id && !i.enabled()));
-        assert!(disabled("window.next") && disabled("window.prev"), "{name}: one window: next and previous are greyed");
+        assert!(disabled("window.next") && disabled("window.previous"), "{name}: one window: next and previous are greyed");
         let ix = s.with(|e, _| window_index(e));
         s.update(move |e, w, cx| e.open_menu_at(ix, w, cx));
         s.screenshot(&format!("{name}-window-menu"));

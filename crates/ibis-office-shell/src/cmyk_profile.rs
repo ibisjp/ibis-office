@@ -203,6 +203,11 @@ impl CmykConverter for IccConverter {
     }
 }
 
+/// The converter of the ICC profile in `bytes` (for the scenarios).
+pub fn icc_converter(bytes: &[u8], name: &str) -> Result<Arc<dyn CmykConverter>, String> {
+    Ok(Arc::new(IccConverter::from_bytes(bytes, name.into())?))
+}
+
 /// The conversion of the profile in `bytes` (an ICC file called `file`); `path` is where it came from (just the file's name in
 /// the browser, which has no path).
 fn parse_profile(bytes: &[u8], file: &str, path: PathBuf) -> Result<(Arc<dyn CmykConverter>, ProfileInfo), String> {
@@ -354,6 +359,10 @@ impl SlideEditor {
         self.sidebar_open = true;
         self.dialog = Default::default();
         cx.notify();
+    }
+
+    pub(crate) fn cmyk_profile_chooser_open(&self) -> bool {
+        self.chooser_state().is_some()
     }
 
     fn chooser_state(&self) -> Option<Rc<std::cell::RefCell<ChooserState>>> {
@@ -609,3 +618,4 @@ mod tests {
         assert!(!dirs.is_empty());
     }
 }
+

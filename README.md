@@ -1,4 +1,4 @@
-<p align="center"><b>English</b> | <a href="README-ja.md">日本語</a> | <a href="README-zh-CN.md">简体中文</a></p>
+<p align="center"><b>English</b> | <a href="docs/README-ja.md">日本語</a> | <a href="docs/README-zh-CN.md">简体中文</a></p>
 
 <p align="center">
   <img src="asset/ibisOffice_svg_logo_for_light.svg" alt="ibisOffice" width="480">
@@ -28,32 +28,32 @@ Our aim is simple: a document made in Microsoft Office should look the same when
 <table>
   <tr>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-Windows.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Windows.zip">
         <img src="asset/download-windows.svg" alt="Download for Windows" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-Windows.zip"><code>ibisOffice-0.8.7-Windows.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Windows.zip"><code>ibisOffice-0.8.9-Windows.zip</code></a><br>
       <small>Windows 10 / 11 (64-bit)</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-macOS.zip">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-macOS.zip">
         <img src="asset/download-mac.svg" alt="Download for Mac" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-macOS.zip"><code>ibisOffice-0.8.7-macOS.zip</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-macOS.zip"><code>ibisOffice-0.8.9-macOS.zip</code></a><br>
       <small>macOS 11 or later (Apple silicon)</small>
     </td>
     <td align="center">
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-Linux.AppImage">
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Linux.AppImage">
         <img src="asset/download-linux.svg" alt="Download for Linux" height="54">
       </a><br>
-      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.7/ibisOffice-0.8.7-Linux.AppImage"><code>ibisOffice-0.8.7-Linux.AppImage</code></a><br>
+      <a href="https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Linux.AppImage"><code>ibisOffice-0.8.9-Linux.AppImage</code></a><br>
       <small>Linux x86_64</small>
     </td>
   </tr>
 </table>
 
-- **Windows**: download and unzip `ibisOffice-0.8.7-Windows.zip`, then run `ibisOffice.exe` in the `ibisOffice` folder.
-- **macOS**: download and unzip `ibisOffice-0.8.7-macOS.zip`, then move `ibisOffice.app` to your Applications folder.
-- **Linux**: download `ibisOffice-0.8.7-Linux.AppImage`, allow it to run as a program (`chmod +x`), and double-click. Runs on major desktop Linux distributions (glibc 2.31 or later: Ubuntu, Debian, Fedora, Arch Linux, etc.). No installation or FUSE is needed.
+- **Windows**: download and unzip `ibisOffice-0.8.9-Windows.zip`, then run `ibisOffice.exe` in the `ibisOffice` folder.
+- **macOS**: download and unzip `ibisOffice-0.8.9-macOS.zip`, then move `ibisOffice.app` to your Applications folder.
+- **Linux**: download `ibisOffice-0.8.9-Linux.AppImage`, allow it to run as a program (`chmod +x`), and double-click. Runs on major desktop Linux distributions (glibc 2.31 or later: Ubuntu, Debian, Fedora, Arch Linux, etc.). No installation or FUSE is needed.
 - **Try the web version**: open the [playground](https://ibisjp.github.io/ibis-office/) in your browser — no installation (a browser with WebGPU). Open the sample Word, Excel and PowerPoint documents and try it right away.
 - **Changelog**: see [CHANGELOG.md](CHANGELOG.md) for release notes and recent updates.
 - **Watch the video**: an introduction to ibisOffice (YouTube).
@@ -61,7 +61,7 @@ Our aim is simple: a document made in Microsoft Office should look the same when
   [![ibisOffice introduction video](asset/video-en.jpg)](https://www.youtube.com/watch?v=nk2BRzMC2vw)
 
 - **Command-line interface**: for batch headless conversion to PDF/PNG, print settings, and performance benchmarking, see [Command-Line Options](docs/cli-options.md).
-- **Embedding the browser version**: optional Close and Download buttons that hand the embedding page an event, see [Embedding](docs/web-embedding.md).
+- **Embedding the browser version**: put it on your own web server and open documents from your system, with optional Close and Download buttons that hand your page an event; see [Embedding the browser version](docs/web-embedding.md).
 
 ## Goals
 
@@ -101,6 +101,7 @@ The same Rust code runs as a native app and, as WebAssembly, inside the browser.
 - **Rendering compatibility, guaranteed by process**: more than 70,000 tests continuously compare ibisOffice with Office's output, pixel by pixel.
 - **Every edit is a "command"**: every change goes through a command that carries only IDs and final values. It is the unit of undo and redo, and also the unit exchanged with the server in collaborative editing.
 - **Faithful to the standard**: files are read and written following the international standard for Office Open XML (ECMA-376 / ISO/IEC 29500 / JIS X 4191). Built-in definitions such as shape outlines use the official ECMA-376 data distributed by Ecma, unmodified.
+- **AI-native, with MCP**: `ibisOffice --mcp` (on Windows, `ibisOffice-mcp.exe`) runs ibisOffice as an MCP (Model Context Protocol) server (see [Using ibisOffice from an AI assistant](docs/mcp.md)). An AI assistant such as Claude can open Word, Excel and PowerPoint files, read and edit their text, cells, tables and slides, undo edits, and save or export them. Only the folders you allow can be reached.
 - **Only components that are safe for commercial use**: every library we depend on is under a license that allows commercial use, such as Apache-2.0, MIT or BSD. No copyleft libraries are used (checked on every change with `cargo deny`).
 
 ## Motivation
@@ -177,6 +178,12 @@ Conversion methods: ibisOffice `ibisOffice --export pdf`; Microsoft Office: open
 - **Build document viewing and editing into web systems**: inside business systems, SaaS products and portals, view and edit attached Word, Excel and PowerPoint documents on the spot, looking just as they do in Office.
 - **Handle documents without sending them to a server**: rendering and editing happen inside the browser, so when you open a local file its content is not sent to any external server.
 
+## Add ibisOffice to your web system
+
+The browser version is a set of static files. Download [`ibisOffice-0.8.9-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip) (the browser version of [v0.8.9](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.9)), check it with [its SHA-256](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip.sha256), and put it on your own web server. Your page loads it in an `iframe` and hands ibisOffice a few functions (list, open and save files); your system keeps the files, the sign-in and the permissions, and the editor runs in the visitor's browser.
+
+[Embedding the browser version](docs/web-embedding.md) has the download and check, the minimal setup (where to put the files, the server settings, the smallest page that opens a document) and every option, function and event.
+
 ## Building
 
 ```bash
@@ -197,7 +204,7 @@ ibisOffice implements a comprehensive set of features for Word (.docx), Excel (.
 For the full list of implemented features across all three formats (over 1,800 items), please see:
 
 <p align="center">
-  👉 <b><a href="docs/implemented-feature.md">Implemented Features</a></b>
+  <b><a href="docs/implemented-feature.md">Implemented Features</a></b>
 </p>
 
 ## License

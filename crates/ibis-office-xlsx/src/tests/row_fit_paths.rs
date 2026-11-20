@@ -106,7 +106,7 @@ fn paths(file: &str, one: f32) {
     agree(&mut s, "B4", 3, 1, &format!("{file} autofit B4"));
     // An entry: wrapping text typed in a cell that did not wrap.
     s.click_cell("B9");
-    s.update(|e, _, cx| e.format_cells(StyleChange::Wrap(true), cx));
+    s.update(|e, _, cx| e.format_cells(StyleChange::WrapText(true), cx));
     s.enter("A line of text that is long enough to be broken into several lines in a column that is sixty characters wide: it goes on, and on, and on, until it is certainly more than one hundred and twenty characters long.", "enter");
     agree(&mut s, "B9", 8, 1, &format!("{file} entry"));
     // A column's width: fewer lines, the row follows.
@@ -120,9 +120,9 @@ fn paths(file: &str, one: f32) {
     agree(&mut s, "B9", 8, 1, &format!("{file} wider column B9"));
     // Wrapping off and on again.
     s.click_cell("B2");
-    s.update(|e, _, cx| e.format_cells(StyleChange::Wrap(false), cx));
+    s.update(|e, _, cx| e.format_cells(StyleChange::WrapText(false), cx));
     assert_eq!(row_pt(&mut s, 1), one, "{file}: wrapping off: one line");
-    s.update(|e, _, cx| e.format_cells(StyleChange::Wrap(true), cx));
+    s.update(|e, _, cx| e.format_cells(StyleChange::WrapText(true), cx));
     agree(&mut s, "B2", 1, 1, &format!("{file} wrapping on"));
     // The font's size.
     s.update(|e, _, cx| e.format_cells(StyleChange::FontSize(1600), cx));
@@ -166,7 +166,7 @@ pub(super) fn agree_scenario() {
     // The autofit command on H31 after it was made larger by hand: back to the measured height; the column's autofit leaves it.
     s.update(|e, _, cx| {
         let slide = e.current_slide;
-        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize { slide, axis: ibis_doc_model::sheet_command::Axis::Rows, first: 30, last: 30, size: 200 * EMU_PER_POINT })], cx);
+        e.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetSize { sheet: slide, axis: ibis_doc_model::sheet_command::Axis::Rows, first: 30, last: 30, size: 200 * EMU_PER_POINT })], cx);
     });
     assert!(custom(&mut s, 30));
     s.update(|e, w, cx| e.fit_rows(30, w, cx));

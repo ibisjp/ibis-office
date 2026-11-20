@@ -11,7 +11,7 @@
 //! and a closed window (its editor dropped) is swept out when the table is read. The order is a counter, not a
 //! time (`clock` is for time; only the order matters here).
 use gpui_kit::{AnyWindowHandle, App, BorrowAppContext as _, EntityId, Global, SharedString, WeakEntity};
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 use crate::editor::SlideEditor;
 

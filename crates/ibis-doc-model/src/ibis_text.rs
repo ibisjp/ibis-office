@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! ibisOffice's own text features PowerPoint does not have: text wrap round pictures and videos (GitHub issue #132)
-//! and linked text boxes (#131). They are saved in an extension PowerPoint ignores (`ibis-pptx` `pptx_ibis`).
+//! and linked text boxes (#131). They are saved in an extension PowerPoint ignores (`ibis-formats` `pptx_ibis`).
 use crate::{Emu, ShapeId};
 
 /// How text wraps round a picture or a video (図の形式 > テキストの回り込み).
@@ -173,9 +173,10 @@ fn continuation(mut tail: crate::text::Paragraph) -> crate::text::Paragraph {
 
 /// Divides `paragraphs` among boxes `capacities` high (the room for text, in the unit `measure` answers in): each box takes whole
 /// lines, a paragraph may be cut between two of its lines, the rest going on at the top of the next box. `measure(paragraph,
-/// box)` is the paragraph's lines in the box's width. The last box takes all that is left, past its end. A box never takes less
+/// box, top)` is the paragraph's lines in the box's width, set `top` (the unit) below the top of the box's text area where it starts (the lines wrap round
+/// pictures at the place they are at: a line that is held up by one is higher by that, and the box holds fewer lines). The last box takes all that is left, past its end. A box never takes less
 /// than one line (a box too low for one still has the line it starts with; else the text could never move on).
-pub fn flow_text(paragraphs: Vec<crate::text::Paragraph>, capacities: &[f32], measure: &mut dyn FnMut(&crate::text::Paragraph, usize) -> ParagraphMeasure) -> Flowed {
+pub fn flow_text(paragraphs: Vec<crate::text::Paragraph>, capacities: &[f32], measure: &mut dyn FnMut(&crate::text::Paragraph, usize, f32) -> ParagraphMeasure) -> Flowed {
     let mut queue: std::collections::VecDeque<crate::text::Paragraph> = paragraphs.into();
     let count = capacities.len();
     let mut out = Flowed { portions: Vec::new(), joined: Vec::new(), padding: Vec::new() };
@@ -189,7 +190,11 @@ pub fn flow_text(paragraphs: Vec<crate::text::Paragraph>, capacities: &[f32], me
                 portion.push(p);
                 continue;
             }
-            let m = measure(&p, b);
+            let mut m = measure(&p, b, used);
+            // (The first paragraph of a box has no space above it: it starts where `used` says, not `before` further down.)
+            if portion.is_empty() && m.before > 0.0 {
+                m = measure(&p, b, used - m.before);
+            }
             let before = if portion.is_empty() { 0.0 } else { m.before };
             let room = capacity - used - before;
             let mut fit = 0;
@@ -261,7 +266,7 @@ mod tests {
     }
 
     /// Ten characters to a line, a line 1 high, 1 above a paragraph and none below.
-    fn measure(p: &Paragraph, _: usize) -> ParagraphMeasure {
+    fn measure(p: &Paragraph, _: usize, _: f32) -> ParagraphMeasure {
         let n = p.text().chars().count();
         let mut lines = Vec::new();
         let mut at = 0;
@@ -318,7 +323,7 @@ mod tests {
     #[test]
     fn a_continuation_has_no_bullet_no_space_before_and_no_indent() {
         let mut first = paragraph(&"x".repeat(25));
-        first.bullet = Some(crate::text::Bullet { text: "•".into(), picture: None, size: 100_000, color: None, auto: None, symbol: None });
+        first.bullet = Some(crate::text::Bullet { text: "•".into(), picture: None, size: 100_000, color: None, auto: None, symbol: None, font: None });
         first.space_before = 600;
         first.indent = -300;
         let flowed = flow_text(vec![first.clone()], &[2.0, 10.0], &mut measure);

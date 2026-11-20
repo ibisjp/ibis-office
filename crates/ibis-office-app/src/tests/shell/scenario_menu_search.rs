@@ -4,7 +4,7 @@
 //! Scenarios of the menu search's history ("履歴"/"コマンド", 2026-11-03), the scroll bar of the menus and
 //! submenus, and the grid of pictures of the spreadsheet's 挿入 > グラフ submenu.
 use ibis_doc_model::ShapeKind;
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 use crate::shell::chrome::{MenuEntry, MenuId, MENU_SEARCH_COMMANDS_HEADING, MENU_SEARCH_HISTORY_HEADING, MENU_SEARCH_HISTORY_ITEM, menu_search_rows};
 use crate::shell::menu_search_history as history;
@@ -19,6 +19,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::menu_scrollbar_same_in_menu_and_submenu", menu_scrollbar_same_in_menu_and_submenu),
         ("shell::menu_scrollbar_over_highlighted_row", menu_scrollbar_over_highlighted_row),
         ("shell::menu_chart_submenu_grid", menu_chart_submenu_grid),
+        ("shell::issue203_chart_submenu_with_a_million_rows", issue203_chart_submenu_with_a_million_rows),
         ("shell::menu_search_lists_each_command_once", menu_search_lists_each_command_once),
     ]
 }
@@ -270,10 +271,11 @@ fn menu_chart_submenu_grid() {
     s.settle();
     s.screenshot("chart-grid-top");
     let b = |id: &str| buttons::bounds(&format!("menu-item-{id}")).unwrap_or_else(|| panic!("{id} not drawn: {:?}", buttons::all()));
-    let (c0, c1, c2) = (b("pptx.insert-chart.column"), b("pptx.insert-chart.stacked-column"), b("pptx.insert-chart.percent-stacked-column"));
-    assert_eq!(c0.origin.y, c1.origin.y, "two tiles in a row");
+    let (c0, c1, c2, c3) = (b("pptx.insert-chart.column"), b("pptx.insert-chart.stacked-column"), b("pptx.insert-chart.percent-stacked-column"), b("pptx.insert-chart.3d-clustered-column"));
+    assert!(c0.origin.y == c1.origin.y && c1.origin.y == c2.origin.y, "three tiles in a row (K0032)");
     assert!(c1.origin.x > c0.origin.x + c0.size.width - px(1.), "the second is right of the first: {c0:?} {c1:?}");
-    assert!(c2.origin.y > c0.origin.y + c0.size.height - px(1.) && c2.origin.x == c0.origin.x, "the third starts the next row: {c2:?}");
+    assert!(c2.origin.x > c1.origin.x + c1.size.width - px(1.), "the third is right of the second: {c1:?} {c2:?}");
+    assert!(c3.origin.y > c0.origin.y + c0.size.height - px(1.) && c3.origin.x == c0.origin.x, "the fourth starts the next row: {c3:?}");
     let recommended = b("xlsx.recommended-charts");
     assert!(recommended.size.width > c0.size.width * 1.8, "the first item is a full-width line, the tiles are narrower");
 
@@ -319,6 +321,36 @@ fn menu_chart_submenu_grid() {
     open_submenu(&mut s, "insert.chart");
     s.key("enter");
     assert!(s.with(|e, _| e.sidebar_open && e.sheet_state().is_some_and(|st| st.panels.recommended_charts.is_some())), "the first line opens the recommended charts");
+}
+
+/// #203: a million numbers in A1:A1048576 (as `=SEQUENCE(2^20)` makes them): opening 挿入 > グラフ and moving down its
+/// tiles takes no longer than with a small sheet, and the pictures are drawn (of the start of the data).
+fn issue203_chart_submenu_with_a_million_rows() {
+    use crate::xlsx::scenarios::SheetSteps as _;
+    use ibis_doc_model::{CellEdit, CellInput, CellValue, Command, SheetCommand};
+    let _probe = buttons::Probe::new();
+    let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
+    s.size(1200., 900.);
+    s.update(|e, _, cx| {
+        let slide = e.current_slide;
+        let edits = (0..(1u32 << 20)).map(|row| CellEdit { row, column: 0, input: CellInput::Value(CellValue::Number(f64::from(row + 1))) }).collect();
+        e.document.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })]).unwrap();
+        cx.notify();
+    });
+    s.click_cell("A1");
+    s.settle();
+    let start = crate::clock::Instant::now();
+    open_insert_menu(&mut s);
+    open_submenu(&mut s, "insert.chart");
+    s.settle();
+    for _ in 0..3 {
+        s.key("down");
+    }
+    let elapsed = start.elapsed().as_secs_f64();
+    let b = |id: &str| buttons::bounds(&format!("menu-item-{id}")).unwrap_or_else(|| panic!("{id} not drawn"));
+    assert!(b("pptx.insert-chart.column").size.width > px(10.), "the pictures are drawn");
+    eprintln!("issue203: open the chart submenu and move down 3 times: {elapsed:.3} s");
+    assert!(elapsed < 3.0, "the chart submenu of a sheet of a million rows opens at once: {elapsed:.3} s");
 }
 
 /// The menu search lists a command once: for a few words, on each screen, no two rows share a command id, or the same words and place.

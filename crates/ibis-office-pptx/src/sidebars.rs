@@ -24,12 +24,12 @@ pub(crate) const SIDEBARS: &[SidebarDef] = &[
     sidebar_def!("sidebar.find", "sidebar.find", Right, G::Document, Pane, panels: &["pptx_find_panel"], cmd: Some("edit.find-replace"), open: None, start: true, available: always, key: Some("⌘F"), toolbar: None),
     sidebar_def!("sidebar.selection", "sidebar.selection", Right, G::Document, Pane, panels: &["selection_pane"], cmd: Some("pptx.selection-pane"), open: None, start: false, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.reading-order", "sidebar.reading-order", Right, G::Document, Pane, panels: &["reading_order_pane"], cmd: Some("pptx.reading-order"), open: None, start: false, available: always, key: None, toolbar: None),
-    sidebar_def!("sidebar.animation", "sidebar.animation", Right, G::Document, Pane, panels: &["animation_pane"], cmd: Some("pptx.anim.pane"), open: None, start: false, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.animation", "sidebar.animation", Right, G::Document, Pane, panels: &["animation_pane"], cmd: Some("pptx.animation.pane"), open: None, start: false, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.record-preview", "sidebar.record-preview", Right, G::Document, Pane, panels: &["record_preview_panel"], cmd: Some("pptx.record-preview"), open: None, start: true, available: always, key: None, toolbar: None),
     // Right pane: review.
     sidebar_def!("sidebar.spelling", "sidebar.spelling", Right, G::Review, Pane, panels: &["spelling_panel"], cmd: Some("pptx.spelling.check"), open: Some(by_format), start: true, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.thesaurus", "sidebar.thesaurus", Right, G::Review, Pane, panels: &["pptx_thesaurus_panel"], cmd: Some("pptx.thesaurus"), open: Some(by_format), start: true, available: always, key: None, toolbar: None),
-    sidebar_def!("sidebar.accessibility", "sidebar.accessibility", Right, G::Review, Pane, panels: &["pptx_accessibility_panel"], cmd: Some("pptx.check-accessibility"), open: None, start: true, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.accessibility", "sidebar.accessibility", Right, G::Review, Pane, panels: &["pptx_accessibility_panel"], cmd: Some("review.accessibility-check"), open: None, start: true, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.screen-reader", "sidebar.screen-reader", Right, G::Review, Pane, panels: &["pptx_screen_reader_panel"], cmd: Some("pptx.screen-reader"), open: Some(by_format), start: false, available: always, key: None, toolbar: None),
     // Right pane: drawing and settings.
     sidebar_def!("sidebar.ink", "sidebar.ink", Right, G::Tools, Pane, panels: &["pptx_ink_panel"], cmd: Some("pptx.ink"), open: Some(by_format), start: false, available: always, key: None, toolbar: None),

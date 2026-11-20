@@ -270,16 +270,16 @@ impl SlideEditor {
                 };
                 match i {
                     2 => {
-                        changes.push(ParaChange::Left(emu));
-                        changes.push(ParaChange::LeftChars(chars));
+                        changes.push(ParaChange::LeftIndent(emu));
+                        changes.push(ParaChange::LeftIndentChars(chars));
                     }
                     3 => {
-                        changes.push(ParaChange::Right(emu));
-                        changes.push(ParaChange::RightChars(chars));
+                        changes.push(ParaChange::RightIndent(emu));
+                        changes.push(ParaChange::RightIndentChars(chars));
                     }
                     4 => {
-                        changes.push(ParaChange::FirstLine(emu));
-                        changes.push(ParaChange::FirstLineChars(chars));
+                        changes.push(ParaChange::FirstLineIndent(emu));
+                        changes.push(ParaChange::FirstLineIndentChars(chars));
                     }
                     _ => {}
                 }
@@ -292,7 +292,7 @@ impl SlideEditor {
                 changes.push(match i {
                     0 => ParaChange::SpaceBefore(emu),
                     1 => ParaChange::SpaceAfter(emu),
-                    _ => ParaChange::Line(match rule {
+                    _ => ParaChange::LineSpacing(match rule {
                         LineRule::Multiple => LineHeight::Auto((value * 240.).round() as u32),
                         LineRule::AtLeast => LineHeight::AtLeast(emu),
                         LineRule::Exact => LineHeight::Exact(emu),

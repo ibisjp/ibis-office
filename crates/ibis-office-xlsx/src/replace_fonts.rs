@@ -28,6 +28,21 @@ pub(crate) fn workbook_used_fonts(presentation: &ibis_doc_model::Presentation) -
     fonts.into_iter().collect()
 }
 
+/// The displayed text of the workbook's cells: the characters its fonts have to draw.
+pub(crate) fn workbook_used_text(presentation: &ibis_doc_model::Presentation) -> String {
+    let mut text = String::new();
+    for slide in &presentation.slides {
+        for shape in &slide.shapes {
+            if let ShapeKind::Sheet(sheet) = &shape.kind {
+                for cell in sheet.cells.iter() {
+                    text.push_str(&cell.text);
+                }
+            }
+        }
+    }
+    text
+}
+
 /// The commands that set `replacement` as the font of the cells formatted in `target` (adjacent cells of a row in one range),
 /// and how many cells they change.
 pub(crate) fn workbook_replace_commands(presentation: &ibis_doc_model::Presentation, target: &str, replacement: &str) -> (Vec<Command>, usize) {
@@ -51,7 +66,7 @@ pub(crate) fn workbook_replace_commands(presentation: &ibis_doc_model::Presentat
                 }
             }
             if !ranges.is_empty() {
-                commands.push(Command::Sheet(SheetCommand::SetFormat { slide: slide.id, ranges, change: StyleChange::Font(Some(replacement.trim().to_string())) }));
+                commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: slide.id, ranges, change: StyleChange::Font(Some(replacement.trim().to_string())) }));
             }
         }
     }

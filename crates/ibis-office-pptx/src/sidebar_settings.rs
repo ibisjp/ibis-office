@@ -95,8 +95,7 @@ impl SlideEditor {
             }).collect();
             self.run(commands,cx);
         } else if field == 9 {
-            let Ok(pt) = raw.trim().parse::<f32>() else {return;};
-            if !(1.0..=1638.).contains(&pt) {return;}
+            let Some(pt) = crate::shell::editor::parse_font_size(raw) else {return;};
             self.format_characters(window, cx, ibis_doc_model::CharacterFormat {font_size: Some((pt*100.).round() as u32), ..Default::default()});
         } else if field == 7 {
             let value = raw.trim().trim_start_matches('#');
@@ -139,7 +138,7 @@ impl SlideEditor {
                     } else {
                         let mut frame=shape.frame;
                         match field {0=>frame.width=emu as i64,1=>frame.height=emu as i64,3=>frame.x=emu as i64,_=>frame.y=emu as i64}
-                        (frame!=shape.frame).then(||Command::SetFrame {slide:self.current_slide,shape:id,frame})
+                        (frame!=shape.frame).then(||Command::SetFrame { slide: self.current_slide, frames: vec![(id, frame)], with_attached: true })
                     }
                 }).collect();
                 self.run(commands,cx);
@@ -158,7 +157,7 @@ impl SlideEditor {
         let commands=self.selected_shapes().into_iter().filter_map(|shape| {
             let ShapeKind::Auto(auto)=&shape.kind else {return None};
             let next=model.written_to(&initial,auto);
-            (next!=*auto).then(||Command::SetKind {slide:self.current_slide,shape:shape.id,kind:Box::new(ShapeKind::Auto(next))})
+            (next!=*auto).then(||Command::SetShapeKind {slide:self.current_slide,shape:shape.id,kind:Box::new(ShapeKind::Auto(next))})
         }).collect();
         self.apply_pptx_commands_checked(commands,cx);
         let text=model.text_change(&initial);

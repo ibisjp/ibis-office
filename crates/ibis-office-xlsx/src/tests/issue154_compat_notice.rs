@@ -72,3 +72,32 @@ pub(super) fn run() {
     let found = saved.slides.iter().filter_map(|sl| ibis_doc_model::sheet_calc::sheet_of_slide(sl)).flat_map(|sh| sh.validations.iter()).any(|v| v.formula1.as_deref() == Some("TRANSPOSE(D1:D3)"));
     assert!(found, "the rule is in the file");
 }
+
+/// GitHub issue #260: a list whose source is a formula keeps its `=` when the panel is opened again, the drop-down shows what the formula
+/// gives, and the file has the formula without `=`.
+pub(super) fn formula_list_keeps_its_equals_issue_260() {
+    let mut s = super::new_sheet();
+    s.size(1200., 800.);
+    for (cell, v) in [("D1", "a"), ("D2", "b"), ("D3", "c")] {
+        s.click_cell(cell);
+        s.enter(v, "enter");
+    }
+    set_list(&mut s, "F1", "=OFFSET(D1,0,0,3,1)");
+    assert_eq!(formula_here(&mut s).as_deref(), Some("OFFSET(D1,0,0,3,1)"));
+    let items = s.with(|e, _| e.current_rule().map(|r| e.validation_list_items_in_book(&r)));
+    assert_eq!(items, Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]));
+    // The panel opened again shows the source with its `=`, and applying it again leaves the rule as it is (it was read as the text of a list).
+    s.click_cell("F1");
+    let shown = s.update(|e, window, cx| {
+        e.open_validation_panel(window, cx);
+        e.wb().validation.as_ref().map(|p| p.items.read(cx).value().to_string())
+    });
+    assert_eq!(shown.as_deref(), Some("=OFFSET(D1,0,0,3,1)"));
+    s.update(|e, _, cx| e.apply_validation_panel(cx));
+    assert_eq!(formula_here(&mut s).as_deref(), Some("OFFSET(D1,0,0,3,1)"));
+    // The file has the formula without `=`, and reads back the same.
+    s.save_as("issue260-formula-list.xlsx");
+    let saved = s.reopen();
+    let rules: Vec<_> = saved.slides.iter().filter_map(|sl| ibis_doc_model::sheet_calc::sheet_of_slide(sl)).flat_map(|sh| sh.validations.iter()).collect();
+    assert!(rules.iter().any(|v| v.kind == "list" && v.formula1.as_deref() == Some("OFFSET(D1,0,0,3,1)")), "{rules:?}");
+}

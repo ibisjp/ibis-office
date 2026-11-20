@@ -189,7 +189,7 @@ pub(crate) fn sort_key(text: &str) -> (Vec<u8>, Vec<u8>) {
     let lower: String = text.chars().map(|c| c.to_ascii_lowercase()).collect();
     // Of letters that differ only in case, the lower case one first.
     let swapped: String = text.chars().map(|c| if c.is_ascii_lowercase() { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() }).collect();
-    (ibis_pptx::csv::encode_sjis(&lower), ibis_pptx::csv::encode_sjis(&swapped))
+    (ibis_formats::csv::encode_sjis(&lower), ibis_formats::csv::encode_sjis(&swapped))
 }
 
 /// The heading an entry goes under (Word's `\h`): a Latin letter as a full-width capital, a kana as itself (a katakana as the hiragana),
@@ -439,7 +439,7 @@ pub(crate) fn index_commands(doc: &FlowDocument, before: u32, replace: bool, ins
             entries.insert(0, lead);
         }
     }
-    commands.push(ibis_doc_model::FlowCommand::SetToc { before, replace, entries, bookmarks: Vec::new() });
+    commands.push(ibis_doc_model::FlowCommand::SetTableOfContents { before, replace, entries, bookmarks: Vec::new() });
     commands
 }
 

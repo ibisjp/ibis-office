@@ -21,7 +21,7 @@ fn dump_corpus_layout() {
     let mut summary = String::new();
     for name in names.iter().filter(|n| want.is_empty() || want.contains(n)) {
         let Ok(bytes) = std::fs::read(std::path::Path::new(&root).join(format!("{name}.docx"))) else { continue };
-        let Ok(mut presentation) = ibis_pptx::read(&bytes) else { continue };
+        let Ok(mut presentation) = ibis_formats::read(&bytes) else { continue };
         let resources = cx.update(|app| {
             let mut resources = crate::render::shape_view::Resources::new(&presentation, app);
             resources.print = true;
@@ -70,7 +70,7 @@ fn dump_corpus_layout() {
         std::fs::write(std::path::Path::new(&out).join(format!("{name}.rules.tsv")), rules).expect("write");
         // IBIS_DUMP_PDF=1: the PDF the export writes, to look at (`<name>.pdf` in the output folder).
         if std::env::var("IBIS_DUMP_PDF").is_ok_and(|v| v == "1") {
-            let again = ibis_pptx::read(&bytes).expect("a document");
+            let again = ibis_formats::read(&bytes).expect("a document");
             let options = crate::export::Options {
                 format: crate::export::Format::Pdf,
                 out_dir: out.clone().into(),

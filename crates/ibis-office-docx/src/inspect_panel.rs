@@ -186,7 +186,7 @@ impl SlideEditor {
     /// ドキュメントのプロパティと個人情報をすべて削除
     pub(crate) fn doc_inspect_remove_all_properties(&mut self, cx: &mut Context<Self>) {
         let empty_props = DocProperties::default();
-        self.run_flow(vec![ibis_doc_model::FlowCommand::SetDocProperties(empty_props)], cx);
+        self.run_flow(vec![ibis_doc_model::FlowCommand::SetDocumentProperties(empty_props)], cx);
         if let Some(doc) = self.flow() {
             let inspection = inspect_document(doc);
             if let Some(p) = self.doc_state_mut().and_then(|s| s.inspect_panel.as_mut()) {

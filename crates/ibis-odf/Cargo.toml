@@ -1,0 +1,14 @@
+[package]
+name = "ibis-odf"
+description = "Reads and writes OpenDocument files (.odt, .ods, .odp) for ibisOffice."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+ibis-calc.workspace = true
+ibis-doc-model.workspace = true
+ibis-formats.workspace = true
+ibis-ooxml.workspace = true
+roxmltree = "0.21"

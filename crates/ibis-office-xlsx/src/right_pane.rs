@@ -103,11 +103,11 @@ impl SlideEditor {
         let mut repeated=Vec::new();
         for edit in self.document.repeat_sheet_commands(){
             let next=match edit {
-                SheetCommand::SetFormat{change,..}=>SheetCommand::SetFormat{slide,ranges:self.selected_ranges(),change:change.clone()},
-                SheetCommand::ClearFormats{..}=>SheetCommand::ClearFormats{slide,ranges:self.selected_ranges()},
-                SheetCommand::Insert{axis,count,..}=>SheetCommand::Insert{slide,axis:*axis,at:if *axis==Axis::Rows{range.first_row}else{range.first_column},count:*count},
-                SheetCommand::Delete{axis,count,..}=>SheetCommand::Delete{slide,axis:*axis,at:if *axis==Axis::Rows{range.first_row}else{range.first_column},count:*count},
-                SheetCommand::ShiftCells{down,insert,..}=>SheetCommand::ShiftCells{slide,range,down:*down,insert:*insert},
+                SheetCommand::SetFormat{change,..}=>SheetCommand::SetFormat{sheet: slide,ranges:self.selected_ranges(),change:change.clone()},
+                SheetCommand::ClearFormats{..}=>SheetCommand::ClearFormats{sheet: slide,ranges:self.selected_ranges()},
+                SheetCommand::Insert{axis,count,..}=>SheetCommand::Insert{sheet: slide,axis:*axis,at:if *axis==Axis::Rows{range.first_row}else{range.first_column},count:*count},
+                SheetCommand::Delete{axis,count,..}=>SheetCommand::Delete{sheet: slide,axis:*axis,at:if *axis==Axis::Rows{range.first_row}else{range.first_column},count:*count},
+                SheetCommand::InsertOrDeleteCells{down,insert,..}=>SheetCommand::InsertOrDeleteCells{sheet: slide,range,down:*down,insert:*insert},
                 _=>continue,
             };
             repeated.push(Command::Sheet(next));

@@ -398,8 +398,22 @@ fn arc_points(from: (f64, f64), rx: f64, ry: f64, start: f64, sweep: f64) -> Vec
     };
     let t0 = param(start);
     let center = (from.0 - rx * t0.cos(), from.1 - ry * t0.sin());
-    let steps = ((sweep.abs() / 60_000.0 / 5.0).ceil() as usize).clamp(2, 128);
     let tau = std::f64::consts::TAU;
+    // One point per 5 degrees of the ellipse's own parameter (and of the angle): a long thin ellipse turns through a few degrees of the angle
+    // measured from its centre while its point goes a quarter round (a curved arrow's bend), so the steps are counted on the parameter too.
+    let unwrapped = |n: usize| {
+        let mut previous = t0;
+        let mut length = 0.0;
+        for i in 1..=n {
+            let mut t = param(start + sweep * i as f64 / n as f64);
+            t += ((previous - t) / tau).round() * tau;
+            length += (t - previous).abs();
+            previous = t;
+        }
+        length
+    };
+    let steps = ((sweep.abs() / 60_000.0).max(unwrapped(64).to_degrees()) / 5.0).ceil() as usize;
+    let steps = steps.clamp(2, 128);
     let mut previous = t0;
     (1..=steps)
         .map(|i| {

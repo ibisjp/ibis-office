@@ -70,7 +70,7 @@ impl SlideEditor {
         let Some(range) = self.selected_range() else { return };
         let format = ConditionalFormat { source_index: None, ranges: vec![range], rules: vec![CfRule { kind, priority: 1, stop: false, style }] };
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::AddConditional { slide, format })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::AddConditional { sheet: slide, format })]) {
             log::warn!("conditional format rejected: {err}");
         }
         cx.notify();
@@ -106,7 +106,7 @@ impl SlideEditor {
             return;
         }
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::ClearConditional { slide, ranges })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::ClearConditional { sheet: slide, ranges })]) {
             log::warn!("conditional format rejected: {err}");
         }
         cx.notify();

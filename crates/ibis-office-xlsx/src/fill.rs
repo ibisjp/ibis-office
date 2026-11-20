@@ -417,7 +417,7 @@ impl SlideEditor {
     fn apply_cell_move(&mut self, m: CellMove, cx: &mut Context<Self>) {
         let slide = self.current_slide;
         if !m.copy {
-            self.run_sheet(vec![Command::Sheet(SheetCommand::MoveCells { slide, from: m.source, row: m.target.first_row, column: m.target.first_column })], cx);
+            self.run_sheet(vec![Command::Sheet(SheetCommand::MoveCells { sheet: slide, from: m.source, row: m.target.first_row, column: m.target.first_column })], cx);
         } else {
             // A copy goes through the clipboard code, the system clipboard
             // and the internal copy put back as they were.
@@ -428,7 +428,7 @@ impl SlideEditor {
             self.set_selected_ranges(&[m.target]);
             self.paste_cells(false, cx);
             if let Some(item) = previous {
-                cx.write_to_clipboard(item);
+                cx.write_to_clipboard(item); // gesture-ok: runs at the release (the touch cannot be cancelled after it) and puts the clipboard back as it was
             }
             if let Some(state) = self.sheet_state_mut() {
                 state.clip = previous_clip;
@@ -690,7 +690,7 @@ impl SlideEditor {
         if let Some(state) = self.sheet_state_mut() {
             state.last_fill = Some((source, column, row, mode));
         }
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::PutCells { slide, cells })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::PasteCells { sheet: slide, cells })]) {
             log::warn!("fill rejected: {err}");
             self.status = Some(crate::shell::i18n::text("_xlsx.you-can-t-fill-here").into());
         }

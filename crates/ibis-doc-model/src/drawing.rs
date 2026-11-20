@@ -23,6 +23,18 @@ impl Rgb {
         (self.0 >> 16) as u8
     }
 
+    /// The Rec.709 luma of the colour (0.2126 R + 0.7152 G + 0.0722 B, rounded; the grey a colour prints as in grey, and the lightness the caret over it is
+    /// chosen by).
+    pub fn luma(self) -> u8 {
+        (0.2126 * self.r() as f32 + 0.7152 * self.g() as f32 + 0.0722 * self.b() as f32).round() as u8
+    }
+
+    /// The colour of a caret over this one: black over a light colour, white over a dark one (by its [`luma`](Self::luma): from 128 up is light). Windows' Word
+    /// and PowerPoint draw the caret as the inverse of what is under it; this is the same without reading the pixels, and does not follow the screen's appearance.
+    pub fn caret_over(self) -> Self {
+        if self.luma() >= 128 { Self::BLACK } else { Self::WHITE }
+    }
+
     pub const fn g(self) -> u8 {
         (self.0 >> 8) as u8
     }
@@ -256,6 +268,24 @@ pub enum Fill {
 }
 
 impl Fill {
+    /// The colour that stands for what this fill shows, for choosing a colour over it (the caret's): a solid fill's own, a gradient's stops averaged, a
+    /// pattern's background. `None` for no fill, a translucent solid, or a picture.
+    pub fn backdrop_rgb(&self) -> Option<Rgb> {
+        let mean = |stops: &[GradientStop]| {
+            let n = stops.len() as u32;
+            (n > 0).then(|| {
+                let sum = |f: fn(Rgb) -> u8| stops.iter().map(|s| f(s.color.rgb) as u32).sum::<u32>() / n;
+                Rgb::from_rgb(sum(Rgb::r) as u8, sum(Rgb::g) as u8, sum(Rgb::b) as u8)
+            })
+        };
+        match self {
+            Fill::Solid(c) if c.alpha == 255 => Some(c.rgb),
+            Fill::Linear { stops, .. } | Fill::TileLinear { stops, .. } | Fill::Path { stops, .. } => mean(stops),
+            Fill::Pattern { background, .. } if background.alpha == 255 => Some(background.rgb),
+            _ => None,
+        }
+    }
+
     /// The picture this fill shows, if it is a picture fill.
     pub fn media(&self) -> Option<MediaId> {
         match self {
@@ -657,8 +687,9 @@ pub enum LineJoin {
     Bevel,
 }
 
-/// A shape outline or a line.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A shape outline or a line. Two strokes are equal when they are the same line as the file has it: `min_drawn_width` (how the line is drawn, which the
+/// reader sets and the file does not keep) does not count.
+#[derive(Clone, Debug)]
 pub struct Stroke {
     pub color: Color,
     pub width: Emu,
@@ -677,7 +708,28 @@ pub struct Stroke {
     pub alignment: LineAlignment,
     /// An optional fill for the stroke (e.g. gradient stroke `a:gradFill`).
     pub fill: Option<Fill>,
+    /// The thinnest this line is drawn (EMU), 0 for none: set by the readers of a presentation's, a document's and a workbook's shapes to `POWERPOINT_MIN_WIDTH`, which
+    /// PowerPoint, Word and Excel were measured to draw (shape outlines and lines; table and cell borders are another mechanism, and charts have none). Not saved: the file keeps `width`.
+    pub min_drawn_width: Emu,
 }
+
+impl PartialEq for Stroke {
+    fn eq(&self, other: &Self) -> bool {
+        self.color == other.color
+            && self.width == other.width
+            && self.dashed == other.dashed
+            && self.head == other.head
+            && self.tail == other.tail
+            && self.dash == other.dash
+            && self.cap == other.cap
+            && self.join == other.join
+            && self.compound == other.compound
+            && self.alignment == other.alignment
+            && self.fill == other.fill
+    }
+}
+
+impl Eq for Stroke {}
 
 /// Where a stroke is aligned relative to its path (`ST_PenAlignment`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -757,9 +809,21 @@ impl LineCompound {
 impl Stroke {
     /// PowerPoint's default outline: 0.75 pt.
     pub const DEFAULT_WIDTH: Emu = 9_525;
+    /// The thinnest line PowerPoint draws: 0.14 pt = 1778 EMU (the PDF's `w` shows 0.14; 1/512 inch would be 1786 EMU, 0.1406 pt, and the PDF cannot tell the two apart). A line whose `w` is smaller (`w="0"`, `w="1"`, 0.1 pt) is drawn at this
+    /// width, in a table's borders, a shape's outline and a connector alike; from 0.14 pt up the line is as wide as `w` says. Not a hairline of one
+    /// pixel (it does not follow the zoom): Microsoft PowerPoint for Windows (365), PDF written by `SaveAs` 32, the `w` operator of the strokes of
+    /// 0, 1, 1270, 1778, 1905, 2540, 3000, 3175 and 4000 EMU (issue #189, `tasks/doc/requests/2026-11-14-189-office-result.md` 2). The value is
+    /// the smallest width the application itself keeps, not a coefficient fitted to a document.
+    pub const POWERPOINT_MIN_WIDTH: Emu = 1_778;
+
+    /// The width a line is drawn (screen and PDF) at: `width`, or its `min_drawn_width` (the Office thinnest, `POWERPOINT_MIN_WIDTH`, on the shapes' lines) when it is thinner. The file's
+    /// `width` is kept as it was read (a `w="0"` is saved as 0).
+    pub fn drawn_width(&self) -> Emu {
+        self.width.max(self.min_drawn_width)
+    }
 
     pub fn solid(color: Color, width: Emu) -> Self {
-        Self { color, width, dashed: false, head: LineEnd::None, tail: LineEnd::None, dash: LineDash::Solid, cap: LineCap::Flat, join: LineJoin::Miter, compound: LineCompound::Single, alignment: LineAlignment::Center, fill: None }
+        Self { color, width, dashed: false, head: LineEnd::None, tail: LineEnd::None, dash: LineDash::Solid, cap: LineCap::Flat, join: LineJoin::Miter, compound: LineCompound::Single, alignment: LineAlignment::Center, fill: None, min_drawn_width: 0 }
     }
 
     /// This stroke with dash pattern `dash` (and `dashed` to match).

@@ -206,7 +206,7 @@ fn make_smartart_node(
     text_color: Rgb,
     text: &str,
 ) -> Shape {
-    let geometry = ibis_pptx::preset_geometry(geom_preset).unwrap_or(ibis_doc_model::Geometry::Rect);
+    let geometry = ibis_formats::preset_geometry(geom_preset).unwrap_or(ibis_doc_model::Geometry::Rect);
     let border = border_rgb.map(|c| ibis_doc_model::Stroke::solid(ibis_doc_model::Color::opaque(c), 12_700));
     let mut auto = ibis_doc_model::AutoShape::new(
         geometry,
@@ -228,7 +228,7 @@ fn make_smartart_node(
 }
 
 fn make_smartart_arrow(id: ShapeId, geom_preset: &str, frame: EmuRect, fill_rgb: Rgb) -> Shape {
-    let geometry = ibis_pptx::preset_geometry(geom_preset).unwrap_or(ibis_doc_model::Geometry::Rect);
+    let geometry = ibis_formats::preset_geometry(geom_preset).unwrap_or(ibis_doc_model::Geometry::Rect);
     let auto = ibis_doc_model::AutoShape::new(
         geometry,
         ibis_doc_model::Fill::Solid(ibis_doc_model::Color::opaque(fill_rgb)),
@@ -267,7 +267,7 @@ impl SlideEditor {
     /// 図形に変換: the graphic's shapes, as copies of their own (grouped), in the graphic's place.
     pub fn convert_diagram_to_shapes(&mut self, cx: &mut Context<Self>) {
         if let Some((owner, parts)) = self.selected_diagram() {
-            if !parts.iter().all(|s| ibis_pptx::save::check_shape_insertion(s).is_ok()) {
+            if !parts.iter().all(|s| ibis_formats::save::check_shape_insertion(s).is_ok()) {
                 return self.set_status(crate::i18n::text("pptx.smartart.smartart-has-parts-cannot").to_string(), cx);
             }
             let slide = self.current_slide;
@@ -281,9 +281,9 @@ impl SlideEditor {
                 })
                 .collect();
             let ids: Vec<ShapeId> = copies.iter().map(|s| s.id).collect();
-            let mut commands = vec![Command::RemoveShape { slide, shape: owner }];
-            commands.extend(copies.into_iter().enumerate().map(|(i, shape)| Command::InsertShape { slide, index: before + i, shape }));
-            if self.apply_pptx_commands_checked(vec![Command::Group(commands)], cx) {
+            let mut commands = vec![Command::DeleteShape { slide, shapes: vec![owner], with_attached: true }];
+            commands.extend(copies.into_iter().enumerate().map(|(i, shape)| Command::InsertShape { slide, shapes: vec![(before + i, shape)] }));
+            if self.apply_pptx_commands_checked(vec![Command::Batch(commands)], cx) {
                 self.set_selection(ids);
                 self.group_selected(cx);
             }
@@ -413,14 +413,14 @@ impl SlideEditor {
         let slide = self.current_slide;
         let mut commands = Vec::new();
         if let Some(old) = replaced_id {
-            commands.push(Command::RemoveShape { slide, shape: old });
+            commands.push(Command::DeleteShape { slide, shapes: vec![old], with_attached: true });
         }
         let start_index = self.slide().shapes.len() - usize::from(replaced_id.is_some());
         for (i, shape) in shapes.into_iter().enumerate() {
-            commands.push(Command::InsertShape { slide, index: start_index + i, shape });
+            commands.push(Command::InsertShape { slide, shapes: vec![(start_index + i, shape)] });
         }
 
-        if self.apply_pptx_commands_checked(vec![Command::Group(commands)], cx) {
+        if self.apply_pptx_commands_checked(vec![Command::Batch(commands)], cx) {
             self.set_selection(ids.clone());
             self.group_smartart(kind, style, cx);
         }
@@ -749,7 +749,7 @@ impl SlideEditor {
         };
         remaining_groups.push(group);
         let commands = vec![Command::SetShapeGroups { slide: self.current_slide, groups: remaining_groups }];
-        self.apply_pptx_commands_checked(vec![Command::Group(commands)], cx);
+        self.apply_pptx_commands_checked(vec![Command::Batch(commands)], cx);
     }
 
     pub(crate) fn smartart_info_from_group_name(name: &str) -> Option<(SmartArtKind, SmartArtColorStyle)> {
@@ -946,14 +946,14 @@ impl SlideEditor {
     ) {
         let slide = self.current_slide;
         let mut commands = Vec::new();
-        commands.push(Command::RemoveShapes { slide, shapes: old_leaves.to_vec() });
+        commands.push(Command::DeleteShape { slide, shapes: old_leaves.to_vec(), with_attached: false });
         let mut new_shapes = Vec::new();
         let mut new_ids = Vec::new();
         self.build_smartart_shapes(kind, style, items, frame, &mut new_shapes, &mut new_ids);
         let removed_count = old_leaves.iter().filter(|id| self.slide().shape(**id).is_some()).count();
         let at = self.slide().shapes.len().saturating_sub(removed_count);
         for (i, shape) in new_shapes.into_iter().enumerate() {
-            commands.push(Command::InsertShape { slide, index: at + i, shape });
+            commands.push(Command::InsertShape { slide, shapes: vec![(at + i, shape)] });
         }
         // Rebuilding the nodes and their group is one user operation and one Undo step.
         // Preserve the old SmartArt group's native id; other groups remain untouched.
@@ -975,7 +975,7 @@ impl SlideEditor {
         let name = if style == SmartArtColorStyle::Colorful {format!("SmartArt: {}", kind.label())} else {format!("SmartArt: {} [{}]", kind.label(), style.code())};
         groups.push(ibis_doc_model::ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id,name,children:new_ids.iter().copied().map(ibis_doc_model::GroupMember::Shape).collect()});
         commands.push(Command::SetShapeGroups {slide,groups});
-        if self.apply_pptx_commands_checked(vec![Command::Group(commands)], cx) {
+        if self.apply_pptx_commands_checked(vec![Command::Batch(commands)], cx) {
             self.set_selection(new_ids.clone());
             if let Some(target_idx) = select_item_index {
                 let item_shapes: Vec<ShapeId> = new_ids.into_iter().filter(|id| {

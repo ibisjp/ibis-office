@@ -6,7 +6,7 @@
 //! A document is `Presentation::flow`, an `Arc<FlowDocument>` (changed with
 //! `Arc::make_mut`); the viewer lays its pages out again after a change.
 //! Each command applied returns the command that undoes it, as
-//! [`crate::Command`]s do: a [`FlowCommand::ReplaceBlocks`] putting back the
+//! [`crate::Command`]s do: a [`FlowCommand::ReplaceBlockRange`] putting back the
 //! blocks it changed.
 //!
 //! A position is a paragraph (by its id) and an offset in it: characters of
@@ -70,9 +70,9 @@ pub enum RunChange {
     Bold(bool),
     Italic(bool),
     Underline(bool),
-    Strike(bool),
-    DoubleStrike(bool),
-    Caps(bool),
+    Strikethrough(bool),
+    DoubleStrikethrough(bool),
+    AllCaps(bool),
     SmallCaps(bool),
     /// The Latin typeface (`w:ascii`, `w:hAnsi`).
     Font(String),
@@ -105,13 +105,13 @@ pub enum RunChange {
     /// 組み文字 (`w:eastAsianLayout w:combine`), or none.
     Combine(Option<crate::flow::Combine>),
     /// 縦中横 (`w:eastAsianLayout w:vert`).
-    TateChuYoko(bool),
+    HorizontalInVertical(bool),
     /// 縦中横の「行の幅に合わせる」.
-    TateChuYokoFit(bool),
+    HorizontalInVerticalCompress(bool),
     /// 文字の囲み線 (`w:bdr`).
     Border(Option<crate::flow::FlowBorder>),
     /// カーニング (`w:kern`, half-points; Some(0) turns off, None clears direct override).
-    Kern(Option<u32>),
+    Kerning(Option<u32>),
     /// 隠し文字 (`w:vanish`).
     Hidden(bool),
     /// 中抜き・輪郭 (`w:outline`).
@@ -121,7 +121,7 @@ pub enum RunChange {
     /// 浮き出し (`w:emboss`).
     Emboss(bool),
     /// 校正しない (`w:noProof`).
-    NoProof(bool),
+    NoProofing(bool),
     /// 浮き彫り (`w:imprint`).
     Imprint(bool),
     /// OpenType 合字 (`w14:ligatures`).
@@ -134,6 +134,21 @@ pub enum RunChange {
     ContextualAlternates(bool),
     /// Remove the direct formatting (the character style stays).
     Clear,
+    /// Take one direct format away, so the styles' decide again (MCP's `null`).
+    Reset(RunReset),
+}
+
+/// A direct character format [`RunChange::Reset`] takes away.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunReset {
+    Bold,
+    Italic,
+    Underline,
+    Strikethrough,
+    Size,
+    Color,
+    /// All the typefaces (Latin, East Asian, Complex Script).
+    Fonts,
 }
 
 impl RunChange {
@@ -150,23 +165,49 @@ impl RunChange {
                     f.lang_bidi.clone_from(bidi);
                 }
             }
-            RunChange::NoProof(v) => f.no_proof = Some(*v),
+            RunChange::Reset(what) => match what {
+                RunReset::Bold => f.bold = None,
+                RunReset::Italic => f.italic = None,
+                RunReset::Underline => {
+                    f.underline = None;
+                    f.underline_style = None;
+                }
+                RunReset::Strikethrough => {
+                    f.strike = None;
+                    f.double_strike = None;
+                }
+                RunReset::Size => {
+                    f.size = None;
+                    f.cs_size = None;
+                }
+                RunReset::Color => {
+                    f.color = None;
+                    f.theme_color = None;
+                }
+                RunReset::Fonts => {
+                    f.font = None;
+                    f.h_ansi_font = None;
+                    f.east_asian_font = None;
+                    f.cs_font = None;
+                }
+            },
+            RunChange::NoProofing(v) => f.no_proof = Some(*v),
             RunChange::Bold(v) => f.bold = Some(*v),
             RunChange::Italic(v) => f.italic = Some(*v),
             RunChange::Underline(v) => f.underline = Some(*v),
-            RunChange::Strike(v) => {
+            RunChange::Strikethrough(v) => {
                 f.strike = Some(*v);
                 if *v {
                     f.double_strike = Some(false);
                 }
             }
-            RunChange::DoubleStrike(v) => {
+            RunChange::DoubleStrikethrough(v) => {
                 f.double_strike = Some(*v);
                 if *v {
                     f.strike = Some(false);
                 }
             }
-            RunChange::Caps(v) => {
+            RunChange::AllCaps(v) => {
                 f.caps = Some(*v);
                 if *v {
                     f.small_caps = Some(false);
@@ -211,10 +252,10 @@ impl RunChange {
             RunChange::FitText(v) => f.fit_text = Some(*v),
             RunChange::Emphasis(v) => f.emphasis = Some(*v),
             RunChange::Combine(v) => f.combine = Some(*v),
-            RunChange::TateChuYoko(v) => f.tate_chu_yoko = Some(*v),
-            RunChange::TateChuYokoFit(v) => f.tate_chu_yoko_fit = Some(*v),
+            RunChange::HorizontalInVertical(v) => f.tate_chu_yoko = Some(*v),
+            RunChange::HorizontalInVerticalCompress(v) => f.tate_chu_yoko_fit = Some(*v),
             RunChange::Border(v) => f.border = Some(*v),
-            RunChange::Kern(v) => f.kern = *v,
+            RunChange::Kerning(v) => f.kern = *v,
             RunChange::Hidden(v) => f.hidden = Some(*v),
             RunChange::Outline(v) => {
                 f.outline = Some(*v);
@@ -461,19 +502,19 @@ impl CaseConversion {
 /// A change of paragraph formatting (`w:pPr`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParaChange {
-    Align(FlowAlign),
-    Line(LineHeight),
+    Alignment(FlowAlign),
+    LineSpacing(LineHeight),
     SpaceBefore(Emu),
     SpaceAfter(Emu),
     /// Indents: left, right, and the first line relative to the left
     /// (negative for hanging).
-    Left(Emu),
-    Right(Emu),
-    FirstLine(Emu),
+    LeftIndent(Emu),
+    RightIndent(Emu),
+    FirstLineIndent(Emu),
     /// Indents in character units (1/100 of a character, e.g. 100 = 1 char).
-    LeftChars(Option<i32>),
-    RightChars(Option<i32>),
-    FirstLineChars(Option<i32>),
+    LeftIndentChars(Option<i32>),
+    RightIndentChars(Option<i32>),
+    FirstLineIndentChars(Option<i32>),
     /// The paragraph style (`None`: the default style). A style the document
     /// does not have is not applied.
     Style(Option<String>),
@@ -485,15 +526,15 @@ pub enum ParaChange {
     /// End a section with the paragraph (or not: `SectionBreak::None`).
     SectionBreak(crate::flow::SectionBreak),
     /// 次の段落と分離しない (`w:keepNext`).
-    KeepNext(bool),
+    KeepWithNext(bool),
     /// 段落を分割しない (`w:keepLines`).
-    KeepLines(bool),
+    KeepTogether(bool),
     /// 段落前で改ページ (`w:pageBreakBefore`).
     PageBreakBefore(bool),
     /// ブックマーク: a bookmark named so starting at the paragraph (taken
     /// off any other paragraph), or taken off it.
     AddBookmark(String),
-    RemoveBookmark(String),
+    DeleteBookmark(String),
     /// タブ位置の設定・クリア (`w:tabs`).
     Tabs(Vec<crate::flow::TabChange>),
     /// 同じスタイルの段落間にスペースを追加しない (`w:contextualSpacing`).
@@ -528,18 +569,18 @@ impl ParaChange {
     fn apply(&self, p: &mut FlowParagraph, styles: &FlowStyles) {
         let d = &mut p.direct;
         match self {
-            ParaChange::Align(v) => d.align = Some(*v),
-            ParaChange::Line(v) => d.line = Some(*v),
-            ParaChange::SpaceBefore(v) => d.before = Some(*v),
-            ParaChange::SpaceAfter(v) => d.after = Some(*v),
-            ParaChange::Left(v) => d.left = Some(*v),
-            ParaChange::Right(v) => d.right = Some(*v),
-            ParaChange::FirstLine(v) => d.first_line = Some(*v),
-            ParaChange::LeftChars(v) => d.left_chars = *v,
-            ParaChange::RightChars(v) => d.right_chars = *v,
-            ParaChange::FirstLineChars(v) => d.first_line_chars = *v,
-            ParaChange::KeepNext(v) => d.keep_next = Some(*v),
-            ParaChange::KeepLines(v) => d.keep_lines = Some(*v),
+            ParaChange::Alignment(v) => d.align = Some(*v),
+            ParaChange::LineSpacing(v) => d.line = Some(*v),
+            ParaChange::SpaceBefore(v) => { d.before = Some(*v); d.before_lines = None; }
+            ParaChange::SpaceAfter(v) => { d.after = Some(*v); d.after_lines = None; }
+            ParaChange::LeftIndent(v) => d.left = Some(*v),
+            ParaChange::RightIndent(v) => d.right = Some(*v),
+            ParaChange::FirstLineIndent(v) => d.first_line = Some(*v),
+            ParaChange::LeftIndentChars(v) => d.left_chars = *v,
+            ParaChange::RightIndentChars(v) => d.right_chars = *v,
+            ParaChange::FirstLineIndentChars(v) => d.first_line_chars = *v,
+            ParaChange::KeepWithNext(v) => d.keep_next = Some(*v),
+            ParaChange::KeepTogether(v) => d.keep_lines = Some(*v),
             ParaChange::PageBreakBefore(v) => d.page_break_before = Some(*v),
             ParaChange::Style(id) => {
                 if id.as_ref().is_none_or(|id| styles.styles.contains_key(id)) {
@@ -569,7 +610,7 @@ impl ParaChange {
                     p.bookmarks.push(name.clone());
                 }
             }
-            ParaChange::RemoveBookmark(name) => p.bookmarks.retain(|b| b != name),
+            ParaChange::DeleteBookmark(name) => p.bookmarks.retain(|b| b != name),
             ParaChange::Level(level) => {
                 if p.list.is_some() {
                     d.level = Some((*level).min(8));
@@ -613,7 +654,7 @@ pub enum FlowCommand {
     /// one list of blocks).
     SetParagraphFormat { first: u32, last: u32, change: ParaChange },
     /// Replace `remove` blocks at `index` of a list of blocks with `blocks`.
-    ReplaceBlocks { container: Container, index: usize, remove: usize, blocks: Vec<Block> },
+    ReplaceBlockRange { container: Container, index: usize, remove: usize, blocks: Vec<Block> },
     /// Replace the list definitions (a list added); the paragraphs are
     /// resolved again.
     SetNumbering { numbering: crate::flow::Numbering },
@@ -668,24 +709,26 @@ pub enum FlowCommand {
     SetShapeText { at: FlowPos, text: String },
     /// Splice the plain text of the shape at `at`: replace `start..start+remove`
     /// (char indices) with `insert`, preserving per-run formatting.
-    SpliceShapeText { at: FlowPos, start: usize, remove: usize, insert: String },
+    ReplaceShapeTextRange { at: FlowPos, start: usize, remove: usize, insert: String },
     /// Where the text sits vertically in the shape at `at` (DOCX-IMAGE-011, ribbon line 254: テキストの配置).
     SetShapeAnchor { at: FlowPos, anchor: crate::text::VerticalAnchor },
     /// The size and (for a floating shape) the offset from where it is anchored of the
     /// shape at `at`; `None` leaves it as it is.
     SetShapeGeometry { at: FlowPos, size: Option<crate::geometry::EmuSize>, offset: Option<(crate::geometry::Emu, crate::geometry::Emu)> },
+    /// A shape's rotation (図形の書式 > 回転), in 60000ths of a degree, 0 to 21 600 000.
+    SetShapeRotation { at: FlowPos, rotation: i32 },
     /// The connectors glued to shapes follow them to where the shapes are now (DOCX-IMAGE-014).
     RerouteConnectors,
     /// Put the floating shape at `at` where it was drawn: `size` and the position (`x`, `y`) from the top left of the page
     /// (DOCX-IMAGE-011, drawing a shape by dragging).
-    PlaceShapeOnPage { at: FlowPos, size: crate::geometry::EmuSize, x: crate::geometry::Emu, y: crate::geometry::Emu },
+    SetShapePagePosition { at: FlowPos, size: crate::geometry::EmuSize, x: crate::geometry::Emu, y: crate::geometry::Emu },
     /// The formatting of characters `from..to` of the text of the shape at `at` (counted in the text, paragraphs separated by one
     /// character): only those characters change (DOCX-IMAGE-015).
-    SetShapeRangeFormat { at: FlowPos, from: usize, to: usize, bold: Option<bool>, italic: Option<bool>, size: Option<u32>, color: Option<crate::drawing::Rgb> },
+    SetShapeTextRangeBasicFormat { at: FlowPos, from: usize, to: usize, bold: Option<bool>, italic: Option<bool>, size: Option<u32>, color: Option<crate::drawing::Rgb> },
     /// The text formatting of the shape at `at`, all of its text; `None` leaves it as it is.
-    SetShapeTextFormat { at: FlowPos, bold: Option<bool>, italic: Option<bool>, size: Option<u32>, color: Option<crate::drawing::Rgb> },
+    SetShapeTextBasicFormat { at: FlowPos, bold: Option<bool>, italic: Option<bool>, size: Option<u32>, color: Option<crate::drawing::Rgb> },
     /// Apply `format` to characters `range` (`Some((from, to))`) or to the whole text (`None`) of the shape at `at`.
-    FormatShapeText { at: FlowPos, range: Option<(usize, usize)>, format: crate::text::CharacterFormat },
+    SetShapeCharacterFormat { at: FlowPos, range: Option<(usize, usize)>, format: crate::text::CharacterFormat },
     /// The paper size and margins (of the document's last section).
     SetPage { page: crate::flow::PageSetup },
     /// A header (or footer) for a document without one: an empty paragraph
@@ -733,7 +776,7 @@ pub enum FlowCommand {
     /// A table of contents (`entries`, made by [`toc_entries`]) before
     /// paragraph `before`, or in place of the table of contents that
     /// starts at `before` (an update); bookmarks put on the headings.
-    SetToc { before: u32, replace: bool, entries: Vec<FlowParagraph>, bookmarks: Vec<(u32, String)> },
+    SetTableOfContents { before: u32, replace: bool, entries: Vec<FlowParagraph>, bookmarks: Vec<(u32, String)> },
     /// Several commands as one (undone in reverse).
     Many(Vec<FlowCommand>),
     /// The character style of the run at position `at` (one position: a
@@ -745,7 +788,7 @@ pub enum FlowCommand {
     SetComments(Vec<crate::flow::Comment>),
     /// The character style (`w:rStyle`) of the text from `from` to `to`, or
     /// none.
-    SetCharStyle { from: FlowPos, to: FlowPos, style: Option<String> },
+    SetCharacterStyle { from: FlowPos, to: FlowPos, style: Option<String> },
     /// The watermark (透かし), or none.
     /// The sections' own ones (see [`FlowDocument::section_watermarks`])
     /// replaced by `sections`.
@@ -773,7 +816,7 @@ pub enum FlowCommand {
         styles: Option<crate::flow::FlowStyles>,
     },
     /// ドキュメント全体のスタイル セットのプリセット（Word's デザイン > ドキュメントの書式設定 > スタイル セット）.
-    SetDocumentStyleSet {
+    ApplyDocumentStyleSet {
         preset: Option<crate::flow::StyleSetPreset>,
         styles: Option<crate::flow::FlowStyles>,
     },
@@ -786,7 +829,7 @@ pub enum FlowCommand {
     /// コンテンツ コントロールのデザイン モード（Word の「デザイン モード」開発 > デザイン モード）。
     SetFormDesignMode(bool),
     /// 文書のプロパティ（タイトル、作成者、作成日時等）の変更。
-    SetDocProperties(crate::flow::DocProperties),
+    SetDocumentProperties(crate::flow::DocProperties),
     /// 最終版としてマーク（Word の「最終版にする」）。
     SetMarkAsFinal(bool),
     /// 読み取り専用を推奨（Word の「読み取り専用を推奨する」）。
@@ -796,7 +839,7 @@ pub enum FlowCommand {
     /// 禁則処理の方式（Word の「禁則処理の方式」標準/厳密: `w:strictFirstAndLastChars`、DOCX-JA-010）。
     SetStrictFirstAndLastChars(bool),
     /// 文書の既定テーマフォント言語・既定言語（Word の「校正言語の設定 > 既定に設定」: `w:themeFontLang`、DOCX-JA-019）。
-    SetThemeFontLang(Option<crate::flow::ThemeFontLang>),
+    SetThemeFontLanguage(Option<crate::flow::ThemeFontLang>),
     /// 印刷前・文書オープン時にフィールドを更新（Word の「印刷前にフィールドを更新する」）。
     SetUpdateFields(bool),
     /// 差し込み印刷の文書の種類（`w:mailMerge/w:mainDocumentType`）を設定する（`None`: 通常の文書）。
@@ -806,7 +849,7 @@ pub enum FlowCommand {
     /// 注の区切り線: the line above the footnotes (`endnote` false) or the endnotes.
     SetNoteSeparator { endnote: bool, kind: crate::flow::NoteSeparator },
     /// 文書変数（Word の ActiveDocument.Variables、w:settings の w:docVars）。
-    SetDocVariables(std::collections::BTreeMap<String, String>),
+    SetDocumentVariables(std::collections::BTreeMap<String, String>),
     /// 変更履歴の記録をロック（Word の「変更履歴の記録をロック」）。
     SetLockTracking { locked: bool, track_changes: bool },
     /// 表示モードの変更（Word の `w:view`: print, reading, web, normal 等、DOCX-VIEW-005）。
@@ -946,14 +989,14 @@ fn ordered(doc: &FlowDocument, a: FlowPos, b: FlowPos) -> Result<(Container, usi
 pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowCommand, EditError> {
     let styles = doc.styles.clone();
     match command {
-        FlowCommand::ReplaceBlocks { container, index, remove, blocks } => {
+        FlowCommand::ReplaceBlockRange { container, index, remove, blocks } => {
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             if index + remove > list.len() {
                 return Err(EditError::IndexOutOfRange);
             }
             let count = blocks.len();
             let old: Vec<Block> = list.splice(index..index + remove, blocks).collect();
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: count, blocks: old })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: count, blocks: old })
         }
         FlowCommand::SetNumbering { numbering } => {
             let styles = Arc::make_mut(&mut doc.styles);
@@ -1000,7 +1043,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 styles: Some(old_styles),
             })
         }
-        FlowCommand::SetDocumentStyleSet { preset, styles } => {
+        FlowCommand::ApplyDocumentStyleSet { preset, styles } => {
             let old_preset = doc.style_set_preset;
             let old_styles = (*doc.styles).clone();
             doc.style_set_preset = preset;
@@ -1011,7 +1054,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 preset.apply(s);
             }
             resolve_document(doc);
-            Ok(FlowCommand::SetDocumentStyleSet {
+            Ok(FlowCommand::ApplyDocumentStyleSet {
                 preset: old_preset,
                 styles: Some(old_styles),
             })
@@ -1030,7 +1073,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                     p.normalize();
                 }
             }
-            Ok(FlowCommand::ReplaceBlocks { container, index: first, remove: last - first + 1, blocks: old })
+            Ok(FlowCommand::ReplaceBlockRange { container, index: first, remove: last - first + 1, blocks: old })
         }
         FlowCommand::InsertTable { at, rows, columns, width } => {
             if rows == 0 || columns == 0 {
@@ -1074,6 +1117,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 width: crate::flow::PreferredWidth::Auto,
                 cells: table.rows.iter().map(|r| r.cells.iter().map(|_| crate::flow::PreferredWidth::Fixed(column_width)).collect()).collect(),
                 grid_trusted: true,
+                grid_given: true,
             });
             table.resolve_borders();
             let len = p.len();
@@ -1101,7 +1145,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let old: Vec<Block> = list[start..start + remove].to_vec();
             let count = blocks.len();
             list.splice(start..start + remove, blocks);
-            Ok(FlowCommand::ReplaceBlocks { container, index: start, remove: count, blocks: old })
+            Ok(FlowCommand::ReplaceBlockRange { container, index: start, remove: count, blocks: old })
         }
         FlowCommand::InsertPicture { at, media, size } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1114,7 +1158,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             p.resolve(&styles);
             p.normalize();
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::InsertPictureControl { at, media, size, placeholder } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1127,7 +1171,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             p.resolve(&styles);
             p.normalize();
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::ResetPictureControl { at, placeholder_media, size } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1151,7 +1195,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 _ => return Err(EditError::IndexOutOfRange),
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetPictureSize { at, size } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1168,7 +1212,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 _ => return Err(EditError::IndexOutOfRange),
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetPictureLook { at, look } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1201,7 +1245,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 _ => return Err(EditError::IndexOutOfRange),
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::ReplacePicture { at, media, size } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1241,7 +1285,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 _ => return Err(EditError::IndexOutOfRange),
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::InsertTextBox { at, size, text } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1282,7 +1326,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             p.resolve(&styles);
             p.normalize();
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::InsertShape { at, size, geometry, fill, line } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1318,7 +1362,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             p.resolve(&styles);
             p.normalize();
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::InsertLine { at, size, stroke } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1342,7 +1386,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             p.resolve(&styles);
             p.normalize();
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::InsertConnector { at, size, stroke, geometry, flip_h, flip_v, glue } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1382,7 +1426,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             p.resolve(&styles);
             p.normalize();
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::InsertChart { at, shape } => {
             if !matches!(shape.kind, crate::model::ShapeKind::Chart(_)) {
@@ -1398,7 +1442,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             p.resolve(&styles);
             p.normalize();
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetChart { at, chart } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1411,7 +1455,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let crate::model::ShapeKind::Chart(c) = &mut shape.kind else { return Err(EditError::IndexOutOfRange) };
             **c = *chart;
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetShapeStroke { at, stroke } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1427,7 +1471,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 _ => return Err(EditError::IndexOutOfRange),
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetShapeEffects { at, fill, shadow, glow, soft_edge, reflection } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1454,7 +1498,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 auto.reflection = reflection;
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetShapeStyle { at, fill, line } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1472,7 +1516,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 auto.stroke = line.map(|(c, w)| crate::drawing::Stroke::solid(crate::drawing::Color::opaque(c), w));
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetShapeText { at, text } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1501,9 +1545,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 }
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
-        FlowCommand::SpliceShapeText { at, start, remove, insert } => {
+        FlowCommand::ReplaceShapeTextRange { at, start, remove, insert } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
@@ -1518,7 +1562,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             };
             body.splice(start, remove, &insert);
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetShapeAnchor { at, anchor } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1534,7 +1578,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 _ => return Err(EditError::IndexOutOfRange),
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetShapeGeometry { at, size, offset } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1563,7 +1607,19 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 shape.frame.y = y;
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+        }
+        FlowCommand::SetShapeRotation { at, rotation } => {
+            let (container, index, _, at, _) = ordered(doc, at, at)?;
+            let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
+            let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
+            let mut p = old.clone();
+            let i = p.boundary(at.offset);
+            let Some(run) = p.runs.get_mut(i) else { return Err(EditError::IndexOutOfRange) };
+            let FlowRunKind::Shape(shape) = &mut run.kind else { return Err(EditError::IndexOutOfRange) };
+            shape.rotation = rotation.rem_euclid(21_600_000);
+            list[index] = Block::Paragraph(p);
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::RerouteConnectors => {
             let moves = crate::connector::rerouted(doc);
@@ -1574,12 +1630,12 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 let Some(r) = p.runs.get_mut(run) else { continue };
                 r.kind = FlowRunKind::Shape(Box::new(shape));
                 doc.body[index] = Block::Paragraph(p);
-                undo.push(FlowCommand::ReplaceBlocks { container: Container::Body, index, remove: 1, blocks: vec![Block::Paragraph(old)] });
+                undo.push(FlowCommand::ReplaceBlockRange { container: Container::Body, index, remove: 1, blocks: vec![Block::Paragraph(old)] });
             }
             undo.reverse();
             Ok(FlowCommand::Many(undo))
         }
-        FlowCommand::PlaceShapeOnPage { at, size, x, y } => {
+        FlowCommand::SetShapePagePosition { at, size, x, y } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
@@ -1599,9 +1655,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             shape.frame.x = x;
             shape.frame.y = y;
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
-        FlowCommand::SetShapeRangeFormat { at, from, to, bold, italic, size, color } => {
+        FlowCommand::SetShapeTextRangeBasicFormat { at, from, to, bold, italic, size, color } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
@@ -1624,9 +1680,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             };
             body.format_runs(from, to, &format);
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
-        FlowCommand::SetShapeTextFormat { at, bold, italic, size, color } => {
+        FlowCommand::SetShapeTextBasicFormat { at, bold, italic, size, color } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
@@ -1669,9 +1725,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 }
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
-        FlowCommand::FormatShapeText { at, range, format } => {
+        FlowCommand::SetShapeCharacterFormat { at, range, format } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let Block::Paragraph(old) = list[index].clone() else { return Err(EditError::IndexOutOfRange) };
@@ -1707,7 +1763,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 body.format_runs(0, total, &format);
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetPictureWrap { at, wrap } => {
             use crate::model::PictureWrapType;
@@ -1790,7 +1846,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             anchor.wrap_polygon = Some(crate::model::WrapPolygon::default_rect_21600());
                         }
                         list[index] = Block::Paragraph(p);
-                        return Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] });
+                        return Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] });
                     }
                     let crate::model::ShapeKind::Picture(pic) = &shape.kind else { return Err(EditError::IndexOutOfRange) };
                     if wrap == PictureWrapType::Inline {
@@ -1814,6 +1870,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             clear: pic.clear,
                             effects: pic.effects,
                             geometry: pic.geometry.clone(),
+                            effect_extent: [0; 4],
                         };
                         run.kind = FlowRunKind::Picture { media, size, look };
                     } else {
@@ -1837,7 +1894,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 _ => return Err(EditError::IndexOutOfRange),
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetPictureFloating { at, anchor } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1871,6 +1928,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                             clear: pic.clear,
                             effects: pic.effects,
                             geometry: pic.geometry.clone(),
+                            effect_extent: [0; 4],
                         };
                         run.kind = FlowRunKind::Picture { media, size, look };
                     } else {
@@ -1911,7 +1969,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 _ => return Err(EditError::IndexOutOfRange),
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetPictureWrapPolygon { at, polygon } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -1970,7 +2028,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 _ => return Err(EditError::IndexOutOfRange),
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetParagraphSubdocument { para, subdoc } => {
             let (container, index) = locate(doc, para).ok_or(EditError::IndexOutOfRange)?;
@@ -1995,7 +2053,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             doc.linked[if footer { 1 } else { 0 }] = false;
             Ok(FlowCommand::SetSections { state: Box::new(old) })
         }
-        FlowCommand::SetToc { before, replace, entries, bookmarks } => {
+        FlowCommand::SetTableOfContents { before, replace, entries, bookmarks } => {
             let (container, index) = locate(doc, before).ok_or(EditError::IndexOutOfRange)?;
             if container != Container::Body || entries.is_empty() {
                 return Err(EditError::IndexOutOfRange);
@@ -2021,7 +2079,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             };
             list.splice(index..index + remove, entries.into_iter().map(Block::Paragraph));
             let _ = container;
-            Ok(FlowCommand::ReplaceBlocks { container: Container::Body, index: 0, remove: doc.body.len(), blocks: old_body })
+            Ok(FlowCommand::ReplaceBlockRange { container: Container::Body, index: 0, remove: doc.body.len(), blocks: old_body })
         }
         FlowCommand::SetLink { from, to, link } => {
             let (container, index, last, from, to) = ordered(doc, from, to)?;
@@ -2038,7 +2096,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             }
             p.normalize();
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::InsertPageNumber { at } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -2051,7 +2109,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             p.resolve(&styles);
             p.normalize();
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::InsertField { at, kind } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -2074,7 +2132,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             p.resolve(&styles);
             p.normalize();
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::ToggleCheckBox { at } => {
             let (container, index, _, at, _) = ordered(doc, at, at)?;
@@ -2591,7 +2649,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 return Err(EditError::IndexOutOfRange);
             }
             let old = list.remove(index);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 0, blocks: vec![old] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 0, blocks: vec![old] })
         }
         FlowCommand::EditTable { table, edit } => {
             let (container, index) = locate(doc, table).ok_or(EditError::IndexOutOfRange)?;
@@ -2603,7 +2661,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let blocks: Vec<Block> = edited.into_iter().map(Block::Table).collect();
             let count = blocks.len();
             list.splice(index..index + 1, blocks);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: count, blocks: vec![old] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: count, blocks: vec![old] })
         }
         FlowCommand::InsertText { at, text, format } => {
             let form_design_mode = doc.form_design_mode;
@@ -2666,7 +2724,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                     }
                     p.resolve(&styles);
                     list[index] = Block::Paragraph(p);
-                    return Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] });
+                    return Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] });
                 }
             }
             let (format, char_style, style) = match format {
@@ -2745,7 +2803,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             }
             let count = paragraphs.len();
             list.splice(index..index + 1, paragraphs.into_iter().map(Block::Paragraph));
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: count, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: count, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::Delete { from, to } => {
             let form_design_mode = doc.form_design_mode;
@@ -2833,7 +2891,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                     }
                     p.resolve(&styles);
                     list[first] = Block::Paragraph(p);
-                    return Ok(FlowCommand::ReplaceBlocks { container, index: first, remove: 1, blocks: old });
+                    return Ok(FlowCommand::ReplaceBlockRange { container, index: first, remove: 1, blocks: old });
                 }
             }
             let mut joined = a.clone();
@@ -2843,7 +2901,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             joined.resolve(&styles);
             joined.normalize();
             list.splice(first..=last, [Block::Paragraph(joined)]);
-            Ok(FlowCommand::ReplaceBlocks { container, index: first, remove: 1, blocks: old })
+            Ok(FlowCommand::ReplaceBlockRange { container, index: first, remove: 1, blocks: old })
         }
         FlowCommand::SetRunFormat { from, to, change } => {
             let (container, first, last, from, to) = ordered(doc, from, to)?;
@@ -2860,9 +2918,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 p.resolve(&styles);
                 p.normalize();
             }
-            Ok(FlowCommand::ReplaceBlocks { container, index: first, remove: last - first + 1, blocks: old })
+            Ok(FlowCommand::ReplaceBlockRange { container, index: first, remove: last - first + 1, blocks: old })
         }
-        FlowCommand::SetCharStyle { from, to, style } => {
+        FlowCommand::SetCharacterStyle { from, to, style } => {
             let (container, first, last, from, to) = ordered(doc, from, to)?;
             let list = blocks_mut(doc, container).ok_or(EditError::IndexOutOfRange)?;
             let old: Vec<Block> = list[first..=last].to_vec();
@@ -2880,7 +2938,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 p.resolve(&styles);
                 p.normalize();
             }
-            Ok(FlowCommand::ReplaceBlocks { container, index: first, remove: last - first + 1, blocks: old })
+            Ok(FlowCommand::ReplaceBlockRange { container, index: first, remove: last - first + 1, blocks: old })
         }
         FlowCommand::SetNoteStyle { at, style } => {
             let (container, index) = locate(doc, at.para).ok_or(EditError::IndexOutOfRange)?;
@@ -2896,7 +2954,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 pos += r.len();
             }
             p.resolve(&styles);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::Many(commands) => {
             let mut inverses = Vec::new();
@@ -2990,7 +3048,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 change.apply(p, &styles);
                 p.resolve(&styles);
             }
-            Ok(FlowCommand::ReplaceBlocks { container, index: a, remove: b - a + 1, blocks: old })
+            Ok(FlowCommand::ReplaceBlockRange { container, index: a, remove: b - a + 1, blocks: old })
         }
         FlowCommand::SetPageColor(color) => {
             let old = std::mem::replace(&mut doc.page_color, color);
@@ -3004,9 +3062,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let old = std::mem::replace(&mut doc.form_design_mode, mode);
             Ok(FlowCommand::SetFormDesignMode(old))
         }
-        FlowCommand::SetDocProperties(props) => {
+        FlowCommand::SetDocumentProperties(props) => {
             let old = std::mem::replace(&mut doc.properties, props);
-            Ok(FlowCommand::SetDocProperties(old))
+            Ok(FlowCommand::SetDocumentProperties(old))
         }
         FlowCommand::SetMarkAsFinal(mark) => {
             let old = std::mem::replace(&mut doc.mark_as_final, mark);
@@ -3025,9 +3083,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let old = std::mem::replace(&mut doc.strict_first_and_last_chars, strict);
             Ok(FlowCommand::SetStrictFirstAndLastChars(old))
         }
-        FlowCommand::SetThemeFontLang(theme_lang) => {
+        FlowCommand::SetThemeFontLanguage(theme_lang) => {
             let old = std::mem::replace(&mut doc.theme_font_lang, theme_lang);
-            Ok(FlowCommand::SetThemeFontLang(old))
+            Ok(FlowCommand::SetThemeFontLanguage(old))
         }
         FlowCommand::SetUpdateFields(uf) => {
             let old = std::mem::replace(&mut doc.update_fields, uf);
@@ -3045,9 +3103,9 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
             let old = std::mem::replace(&mut doc.mail_merge_field_map, field_map);
             Ok(FlowCommand::SetMailMergeFieldMap(old))
         }
-        FlowCommand::SetDocVariables(vars) => {
+        FlowCommand::SetDocumentVariables(vars) => {
             let old = std::mem::replace(&mut doc.doc_variables, vars);
-            Ok(FlowCommand::SetDocVariables(old))
+            Ok(FlowCommand::SetDocumentVariables(old))
         }
         FlowCommand::SetLockTracking { locked, track_changes } => {
             let old_locked = std::mem::replace(&mut doc.lock_tracking, locked);
@@ -3117,7 +3175,7 @@ pub fn apply_to(doc: &mut FlowDocument, command: FlowCommand) -> Result<FlowComm
                 _ => return Err(EditError::IndexOutOfRange),
             }
             list[index] = Block::Paragraph(p);
-            Ok(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
+            Ok(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(old)] })
         }
         FlowCommand::SetImageQualitySettings { default_dpi, discard_crop, do_not_compress } => {
             let old_dpi = std::mem::replace(&mut doc.default_image_dpi, default_dpi);
@@ -3268,7 +3326,7 @@ pub fn clear_all_headers_footers(doc: &FlowDocument) -> Option<FlowCommand> {
     Some(FlowCommand::SetSections { state: Box::new(state) })
 }
 
-/// Build a [`FlowCommand::ReplaceBlocks`] that mutates the [`crate::text::TextBody`] of the shape at `at`.
+/// Build a [`FlowCommand::ReplaceBlockRange`] that mutates the [`crate::text::TextBody`] of the shape at `at`.
 pub fn mutate_shape_text_body<F>(doc: &FlowDocument, at: FlowPos, f: F) -> Option<FlowCommand>
 where
     F: FnOnce(&mut crate::text::TextBody),
@@ -3285,10 +3343,10 @@ where
         _ => return None,
     };
     f(body);
-    Some(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(p)] })
+    Some(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(p)] })
 }
 
-/// Build [`FlowCommand::ReplaceBlocks`] commands that mutate the [`crate::text::TextBody`] of all shapes at `positions`.
+/// Build [`FlowCommand::ReplaceBlockRange`] commands that mutate the [`crate::text::TextBody`] of all shapes at `positions`.
 /// Shapes anchored in the same paragraph are updated together in a single `ReplaceBlocks` so earlier edits are not overwritten.
 pub fn mutate_shapes_text_bodies<F>(doc: &FlowDocument, positions: &[FlowPos], mut f: F) -> Vec<FlowCommand>
 where
@@ -3325,7 +3383,7 @@ where
             }
         }
         if any {
-            commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(p)] });
+            commands.push(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(p)] });
         }
     }
     commands
@@ -3535,7 +3593,7 @@ pub fn insert_note(doc: &FlowDocument, at: FlowPos, endnote: bool) -> Option<(Ve
     p.runs.push(FlowRun::new(FlowRunKind::Text(" ".into()), FlowRunStyle::default()));
     p.resolve(styles);
     let (mut footnotes, mut endnotes) = (doc.footnotes.clone(), doc.endnotes.clone());
-    let note = crate::flow::Note { id, blocks: vec![Block::Paragraph(p)] };
+    let note = crate::flow::Note { id, blocks: vec![Block::Paragraph(p)], ..Default::default() };
     if endnote { endnotes.push(note) } else { footnotes.push(note) }
     let mut commands = vec![FlowCommand::SetNotes { footnotes, endnotes }, FlowCommand::InsertField { at, kind: FlowRunKind::NoteRef { endnote, id } }];
     let to = FlowPos::new(at.para, at.offset + 1);
@@ -3559,7 +3617,7 @@ pub fn convert_notes(doc: &FlowDocument, to_endnotes: bool) -> Option<FlowComman
     let mut ids = std::collections::HashMap::new();
     for note in from {
         ids.insert(note.id, next);
-        moved.push(crate::flow::Note { id: next, blocks: note.blocks.clone() });
+        moved.push(crate::flow::Note { id: next, blocks: note.blocks.clone(), custom_mark: note.custom_mark });
         next += 1;
     }
     let (footnotes, endnotes) = if to_endnotes { (Vec::new(), moved) } else { (moved, Vec::new()) };
@@ -3578,7 +3636,7 @@ pub fn convert_notes(doc: &FlowDocument, to_endnotes: bool) -> Option<FlowComman
             }
         }
         let (container, index) = locate(doc, p.id)?;
-        commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
+        commands.push(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
     }
     Some(FlowCommand::Many(commands))
 }
@@ -3783,7 +3841,7 @@ pub fn delete_comment(doc: &FlowDocument, id: u32) -> Option<FlowCommand> {
         q.runs.retain(|r| !marked(r));
         q.normalize();
         let (container, index) = locate(doc, p.id)?;
-        commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
+        commands.push(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
     }
     Some(FlowCommand::Many(commands))
 }
@@ -3823,7 +3881,7 @@ pub fn delete_all_comments(doc: &FlowDocument) -> Option<FlowCommand> {
         q.runs.retain(|r| !marked(r));
         q.normalize();
         if let Some((container, index)) = locate(doc, p.id) {
-            commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
+            commands.push(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
         }
     }
     Some(FlowCommand::Many(commands))
@@ -3846,7 +3904,7 @@ fn each_part(doc: &mut FlowDocument, from: FlowPos, to: FlowPos, styles: &Arc<Fl
         p.resolve(styles);
         p.normalize();
     }
-    Ok(FlowCommand::ReplaceBlocks { container, index: first, remove: last - first + 1, blocks: old })
+    Ok(FlowCommand::ReplaceBlockRange { container, index: first, remove: last - first + 1, blocks: old })
 }
 
 /// A tracked deletion of the text from `from` to `to`: inserted text is removed, the rest marked deleted.
@@ -4022,7 +4080,7 @@ pub fn resolve_revisions_filter(
         if q != *p
             && let Some((container, index)) = locate(doc, p.id)
         {
-            commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
+            commands.push(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
         }
     }
     // Accepting a deleted paragraph mark joins the paragraph to the next one (a run of them into the paragraph whose mark stays), which has
@@ -4052,7 +4110,7 @@ pub fn resolve_revisions_filter(
             joined.mark_revision = None;
             joined.resolve(&doc.styles);
             joined.normalize();
-            tail.push(FlowCommand::ReplaceBlocks { container, index: at, remove: last - at + 1, blocks: vec![Block::Paragraph(joined)] });
+            tail.push(FlowCommand::ReplaceBlockRange { container, index: at, remove: last - at + 1, blocks: vec![Block::Paragraph(joined)] });
         }
         // From the last up, so that each leaves the places of those before it.
         tail.reverse();
@@ -4479,6 +4537,7 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
                 width: crate::flow::PreferredWidth::Auto,
                 cells: t.rows.iter().map(|r| r.cells.iter().map(|_| crate::flow::PreferredWidth::Auto).collect()).collect(),
                 grid_trusted: false,
+                grid_given: true,
             });
         }
         TableEdit::AutoFitWindow(available) => {
@@ -4512,6 +4571,7 @@ fn edit_table(mut t: FlowTable, edit: TableEdit, next: &mut u32, styles: &FlowSt
                 width: crate::flow::PreferredWidth::Percent(5000),
                 cells: t.rows.iter().map(|r| r.cells.iter().map(|_| crate::flow::PreferredWidth::Auto).collect()).collect(),
                 grid_trusted: false,
+                grid_given: true,
             });
         }
         TableEdit::FixedColumns => {
@@ -6346,8 +6406,8 @@ mod tests {
         let mut d = FlowDocument::default();
         Arc::make_mut(&mut d.styles).styles.insert("Note".into(), style(900));
         d.body.push(Block::Paragraph(para(1)));
-        d.footnotes.push(crate::flow::Note { id: 1, blocks: vec![Block::Paragraph(para(2))] });
-        d.endnotes.push(crate::flow::Note { id: 2, blocks: vec![Block::Paragraph(para(3))] });
+        d.footnotes.push(crate::flow::Note { id: 1, blocks: vec![Block::Paragraph(para(2))], ..Default::default() });
+        d.endnotes.push(crate::flow::Note { id: 2, blocks: vec![Block::Paragraph(para(3))], ..Default::default() });
         d.comments.push(crate::flow::Comment { id: 3, author: String::new(), initials: String::new(), date: String::new(), blocks: vec![Block::Paragraph(para(4))], parent: None, done: false, para_id: None });
         resolve_document(&mut d);
         apply_to(&mut d, FlowCommand::SetStyle { id: "Note".into(), style: Some(style(1400)) }).unwrap();
@@ -6427,7 +6487,7 @@ mod tests {
     #[test]
     fn paragraph_format() {
         let mut d = doc();
-        run(&mut d, FlowCommand::SetParagraphFormat { first: 2, last: 1, change: ParaChange::Align(FlowAlign::Center) });
+        run(&mut d, FlowCommand::SetParagraphFormat { first: 2, last: 1, change: ParaChange::Alignment(FlowAlign::Center) });
         for b in &d.body {
             let Block::Paragraph(p) = b else { panic!() };
             assert_eq!(p.align, FlowAlign::Center);
@@ -7211,11 +7271,11 @@ mod tests {
         };
 
         // Set theme font lang
-        run(&mut d, FlowCommand::SetThemeFontLang(Some(tfl.clone())));
+        run(&mut d, FlowCommand::SetThemeFontLanguage(Some(tfl.clone())));
         assert_eq!(d.theme_font_lang, Some(tfl));
 
         // Clear theme font lang
-        run(&mut d, FlowCommand::SetThemeFontLang(None));
+        run(&mut d, FlowCommand::SetThemeFontLanguage(None));
         assert!(d.theme_font_lang.is_none());
     }
 
@@ -7663,7 +7723,7 @@ pub fn updated_fields_in_range_with(doc: &FlowDocument, range: Option<(FlowPos, 
         if changed && q != **p
             && let Some((container, block_idx)) = locate(doc, p.id)
         {
-            commands.push(FlowCommand::ReplaceBlocks { container, index: block_idx, remove: 1, blocks: vec![Block::Paragraph(q)] });
+            commands.push(FlowCommand::ReplaceBlockRange { container, index: block_idx, remove: 1, blocks: vec![Block::Paragraph(q)] });
         }
     }
     commands
@@ -7776,7 +7836,7 @@ pub fn insert_caption_in_chapter(
         p.runs.push(FlowRun::new(FlowRunKind::Text(format!(" {}", text.trim())), base));
     }
     p.resolve(styles);
-    commands.push(FlowCommand::ReplaceBlocks { container, index: index + 1, remove: 0, blocks: vec![Block::Paragraph(p)] });
+    commands.push(FlowCommand::ReplaceBlockRange { container, index: index + 1, remove: 0, blocks: vec![Block::Paragraph(p)] });
     Some((commands, bookmark))
 }
 
@@ -7816,7 +7876,7 @@ pub fn cross_reference(doc: &FlowDocument, at: FlowPos, caption: u32) -> Option<
             let (container, index) = locate(doc, caption)?;
             let mut q = p.clone();
             q.bookmarks.push(b.clone());
-            commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
+            commands.push(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
             b
         }
     };
@@ -8018,7 +8078,7 @@ pub fn insert_cross_reference_target(
                         if let Some((container, index)) = locate(doc, target.id) {
                             let mut q = p.clone();
                             q.bookmarks.push(bookmark.clone());
-                            commands.push(FlowCommand::ReplaceBlocks {
+                            commands.push(FlowCommand::ReplaceBlockRange {
                                 container,
                                 index,
                                 remove: 1,
@@ -8039,7 +8099,7 @@ pub fn insert_cross_reference_target(
                         if let Some((container, index)) = locate(doc, p.id) {
                             let mut q = p.clone();
                             q.bookmarks.push(bookmark.clone());
-                            commands.push(FlowCommand::ReplaceBlocks {
+                            commands.push(FlowCommand::ReplaceBlockRange {
                                 container,
                                 index,
                                 remove: 1,
@@ -8201,7 +8261,7 @@ pub fn remove_all_hidden_text(doc: &FlowDocument) -> Option<FlowCommand> {
         q.runs.retain(|r| !is_hidden(r));
         q.normalize();
         if let Some((container, index)) = locate(doc, p.id) {
-            commands.push(FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
+            commands.push(FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(q)] });
         }
     }
     if commands.is_empty() {
@@ -8966,7 +9026,7 @@ pub fn unlink_fields_at(doc: &FlowDocument, range: Option<(FlowPos, FlowPos)>, n
             q.resolve(&doc.styles);
             q.normalize();
             if q != *p && let Some((container, idx)) = locate(doc, p.id) {
-                commands.push(FlowCommand::ReplaceBlocks { container, index: idx, remove: 1, blocks: vec![Block::Paragraph(q)] });
+                commands.push(FlowCommand::ReplaceBlockRange { container, index: idx, remove: 1, blocks: vec![Block::Paragraph(q)] });
             }
         }
     }
@@ -9054,7 +9114,7 @@ pub fn toggle_field_codes_at(doc: &FlowDocument, range: Option<(FlowPos, FlowPos
             q.resolve(&doc.styles);
             q.normalize();
             if q != *p && let Some((container, idx)) = locate(doc, p.id) {
-                commands.push(FlowCommand::ReplaceBlocks { container, index: idx, remove: 1, blocks: vec![Block::Paragraph(q)] });
+                commands.push(FlowCommand::ReplaceBlockRange { container, index: idx, remove: 1, blocks: vec![Block::Paragraph(q)] });
             }
         }
     }
@@ -9122,7 +9182,7 @@ pub fn lock_fields_at(doc: &FlowDocument, range: Option<(FlowPos, FlowPos)>, loc
             q.resolve(&doc.styles);
             q.normalize();
             if q != *p && let Some((container, idx)) = locate(doc, p.id) {
-                commands.push(FlowCommand::ReplaceBlocks { container, index: idx, remove: 1, blocks: vec![Block::Paragraph(q)] });
+                commands.push(FlowCommand::ReplaceBlockRange { container, index: idx, remove: 1, blocks: vec![Block::Paragraph(q)] });
             }
         }
     }
@@ -9356,7 +9416,7 @@ pub fn insert_field_at_range(
 
     let new_pos = FlowPos::new(p.id, lo + 1);
     Some((
-        vec![FlowCommand::ReplaceBlocks {
+        vec![FlowCommand::ReplaceBlockRange {
             container,
             index,
             remove: 1,
@@ -9407,7 +9467,7 @@ pub fn edit_field_at(doc: &FlowDocument, pos: FlowPos, new_instruction: &str) ->
         q.runs = runs;
         q.resolve(&doc.styles);
         q.normalize();
-        Some(vec![FlowCommand::ReplaceBlocks {
+        Some(vec![FlowCommand::ReplaceBlockRange {
             container,
             index,
             remove: 1,

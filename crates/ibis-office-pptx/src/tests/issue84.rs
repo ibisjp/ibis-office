@@ -201,7 +201,7 @@ fn layouts_in_master_view() {
 /// on its first layout (a vertical at 5,000,000), as PowerPoint writes them; the path (from the repository's root).
 fn deck_with_master_guides() -> (String, Vec<SlideGuide>, Vec<SlideGuide>) {
     use ibis_doc_model::{Command, Document};
-    use ibis_pptx::{master_page, SaveOptions};
+    use ibis_formats::{master_page, SaveOptions};
     let root = crate::shell::scenario::repo_root();
     let mut data = std::fs::read(root.join("test/editing/pptx-plan.pptx")).expect("the plan deck");
     let master_guides = vec![
@@ -211,7 +211,7 @@ fn deck_with_master_guides() -> (String, Vec<SlideGuide>, Vec<SlideGuide>) {
     let layout_guides = vec![SlideGuide { id: 1, horizontal: false, pos: SlideGuide::pos_from_emu(5_000_000), color: None, user_drawn: true }];
     let pages = master_page::pages(&data).unwrap();
     for (page, guides) in [(pages.iter().find(|p| p.master).unwrap().clone(), master_guides.clone()), (pages.iter().find(|p| !p.master).unwrap().clone(), layout_guides.clone())] {
-        let opened = ibis_pptx::open(master_page::build(&data, &page.part).unwrap()).unwrap();
+        let opened = ibis_formats::open(master_page::build(&data, &page.part).unwrap()).unwrap();
         let mut document = Document::new(opened.presentation.clone());
         document.execute(vec![Command::SetGuides { slide: Some(opened.presentation.slides[0].id), guides }]).unwrap();
         let edited = opened.source.save(document.presentation(), SaveOptions::default()).unwrap();

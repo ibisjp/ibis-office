@@ -13,14 +13,14 @@ fn validations(d:&Document,id:SlideId)->Vec<Validation>{crate::sheet_calc::sheet
 fn clearing_the_middle_preserves_surrounding_rules_and_undo(){
  let(mut d,id)=workbook();let area=rectangle(0,0,2,2);let center=rectangle(1,1,1,1);
  let rule=Validation{kind:"custom".into(),formula1:Some("A1>0".into()),..Default::default()};
- d.execute(vec![Command::Sheet(SheetCommand::SetValidation{slide:id,ranges:vec![area],rule:Some(rule)})]).unwrap();let before=validations(&d,id);
- d.execute(vec![Command::Sheet(SheetCommand::SetValidation{slide:id,ranges:vec![center],rule:None})]).unwrap();let rules=validations(&d,id);
+ d.execute(vec![Command::Sheet(SheetCommand::SetValidation{sheet:id,ranges:vec![area],rule:Some(rule)})]).unwrap();let before=validations(&d,id);
+ d.execute(vec![Command::Sheet(SheetCommand::SetValidation{sheet:id,ranges:vec![center],rule:None})]).unwrap();let rules=validations(&d,id);
  for row in 0..=2{for column in 0..=2{let count=rules.iter().flat_map(|r|&r.ranges).filter(|r|r.first_row<=row&&row<=r.last_row&&r.first_column<=column&&column<=r.last_column).count();assert_eq!(count,usize::from((row,column)!=(1,1)));}}
  assert!(d.undo());assert_eq!(validations(&d,id),before);
 }
 #[test]
 fn trimming_the_anchor_rebases_relative_validation_formulas(){
- let(mut d,id)=workbook();d.execute(vec![Command::Sheet(SheetCommand::SetValidation{slide:id,ranges:vec![rectangle(0,0,3,0)],rule:Some(Validation{kind:"custom".into(),formula1:Some("MOD(A1,2)=0".into()),..Default::default()})})]).unwrap();
- d.execute(vec![Command::Sheet(SheetCommand::SetValidation{slide:id,ranges:vec![rectangle(0,0,0,0)],rule:Some(Validation{kind:"whole".into(),..Default::default()})})]).unwrap();let rules=validations(&d,id);assert_eq!(rules.len(),2);assert_eq!(rules[0].ranges,vec![rectangle(1,0,3,0)]);assert_eq!(rules[0].formula1.as_deref(),Some("MOD(A2,2)=0"));
+ let(mut d,id)=workbook();d.execute(vec![Command::Sheet(SheetCommand::SetValidation{sheet:id,ranges:vec![rectangle(0,0,3,0)],rule:Some(Validation{kind:"custom".into(),formula1:Some("MOD(A1,2)=0".into()),..Default::default()})})]).unwrap();
+ d.execute(vec![Command::Sheet(SheetCommand::SetValidation{sheet:id,ranges:vec![rectangle(0,0,0,0)],rule:Some(Validation{kind:"whole".into(),..Default::default()})})]).unwrap();let rules=validations(&d,id);assert_eq!(rules.len(),2);assert_eq!(rules[0].ranges,vec![rectangle(1,0,3,0)]);assert_eq!(rules[0].formula1.as_deref(),Some("MOD(A2,2)=0"));
  assert!(d.undo());assert_eq!(validations(&d,id)[0].formula1.as_deref(),Some("MOD(A1,2)=0"));
 }

@@ -48,13 +48,16 @@ pub(crate) struct PrintSettings {
     pub(crate) frame: bool,
     /// Handouts on a landscape page (配布資料の向き).
     pub(crate) landscape: bool,
+    /// Handouts with the slides down a column before the next (配布資料の順序: 縦).
+    pub(crate) vertical_order: bool,
 }
 
 impl PrintSettings {
-    /// Whether the print is not the plain vector PDF of every slide (so it is
-    /// made of the slides' pictures).
+    /// Whether the print is not a vector PDF (so it is made of the slides' pictures): none is any more. Handouts, notes pages and the outline are vector (#225), so is the
+    /// colour (grey and black and white are made of the vector PDF's own colours, pictures and shadows) and so is the frame (a stroked box round the slide, the notes page's
+    /// print area or each slide of a handout).
     pub(crate) fn needs_pictures(&self) -> bool {
-        self.handout.is_some() || self.notes_pages || self.outline || self.color != PrintColorKind::Color || self.frame
+        false
     }
 
     /// The program's arguments for these settings, `current` the (1-based)
@@ -63,8 +66,8 @@ impl PrintSettings {
         let mut args = Vec::new();
         match self.range {
             PrintRange::All => {}
-            PrintRange::Current => args.extend(["--slides".to_string(), current.to_string()]),
-            PrintRange::Custom => args.extend(["--slides".to_string(), self.custom.clone()]),
+            PrintRange::Current => args.extend(["--range".to_string(), current.to_string()]),
+            PrintRange::Custom => args.extend(["--range".to_string(), self.custom.clone()]),
         }
         match self.color {
             PrintColorKind::Color => {}
@@ -83,6 +86,9 @@ impl PrintSettings {
                 if self.landscape {
                     args.push("--handout-landscape".to_string());
                 }
+                if self.vertical_order {
+                    args.extend(["--handout-order".to_string(), "vertical".to_string()]);
+                }
             }
             // The header, date, footer and page number of the notes and handouts.
             if let Some(text) = marks.header.as_ref().filter(|t| !t.is_empty()) {
@@ -96,6 +102,16 @@ impl PrintSettings {
             }
             if marks.number {
                 args.push("--handout-number".to_string());
+            }
+            // Marks the file's notes page never set are PowerPoint's own (today's date and the page number); marks it has set without
+            // a date or number mean there are none.
+            if *marks != ibis_doc_model::NotesMarks::default() {
+                if marks.date.is_none() {
+                    args.push("--no-handout-date".to_string());
+                }
+                if !marks.number {
+                    args.push("--no-handout-number".to_string());
+                }
             }
         }
         if self.frame {
@@ -271,6 +287,13 @@ impl SlideEditor {
         self.print_now(window, cx);
     }
 
+    /// 設定を保存: the settings kept (nothing printed) and the panel closed.
+    pub(crate) fn save_print_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.keep_print_settings(cx) {
+            self.close_print_panel(window, cx);
+        }
+    }
+
     pub fn close_print_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(s) = self.pptx_mut() {
             s.print_panel = None;
@@ -292,6 +315,7 @@ impl SlideEditor {
             // The list of slides is indented by one full-width character (the label of the radio above it) and is as wide as the dialog.
             .child(div().w_full().pl(px(CUSTOM_INDENT)).child(crate::shell::chrome::text_field(&custom).full_width()))
             .child(heading("_shell.print-layout"))
+            .child(crate::shell::chrome::checkbox_button("pptx-print-vertical-order", crate::shell::i18n::text("pptx.print-panel.vertical-order-handouts"), settings.vertical_order, false, cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.vertical_order = !s.vertical_order, cx))))
             .child(crate::shell::chrome::checkbox_button("pptx-print-landscape", crate::shell::i18n::text("pptx.print-panel.landscape-handouts"), settings.landscape, false, cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.landscape = !s.landscape, cx))))
             .child(layout_dropdown(&settings, cx));
         // 色: the label and the three choices on one line when they fit the pane (two lines when they do not).
@@ -301,12 +325,17 @@ impl SlideEditor {
         body = body
             .child(colors)
             .child(crate::shell::chrome::checkbox_button("pptx-print-frame", crate::shell::i18n::text("pptx.print-panel.frame-slides"), settings.frame, false, cx.listener(|e, _, _, cx| e.edit_print_panel(|s| s.frame = !s.frame, cx))));
+        body = body.child(heading("shell.print.cmyk-heading")).child(self.print_cmyk_section("pptx-print", cx));
         if let Some(error) = error {
             body = body.child(div().text_sm().text_color(rgb(0xb3261e)).child(error));
         }
-        let panel_actions = crate::shell::chrome::action_bar()
-                .action(crate::shell::chrome::ActionDefinition::new("pptx-print-apply", crate::shell::i18n::text("pptx.print-panel.print"), crate::shell::chrome::ActionButtonKind::Primary).on_click(cx.listener(|e, _, w, cx| e.apply_print_panel(w, cx))))
-                .action(crate::shell::chrome::ActionDefinition::new("pptx-print-cancel", crate::shell::i18n::text("_shell.cancel"), crate::shell::chrome::ActionButtonKind::Normal).on_click(cx.listener(|e, _, w, cx| e.close_print_panel(w, cx))));
+        let panel_actions = crate::shell::print_common::print_action_bar(
+            "pptx-print",
+            crate::shell::i18n::text("pptx.print-panel.print"),
+            cx.listener(|e, _, w, cx| { e.keep_print_cmyk(); e.apply_print_panel(w, cx) }),
+            cx.listener(|e, _, w, cx| { e.keep_print_cmyk(); e.save_print_panel(w, cx) }),
+            cx.listener(|e, _, w, cx| { e.cancel_print_cmyk(cx); e.close_print_panel(w, cx) }),
+        );
         Some(SidebarPanel::with_footer(crate::shell::i18n::text("pptx.print-panel.print"), body.into_any_element(), panel_actions))
     }
 }
@@ -328,9 +357,12 @@ mod tests {
     fn arguments() {
         let none = PrintSettings::default();
         assert!(none.arguments(4, &Default::default()).is_empty() && !none.needs_pictures());
-        let all = PrintSettings { range: PrintRange::Current, custom: String::new(), handout: Some(6), notes_pages: false, outline: false, color: PrintColorKind::Gray, frame: true, landscape: false };
-        assert_eq!(all.arguments(4, &Default::default()), ["--slides", "4", "--print-color", "gray", "--handout", "6", "--print-frame"]);
-        assert!(all.needs_pictures());
+        let all = PrintSettings { range: PrintRange::Current, custom: String::new(), handout: Some(6), notes_pages: false, outline: false, color: PrintColorKind::Gray, frame: true, landscape: false, vertical_order: false };
+        assert_eq!(all.arguments(4, &Default::default()), ["--range", "4", "--print-color", "gray", "--handout", "6", "--print-frame"]);
+        assert!(!all.needs_pictures(), "the colour is vector too (#225)");
+        // A handout (or notes) with a frame is vector: the frame is drawn as a line; a frame round the slides themselves is a picture.
+        assert!(!PrintSettings { handout: Some(6), frame: true, ..Default::default() }.needs_pictures());
+        assert!(!PrintSettings { frame: true, ..Default::default() }.needs_pictures(), "the frame is vector too");
         // Handouts on their side with what the notes pages carry.
         let marks = ibis_doc_model::NotesMarks { header: Some("社外秘".into()), date: Some(ibis_doc_model::NotesDate::Fixed("2026/10/11".into())), footer: Some("ibis".into()), number: true };
         let wide = PrintSettings { handout: Some(4), landscape: true, ..Default::default() };
@@ -338,15 +370,15 @@ mod tests {
         // Notes pages carry them too.
         let notes = PrintSettings { notes_pages: true, ..Default::default() };
         assert_eq!(notes.arguments(1, &marks), ["--notes-pages", "--handout-header", "社外秘", "--handout-date", "2026/10/11", "--handout-footer", "ibis", "--handout-number"]);
-        assert!(notes.needs_pictures());
+        assert!(!notes.needs_pictures(), "notes pages are vector (#225)");
         // The outline (the slides' text) too.
         let outline = PrintSettings { outline: true, ..Default::default() };
         assert_eq!(outline.arguments(1, &marks), ["--outline-pages", "--handout-header", "社外秘", "--handout-date", "2026/10/11", "--handout-footer", "ibis", "--handout-number"]);
-        assert!(outline.needs_pictures());
+        assert!(!outline.needs_pictures(), "the outline is vector (#225)");
         // Not for the slides themselves.
         assert!(PrintSettings::default().arguments(1, &marks).is_empty());
         let range = PrintSettings { range: PrintRange::Custom, custom: "1,3-4".into(), ..Default::default() };
-        assert_eq!(range.arguments(1, &Default::default()), ["--slides", "1,3-4"]);
+        assert_eq!(range.arguments(1, &Default::default()), ["--range", "1,3-4"]);
         assert!(!range.needs_pictures());
     }
 }

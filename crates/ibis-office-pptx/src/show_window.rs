@@ -31,12 +31,17 @@ impl ShowView {
 impl Render for ShowView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let kind = self.kind;
+        SlideEditor::begin_message_box_frame(window);
         let content = self.editor.update(cx, |editor, ecx| editor.render_slideshow_for(kind, window, ecx));
         div()
             .size_full()
             .bg(black())
             .key_context(SLIDESHOW_CONTEXT)
             .track_focus(&self.focus)
+            // The slide show's questions (rehearsal timings, ink) are the shared message box: its keys come first.
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.editor.update(cx, |e, ecx| e.slideshow_question_key(&event.keystroke, window, ecx)) { window.prevent_default(); cx.stop_propagation(); }
+            }))
             .on_action(cx.listener(|this, _: &crate::shell::actions::NextSlide, window, cx| this.editor.update(cx, |e, ecx| e.next_slide(&crate::shell::actions::NextSlide, window, ecx))))
             .on_action(cx.listener(|this, _: &crate::shell::actions::PreviousSlide, window, cx| this.editor.update(cx, |e, ecx| e.previous_slide(&crate::shell::actions::PreviousSlide, window, ecx))))
             .on_action(cx.listener(|this, _: &crate::shell::actions::FirstSlide, _, cx| this.editor.update(cx, |e, ecx| e.slideshow_to_end(false, ecx))))

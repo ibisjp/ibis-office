@@ -876,7 +876,7 @@ impl SlideEditor {
         let shape = Shape::new(shape_id, frame, ShapeKind::Picture(picture));
 
         let mut commands = vec![
-            Command::InsertShape { slide: slide_id, index: self.slide().shapes.len(), shape },
+            Command::InsertShape { slide: slide_id, shapes: vec![(self.slide().shapes.len(), shape)] },
         ];
 
         if linked {

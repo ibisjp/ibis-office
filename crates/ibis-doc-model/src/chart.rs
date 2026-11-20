@@ -43,6 +43,8 @@ pub struct ChartText {
     pub font: Option<String>,
     /// The East Asian typeface.
     pub east_asian_font: Option<String>,
+    /// Character spacing (`spc`), in hundredths of a point added after each character (negative packs them).
+    pub spacing: i32,
 }
 
 impl ChartText {
@@ -60,7 +62,7 @@ impl ChartText {
 impl Default for ChartText {
     /// Office's default chart text: 10 pt, dark grey.
     fn default() -> Self {
-        Self { size: 1000, bold: false, color: Some(Color::opaque(crate::Rgb(0x595959))), font: None, east_asian_font: None }
+        Self { size: 1000, bold: false, color: Some(Color::opaque(crate::Rgb(0x595959))), font: None, east_asian_font: None, spacing: 0 }
     }
 }
 
@@ -458,6 +460,8 @@ pub struct Series {
     pub point_strokes: Vec<(usize, Option<Stroke>)>,
     /// How far a pie's slices are pulled out from the centre (`c:explosion` of the series), as a percentage of the radius.
     pub explosion: u32,
+    /// A shadow inside the series' shapes (`a:innerShdw` of the series' `c:spPr`): the bars of a bar chart.
+    pub inner_shadow: Option<crate::Shadow>,
     /// The same for single slices (`c:explosion` of a `c:dPt`), overriding the series'.
     pub point_explosions: Vec<(usize, u32)>,
     pub marker: Option<Marker>,
@@ -565,6 +569,8 @@ pub struct Axis {
     /// Labels sit at the low end of the crossing axis (`tickLblPos="low"`),
     /// such as below the plot for a top value axis.
     pub labels_low: bool,
+    /// Distance of the category labels from the axis as a percentage of the default (`c:lblOffset`, 100 when absent).
+    pub label_offset: u32,
     /// Rotation of the tick labels, in 60 000ths of a degree clockwise
     /// (−5 400 000 reads bottom to top); 0 for horizontal.
     pub label_rotation: i32,

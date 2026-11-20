@@ -23,7 +23,12 @@ pub struct Reference {
 }
 pub fn references(text: &str) -> Vec<Reference> {
     if !is_formula(text){return Vec::new();}
-    let offset=usize::from(text.starts_with('='));
+    // The formula starts after the `=` or the `@` of `@sum(` (#148), which becomes `=` when the entry is committed.
+    let offset=match text.chars().next() {
+        Some('=') => 1,
+        Some(mark @ ('@' | '\u{ff20}')) if at_entry_to_formula(text).is_some() => mark.len_utf8(),
+        _ => 0,
+    };
     let formula=&text[offset..];
     let Ok(tokens) = tokenize(formula) else {
         return Vec::new();
@@ -314,7 +319,9 @@ pub(crate) fn color_runs(text: &str, start: usize, len: usize, base: TextRun) ->
         .collect()
 }
 
-pub(crate) fn is_formula(text:&str)->bool {text.starts_with(['=','+','-'])}
+/// Whether the entry is a formula being typed: it starts with `=`, `+` or `-`, or is `@` and a function's name and `(` (Excel takes the
+/// `@` for `=` then; #148), so a reference can be pointed at in it with the arrow keys or the mouse.
+pub(crate) fn is_formula(text:&str)->bool {text.starts_with(['=','+','-']) || at_entry_to_formula(text).is_some()}
 
 /// A cell entry typed as `@sum(a1:a2)` is the formula `=sum(a1:a2)` (GitHub issue #148; Excel 365 measured by keys on a Windows PC,
 /// tasks/doc/m60-excel-at-input.md): when the text starts with `@` and then a name of a function we know and `(`, the `@` becomes `=`.

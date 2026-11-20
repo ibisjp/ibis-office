@@ -579,6 +579,12 @@ impl SlideEditor {
                             // ⌘↑ / ⌘↓ move the current slide up or down the list.
                             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                                 let k = &event.keystroke;
+                                // Enter in the list adds a slide after the current one, as PowerPoint's does.
+                                if k.key == "enter" && !k.modifiers.platform && !k.modifiers.control && !k.modifiers.alt && !k.modifiers.shift && this.pages_are_slides() {
+                                    cx.stop_propagation();
+                                    this.add_slide(window, cx);
+                                    return;
+                                }
                                 if (k.modifiers.platform || k.modifiers.control) && this.pages_are_slides() {
                                     match k.key.as_str() {
                                         "up" => {
@@ -803,7 +809,7 @@ impl SlideEditor {
         if commands.is_empty() {
             return;
         }
-        self.run(vec![ibis_doc_model::Command::Group(commands)], cx);
+        self.run(vec![ibis_doc_model::Command::Batch(commands)], cx);
         self.select_slide(chosen[0], window, cx);
         if let Some(s) = self.pptx_mut() {
             s.slide_selection = chosen;

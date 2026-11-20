@@ -251,7 +251,7 @@ pub(crate) fn data_floor_or_kept_pt(res: &Resources, sheet: &ibis_doc_model::She
 }
 
 /// Set the height of each row Excel measures (`Sheet::measured_rows`) to the one `fitted_height_pt` gives, for the sheets whose fonts are
-/// known. A row with nothing in it is the sheet's default row (`ibis_pptx::APP_DEFAULT_ROW_PT` unless the file asks for one with
+/// known. A row with nothing in it is the sheet's default row (`ibis_formats::APP_DEFAULT_ROW_PT` unless the file asks for one with
 /// `customHeight`: set by the reader), a row with cells the Normal font's row at least.
 pub fn fit_measured_rows(presentation: &mut Presentation, res: &Resources) {
     let normal_font = normal_font(presentation);
@@ -390,7 +390,7 @@ mod tests {
     use crate::render::font_metrics::WinRowMetrics;
 
     fn metrics(win: (f64, f64), hhea: (f64, f64, f64), em: f64, vdmx: Option<Vec<(u16, i16, i16)>>) -> WinRowMetrics {
-        WinRowMetrics { win_ascent: win.0, win_descent: win.1, hhea_ascent: hhea.0, hhea_descent: hhea.1, hhea_line_gap: hhea.2, units_per_em: em, vdmx }
+        WinRowMetrics { win_ascent: win.0, win_descent: win.1, hhea_ascent: hhea.0, hhea_descent: hhea.1, hhea_line_gap: hhea.2, units_per_em: em, y_subscript_size: 0.0, y_superscript_size: 0.0, y_subscript_offset: 0.0, y_superscript_offset: 0.0, code_page_range_1: 0, vdmx }
     }
 
     /// Rows of Microsoft Excel 365 (font-rows: the Normal font set to the typeface, the standard row in points / 0.75): (pt × 100,
@@ -495,7 +495,7 @@ mod tests {
     #[test]
     fn a_medium_line_under_a_row_is_found_in_its_cells_or_the_next_rows_top() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/editing/xlsx-sales.xlsx");
-        let presentation = ibis_pptx::read(&std::fs::read(path).unwrap()).unwrap();
+        let presentation = ibis_formats::read(&std::fs::read(path).unwrap()).unwrap();
         let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&presentation.slides[0]).unwrap();
         let thick: Vec<u32> = (0..12).filter(|&r| super::thick_bottom(sheet, r)).collect();
         assert_eq!(thick, vec![1, 8], "rows 2 and 9");

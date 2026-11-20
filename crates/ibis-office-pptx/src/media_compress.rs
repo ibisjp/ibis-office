@@ -161,7 +161,7 @@ impl SlideEditor {
                 if let Some(ref mut clip) = p.clip {
                     clip.media = new_media;
                 }
-                commands.push(Command::SetKind { slide: slide_id, shape: shape_id, kind: Box::new(ShapeKind::Picture(p)) });
+                commands.push(Command::SetShapeKind { slide: slide_id, shape: shape_id, kind: Box::new(ShapeKind::Picture(p)) });
             }
         }
 
@@ -193,7 +193,7 @@ impl SlideEditor {
                         if changed {
                             let mut new_pic = p.clone();
                             new_pic.clip = Some(updated);
-                            commands.push(Command::SetKind {
+                            commands.push(Command::SetShapeKind {
                                 slide: slide.id,
                                 shape: shape.id,
                                 kind: Box::new(ShapeKind::Picture(new_pic)),

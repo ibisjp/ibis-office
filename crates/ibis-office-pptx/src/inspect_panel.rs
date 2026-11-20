@@ -151,7 +151,7 @@ impl SlideEditor {
     /// ドキュメントのプロパティと個人情報をすべて削除
     pub(crate) fn inspect_remove_all_properties(&mut self, cx: &mut Context<Self>) {
         let empty_props = ibis_doc_model::flow::DocProperties::default();
-        self.run(vec![Command::SetDocProperties { properties: empty_props }], cx);
+        self.run(vec![Command::SetDocumentProperties { properties: empty_props }], cx);
         let inspection = inspect_presentation(self.presentation());
         if let Some(p) = self.pptx_mut().and_then(|s| s.inspect_panel.as_mut()) {
             p.properties_removed = true;
@@ -206,7 +206,7 @@ impl SlideEditor {
         let hidden_ids: Vec<_> = self.presentation().slides.iter().filter(|s| s.hidden).map(|s| s.id).collect();
         let total_slides = self.presentation().slides.len();
         if hidden_ids.len() < total_slides {
-            let commands: Vec<_> = hidden_ids.into_iter().map(|slide| Command::RemoveSlide { slide }).collect();
+            let commands: Vec<_> = hidden_ids.into_iter().map(|slide| Command::DeleteSlide { slide }).collect();
             self.run(commands, cx);
         } else {
             // 全スライドが非表示の場合は非表示フラグを解除
@@ -236,7 +236,7 @@ impl SlideEditor {
             for shape in &slide.shapes {
                 let f = shape.frame;
                 if f.x + f.width <= 0 || f.y + f.height <= 0 || f.x >= size.width || f.y >= size.height {
-                    commands.push(Command::RemoveShape { slide: slide.id, shape: shape.id });
+                    commands.push(Command::DeleteShape { slide: slide.id, shapes: vec![shape.id], with_attached: true });
                 }
             }
         }

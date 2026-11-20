@@ -79,3 +79,58 @@ fn a_picture_of_a_file_is_drawn_as_rgb() {
     let want = ibis_office_base::cmyk::converter().to_rgb(Cmyk::new(100, 0, 0, 0));
     assert!(near(*img.get_pixel(8, 8), want, 6));
 }
+
+/// `file()` with `profile` put in as `APP2` `ICC_PROFILE` segments of `piece` bytes (written in reverse order: the sequence numbers decide).
+fn with_profile(profile: &[u8], piece: usize) -> Vec<u8> {
+    let jpeg = file();
+    let chunks: Vec<&[u8]> = profile.chunks(piece).collect();
+    let mut out = jpeg[..2].to_vec();
+    for (n, chunk) in chunks.iter().enumerate().rev() {
+        out.extend([0xff, 0xe2]);
+        out.extend(((chunk.len() + 16) as u16).to_be_bytes());
+        out.extend(b"ICC_PROFILE\0");
+        out.extend([n as u8 + 1, chunks.len() as u8]);
+        out.extend(*chunk);
+    }
+    out.extend(&jpeg[2..]);
+    out
+}
+
+/// The profile inside the picture makes the colours, not the converter in use (PowerPoint's way); the pieces of a profile are joined by their numbers.
+#[test]
+fn the_profile_inside_the_picture_makes_the_colours() {
+    let Ok(profile) = std::fs::read("/System/Library/ColorSync/Profiles/Generic CMYK Profile.icc") else { return };
+    assert_eq!(super::embedded_profile(&with_profile(&profile, 20_000)).as_deref(), Some(&profile[..]));
+    let own = super::EmbeddedProfile::new(&profile).expect("a CMYK profile");
+    for piece in [20_000, 60_000] {
+        let img = decode(&with_profile(&profile, piece), &OpenCmykConverter).expect("a four-component JPEG");
+        for ((x, y), ink) in [((8, 8), [1.0, 0.0, 0.0, 0.0]), ((56, 8), [0.0, 1.0, 0.0, 0.0]), ((8, 24), [0.0, 0.0, 1.0, 0.0]), ((56, 24), [0.0, 0.0, 0.0, 1.0])] {
+            assert!(near(*img.get_pixel(x, y), own.to_rgb_fractions(ink), 6), "{ink:?}");
+        }
+    }
+    // Not the open model's colours (a profile is a different press).
+    let img = decode(&with_profile(&profile, 60_000), &OpenCmykConverter).unwrap();
+    assert!(!near(*img.get_pixel(8, 8), OpenCmykConverter.to_rgb(Cmyk::new(100, 0, 0, 0)), 3));
+}
+
+/// Measured on PowerPoint for Windows: a Lab-based CMYK JPEG (Adobe `APP14` transform 0, a 557 KB profile) of the `.ppt` corpus 017 against the picture PowerPoint wrote to its
+/// PDF. The files are private (`target/cm/`, made by `scripts/` of the corpus; skipped when absent): the mean absolute error per channel must stay below 6, 6.5 and 9.5
+/// (5.2, 5.9, 9.1 when measured; the old table path gave 12.4, 15.3, 18.7).
+#[test]
+fn a_lab_based_profile_in_the_picture_gives_what_powerpoint_wrote() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/cm");
+    let (Ok(jpeg), Ok(truth)) = (std::fs::read(root.join("img4.jpeg")), std::fs::read(root.join("truth.rgb"))) else { return };
+    let img = decode(&jpeg, &OpenCmykConverter).expect("a four-component JPEG");
+    assert_eq!((img.width(), img.height()), (922, 922));
+    let mut sum = [0f64; 3];
+    let mut n = 0f64;
+    for i in (0..922 * 922).step_by(7) {
+        let p = img.as_raw();
+        for k in 0..3 {
+            sum[k] += (p[i * 4 + k] as f64 - truth[i * 3 + k] as f64).abs();
+        }
+        n += 1.0;
+    }
+    let mean = sum.map(|s| s / n);
+    assert!(mean[0] < 6.0 && mean[1] < 6.5 && mean[2] < 9.5, "{mean:?}");
+}

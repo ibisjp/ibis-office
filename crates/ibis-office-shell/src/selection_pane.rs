@@ -122,13 +122,13 @@ impl SlideEditor {
             MenuItem::tr("pptx.selection-pane.show-all").icon("visibility").on(|e, _, cx| e.set_all_hidden(false, cx)).into(),
             MenuItem::tr("pptx.selection-pane.hide-all").icon("visibility_off").on(|e, _, cx| e.set_all_hidden(true, cx)).into(),
             MenuEntry::Separator,
-            MenuItem::tr("pptx.order.front").icon("flip_to_front").on(move |e, _, cx| {
+            MenuItem::tr("arrange.bring-to-front").icon("flip_to_front").on(move |e, _, cx| {
                 e.set_selection(vec![id]);
                 e.order_selected(crate::shape_items::Order::Front, cx);
             }).into(),
-            MenuItem::tr("pptx.order.forward").icon("arrow_upward").on(move |e, _, cx| e.order_one(id, true, cx)).into(),
-            MenuItem::tr("pptx.order.backward").icon("arrow_downward").on(move |e, _, cx| e.order_one(id, false, cx)).into(),
-            MenuItem::tr("pptx.order.back").icon("flip_to_back").on(move |e, _, cx| {
+            MenuItem::tr("arrange.bring-forward").icon("arrow_upward").on(move |e, _, cx| e.order_one(id, true, cx)).into(),
+            MenuItem::tr("arrange.send-backward").icon("arrow_downward").on(move |e, _, cx| e.order_one(id, false, cx)).into(),
+            MenuItem::tr("arrange.send-to-back").icon("flip_to_back").on(move |e, _, cx| {
                 e.set_selection(vec![id]);
                 e.order_selected(crate::shape_items::Order::Back, cx);
             }).into(),

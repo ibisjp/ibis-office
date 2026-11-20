@@ -117,8 +117,8 @@ fn curved_and_rotated() {
     assert!((half_left - 0.5).abs() < 0.12 && (half_top - 0.5).abs() < 0.12, "ellipse: {half_left} {half_top}");
     assert!(alpha(&soft, l, cy) < 0.01 && alpha(&soft, cx, cy) > 0.99);
     // A triangle turned by 30 degrees: it fades along its turned outline, so its corner (the vertex) is fainter than the middle of an edge.
-    let hard = shot(ibis_pptx::preset_geometry("triangle").expect("the triangle preset"), 1_800_000, Fill::Solid(RED), None, None, "triangle-hard");
-    let soft = shot(ibis_pptx::preset_geometry("triangle").expect("the triangle preset"), 1_800_000, Fill::Solid(RED), None, Some(RAD), "triangle-soft");
+    let hard = shot(ibis_formats::preset_geometry("triangle").expect("the triangle preset"), 1_800_000, Fill::Solid(RED), None, None, "triangle-hard");
+    let soft = shot(ibis_formats::preset_geometry("triangle").expect("the triangle preset"), 1_800_000, Fill::Solid(RED), None, Some(RAD), "triangle-soft");
     let (cx, cy) = centre_of_shape(&hard);
     assert!(alpha(&soft, cx, cy) > 0.9, "the middle of the triangle stays");
     let mut faded = 0;

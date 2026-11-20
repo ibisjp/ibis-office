@@ -49,7 +49,7 @@ impl SlideEditor {
         let mut table=t.clone();let Some(c)=table.rows.get_mut(row).and_then(|r|r.cells.get_mut(cell)) else{return};
         change(c);table.resolve_borders();
         if &table==t {return;}
-        self.run_flow(vec![FlowCommand::ReplaceBlocks {container,index,remove:1,blocks:vec![Block::Table(table)]}],cx);
+        self.run_flow(vec![FlowCommand::ReplaceBlockRange {container,index,remove:1,blocks:vec![Block::Table(table)]}],cx);
     }
     pub(crate) fn choose_cell_border_edge(&mut self,edge:Option<usize>,cx:&mut Context<Self>) {
         if edge.is_some_and(|i|i>=4) {return;}

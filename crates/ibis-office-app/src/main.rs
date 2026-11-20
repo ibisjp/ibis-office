@@ -7,6 +7,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(not(target_family = "wasm"), not(target_os = "android"), not(target_os = "ios")))]
     ibis_office_app::run_native();
 }

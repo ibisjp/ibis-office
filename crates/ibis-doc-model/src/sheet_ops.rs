@@ -10,7 +10,7 @@
 //! The same functions change the model when the user edits it and, when
 //! saving, the model as it was read, so that the saved file's cells can be
 //! compared with the edited ones after the file's XML has had the same
-//! changes (see `ibis-pptx/src/save/xlsx.rs`). The workbook keeps the
+//! changes (see `ibis-formats/src/save/xlsx.rs`). The workbook keeps the
 //! list of structural changes in the order they were made
 //! ([`crate::Workbook::structure`]).
 
@@ -98,8 +98,42 @@ pub fn move_range(r: CellRange, axis: Axis, at: u32, count: i64) -> Option<CellR
     })
 }
 
+/// The inner ids of the rows (or columns) follow the change: the ones deleted go, the ones inserted are new (`Sheet::line_id`).
+fn change_line_ids(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
+    let extent = match axis {
+        Axis::Rows => sheet.rows.len().max(sheet.cells.iter().map(|c| c.row as usize + 1).max().unwrap_or(0)),
+        Axis::Columns => sheet.columns.len().max(sheet.cells.iter().map(|c| c.column as usize + 1).max().unwrap_or(0)),
+    };
+    let ids = match axis {
+        Axis::Rows => &mut sheet.row_ids.0,
+        Axis::Columns => &mut sheet.column_ids.0,
+    };
+    // The ids of the rows the sheet had, as they are not made yet: the id of the row at `i` is `i + 1`.
+    let wanted = extent.max(at as usize + 1);
+    while ids.len() < wanted {
+        ids.push(ids.len() as u32 + 1);
+    }
+    let mut fresh = ids.iter().copied().max().unwrap_or(0).max(Sheet::FRESH_LINE_ID - 1);
+    let at = at as usize;
+    if count > 0 {
+        for _ in 0..count {
+            fresh += 1;
+            ids.insert(at, fresh);
+        }
+    } else {
+        let n = ((-count) as usize).min(ids.len().saturating_sub(at));
+        ids.drain(at..at + n);
+        // The length stays (the grid's sizes keep theirs too): the rows that came in at the end are new.
+        for _ in 0..n {
+            fresh += 1;
+            ids.push(fresh);
+        }
+    }
+}
+
 /// The sheet's own changes: cells, merged ranges, sizes, print settings.
 fn change_sheet(sheet: &mut Sheet, axis: Axis, at: u32, count: i64) {
+    change_line_ids(sheet, axis, at, count);
     let mut cells = std::mem::take(&mut sheet.cells);
     cells.retain_mut(|c| {
         let i = if axis == Axis::Rows { c.row } else { c.column };

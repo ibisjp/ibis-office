@@ -12,7 +12,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 /// How many strings a kind remembers.
 pub(crate) const MAX: usize = 5;

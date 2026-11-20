@@ -45,7 +45,7 @@ pub fn goal_seek(presentation: &Presentation, slide: SlideId, formula: (u32, u32
     // The formula's result minus the target at `x`.
     let mut miss = |x: f64| -> Option<f64> {
         let edit = CellEdit { row: changing.0, column: changing.1, input: CellInput::Value(CellValue::Number(x)) };
-        doc.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![edit] })]).ok()?;
+        doc.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![edit] })]).ok()?;
         let sheet = doc.presentation().slide(slide).and_then(crate::sheet_calc::sheet_of_slide)?;
         match sheet.cell(formula.0, formula.1).map(|c| &c.value) {
             Some(CellValue::Number(v)) if v.is_finite() => Some(v - target),
@@ -137,7 +137,7 @@ mod tests {
         }));
         let mut d = Document::new(p);
         let edits = cells.iter().map(|(row, column, input)| CellEdit { row: *row, column: *column, input: input.clone() }).collect();
-        d.execute(vec![Command::Sheet(SheetCommand::SetCells { slide: id, edits })]).unwrap();
+        d.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: id, edits })]).unwrap();
         (d.presentation().clone(), id)
     }
 

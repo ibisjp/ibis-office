@@ -15,7 +15,7 @@ use gpui_kit::component::{Sizable as _, h_flex};
 use gpui_kit::*;
 use ibis_calc::input::{DateOrder, Typed, parse_date_in_order, parse_imported};
 use ibis_doc_model::{CellEdit, CellInput, CellRange, CellValue, Command, SheetCommand, SlideId, StyleChange};
-use ibis_pptx::csv::{ImportOptions, TextEncoding};
+use ibis_formats::csv::{ImportOptions, TextEncoding};
 use crate::ext::*;
 
 /// How a column is read.
@@ -279,7 +279,7 @@ impl SlideEditor {
         let Some(data) = p.data.as_ref() else {
             return self.import_text_message(crate::shell::i18n::text("_xlsx.choose-a-file-to-load").into(), cx);
         };
-        let imported = match ibis_pptx::csv::import(data, &p.options(cx)) {
+        let imported = match ibis_formats::csv::import(data, &p.options(cx)) {
             Ok(i) => i,
             Err(e) => return self.import_text_message(e.to_string(), cx),
         };
@@ -324,11 +324,11 @@ impl SlideEditor {
             };
             slide = self.document.ids().new_slide_id();
             let shape = self.document.ids().new_shape_id();
-            commands.push(Command::Sheet(SheetCommand::AddSheet { index, name, slide, shape }));
+            commands.push(Command::Sheet(SheetCommand::AddSheet { index, name, sheet: slide, shape }));
         }
-        commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
+        commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits }));
         for (range, code) in formats {
-            commands.push(Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
+            commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
         }
         if let Err(error) = self.document.execute(commands) {
             return self.import_text_message(error.to_string(), cx);
@@ -349,7 +349,7 @@ impl SlideEditor {
     pub fn import_text_panel(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
         let preview: Vec<Vec<String>> = {
             let p = self.sheet_state()?.panels.import_text.as_ref()?;
-            match p.data.as_ref().map(|d| ibis_pptx::csv::import(d, &p.options(cx))) {
+            match p.data.as_ref().map(|d| ibis_formats::csv::import(d, &p.options(cx))) {
                 Some(Ok(i)) => i.rows.into_iter().take(6).collect(),
                 _ => Vec::new(),
             }
@@ -425,7 +425,7 @@ impl SlideEditor {
                 "import-text-all-text".into(),
                 crate::shell::i18n::text("_xlsx.make-all-columns-text").to_string(),
                 Box::new(move |p| {
-                    let n = p.data.as_ref().and_then(|d| ibis_pptx::csv::import(d, &ImportOptions { encoding: p.encoding, delimiter: p.delimiter, start_row: 1, fixed: p.fixed.then(Vec::new) }).ok()).map_or(0, |i| i.rows.iter().map(Vec::len).max().unwrap_or(0));
+                    let n = p.data.as_ref().and_then(|d| ibis_formats::csv::import(d, &ImportOptions { encoding: p.encoding, delimiter: p.delimiter, start_row: 1, fixed: p.fixed.then(Vec::new) }).ok()).map_or(0, |i| i.rows.iter().map(Vec::len).max().unwrap_or(0));
                     p.columns = vec![ColumnType::Text; n];
                 }),
             ));

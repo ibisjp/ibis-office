@@ -109,10 +109,10 @@ impl SlideEditor {
         let slide = self.current_slide;
         let mut commands = Vec::new();
         if ShapeKind::Table(Box::new(table.clone())) != shape.kind {
-            commands.push(Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) });
+            commands.push(Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Table(Box::new(table))) });
         }
         if frame != shape.frame {
-            commands.push(Command::SetFrame { slide, shape: id, frame });
+            commands.push(Command::SetFrame { slide, frames: vec![(id, frame)], with_attached: true });
         }
         self.run(commands, cx);
         self.close_cell_size_panel(window, cx);

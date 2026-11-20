@@ -21,7 +21,7 @@ const COMPOSING:&str="\u{3042}\u{3044}\u{3046}\u{3048}\u{304a}"; // i18n-ok: Jap
 
 /// How far the end of the paragraph is from its start along the line, before and while the five characters are composed at its start.
 fn end_shift(vertical:bool)->(f32,f32,f32){
-    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Document,w,cx));
+    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_formats::Kind::Document,w,cx));
     s.type_text(AFTER);
     if vertical{s.menu("docx.page.direction.vertical");}
     let (p,_)=s.paragraph(0);let n=AFTER.chars().count();
@@ -50,7 +50,7 @@ fn pushes_vertical(){
 }
 
 fn scrolled_into_view(){
-    let mut s=Scenario::start_view();s.size(1200.,800.);s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Document,w,cx));
+    let mut s=Scenario::start_view();s.size(1200.,800.);s.update(|e,w,cx|e.new_file(ibis_formats::Kind::Document,w,cx));
     for _ in 0..40{s.type_text("\u{3042}\u{3044}\u{3046}\u{3048}\u{304a}");s.key("enter");} // i18n-ok: Japanese document fixture.
     // The caret is at the end of the last paragraph, in view; a long composing string runs on below it.
     let scrolled=|s:&mut Scenario|s.with(|e,_|f32::from(e.page_origin(0).unwrap().0.y));
@@ -70,7 +70,7 @@ fn scrolled_into_view(){
 /// The rectangle the input method gets for the composing text (where it opens its candidate window) is on the LAST line of the text
 /// when it wraps, not the first, so the candidates do not cover the text being typed.
 fn candidate_rect_last_line(){
-    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Document,w,cx));
+    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_formats::Kind::Document,w,cx));
     let long:String="\u{3042}".repeat(120); // i18n-ok: Japanese IME composition fixture.
     s.update(|e,w,cx|e.doc_replace_and_mark_text_in_range(None,&long,Some(0..0),w,cx));
     let n=long.encode_utf16().count();
@@ -83,4 +83,14 @@ fn candidate_rect_last_line(){
         gpui_kit::PlatformInputHandler::compute_ime_candidate_bounds(Some(0..n),&sel,|r|with_format!(e,bounds_for_range(e,r,Default::default(),w,cx))).map(|b|f32::from(b.origin.y))
     });
     assert!((got.unwrap()-last).abs()<1.,"candidate rect is on the last line: {got:?} against {last}");
+    // And at the last character of it (K0020: the window opens under the newest character, not at the start of the line).
+    let (lx,line_start)=(
+        s.update(|e,w,cx|with_format!(e,bounds_for_range(e,n-1..n,Default::default(),w,cx)).map(|b|f32::from(b.origin.x)).unwrap()),
+        s.update(|e,w,cx|with_format!(e,bounds_for_range(e,0..0,Default::default(),w,cx)).map(|b|f32::from(b.origin.x)).unwrap()),
+    );
+    let gx=s.update(|e,w,cx|{
+        let sel=with_format!(e,selected_text_range(e,true,w,cx)).unwrap();
+        gpui_kit::PlatformInputHandler::compute_ime_candidate_bounds(Some(0..n),&sel,|r|with_format!(e,bounds_for_range(e,r,Default::default(),w,cx))).map(|b|f32::from(b.origin.x))
+    }).unwrap();
+    assert!((gx-lx).abs()<1.&&gx>line_start+10.,"candidate rect is at the last character: {gx} (last character {lx}, first character {line_start})");
 }

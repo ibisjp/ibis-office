@@ -160,8 +160,8 @@ impl SlideEditor {
             // Word stores the shrink once, as `w:w`, when 行の幅に合わせる is applied; turning it off or taking 縦中横 away stores none.
             let scale = if remove || !fit { None } else { self.body_fit_scale(from, to) };
             let commands = vec![
-                FlowCommand::SetRunFormat { from, to, change: RunChange::TateChuYoko(!remove) },
-                FlowCommand::SetRunFormat { from, to, change: RunChange::TateChuYokoFit(!remove && fit) },
+                FlowCommand::SetRunFormat { from, to, change: RunChange::HorizontalInVertical(!remove) },
+                FlowCommand::SetRunFormat { from, to, change: RunChange::HorizontalInVerticalCompress(!remove && fit) },
                 FlowCommand::SetRunFormat { from, to, change: RunChange::Scale(scale) },
             ];
             if self.run_flow(commands, cx) {

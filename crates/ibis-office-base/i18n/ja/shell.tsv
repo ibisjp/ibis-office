@@ -32,6 +32,7 @@ tools.settings	設定…
 help.search	メニューを検索
 help.help	ヘルプ
 help.shortcuts	キーボード ショートカット
+help.source-code	ソースコード (AGPL)…
 help.about	ibisOffice について
 file.new.document	ドキュメント
 file.new.workbook	スプレッドシート
@@ -159,6 +160,7 @@ align.right	右揃え
 align.justify	両端揃え
 status.hint.textbox	スライドをクリックまたはドラッグしてテキスト ボックスを配置
 status.hint.esc	Esc で編集を終了
+status.hint.shape	クリックまたはドラッグして図形を配置（Esc で取り消し）
 file.protect	パスワードで保護…
 shell.read-stopped	読み込みが止まりました
 start.new	新規作成
@@ -696,7 +698,7 @@ _shell.confirm-password	パスワードの確認
 _shell.the-password-is-not-correct	パスワードが違います
 _shell.enter-a-password	パスワードを入力してください
 _shell.the-passwords-do-not-match	確認のパスワードが一致しません
-_shell.remove-password	パスワードを解除
+_shell.remove-password	パスワードを解除(&R)
 _shell.a-forgotten-password-cannot-be-recovered	忘れたパスワードは取り戻せません。
 _shell.password-required-to-open-the-file	ファイルを開くときに必要なパスワード
 _shell.this-file-is-protected-with-a-password	このファイルはパスワードで保護されています
@@ -771,7 +773,7 @@ settings.trust.links-warning	他のブックへのリンクがあるブックを
 settings.trust.links-note	リンクの値は最後に保存されたままです。バーの「値を更新」か、データ > ブックのリンクで更新します。
 settings.trust.macros	マクロ
 settings.trust.macros-note	VBA マクロは実行しません。マクロを含むファイル（.xlsm など）は、マクロをそのまま残して保存します。
-settings.qat.note	ツール バーの上のタイトル行（元に戻す・やり直しの隣）に置くコマンドを選びます。開いている文書のメニューにあるコマンドだけが表示されます。
+settings.qat.note	ツール バーの上のタイトル行（元に戻す・やり直しの隣）に置くコマンドを選びます。3 つの形式で共通です。開いている文書にないコマンドは、その文書では表示されません。
 settings.qat.order	選択したコマンドの並び順
 settings.qat.add	追加
 settings.qat.remove	削除
@@ -819,6 +821,7 @@ settings.view.scrollbars-always	スクロール バーを常に表示する
 file.save-format.docx	Word 文書 (.docx)
 file.save-format.dotx	Word テンプレート (.dotx)
 file.save-format.odt	OpenDocument テキスト (.odt)
+file.save-format.md	Markdown 文書 (.md)
 file.save-format.xlsx	Excel ブック (.xlsx)
 file.save-format.xltx	Excel テンプレート (.xltx)
 file.save-format.xls	Excel 97-2003 ブック (.xls)
@@ -934,6 +937,7 @@ shell.file-name-menu.copy-path	ファイルパスをコピー
 shell.file-name-menu.rename	ファイル名を変更…
 shell.file-name-menu.name-copied	ファイル名をコピーしました
 shell.file-name-menu.path-copied	ファイルパスをコピーしました
+shell.file-name-menu.path-copy-failed	コピーできませんでした（クリップボードの権限がありません）
 shell.file-name-menu.renamed	ファイル名を変更しました
 shell.rename-file.title	ファイル名を変更
 shell.rename-file.name	ファイル名
@@ -1050,7 +1054,7 @@ menu.context.gone	開いていたメニューの対象が無くなったため�
 menu.overflow	その他のメニュー
 window.list	ウィンドウ一覧…
 window.next	次のウィンドウ
-window.prev	前のウィンドウ
+window.previous	前のウィンドウ
 window.current	今のウィンドウ
 window.more	その他のウィンドウ（{n}）…
 sidebar.navigation	ナビゲーション ウィンドウ
@@ -1061,7 +1065,7 @@ sidebar.cell-format	セルの書式設定
 sidebar.picture	図の設定
 sidebar.text-box	テキスト ボックスの設定
 sidebar.chart	グラフの書式設定
-sidebar.frame	図形・図のサイズとプロパティ
+sidebar.frame	図形の書式
 sidebar.table-design	テーブルのデザイン
 sidebar.pivot-fields	ピボットテーブルのフィールド
 sidebar.tabs	タブとリーダーの設定
@@ -1086,6 +1090,8 @@ sidebar.spelling	スペルチェックと文章校正
 sidebar.thesaurus	類義語辞典
 sidebar.word-count	文字カウント
 sidebar.accessibility	アクセシビリティ チェック
+sidebar.machine-readability	デジタル庁: 機械可読性チェック
+sidebar.filter	フィルター
 sidebar.screen-reader	スクリーン リーダー ナビゲーション
 sidebar.read-aloud	音声読み上げ
 sidebar.ink	インク
@@ -1132,10 +1138,6 @@ window.tile-side-by-side	左右に並べて表示
 window.tile-stacked	上下に並べて表示
 window.bring-all-front	すべてを手前に移動
 window.close-all	すべての書類を閉じる
-color.editor.cyan	シアン
-color.editor.magenta	マゼンタ
-color.editor.yellow	イエロー
-color.editor.black	ブラック
 shell.infobar.cmyk.title	CMYK
 shell.infobar.cmyk.hint.message	印刷に近い色で表示するには、プロファイル（ICC）を選びます。いまは簡易変換で表示しています。
 shell.infobar.cmyk.missing.message	このファイルは{name}を使っています。見つかりません。
@@ -1156,8 +1158,12 @@ shell.cmyk.profile.none-found	このパソコンに CMYK のプロファイル�
 shell.cmyk.profile.web-note	ブラウザーではパソコン内のプロファイルを探せません。選んだファイルは、このブラウザーに保存されます。
 shell.action.cancel	キャンセル
 shell.ibis-ext.title	ibisOffice の機能
-shell.ibis-ext.message	この機能は PowerPoint にない機能です。有効にしますか？
-color.dialog.cmyk-mode	CMYK モード（印刷の色域）
+shell.ibis-ext.message	この機能は Microsoft Office にない機能です。有効にしますか？
+view.print-colors	印刷の色で表示
+shell.print.cmyk-heading	色（CMYK）
+shell.print.cmyk-mode	CMYK モード（印刷の色域）
+shell.print.cmyk-note	画面は、印刷したときの色に近い見た目で表示します。CMYK への変換は、プリンタードライバーが行います。
+shell.print.save-settings	設定を保存
 shell.find.previous-tip	前へ
 shell.find.next-tip	次へ
 shell.find.all-tip	すべて検索
@@ -1166,6 +1172,12 @@ settings.spreadsheet	スプレッドシート
 settings.spreadsheet.formula-bar-font	数式バーの英数フォント
 settings.spreadsheet.formula-bar-font-note	数式バーの英数字に使うフォントです。半角の「．」と「，」を見分けやすい書体を選べます。選んだ書体に無い文字（日本語など）は、今までの書体で表示します。
 settings.spreadsheet.formula-bar-font-default	既定（アプリの書体）
+settings.spreadsheet.csv	CSV・TSV・テキストファイルを開くとき
+settings.spreadsheet.csv-font	表示フォント
+settings.spreadsheet.csv-font-default	既定（游ゴシック）
+settings.spreadsheet.csv-font-size	文字の大きさ
+settings.spreadsheet.csv-font-size-unit	pt
+settings.spreadsheet.csv-note	CSV（csv・tsv・txt）を新たに開くときに、セルの表示に使うフォントと大きさです。すでに開いているファイルは変わりません。
 shell.font-setup.title	セットアップ
 shell.font-setup.heading	ダウンロードフォント
 shell.font-setup.col.name	フォント名
@@ -1183,3 +1195,207 @@ shell.font-setup.progress	{name} をダウンロードしています（{index}/
 shell.font-setup.failed	{name} をインストールできませんでした（全{count}件）。{error}
 shell.font-setup.cancelled	取り消しました。
 shell.font-setup.done	インストールしました。書体の一覧から選べます。
+shell.panel-message.title	メッセージ
+shell.host.saving	保存中…
+shell.host.exported	書き出しました
+shell.host.error-title	保存できませんでした
+shell.host.error-save-as	保存できませんでした。名前を付けて保存してください。
+shell.host.error-network	サーバーと通信できません。通信が回復してから、もう一度保存してください。
+shell.host.error-network-status	サーバーと通信できません。通信が回復してから、もう一度保存してください。
+shell.host.error-unauthorized	ログインの有効期限が切れました。もう一度ログインしてから、保存してください。
+shell.host.error-exists	同じ名前のファイルが既にあります。名前を変えてください。
+shell.host.error-too-large	ファイルが大きすぎるため、保存できませんでした。
+shell.host.error-other	保存できませんでした。
+shell.host-file.title-open	開く
+shell.host-file.title-save-as	名前を付けて保存
+shell.host-file.title-copy	コピーを作成
+shell.host-file.title-export	書き出し
+shell.host-file.more	さらに表示…
+shell.host-file.deferred	続きの表示
+shell.host-file.deferred-loading	取得中...
+shell.host-file.deferred-empty	他の参加フォルダはありませんでした。
+shell.host-file.loading	読み込み中…
+shell.host-file.empty	ファイルがありません
+shell.host-file.col.folders	フォルダー
+shell.host-file.col.name	名前
+shell.host-file.col.updated	更新日時
+shell.host-file.col.size	サイズ
+shell.host-file.file-name	ファイル名
+shell.host-file.file-type	ファイルの種類
+shell.host-file.type-docx	Word 文書 (*.docx)
+shell.host-file.type-xlsx	Excel ブック (*.xlsx)
+shell.host-file.type-pptx	PowerPoint プレゼンテーション (*.pptx)
+shell.host-file.open	開く
+shell.host-file.opening	開いています…
+shell.host-file.save	保存
+shell.host-file.export	書き出し
+shell.host-file.open-local	ローカルストレージから開く
+shell.host-file.save-local	ローカルに保存（ダウンロード）
+shell.host-file.error-empty	ファイル名を入力してください
+shell.host-file.error-char	ファイル名に使えない文字があります: {char}
+shell.host-file.error-end	ファイル名の先頭の空白や末尾のピリオドは使えません
+shell.host-file.error-long	ファイル名が長すぎます
+shell.host-file.error-list	一覧を取得できませんでした
+shell.host-file.error-open-title	開けませんでした
+shell.host-file.error-open	ファイルを開けませんでした。
+shell.host-file.error-no-permission	このフォルダには保存できません（書き込みの権限がありません）
+shell.host-file.overwrite-title	上書きの確認
+shell.host-file.overwrite	{name} は既に存在します。上書きしますか？
+shell.file-name-menu.get-path	パスの取得
+shell.host-file.error-rename	名前を変更できませんでした。
+shell.host-file.error-path-title	パスを取得できません
+shell.host-file.error-path	パスを取得できませんでした。
+shell.infobar.host.readonly.title	読み取り専用
+shell.infobar.host.readonly.message	この文書は読み取り専用です。
+shell.infobar.host.save-as	名前を付けて保存
+shell.infobar.host.notice.title	お知らせ
+shell.infobar.host.notice.message	ホストからのお知らせです。
+shell.infobar.host.notice.error	エラー
+shell.infobar.host.notice.warn	注意
+shell.infobar.host.notice.info	お知らせ
+shell.web-pdf.making	PDF を作成しています…
+shell.web-pdf.exported	PDF を書き出しました
+shell.web-pdf.print-opened	PDF を新しいタブで開きました。ブラウザーの印刷で印刷してください
+shell.web-pdf.pictures-skipped	ブラウザー版では、色・枠・配布資料・ノート・アウトラインの印刷設定は PDF に反映されません。ページをそのまま PDF にしました
+shell.web-pdf.missing-glyphs	書体のデータが取れず、{count} 文字を PDF に入れられませんでした
+shell.host.export-not-allowed	この形式での書き出しは、使えないように設定されています。
+shell.infobar.signature.title	電子署名
+shell.infobar.signature.message	この文書には電子署名があります。編集して保存すると電子署名は削除されます。
+shell.infobar.signature.inspect	署名を確認…
+shell.signature.confirm.title	電子署名
+shell.signature.confirm.save	この文書には電子署名があります。保存すると電子署名は削除されます。続けますか？
+shell.signature.confirm.export	この文書には電子署名があります。書き出したり別の形式で保存したりしたファイルには、署名は引き継がれません。続けますか？
+shell.signature.report.title	電子署名の確認
+shell.signature.report.none	このファイルに電子署名はありません。
+shell.signature.report.broken	電子署名の保存のしかたが不正です（{reason}）。
+shell.signature.report.head	署名 {n}（{part}）：{result}
+shell.signature.report.signer	　署名者（証明書に書かれた名前）：{name}
+shell.signature.report.value	　署名値：{state}
+shell.signature.report.digests	　対象部分のダイジェスト：{total} 件中 {matched} 件が一致
+shell.signature.report.detail	　・{what}：{state}
+shell.signature.report.more	　・ほか {count} 件
+shell.signature.report.notice	確認したのは、署名値と、署名が対象にする部分のダイジェストの一致だけです。証明書の信頼・失効、タイムスタンプ、署名が文書全体を対象にしているかは確認していないため、署名が有効であるという判定ではありません。編集後の状態は、保存したファイルを開き直して確認してください。
+shell.signature.result.consistent	署名値とダイジェストは一致しています
+shell.signature.result.mismatch	一致しない部分があります（署名の後で変更された可能性があります）
+shell.signature.result.unsupported	未対応のアルゴリズムや変換があり、確認できない部分があります
+shell.signature.result.uninspectable	確認できない部分があります
+shell.signature.result.malformed	署名の構造が不正です（{reason}）
+shell.signature.check.match	一致
+shell.signature.check.mismatch	一致しません
+shell.signature.check.part-missing	対象の部品がありません
+shell.signature.check.unsupported	未対応（{what}）
+shell.signature.check.uninspectable	確認できません（{reason}）
+shell.signature.reason.external	文書の外を指しています。取得はしません
+shell.signature.reason.no-key	署名に証明書も鍵もありません
+shell.signature.reason.bad-key	証明書を読めません
+shell.signature.reason.target-missing	参照先がありません
+shell.signature.reason.not-xml	XML ではありません
+shell.signature.malformed.relationships	関係の部品を読めません
+shell.signature.malformed.origin-missing	署名の部品はあるが、署名の起点への関係がありません
+shell.signature.malformed.origin-part-missing	署名の起点の部品がありません
+shell.signature.malformed.signature-part-missing	署名の部品がありません
+shell.signature.malformed.unreadable	署名の部品を読めません
+shell.signature.malformed.xml	署名が XML として正しくありません
+shell.signature.malformed.not-signature	署名の要素ではありません
+shell.signature.malformed.no-signed-info	SignedInfo がありません
+shell.signature.malformed.no-signature-value	SignatureValue がありません
+shell.signature.malformed.no-reference	Reference がありません
+shell.signature.malformed.bad-reference	Reference の DigestMethod または DigestValue がありません
+shell.signature.malformed.bad-base64	署名値またはダイジェストが base64 ではありません
+shell.infobar.signature.message-viewer	このファイルには電子署名があります。ここでは表示するだけで、変更しません。
+shell.signature.report.pdf-signer	　署名者（署名欄に書かれた名前）：{name}
+shell.signature.report.pdf-reason	　理由：{reason}
+shell.signature.report.pdf-format	　署名の形式：{name}
+shell.signature.report.pdf-notice	確認したのは構造だけです。署名が対象にするバイト範囲がファイルに合っているか、署名の後でファイルに追記されていないかを比べました。署名値（証明書による署名）、証明書の信頼・失効、タイムスタンプは確認していないため、署名が有効であるという判定ではありません。
+shell.signature.report.xps-count	このファイルには電子署名が {count} 件あります。署名値とダイジェストは比べていません。
+shell.signature.result.pdf-whole	署名の対象範囲がファイル全体に及んでいます
+shell.signature.result.pdf-later	署名の後でファイルに追記されています（版 {revision}、変更されたオブジェクト {count} 件）
+shell.signature.result.pdf-invalid	署名の対象範囲の指定が不正か、ファイルに合っていません
+shell.signature.report.ofd-algorithms	　アルゴリズム：署名 {sig}、ダイジェスト {check}
+toolbar.scene.doc.none	選択なし
+toolbar.scene.doc.table	表
+toolbar.scene.doc.image	画像
+toolbar.scene.sheet.cell	セル
+toolbar.scene.slide.none	選択なし
+toolbar.scene.slide.shape	図形
+toolbar.scene.slide.image	画像
+toolbar.scene.slide.video	動画
+toolbar.scene.slide.line	線
+toolbar.scene.slide.table	表
+settings.document	ドキュメント
+settings.presentation	プレゼンテーション
+settings.toolbar	ツールバー
+settings.toolbar.note	選んだ形式のツールバーに置くボタンを、場面ごとに選び、並べ替えます。
+settings.toolbar.customize	ツールバーのカスタマイズ
+settings.toolbar.default	既定のまま
+settings.toolbar.customized	カスタマイズ済み
+toolbar.customize.context	編集する場面
+toolbar.customize.font-size	フォント サイズ
+toolbar.customize.commands	コマンド
+toolbar.customize.search	コマンドを検索
+toolbar.customize.count	{n} 件
+toolbar.customize.order	ツールバーの並び
+toolbar.customize.add-separator	区切り線を追加
+toolbar.customize.separator	区切り線
+toolbar.customize.reset	既定に戻す
+toolbar.customize.reset-scene	この場面を既定に戻す
+toolbar.customize.reset-all	すべての場面を既定に戻す
+toolbar.customize.undo	元に戻す
+toolbar.customize.redo	やり直し
+toolbar.customize.add	追加
+toolbar.customize.remove	削除
+toolbar.customize.added	追加済み
+toolbar.customize.hide-added	追加済みを隠す
+toolbar.customize.preview	プレビュー
+toolbar.customize.changed	変更あり
+toolbar.customize.empty	左の一覧からコマンドを追加します。
+toolbar.customize.no-hit	「{q}」に合うコマンドはありません。
+toolbar.customize.menu-button	サブメニューを開くメニュー ボタン（▼）として置きます
+toolbar.customize.toolbar-buttons	ツールバーのボタン
+toolbar.customize.unknown-default	この場面の既定の並びは、その状態の文書を開くと分かります。
+toolbar.customize.popular	よく使うコマンド
+toolbar.customize.set.align-h	左右の配置（左・中央・右と ▼）
+toolbar.customize.set.align-v	上下の配置（上・中央・下と ▼）
+toolbar.customize.all-scenes	すべての場面に追加
+settings.qat.customize	クイック アクセス ツール バーのカスタマイズ
+review.accessibility-check	アクセシビリティ チェック…
+review.compatibility-check	互換性チェック…
+edit.go-to	ジャンプ…
+page.paper-a3	A3 (297 x 420 mm)
+page.paper-a4	A4 (210 x 297 mm)
+page.paper-b5	B5 (182 x 257 mm)
+arrange.send-to-back	最背面へ移動
+arrange.send-backward	背面へ移動
+arrange.bring-forward	前面へ移動
+arrange.bring-to-front	最前面へ移動
+insert.signature-line	署名欄…
+table.banded-columns	縞模様 (列)
+table.first-column	最初の列
+table.header-row	タイトル行
+table.last-column	最後の列
+table.total-row	集計行
+table.banded-rows	縞模様 (行)
+view.side-by-side	並べて比較
+arrange.align-bottom	下揃え
+arrange.align-center	左右中央揃え
+arrange.align-left	左揃え
+arrange.align-middle	上下中央揃え
+arrange.align-right	右揃え
+arrange.align-top	上揃え
+shell.pdf.signatures	署名: {count}件
+shell.pdf.signatures-mismatch	署名: {count}件（改ざん・不一致あり）
+shell.pdf.signatures-verified	署名: {count}件（SM3・SM2 で検証済み）
+shell.pdf.signatures-digests	署名: {count}件（SM3 ダイジェスト一致）
+window.open-pdf-in-preview	プレビューで開く
+window.open-pdf-in-edge	Microsoft Edge で開く
+shell.pdf.page-number	ページ番号
+shell.pdf.page-of	/ {total}
+shell.pdf.go	移動
+file.new-document	新しい文書
+file.new-workbook	新しいスプレッドシート
+file.new-presentation	新しいプレゼンテーション
+file.close-window	ウィンドウを閉じる
+window.minimize	しまう
+app.services	サービス
+app.hide	ibisOffice を隠す
+file.copy-download	コピーの保存（ダウンロード）

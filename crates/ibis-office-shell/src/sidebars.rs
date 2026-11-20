@@ -16,7 +16,7 @@
 //!
 //! `panels` are the names of the panel functions of the screen's pane chain (`fn sidebar` of the screen) that show the pane: the
 //! test `sidebars_cover_pane_chain` reads the chains' source and fails for a resident panel that no definition names.
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 use crate::chrome::{Handler, MenuEntry, MenuItem};
 use crate::commands::CommandRegistry;

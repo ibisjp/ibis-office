@@ -35,6 +35,12 @@ impl SlideEditor {
         with_format!(self, used_fonts(self))
     }
 
+    /// The text of the open file; `None` when the screen cannot say (every block of a font is then taken).
+    #[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
+    pub fn used_text(&self) -> Option<String> {
+        with_format!(self, used_text(self))
+    }
+
     /// `target` replaced by `replacement` in the whole file; how many places (runs, cells, text bodies) changed.
     pub(crate) fn replace_fonts_in_file(&mut self, target: &str, replacement: &str, cx: &mut Context<Self>) -> usize {
         with_format!(self, replace_fonts(self, target, replacement, cx))
@@ -275,6 +281,33 @@ pub fn presentation_used_fonts(presentation: &Presentation) -> Vec<String> {
     }
 
     fonts.into_iter().collect()
+}
+
+/// The text of the shapes (and of the table cells) of the presentation: the characters the fonts have to draw.
+pub fn presentation_used_text(presentation: &Presentation) -> String {
+    let mut text = String::new();
+    let mut add = |body: &TextBody| {
+        for p in &body.paragraphs {
+            for r in &p.runs {
+                text.push_str(&r.text);
+            }
+        }
+    };
+    for slide in &presentation.slides {
+        for shape in &slide.shapes {
+            if let Some(body) = shape.text_body() {
+                add(body);
+            }
+            if let ShapeKind::Table(table) = &shape.kind {
+                for r in &table.rows {
+                    for cell in &r.cells {
+                        add(&cell.text);
+                    }
+                }
+            }
+        }
+    }
+    text
 }
 
 /// システムにインストールされておらず、プレゼンテーション内にも埋め込まれていない不足フォントを検出する。

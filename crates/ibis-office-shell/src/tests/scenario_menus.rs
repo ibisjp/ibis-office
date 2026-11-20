@@ -178,7 +178,7 @@ fn menus_xlsx_no_dead_items() {
 const PPTX_DEAD: &[&str] = &["file.export.svg", "file.language", "help.help", "help.shortcuts"];
 /// Items only a state this check does not reach connects: an animation chosen in the animation pane, a vertex selected while the edit
 /// points are on, a character format copied.
-const PPTX_STATE_ONLY: &[&str] = &["pptx.anim.options-dialog", "pptx.edit-points.smooth", "pptx.edit-points.straight", "pptx.edit-points.corner", "edit.paste-format"];
+const PPTX_STATE_ONLY: &[&str] = &["pptx.animation.options-dialog", "pptx.edit-points.smooth", "pptx.edit-points.straight", "pptx.edit-points.corner", "edit.paste-format"];
 
 fn menus_pptx_no_dead_items() {
     let mut s = Scenario::open("test/benchmark/earnings-presentation.pptx");
@@ -277,11 +277,11 @@ fn menus_pptx_no_dead_items() {
 /// reset, the PivotTable's グループ解除). What is left is only what is told apart by a heading: the animations of an
 /// effect's entrance and exit. A new pair must be told apart by its name, not listed here.
 const SAME_LABEL: &[(&str, &str)] = &[
-    ("add.pptx.anim.in.fade", "add.pptx.anim.out.fade"),
-    ("add.pptx.anim.in.wipe", "add.pptx.anim.out.wipe"),
-    ("add.pptx.anim.in.zoom", "add.pptx.anim.out.zoom"),
+    ("add.pptx.animation.in.fade", "add.pptx.animation.out.fade"),
+    ("add.pptx.animation.in.wipe", "add.pptx.animation.out.wipe"),
+    ("add.pptx.animation.in.zoom", "add.pptx.animation.out.zoom"),
     // The design's Animations menu names both the entrance class and the start timing 開始 (two submenus of two menus of the bar).
-    ("pptx.anim.entrance", "pptx.anim.start"),
+    ("pptx.animation.entrance", "pptx.animation.start"),
     // Excel's View > ウィンドウ枠の固定 > ウィンドウ枠の固定 (the design names the first line of the submenu as its parent): the old command
     // `xlsx.freeze-panes` and the layout's `xlsx.freeze-at-selection` run the same function, and the old construction lists both.
     ("xlsx.freeze-panes", "xlsx.freeze-at-selection"),

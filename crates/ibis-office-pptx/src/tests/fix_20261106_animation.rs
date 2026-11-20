@@ -36,8 +36,8 @@ fn effect_dropdown() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.size(1200., 900.);
     s.click_shape(0);
-    s.toolbar_menu("motion", "pptx.anim.in.fade");
-    s.toolbar_menu("motion", "pptx.anim.pane");
+    s.toolbar_menu("motion", "pptx.animation.in.fade");
+    s.toolbar_menu("motion", "pptx.animation.pane");
     s.update(|e, _, cx| e.open_animation_options_panel(0, cx));
     s.settle();
     s.screenshot("dialog-effect-dropdown");
@@ -61,7 +61,7 @@ fn sidebar_button() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.size(1200., 900.);
     s.click_shape(0);
-    s.toolbar_menu("motion", "pptx.anim.in.fade");
+    s.toolbar_menu("motion", "pptx.animation.in.fade");
     assert!(!s.with(|e, _| e.pptx().unwrap().animation_pane));
     s.update(|e, w, cx| e.toggle_sidebar(w, cx));
     s.settle();
@@ -90,11 +90,11 @@ fn dragged_row() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.size(1280., 720.);
     s.click_shape(0);
-    s.toolbar_menu("motion", "pptx.anim.in.fade");
-    s.toolbar_menu("motion", "add.pptx.anim.em.spin");
+    s.toolbar_menu("motion", "pptx.animation.in.fade");
+    s.toolbar_menu("motion", "add.pptx.animation.em.spin");
     s.click_shape(1);
-    s.toolbar_menu("motion", "pptx.anim.in.fly-bottom");
-    s.toolbar_menu("motion", "pptx.anim.pane");
+    s.toolbar_menu("motion", "pptx.animation.in.fly-bottom");
+    s.toolbar_menu("motion", "pptx.animation.pane");
     s.settle();
     let dnd = s.with(|e, _| e.pptx().unwrap().animation_dnd.clone());
     let b = |i: usize| dnd.row_bounds("anim-table", i).unwrap();
@@ -259,11 +259,11 @@ fn three_rows() -> Scenario {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.size(1280., 720.);
     s.click_shape(0);
-    s.toolbar_menu("motion", "pptx.anim.in.fade");
-    s.toolbar_menu("motion", "add.pptx.anim.em.spin");
+    s.toolbar_menu("motion", "pptx.animation.in.fade");
+    s.toolbar_menu("motion", "add.pptx.animation.em.spin");
     s.click_shape(1);
-    s.toolbar_menu("motion", "pptx.anim.in.fly-bottom");
-    s.toolbar_menu("motion", "pptx.anim.pane");
+    s.toolbar_menu("motion", "pptx.animation.in.fly-bottom");
+    s.toolbar_menu("motion", "pptx.animation.pane");
     s.settle();
     s
 }

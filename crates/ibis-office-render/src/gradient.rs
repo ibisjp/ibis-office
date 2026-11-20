@@ -49,7 +49,11 @@ pub fn color_at_mode(stops: &[GradientStop], t: f32, powerpoint: bool) -> Hsla {
         [((v >> 16) & 0xff) as f32 / 255.0, ((v >> 8) & 0xff) as f32 / 255.0, (v & 0xff) as f32 / 255.0, c.alpha as f32 / 255.0]
     };
     let (ca, cb) = (channels(a.color), channels(b.color));
-    let two = powerpoint && stops.len() == 2;
+    // A gradient of just two colours, or the same two mirrored (A at 0, B at 50% and A at 100%, which a two-colour gradient with its focus at the
+    // middle is: PowerPoint's PDF of 025 draws each half as a two-colour gradient, as does PowerPoint's own pptx of it): each segment eases toward
+    // the higher channel value.
+    let mirrored = stops.len() == 3 && stops[0].position == 0 && stops[1].position == 50_000 && stops[2].position == 100_000 && stops[0].color == stops[2].color;
+    let two = powerpoint && (stops.len() == 2 || mirrored);
     let mix = |i: usize| {
         let (a, b) = (ca[i], cb[i]);
         if !two {

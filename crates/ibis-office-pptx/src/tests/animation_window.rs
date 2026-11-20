@@ -30,11 +30,11 @@ fn animation_window() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.size(1280., 720.);
     s.click_shape(0);
-    s.toolbar_menu("motion", "pptx.anim.in.fade");
-    s.toolbar_menu("motion", "add.pptx.anim.em.spin");
+    s.toolbar_menu("motion", "pptx.animation.in.fade");
+    s.toolbar_menu("motion", "add.pptx.animation.em.spin");
     s.click_shape(1);
-    s.toolbar_menu("motion", "pptx.anim.in.fly-bottom");
-    s.toolbar_menu("motion", "pptx.anim.pane");
+    s.toolbar_menu("motion", "pptx.animation.in.fly-bottom");
+    s.toolbar_menu("motion", "pptx.animation.pane");
     s.settle();
     let start = order(&mut s);
     assert_eq!(start, vec![(0, C::Entrance, L::Fade), (0, C::Emphasis, L::Spin(21_600_000)), (1, C::Entrance, L::Fly(AnimationSide::Bottom))]);

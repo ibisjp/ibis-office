@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! The table styles of the テーブルのデザイン panel as small 4:3 previews: a
-//! 4 x 5 table laid out in the style (ibis_pptx::styled_with_table, which
+//! 4 x 5 table laid out in the style (ibis_formats::styled_with_table, which
 //! reads ECMA-376's presetTableStyles.xml), drawn as its fills and lines.
 
 use std::cell::RefCell;
@@ -59,7 +59,7 @@ fn preview(info: &TableStyleInfo, theme: &[(String, Rgb)]) -> Preview {
         filter: None,
         totals: Vec::new(),
     };
-    let styled = ibis_pptx::styled_with_table(&sheet, &table, theme);
+    let styled = ibis_formats::styled_with_table(&sheet, &table, theme);
     let grid: Vec<Vec<PreviewCell>> = (0..ROWS)
         .map(|row| {
             (0..COLUMNS)

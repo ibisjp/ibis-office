@@ -13,23 +13,25 @@ pub(crate) const SIDEBARS: &[SidebarDef] = &[
     // Right pane: format and objects.
     sidebar_def!("sidebar.cell-format", "sidebar.cell-format", Right, G::Object, Pane, panels: &["custom_format_panel"], cmd: Some("format.options"), open: None, start: false, available: always, key: None, toolbar: Some("sidebar")),
     sidebar_def!("sidebar.chart", "sidebar.chart", Right, G::Object, Pane, panels: &["sheet_chart_panel"], cmd: Some("xlsx.chart-format"), open: None, start: false, available: chart, key: None, toolbar: None),
-    sidebar_def!("sidebar.frame", "sidebar.frame", Right, G::Object, Pane, panels: &[], cmd: Some("xlsx.frame-settings"), open: None, start: false, available: frame, key: None, toolbar: None),
-    sidebar_def!("sidebar.table-design", "sidebar.table-design", Right, G::Object, Pane, panels: &[], cmd: Some("xlsx.table-design"), open: None, start: false, available: sheet_table, key: None, toolbar: None),
-    sidebar_def!("sidebar.pivot-fields", "sidebar.pivot-fields", Right, G::Object, Pane, panels: &[], cmd: Some("xlsx.pivot-fields"), open: None, start: false, available: pivot, key: None, toolbar: None),
+    sidebar_def!("sidebar.frame", "sidebar.frame", Right, G::Object, Pane, panels: &["sheet_frame_panel"], cmd: Some("xlsx.frame-settings"), open: None, start: false, available: frame, key: None, toolbar: None),
+    sidebar_def!("sidebar.table-design", "sidebar.table-design", Right, G::Object, Pane, panels: &["table_design_panel"], cmd: Some("xlsx.table-design"), open: None, start: false, available: sheet_table, key: None, toolbar: None),
+    sidebar_def!("sidebar.pivot-fields", "sidebar.pivot-fields", Right, G::Object, Pane, panels: &["pivot_panel"], cmd: Some("xlsx.pivot-fields"), open: None, start: false, available: pivot, key: None, toolbar: None),
     sidebar_def!("sidebar.header-footer", "sidebar.header-footer", Right, G::Object, Pane, panels: &["header_footer_edit_panel"], cmd: Some("xlsx.header-footer"), open: None, start: true, available: always, key: None, toolbar: None),
     // Right pane: the document.
-    sidebar_def!("sidebar.comments", "sidebar.comments", Right, G::Document, Pane, panels: &[], cmd: None, open: Some(open_comments), start: false, available: always, key: None, toolbar: Some("show-comments")),
+    sidebar_def!("sidebar.comments", "sidebar.comments", Right, G::Document, Pane, panels: &["threaded_comment_panel"], cmd: None, open: Some(open_comments), start: false, available: always, key: None, toolbar: Some("show-comments")),
     sidebar_def!("sidebar.find", "sidebar.find", Right, G::Document, Pane, panels: &["sheet_find_panel"], cmd: Some("edit.find-replace"), open: None, start: true, available: always, key: Some("⌘F"), toolbar: None),
-    sidebar_def!("sidebar.selection", "sidebar.selection", Right, G::Document, Pane, panels: &[], cmd: Some("xlsx.selection-pane"), open: None, start: false, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.selection", "sidebar.selection", Right, G::Document, Pane, panels: &["xlsx_selection_pane_panel"], cmd: Some("xlsx.selection-pane"), open: None, start: false, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.names", "sidebar.names", Right, G::Document, Pane, panels: &["names_panel"], cmd: Some("xlsx.named-ranges"), open: None, start: true, available: always, key: None, toolbar: None),
-    sidebar_def!("sidebar.watch", "sidebar.watch", Right, G::Document, Pane, panels: &[], cmd: Some("xlsx.watch-window"), open: None, start: false, available: always, key: None, toolbar: None),
-    sidebar_def!("sidebar.xml-source", "sidebar.xml-source", Right, G::Document, Pane, panels: &[], cmd: Some("xlsx.xml-source"), open: None, start: false, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.watch", "sidebar.watch", Right, G::Document, Pane, panels: &["watch_window_panel"], cmd: Some("xlsx.watch-window"), open: None, start: false, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.xml-source", "sidebar.xml-source", Right, G::Document, Pane, panels: &["xml_source_panel"], cmd: Some("xlsx.xml-source"), open: None, start: false, available: always, key: None, toolbar: None),
     // Right pane: review.
-    sidebar_def!("sidebar.thesaurus", "sidebar.thesaurus", Right, G::Review, Pane, panels: &[], cmd: Some("xlsx.thesaurus"), open: Some(by_format), start: true, available: always, key: None, toolbar: None),
-    sidebar_def!("sidebar.accessibility", "sidebar.accessibility", Right, G::Review, Pane, panels: &[], cmd: Some("xlsx.accessibility-check"), open: None, start: true, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.thesaurus", "sidebar.thesaurus", Right, G::Review, Pane, panels: &["sheet_thesaurus_panel"], cmd: Some("xlsx.thesaurus"), open: Some(by_format), start: true, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.accessibility", "sidebar.accessibility", Right, G::Review, Pane, panels: &["xlsx_accessibility_panel"], cmd: Some("review.accessibility-check"), open: None, start: true, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.machine-readability", "sidebar.machine-readability", Right, G::Review, Pane, panels: &["machine_readability_panel"], cmd: Some("xlsx.machine-readability-check"), open: None, start: true, available: always, key: None, toolbar: None),
     // Right pane: drawing and settings.
-    sidebar_def!("sidebar.ink", "sidebar.ink", Right, G::Tools, Pane, panels: &[], cmd: Some("xlsx.ink"), open: Some(by_format), start: false, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.ink", "sidebar.ink", Right, G::Tools, Pane, panels: &["ink_panel"], cmd: Some("xlsx.ink"), open: Some(by_format), start: false, available: always, key: None, toolbar: None),
     // Settings dialogs the pane chain shows without a dialog wrapper (their own commands open them; the menu leaves them out).
     sidebar_def!("sidebar.sort", "sidebar.sort", Right, G::Tools, Task, panels: &["sort_panel"], cmd: None, open: None, start: false, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.filter", "sidebar.filter", Right, G::Tools, Task, panels: &["filter_dialog_panel"], cmd: None, open: None, start: false, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.edit-basics", "sidebar.edit-basics", Right, G::Tools, Task, panels: &["edit_panel"], cmd: None, open: None, start: false, available: always, key: None, toolbar: None),
 ];

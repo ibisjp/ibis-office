@@ -208,7 +208,7 @@ impl SlideEditor {
         };
         let slide = self.current_slide;
         let edit = CellEdit { row, column, input };
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![edit] })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![edit] })]) {
             if let Some(p) = self.wb_mut().panels.function.as_mut() {
                 p.message = format("edit.refused", &[("error", &err)]);
             }

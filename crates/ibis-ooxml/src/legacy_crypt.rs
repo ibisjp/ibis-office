@@ -11,7 +11,7 @@
 //! - RC4 CryptoAPI ("Office 2003": an encryption header and a verifier, SHA-1, 40 to 128 bits).
 //!
 //! What the stream of a format does with the blocks (which bytes are not encrypted, how the blocks are
-//! numbered) is its own: a workbook's is in `ibis-pptx` (`xls`).
+//! numbered) is its own: a workbook's is in `ibis-formats` (`xls`).
 
 use md5::Md5;
 use sha1::{Digest, Sha1};

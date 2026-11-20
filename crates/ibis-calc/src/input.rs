@@ -32,6 +32,41 @@ pub enum InputSource {
     Imported,
 }
 
+/// A character of the full-width forms of ASCII (`！`..`～`) or the ideographic space.
+fn is_fullwidth_ascii(c: char) -> bool {
+    ('\u{FF01}'..='\u{FF5E}').contains(&c) || c == '\u{3000}'
+}
+
+/// `text` with its full-width ASCII and ideographic spaces made half-width, outside the string literals (`"..."`) of a formula,
+/// whose text is kept as it is. `None` if nothing changed.
+fn narrow_fullwidth(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut in_string = false;
+    let mut formula = false;
+    for (i, c) in text.chars().enumerate() {
+        let n = match c {
+            '\u{3000}' => ' ',
+            c if ('\u{FF01}'..='\u{FF5E}').contains(&c) => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+            c => c,
+        };
+        if i == 0 {
+            formula = n == '=';
+        }
+        if formula && in_string {
+            out.push(c);
+            if n == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if formula && n == '"' {
+            in_string = true;
+        }
+        out.push(n);
+    }
+    (out != text).then_some(out)
+}
+
 /// Read what was typed into a cell.
 pub fn parse_input(text: &str, date1904: bool) -> Typed {
     parse_input_from(text, date1904, InputSource::Typed)
@@ -45,6 +80,23 @@ pub fn parse_imported(text: &str, date1904: bool) -> Typed {
 
 /// Read `text` as Excel does for an entrance of kind `source`.
 pub fn parse_input_from(text: &str, date1904: bool, source: InputSource) -> Typed {
+    // Full-width digits, signs, `％`, `．`, `，`, `＝`…typed (not read from a file): Excel takes what they spell as a number, a
+    // date, a time or a formula, and puts it in as the half-width text (#240). Text they do not spell as one stays as it was typed.
+    if text.chars().any(is_fullwidth_ascii)
+        && let Some(narrow) = narrow_fullwidth(text)
+    {
+        // `＠ＳＵＭ（１）`: the `@` is dropped, the rest is the formula (typed).
+        if source == InputSource::Typed && let Some(f) = narrow.strip_prefix('@').filter(|f| !f.is_empty()) {
+            return Typed::Formula(f.to_string());
+        }
+        match parse_input_from(&narrow, date1904, source) {
+            Typed::Formula(f) if narrow.starts_with('=') => return Typed::Formula(f),
+            // `＋１＋２` is `=1+2`, `－１＋２` is `=-1+2` (Excel takes a leading `+` of a formula away).
+            Typed::Formula(f) if source == InputSource::Typed => return Typed::Formula(f.strip_prefix('+').map_or(f.clone(), str::to_string)),
+            Typed::Value(v @ (CellValue::Number(_) | CellValue::Bool(_)), f) => return Typed::Value(v, f),
+            _ => {}
+        }
+    }
     if let Some(f) = text.strip_prefix('=')
         && !f.is_empty()
     {
@@ -87,8 +139,10 @@ pub fn parse_input_from(text: &str, date1904: bool, source: InputSource) -> Type
         };
         return Typed::Value(CellValue::Number(n), format);
     }
-    // Dates and times.
-    if let Some(n) = parse_date_time(t, date1904) {
+    // Dates and times. `12:30PM` with no space before the AM/PM is text, as in Excel (Windows, Japanese; GitHub issue #240).
+    let upper = t.to_ascii_uppercase();
+    let glued_meridiem = (upper.ends_with("AM") || upper.ends_with("PM")) && upper.contains(':') && upper.chars().rev().nth(2).is_some_and(|c| c.is_ascii_digit());
+    if !glued_meridiem && let Some(n) = parse_date_time(t, date1904) {
         let has_time = t.contains(':') || t.to_ascii_uppercase().ends_with('M');
         let has_date = n.abs() >= 1.0 || t.contains(['/', '年', '月']);
         let parts = t.split(['/', '-']).filter(|p| !p.is_empty()).count();
@@ -123,6 +177,50 @@ pub fn parse_input_from(text: &str, date1904: bool, source: InputSource) -> Type
         return Typed::Formula(text.to_string());
     }
     Typed::Value(CellValue::Text(text.to_string()), None)
+}
+
+/// The text Excel puts in the edit box and the formula bar for a number in a
+/// cell of number format `code`, such that typing it back gives the same
+/// number: a date `2026/11/14`, a time `13:30:00`, both `2026/11/14 13:30:00`
+/// (the time alone when the serial is below 1 in the 1900 system), a
+/// percentage `12%`; any other number as typed, not as shown. A number a
+/// date cannot show (negative, 1900/1/0, past 9999/12/31) stays a number.
+pub fn number_edit_text(n: f64, code: &str, date1904: bool) -> String {
+    use crate::numfmt::{DatePart as D, Token};
+    let plain = || crate::eval::number_to_text(n);
+    let parsed = crate::numfmt::parsed(code);
+    let Some(section) = parsed.first() else { return plain() };
+    if section.invalid || !n.is_finite() {
+        return plain();
+    }
+    if section.is_date() {
+        if !(0.0..2_958_466.0).contains(&n) {
+            return plain();
+        }
+        let has_date = section.tokens.iter().any(|t| matches!(t, Token::Date(D::Year(_) | D::Month(_) | D::Day(_) | D::JaDay(_) | D::EraYear(_) | D::Era(_) | D::Buddhist(_))));
+        let has_time = section.tokens.iter().any(|t| matches!(t, Token::Date(D::Hour(_) | D::Minute(_) | D::Second(_) | D::SubSecond(_) | D::AmPm(_) | D::ElapsedHours(_) | D::ElapsedMinutes(_) | D::ElapsedSeconds(_))));
+        // Whole seconds, as Excel's edit box shows them.
+        let total = (n * 86_400.0).round() as i64;
+        let (days, secs) = (total.div_euclid(86_400), total.rem_euclid(86_400));
+        let serial = days as f64;
+        let show_date = date1904 || days >= 1;
+        let show_time = has_time || secs != 0;
+        // 1900/1/0 of a date format has no text to type back.
+        if !show_date && !(show_time && (has_time || !has_date)) {
+            return plain();
+        }
+        let date = || crate::numfmt::format_text_only(&CellValue::Number(serial), "yyyy/m/d", date1904);
+        let time = || format!("{}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60);
+        return match (show_date, show_time) {
+            (true, true) => format!("{} {}", date(), time()),
+            (true, false) => date(),
+            _ => time(),
+        };
+    }
+    if section.tokens.iter().any(|t| matches!(t, Token::Percent)) {
+        return format!("{}%", crate::eval::number_to_text(n * 100.0));
+    }
+    plain()
 }
 
 /// The order of the year, month and day in a date column of a text file
@@ -216,6 +314,72 @@ mod tests {
         }
     }
 
+    /// GitHub issue #240: what Excel (Windows, Japanese, Microsoft 365) makes of full-width text typed or pasted into a cell of General format
+    /// (tasks/doc/requests/2026-11-16-240-fullwidth-result.md, the table's inputs 0 to 37).
+    #[test]
+    fn fullwidth_input_as_excel_reads_it_issue_240() {
+        use CellValue::{Bool, Number, Text};
+        let n = |s: &str| s.to_string();
+        // (typed, the value Excel makes), for both typing and pasting.
+        let values: Vec<(&str, CellValue)> = vec![
+            ("１２３", Number(123.0)),
+            ("－１２．５", Number(-12.5)),
+            ("＋１２", Number(12.0)),
+            ("１，２３４", Number(1234.0)),
+            ("１２３４５６７８９０１２３４５６７８９", Number(1.23456789012345e18)),
+            ("１２３．", Number(123.0)),
+            ("．５", Number(0.5)),
+            ("１Ｅ３", Number(1000.0)),
+            ("１ｅ３", Number(1000.0)),
+            ("１２％", Number(0.12)),
+            ("￥１，０００", Number(1000.0)),
+            ("＄１２", Number(12.0)),
+            ("１２円", Text(n("１２円"))),
+            ("（１２）", Number(-12.0)),
+            ("(12)", Number(-12.0)),
+            ("￥1000", Number(1000.0)),
+            ("２０２６／９／３０", Number(46295.0)),
+            ("２０２６－９－３０", Number(46295.0)),
+            ("１２：３０", Number(0.520833333333333)),
+            ("１２：３０：００", Number(0.520833333333333)),
+            ("午後１：００", Text(n("午後１：００"))),
+            ("２０２６年９月３０日", Number(46295.0)),
+            ("１２：３０ＰＭ", Text(n("１２：３０ＰＭ"))),
+            ("ＡＢＣ", Text(n("ＡＢＣ"))),
+            ("１２３個", Text(n("１２３個"))),
+            ("ＴＲＵＥ", Bool(true)),
+            ("＃Ｎ／Ａ", Text(n("＃Ｎ／Ａ"))),
+            ("１２３　４５６", Text(n("１２３　４５６"))),
+            ("０１２３", Number(123.0)),
+        ];
+        for source in [InputSource::Typed, InputSource::Imported] {
+            for (typed, expected) in &values {
+                match parse_input_from(typed, false, source) {
+                    Typed::Value(v, _) => match (&v, expected) {
+                        (Number(a), Number(b)) => assert!((a - b).abs() < 1e-9 * b.abs().max(1.0), "{typed} {source:?}: {a} {b}"),
+                        _ => assert_eq!(&v, expected, "{typed} {source:?}"),
+                    },
+                    Typed::Formula(f) => panic!("{typed} {source:?}: formula {f}"),
+                }
+            }
+        }
+        // Formulas.
+        for (typed, f) in [("＝１＋２", "1+2"), ("＝ＳＵＭ（Ａ１：Ａ３）", "SUM(A1:A3)"), ("＝\"ＡＢ\"", "\"ＡＢ\"")] {
+            for source in [InputSource::Typed, InputSource::Imported] {
+                assert_eq!(parse_input_from(typed, false, source), Typed::Formula(f.to_string()), "{typed} {source:?}");
+            }
+        }
+        assert!(matches!(parse_input("＝ａ１", false), Typed::Formula(f) if f.eq_ignore_ascii_case("a1")));
+        for (typed, f) in [("＋１＋２", "1+2"), ("－１＋２", "-1+2"), ("＠ＳＵＭ（１）", "SUM(1)")] {
+            assert_eq!(parse_input(typed, false), Typed::Formula(f.to_string()), "{typed}");
+        }
+        // The number formats Excel gives.
+        assert_eq!(value("１，２３４").1, Some("#,##0"));
+        assert_eq!(value("１２％").1, Some("0%"));
+        assert_eq!(value("１Ｅ３").1, Some("0.00E+00"));
+        assert_eq!(value("２０２６年９月３０日").1, Some("yyyy\"年\"m\"月\"d\"日\""));
+    }
+
     #[test]
     fn imported_sign_led_text_stays_text() {
         for t in ["+81-90-1234-5678", "- 備考", "-----", "+HYPERLINK(\"x\")", "-x"] {
@@ -239,12 +403,60 @@ mod tests {
         assert_eq!(value("'0123"), (CellValue::Text("0123".into()), None));
         assert_eq!(value("abc"), (CellValue::Text("abc".into()), None));
         assert_eq!(value("#N/A"), (CellValue::Error(CellError::NA), None));
+        // Full-width (#240).
+        assert_eq!(value("１２３"), (CellValue::Number(123.0), None));
+        assert_eq!(value("－１２．５"), (CellValue::Number(-12.5), None));
+        assert_eq!(value("１，２３４"), (CellValue::Number(1234.0), Some("#,##0")));
+        assert_eq!(value("１２％"), (CellValue::Number(0.12), Some("0%")));
+        assert_eq!(value("￥１，０００").0, CellValue::Number(1000.0));
+        assert_eq!(parse_input("＝ａ１＋１", false), Typed::Formula("a1+1".into()));
+        assert_eq!(parse_input("＝\"ＡＢ\"", false), Typed::Formula("\"ＡＢ\"".into()));
+        assert_eq!(value("ＡＢＣ"), (CellValue::Text("ＡＢＣ".into()), None));
+        assert_eq!(value("１２３個"), (CellValue::Text("１２３個".into()), None));
+        // A paste is read as typed (Excel: the table of #240, "貼り付け" = "IME オン入力" for every input).
+        assert_eq!(parse_imported("１２３", false), Typed::Value(CellValue::Number(123.0), None));
         assert_eq!(value("1e3"), (CellValue::Number(1000.0), Some("0.00E+00")));
         assert_eq!(value("1234567890123456"), (CellValue::Number(1234567890123450.0), None));
         assert_eq!(value("'1234567890123456"), (CellValue::Text("1234567890123456".into()), None));
         assert_eq!(value("1234567890123456789"), (CellValue::Number(1234567890123450000.0), None));
         assert_eq!(parse_input("-12:00", true), Typed::Value(CellValue::Number(-0.5), Some("[h]:mm")));
         assert_eq!(parse_input("-1904/01/02", true), Typed::Value(CellValue::Number(-1.0), Some("yyyy/m/d")));
+    }
+
+    /// #199: the edit text of a date, time, date-time or percentage cell is what Excel shows, and typing it back gives the same number.
+    #[test]
+    fn issue199_edit_text_round_trips() {
+        let cases: &[(f64, &str, bool, &str)] = &[
+            (46340.0, "yyyy/m/d", false, "2026/11/14"),
+            (46340.0, "yyyy\"年\"m\"月\"d\"日\"", false, "2026/11/14"),
+            (46340.0, "m/d", false, "2026/11/14"),
+            (0.5625, "h:mm", false, "13:30:00"),
+            (0.5625, "h:mm AM/PM", false, "13:30:00"),
+            (46340.5625, "yyyy/m/d h:mm", false, "2026/11/14 13:30:00"),
+            (46340.5625, "yyyy/m/d", false, "2026/11/14 13:30:00"),
+            (1.5, "h:mm", false, "1900/1/1 12:00:00"),
+            (1.0, "yyyy/m/d", false, "1900/1/1"),
+            (0.0, "yyyy/m/d", false, "0"),
+            (0.5, "yyyy/m/d", false, "0.5"),
+            (-1.0, "yyyy/m/d", false, "-1"),
+            (3000000.0, "yyyy/m/d", false, "3000000"),
+            (0.0, "yyyy/m/d", true, "1904/1/1"),
+            (0.5, "h:mm", true, "1904/1/1 12:00:00"),
+            (45000.0, "yyyy/m/d", true, "2027/3/16"),
+            (0.12, "0%", false, "12%"),
+            (0.123456, "0.00%", false, "12.3456%"),
+            (0.07, "0%", false, "7%"),
+            (1234.5, "#,##0.00", false, "1234.5"),
+            (12.0, "General", false, "12"),
+        ];
+        for &(n, code, d1904, want) in cases {
+            let got = number_edit_text(n, code, d1904);
+            assert_eq!(got, want, "{n} {code} 1904={d1904}");
+            match parse_input(&got, d1904) {
+                Typed::Value(CellValue::Number(back), _) => assert!((back - n).abs() < 1e-9, "{got} -> {back}, was {n}"),
+                other => panic!("{got}: {other:?}"),
+            }
+        }
     }
 
     #[test]

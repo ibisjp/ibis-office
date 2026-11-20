@@ -32,7 +32,7 @@ pub(crate) const CANDIDATES: &[&str] = &[
     "xlsx.insert-table",
     "xlsx.insert-picture",
     "xlsx.pivot-insert",
-    "xlsx.slicer-insert",
+    "xlsx.insert-slicer",
     "xlsx.fill-down",
     "xlsx.freeze",
     "xlsx.gridlines",
@@ -50,10 +50,10 @@ pub(crate) const CANDIDATES: &[&str] = &[
     "docx.track.record",
     "docx.track.accept",
     "docx.track.reject",
-    "docx.accessibility-check",
+    "review.accessibility-check",
     "docx.read-aloud",
     "docx.inspect-document",
-    "docx.compatibility-check",
+    "review.compatibility-check",
     "docx.print-settings",
     "docx.file.convert-format",
     "pptx.new-slide",
@@ -61,14 +61,14 @@ pub(crate) const CANDIDATES: &[&str] = &[
     "pptx.delete-slide",
     "pptx.selection-pane",
     "pptx.reading-order",
-    "pptx.check-accessibility",
+    "review.accessibility-check",
     "pptx.inspect-document",
     "pptx.3d-model",
     "pptx.record-preview",
     "pptx.screen-reader",
 ];
 
-const KEY: &str = "qat";
+const KEY: &str = "app.quick-access-toolbar";
 
 thread_local! {
     static CACHE: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
@@ -78,7 +78,7 @@ thread_local! {
 pub fn commands() -> Vec<String> {
     CACHE.with(|c| {
         c.borrow_mut()
-            .get_or_insert_with(|| settings::get(KEY).unwrap_or_default().split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect())
+            .get_or_insert_with(|| settings::get(KEY).unwrap_or_default().split(',').map(str::trim).filter(|s| !s.is_empty()).map(|id| crate::menu_id_migration::current(id).into_owned()).collect())
             .clone()
     })
 }

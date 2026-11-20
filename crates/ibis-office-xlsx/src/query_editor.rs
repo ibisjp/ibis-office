@@ -179,7 +179,7 @@ impl SlideEditor {
             ed.side = Side::Code;
             let mut q = ed.query.clone();
             q.name = ed.name.read(cx).value().to_string();
-            let code = query::query_to_m(&q);
+            let code = query::query_to_m_named(&q, &|id| crate::shell::i18n::text(&format!("query.step-name.{id}")).to_string());
             ed.code.update(cx, |i, cx| i.set_value(code, window, cx));
         }
         cx.notify();
@@ -192,7 +192,10 @@ impl SlideEditor {
         let code = ed.code.read(cx).value().to_string();
         let mut base = ed.query.clone();
         base.name = ed.name.read(cx).value().to_string();
-        let result = query::m_to_query(&code, &base).map_err(|e| crate::shell::i18n::format(&format!("query.code-error.{}", e.key), &[("detail", &e.detail)]));
+        let result = query::m_to_query(&code, &base).map_err(|e| {
+            let message = crate::shell::i18n::format(&format!("query.code-error.{}", e.key), &[("detail", &e.detail)]);
+            if e.line > 0 { crate::shell::i18n::format("query.code-error.at-line", &[("line", &e.line.to_string()), ("message", &message)]) } else { message }
+        });
         let result = result.and_then(|q| match query::read_source(self.presentation(), &q.source) {
             Ok(table) => Ok((q, table)),
             Err(e) => Err(crate::shell::i18n::format("query.code-source-failed", &[("error", &e)])),
@@ -206,6 +209,12 @@ impl SlideEditor {
                     ed.message = crate::shell::i18n::text("query.code-applied").to_string();
                 }
                 self.query_recompute();
+                // Code the interpreter cannot run (a function it does not have yet, an error the code raises) is told at once, with its line.
+                if let Some(ed) = self.query_editor_mut()
+                    && let Some((bad, e)) = ed.error.clone()
+                {
+                    ed.message = crate::shell::i18n::format("query.step-failed", &[("step", &(bad + 1)), ("error", &run_error_text(&e))]);
+                }
                 let steps = self.sheet_state().and_then(|s| s.panels.query_editor.as_ref()).map_or(0, |q| q.query.steps.len());
                 self.query_show(steps);
             }
@@ -266,19 +275,45 @@ impl SlideEditor {
             }
             None => {
                 let at = ed.selected.min(ed.query.steps.len());
-                ed.query.steps.insert(at, step);
-                at + 1
+                match (&step, at.checked_sub(1).and_then(|k| ed.query.steps.get_mut(k))) {
+                    // Sorting right after a sort adds the keys to that step, as Excel does (the second column the second key).
+                    (Step::Sort(more), Some(Step::Sort(keys))) => {
+                        for (column, ascending) in more {
+                            match keys.iter_mut().find(|(c, _)| c == column) {
+                                Some(key) => key.1 = *ascending,
+                                None => keys.push((column.clone(), *ascending)),
+                            }
+                        }
+                        at
+                    }
+                    _ => {
+                        ed.query.steps.insert(at, step);
+                        at + 1
+                    }
+                }
             }
         };
         ed.form = None;
         ed.message.clear();
         self.query_recompute();
+        // Excel names the columns a split makes in the call: as many as the table has after it.
+        if let Some(ed) = self.query_editor_mut()
+            && let Some(k) = at.checked_sub(1)
+            && let Some(Step::SplitColumn { columns, .. }) = ed.query.steps.get(k)
+            && *columns == 0
+            && let (Some(before), Some(after)) = (ed.results.get(k), ed.results.get(k + 1))
+        {
+            let made = (after.columns.len() + 1).saturating_sub(before.columns.len()).max(1);
+            if let Some(Step::SplitColumn { columns, .. }) = ed.query.steps.get_mut(k) {
+                *columns = made;
+            }
+        }
         // Shown: the step itself, or the last that worked.
         self.query_show(at);
         if let Some(ed) = self.query_editor_mut()
             && let Some((bad, e)) = ed.error.clone()
         {
-            ed.message = crate::shell::i18n::format("query.step-failed", &[("step", &(bad + 1)), ("error", &e)]);
+            ed.message = crate::shell::i18n::format("query.step-failed", &[("step", &(bad + 1)), ("error", &run_error_text(&e))]);
         }
         cx.notify();
     }
@@ -378,7 +413,7 @@ impl SlideEditor {
         let _ = window;
         let Some(ed) = self.sheet_state().and_then(|s| s.panels.query_editor.as_ref()) else { return };
         if let Some((bad, e)) = ed.error.clone() {
-            let text = crate::shell::i18n::format("query.step-failed", &[("step", &(bad + 1)), ("error", &e)]);
+            let text = crate::shell::i18n::format("query.step-failed", &[("step", &(bad + 1)), ("error", &run_error_text(&e))]);
             if let Some(ed) = self.query_editor_mut() {
                 ed.message = text;
             }
@@ -399,7 +434,7 @@ impl SlideEditor {
             queries.retain(|q| q.name != old_name);
         }
         commands.push(Command::Sheet(SheetCommand::SetQueries { queries, parameters }));
-        commands.push(Command::Sheet(SheetCommand::LoadQuery { slide, query, table }));
+        commands.push(Command::Sheet(SheetCommand::LoadQuery { sheet: slide, query, table }));
         if let Err(e) = self.document.execute(commands) {
             self.set_status(e.to_string(), cx);
             return;
@@ -459,7 +494,7 @@ impl SlideEditor {
         };
         let rows = table.rows.len();
         let slide = self.current_slide;
-        if let Err(e) = self.document.execute(vec![Command::Sheet(SheetCommand::LoadQuery { slide, query: query.clone(), table })]) {
+        if let Err(e) = self.document.execute(vec![Command::Sheet(SheetCommand::LoadQuery { sheet: slide, query: query.clone(), table })]) {
             return self.queries_message(e.to_string(), cx);
         }
         self.queries_message(crate::shell::i18n::format("query.refreshed", &[("name", &query.name), ("rows", &rows)]), cx);
@@ -493,6 +528,7 @@ impl SlideEditor {
                 Source::Blank => crate::shell::i18n::text("query.source-blank").to_string(),
                 Source::Table(t) => t.clone(),
                 Source::Range { sheet, range } => format!("{sheet}!{range}"),
+                Source::Csv { path, .. } | Source::Workbook { path, .. } => path.clone(),
             };
             body = body
                 .child(div().font_weight(FontWeight::BOLD).child(SharedString::from(q.name.clone())))
@@ -861,5 +897,22 @@ fn type_mark(ty: query::QType) -> &'static str {
         query::QType::DateTime => "📅",
         query::QType::Time => "⏱",
         query::QType::Logical => "T/F",
+        query::QType::Currency => "$",
+        query::QType::Percentage => "%",
+        query::QType::Int32 => "123",
+        query::QType::DateTimeZone => "📅",
+        query::QType::Duration => "⏱",
+    }
+}
+
+/// A run error as the screen tells it: what a code step of M reports is a key and values (`parse_run_error`), told in the screen's
+/// language (`query.m-error.<key>`, "N 行目：List.Accumulate にはまだ対応していません"); any other message is as it is.
+pub(crate) fn run_error_text(message: &str) -> String {
+    match query::parse_run_error(message) {
+        Some((key, args)) => {
+            let args: Vec<(&str, &dyn std::fmt::Display)> = args.iter().map(|(n, v)| (n.as_str(), v as &dyn std::fmt::Display)).collect();
+            crate::shell::i18n::format(&format!("query.m-error.{key}"), &args)
+        }
+        None => message.to_string(),
     }
 }

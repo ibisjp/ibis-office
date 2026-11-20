@@ -99,7 +99,7 @@ impl SlideEditor {
             return;
         }
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::EditSlicer { slide, shape, slicer })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::EditSlicer { sheet: slide, shape, slicer })]) {
             self.status = Some(format("edit.refused", &[("error", &err)]).into());
             return cx.notify();
         }
@@ -185,7 +185,7 @@ impl SlideEditor {
             *pivots = connected;
         }
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::EditSlicer { slide, shape, slicer: slicer.clone() })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::EditSlicer { sheet: slide, shape, slicer: slicer.clone() })]) {
             if let Some(p) = self.wb_mut().panels.slicer_settings.as_mut() {
                 p.message = format("edit.refused", &[("error", &err)]);
             }

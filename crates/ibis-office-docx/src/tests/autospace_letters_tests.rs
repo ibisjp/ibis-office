@@ -9,7 +9,10 @@ use crate::shell::scenario::Scenario;
 use crate::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
-    vec![("docx::autospace_is_between_japanese_and_the_letters_of_word", autospace_is_between_japanese_and_the_letters_of_word)]
+    vec![
+        ("docx::autospace_is_between_japanese_and_the_letters_of_word", autospace_is_between_japanese_and_the_letters_of_word as fn()),
+        ("docx::autospace_is_a_quarter_of_the_scaled_em", autospace_is_a_quarter_of_the_scaled_em),
+    ]
 }
 
 /// The space before and after the character `x` in each of the three places `test/editing/autospace-letters.docx` has it
@@ -66,4 +69,29 @@ fn autospace_is_between_japanese_and_the_letters_of_word() {
         near(place.1, quarter(place.0), "U+FF71 after a Latin letter or digit");
         near(place.2, quarter(place.0), "U+FF71 before a Latin letter or digit");
     }
+}
+
+/// 「あ1あ」 of ＭＳ 明朝 11 pt at 100% and at 80% (`test/editing/autospace-scaled.docx`): the quarter em after the digit is of the size the character is set at,
+/// 2.75 pt, and 2.2 pt at 80% (Word's XPS of corpus 016, Meiryo 11 pt at 80%: 2.16 pt between 「1」 and the kanji, 8.8 pt the character's width).
+fn autospace_is_a_quarter_of_the_scaled_em() {
+    let mut s = Scenario::open("test/editing/autospace-scaled.docx");
+    // Each paragraph's line: the distance from the digit to the kana after it (the digit's own width and the quarter em).
+    let widths: Vec<f32> = s.with(|e, _| {
+        let pages = super::flow_layout::pages(e.flow().expect("a document"), &e.resources);
+        let mut out = Vec::new();
+        for it in pages.pages.iter().flat_map(|p| p.items.iter()) {
+            if let Item::Line { stops, .. } = it {
+                if stops.len() >= 3 {
+                    out.push(stops[2].1 - stops[1].1);
+                }
+            }
+        }
+        out
+    });
+    assert_eq!(widths.len(), 2, "two lines: {widths:?}");
+    // The digit's width is the same share of the em at 100% and at 80%: the difference of the two is 0.2 of 5.5 plus the quarters' difference 0.55 pt.
+    let (full, scaled) = (widths[0], widths[1]);
+    let quarter_full = 11.0 / 4.0;
+    let digit = full - quarter_full;
+    assert!(((scaled - digit * 0.8) - 2.2).abs() < 0.05, "the quarter em at 80% is 2.2 pt: {full:.2} {scaled:.2}");
 }

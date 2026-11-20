@@ -21,7 +21,7 @@ fn center(b:Bounds<Pixels>)->(f32,f32){(f32::from(b.center().x),f32::from(b.cent
 fn recent_remove(){
     let _probe=buttons::Probe::new();let mut s=Scenario::start_view();
     let keep=s.screenshot_path("history-keep").with_extension("docx");let remove=s.screenshot_path("history-remove").with_extension("docx");let missing=s.screenshot_path("history-missing").with_extension("docx");
-    let bytes=ibis_pptx::blank_file(ibis_pptx::Kind::Document).unwrap();std::fs::write(&keep,&bytes).unwrap();std::fs::write(&remove,&bytes).unwrap();
+    let bytes=ibis_formats::blank_file(ibis_formats::Kind::Document).unwrap();std::fs::write(&keep,&bytes).unwrap();std::fs::write(&remove,&bytes).unwrap();
     s.update(|e,_,cx|{e.recent_files=crate::shell::recent_files::add(&keep);e.recent_files=crate::shell::recent_files::add(&remove);cx.notify();});
     let b=buttons::bounds("row-actions-0").unwrap();s.hover(center(b));let shot=s.screenshot("recent-hover");let image=image::open(shot).unwrap().to_rgba8();let viewport=s.update(|_,w,_|f32::from(w.viewport_size().width));let scale=image.width()as f32/viewport;
     let mut ink=0;for y in (f32::from(b.origin.y)*scale)as u32..(f32::from(b.bottom())*scale)as u32{for x in (f32::from(b.origin.x)*scale)as u32..(f32::from(b.right())*scale)as u32{let p=image.get_pixel(x,y);if p[0]<100&&p[1]<100&&p[2]<100{ink+=1;}}}assert!(ink>5,"the overflow dots must be visible");buttons::click(&mut s,"row-actions-0");
@@ -35,7 +35,7 @@ fn recent_remove(){
 fn recent_missing_alert(){
     let _probe=buttons::Probe::new();let mut s=Scenario::start_view();
     let good=s.screenshot_path("recent-good").with_extension("docx");let gone=s.screenshot_path("recent-gone").with_extension("docx");let broken=s.screenshot_path("recent-broken").with_extension("docx");
-    std::fs::write(&good,ibis_pptx::blank_file(ibis_pptx::Kind::Document).unwrap()).unwrap();std::fs::write(&broken,b"locked").unwrap();{use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&broken,std::fs::Permissions::from_mode(0)).unwrap();}let _=std::fs::remove_file(&gone);
+    std::fs::write(&good,ibis_formats::blank_file(ibis_formats::Kind::Document).unwrap()).unwrap();std::fs::write(&broken,b"locked").unwrap();{use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&broken,std::fs::Permissions::from_mode(0)).unwrap();}let _=std::fs::remove_file(&gone);
     s.update(|e,_,cx|{e.recent_files=vec![good.clone(),gone.clone(),broken.clone()];e.recent_exists.clear();cx.notify();});
     s.wait(300);s.settle();
     assert_eq!(s.with(|e,_|e.recent_exists.get(&gone).copied()),Some(false),"the missing file is found once");
@@ -60,7 +60,7 @@ fn recent_missing_alert(){
 fn logos(){
     let _probe=buttons::Probe::new();let mut s=Scenario::start_view();s.size(1200.,800.);let b=buttons::bounds("start-app-logo").unwrap();assert!(f32::from(b.size.height)>80.);s.screenshot("start-logo");
     s.size(760.,800.);let b=buttons::bounds("start-app-logo").unwrap();assert!((f32::from(b.size.width)/f32::from(b.size.height)-crate::shell::chrome::LOGO_ASPECT).abs()<0.1);s.screenshot("start-logo-narrow");
-    for (kind,name)in [(ibis_pptx::Kind::Document,"docx"),(ibis_pptx::Kind::Workbook,"xlsx"),(ibis_pptx::Kind::Presentation,"pptx")]{
+    for (kind,name)in [(ibis_formats::Kind::Document,"docx"),(ibis_formats::Kind::Workbook,"xlsx"),(ibis_formats::Kind::Presentation,"pptx")]{
         s.update(|e,w,cx|e.new_file(kind,w,cx));s.size(1200.,800.);assert!(buttons::bounds("editor-app-logo").is_some());s.screenshot(&format!("{name}-logo"));buttons::clear();s.size(400.,800.);assert!(buttons::bounds("editor-app-logo").is_none(),"narrow {name}");s.screenshot(&format!("{name}-logo-hidden"));buttons::clear();s.size(1200.,800.);assert!(buttons::bounds("editor-app-logo").is_some());
     }
 }
@@ -68,14 +68,14 @@ struct Capture;
 impl Drop for Capture{fn drop(&mut self){crate::shell::links::CAPTURE_URLS.with(|s|*s.borrow_mut()=None);}}
 fn control_click(){
     crate::shell::links::CAPTURE_URLS.with(|s|*s.borrow_mut()=Some(Vec::new()));let _capture=Capture;
-    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Document,w,cx));s.type_text("Follow this link");let(p,_) = s.paragraph(0);
+    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_formats::Kind::Document,w,cx));s.type_text("Follow this link");let(p,_) = s.paragraph(0);
     s.update(|e,_,cx|{e.set_caret(FlowPos::new(p,0),false,cx);e.set_caret(FlowPos::new(p,16),true,cx);e.set_link("https://example.com/issue59",cx);e.set_caret(FlowPos::new(p,0),false,cx);});
     let at=s.update(|e,_,_|{let lines=e.flow_lines();let(page,x,y,h)=e.caret_box(&lines,FlowPos::new(p,2)).unwrap();let(o,k)=e.page_origin(page).unwrap();(f32::from(o.x)+x*k+1.,f32::from(o.y)+(y+h/2.)*k)});
     for modifiers in [Modifiers{control:true,..Default::default()},Modifiers{platform:true,..Default::default()}]{s.dispatch_click_with(at,modifiers);assert_eq!(crate::shell::links::CAPTURE_URLS.with(|s|s.borrow().as_ref().unwrap().last().cloned()),Some("https://example.com/issue59".into()));}
     s.screenshot("control-click-hyperlink");
 }
 fn vertical(){
-    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Document,w,cx));
+    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_formats::Kind::Document,w,cx));
     s.type_text("あ。あ、あ（）〔〕［］｛｝〈〉《》「」『』【】ー～“”‘’㌢㍍㌘㍑"); // i18n-ok: Japanese document fixture content, not UI labels.
     s.menu("docx.page.direction.vertical");let(p,_) = s.paragraph(0);
     let steps=s.with(|e,_|{let lines=e.flow_lines();(0..5).map(|i|e.caret_box(&lines,FlowPos::new(p,i)).unwrap().2).collect::<Vec<_>>()});let cell=steps[1]-steps[0];assert!(cell>0.);assert!(((steps[2]-steps[1])-cell).abs()<0.5);assert!(((steps[4]-steps[3])-cell).abs()<0.5);
@@ -87,14 +87,14 @@ fn vertical(){
 // ⌃D is the text editing key (delete forward) on a Mac, so duplicating is ⌘D there.
 const DUPLICATE_KEY:&str=if cfg!(target_os="macos"){"cmd-d"}else{"ctrl-d"};
 fn shortcuts(){
-    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Presentation,w,cx));let before=s.with(|e,_|e.presentation().slides.len());s.key("ctrl-m");assert_eq!(s.with(|e,_|e.presentation().slides.len()),before+1);s.key(DUPLICATE_KEY);assert_eq!(s.with(|e,_|e.presentation().slides.len()),before+2);
-    s.update(|e,_,cx|{let id=e.document.ids().new_shape_id();let shape=ibis_doc_model::Shape::text_box(id,ibis_doc_model::EmuRect::new(0,0,2000000,1000000),"Duplicate shape");let index=e.slide().shapes.len();e.run(vec![ibis_doc_model::Command::InsertShape{slide:e.current_slide,index,shape}],cx);e.set_selection(vec![id]);});
+    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_formats::Kind::Presentation,w,cx));let before=s.with(|e,_|e.presentation().slides.len());s.key("ctrl-m");assert_eq!(s.with(|e,_|e.presentation().slides.len()),before+1);s.key(DUPLICATE_KEY);assert_eq!(s.with(|e,_|e.presentation().slides.len()),before+2);
+    s.update(|e,_,cx|{let id=e.document.ids().new_shape_id();let shape=ibis_doc_model::Shape::text_box(id,ibis_doc_model::EmuRect::new(0,0,2000000,1000000),"Duplicate shape");let index=e.slide().shapes.len();e.run(vec![ibis_doc_model::Command::InsertShape { slide: e.current_slide, shapes: vec![(index, shape)] }],cx);e.set_selection(vec![id]);});
     let count=s.with(|e,_|e.slide().shapes.len());s.key(DUPLICATE_KEY);assert_eq!(s.with(|e,_|e.slide().shapes.len()),count+1);s.key("cmd-z");assert_eq!(s.with(|e,_|e.slide().shapes.len()),count);s.screenshot("slide-shortcuts");
 }
 
 fn glow_outline(){
     use ibis_doc_model::{Color,EmuRect,Rgb,Shape};
-    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Presentation,w,cx));
+    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_formats::Kind::Presentation,w,cx));
     let p=s.with(|e,_|e.presentation().clone());let mut right_edges=Vec::new();let mut pixels_per_point=0.;
     for width in [0,8*12700] {
         let mut shape=Shape::text_box(ibis_doc_model::ShapeId(9999),EmuRect::new(0,0,4000000,2000000),"O");let body=shape.text_body_mut().unwrap();body.style.font_size=7200;body.style.font=Some("Arial".into());for run in body.paragraphs.iter_mut().flat_map(|p|&mut p.runs){run.style.font_size=Some(7200);run.style.outline=(width>0).then_some((Color::opaque(Rgb(0)),width));run.style.glow=Some((Color::opaque(Rgb(0xff0000)),4*12700));}
@@ -112,7 +112,7 @@ fn glow_outline(){
 fn glow_91(){
     use ibis_doc_model::{Color,EmuRect,Rgb,Shape};
     for r in [10.0_f32,20.0,40.0,80.0]{let(spread,blur)=crate::render::shape_view::glow_spread_blur(r);assert!((spread-r/2.).abs()<1e-4&&(blur-r/6.).abs()<1e-4,"glow of {r}: {spread} {blur}");}
-    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Presentation,w,cx));
+    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_formats::Kind::Presentation,w,cx));
     let p=s.with(|e,_|e.presentation().clone());let mut gaps=Vec::new();
     for width in [0,8*12700]{
         let mut shape=Shape::text_box(ibis_doc_model::ShapeId(9999),EmuRect::new(0,0,4000000,2000000),"O");let body=shape.text_body_mut().unwrap();body.style.font_size=7200;body.style.font=Some("Arial".into());for run in body.paragraphs.iter_mut().flat_map(|p|&mut p.runs){run.style.font_size=Some(7200);run.style.outline=Some((Color::opaque(Rgb(0)),width.max(1)));run.style.glow=Some((Color::opaque(Rgb(0xff0000)),4*12700));if width==0{run.style.outline=None;}}
@@ -130,7 +130,7 @@ fn glow_91(){
 /// `tasks/doc/glow-measurements-20261106.md`) within 5 % (and a pixel). The PNGs are written to `target/glow91/` to look at.
 fn glow_smooth(){
     use ibis_doc_model::{Color,EmuRect,Rgb,Shape};
-    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_pptx::Kind::Presentation,w,cx));
+    let mut s=Scenario::start_view();s.update(|e,w,cx|e.new_file(ibis_formats::Kind::Presentation,w,cx));
     let p=s.with(|e,_|e.presentation().clone());
     // (size pt, rad pt, d50, d10, d02 in pt): rows of the measurement table.
     let measured:[(u32,i64,f32,f32,f32);9]=[(12,10,1.250,1.864,2.225),(24,5,1.125,1.629,1.910),(24,30,6.250,9.156,10.925),(44,10,3.000,4.500,5.425),(72,5,2.250,3.289,3.931),(72,30,12.958,19.250,22.800),(130,5,3.169,4.725,5.675),(130,10,6.875,10.031,11.925),(130,30,20.094,29.500,34.925)];

@@ -175,11 +175,11 @@ pub(crate) fn document_paragraph_styles(doc: &ibis_doc_model::FlowDocument) -> V
 
 /// The menu ids of the cross-references offered (one per caption).
 const XREF_IDS: [&str; 50] = [
-    "docx.xref.1", "docx.xref.2", "docx.xref.3", "docx.xref.4", "docx.xref.5", "docx.xref.6", "docx.xref.7", "docx.xref.8", "docx.xref.9", "docx.xref.10",
-    "docx.xref.11", "docx.xref.12", "docx.xref.13", "docx.xref.14", "docx.xref.15", "docx.xref.16", "docx.xref.17", "docx.xref.18", "docx.xref.19", "docx.xref.20",
-    "docx.xref.21", "docx.xref.22", "docx.xref.23", "docx.xref.24", "docx.xref.25", "docx.xref.26", "docx.xref.27", "docx.xref.28", "docx.xref.29", "docx.xref.30",
-    "docx.xref.31", "docx.xref.32", "docx.xref.33", "docx.xref.34", "docx.xref.35", "docx.xref.36", "docx.xref.37", "docx.xref.38", "docx.xref.39", "docx.xref.40",
-    "docx.xref.41", "docx.xref.42", "docx.xref.43", "docx.xref.44", "docx.xref.45", "docx.xref.46", "docx.xref.47", "docx.xref.48", "docx.xref.49", "docx.xref.50",
+    "docx.cross-reference.1", "docx.cross-reference.2", "docx.cross-reference.3", "docx.cross-reference.4", "docx.cross-reference.5", "docx.cross-reference.6", "docx.cross-reference.7", "docx.cross-reference.8", "docx.cross-reference.9", "docx.cross-reference.10",
+    "docx.cross-reference.11", "docx.cross-reference.12", "docx.cross-reference.13", "docx.cross-reference.14", "docx.cross-reference.15", "docx.cross-reference.16", "docx.cross-reference.17", "docx.cross-reference.18", "docx.cross-reference.19", "docx.cross-reference.20",
+    "docx.cross-reference.21", "docx.cross-reference.22", "docx.cross-reference.23", "docx.cross-reference.24", "docx.cross-reference.25", "docx.cross-reference.26", "docx.cross-reference.27", "docx.cross-reference.28", "docx.cross-reference.29", "docx.cross-reference.30",
+    "docx.cross-reference.31", "docx.cross-reference.32", "docx.cross-reference.33", "docx.cross-reference.34", "docx.cross-reference.35", "docx.cross-reference.36", "docx.cross-reference.37", "docx.cross-reference.38", "docx.cross-reference.39", "docx.cross-reference.40",
+    "docx.cross-reference.41", "docx.cross-reference.42", "docx.cross-reference.43", "docx.cross-reference.44", "docx.cross-reference.45", "docx.cross-reference.46", "docx.cross-reference.47", "docx.cross-reference.48", "docx.cross-reference.49", "docx.cross-reference.50",
 ];
 
 fn handler(f: impl Fn(&mut SlideEditor, &mut Window, &mut Context<SlideEditor>) + 'static) -> Handler {
@@ -270,10 +270,10 @@ pub(crate) const PICTURE_FLOAT_DISTANCES: &[(&str, &str, [ibis_doc_model::Emu; 4
 ];
 
 pub(crate) const PICTURE_ZORDERS: &[(&str, &str, super::picture_panel::ZOrderAction)] = &[
-    ("docx.picture.zorder.front", "_shell.bring-to-front", super::picture_panel::ZOrderAction::BringToFront),
-    ("docx.picture.zorder.forward", "_shell.bring-forward", super::picture_panel::ZOrderAction::BringForward),
-    ("docx.picture.zorder.backward", "_shell.send-backward", super::picture_panel::ZOrderAction::SendBackward),
-    ("docx.picture.zorder.back", "_shell.send-to-back", super::picture_panel::ZOrderAction::SendToBack),
+    ("arrange.bring-to-front", "_shell.bring-to-front", super::picture_panel::ZOrderAction::BringToFront),
+    ("arrange.bring-forward", "_shell.bring-forward", super::picture_panel::ZOrderAction::BringForward),
+    ("arrange.send-backward", "_shell.send-backward", super::picture_panel::ZOrderAction::SendBackward),
+    ("arrange.send-to-back", "_shell.send-to-back", super::picture_panel::ZOrderAction::SendToBack),
 ];
 
 #[allow(dead_code)]
@@ -467,7 +467,7 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
         if base.len() == 10 {
             for row in 1..6 {
                 theme.push((0..10).map(|i| {
-                    let rgb = ibis_pptx::tinted(Rgb(base[i].2), THEME_TINTS[i][row]);
+                    let rgb = ibis_formats::tinted(Rgb(base[i].2), THEME_TINTS[i][row]);
                     Swatch::new(rgb, format!("#{:06X}", rgb.0), current == Some(rgb), &pick)
                 }).collect());
             }
@@ -772,10 +772,10 @@ pub(crate) fn toolbar_right(editor: &SlideEditor) -> Vec<ToolItem> {
                 })
                 .into(),
             MenuItem::tr("docx.cell.direction.tbrl")
-                .checked(direction == ibis_doc_model::CellDirection::TbRl)
+                .checked(direction == ibis_doc_model::CellDirection::TbRlV)
                 .on(|this, _, cx| {
-                    if this.caret_cell_direction() == Some(ibis_doc_model::CellDirection::TbRl) { return; }
-                    this.edit_table(|r, c, _| ibis_doc_model::TableEdit::Direction { cells: vec![(r, c)], direction: ibis_doc_model::CellDirection::TbRl }, cx);
+                    if this.caret_cell_direction() == Some(ibis_doc_model::CellDirection::TbRlV) { return; }
+                    this.edit_table(|r, c, _| ibis_doc_model::TableEdit::Direction { cells: vec![(r, c)], direction: ibis_doc_model::CellDirection::TbRlV }, cx);
                 })
                 .into(),
             MenuItem::tr("docx.cell.direction.tblrv")
@@ -1182,6 +1182,10 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             .shortcut("⌥⌘V")
             .on(|this, _, cx| this.paste_format(cx))
             .into(),
+        MenuItem::tr("docx.paste-special.markdown")
+            .icon("description")
+            .on(|this, _, cx| { this.paste_markdown(cx); })
+            .into(),
         Submenu::tr("docx.options.paste-default", "settings", paste_default_submenu).into(),
     ];
     menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.autocorrect-options").icon("spellcheck").on(|this, window, cx| this.open_doc_autocorrect_panel(window, cx)).into());
@@ -1190,6 +1194,8 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     let drawing_table = _editor.doc_state().is_some_and(|s| s.draw_table_mode);
     menus.items_mut(MenuId::Insert).push(MenuItem::tr("docx.insert.draw-table").icon("border_style").checked(drawing_table).on(|this, _, cx| this.toggle_draw_table(cx)).into());
     let edit = menus.items_mut(MenuId::Edit);
+    let copy_at = edit.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "edit.copy")).map_or(edit.len(), |i| i + 1);
+    edit.insert(copy_at, MenuItem::tr("docx.edit.copy-markdown").icon("content_copy").on(|this, _, cx| { this.copy_as_markdown(cx); }).into());
     let at = edit.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "edit.paste-format")).map_or(edit.len(), |i| i + 1);
     edit.insert(at, Submenu::tr("docx.paste-special", "content_paste", paste_special_submenu).into());
     let autocorrect_on = !_editor.doc_state().is_some_and(|s| s.autocorrect_off);
@@ -1230,7 +1236,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     );
     edit.insert(
         find_at + 2,
-        MenuItem::tr("docx.go-to")
+        MenuItem::tr("edit.go-to")
             .shortcut("⌥⌘G")
             .on(|this, window, cx| this.open_go_to_panel(window, cx))
             .into(),
@@ -1258,6 +1264,8 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.paste-special.match-format", |this, _, cx| this.paste_match_format(cx));
     menus.connect("docx.paste-special.text-only", |this, _, cx| this.paste_plain_text(cx));
     menus.connect("docx.paste-special.format-only", |this, _, cx| this.paste_format(cx));
+    menus.connect("docx.paste-special.markdown", |this, _, cx| { this.paste_markdown(cx); });
+    menus.connect("docx.edit.copy-markdown", |this, _, cx| { this.copy_as_markdown(cx); });
     menus.connect("docx.options.paste-default.keep-source", |this, _, cx| this.set_default_paste_mode(crate::prefs::DefaultPasteMode::KeepSourceFormatting, cx));
     menus.connect("docx.options.paste-default.merge-format", |this, _, cx| this.set_default_paste_mode(crate::prefs::DefaultPasteMode::MergeFormatting, cx));
     menus.connect("docx.options.paste-default.text-only", |this, _, cx| this.set_default_paste_mode(crate::prefs::DefaultPasteMode::KeepTextOnly, cx));
@@ -1273,7 +1281,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.caption.table", |this, _, cx| this.insert_caption(&crate::shell::i18n::text("insert.table"), cx));
     menus.connect("docx.caption.equation", |this, _, cx| this.insert_caption(&crate::shell::i18n::text("insert.equation"), cx));
     menus.connect("docx.caption.insert", |this, window, cx| this.open_caption_panel(window, cx));
-    menus.connect("docx.xref.dialog", |this, window, cx| this.open_cross_reference_panel(window, cx));
+    menus.connect("docx.cross-reference.dialog", |this, window, cx| this.open_cross_reference_panel(window, cx));
     menus.connect("align.left", |this, _, cx| this.set_alignment(FlowAlign::Left, cx));
     menus.connect("align.center", |this, _, cx| this.set_alignment(FlowAlign::Center, cx));
     menus.connect("align.right", |this, _, cx| this.set_alignment(FlowAlign::Right, cx));
@@ -1305,7 +1313,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.mark-as-final", |this, _, cx| this.toggle_mark_as_final(cx));
     menus.connect("docx.read-only-recommended", |this, _, cx| this.toggle_read_only_recommended(cx));
     menus.connect("docx.inspect-document", |this, window, cx| this.open_doc_inspect_panel(window, cx));
-    menus.connect("docx.compatibility-check", |this, window, cx| this.open_doc_compatibility_panel(window, cx));
+    menus.connect("review.compatibility-check", |this, window, cx| this.open_doc_compatibility_panel(window, cx));
     menus.connect("docx.print-settings", |this, window, cx| this.open_doc_print_panel(window, cx));
     menus.connect("docx.options.print.update-fields", |this, _, cx| this.toggle_update_fields_before_printing(cx));
     menus.connect("docx.options.print.update-links", |this, _, cx| this.toggle_update_links_before_printing(cx));
@@ -1369,7 +1377,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     );
     file.insert(
         at + 3,
-        MenuItem::tr("docx.compatibility-check")
+        MenuItem::tr("review.compatibility-check")
             .icon("rule")
             .on(|this, window, cx| this.open_doc_compatibility_panel(window, cx))
             .into(),
@@ -1616,11 +1624,12 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
 
     // Format conversion is a File > Export choice, not a separate settings screen.
     for (id, key, format) in [
-        ("docx.file.export.doc", "docx.convert.format.doc", ibis_pptx::docx_convert::DocxConvertFormat::Doc),
-        ("docx.file.export.rtf", "docx.convert.format.rtf", ibis_pptx::docx_convert::DocxConvertFormat::Rtf),
-        ("docx.file.export.txt", "docx.convert.format.txt", ibis_pptx::docx_convert::DocxConvertFormat::Txt),
-        ("docx.file.export.html", "docx.convert.format.html", ibis_pptx::docx_convert::DocxConvertFormat::Html),
-        ("docx.file.export.odt", "docx.convert.format.odt", ibis_pptx::docx_convert::DocxConvertFormat::Odt),
+        ("docx.file.export.doc", "docx.convert.format.doc", ibis_formats::docx_convert::DocxConvertFormat::Doc),
+        ("docx.file.export.rtf", "docx.convert.format.rtf", ibis_formats::docx_convert::DocxConvertFormat::Rtf),
+        ("docx.file.export.txt", "docx.convert.format.txt", ibis_formats::docx_convert::DocxConvertFormat::Txt),
+        ("docx.file.export.html", "docx.convert.format.html", ibis_formats::docx_convert::DocxConvertFormat::Html),
+        ("docx.file.export.odt", "docx.convert.format.odt", ibis_formats::docx_convert::DocxConvertFormat::Odt),
+        ("docx.file.export.md", "docx.convert.format.md", ibis_formats::docx_convert::DocxConvertFormat::Markdown),
     ] {
         let entry = MenuItem::new(id, crate::shell::i18n::text(key)).icon("description")
             .on(move |editor, window, cx| editor.export_docx_format_dialog(format, window, cx)).into();
@@ -1647,7 +1656,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         this.edit_table(|r, c, _| ibis_doc_model::TableEdit::Direction { cells: vec![(r, c)], direction: ibis_doc_model::CellDirection::LrTb }, cx);
     });
     menus.connect("docx.cell.direction.tbrl", |this, _, cx| {
-        this.edit_table(|r, c, _| ibis_doc_model::TableEdit::Direction { cells: vec![(r, c)], direction: ibis_doc_model::CellDirection::TbRl }, cx);
+        this.edit_table(|r, c, _| ibis_doc_model::TableEdit::Direction { cells: vec![(r, c)], direction: ibis_doc_model::CellDirection::TbRlV }, cx);
     });
     menus.connect("docx.cell.direction.tblrv", |this, _, cx| {
         this.edit_table(|r, c, _| ibis_doc_model::TableEdit::Direction { cells: vec![(r, c)], direction: ibis_doc_model::CellDirection::TbLrV }, cx);
@@ -1956,7 +1965,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
                 .into(),
         ];
         menus.items_mut(MenuId::View).push(
-            crate::shell::chrome::Submenu::tr("docx.view.screentips", "help_outline", screentip_subitems).into(),
+            crate::shell::chrome::Submenu::tr("docx.view.screentips", "help", screentip_subitems).into(),
         );
     }
     menus.items_mut(MenuId::Format).push(MenuItem::tr("docx.selection-pane")
@@ -2435,7 +2444,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
                         theme.push(
                             (0..10)
                                 .map(|i| {
-                                    let rgb = ibis_pptx::tinted(Rgb(base[i].2), THEME_TINTS[i][row]);
+                                    let rgb = ibis_formats::tinted(Rgb(base[i].2), THEME_TINTS[i][row]);
                                     let mut sw = Swatch::new(rgb, format!("#{:06X}", rgb.0), current == Some(rgb), &pick);
                                     sw.item = sw.item.disabled(!editing);
                                     sw
@@ -2608,7 +2617,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
                         .on(move |this, w, cx| {
                             // In a text box's text the command opens its dialog (行の幅に合わせる); in the body it switches the setting.
                             if !this.open_tate_chu_yoko(w, cx) {
-                                this.apply_run_change(ibis_doc_model::RunChange::TateChuYoko(!on), cx)
+                                this.apply_run_change(ibis_doc_model::RunChange::HorizontalInVertical(!on), cx)
                             }
                         })
                         .into(),
@@ -2786,10 +2795,10 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     }
     menus.connect("docx.page-break", |this, _, cx| this.insert_page_break(cx));
     menus.connect("docx.column-break", |this, _, cx| this.type_text("\u{e}", cx));
-    menus.connect("docx.toc", |this, _, cx| this.insert_toc(cx));
-    menus.connect("docx.toc.update-dialog", |this, _, cx| this.open_update_toc_panel(cx));
-    menus.connect("docx.toc.update-page-numbers-only", |this, _, cx| { this.update_toc_page_numbers_only(cx); });
-    menus.connect("docx.toc.update-entire-table", |this, _, cx| this.update_toc(None, cx));
+    menus.connect("docx.table-of-contents", |this, _, cx| this.insert_toc(cx));
+    menus.connect("docx.table-of-contents.update-dialog", |this, _, cx| this.open_update_toc_panel(cx));
+    menus.connect("docx.table-of-contents.update-page-numbers-only", |this, _, cx| { this.update_toc_page_numbers_only(cx); });
+    menus.connect("docx.table-of-contents.update-entire-table", |this, _, cx| this.update_toc(None, cx));
     menus.connect("docx.table-of-figures", |this, _, cx| {
         let is_en = crate::shell::i18n::language() == crate::shell::i18n::Language::English;
         this.insert_table_of_figures(&if is_en { "Figure".to_string() } else { crate::shell::i18n::text("docx.common.figure").to_string() }, cx);
@@ -2809,20 +2818,20 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     // 目次の更新 and its levels, after 目次.
     {
         let entries = menus.items_mut(MenuId::Insert);
-        let at = entries.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "docx.toc")).map_or(entries.len(), |i| i + 1);
-        let levels: Vec<MenuEntry> = [(1u32, "docx.toc.levels-1", "docx.toolbar.up-heading-1"), (2, "docx.toc.levels-2", "docx.toolbar.up-heading-2"), (3, "docx.toc.levels-3", "docx.toolbar.up-heading-3"), (4, "docx.toc.levels-4", "docx.toolbar.up-heading-4")]
+        let at = entries.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "docx.table-of-contents")).map_or(entries.len(), |i| i + 1);
+        let levels: Vec<MenuEntry> = [(1u32, "docx.table-of-contents.levels-1", "docx.toolbar.up-heading-1"), (2, "docx.table-of-contents.levels-2", "docx.toolbar.up-heading-2"), (3, "docx.table-of-contents.levels-3", "docx.toolbar.up-heading-3"), (4, "docx.table-of-contents.levels-4", "docx.toolbar.up-heading-4")]
             .into_iter()
             .map(|(n, id, label)| MenuItem::new(id, crate::shell::i18n::text(label)).on(move |this, _, cx| this.update_toc(Some((1, n)), cx)).into())
             .collect();
         let update_subitems: Vec<MenuEntry> = vec![
-            MenuItem::tr("docx.toc.update-dialog").on(|this, _, cx| this.open_update_toc_panel(cx)).into(),
-            MenuItem::tr("docx.toc.update-page-numbers-only").on(|this, _, cx| { this.update_toc_page_numbers_only(cx); }).into(),
-            MenuItem::tr("docx.toc.update-entire-table").on(|this, _, cx| this.update_toc(None, cx)).into(),
+            MenuItem::tr("docx.table-of-contents.update-dialog").on(|this, _, cx| this.open_update_toc_panel(cx)).into(),
+            MenuItem::tr("docx.table-of-contents.update-page-numbers-only").on(|this, _, cx| { this.update_toc_page_numbers_only(cx); }).into(),
+            MenuItem::tr("docx.table-of-contents.update-entire-table").on(|this, _, cx| this.update_toc(None, cx)).into(),
         ];
-        entries.insert(at, MenuItem::tr("docx.toc.manual").on(|this, _, cx| this.insert_manual_toc(cx)).into());
+        entries.insert(at, MenuItem::tr("docx.table-of-contents.manual").on(|this, _, cx| this.insert_manual_toc(cx)).into());
         let at = at + 1;
-        entries.insert(at, crate::shell::chrome::Submenu::tr("docx.toc.update-menu", "refresh", update_subitems).into());
-        entries.insert(at + 1, crate::shell::chrome::Submenu::tr("docx.toc.levels", "toc", levels).into());
+        entries.insert(at, crate::shell::chrome::Submenu::tr("docx.table-of-contents.update-menu", "refresh", update_subitems).into());
+        entries.insert(at + 1, crate::shell::chrome::Submenu::tr("docx.table-of-contents.levels", "toc", levels).into());
         let tof_items: Vec<MenuEntry> = vec![
             MenuItem::tr("docx.table-of-figures.figure").on(|this, _, cx| {
                 let is_en = crate::shell::i18n::language() == crate::shell::i18n::Language::English;
@@ -2845,11 +2854,11 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         let entries = menus.items_mut(MenuId::Insert);
         let at = entries.iter().position(|e| matches!(e, MenuEntry::Submenu(s) if s.id == "docx.table-of-figures")).map_or(entries.len(), |i| i + 1);
         let mut references: Vec<MenuEntry> = vec![
-            MenuItem::tr("docx.xref.dialog").on(|this, window, cx| this.open_cross_reference_panel(window, cx)).into(),
+            MenuItem::tr("docx.cross-reference.dialog").on(|this, window, cx| this.open_cross_reference_panel(window, cx)).into(),
             crate::shell::chrome::MenuEntry::Separator,
         ];
         if captions.is_empty() {
-            references.push(MenuItem::tr("docx.xref.none").disabled(true).into());
+            references.push(MenuItem::tr("docx.cross-reference.none").disabled(true).into());
         } else {
             references.extend(captions.into_iter().enumerate().take(50).map(|(i, (id, _, text))| MenuItem::new(XREF_IDS[i.min(XREF_IDS.len() - 1)], text).on(move |this, _, cx| this.insert_cross_reference(id, cx)).into()));
         };
@@ -2857,7 +2866,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         entries.insert(at + 1, MenuItem::tr("docx.caption.table").on(|this, _, cx| this.insert_caption(&crate::shell::i18n::text("insert.table"), cx)).into());
         entries.insert(at + 2, MenuItem::tr("docx.caption.equation").on(|this, _, cx| this.insert_caption(&crate::shell::i18n::text("insert.equation"), cx)).into());
         entries.insert(at + 3, MenuItem::tr("docx.caption.insert").on(|this, window, cx| this.open_caption_panel(window, cx)).into());
-        entries.insert(at + 4, crate::shell::chrome::Submenu::tr("docx.xref", "link", references).into());
+        entries.insert(at + 4, crate::shell::chrome::Submenu::tr("docx.cross-reference", "link", references).into());
         let showing_codes = _editor.flow().is_some_and(|d| d.show_field_codes);
         entries.insert(at + 5, MenuItem::tr("docx.fields.insert").shortcut("⌘F9").on(|this, window, cx| this.open_field_panel(window, cx)).into());
         entries.insert(at + 6, MenuItem::tr("docx.fields.edit").on(|this, window, cx| this.open_field_panel(window, cx)).into());
@@ -2973,7 +2982,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             MenuItem::tr("docx.track.record").checked(tracking).disabled(locked).on(|this, _, cx| this.toggle_track_changes(cx)).into(),
             MenuItem::tr("docx.track.lock").checked(locked).icon("lock").on(|this, _, cx| this.toggle_lock_tracking(cx)).into(),
             crate::shell::chrome::Submenu::tr("docx.track.display", "visibility", display_menu).into(),
-            crate::shell::chrome::Submenu::tr("docx.track.reviewers", "people", reviewer_menu).into(),
+            crate::shell::chrome::Submenu::tr("docx.track.reviewers", "group", reviewer_menu).into(),
             MenuItem::tr("docx.track.show").checked(mode == MarkupDisplayMode::All).on(move |this, _, cx| {
                 let next = if mode == MarkupDisplayMode::All { MarkupDisplayMode::None } else { MarkupDisplayMode::All };
                 this.set_markup_display_mode(next, cx);
@@ -3116,12 +3125,12 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
                 MenuItem::tr("docx.language.no-proof")
                     .checked(no_proof)
                     .disabled(!editing)
-                    .on(move |this, _, cx| this.apply_run_change(ibis_doc_model::RunChange::NoProof(!no_proof), cx))
+                    .on(move |this, _, cx| this.apply_run_change(ibis_doc_model::RunChange::NoProofing(!no_proof), cx))
                     .into(),
             );
             menus.items_mut(MenuId::Tools).push(crate::shell::chrome::Submenu::tr("docx.language", "translate", languages).into());
         }
-        menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.merge").icon("mail").on(|this, window, cx| this.open_merge(window, cx)).into());
+        menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.mail-merge").icon("mail").on(|this, window, cx| this.open_merge(window, cx)).into());
         // 差し込み文書's lines that open the panel at a step or a choice of it (the menu redesign, 2026-11-11).
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.merge.envelopes").icon("mail").on(|this, window, cx| this.open_merge_kind("envelopes", window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.merge.labels").icon("label").on(|this, window, cx| this.open_merge_kind("mailingLabels", window, cx)).into());
@@ -3132,11 +3141,11 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.merge.export-pdf").icon("picture_as_pdf").on(|this, window, cx| this.export_merged_pdf(window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.merge.match-fields").icon("sync_alt").on(|this, _, cx| this.toggle_match_fields(cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.merge.auto-match-fields").icon("auto_fix_high").on(|this, _, cx| this.auto_match_merge_fields(cx)).into());
-        menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.merge.clear-match-fields").icon("clear").on(|this, _, cx| this.clear_merge_field_map(cx)).into());
+        menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.merge.clear-match-fields").icon("close").on(|this, _, cx| this.clear_merge_field_map(cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.merge.check-errors").icon("fact_check").on(|this, _, cx| { this.check_merge_errors(cx); }).into());
-        menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.accessibility-check").icon("accessibility").on(|this, _, cx| this.open_accessibility_panel(cx)).into());
+        menus.items_mut(MenuId::Tools).push(MenuItem::tr("review.accessibility-check").icon("accessibility").on(|this, _, cx| this.open_accessibility_panel(cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.inspect-document").icon("find_in_page").on(|this, window, cx| this.open_doc_inspect_panel(window, cx)).into());
-        menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.compatibility-check").icon("rule").on(|this, window, cx| this.open_doc_compatibility_panel(window, cx)).into());
+        menus.items_mut(MenuId::Tools).push(MenuItem::tr("review.compatibility-check").icon("rule").on(|this, window, cx| this.open_doc_compatibility_panel(window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.print-settings").icon("tune").on(|this, window, cx| this.open_doc_print_panel(window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.reference.source-manager").icon("manage_accounts").on(|this, window, cx| this.open_source_manager_panel(window, cx)).into());
         menus.items_mut(MenuId::Tools).push(MenuItem::tr("docx.options.user-info").icon("person").on(|this, window, cx| this.open_user_info_panel(window, cx)).into());
@@ -3201,8 +3210,8 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     });
     menus.connect("docx.track.change-user-name", |this, window, cx| this.open_user_info_panel(window, cx));
     menus.connect("docx.options.user-info", |this, window, cx| this.open_user_info_panel(window, cx));
-    menus.connect("docx.accessibility-check", |this, _, cx| this.open_accessibility_panel(cx));
-    menus.connect("docx.merge", |this, window, cx| this.open_merge(window, cx));
+    menus.connect("review.accessibility-check", |this, _, cx| this.open_accessibility_panel(cx));
+    menus.connect("docx.mail-merge", |this, window, cx| this.open_merge(window, cx));
     menus.connect("docx.merge.print", |this, window, cx| this.print_merged_documents(window, cx));
     menus.connect("docx.merge.export-pdf", |this, window, cx| this.export_merged_pdf(window, cx));
     menus.connect("docx.merge.match-fields", |this, _, cx| this.toggle_match_fields(cx));
@@ -3295,7 +3304,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.view.one-page", |this, window, cx| this.zoom_one_page(window, cx));
     menus.connect("docx.view.multiple-pages", |this, window, cx| this.zoom_multiple_pages(window, cx));
     menus.connect("docx.view.page-width", |this, window, cx| this.zoom_page_width(window, cx));
-    menus.connect("docx.view.zoom-100", |this, window, cx| this.zoom_100_percent(window, cx));
+    menus.connect("view.zoom-100", |this, window, cx| this.zoom_100_percent(window, cx));
     {
         let win_items = menus.items_mut(MenuId::Window);
         let has_id = |items: &[MenuEntry], id: &str| items.iter().any(|e| matches!(e, MenuEntry::Item(it) if it.id == id));
@@ -3319,10 +3328,10 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.arrange-all", |_this, window, cx| SlideEditor::arrange_all_windows(Some(window), cx));
     menus.connect("docx.split", |this, _, cx| this.toggle_document_split(cx));
     menus.connect("docx.remove-split", |this, _, cx| this.toggle_document_split(cx));
-    if let Some(item) = menus.find_mut("docx.view-side-by-side") {
+    if let Some(item) = menus.find_mut("view.side-by-side") {
         item.checked = _editor.side_by_side;
     }
-    menus.connect("docx.view-side-by-side", |this, window, cx| {
+    menus.connect("view.side-by-side", |this, window, cx| {
         this.toggle_view_side_by_side(window, cx);
     });
     if let Some(item) = menus.find_mut("docx.sync-scrolling") {
@@ -3420,7 +3429,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     }
     menus.connect("edit.find-replace", |this, window, cx| this.open_find(window, cx));
     menus.connect("edit.go-to", |this, window, cx| this.open_go_to_panel(window, cx));
-    menus.connect("docx.go-to", |this, window, cx| this.open_go_to_panel(window, cx));
+    menus.connect("edit.go-to", |this, window, cx| this.open_go_to_panel(window, cx));
     menus.connect("docx.header-footer", |this, _, cx| this.edit_part(ibis_doc_model::PartKind::Header, cx));
     menus.connect("docx.page-number", |this, _, cx| this.insert_page_number(cx));
     menus.connect("docx.page-number.bottom-left", |this, _, cx| this.insert_page_number_at(crate::editing::PageNumberPosition::FooterLeft, cx));
@@ -3594,49 +3603,46 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     {
         let editing = _editor.ordered_selection().is_some();
         let entries = menus.items_mut(MenuId::Insert);
-        let at = entries.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "docx.toc")).map_or(entries.len(), |i| i + 1);
+        let at = entries.iter().position(|e| matches!(e, MenuEntry::Item(i) if i.id == "docx.table-of-contents")).map_or(entries.len(), |i| i + 1);
         entries.insert(at, MenuItem::tr("docx.index").icon("list_alt").disabled(!editing).on(|this, _, cx| this.insert_index(cx)).into());
         entries.insert(at + 1, MenuItem::tr("docx.index.mark").icon("bookmark_add").disabled(!editing).on(|this, _, cx| this.mark_index_entry(cx)).into());
-        let levels: Vec<MenuEntry> = [("docx.toc.mark-level-1", 1u32), ("docx.toc.mark-level-2", 2), ("docx.toc.mark-level-3", 3)]
+        let levels: Vec<MenuEntry> = [("docx.table-of-contents.mark-level-1", 1u32), ("docx.table-of-contents.mark-level-2", 2), ("docx.table-of-contents.mark-level-3", 3)]
             .into_iter()
             .map(|(id, n)| MenuItem::tr(id).disabled(!editing).on(move |this, _, cx| this.mark_toc_entry(n, cx)).into())
             .collect();
-        entries.insert(at + 2, crate::shell::chrome::Submenu::tr("docx.toc.mark-entry", "bookmark_add", levels).into());
-        entries.insert(at + 3, MenuItem::tr("docx.toc.from-entries").icon("toc").disabled(!editing).on(|this, _, cx| this.insert_toc_from_entries(cx)).into());
-        let categories: Vec<MenuEntry> = [("docx.toa.mark-category-1", 1u32), ("docx.toa.mark-category-2", 2), ("docx.toa.mark-category-3", 3), ("docx.toa.mark-category-4", 4), ("docx.toa.mark-category-5", 5), ("docx.toa.mark-category-6", 6)]
+        entries.insert(at + 2, crate::shell::chrome::Submenu::tr("docx.table-of-contents.mark-entry", "bookmark_add", levels).into());
+        entries.insert(at + 3, MenuItem::tr("docx.table-of-contents.from-entries").icon("toc").disabled(!editing).on(|this, _, cx| this.insert_toc_from_entries(cx)).into());
+        let categories: Vec<MenuEntry> = [("docx.table-of-authorities.mark-category-1", 1u32), ("docx.table-of-authorities.mark-category-2", 2), ("docx.table-of-authorities.mark-category-3", 3), ("docx.table-of-authorities.mark-category-4", 4), ("docx.table-of-authorities.mark-category-5", 5), ("docx.table-of-authorities.mark-category-6", 6)]
             .into_iter()
             .map(|(id, n)| MenuItem::tr(id).disabled(!editing).on(move |this, _, cx| this.mark_citation(n, cx)).into())
             .collect();
-        entries.insert(at + 4, crate::shell::chrome::Submenu::tr("docx.toa.mark", "bookmark_add", categories).into());
-        entries.insert(at + 5, MenuItem::tr("docx.toa").icon("list_alt").disabled(!editing).on(|this, _, cx| this.insert_toa(cx)).into());
+        entries.insert(at + 4, crate::shell::chrome::Submenu::tr("docx.table-of-authorities.mark", "bookmark_add", categories).into());
+        entries.insert(at + 5, MenuItem::tr("docx.table-of-authorities").icon("list_alt").disabled(!editing).on(|this, _, cx| this.insert_toa(cx)).into());
         // 参考資料 ▸ 引用文献一覧 ▸ 引用文献一覧の更新: the table made again from the TA fields (does nothing when the document has none).
-        entries.insert(at + 6, MenuItem::tr("docx.toa.update").icon("refresh").disabled(!editing).on(|this, _, cx| this.update_toa(cx)).into());
+        entries.insert(at + 6, MenuItem::tr("docx.table-of-authorities.update").icon("refresh").disabled(!editing).on(|this, _, cx| this.update_toa(cx)).into());
         entries.insert(at + 7, MenuItem::tr("docx.reference.insert-citation").icon("format_quote").disabled(!editing).on(|this, _, cx| this.insert_citation_at_selection(cx)).into());
         entries.insert(at + 8, MenuItem::tr("docx.reference.bibliography").icon("auto_stories").disabled(!editing).on(|this, _, cx| this.insert_bibliography(cx)).into());
         entries.insert(at + 9, MenuItem::tr("docx.reference.bibliography.update").icon("refresh").disabled(!editing).on(|this, _, cx| this.update_bibliography(cx)).into());
         entries.insert(at + 10, MenuItem::tr("docx.reference.source-manager").icon("manage_accounts").disabled(!editing).on(|this, window, cx| this.open_source_manager_panel(window, cx)).into());
     }
-    // 挿入 > 図形: the preset shapes, at the caret.
+    // 挿入 > 図形: the shared grid of pictures (`shell::shape_items::shape_tile_items`, K0031), drawn on the page.
     {
+        use crate::shell::shape_items::{ArrowKind, LineKind, ShapeTile};
         let editing = _editor.ordered_selection().is_some();
-        let items: Vec<MenuEntry> = crate::shell::shape_items::SHAPES
-            .iter()
-            .map(|&(preset, icon, id)| MenuItem::tr(id).icon(icon).disabled(!editing).on(move |this, _, cx| this.arm_draw_shape(super::draw_table::DrawKind::Shape(preset), cx)).thumb(move |editor, width| crate::shell::shape_items::shape_thumb(editor, crate::shell::shape_items::ShapeThumb::Preset(preset), width)).tile_columns(8).tile_width(crate::shell::menu_tiles::SMALL_TILE_WIDTH).into())
-            .collect();
+        fn draw(this: &mut SlideEditor, tile: ShapeTile, _: &mut Window, cx: &mut Context<SlideEditor>) {
+            let kind = match tile {
+                ShapeTile::Preset(preset) => super::draw_table::DrawKind::Shape(preset),
+                ShapeTile::Line(LineKind::Bent, arrow) => super::draw_table::DrawKind::Connector { curved: false, arrow: arrow != ArrowKind::None },
+                ShapeTile::Line(LineKind::Curved, arrow) => super::draw_table::DrawKind::Connector { curved: true, arrow: arrow != ArrowKind::None },
+                ShapeTile::Line(_, arrow) => super::draw_table::DrawKind::Line { arrow: arrow != ArrowKind::None },
+            };
+            this.arm_draw_shape(kind, cx);
+        }
         for entry in menus.items_mut(MenuId::Insert) {
             if let MenuEntry::Submenu(sub) = entry
                 && sub.id == "insert.shape"
             {
-                sub.items = vec![
-                    MenuItem::tr("docx.shape.line").icon("remove").disabled(!editing).on(|this, _, cx| this.arm_draw_shape(super::draw_table::DrawKind::Line { arrow: false }, cx)).thumb(|editor, width| crate::shell::shape_items::shape_thumb(editor, crate::shell::shape_items::ShapeThumb::Line { preset: "line", arrow: false }, width)).tile_columns(8).tile_width(crate::shell::menu_tiles::SMALL_TILE_WIDTH).into(),
-                    MenuItem::tr("docx.shape.arrow").icon("arrow_right_alt").disabled(!editing).on(|this, _, cx| this.arm_draw_shape(super::draw_table::DrawKind::Line { arrow: true }, cx)).thumb(|editor, width| crate::shell::shape_items::shape_thumb(editor, crate::shell::shape_items::ShapeThumb::Line { preset: "line", arrow: true }, width)).tile_columns(8).tile_width(crate::shell::menu_tiles::SMALL_TILE_WIDTH).into(),
-                    MenuItem::tr("docx.shape.elbow").icon("turn_right").disabled(!editing).on(|this, _, cx| this.arm_draw_shape(super::draw_table::DrawKind::Connector { curved: false, arrow: false }, cx)).thumb(|editor, width| crate::shell::shape_items::shape_thumb(editor, crate::shell::shape_items::ShapeThumb::Line { preset: "bentConnector3", arrow: false }, width)).tile_columns(8).tile_width(crate::shell::menu_tiles::SMALL_TILE_WIDTH).into(),
-                    MenuItem::tr("docx.shape.elbow-arrow").icon("turn_right").disabled(!editing).on(|this, _, cx| this.arm_draw_shape(super::draw_table::DrawKind::Connector { curved: false, arrow: true }, cx)).thumb(|editor, width| crate::shell::shape_items::shape_thumb(editor, crate::shell::shape_items::ShapeThumb::Line { preset: "bentConnector3", arrow: true }, width)).tile_columns(8).tile_width(crate::shell::menu_tiles::SMALL_TILE_WIDTH).into(),
-                    MenuItem::tr("docx.shape.curved").icon("gesture").disabled(!editing).on(|this, _, cx| this.arm_draw_shape(super::draw_table::DrawKind::Connector { curved: true, arrow: false }, cx)).thumb(|editor, width| crate::shell::shape_items::shape_thumb(editor, crate::shell::shape_items::ShapeThumb::Line { preset: "curvedConnector3", arrow: false }, width)).tile_columns(8).tile_width(crate::shell::menu_tiles::SMALL_TILE_WIDTH).into(),
-                    MenuItem::tr("docx.shape.curved-arrow").icon("gesture").disabled(!editing).on(|this, _, cx| this.arm_draw_shape(super::draw_table::DrawKind::Connector { curved: true, arrow: true }, cx)).thumb(|editor, width| crate::shell::shape_items::shape_thumb(editor, crate::shell::shape_items::ShapeThumb::Line { preset: "curvedConnector3", arrow: true }, width)).tile_columns(8).tile_width(crate::shell::menu_tiles::SMALL_TILE_WIDTH).into(),
-                    MenuEntry::Separator,
-                ];
-                sub.items.extend(items.clone());
+                sub.items = crate::shell::shape_items::shape_tile_items(editing, draw);
             }
         }
     }
@@ -3729,7 +3735,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         let struct_items: Vec<MenuEntry> = vec![
             MenuItem::tr("docx.math.struct.fraction").icon("functions").disabled(!editing).on(|this, _, cx| { this.insert_docx_math_structure("fraction", cx); }).into(),
             MenuItem::tr("docx.math.struct.script").icon("superscript").disabled(!editing).on(|this, _, cx| { this.insert_docx_math_structure("script", cx); }).into(),
-            MenuItem::tr("docx.math.struct.radical").icon("square_root").disabled(!editing).on(|this, _, cx| { this.insert_docx_math_structure("radical", cx); }).into(),
+            MenuItem::tr("docx.math.struct.radical").icon("function").disabled(!editing).on(|this, _, cx| { this.insert_docx_math_structure("radical", cx); }).into(),
             MenuItem::tr("docx.math.struct.integral").icon("functions").disabled(!editing).on(|this, _, cx| { this.insert_docx_math_structure("integral", cx); }).into(),
             MenuItem::tr("docx.math.struct.large-op").icon("functions").disabled(!editing).on(|this, _, cx| { this.insert_docx_math_structure("large-op", cx); }).into(),
             MenuItem::tr("docx.math.struct.brackets").icon("data_array").disabled(!editing).on(|this, _, cx| { this.insert_docx_math_structure("brackets", cx); }).into(),
@@ -3757,7 +3763,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         if let MenuEntry::Submenu(sub) = entry
             && sub.id == "insert.image"
         {
-            sub.items.push(MenuItem::tr("docx.image.file").icon("upload_file").on(|this, window, cx| this.doc_pick_picture(window, cx)).into());
+            sub.items.push(MenuItem::tr("docx.picture.file").icon("upload_file").on(|this, window, cx| this.doc_pick_picture(window, cx)).into());
         }
     }
     // 挿入 > 表: tables of a few sizes.
@@ -3778,7 +3784,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         entries.push(crate::shell::chrome::Submenu::tr("docx.insert.icon-categories", "category", crate::insert_objects::docx_icon_insert_items()).into());
         entries.push(MenuItem::tr("docx.insert.wordart").icon("title").disabled(!editing).on(|this, _, cx| { this.doc_insert_wordart(0, None, cx); }).into());
         entries.push(crate::shell::chrome::Submenu::tr("docx.insert.wordart-styles", "title", crate::insert_objects::docx_wordart_insert_items()).into());
-        entries.push(MenuItem::tr("docx.signature-line").icon("draw").disabled(!editing).on(|this, _, cx| { this.doc_insert_signature_line("", "", cx); }).into());
+        entries.push(MenuItem::tr("insert.signature-line").icon("draw").disabled(!editing).on(|this, _, cx| { this.doc_insert_signature_line("", "", cx); }).into());
     }
     // 表示形式 > 表: rows, columns and the table, where the caret is in one.
     let in_table = _editor.can_select_table();
@@ -3814,7 +3820,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         item("docx.table.delete-row", "docx.context-menu.delete-row", |this, cx| this.edit_table(|r, _, _| ibis_doc_model::TableEdit::DeleteRows { first: r, last: r }, cx)),
         item("docx.table.delete-column", "docx.context-menu.delete-column", |this, cx| this.edit_table(|_, _, g| ibis_doc_model::TableEdit::DeleteColumn { column: g }, cx)),
         crate::shell::chrome::Submenu::tr(
-            "docx.table.cell-delete",
+            "docx.table.delete-cell",
             "delete",
             vec![
                 item("docx.table.cell-delete.shift-left", "_shell.delete-cells-shift-cells-left", |this, cx| this.edit_table(|r, c, _| ibis_doc_model::TableEdit::DeleteCellShiftLeft { row: r, cell: c }, cx)),
@@ -3922,7 +3928,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
             "text_rotation_none",
             vec![
                 direction_item("docx.cell.direction.lrtb", ibis_doc_model::CellDirection::LrTb),
-                direction_item("docx.cell.direction.tbrl", ibis_doc_model::CellDirection::TbRl),
+                direction_item("docx.cell.direction.tbrl", ibis_doc_model::CellDirection::TbRlV),
                 direction_item("docx.cell.direction.tblrv", ibis_doc_model::CellDirection::TbLrV),
                 direction_item("docx.cell.direction.btlr", ibis_doc_model::CellDirection::BtLr),
             ],
@@ -4103,12 +4109,12 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         let look = _editor.caret_table().and_then(|t| t.style.as_ref()).map(|s| s.look);
         type Flag = fn(&mut ibis_doc_model::TableLook) -> &mut bool;
         let options: [(&'static str, &'static str, Flag); 6] = [
-            ("docx.table.look.first-row", "docx.table-design.header-row", |l| &mut l.first_row),
-            ("docx.table.look.last-row", "docx.table-design.total-row", |l| &mut l.last_row),
-            ("docx.table.look.first-column", "docx.table-design.first-column", |l| &mut l.first_column),
-            ("docx.table.look.last-column", "docx.table-design.last-column", |l| &mut l.last_column),
-            ("docx.table.look.row-bands", "docx.toolbar.banded-rows", |l| &mut l.no_hband),
-            ("docx.table.look.column-bands", "docx.toolbar.banded-columns", |l| &mut l.no_vband),
+            ("table.header-row", "docx.table-design.header-row", |l| &mut l.first_row),
+            ("table.total-row", "docx.table-design.total-row", |l| &mut l.last_row),
+            ("table.first-column", "docx.table-design.first-column", |l| &mut l.first_column),
+            ("table.last-column", "docx.table-design.last-column", |l| &mut l.last_column),
+            ("table.banded-rows", "docx.toolbar.banded-rows", |l| &mut l.no_hband),
+            ("table.banded-columns", "docx.toolbar.banded-columns", |l| &mut l.no_vband),
         ];
         let items: Vec<MenuEntry> = options
             .into_iter()
@@ -4271,22 +4277,22 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         MenuItem::new(id, crate::shell::i18n::text(label)).checked(on).disabled(!editing).on(move |this, _, cx| this.apply_para_change(change(!on), cx)).into()
     };
     let pagination = vec![
-        flag("docx.para.widow-control", "docx.paragraph-panel.widow-orphan-control", widow_control, ibis_doc_model::ParaChange::WidowControl),
-        flag("docx.para.keep-next", "docx.toolbar.keep-next", keep_next, ibis_doc_model::ParaChange::KeepNext),
-        flag("docx.para.keep-lines", "docx.toolbar.keep-lines-together", keep_lines, ibis_doc_model::ParaChange::KeepLines),
-        flag("docx.para.page-break-before", "docx.toolbar.page-break-before", break_before, ibis_doc_model::ParaChange::PageBreakBefore),
-        flag("docx.para.suppress-line-numbers", "docx.paragraph-panel.suppress-line-numbers", suppress_line_numbers, ibis_doc_model::ParaChange::SuppressLineNumbers),
-        flag("docx.para.suppress-auto-hyphens", "docx.paragraph-panel.don-t-hyphenate", suppress_auto_hyphens, ibis_doc_model::ParaChange::SuppressAutoHyphens),
-        flag("docx.para.contextual-spacing", "fix.toolbar.don-t-add-space-between", contextual_spacing, ibis_doc_model::ParaChange::ContextualSpacing),
-        flag("docx.para.overflow-punct", "docx.toolbar.hanging-punctuation", overflow_punct, ibis_doc_model::ParaChange::OverflowPunct),
-        flag("docx.para.auto-space-de", "docx.toolbar.automatically-adjust-space-between", auto_space_letters, ibis_doc_model::ParaChange::AutoSpaceDE),
-        flag("docx.para.auto-space-dn", "docx.toolbar.automatically-adjust-space-between-2", auto_space_digits, ibis_doc_model::ParaChange::AutoSpaceDN),
-        flag("docx.para.kinsoku", "docx.toolbar.use-asian-rules-controlling-first", kinsoku, ibis_doc_model::ParaChange::Kinsoku),
-        flag("docx.para.word-wrap", "docx.toolbar.allow-latin-text-wrap-middle", word_wrap, ibis_doc_model::ParaChange::WordWrap),
-        flag("docx.para.bidi", "docx.toolbar.right-left-text-direction", bidi, ibis_doc_model::ParaChange::Bidi),
-        flag("docx.para.snap-to-grid", "docx.toolbar.snap-grid", snap_to_grid, ibis_doc_model::ParaChange::SnapToGrid),
+        flag("docx.paragraph.widow-control", "docx.paragraph-panel.widow-orphan-control", widow_control, ibis_doc_model::ParaChange::WidowControl),
+        flag("docx.paragraph.keep-next", "docx.toolbar.keep-next", keep_next, ibis_doc_model::ParaChange::KeepWithNext),
+        flag("docx.paragraph.keep-lines", "docx.toolbar.keep-lines-together", keep_lines, ibis_doc_model::ParaChange::KeepTogether),
+        flag("docx.paragraph.page-break-before", "docx.toolbar.page-break-before", break_before, ibis_doc_model::ParaChange::PageBreakBefore),
+        flag("docx.paragraph.suppress-line-numbers", "docx.paragraph-panel.suppress-line-numbers", suppress_line_numbers, ibis_doc_model::ParaChange::SuppressLineNumbers),
+        flag("docx.paragraph.suppress-auto-hyphens", "docx.paragraph-panel.don-t-hyphenate", suppress_auto_hyphens, ibis_doc_model::ParaChange::SuppressAutoHyphens),
+        flag("docx.paragraph.contextual-spacing", "fix.toolbar.don-t-add-space-between", contextual_spacing, ibis_doc_model::ParaChange::ContextualSpacing),
+        flag("docx.paragraph.overflow-punct", "docx.toolbar.hanging-punctuation", overflow_punct, ibis_doc_model::ParaChange::OverflowPunct),
+        flag("docx.paragraph.auto-space-de", "docx.toolbar.automatically-adjust-space-between", auto_space_letters, ibis_doc_model::ParaChange::AutoSpaceDE),
+        flag("docx.paragraph.auto-space-dn", "docx.toolbar.automatically-adjust-space-between-2", auto_space_digits, ibis_doc_model::ParaChange::AutoSpaceDN),
+        flag("docx.paragraph.kinsoku", "docx.toolbar.use-asian-rules-controlling-first", kinsoku, ibis_doc_model::ParaChange::Kinsoku),
+        flag("docx.paragraph.word-wrap", "docx.toolbar.allow-latin-text-wrap-middle", word_wrap, ibis_doc_model::ParaChange::WordWrap),
+        flag("docx.paragraph.bidi", "docx.toolbar.right-left-text-direction", bidi, ibis_doc_model::ParaChange::Bidi),
+        flag("docx.paragraph.snap-to-grid", "docx.toolbar.snap-grid", snap_to_grid, ibis_doc_model::ParaChange::SnapToGrid),
     ];
-    menus.items_mut(MenuId::Format).push(crate::shell::chrome::Submenu::tr("docx.para.pagination", "insert_page_break", pagination).into());
+    menus.items_mut(MenuId::Format).push(crate::shell::chrome::Submenu::tr("docx.paragraph.pagination", "insert_page_break", pagination).into());
     let strict_kinsoku = _editor.strict_kinsoku();
     let kinsoku_mode: Vec<MenuEntry> = vec![
         MenuItem::new("docx.kinsoku.mode.normal", crate::shell::i18n::text("docx.kinsoku.mode.normal")).checked(!strict_kinsoku).on(|this, _, cx| this.set_kinsoku_preset(false, cx)).into(),
@@ -4297,14 +4303,14 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     menus.connect("docx.kinsoku.menu", |this, window, cx| this.open_kinsoku_panel(window, cx));
     menus.connect("docx.kinsoku.mode.normal", |this, _, cx| this.set_kinsoku_preset(false, cx));
     menus.connect("docx.kinsoku.mode.strict", |this, _, cx| this.set_kinsoku_preset(true, cx));
-    menus.connect("docx.para.suppress-auto-hyphens", |this, _, cx| this.toggle_suppress_auto_hyphens(cx));
-    menus.connect("docx.para.overflow-punct", |this, _, cx| this.toggle_overflow_punct(cx));
-    menus.connect("docx.para.auto-space-de", |this, _, cx| this.toggle_auto_space_de(cx));
-    menus.connect("docx.para.auto-space-dn", |this, _, cx| this.toggle_auto_space_dn(cx));
-    menus.connect("docx.para.kinsoku", |this, _, cx| this.toggle_kinsoku(cx));
-    menus.connect("docx.para.word-wrap", |this, _, cx| this.toggle_word_wrap(cx));
-    menus.connect("docx.para.bidi", |this, _, cx| this.toggle_bidi(cx));
-    menus.connect("docx.para.snap-to-grid", |this, _, cx| this.toggle_snap_to_grid(cx));
+    menus.connect("docx.paragraph.suppress-auto-hyphens", |this, _, cx| this.toggle_suppress_auto_hyphens(cx));
+    menus.connect("docx.paragraph.overflow-punct", |this, _, cx| this.toggle_overflow_punct(cx));
+    menus.connect("docx.paragraph.auto-space-de", |this, _, cx| this.toggle_auto_space_de(cx));
+    menus.connect("docx.paragraph.auto-space-dn", |this, _, cx| this.toggle_auto_space_dn(cx));
+    menus.connect("docx.paragraph.kinsoku", |this, _, cx| this.toggle_kinsoku(cx));
+    menus.connect("docx.paragraph.word-wrap", |this, _, cx| this.toggle_word_wrap(cx));
+    menus.connect("docx.paragraph.bidi", |this, _, cx| this.toggle_bidi(cx));
+    menus.connect("docx.paragraph.snap-to-grid", |this, _, cx| this.toggle_snap_to_grid(cx));
     menus.items_mut(MenuId::Format).push(MenuItem::tr("docx.heading-numbers").icon("format_list_numbered").on(|this, _, cx| this.number_headings(cx)).into());
     {
         let editing = _editor.ordered_selection().is_some();
@@ -4400,9 +4406,9 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
         MenuItem::tr("docx.page.portrait").on(|this, _, cx| this.set_orientation(false, cx)).into(),
         MenuItem::tr("docx.page.landscape").on(|this, _, cx| this.set_orientation(true, cx)).into(),
         MenuEntry::Separator,
-        MenuItem::tr("docx.page.a4").on(|this, _, cx| this.set_paper(11_906, 16_838, cx)).into(),
-        MenuItem::tr("docx.page.b5").on(|this, _, cx| this.set_paper(10_318, 14_570, cx)).into(),
-        MenuItem::tr("docx.page.a3").on(|this, _, cx| this.set_paper(16_838, 23_811, cx)).into(),
+        MenuItem::tr("page.paper-a4").on(|this, _, cx| this.set_paper(11_906, 16_838, cx)).into(),
+        MenuItem::tr("page.paper-b5").on(|this, _, cx| this.set_paper(10_318, 14_570, cx)).into(),
+        MenuItem::tr("page.paper-a3").on(|this, _, cx| this.set_paper(16_838, 23_811, cx)).into(),
         MenuItem::tr("docx.page.letter").on(|this, _, cx| this.set_paper(12_240, 15_840, cx)).into(),
         MenuEntry::Separator,
         MenuItem::tr("docx.page.margins-normal").on(|this, _, cx| this.set_margins([1985, 1701, 1701, 1701], cx)).into(),
@@ -4734,7 +4740,7 @@ pub(crate) fn menus(_editor: &SlideEditor, menus: &mut Menus) {
     for (idx, &(_, insert_id, _)) in crate::insert_objects::DOCX_WORDART_STYLES.iter().enumerate() {
         menus.connect(insert_id, move |this, _, cx| { this.doc_insert_wordart(idx, None, cx); });
     }
-    menus.connect("docx.signature-line", |this, _, cx| { this.doc_insert_signature_line("", "", cx); });
+    menus.connect("insert.signature-line", |this, _, cx| { this.doc_insert_signature_line("", "", cx); });
     menus.connect("docx.quick-parts.author", |this, _, cx| { this.doc_insert_quick_part("AUTHOR", "Author", cx); });
     menus.connect("docx.quick-parts.title", |this, _, cx| { this.doc_insert_quick_part("TITLE", "Document Title", cx); });
     menus.connect("docx.quick-parts.subject", |this, _, cx| { this.doc_insert_quick_part("SUBJECT", "Subject", cx); });

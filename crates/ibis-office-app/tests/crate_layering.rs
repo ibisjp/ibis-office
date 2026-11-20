@@ -7,7 +7,7 @@
 //!
 //!   ibis-office-app  ->  (docx, xlsx and pptx are the crates ibis-office-docx, ibis-office-xlsx and ibis-office-pptx)  ->  ibis-office-shell  ->  ibis-office-render  ->  ibis-office-base
 //!
-//! The crates of the document model and the file formats (`ibis-doc-model`, `ibis-pptx`, `ibis-calc`, ...) are below all of them
+//! The crates of the document model and the file formats (`ibis-doc-model`, `ibis-formats`, `ibis-calc`, ...) are below all of them
 //! and are not checked here.
 //!
 //! Until the formats are crates of their own, the same direction holds between the directories of `ibis-office-app/src`
@@ -152,5 +152,5 @@ fn the_reading_of_a_line_finds_the_named_module() {
     assert!(names_module("use crate::pptx;", "pptx"));
     assert!(!names_module("use crate::pptx_theme::Theme;", "pptx"));
     assert!(!names_module("    // see crate::docx::flow_layout", "docx"));
-    assert!(!names_module("let kind = ibis_pptx::preset_geometry(name);", "pptx"));
+    assert!(!names_module("let kind = ibis_formats::preset_geometry(name);", "pptx"));
 }

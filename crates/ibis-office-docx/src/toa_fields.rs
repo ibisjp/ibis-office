@@ -246,7 +246,7 @@ pub(crate) fn toa_commands(doc: &FlowDocument, before: u32, replace: bool, instr
         p.resolve(&with_styles.styles);
         entries.push(p);
     }
-    commands.push(ibis_doc_model::FlowCommand::SetToc { before, replace, entries, bookmarks: Vec::new() });
+    commands.push(ibis_doc_model::FlowCommand::SetTableOfContents { before, replace, entries, bookmarks: Vec::new() });
     commands
 }
 

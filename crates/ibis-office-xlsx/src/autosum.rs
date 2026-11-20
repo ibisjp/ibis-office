@@ -107,10 +107,10 @@ impl SlideEditor {
             return;
         }
         let slide = self.current_slide;
-        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { slide, edits })];
+        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })];
         for (column, code) in formats {
             let range = CellRange { first_row: row, first_column: column, last_row: row, last_column: column };
-            commands.push(Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
+            commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
         }
         if let Err(err) = self.document.execute(commands) {
             log::warn!("auto function rejected: {err}");

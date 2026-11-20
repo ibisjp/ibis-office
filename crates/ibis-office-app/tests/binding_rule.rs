@@ -24,7 +24,7 @@
 //!    occurrences and the reason. A new occurrence fails the test; a panel that moved to `ShownNumber` has to lower its numbers in
 //!    the list (the list is updated only downwards, so the test also fails when a count is lower than the list says).
 //!
-//! Rule: doc/rule/implimentationRule.md, 「複数の対象を編集するパネル」.
+//! Rule: docs/rule/implimentationRule.md, 「複数の対象を編集するパネル」.
 
 use std::path::{Path, PathBuf};
 
@@ -179,7 +179,7 @@ const RAW_FIELD_ALLOWED: &[(&str, usize, usize, usize, &str)] = &[
     ("docx/table_formula_panel.rs", 1, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("docx/table_size_panel.rs", 1, 1, 1, "3-A, not moved: writes only the fields whose text differs from `initial`, so an unedited Apply keeps the table"),
     ("docx/template.rs", 1, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
-    ("docx/text_box_effects.rs", 1, 1, 8, "3-A, not moved: every field is made from the f64 `to_string()` of the model value, which keeps all its digits, so an unedited Apply does not change it"),
+    ("shell/effect_editor.rs", 1, 1, 10, "3-A, not moved (the decoration editor, moved here from the document screen's text box panel): every field is made from the f64 `to_string()` of the model value, which keeps all its digits, so an unedited Apply does not change it; the text outline width and the text glow size are two more of those fields"),
     ("docx/text_box_panel.rs", 1, 3, 2, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("docx/thesaurus.rs", 1, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("shell/alt_text_panel.rs", 2, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
@@ -190,6 +190,8 @@ const RAW_FIELD_ALLOWED: &[(&str, usize, usize, usize, &str)] = &[
     ("shell/frame_panel.rs", 0, 1, 0, "the size and position panel: the length and angle fields are ShownNumber (2026-11-07); what is left is the scale (%) fields, a ratio of the size the panel was opened with, not a model value"),
     ("shell/glow_panel.rs", 0, 1, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("shell/gradient_panel.rs", 3, 6, 1, "3-A, not moved: the fields show the angle with 8 digits and the stop position with 3 (`{:.8}`, `{:.3}`), which holds every model value (60 000ths, 1 000ths) exactly, so an unedited Apply does not change it; moving it to ShownNumber would change the shown text (trailing zeros), so it moves when the panel is redesigned"),
+    ("shell/host_file_dialog.rs", 0, 4, 0, "no field is read with these parses: they read the stored split ratio of the dialog (a setting) and the time text of a host's reply"),
+    ("shell/toolbar_customize.rs", 1, 0, 0, "a search field of the dialog (text, no attribute of the objects)"),
     ("shell/header_footer.rs", 2, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("shell/insets_panel.rs", 1, 1, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("pptx/layout_panel.rs", 2, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
@@ -202,7 +204,7 @@ const RAW_FIELD_ALLOWED: &[(&str, usize, usize, usize, &str)] = &[
     ("pptx/section_panel.rs", 1, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("shell/selection_pane.rs", 1, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("pptx/show_panel.rs", 2, 2, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
-    ("pptx/sidebar_settings.rs", 1, 1, 1, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
+    ("pptx/sidebar_settings.rs", 1, 2, 2, "3-A, not moved: the sidebar fields apply while the user types (`InputEvent::Change`, never for a text the sidebar set itself) and the outline width and the size and position fields compare the typed value with the model before writing; the font size field uses `parse_font_size`; a live-apply field needs a design of its own for ShownNumber"),
     ("shell/size_panel.rs", 3, 1, 0, "the slide size panel: the width and height are ShownNumber (2026-11-07); what is left is the fields with a placeholder (the width and the height are given their text from the ShownNumber) and the first slide number (a whole number, no unit)"),
     ("shell/theme_panel.rs", 2, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("shell/thesaurus_panel.rs", 1, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
@@ -216,7 +218,7 @@ const RAW_FIELD_ALLOWED: &[(&str, usize, usize, usize, &str)] = &[
     ("shell/ink_panel.rs", 1, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("shell/rename_file.rs", 1, 0, 0, "a text field (the file name of the rename dialog), not a number"),
     ("shell/math_editor.rs", 1, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
-    ("shell/password_window.rs", 8, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
+    ("shell/password_window.rs", 1, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("shell/replace_fonts.rs", 2, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("xlsx/advanced_filter.rs", 1, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),
     ("xlsx/alt_text_panel.rs", 2, 0, 0, "legacy at the introduction of the lint (2026-11-06): a text/name/formula field, or a number read with a plain parse; moves to ShownNumber when the panel is next touched"),

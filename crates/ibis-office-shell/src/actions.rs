@@ -8,7 +8,7 @@ use gpui_kit::*;
 actions!(
     ibis_office,
     [
-        AddPresentationSlide,
+        AddSlide,
         DuplicatePresentationSelection,
         /// Undo the last edit.
         Undo,
@@ -19,9 +19,21 @@ actions!(
         /// Leave text editing, the insert tool, or the selection, in that order.
         CancelTool,
         /// Open a PowerPoint, Excel or Word file.
-        OpenFile,
+        Open,
         /// Make a new, empty Word document (ファイル > 新規作成 > ドキュメント).
         NewDocument,
+        /// The start window's ファイル > 新しい文書 (⌘D, only in the start window): a new, empty document.
+        StartNewDocument,
+        /// The start window's ファイル > 新しいスプレッドシート (⌘E, only in the start window).
+        StartNewWorkbook,
+        /// The start window's ファイル > 新しいプレゼンテーション (⌘P, only in the start window).
+        StartNewPresentation,
+        /// Minimize the window (ウィンドウ > しまう, ⌘M).
+        MinimizeWindow,
+        /// Look for a newer version (ヘルプ > 更新の確認…).
+        CheckForUpdates,
+        /// Hide the app (ibisOffice > ibisOffice を隠す, ⌘H).
+        HideApp,
         /// Open the start window (ファイル > スタートウィンドウ).
         OpenStartWindow,
         /// Make a new presentation from a template (ファイル > 新規 > テンプレートから新規作成…).
@@ -33,7 +45,7 @@ actions!(
         /// Save the open file under another name.
         SaveAs,
         /// Print the open file (ファイル > 印刷…, ⌘P).
-        PrintFile,
+        Print,
         /// Hide or show the title row and the menu bar (the toolbar's ^).
         ToggleMenus,
         /// Show the next slide.
@@ -115,10 +127,10 @@ actions!(
         /// Start rehearsing slide show timings.
         RehearseTimings,
         /// 表示 > 拡大・縮小・100%・ウィンドウに合わせる（⌘+・⌘-・⌘0・⌥⌘0）.
-        ZoomInView,
-        ZoomOutView,
-        ZoomActualView,
-        ZoomFitView,
+        ViewZoomIn,
+        ViewZoomOut,
+        ViewZoomActual,
+        ViewZoomFit,
         /// Toggle the slide sorter grid view in the presentation editor.
         ToggleSlideGridView,
         /// Start or exit reading view in the presentation editor.
@@ -155,3 +167,10 @@ actions!(
         PasteAnimation,
     ]
 );
+
+/// A file of ファイル > 最近使ったファイル in the system menu (macOS), opened by its path.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ibis_office, no_json)]
+pub struct OpenRecent {
+    pub path: std::path::PathBuf,
+}

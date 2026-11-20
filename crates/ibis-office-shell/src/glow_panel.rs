@@ -116,7 +116,7 @@ impl SlideEditor {
             let (own_color,own_radius)=auto.glow.unwrap_or(DEFAULT_GLOW);
             let glow=(edit.color(own_color),edit.radius(own_radius));
             if auto.glow==Some(glow) {return None;}
-            let mut auto=auto.clone();auto.glow=Some(glow);Some(Command::SetKind {slide:*slide,shape:shape.id,kind:Box::new(ShapeKind::Auto(auto))})
+            let mut auto=auto.clone();auto.glow=Some(glow);Some(Command::SetShapeKind {slide:*slide,shape:shape.id,kind:Box::new(ShapeKind::Auto(auto))})
         }).collect();
         if self.apply_pptx_commands_checked(commands,cx) {self.close_glow_panel(window,cx);} else {
             if let Some(p)=self.shape_edit.glow_panel.as_mut() {p.error=Some(crate::i18n::text("pptx.glow-panel.glow-cannot-saved-selected-shape").into());}cx.notify();

@@ -205,8 +205,9 @@ pub(crate) fn write(clip: &Clip, merges: &[CellRange]) -> Option<String> {
         cells.push((c.row, c.column, id, c));
     }
     cells.sort_by_key(|&(r, c, ..)| (r, c));
-    let rows = cells.iter().map(|c| c.0).max().unwrap_or(0) + 1;
-    let columns = cells.iter().map(|c| c.1).max().unwrap_or(0) + 1;
+    // The copied range's own size (not the last cell that has content: trailing empty cells are part of the copy).
+    let rows = clip.range.last_row - clip.range.first_row + 1;
+    let columns = clip.range.last_column - clip.range.first_column + 1;
     let mut table = format!("<Table ss:ExpandedColumnCount=\"{columns}\" ss:ExpandedRowCount=\"{rows}\" x:FullColumns=\"1\" x:FullRows=\"1\">");
     // The columns' widths, in points (EMU / 12700).
     let mut widths: Vec<(u32, i64)> = clip.col_widths.iter().map(|&(c, w)| (c, w)).collect();
@@ -284,6 +285,67 @@ mod tests {
             orig_row: row,
             orig_column: column,
         }
+    }
+
+    fn clip_of(rows: u32, columns: u32, cells: Vec<ClipCell>) -> Clip {
+        Clip {
+            slide: SlideId(1),
+            range: CellRange { first_row: 0, first_column: 0, last_row: rows - 1, last_column: columns - 1 },
+            cells,
+            cut: false,
+            text: String::new(),
+            validations: Vec::new(),
+            cell_images: Vec::new(),
+            col_widths: Vec::new(),
+            comments: Vec::new(),
+            merges: Vec::new(),
+            source: None,
+            foreign: false,
+            origin: None,
+            cut_elsewhere: false,
+            spill_ghosts: Vec::new(),
+        }
+    }
+
+    fn count(haystack: &str, needle: &str) -> usize {
+        haystack.matches(needle).count()
+    }
+
+    /// #187: copied cells hold exactly the copied rows and columns in the HTML table and the XML Spreadsheet, whatever the shape
+    /// (one cell, one row, two rows of one column, a range whose last row and column are empty).
+    #[test]
+    fn payloads_hold_exactly_the_copied_range() {
+        let n = |r, c, v: f64| cell(r, c, CellValue::Number(v), None, CellStyle::default());
+        // (rows, columns, cells that have content)
+        let shapes: Vec<(u32, u32, Vec<ClipCell>)> = vec![
+            (1, 1, vec![n(0, 0, 11.0)]),
+            (1, 3, vec![n(0, 0, 1.0), n(0, 1, 2.0), n(0, 2, 3.0)]),
+            (2, 1, vec![n(0, 0, 11.0), n(1, 0, 12.0)]),
+            (3, 3, vec![n(0, 0, 1.0), n(1, 1, 2.0)]),
+            (3, 2, vec![n(0, 1, 1.0)]),
+        ];
+        for (rows, columns, cells) in shapes {
+            let clip = clip_of(rows, columns, cells);
+            let html = crate::clipboard_html::write(&clip, &[]);
+            assert_eq!(count(&html, "<tr>"), rows as usize, "{rows}x{columns}: {html}");
+            assert_eq!(count(&html, "<td"), (rows * columns) as usize, "{rows}x{columns}: {html}");
+            let xml = super::write(&clip, &[]).unwrap();
+            assert!(xml.contains(&format!("ss:ExpandedRowCount=\"{rows}\"")), "{rows}x{columns}: {xml}");
+            assert!(xml.contains(&format!("ss:ExpandedColumnCount=\"{columns}\"")), "{rows}x{columns}: {xml}");
+            // No row without a cell: a row is written only for a row that holds one.
+            let with_content = clip.cells.iter().map(|c| c.row).collect::<std::collections::BTreeSet<_>>().len();
+            assert_eq!(count(&xml, "<Row"), with_content, "{rows}x{columns}: {xml}");
+        }
+    }
+
+    /// The plain text ends each row with one row end (CRLF on Windows, as Excel writes it); Excel adds an empty row below the
+    /// copied cells for a text that ends otherwise (#187).
+    #[test]
+    fn row_end_is_one_per_row() {
+        assert_eq!(crate::clipboard::ROW_END, if cfg!(windows) { "\r\n" } else { "\n" });
+        let text = ["11", "12"].iter().map(|v| format!("{v}{}", crate::clipboard::ROW_END)).collect::<String>();
+        assert_eq!(text.matches('\n').count(), 2);
+        assert!(!text.ends_with(&format!("{0}{0}", crate::clipboard::ROW_END)));
     }
 
     /// Two rows of cells copied from A1: a bold cell with a fill and a format, text to escape, formulas of relative and absolute

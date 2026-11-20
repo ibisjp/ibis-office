@@ -472,6 +472,12 @@ pub struct Workbook {
     pub custom_views: Vec<CustomWorkbookView>,
     /// ウィンドウの非表示状態 (`<bookViews><workbookView visibility="hidden"/>`).
     pub window_hidden: bool,
+    /// The sheet shown when the file was left (`bookViews/workbookView/@activeTab`): its index in [`Workbook::sheets`], hidden
+    /// sheets counted. The editor opens at it and hands the present sheet back when it saves.
+    pub active_tab: usize,
+    /// The sheets selected together (a group, `sheetView/@tabSelected` on more than one sheet): their indexes in [`Workbook::sheets`]. Empty
+    /// when the file is left with the one sheet. The editor hands the group back when it saves.
+    pub selected_tabs: Vec<usize>,
     /// The external workbooks the formulas refer to (`externalReferences`),
     /// in order: `[1]` in a file's formula is the first.
     pub external_books: Vec<ExternalBook>,
@@ -534,6 +540,8 @@ impl Default for Workbook {
             calc_index: CalcIndex::default(),
             custom_views: Vec::new(),
             window_hidden: false,
+            active_tab: 0,
+            selected_tabs: Vec::new(),
             external_books: Vec::new(),
             queries: Vec::new(),
             query_parameters: Vec::new(),
@@ -563,11 +571,11 @@ impl CustomCellStyle {
             changes.push(StyleChange::NumberFormat(self.format.number_format.clone()));
         }
         if self.include_alignment {
-            changes.push(StyleChange::Align(self.format.align));
-            changes.push(StyleChange::Vertical(self.format.vertical));
-            changes.push(StyleChange::Wrap(self.format.wrap));
-            changes.push(StyleChange::Indent(self.format.indent));
-            changes.push(StyleChange::Shrink(self.format.shrink));
+            changes.push(StyleChange::HorizontalAlignment(self.format.align));
+            changes.push(StyleChange::VerticalAlignment(self.format.vertical));
+            changes.push(StyleChange::WrapText(self.format.wrap));
+            changes.push(StyleChange::IndentLevel(self.format.indent));
+            changes.push(StyleChange::ShrinkToFit(self.format.shrink));
             changes.push(StyleChange::Rotation(self.format.rotation));
         }
         if self.include_font {
@@ -576,7 +584,7 @@ impl CustomCellStyle {
             changes.push(StyleChange::Bold(self.format.bold));
             changes.push(StyleChange::Italic(self.format.italic));
             changes.push(StyleChange::UnderlineKind(self.format.underline));
-            changes.push(StyleChange::Strike(self.format.strike));
+            changes.push(StyleChange::Strikethrough(self.format.strike));
             changes.push(StyleChange::Color(self.format.color));
             if let Some(theme) = self.format.color_theme {
                 changes.push(StyleChange::ColorTheme(self.format.color, theme));
@@ -852,7 +860,7 @@ pub struct PhoneticInfo {
 
 /// Where a worksheet was left, as the file keeps it in its `sheetView` (Excel writes it at each save): the cell at the top left of
 /// what scrolls, and the selected cell and range. Cells are `(column, row)`, 0-based. The editor reads it when the file is opened
-/// and hands the present positions back when it saves (`ibis_pptx::SaveOptions` gets the sheet as it is, with these set).
+/// and hands the present positions back when it saves (`ibis_formats::SaveOptions` gets the sheet as it is, with these set).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SheetViewPosition {
     /// `sheetView/@topLeftCell`: the first cell of the (top-left) pane's view.
@@ -928,6 +936,11 @@ pub struct Sheet {
     /// The height each of the `measured_rows` was given when the sheet was opened (what the fonts in it measure, which is not
     /// what the file stored). A row still at that height is not a height the person chose: saving does not write it.
     pub fitted_rows: Unsaved<std::collections::BTreeMap<u32, Emu>>,
+    /// The inner id of each row and of each column (by position), which goes with the row or column when rows or columns are inserted or deleted before it: something
+    /// that points at a cell (a finding of the machine readability check) keeps its row and column ids and finds the cell again wherever it went (`line_id`, `line_index`).
+    /// Empty until the first insert or delete (then the id of the row at `i` is `i + 1`). Not saved.
+    pub row_ids: Unsaved<Vec<u32>>,
+    pub column_ids: Unsaved<Vec<u32>>,
     /// How the rows with nothing in them (and the sheet's default row) are as high as: see [`DefaultRowRule`]. Not saved.
     pub default_row_rule: Unsaved<DefaultRowRule>,
     /// A sheet converted from an .xls: the rows with a ROW record stay at the height saved when the file opens (Excel lays them out so),
@@ -1062,6 +1075,8 @@ impl Default for Sheet {
             printed: Unsaved::default(),
             column_chars: Unsaved::default(),
             printed_text_extra: Unsaved::default(),
+            row_ids: Unsaved::default(),
+            column_ids: Unsaved::default(),
             column_fonts: Unsaved::default(),
             row_fonts: Unsaved::default(),
             written_fonts: Unsaved::default(),
@@ -2062,6 +2077,31 @@ impl Default for SheetPrint {
 }
 
 impl Sheet {
+    /// The ids made when rows or columns are inserted begin here (the ids of the rows the sheet had are `position + 1`, below it).
+    pub const FRESH_LINE_ID: u32 = 1 << 31;
+
+    fn line_ids(&self, axis: ibis_calc::formula::Axis) -> &Vec<u32> {
+        match axis {
+            ibis_calc::formula::Axis::Rows => &self.row_ids.0,
+            ibis_calc::formula::Axis::Columns => &self.column_ids.0,
+        }
+    }
+
+    /// The inner id of the row (or column) at `index`: it stays with the row when rows are inserted or deleted before it.
+    pub fn line_id(&self, axis: ibis_calc::formula::Axis, index: u32) -> u32 {
+        self.line_ids(axis).get(index as usize).copied().unwrap_or(index + 1)
+    }
+
+    /// Where the row (or column) with the inner id `id` is now; `None` when it was deleted.
+    pub fn line_index(&self, axis: ibis_calc::formula::Axis, id: u32) -> Option<u32> {
+        let ids = self.line_ids(axis);
+        if let Some(at) = ids.iter().position(|&x| x == id) {
+            return Some(at as u32);
+        }
+        // A row past the ones that have ids is where its id says (nothing moved it).
+        (id < Self::FRESH_LINE_ID && (id as usize) > ids.len()).then(|| id - 1)
+    }
+
     /// The formula of the cell at (`row`, `column`) as Excel's bar and an edit
     /// show it: a this-row reference of the table the cell is in is `[@Qty]`.
     pub fn formula_shown(&self, row: u32, column: u32, formula: &str) -> String {

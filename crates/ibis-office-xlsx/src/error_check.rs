@@ -48,7 +48,7 @@ impl SlideEditor {
         let Some(kind) = self.current_error() else { return };
         let Some(range) = self.selected_range() else { return };
         let slide = self.current_slide;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::IgnoreErrors { slide, range, kind })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::IgnoreErrors { sheet: slide, range, kind })], cx);
     }
 
     /// 計算列の数式を復元: restore the calculated column formula across the table column
@@ -84,7 +84,7 @@ impl SlideEditor {
             column,
             input: CellInput::Formula(target_formula),
         }];
-        self.run_sheet(vec![Command::Sheet(SheetCommand::SetCells { slide, edits })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })], cx);
     }
 
     /// 数値に変換: the text constants of the selection that read as numbers
@@ -116,9 +116,9 @@ impl SlideEditor {
             return;
         }
         let slide = self.current_slide;
-        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { slide, edits })];
+        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })];
         for (range, code) in formats {
-            commands.push(Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
+            commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
         }
         self.run_sheet(commands, cx);
     }
@@ -278,7 +278,7 @@ impl SlideEditor {
         }
         body = body.child(mark("reset", crate::shell::chrome::action_button("error-reset").small().label(text("xlsx.error-options.reset-ignored")).on_click(cx.listener(|this, _, _, cx| {
             let slide = this.current_slide;
-            this.run_sheet(vec![Command::Sheet(SheetCommand::ResetIgnoredErrors { slide })], cx);
+            this.run_sheet(vec![Command::Sheet(SheetCommand::ResetIgnoredErrors { sheet: slide })], cx);
         })).into_any_element()));
         let panel_terminal_actions = crate::shell::chrome::action_bar().action(mark_action("apply", crate::shell::chrome::ActionDefinition::new("error-ok", "", crate::shell::chrome::ActionButtonKind::Primary).label(text("OK")).on_click(cx.listener(|this, _, _, cx| this.apply_error_options_panel(cx)))))
             .action(crate::shell::chrome::dialog_cancel_definition(cx));

@@ -111,7 +111,7 @@ impl SlideEditor {
             };
             #[cfg(target_family = "wasm")]
             let (path_str, data): (String, Option<Vec<u8>>) = (name.clone(), None);
-            let mut book = ibis_pptx::new_external_book(&name, data.as_deref(), formula);
+            let mut book = ibis_formats::new_external_book(&name, data.as_deref(), formula);
             book.path = path_str;
             if book.sheets.is_empty() {
                 self.status = Some(crate::shell::i18n::format("xlsx.external.file-not-found", &[("name", &name)]).into());
@@ -130,7 +130,7 @@ impl SlideEditor {
     /// 値の更新 of link `index` from the file `data` (its bytes).
     pub(crate) fn refresh_external_book_from(&mut self, index: usize, data: &[u8], cx: &mut Context<Self>) {
         let Some(book) = self.presentation().workbook.as_ref().and_then(|w| w.external_books.get(index)).cloned() else { return };
-        match ibis_pptx::refreshed_sheets(&book, data) {
+        match ibis_formats::refreshed_sheets(&book, data) {
             Ok(sheets) => {
                 self.run_sheet(vec![Command::Sheet(SheetCommand::RefreshExternalBook { index, sheets })], cx);
                 self.external_links_message(crate::shell::i18n::format("external-links.updated", &[("name", &book.name)]), cx);
@@ -144,10 +144,10 @@ impl SlideEditor {
     #[cfg(not(target_family = "wasm"))]
     fn link_file(&self, book: &ibis_doc_model::ExternalBook) -> Option<Vec<u8>> {
         let dir = self.file_path().and_then(|p| p.parent().map(std::path::Path::to_path_buf));
-        if let Some(data) = ibis_pptx::link_path(&book.path, dir.as_deref()).and_then(|p| std::fs::read(p).ok()) {
+        if let Some(data) = ibis_formats::link_path(&book.path, dir.as_deref()).and_then(|p| std::fs::read(p).ok()) {
             return Some(data);
         }
-        let name = ibis_pptx::link_path(&book.path, None).as_deref().and_then(|p| p.file_name().map(|n| n.to_owned())).or_else(|| (!book.name.is_empty()).then(|| book.name.clone().into()))?;
+        let name = ibis_formats::link_path(&book.path, None).as_deref().and_then(|p| p.file_name().map(|n| n.to_owned())).or_else(|| (!book.name.is_empty()).then(|| book.name.clone().into()))?;
         std::fs::read(dir?.join(name)).ok()
     }
 
@@ -201,7 +201,7 @@ impl SlideEditor {
         data: &[u8],
         cx: &mut Context<Self>,
     ) {
-        let Ok(new_book) = ibis_pptx::read_external_book(&new_name, &new_path, data) else {
+        let Ok(new_book) = ibis_formats::read_external_book(&new_name, &new_path, data) else {
             self.external_links_message(crate::shell::i18n::format("xlsx.external.file-not-found", &[("name", &new_name)]).to_string(), cx);
             return;
         };
@@ -250,7 +250,7 @@ impl SlideEditor {
 
     /// 外部ブックのリンクを追加 from bytes `data` of a chosen workbook file.
     pub(crate) fn add_external_link(&mut self, name: String, path: String, data: &[u8], cx: &mut Context<Self>) {
-        let Ok(book) = ibis_pptx::read_external_book(&name, &path, data) else {
+        let Ok(book) = ibis_formats::read_external_book(&name, &path, data) else {
             self.external_links_message(crate::shell::i18n::format("xlsx.external.file-not-found", &[("name", &name)]).to_string(), cx);
             return;
         };
@@ -347,7 +347,7 @@ impl SlideEditor {
             let data = self.link_file(&book);
             #[cfg(target_family = "wasm")]
             let data: Option<Vec<u8>> = None;
-            match data.as_deref().map(|d| ibis_pptx::refreshed_sheets(&book, d)) {
+            match data.as_deref().map(|d| ibis_formats::refreshed_sheets(&book, d)) {
                 Some(Ok(sheets)) => {
                     self.run_sheet(vec![Command::Sheet(SheetCommand::RefreshExternalBook { index, sheets })], cx);
                     updated += 1;
@@ -403,7 +403,7 @@ impl SlideEditor {
             let sheets = book.sheets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ");
             body = body
                 .child(div().font_weight(FontWeight::BOLD).child(SharedString::from(book.name.clone())))
-                .child(div().text_sm().child(SharedString::from(ibis_pptx::link_display(&book.path))))
+                .child(div().text_sm().child(SharedString::from(ibis_formats::link_display(&book.path))))
                 .child(div().text_sm().child(crate::shell::i18n::format("external-links.sheets", &[("sheets", &sheets)])))
                 .child(
                     h_flex()

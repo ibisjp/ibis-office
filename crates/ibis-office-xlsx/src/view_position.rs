@@ -35,6 +35,12 @@ impl SlideEditor {
         if !self.is_workbook() {
             return;
         }
+        // The sheet the file was left on (`workbookView/@activeTab`, an index of all the sheets, hidden ones counted).
+        let active = self.presentation().workbook.as_deref().and_then(|wb| wb.sheets.get(wb.active_tab)).and_then(|s| s.slide);
+        if let Some(slide) = active {
+            self.set_current_slide(slide);
+        }
+        self.restore_sheet_group();
         let current = self.current_slide;
         let mut scrolls = Vec::new();
         let mut cells = Vec::new();
@@ -140,11 +146,16 @@ impl SlideEditor {
     /// The workbook as the file is written from it: the sheets' positions put in (a copy, only when one differs from the model).
     pub(crate) fn workbook_for_save(&self) -> Cow<'_, Presentation> {
         let views = self.current_sheet_views();
-        let differs = views.iter().any(|(slide, view)| self.presentation().slide(*slide).and_then(crate::shell::editor::sheet_of).is_some_and(|(_, s)| s.view != *view));
+        // The sheet shown now, as an index of all the sheets (hidden ones counted).
+        let active_tab = self.presentation().workbook.as_deref().and_then(|wb| wb.sheets.iter().position(|s| s.slide == Some(self.current_slide)).filter(|&i| i != wb.active_tab));
+        let differs = active_tab.is_some() || views.iter().any(|(slide, view)| self.presentation().slide(*slide).and_then(crate::shell::editor::sheet_of).is_some_and(|(_, s)| s.view != *view));
         if !differs {
             return Cow::Borrowed(self.presentation());
         }
         let mut copy = self.presentation().clone();
+        if let (Some(i), Some(wb)) = (active_tab, copy.workbook.as_mut()) {
+            std::sync::Arc::make_mut(wb).active_tab = i;
+        }
         for (slide, view) in views {
             if let Ok(sheet) = ibis_doc_model::sheet_command::sheet_mut(&mut copy, slide) {
                 sheet.view = view;

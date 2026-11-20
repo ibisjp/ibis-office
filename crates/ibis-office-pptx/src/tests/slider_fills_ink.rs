@@ -12,7 +12,7 @@ pub(crate) fn all()->Vec<(&'static str,fn())>{vec![
     ("pptx::slider_fill_panels",fill_panels),
 ]}
 fn fixture()->(Scenario,Vec<ShapeId>){
-    let mut s=Scenario::new_document(ibis_pptx::Kind::Presentation);
+    let mut s=Scenario::new_document(ibis_formats::Kind::Presentation);
     s.size(1200.,900.);
     let ids=s.update(|e,_,cx|{
         let mut ids=Vec::new();

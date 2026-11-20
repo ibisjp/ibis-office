@@ -68,19 +68,19 @@ docx.text.case.katakana	カタカナ
 docx.text.case.hiragana	ひらがな
 docx.text.enclose.none	（囲い文字なし）
 docx.paragraph.details#2	詳細…
-docx.toc.update-menu	目次の更新
-docx.toc.update-dialog	目次の更新…
-docx.toc.update-dialog.title	目次の更新
-docx.toc.update-dialog.prompt	目次を更新しています。次のいずれかのオプションを選択してください
-docx.toc.update-page-numbers-only	ページ番号だけを更新する
-docx.toc.update-entire-table	目次をすべて更新する
-docx.toc.update-ok	OK
-docx.toc.update-cancel	キャンセル
+docx.table-of-contents.update-menu	目次の更新
+docx.table-of-contents.update-dialog	目次の更新…
+docx.table-of-contents.update-dialog.title	目次の更新
+docx.table-of-contents.update-dialog.prompt	目次を更新しています。次のいずれかのオプションを選択してください
+docx.table-of-contents.update-page-numbers-only	ページ番号だけを更新する
+docx.table-of-contents.update-entire-table	目次をすべて更新する
+docx.table-of-contents.update-ok	OK
+docx.table-of-contents.update-cancel	キャンセル
 docx.table-of-figures	図表目次
 docx.table-of-figures.figure	図表目次（図）
 docx.table-of-figures.table	図表目次（表）
 docx.table-of-figures.equation	図表目次（数式）
-docx.xref.none	図表番号がありません
+docx.cross-reference.none	図表番号がありません
 docx.caption.figure	図表番号（図）
 docx.caption.table	図表番号（表）
 docx.caption.equation	図表番号（数式）
@@ -133,7 +133,7 @@ docx.section-next	セクション区切り（次のページから）
 docx.section-continuous	セクション区切り（現在の位置から）
 docx.section-odd	セクション区切り（奇数ページから）
 docx.section-even	セクション区切り（偶数ページから）
-docx.image.file	ファイルから…
+docx.picture.file	ファイルから…
 docx.cell.merge-right	右のセルと結合
 docx.cell.split-grid	グリッド列ごとにセルを分割
 docx.table.repeat-header	タイトル行の繰り返し
@@ -144,9 +144,6 @@ docx.page.direction.horizontal	横書き
 docx.page.direction.vertical	縦書き
 docx.page.portrait	縦
 docx.page.landscape	横
-docx.page.a4	A4
-docx.page.b5	B5
-docx.page.a3	A3
 docx.page.letter	レター
 docx.page.margins-normal	余白：標準
 docx.page.margins-narrow	余白：狭い
@@ -200,44 +197,44 @@ docx.text.opentype.num-form.default	既定
 docx.text.opentype.num-form.lining	ライニング
 docx.text.opentype.num-form.old-style	オールドスタイル
 docx.text.opentype.cntxt-alts	前後関係に依存する異体字を使用する
-docx.toc.levels	目次に載せるレベル
-docx.xref	相互参照
-docx.xref.dialog	相互参照…
-docx.xref.title	相互参照
-docx.xref.type	参照する項目
-docx.xref.type.heading	見出し
-docx.xref.type.bookmark	ブックマーク
-docx.xref.type.footnote	脚注
-docx.xref.type.endnote	文末脚注
-docx.xref.type.caption	図表
-docx.xref.kind	挿入する参照内容
-docx.xref.kind.text	テキスト
-docx.xref.kind.page	ページ番号
-docx.xref.kind.paragraph	段落番号
-docx.xref.kind.note	注番号
-docx.xref.kind.label_number	番号とラベルのみ
-docx.xref.kind.entire_caption	図表番号全体
-docx.xref.kind.caption_text	説明文のみ
-docx.xref.kind.relative	上の位置/下の位置
-docx.xref.hyperlink	ハイパーリンクとして挿入する
-docx.xref.insert	挿入
-docx.xref.close	閉じる
-docx.xref.empty	（参照可能な項目がありません）
-docx.xref.inserted	相互参照を挿入しました。
+docx.table-of-contents.levels	目次に載せるレベル
+docx.cross-reference	相互参照
+docx.cross-reference.dialog	相互参照…
+docx.cross-reference.title	相互参照
+docx.cross-reference.type	参照する項目
+docx.cross-reference.type.heading	見出し
+docx.cross-reference.type.bookmark	ブックマーク
+docx.cross-reference.type.footnote	脚注
+docx.cross-reference.type.endnote	文末脚注
+docx.cross-reference.type.caption	図表
+docx.cross-reference.kind	挿入する参照内容
+docx.cross-reference.kind.text	テキスト
+docx.cross-reference.kind.page	ページ番号
+docx.cross-reference.kind.paragraph	段落番号
+docx.cross-reference.kind.note	注番号
+docx.cross-reference.kind.label_number	番号とラベルのみ
+docx.cross-reference.kind.entire_caption	図表番号全体
+docx.cross-reference.kind.caption_text	説明文のみ
+docx.cross-reference.kind.relative	上の位置/下の位置
+docx.cross-reference.hyperlink	ハイパーリンクとして挿入する
+docx.cross-reference.insert	挿入
+docx.cross-reference.close	閉じる
+docx.cross-reference.empty	（参照可能な項目がありません）
+docx.cross-reference.inserted	相互参照を挿入しました。
 docx.date	日付と時刻
 docx.track	変更履歴
 docx.table	表
 docx.list.start	開始番号
 docx.list	番号の振り直し
-docx.para.pagination	改ページと改行
-docx.para.suppress-auto-hyphens	単語の途中で改行しない（ハイフネーションを行わない）
-docx.para.overflow-punct	句読点のぶら下げを行う
-docx.para.auto-space-de	日本語と英字の間隔を自動調整する
-docx.para.auto-space-dn	日本語と数字の間隔を自動調整する
-docx.para.kinsoku	禁則処理を行う
-docx.para.word-wrap	日本語と英字の単語の途中で改行しない
-docx.para.bidi	右から左へ記述する
-docx.para.snap-to-grid	行グリッド線に合わせる
+docx.paragraph.pagination	改ページと改行
+docx.paragraph.suppress-auto-hyphens	単語の途中で改行しない（ハイフネーションを行わない）
+docx.paragraph.overflow-punct	句読点のぶら下げを行う
+docx.paragraph.auto-space-de	日本語と英字の間隔を自動調整する
+docx.paragraph.auto-space-dn	日本語と数字の間隔を自動調整する
+docx.paragraph.kinsoku	禁則処理を行う
+docx.paragraph.word-wrap	日本語と英字の単語の途中で改行しない
+docx.paragraph.bidi	右から左へ記述する
+docx.paragraph.snap-to-grid	行グリッド線に合わせる
 docx.page	ページ設定
 docx.line-numbers	行番号
 docx.line-numbers.none	なし
@@ -295,7 +292,7 @@ docx.page-number.top-left	左揃え
 docx.page-number.top-center	中央揃え
 docx.page-number.top-right	右揃え
 docx.page-number.current	現在の位置
-docx.toc	目次
+docx.table-of-contents	目次
 docx.cell.merge-below	下のセルと結合
 docx.cell.unmerge-below	縦の結合を解除
 docx.table.select-cell	セルを選択
@@ -367,7 +364,7 @@ docx.table.select.table	表を選択
 docx.table.cell-insert	セルの挿入
 docx.table.cell-insert.shift-right	セルを挿入（右方向にシフト）
 docx.table.cell-insert.shift-down	セルを挿入（下方向にシフト）
-docx.table.cell-delete	セルの削除
+docx.table.delete-cell	セルの削除
 docx.table.cell-delete.shift-left	セルを削除（左方向にシフト）
 docx.table.cell-delete.shift-up	セルを削除（上方向にシフト）
 docx.picture.border	画像の枠線
@@ -463,6 +460,8 @@ docx.paste-special.keep-source	元の書式を保持
 docx.paste-special.match-format	貼り付け先の書式に合わせる
 docx.paste-special.text-only	テキストのみ
 docx.paste-special.format-only	書式のみ貼り付け
+docx.paste-special.markdown	Markdown として貼り付け
+docx.edit.copy-markdown	Markdown としてコピー
 docx.options.paste-default	貼り付けの既定動作
 docx.options.paste-default.keep-source	元の書式を保持 (既定)
 docx.options.paste-default.merge-format	書式を統合
@@ -526,10 +525,6 @@ docx.picture.layout-in-cell	表のセル内で配置する
 docx.picture.move-with-text	本文と一緒に移動
 docx.picture.fix-position-on-page	ページ上の位置を固定
 docx.picture.zorder	重なり順（画像）
-docx.picture.zorder.front	最前面へ移動
-docx.picture.zorder.forward	前面へ移動
-docx.picture.zorder.backward	背面へ移動
-docx.picture.zorder.back	最背面へ移動
 docx.toolbar.order-picture	重なり順（画像）
 docx.picture.align-distribute	整列と均等配置（画像）
 docx.picture.align.left	左揃え
@@ -623,7 +618,6 @@ docx.selection-pane	オブジェクトの選択と表示…
 docx.selection-pane.title	オブジェクトの選択と表示
 docx.selection-pane.empty	文書内に図形や画像がありません。
 docx.picture.name	オブジェクト名
-docx.accessibility-check	アクセシビリティ チェック…
 docx.accessibility.title	アクセシビリティ
 docx.accessibility.passed	問題は見つかりませんでした。
 docx.accessibility.missing-alt	代替テキストがありません
@@ -733,7 +727,6 @@ docx.options.print.update-links	印刷前にリンクされたデータを更新
 docx.options.print.backgrounds	背景の色とイメージを印刷する
 docx.options.print.hidden-text	隠し文字を印刷する
 docx.options.print.markup	変更履歴とコメントを印刷する
-docx.go-to	ジャンプ…
 docx.goto.title	ジャンプ
 docx.goto.what	移動先
 docx.goto.page	ページ
@@ -779,7 +772,6 @@ docx.find.no-selection	選択範囲がありません
 docx.view.one-page	1 ページ
 docx.view.multiple-pages	複数ページ
 docx.view.page-width	ページ幅
-docx.view.zoom-100	100%
 insert.rich-text	リッチテキスト
 insert.plain-text	プレーンテキスト
 insert.picture-control	画像コントロール
@@ -823,7 +815,6 @@ docx.new-window	新しいウィンドウ
 docx.arrange-all	並べて表示
 docx.split	分割
 docx.remove-split	分割の解除
-docx.view-side-by-side	並べて比較
 docx.sync-scrolling	同期スクロール
 docx.reset-window-position	ウィンドウの位置をリセット
 docx.interaction	操作モード
@@ -847,7 +838,7 @@ docx.find.format.strike	取消線
 docx.find.format.clear	書式なし
 docx.find.format.find-active	検索書式
 docx.find.format.replace-active	置換書式
-docx.toc.manual	手動作成の目次
+docx.table-of-contents.manual	手動作成の目次
 docx.language	言語
 docx.language.ja	日本語
 docx.language.en-US	英語（米国）
@@ -873,7 +864,7 @@ docx.shape.elbow	カギ線コネクタ
 docx.shape.elbow-arrow	カギ線矢印コネクタ
 docx.shape.curved	曲線コネクタ
 docx.shape.curved-arrow	曲線矢印コネクタ
-docx.merge	差し込み印刷…
+docx.mail-merge	差し込み印刷…
 merge.done	{n} 件の差し込み結果を保存しました
 docx.index	索引
 docx.index.mark	索引登録
@@ -1336,21 +1327,21 @@ docx.recover-unsaved	未保存のファイルの回復…
 docx.insert.draw-table	罫線を引いて表を作成
 docx.backup-always	常にバックアップ コピーを作成する
 _docx.backup-of-stem	{stem} のバックアップ.wbk
-docx.toc.mark-entry	目次項目の登録
-docx.toc.mark-level-1	レベル 1
-docx.toc.mark-level-2	レベル 2
-docx.toc.mark-level-3	レベル 3
-docx.toc.from-entries	目次項目から目次を作る
+docx.table-of-contents.mark-entry	目次項目の登録
+docx.table-of-contents.mark-level-1	レベル 1
+docx.table-of-contents.mark-level-2	レベル 2
+docx.table-of-contents.mark-level-3	レベル 3
+docx.table-of-contents.from-entries	目次項目から目次を作る
 docx.editing.select-text-mark-toc-entry	目次に登録する文字を 1 つの段落の中で選択してください
-docx.toa.mark	引用文献の登録
-docx.toa.mark-category-1	判例
-docx.toa.mark-category-2	法令
-docx.toa.mark-category-3	その他の引用
-docx.toa.mark-category-4	規則
-docx.toa.mark-category-5	論文
-docx.toa.mark-category-6	規制
-docx.toa	引用文献目録
-docx.toa.update	引用文献目録の更新
+docx.table-of-authorities.mark	引用文献の登録
+docx.table-of-authorities.mark-category-1	判例
+docx.table-of-authorities.mark-category-2	法令
+docx.table-of-authorities.mark-category-3	その他の引用
+docx.table-of-authorities.mark-category-4	規則
+docx.table-of-authorities.mark-category-5	論文
+docx.table-of-authorities.mark-category-6	規制
+docx.table-of-authorities	引用文献目録
+docx.table-of-authorities.update	引用文献目録の更新
 docx.editing.select-text-mark-citation	引用文献に登録する文字を 1 つの段落の中で選択してください
 _docx.toa-category-1	判例
 _docx.toa-category-2	法令
@@ -1714,7 +1705,6 @@ docx.insert.icon	アイコン…
 docx.insert.smartart	SmartArt
 docx.insert.wordart	ワードアート
 docx.insert.wordart-styles	ワードアートのスタイル
-docx.signature-line	署名欄…
 docx.wordart.style1	スタイル 1
 docx.wordart.style2	スタイル 2
 docx.wordart.style3	スタイル 3
@@ -1764,7 +1754,6 @@ docx.inspect-panel.no-hidden-text	隠し文字は検出されませんでした
 docx.inspect.remove-all	すべて削除
 docx.inspect-panel.reinspect	再検査
 docx.inspect-panel.reinspection-complete	再検査が完了しました
-docx.compatibility-check	互換性チェック…
 docx.compat.title	互換性チェック
 docx.compat.summary-hint	旧バージョンの Word で失われる可能性がある機能を検査します
 docx.compat.recheck	再確認
@@ -2094,6 +2083,7 @@ docx.convert.format.rtf	リッチ テキスト形式 (.rtf)
 docx.convert.format.txt	書式なし (プレーン テキスト) (.txt)
 docx.convert.format.html	Web ページ (.html)
 docx.convert.format.odt	OpenDocument テキスト (.odt)
+docx.convert.format.md	Markdown 文書 (.md)
 docx.convert.export-title	別形式で書き出し
 docx.convert.export-path	出力先ファイルパス
 docx.convert.export-btn	書き出し

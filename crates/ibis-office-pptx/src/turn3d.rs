@@ -100,6 +100,8 @@ pub(crate) struct Card {
     pub mesh: Option<Mesh>,
     /// The share of white laid over the card (the paper's back is paler than its front: see `BACK_WHITE`); 0 for none.
     pub white: f32,
+    /// The opacity the card is drawn at over what is behind it (1 for the opaque cards; the ripple's new slide fades in across the wave).
+    pub opacity: f32,
 }
 
 /// A triangle mesh of a sheet that is not flat: the vertices (shared by the several draws of one sheet, each with the triangles it
@@ -113,7 +115,7 @@ pub(crate) struct Mesh {
 impl Card {
     /// A flat card.
     pub(crate) fn flat(face: Face, transform: Transform3D, cull_back: bool, shade: f32) -> Self {
-        Self { face, transform, cull_back, shade, mesh: None, white: 0.0 }
+        Self { face, transform, cull_back, shade, mesh: None, white: 0.0, opacity: 1.0 }
     }
 }
 
@@ -389,6 +391,21 @@ impl Rigid {
     pub(crate) fn dark_background(self) -> bool {
         self == Rigid::Switch
     }
+
+    /// The share (0 to 1) of the new slide's own background in the background behind the cards at `t` (0 to 1, linear in the transition's time), for
+    /// the effects whose background is neither black nor white throughout: 観覧車's goes from the old slide's background to the new slide's along a
+    /// half cosine, `(1 - cos(pi t)) / 2`. PowerPoint for Windows, 2 s: in the audit deck (slides with a white and a black background in turn) the
+    /// gray of the background in each frame went white to black for the slide that is black and black to white for the one that is white (left frames
+    /// 14 to 55: least-squares start 8.4 (the transition begins at frame 9) and length 59.95 of 60 frames, rms 0.005 of the brightness; right frames
+    /// 22 to 60: length 59.96, rms 0.005; a smoothstep gave rms 0.005 with lengths of 57.9 and 57.7, a straight line 0.018 and 0.008). The grays are
+    /// the sRGB values themselves (a blend in linear light fitted 0.016). The same effect between a white slide and one with no background of its own
+    /// (white, 1920 x 1080 at 62.5 frames a second) keeps the background white: it is the slides' backgrounds that are mixed, not white and black.
+    pub(crate) fn background_mix(self, t: f32) -> Option<f32> {
+        if self != Rigid::Ferris {
+            return None;
+        }
+        Some((1.0 - (std::f32::consts::PI * t.clamp(0.0, 1.0)).cos()) / 2.0)
+    }
 }
 
 /// The poses of a card at the video frame `frame`, linearly between the table's rows; `None` before the first row and after the last (the
@@ -409,7 +426,7 @@ fn pose_at(track: &[(f32, Pose)], frame: f32) -> Option<Pose> {
 }
 
 /// A card at `pose` seen by the camera of focal length `RIGID_FOCAL` x width; `mirror` -1 for the table's mirror image.
-fn pose_card(face: Face, pose: Pose, mirror: f32, w: f32, h: f32) -> Card {
+pub(crate) fn pose_card(face: Face, pose: Pose, mirror: f32, w: f32, h: f32) -> Card {
     let k = w / 640.0;
     Card::flat(
         face,
@@ -516,6 +533,7 @@ pub(crate) fn page_curl_single(motion: (f64, f64), t: f32, w: f32, h: f32) -> Ve
         shade: 1.0,
         mesh: Some(Mesh { vertices: Arc::new(vertices), indices }),
         white: 0.0,
+        opacity: 1.0,
     });
     cards
 }
@@ -635,6 +653,7 @@ pub(crate) fn rolled_sheet(c: f32, r: f32, theta: f32, mirror: bool, w: f32, h: 
             shade,
             mesh: Some(Mesh { vertices: vertices.clone(), indices: tris }),
             white: if band >= 5 { BACK_WHITE } else { 0.0 },
+            opacity: 1.0,
         });
     }
     cards
@@ -695,6 +714,7 @@ fn half_sheet(face: Face, left: bool, w: f32, h: f32) -> Card {
         shade: 1.0,
         mesh: Some(Mesh { vertices: Arc::new(vertices), indices: vec![0, 1, 2, 1, 3, 2] }),
         white: 0.0,
+        opacity: 1.0,
     }
 }
 
@@ -756,7 +776,7 @@ pub(crate) fn page_curl_double(motion: (f64, f64), t: f32, w: f32, h: f32) -> Ve
     let transform = Transform3D::perspective(ROLL_FOCAL * w).then(Transform3D::translate(w / 2.0, h / 2.0, 0.0));
     for (face, vertices, indices) in [(Face::Old, front, front_indices), (Face::New, back, back_indices)] {
         if !indices.is_empty() {
-            cards.push(Card { face, transform, cull_back: false, shade: 1.0, mesh: Some(Mesh { vertices: Arc::new(vertices), indices }), white: 0.0 });
+            cards.push(Card { face, transform, cull_back: false, shade: 1.0, mesh: Some(Mesh { vertices: Arc::new(vertices), indices }), white: 0.0, opacity: 1.0 });
         }
     }
     cards
@@ -867,6 +887,7 @@ pub(crate) fn airplane(motion: (f64, f64), t: f32, w: f32, h: f32) -> Vec<Card> 
                 shade: 1.0 - AIRPLANE_SHADE * (1.0 - normal),
                 mesh: Some(Mesh { vertices: Arc::new(vertices), indices: vec![0, 1, 2] }),
                 white: if front { 0.0 } else { 1.0 },
+                opacity: 1.0,
             },
         ));
     }
@@ -939,6 +960,7 @@ pub(crate) fn origami(motion: (f64, f64), t: f32, w: f32, h: f32) -> Vec<Card> {
                 shade: if white { 0.93 } else { 1.0 },
                 mesh: Some(Mesh { vertices: Arc::new(vertices), indices }),
                 white: if white { 1.0 } else { 0.0 },
+                opacity: 1.0,
             });
         }
     }
@@ -986,7 +1008,7 @@ pub(crate) fn curtains(t: f32, w: f32, h: f32) -> Vec<Card> {
                 indices.extend([tl, tr, bl, tr, br, bl]);
             }
         }
-        cards.push(Card { face: Face::Old, transform, cull_back: false, shade: 1.0, mesh: Some(Mesh { vertices: Arc::new(vertices), indices }), white: 0.0 });
+        cards.push(Card { face: Face::Old, transform, cull_back: false, shade: 1.0, mesh: Some(Mesh { vertices: Arc::new(vertices), indices }), white: 0.0, opacity: 1.0 });
     }
     cards
 }
@@ -1170,6 +1192,14 @@ mod tests {
         assert!((edge_on.shade - 0.76).abs() < 0.01);
         let [at_rest, _] = cube((-1.0, 0.0), 0.0, 640.0, 360.0);
         assert!((at_rest.shade - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_ferris_background_goes_from_the_old_slides_to_the_new_slides_along_a_half_cosine() {
+        let at = |t: f32| Rigid::Ferris.background_mix(t).unwrap();
+        assert!(at(0.0).abs() < 1e-6 && (at(1.0) - 1.0).abs() < 1e-6 && (at(0.5) - 0.5).abs() < 1e-6);
+        assert!((at(0.25) + at(0.75) - 1.0).abs() < 1e-6);
+        assert!(Rigid::Switch.background_mix(0.5).is_none());
     }
 
     #[test]

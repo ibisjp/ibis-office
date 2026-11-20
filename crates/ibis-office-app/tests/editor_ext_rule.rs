@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! The methods a format (docx, xlsx, pptx) writes for the editor are methods of extension traits
-//! (`#[ibis_office_macros::editor_ext(Name)] impl SlideEditor { .. }`, doc/rule/implimentationRule.md), so that the
+//! (`#[ibis_office_macros::editor_ext(Name)] impl SlideEditor { .. }`, docs/rule/implimentationRule.md), so that the
 //! format's folder can become a crate of its own: a crate cannot write `impl SlideEditor` for a type of another crate,
 //! but it can implement its own trait for it. While the formats are still folders of one crate the compiler accepts
 //! the plain `impl` too, so this reads the sources and looks for what the compiler will refuse later, and for the

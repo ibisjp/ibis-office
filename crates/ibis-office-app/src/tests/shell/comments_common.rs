@@ -289,7 +289,7 @@ fn scroll_reset() {
             .map(|row| {
                 let post = ibis_doc_model::ThreadPost { author: "Tester".into(), date: "2026-11-01T09:00:00.00".into(), text: format!("Thread on row {row}") };
                 let thread = ibis_doc_model::ThreadedComment { id: format!("{{00000000-0000-4000-8000-{row:012}}}"), row, column: 3, posts: vec![post], done: false };
-                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetThreadedComment { slide, row, column: 3, thread: Some(thread) })
+                ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetThreadedComment { sheet: slide, row, column: 3, thread: Some(thread) })
             })
             .collect();
         e.document.execute(commands).unwrap();
@@ -335,7 +335,7 @@ fn hover_mark() {
         let slide = e.current_slide;
         let posts = (0..14).map(|i| ibis_doc_model::ThreadPost { author: "Tester".into(), date: "2026-11-01T09:00:00.00".into(), text: format!("Post number {i} of a long thread") }).collect();
         let thread = ibis_doc_model::ThreadedComment { id: "{00000000-0000-4000-8000-000000000001}".into(), row: 1, column: 1, posts, done: false };
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetThreadedComment { slide, row: 1, column: 1, thread: Some(thread) })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetThreadedComment { sheet: slide, row: 1, column: 1, thread: Some(thread) })]).unwrap();
     });
     s.hover((x - 3., y + 3.));
     s.settle();
@@ -351,7 +351,7 @@ fn thread_on(slide: ibis_doc_model::SlideId, row: u32) -> ibis_doc_model::Comman
     let other = ibis_doc_model::ThreadPost { author: "Tester".into(), date: "2026-11-01T09:00:00.00".into(), text: format!("Thread on row {row}") };
     let own = ibis_doc_model::ThreadPost { author: crate::shell::user_name::user_name(), date: "2026-11-01T09:30:00.00".into(), text: "My answer".into() };
     let thread = ibis_doc_model::ThreadedComment { id: format!("{{00000000-0000-4000-8000-{row:012}}}"), row, column: 3, posts: vec![other, own], done: false };
-    ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetThreadedComment { slide, row, column: 3, thread: Some(thread) })
+    ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetThreadedComment { sheet: slide, row, column: 3, thread: Some(thread) })
 }
 
 fn shown(s: &mut Scenario) -> Option<(u32, u32)> {
@@ -424,7 +424,7 @@ fn round2_popup() {
         let slide = e.current_slide;
         let posts = (0..40).map(|i| ibis_doc_model::ThreadPost { author: if i % 3 == 2 { crate::shell::user_name::user_name() } else { "Tester".into() }, date: "2026-11-01T09:00:00.00".into(), text: format!("Post number {i} of a long thread") }).collect();
         let thread = ibis_doc_model::ThreadedComment { id: "{00000000-0000-4000-8000-000000000001}".into(), row: 1, column: 1, posts, done: false };
-        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetThreadedComment { slide, row: 1, column: 1, thread: Some(thread) })]).unwrap();
+        e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetThreadedComment { sheet: slide, row: 1, column: 1, thread: Some(thread) })]).unwrap();
     });
     s.hover(on_mark);
     s.wait(100);

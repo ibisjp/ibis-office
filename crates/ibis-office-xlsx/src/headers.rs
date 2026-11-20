@@ -383,7 +383,7 @@ impl SlideEditor {
         let (first, last) = self.selected_lines(drag.axis).filter(|(a, b)| (*a..=*b).contains(&drag.index)).unwrap_or((drag.index, drag.index));
         let slide = self.current_slide;
         let started = crate::debug_timing::start();
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetSize { slide, axis: drag.axis, first, last, size })]) {
+        if let Err(err) = self.document.execute(self.group_commands(vec![Command::Sheet(SheetCommand::SetSize { sheet: slide, axis: drag.axis, first, last, size })])) {
             log::warn!("sizing rejected: {err}");
         }
         crate::debug_timing::report("resize header: execute", started);
@@ -432,7 +432,7 @@ impl SlideEditor {
             // No wider than Excel lets a column be (255 characters).
             let size = fitted_width(widest).min((max_column_width_pt(self.default_font_size_pt()) * EMU_PER_POINT as f32) as Emu);
             // Fitted, the column is the sheet's to widen again (not a width set by hand), and the width is saved.
-            commands.push(Command::Sheet(SheetCommand::SetColumnWidthFitted { slide, first: column, last: column, size }));
+            commands.push(Command::Sheet(SheetCommand::SetColumnWidthFitted { sheet: slide, first: column, last: column, size }));
         }
         crate::debug_timing::report("fit columns: measure", started);
         if commands.is_empty() {
@@ -599,7 +599,7 @@ impl SlideEditor {
             let current_h = sheet.rows.get(row as usize).copied().filter(|&h| h > 0).unwrap_or(sheet.default_row);
             // A height fitted is not a height fixed by hand: a row that was fixed is given back to the sheet, though its height stays.
             if (current_h != size || sheet.custom_rows.contains(&row)) && size > 0 {
-                out.push(Command::Sheet(SheetCommand::SetRowHeightFitted { slide, first: row, last: row, size }));
+                out.push(Command::Sheet(SheetCommand::SetRowHeightFitted { sheet: slide, first: row, last: row, size }));
             }
         }
         out
@@ -637,7 +637,7 @@ impl SlideEditor {
             let floor = super::row_fit::fitted_height_pt(sheet, &self.resources, &super::row_fit::normal_font(self.presentation()), row, &Default::default(), true, true, Some(super::row_fit::data_floor_or_kept_pt(&self.resources, sheet, &super::row_fit::normal_font(self.presentation()), row))).map_or(sheet.default_row, |pt| (pt * EMU_PER_POINT as f32) as Emu);
             for command in self.fit_rows_commands(row, row, ts) {
                 out.push(match command {
-                    Command::Sheet(SheetCommand::SetRowHeightFitted { slide, first, last, size }) => Command::Sheet(SheetCommand::SetRowHeightFitted { slide, first, last, size: size.max(floor) }),
+                    Command::Sheet(SheetCommand::SetRowHeightFitted { sheet: slide, first, last, size }) => Command::Sheet(SheetCommand::SetRowHeightFitted { sheet: slide, first, last, size: size.max(floor) }),
                     other => other,
                 });
             }

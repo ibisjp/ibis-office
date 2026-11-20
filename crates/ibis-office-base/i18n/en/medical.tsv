@@ -1,0 +1,130 @@
+medical.dicom.tag.modality	Modality
+medical.dicom.tag.study-description	Study Description
+medical.dicom.tag.series-description	Series Description
+medical.dicom.tag.slice-thickness	Slice Thickness
+medical.dicom.tag.kvp	Tube Voltage (KVP)
+medical.dicom.tag.photometric	Photometric Interpretation
+medical.dicom.tag.rows	Rows
+medical.dicom.tag.columns	Columns
+medical.dicom.tag.bits-allocated	Bits Allocated
+medical.dicom.warning.burned-in	BurnedInAnnotation (0028,0301) = YES: patient information may be burned into the image pixels. Specify the areas to black out with roi_masks.
+medical.dicom.title	DICOM non-diagnostic asset for research and presentations
+medical.dicom.heading	DICOM non-diagnostic asset (anonymized)
+medical.dicom.notice	**Not SaMD, not for diagnosis**: this view is meant to help prepare conference presentations, case reports and clinical research material; it cannot be used for primary reading, diagnosis or treatment.
+medical.dicom.stripped-tags	Identifying tags removed in memory ({count}): `{tags}`
+medical.dicom.no-stripped-tags	Identifying tags: none found
+medical.dicom.note	Note: {text}
+medical.dicom.preview-heading	Anonymized preview image
+medical.dicom.params-heading	Imaging and image parameters (not personal information)
+medical.dicom.params-head	| Item | Value |
+medical.dicom.warning.compressed	The transfer syntax `{ts_uid}` is compressed, so the image was not decoded in the Wasm or light mode and only the metadata was extracted (use an uncompressed image or convert on the desktop version).
+medical.dicom.warning.size	The image size is out of the supported range, so the preview was skipped.
+medical.dicom.warning.pixel-format	The pixel format (samples={samples}, bits={bits}) is not supported, so only the metadata was extracted.
+medical.dicom.warning.j2k-unreadable	The JPEG 2000 pixel data could not be read, so only the metadata was extracted.
+medical.dicom.warning.jls-unreadable	The JPEG-LS pixel data could not be read, so only the metadata was extracted.
+medical.dicom.warning.jxl-unreadable	The JPEG-XL pixel data could not be read, so only the metadata was extracted.
+medical.dicom.warning.j2k-decode	JPEG 2000 decoding failed, so only the metadata was extracted: {error}
+medical.dicom.warning.jls-decode	JPEG-LS decoding failed, so only the metadata was extracted: {error}
+medical.dicom.warning.jxl-header	The JPEG-XL header could not be read, so only the metadata was extracted: {error}
+medical.dicom.warning.jxl-frame	A JPEG-XL frame could not be rendered, so only the metadata was extracted: {error}
+medical.dicom.warning.j2k-channels	A JPEG 2000 image with {count} channels cannot be converted to PNG, so only the metadata was extracted.
+medical.dicom.warning.jls-channels	A JPEG-LS image with {count} components cannot be converted to PNG, so only the metadata was extracted.
+medical.dicom.warning.jxl-channels	A JPEG-XL image with {count} channels cannot be converted to PNG, so only the metadata was extracted.
+medical.fhir.default-title	HL7 FHIR document
+medical.fhir.default-title-xml	HL7 FHIR XML document
+medical.cda.default-title	Specific health checkup (HL7 CDA) document
+medical.fhir.default-title-docx	Referral letter
+medical.fhir.notice	This view is a faithful structured transcription of HL7 FHIR data and does not support decisions on diagnosis or treatment.
+medical.fhir.authenticity	**Authenticity (Provenance/Signature)**: {provenance} Provenance, {signatures} signature elements (signed by: {signers})
+medical.fhir.patient-heading	Patient information
+medical.fhir.patient-head	| Item | Content |
+medical.fhir.patient-id	Patient ID
+medical.fhir.patient-name	Name
+medical.fhir.patient-gender	Gender
+medical.fhir.patient-birth	Date of birth
+medical.fhir.issuer-heading	Issuers and practitioners
+medical.fhir.issuer-head	| Type | Name |
+medical.fhir.condition-heading	Diagnoses (Condition)
+medical.fhir.condition-head	| Diagnosis | Code | Clinical status | Onset/recorded |
+medical.fhir.allergy-heading	Allergies and drug contraindications (AllergyIntolerance)
+medical.fhir.allergy-head	| Substance | Type | Criticality | Clinical status |
+medical.fhir.observation-heading	Test results and findings (Observation)
+medical.fhir.observation-head	| Item | Code | Value | Date and time |
+medical.fhir.medication-heading	Prescriptions and medication (Medication)
+medical.fhir.medication-head	| Medicine | Code | Dosage | Status |
+medical.cda.time	Created/performed: `{time}`
+medical.cda.observation-heading	Test and observation items (Observation)
+medical.cda.observation-head	| Item | Code | Value | Unit |
+medical.fhir-xml.resources-heading	Resources in the document
+medical.fhir-xml.resources-head	| # | Resource type | ID |
+medical.hl7v2.title	HL7 v2 message inspector
+medical.hl7v2.heading	HL7 v2 message ({type})
+medical.hl7v2.control-id	Message control ID: `{id}`
+medical.hl7v2.segment-count	Segments: {count}
+medical.hl7v2.segments-heading	Segments
+medical.hl7v2.segments-head	| # | Segment | Main fields |
+medical.uke.record.information	Medical institution
+medical.uke.record.common-dental	Receipt common (dental/dispensing)
+medical.uke.record.common	Receipt common
+medical.uke.record.insurer	Insurer
+medical.uke.record.public	Public expense
+medical.uke.record.public-extra	Public expense (supplement)
+medical.uke.record.eligibility	Eligibility check
+medical.uke.record.visit-date	Visit dates
+medical.uke.record.copay	Co-payment
+medical.uke.record.diagnosis	Diagnoses
+medical.uke.record.procedure	Procedures
+medical.uke.record.medicine	Medicines
+medical.uke.record.material	Specific materials
+medical.uke.record.comment	Comments
+medical.uke.record.symptoms	Symptom details
+medical.uke.record.inpatient	Inpatient basic fees
+medical.uke.record.elderly	Elderly care
+medical.uke.record.dispensing	Dispensing
+medical.uke.record.claim-total	Claim total
+medical.uke.record.reception	Reception information
+medical.uke.record.other	Other records
+medical.uke.sheet-detail	Receipt details
+medical.uke.sheet-summary	Receipt summary
+medical.uke.detail.line	Line
+medical.uke.detail.kind	Type
+medical.uke.detail.record	Record
+medical.uke.detail.receipt-no	Receipt no.
+medical.uke.detail.main-code	Main code
+medical.uke.detail.master-name	Name from master
+medical.uke.detail.points	Points
+medical.uke.detail.count	Count
+medical.uke.detail.raw	Original fields...
+medical.uke.summary.facility-code	Institution code
+medical.uke.summary.facility-name	Institution name
+medical.uke.summary.billing-month	Treatment month
+medical.uke.summary.receipt-no	Receipt no.
+medical.uke.summary.patient	Patient name
+medical.uke.summary.sex	Sex
+medical.uke.summary.birth	Date of birth
+medical.uke.summary.insurer-no	Insurer no.
+medical.uke.summary.claimed	Claimed points (HO)
+medical.uke.summary.computed	Summed points (SI/IY/TO)
+medical.uke.summary.difference	Difference
+medical.uke.summary.diseases	Diagnoses
+medical.uke.summary.items	Detail lines
+medical.uke.summary.total	Total
+medical.uke.summary.go-total	Total points of the GO record
+medical.dpc.sheet-detail	DPC details
+medical.dpc.sheet-summary	DPC summary
+medical.dpc.summary.patient-id	Data ID
+medical.dpc.summary.facility-code	Facility code
+medical.dpc.summary.item-count	Detail lines
+medical.dpc.summary.points	Total points (points x count)
+medical.pii.location.slide	Slide {no}
+medical.pii.location.notes	Slide {no} notes
+medical.pii.location.comments	Slide {no} comments
+medical.pii.location.sheet-cell	Sheet {no} (R{row}C{column})
+medical.pii.location.text	Slide {no} text
+medical.pii.location.hidden-sheet	Sheet `{name}`
+medical.pii.detail.hidden-slide	Contains a hidden slide
+medical.pii.detail.notes	The speaker notes contain text
+medical.pii.detail.comments	Contains {count} comments
+medical.pii.detail.hidden-sheet	Contains a hidden worksheet
+medical.pii.detail.personal-number	Found a 12-digit string in the form of an Individual Number (My Number)
+medical.pii.detail.patient-id	Found text with a patient ID or an insured person number

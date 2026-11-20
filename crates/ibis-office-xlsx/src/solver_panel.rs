@@ -411,9 +411,9 @@ impl SlideEditor {
         let mut commands = Vec::new();
         if let (true, Some((solution, _)), Some(model)) = (keep, found.as_ref(), model.as_ref()) {
             let edits = model.variables.iter().zip(&solution.values).map(|(&(row, column), v)| CellEdit { row, column, input: CellInput::Value(CellValue::Number(*v)) }).collect();
-            commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
+            commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits }));
         }
-        commands.push(Command::Sheet(SheetCommand::SetSolverNames { slide, names: description.to_names(&sheet_name) }));
+        commands.push(Command::Sheet(SheetCommand::SetSolverNames { sheet: slide, names: description.to_names(&sheet_name) }));
         if let (true, Some((solution, original)), Some(model)) = (keep, found.as_ref(), model.as_ref()) {
             if report {
                 commands.push(self.solver_report_command(&sheet_name, model, &description, solution, original));
@@ -530,7 +530,7 @@ impl SlideEditor {
                 r += 1;
             }
         }
-        Command::Sheet(SheetCommand::CreateReportSheet { slide, name: text("xlsx.solver.report.title").to_string(), cells, widths: vec![(0, 90), (1, 150), (2, 90), (3, 110), (4, 90), (5, 70)] })
+        Command::Sheet(SheetCommand::CreateReportSheet { sheet: slide, name: text("xlsx.solver.report.title").to_string(), cells, widths: vec![(0, 90), (1, 150), (2, 90), (3, 110), (4, 90), (5, 70)] })
     }
 
     fn solver_sensitivity_report_command(&self, sheet_name: &str, model: &ibis_doc_model::solver::Model, solution: &Solution) -> Command {
@@ -598,7 +598,7 @@ impl SlideEditor {
             r += 1;
         }
         Command::Sheet(SheetCommand::CreateReportSheet {
-            slide,
+            sheet: slide,
             name: text("xlsx.solver.sensitivity-report").to_string(),
             cells,
             widths: vec![(0, 90), (1, 130), (2, 90), (3, 95), (4, 95), (5, 95), (6, 95)],
@@ -650,7 +650,7 @@ impl SlideEditor {
             put(r, 6, opt_num(l.upper_objective), false);
         }
         Command::Sheet(SheetCommand::CreateReportSheet {
-            slide,
+            sheet: slide,
             name: text("xlsx.solver.limits-report").to_string(),
             cells,
             widths: vec![(0, 90), (1, 130), (2, 90), (3, 90), (4, 110), (5, 90), (6, 110)],

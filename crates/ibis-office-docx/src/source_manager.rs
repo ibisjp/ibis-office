@@ -301,7 +301,7 @@ pub(crate) fn save_document_sources_command(
     let data = encode_sources(sources);
     let mut vars = doc.doc_variables.clone();
     vars.insert(DOC_SOURCES_VAR.to_string(), data);
-    Some(FlowCommand::SetDocVariables(vars))
+    Some(FlowCommand::SetDocumentVariables(vars))
 }
 
 /// 現在選択中のリスト種別
@@ -1176,7 +1176,7 @@ mod tests {
             url: String::new(),
         };
         let cmd = save_document_sources_command(&doc, &[detailed_entry.clone()]).unwrap();
-        if let ibis_doc_model::FlowCommand::SetDocVariables(vars) = cmd {
+        if let ibis_doc_model::FlowCommand::SetDocumentVariables(vars) = cmd {
             doc.doc_variables = vars;
         }
 

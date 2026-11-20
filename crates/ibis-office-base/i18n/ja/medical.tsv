@@ -1,0 +1,130 @@
+medical.dicom.tag.modality	モダリティ (Modality)
+medical.dicom.tag.study-description	検査記述 (StudyDescription)
+medical.dicom.tag.series-description	シリーズ記述 (SeriesDescription)
+medical.dicom.tag.slice-thickness	スライス厚 (SliceThickness)
+medical.dicom.tag.kvp	管電圧 (KVP)
+medical.dicom.tag.photometric	画素表現 (PhotometricInterpretation)
+medical.dicom.tag.rows	行数 (Rows)
+medical.dicom.tag.columns	列数 (Columns)
+medical.dicom.tag.bits-allocated	割当ビット数 (BitsAllocated)
+medical.dicom.warning.burned-in	BurnedInAnnotation (0028,0301) = YES: 画像ピクセル内に患者情報が焼き込まれている可能性があります。roi_masks で黒塗り領域を指定してください。
+medical.dicom.title	DICOM 非診断研究・発表用アセット
+medical.dicom.heading	DICOM 非診断アセット（匿名化済み）
+medical.dicom.notice	**非 SaMD・非診断用途の注意**: 本表示は学会発表・症例報告・臨床研究資料の作成補助を目的としており、一次読影・診断・治療目的には使用できません。
+medical.dicom.stripped-tags	メモリ内で除去された個人識別タグ ({count} 件): `{tags}`
+medical.dicom.no-stripped-tags	個人識別タグ: 該当タグなし
+medical.dicom.note	注意: {text}
+medical.dicom.preview-heading	匿名化プレビュー画像
+medical.dicom.params-heading	撮像・画像パラメータ（非個人情報）
+medical.dicom.params-head	| 項目 | 値 |
+medical.dicom.warning.compressed	転送構文 `{ts_uid}` は圧縮形式のため Wasm/軽量モードでは画像デコードをスキップし、メタデータのみ抽出しました（非圧縮画像またはデスクトップ版での変換をご利用ください）。
+medical.dicom.warning.size	画像サイズがサポート範囲外のためプレビュー生成をスキップしました。
+medical.dicom.warning.pixel-format	未対応の画素形式 (samples={samples}, bits={bits}) のためメタデータのみ抽出しました。
+medical.dicom.warning.j2k-unreadable	JPEG 2000 画素データの読み取りに失敗したため、メタデータのみ抽出しました。
+medical.dicom.warning.jls-unreadable	JPEG-LS 画素データの読み取りに失敗したため、メタデータのみ抽出しました。
+medical.dicom.warning.jxl-unreadable	JPEG-XL 画素データの読み取りに失敗したため、メタデータのみ抽出しました。
+medical.dicom.warning.j2k-decode	JPEG 2000 デコードに失敗したため、メタデータのみ抽出しました: {error}
+medical.dicom.warning.jls-decode	JPEG-LS デコードに失敗したため、メタデータのみ抽出しました: {error}
+medical.dicom.warning.jxl-header	JPEG-XL ヘッダ解析に失敗したため、メタデータのみ抽出しました: {error}
+medical.dicom.warning.jxl-frame	JPEG-XL フレーム描画に失敗したため、メタデータのみ抽出しました: {error}
+medical.dicom.warning.j2k-channels	JPEG 2000 チャンネル数 {count} は PNG 変換未対応のためメタデータのみ抽出しました。
+medical.dicom.warning.jls-channels	JPEG-LS コンポーネント数 {count} は PNG 変換未対応のためメタデータのみ抽出しました。
+medical.dicom.warning.jxl-channels	JPEG-XL チャンネル数 {count} は PNG 変換未対応のためメタデータのみ抽出しました。
+medical.fhir.default-title	HL7 FHIR 文書
+medical.fhir.default-title-xml	HL7 FHIR XML 文書
+medical.cda.default-title	特定健診・HL7 CDA 文書
+medical.fhir.default-title-docx	診療情報提供書
+medical.fhir.notice	本表示は HL7 FHIR データの忠実な構造化転記であり、診断・治療の判断支援を行うものではありません。
+medical.fhir.authenticity	**真正性情報 (Provenance/Signature)**: Provenance {provenance} 件 / 署名要素 {signatures} 件（署名者: {signers}）
+medical.fhir.patient-heading	患者情報
+medical.fhir.patient-head	| 項目 | 内容 |
+medical.fhir.patient-id	患者ID
+medical.fhir.patient-name	氏名
+medical.fhir.patient-gender	性別
+medical.fhir.patient-birth	生年月日
+medical.fhir.issuer-heading	発行元・担当者
+medical.fhir.issuer-head	| 種別 | 名称 |
+medical.fhir.condition-heading	傷病名 (Condition)
+medical.fhir.condition-head	| 傷病名 | コード | 臨床状態 | 発症/記録日 |
+medical.fhir.allergy-heading	アレルギー・薬剤禁忌 (AllergyIntolerance)
+medical.fhir.allergy-head	| 原因物質 | 種別 | 重要度 | 臨床状態 |
+medical.fhir.observation-heading	検査結果・所見 (Observation)
+medical.fhir.observation-head	| 項目名 | コード | 測定値 | 基準日時 |
+medical.fhir.medication-heading	処方・投薬 (Medication)
+medical.fhir.medication-head	| 医薬品名 | コード | 用法・用量 | ステータス |
+medical.cda.time	作成/実施日時: `{time}`
+medical.cda.observation-heading	検査・観察項目 (Observation)
+medical.cda.observation-head	| 項目名 | コード | 値 | 単位 |
+medical.fhir-xml.resources-heading	収録リソース一覧
+medical.fhir-xml.resources-head	| # | リソース種別 | ID |
+medical.hl7v2.title	HL7 v2 電文インスペクタ
+medical.hl7v2.heading	HL7 v2 電文 ({type})
+medical.hl7v2.control-id	メッセージ制御 ID: `{id}`
+medical.hl7v2.segment-count	セグメント数: {count}
+medical.hl7v2.segments-heading	セグメント一覧
+medical.hl7v2.segments-head	| # | セグメント | 主要フィールド |
+medical.uke.record.information	医療機関情報
+medical.uke.record.common-dental	レセプト共通(歯科/調剤)
+medical.uke.record.common	レセプト共通
+medical.uke.record.insurer	保険者
+medical.uke.record.public	公費
+medical.uke.record.public-extra	公費(補足)
+medical.uke.record.eligibility	資格確認
+medical.uke.record.visit-date	受診日
+medical.uke.record.copay	窓口負担
+medical.uke.record.diagnosis	傷病名
+medical.uke.record.procedure	診療行為
+medical.uke.record.medicine	医薬品
+medical.uke.record.material	特定器材
+medical.uke.record.comment	コメント
+medical.uke.record.symptoms	症状詳記
+medical.uke.record.inpatient	入院基本料等
+medical.uke.record.elderly	老人医療
+medical.uke.record.dispensing	調剤
+medical.uke.record.claim-total	診療報酬請求書
+medical.uke.record.reception	受付情報
+medical.uke.record.other	その他レコード
+medical.uke.sheet-detail	レセプト明細
+medical.uke.sheet-summary	レセプトサマリー
+medical.uke.detail.line	行
+medical.uke.detail.kind	種別
+medical.uke.detail.record	レコード名
+medical.uke.detail.receipt-no	レセプト番号
+medical.uke.detail.main-code	主要コード
+medical.uke.detail.master-name	マスター解決名称
+medical.uke.detail.points	点数
+medical.uke.detail.count	回数
+medical.uke.detail.raw	原文フィールド...
+medical.uke.summary.facility-code	医療機関コード
+medical.uke.summary.facility-name	医療機関名称
+medical.uke.summary.billing-month	診療年月
+medical.uke.summary.receipt-no	レセプト番号
+medical.uke.summary.patient	患者氏名
+medical.uke.summary.sex	男女
+medical.uke.summary.birth	生年月日
+medical.uke.summary.insurer-no	保険者番号
+medical.uke.summary.claimed	請求点数(HO)
+medical.uke.summary.computed	積算点数(SI/IY/TO)
+medical.uke.summary.difference	検算差分
+medical.uke.summary.diseases	傷病名数
+medical.uke.summary.items	明細行数
+medical.uke.summary.total	合計
+medical.uke.summary.go-total	GOレコード合計点数
+medical.dpc.sheet-detail	DPC明細
+medical.dpc.sheet-summary	DPCサマリー
+medical.dpc.summary.patient-id	データ識別番号
+medical.dpc.summary.facility-code	施設コード
+medical.dpc.summary.item-count	明細件数
+medical.dpc.summary.points	合計点数(点数×回数)
+medical.pii.location.slide	スライド {no}
+medical.pii.location.notes	スライド {no} ノート
+medical.pii.location.comments	スライド {no} コメント
+medical.pii.location.sheet-cell	シート {no} (R{row}C{column})
+medical.pii.location.text	スライド {no} テキスト
+medical.pii.location.hidden-sheet	シート `{name}`
+medical.pii.detail.hidden-slide	非表示スライドが含まれています
+medical.pii.detail.notes	発表者ノートにテキストが含まれています
+medical.pii.detail.comments	{count} 件のコメントが含まれています
+medical.pii.detail.hidden-sheet	非表示ワークシートが含まれています
+medical.pii.detail.personal-number	12桁の個人番号（マイナンバー）様式の数字列を検出
+medical.pii.detail.patient-id	患者ID／被保険者番号を含むテキストを検出

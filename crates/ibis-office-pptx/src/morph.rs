@@ -5,7 +5,7 @@
 //! resize and turn from where they were to where they are, the others fade out
 //! and in. Shapes are paired by name (`!!name`, PowerPoint's way to say which
 //! is which), else by what they hold: their text, their picture, their
-//! geometry. 単語・文字単位 is played as by object.
+//! geometry. 単語・文字 (`morph_text`): the words or characters the texts of a pair have in common move, the others fade.
 use std::collections::HashMap;
 
 use gpui_kit::*;
@@ -199,35 +199,145 @@ pub(crate) fn blend(a: &Shape, b: &Shape, t: f64) -> Option<Shape> {
 
 #[ibis_office_macros::editor_ext(Morph)]
 impl SlideEditor {
-    /// The slide `slide` coming in from `before` as a morph, `t` (0 to 1) of the way.
-    pub(crate) fn morph_page(&self, before: &Slide, slide: &Slide, t: f32, scale: f32) -> AnyElement {
+    /// The slide `slide` coming in from `before` as a morph, `t` (0 to 1, eased) of the way; `progress` is the same moment not eased (the words move on their own curve).
+    pub(crate) fn morph_page(&self, before: &Slide, slide: &Slide, t: f32, progress: f32, scale: f32) -> AnyElement {
         let pairing = pair_shapes(before, slide);
         let olds: Vec<&Shape> = before.shown_shapes().collect();
         let news: Vec<&Shape> = slide.shown_shapes().collect();
+        // The slide's shapes that its animations bring in are not there yet while it comes in (PowerPoint plays the effects after).
+        let waiting = crate::slideshow::hidden_before_animation(slide);
         let layer = |opacity: f32, element: AnyElement| div().absolute().top_0().left_0().size_full().opacity(opacity).child(element).into_any_element();
         let mut page = div().absolute().top_0().left_0().size_full().overflow_hidden().bg(crate::shell::palette::white());
         page = page.child(slide_backdrop(before, scale, &self.resources)).child(layer(t, slide_backdrop(slide, scale, &self.resources).into_any_element()));
         for &i in &pairing.old_only {
             page = page.child(layer(1.0 - t, shape_element(olds[i], olds[i].frame, scale, &self.resources, None)));
         }
+        let unit = crate::morph_text::Unit::of_option(slide.transition.as_ref().and_then(|t| t.direction.as_deref()));
+        let mut moving_text = Vec::new();
         for &(i, j) in &pairing.pairs {
+            if waiting.contains(&news[j].id) {
+                page = page.child(layer(1.0 - t, shape_element(olds[i], olds[i].frame, scale, &self.resources, None)));
+                continue;
+            }
             let (frame, rotation) = between(olds[i], news[j], t as f64);
-            if let Some(mut mixed) = blend(olds[i], news[j], t as f64) {
+            // The words or characters move by themselves; the shape without its text is faded or blended as it is.
+            let moves = unit.and_then(|u| self.text_moves(olds[i], news[j], u, scale));
+            let (old_shape, new_shape);
+            let (a, b) = match &moves {
+                Some(moves) => {
+                    moving_text.push(moves.clone());
+                    (old_shape, new_shape) = (without_text(olds[i]), without_text(news[j]));
+                    (&old_shape, &new_shape)
+                }
+                None => (olds[i], news[j]),
+            };
+            if moves.is_some() && matches!(a.kind, ShapeKind::TextBox(_)) {
+                continue;
+            }
+            let (olds_i, news_j) = (a, b);
+            let _ = (olds_i, news_j);
+            if let Some(mut mixed) = blend(a, b, t as f64) {
                 mixed.rotation = rotation;
                 page = page.child(layer(1.0, shape_element(&mixed, frame, scale, &self.resources, None)));
                 continue;
             }
-            let mut old = olds[i].clone();
+            let mut old = a.clone();
             old.rotation = rotation;
-            let mut new = news[j].clone();
+            let mut new = b.clone();
             new.rotation = rotation;
             page = page.child(layer(1.0 - t, shape_element(&old, frame, scale, &self.resources, None))).child(layer(t, shape_element(&new, frame, scale, &self.resources, None)));
         }
-        for &j in &pairing.new_only {
+        for &j in pairing.new_only.iter().filter(|&&j| !waiting.contains(&news[j].id)) {
             page = page.child(layer(t, shape_element(news[j], news[j].frame, scale, &self.resources, None)));
+        }
+        for moves in &moving_text {
+            for m in moves.iter() {
+                let (token, opacity) = crate::morph_text::at(m, progress);
+                page = page.child(layer(opacity, shape_element(&token_shape(&token, scale), token_frame(&token, scale), scale, &self.resources, None)));
+            }
         }
         page.into_any_element()
     }
+
+    /// Where the words or characters of the pair's texts go, in pixels of the slide at `scale` (pixels to an EMU); `None` when the pair
+    /// is not two plain horizontal texts (they are then faded as by object).
+    pub(crate) fn text_moves(&self, old: &Shape, new: &Shape, unit: crate::morph_text::Unit, scale: f32) -> Option<std::rc::Rc<Vec<crate::morph_text::Move>>> {
+        let (a, b) = (plain_body(old)?, plain_body(new)?);
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (a.text(), b.text(), unit, scale.to_bits()).hash(&mut h);
+            let f = |r: EmuRect| (r.x, r.y, r.width, r.height);
+            (f(old.frame), f(new.frame)).hash(&mut h);
+            h.finish()
+        };
+        thread_local!(static CACHE: std::cell::RefCell<Option<(u64, std::rc::Rc<Vec<crate::morph_text::Move>>)>> = const { std::cell::RefCell::new(None) });
+        if let Some(found) = CACHE.with(|c| c.borrow().as_ref().filter(|(k, _)| *k == key).map(|(_, v)| v.clone())) {
+            return Some(found);
+        }
+        let text = self.resources.window_text_system();
+        let tokens = |shape: &Shape, body: &ibis_doc_model::TextBody| {
+            let area = shape.frame.width - body.insets.left - body.insets.right;
+            let boxes = self.resources.char_boxes(body, area as f64, scale * 12_700.0, &text);
+            let mut tokens = crate::morph_text::tokens(body, &boxes, unit)?;
+            // The text's place on the slide: the shape's, inside its insets, anchored as the shape says.
+            let height = boxes.iter().map(|b| b.y + b.height).fold(0.0f32, f32::max);
+            let room = (shape.frame.height - body.insets.top - body.insets.bottom) as f32 * scale - height;
+            let down = match body.anchor {
+                ibis_doc_model::VerticalAnchor::Top => 0.0,
+                ibis_doc_model::VerticalAnchor::Middle => room / 2.0,
+                ibis_doc_model::VerticalAnchor::Bottom => room,
+            };
+            for t in &mut tokens {
+                t.x += (shape.frame.x + body.insets.left) as f32 * scale;
+                t.y += (shape.frame.y + body.insets.top) as f32 * scale + down;
+            }
+            Some(tokens)
+        };
+        let moves = std::rc::Rc::new(crate::morph_text::plan(tokens(old, a)?, tokens(new, b)?));
+        CACHE.with(|c| *c.borrow_mut() = Some((key, moves.clone())));
+        Some(moves)
+    }
+}
+
+/// The text of a shape when it is plain enough to be moved word by word: horizontal, in one column, not turned, not warped.
+fn plain_body(shape: &Shape) -> Option<&ibis_doc_model::TextBody> {
+    let body = match &shape.kind {
+        ShapeKind::TextBox(body) => body,
+        ShapeKind::Auto(auto) => auto.text.as_ref()?,
+        _ => return None,
+    };
+    let plain = shape.rotation == 0 && !body.vertical && body.sideways == 0 && body.rotation == 0 && body.columns <= 1 && body.warp.is_none() && body.wrap && body.autofit != ibis_doc_model::TextAutofit::ResizeShape;
+    (plain && !body.text().trim().is_empty()).then_some(body)
+}
+
+/// The shape without its text (what is left to fade or blend while the text moves).
+fn without_text(shape: &Shape) -> Shape {
+    let mut out = shape.clone();
+    match &mut out.kind {
+        ShapeKind::Auto(auto) => auto.text = None,
+        ShapeKind::TextBox(body) => body.paragraphs.clear(),
+        _ => {}
+    }
+    out
+}
+
+/// One word or character drawn alone: a text box that does not wrap, with no insets, holding its runs.
+fn token_shape(token: &crate::morph_text::Token, _scale: f32) -> Shape {
+    let mut body = ibis_doc_model::TextBody::default();
+    body.insets = ibis_doc_model::text::Insets { left: 0, top: 0, right: 0, bottom: 0 };
+    body.wrap = false;
+    let mut paragraph = ibis_doc_model::text::Paragraph::default();
+    paragraph.runs = token.runs.clone();
+    paragraph.space_before = 0;
+    paragraph.space_after = 0;
+    body.paragraphs = vec![paragraph];
+    Shape::new(ibis_doc_model::ShapeId(0), EmuRect::new(0, 0, 0, 0), ShapeKind::TextBox(body))
+}
+
+fn token_frame(token: &crate::morph_text::Token, scale: f32) -> EmuRect {
+    let emu = |px: f32| (px / scale).round() as i64;
+    EmuRect::new(emu(token.x), emu(token.y), emu(token.width), emu(token.height))
 }
 
 #[cfg(test)]

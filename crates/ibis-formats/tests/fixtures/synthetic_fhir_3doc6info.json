@@ -1,0 +1,123 @@
+{
+  "resourceType": "Bundle",
+  "id": "synthetic-3doc6info-001",
+  "type": "document",
+  "timestamp": "2026-11-16T09:00:00+09:00",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Composition",
+        "id": "comp-001",
+        "status": "final",
+        "title": "診療情報提供書（テストサンプル）",
+        "date": "2026-11-16"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "pat-001",
+        "identifier": [
+          {
+            "value": "00012345"
+          }
+        ],
+        "name": [
+          {
+            "text": "山田 太郎"
+          }
+        ],
+        "gender": "male",
+        "birthDate": "1970-05-12"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Organization",
+        "id": "org-001",
+        "name": "テスト地域医療連携クリニック"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "cond-001",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "活動性"
+            }
+          ]
+        },
+        "code": {
+          "coding": [
+            {
+              "code": "8830001",
+              "display": "2型糖尿病"
+            }
+          ]
+        },
+        "onsetDateTime": "2024-04-01"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "allergy-001",
+        "clinicalStatus": {
+          "coding": [
+            {
+              "code": "active",
+              "display": "有効"
+            }
+          ]
+        },
+        "category": ["medication"],
+        "criticality": "high",
+        "code": {
+          "text": "ペニシリン"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-001",
+        "code": {
+          "coding": [
+            {
+              "code": "3D045000001906202",
+              "display": "HbA1c(NGSP)"
+            }
+          ]
+        },
+        "effectiveDateTime": "2026-11-10",
+        "valueQuantity": {
+          "value": 6.8,
+          "unit": "%"
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-001",
+        "status": "active",
+        "medicationCodeableConcept": {
+          "coding": [
+            {
+              "code": "620000001",
+              "display": "メトホルミン塩酸塩錠250mg"
+            }
+          ]
+        },
+        "dosageInstruction": [
+          {
+            "text": "1日2回 朝夕食後 1回1錠 30日分"
+          }
+        ]
+      }
+    }
+  ]
+}

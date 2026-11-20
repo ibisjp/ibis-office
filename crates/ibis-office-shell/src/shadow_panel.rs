@@ -86,7 +86,7 @@ impl SlideEditor {
             let ShapeKind::Auto(auto)=&shape.kind else {return None};
             let shadow=edit.on(auto.shadow.unwrap_or_else(default_shadow));
             if auto.shadow==Some(shadow) {return None;}
-            let mut auto=auto.clone();auto.shadow=Some(shadow);Some(Command::SetKind {slide:*slide,shape:shape.id,kind:Box::new(ShapeKind::Auto(auto))})
+            let mut auto=auto.clone();auto.shadow=Some(shadow);Some(Command::SetShapeKind {slide:*slide,shape:shape.id,kind:Box::new(ShapeKind::Auto(auto))})
         }).collect();
         if self.apply_pptx_commands_checked(commands,cx) {self.close_shadow_panel(window,cx);} else {
             if let Some(p)=self.shape_edit.shadow_panel.as_mut() {p.error=Some(crate::i18n::text("pptx.shadow-panel.outer-shadow-cannot-saved-selected").into());}cx.notify();

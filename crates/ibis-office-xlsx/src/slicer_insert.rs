@@ -108,7 +108,7 @@ impl SlideEditor {
             let id = self.document.ids().new_shape_id();
             let frame = EmuRect::new(origin.0 + k as i64 * (WIDTH + GAP), origin.1, WIDTH, HEIGHT);
             let shape = Shape::new(id, frame, ShapeKind::Slicer(Arc::new(slicer)));
-            commands.push(Command::InsertShape { slide, index, shape });
+            commands.push(Command::InsertShape { slide, shapes: vec![(index, shape)] });
             index += 1;
             // The name Excel makes for the cache.
             commands.push(Command::Sheet(SheetCommand::SetName { name: cache, sheet: None, formula: Some("#N/A".into()) }));
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn every_caption_is_in_both_languages() {
         for table in [include_str!("../../ibis-office-base/i18n/ja/xlsx.tsv"), include_str!("../../ibis-office-base/i18n/en/xlsx.tsv")] {
-            for id in ["xlsx.slicer-insert", "xlsx.slicer-insert.title", "xlsx.slicer-insert.select-table", "xlsx.slicer-insert.choose", "xlsx.slicer-insert.choose-fields", "xlsx.slicer-insert.cache-prefix"] {
+            for id in ["xlsx.insert-slicer", "xlsx.slicer-insert.title", "xlsx.slicer-insert.select-table", "xlsx.slicer-insert.choose", "xlsx.slicer-insert.choose-fields", "xlsx.slicer-insert.cache-prefix"] {
                 assert!(table.lines().any(|l| l.split('\t').next() == Some(id)), "{id} is missing");
             }
         }

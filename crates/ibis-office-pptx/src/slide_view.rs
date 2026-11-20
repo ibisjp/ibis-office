@@ -344,12 +344,6 @@ impl SlideEditor {
                     this.cancel_path_draw(cx);
                 } else if this.is_editing_points() {
                     this.end_edit_points(cx);
-                } else if this.pptx().is_some_and(|p| p.slide_zoom_dialog.is_some()) {
-                    this.close_slide_zoom_dialog(cx);
-                } else if this.pptx().is_some_and(|p| p.section_zoom_dialog.is_some()) {
-                    this.close_section_zoom_dialog(cx);
-                } else if this.pptx().is_some_and(|p| p.summary_zoom_dialog.is_some()) {
-                    this.close_summary_zoom_dialog(cx);
                 } else if this.text_editing().is_some() {
                     this.end_text_edit(window, cx);
                 } else if this.pptx_tool() != Tool::Select {
@@ -365,7 +359,7 @@ impl SlideEditor {
             .h_full()
             .overflow_hidden()
             .bg(theme.muted)
-            .when(self.link_hover,|d|d.cursor_pointer()).on_mouse_move(cx.listener(|e,event:&MouseMoveEvent,_,cx|{e.update_link_hover(event,cx);e.update_clip_hover(event,cx)})).when(placing || self.shape_edit.link_mode.is_some(), |d| d.cursor_crosshair())
+            .when(self.link_hover,|d|d.cursor_pointer()).on_mouse_move(cx.listener(|e,event:&MouseMoveEvent,_,cx|{e.update_link_hover(event,cx);e.update_clip_hover(event,cx)})).when(placing || self.shape_edit.link_mode.is_some(), |d| d.cursor(crate::shell::insert_band::insert_cursor()))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_slide_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_slide_right_down))
             // The pointer left the workspace: no clip has its control bar for the pointer.
@@ -402,9 +396,6 @@ impl SlideEditor {
                 }
             }))
             .child(drag_tracker(cx))
-            .children(self.render_slide_zoom_dialog(cx))
-            .children(self.render_section_zoom_dialog(cx))
-            .children(self.render_summary_zoom_dialog(cx))
             .when(self.dialog_is_modal(), |d| d.child(crate::shell::dialog::viewport_shield()))
             .scrollbar(&self.workspace_scroll, ScrollbarAxis::Both)
     }
@@ -938,17 +929,8 @@ impl SlideEditor {
                 }
                 for pts in &dashed {
                     let pts: Vec<Point<Pixels>> = pts.iter().map(at).collect();
-                    let closed = pts.len() > 2;
-                    if closed {
-                        let mut fill = band_color;
-                        fill.a = 0.08;
-                        if let Some(path) = polygon(&pts, None, true) {
-                            window.paint_path(path, fill);
-                        }
-                    }
-                    if let Some(path) = polygon(&pts, Some(px(1.0)), closed) {
-                        window.paint_path(path, band_color);
-                    }
+                    // The box of an insert drag (and the selection band): the one look of the three screens (`shell::insert_band`).
+                    crate::shell::insert_band::paint_band(window, &pts, band_color);
                 }
                 for guide in &alignment_guides {
                     let path = match guide {
@@ -1036,7 +1018,7 @@ impl SlideEditor {
         // after the text so that they are where it was just painted.
         let mut selected = primary;
         selected.a = 0.25;
-        let caret_color = theme.foreground;
+        let caret_color = self.text_caret_color();
         let marks = self.caret_marks();
         let fallback = self.caret_geometry(scale).map(|g| {
             let shows_caret = self.text_editing().is_some_and(|e| e.anchor == e.caret || e.marked.is_some());
@@ -1516,7 +1498,7 @@ impl SlideEditor {
                         .iter()
                         .filter_map(|(id, _)| self.slide().shape(*id).map(|s| (s, self.preview(s).0)))
                         .filter(|(s, frame)| *frame != s.frame)
-                        .map(|(s, frame)| Command::SetFrame { slide, shape: s.id, frame })
+                        .map(|(s, frame)| Command::SetFrame { slide, frames: vec![(s.id, frame)], with_attached: true })
                         .collect();
                     let current_slide = self.slide();
                     let updated_shapes: Vec<Shape> = current_slide.shapes.iter().map(|s| {
@@ -1569,7 +1551,7 @@ impl SlideEditor {
                     && old != new
                     && moved(start, current)
                 {
-                    let mut commands = vec![Command::SetFrame { slide, shape: *shape, frame: new }];
+                    let mut commands = vec![Command::SetFrame { slide, frames: vec![(*shape, new)], with_attached: true }];
                     let current_slide = self.slide();
                     let updated_shapes: Vec<Shape> = current_slide.shapes.iter().map(|s| {
                         if s.id == *shape {

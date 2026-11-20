@@ -12,7 +12,7 @@ pub(super) fn run() {
     s.size(1200.,800.);
     s.update(|e,_,cx| {
         let rule=Validation {ranges:vec![CellRange{first_row:0,last_row:19,first_column:0,last_column:0}],kind:"list".into(),operator:"between".into(),formula1:Some("\"Apple,Meta,Alphabet,Microsoft,Amazon\"".into()),formula2:None,allow_blank:true,dropdown:true,prompt:None,error:None};
-        e.run_sheet(vec![Command::Sheet(SheetCommand::SetValidation{slide:e.current_slide,ranges:rule.ranges.clone(),rule:Some(rule)})],cx);
+        e.run_sheet(vec![Command::Sheet(SheetCommand::SetValidation{sheet:e.current_slide,ranges:rule.ranges.clone(),rule:Some(rule)})],cx);
     });
     s.click_cell("A1");
     s.key("alt-down");

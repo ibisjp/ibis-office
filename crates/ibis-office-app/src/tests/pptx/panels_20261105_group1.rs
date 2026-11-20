@@ -24,10 +24,10 @@ fn animation_pane() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.size(1200., 900.);
     s.click_shape(0);
-    s.toolbar_menu("motion", "pptx.anim.in.fade");
+    s.toolbar_menu("motion", "pptx.animation.in.fade");
     s.click_shape(1);
-    s.toolbar_menu("motion", "pptx.anim.in.fly-bottom");
-    s.toolbar_menu("motion", "pptx.anim.pane");
+    s.toolbar_menu("motion", "pptx.animation.in.fly-bottom");
+    s.toolbar_menu("motion", "pptx.animation.pane");
     s.screenshot("animation-pane");
     s.update(|e, _, cx| e.open_animation_options_panel(0, cx));
     s.screenshot("animation-options");

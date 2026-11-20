@@ -13,13 +13,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gpui_kit::{Background, BorderStyle, Bounds, Corners, FontId, Hsla, OutlineVerb, PaintRecord, Pixels, Rgba};
+use gpui_kit::{Background, BorderStyle, Bounds, Corners, DrawnGlyph, FontId, Hsla, OutlineVerb, PaintRecord, Pixels, Rgba, TextSystem};
 use krilla::Document;
 use krilla::color::rgb;
 use krilla::geom::{Path, PathBuilder, Point, Size, Transform};
 use krilla::image::Image;
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
+use crate::export_print::PaintKind;
 use krilla::paint::{Fill, FillRule, LineCap, LineJoin, LinearGradient, SpreadMethod, Stop, Stroke, StrokeDash};
 use krilla::surface::Surface;
 use krilla::text::{Font, GlyphId, KrillaGlyph};
@@ -39,13 +40,59 @@ const SYNTHETIC_BOLD_STROKE: f32 = 0.035;
 /// A page to write: its records, the window's width in logical pixels and
 /// device pixels per logical one, and its size in points.
 struct PendingPage {
-    records: Vec<PaintRecord>,
-    width_px: f32,
     page_pt: (f32, f32),
-    scale_factor: f32,
-    /// Points the whole page is moved by.
-    shift: (f32, f32),
+    /// The page's number in its document (from 1; the slide's or the document page's), when the caller said: where a link to a page goes to.
+    number: Option<usize>,
+    /// The hyperlinks on the page (`/Subtype /Link` annotations).
+    links: Vec<PageLink>,
+    /// What the page is made of, in order: one window's records for a slide's page, several for a handout or notes page.
+    layers: Vec<Layer>,
 }
+
+/// Where a link on a page goes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinkTo {
+    /// An address outside the file (`/URI`: a web page, a `mailto:`).
+    Url(String),
+    /// A place of the document: the page numbered `number` (the numbers given with `link_last_page`) and the point (`x`, `y`) on it, in points from its top left (the PDF
+    /// has them as whole numbers, as Word's and PowerPoint's do: `x` rounded down and the height above the page's bottom rounded down).
+    Page { number: usize, x: f32, y: f32 },
+}
+
+/// The point of a link's destination (`x`, `y` in points from the page's top left on a page `page_height` high) as the PDF writes it (whole numbers: `x` rounded down, the
+/// height above the page's bottom rounded down), in points from the top left again.
+fn link_destination(page_height: f32, x: f32, y: f32) -> (f32, f32) {
+    let up = (page_height - y).floor().clamp(0.0, page_height.floor());
+    (x.max(0.0).floor(), page_height - up)
+}
+
+/// A clickable stretch of a page, in points from its top left.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageLink {
+    pub rect: (f32, f32, f32, f32),
+    pub to: LinkTo,
+}
+
+/// What a window painted (`records`), put on a page: its logical pixel is `k` points, its top left is at `origin` points of the page,
+/// and only what is inside `clip` (x, y, width, height in points of the page) shows.
+pub struct Layer {
+    pub records: Vec<PaintRecord>,
+    /// Device pixels to a logical pixel of the window.
+    pub scale_factor: f32,
+    pub k: f32,
+    pub origin: (f32, f32),
+    pub clip: Option<(f32, f32, f32, f32)>,
+    /// The frames (x, y, width, height in the window's logical pixels) of the shapes with a plain fill and no line: in the pure black and white print the
+    /// fill of each gets the thin black edge PowerPoint draws (`HAIRLINE_PT`).
+    pub hairline: Vec<(f32, f32, f32, f32)>,
+    /// The frames of the charts, in the same pixels: what is painted inside one keeps its fills in grey in the pure black and white print (a chart's bars are
+    /// not white as a shape's fill is: `tasks/doc/requests/2026-11-20-225-bw-hairline-result.md`).
+    pub charts: Vec<(f32, f32, f32, f32)>,
+}
+
+/// The width of the black line PowerPoint's pure black and white print draws round a plain fill that has no line: 0.5 of the units of its print PDF (0.75 pt
+/// each), whatever the paper's scale, with round ends and joins (Windows PowerPoint's `PrintOut` PDFs, `tasks/doc/requests/2026-11-20-225-bw-hairline-result.md`).
+pub const HAIRLINE_PT: f32 = 0.375;
 
 /// A PDF being written: pages are collected, then written together, once it
 /// is known which glyphs of each font are used (a font that cannot be
@@ -62,62 +109,151 @@ pub struct PdfWriter {
     images_by_content: HashMap<(u32, u32, u64), Vec<(Vec<u8>, Image)>>,
     /// Glyphs left out for want of their font.
     pub missing_glyphs: usize,
+    /// Where the fonts' data comes from (the platform's text system), asked when the pages are written.
+    text_system: Arc<TextSystem>,
+    /// Fonts the caller gave data for (the browser version's substitutes for what its Canvas draws), by the ids it made up.
+    given_fonts: HashMap<FontId, (Arc<Vec<u8>>, u32)>,
+    /// How the colours are printed (see `PRINT_COLOR`).
+    print_color: crate::export_print::PrintColor,
 }
 
 impl PdfWriter {
-    pub fn new() -> Self {
-        Self { pages: Vec::new(), document: Document::new(), fonts: HashMap::new(), images: HashMap::new(), images_by_content: HashMap::new(), missing_glyphs: 0 }
+    pub fn new(text_system: Arc<TextSystem>) -> Self {
+        crate::render::glyph_text::set_recording(true);
+        Self { pages: Vec::new(), document: Document::new(), fonts: HashMap::new(), images: HashMap::new(), images_by_content: HashMap::new(), missing_glyphs: 0, text_system, given_fonts: HashMap::new(), print_color: crate::export_print::PrintColor::Color }
     }
 
     /// Add a page `page_pt` points large from `records`, painted in a window
     /// `width_px` logical pixels wide at `scale_factor` device pixels each.
     /// `font_data` gives a font's data by its id.
     /// The pages added so far.
+    /// Print the colours of the pages as `mode` (the print settings' グレースケール / 白黒), when they are written.
+    pub fn set_print_color(&mut self, mode: crate::export_print::PrintColor) {
+        self.print_color = mode;
+    }
+
     pub fn page_count(&self) -> usize {
         self.pages.len()
     }
 
-    pub fn add_page(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, font_data: &mut dyn FnMut(FontId) -> (FontData, (bool, bool), Variations)) {
-        self.add_page_shifted(records, width_px, page_pt, scale_factor, (0.0, 0.0), font_data);
+    pub fn add_page(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32) {
+        self.add_page_shifted(records, width_px, page_pt, scale_factor, (0.0, 0.0));
     }
 
     /// [`Self::add_page`], with everything on the page moved by `shift`
     /// points (to put what the window drew on whole pixels where the paper
     /// wants it between them).
-    /// `font_data` also tells whether the font is drawn emboldened and slanted (bold or italic asked of a family without
-    /// that face): it is written so too.
-    pub fn add_page_shifted(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, shift: (f32, f32), font_data: &mut dyn FnMut(FontId) -> (FontData, (bool, bool), Variations)) {
-        for record in &records {
-            if let PaintRecord::Glyph { font_id, glyph_id, .. } = record {
-                let font = self.fonts.entry(*font_id).or_insert_with(|| {
-                    let (data, synthetic, variations) = font_data(*font_id);
-                    data.and_then(|(data, index)| {
-                        let characters = Arc::new(glyph_characters(&data, index));
-                        let glyph_count = glyph_count(&data, index);
-                        let extent = vertical_extent(&data, index);
-                        let advances = glyph_advances(&data, index, &variations);
-                        let coords: Vec<(krilla::text::Tag, f32)> = variations.iter().map(|(tag, value)| (krilla::text::Tag::new(tag), *value)).collect();
-                        let font = Font::new_variable(data.clone().into(), index, &coords)?;
-                        Some(PdfFont { font, characters, data, index, glyph_count, extent, advances, glyphs: Vec::new(), outlined: false, synthetic })
-                    })
-                });
-                if let Some(font) = font
-                    && glyph_id.0 < font.glyph_count
-                {
-                    font.glyphs.push(glyph_id.0 as u16);
-                }
-            }
-        }
-        self.pages.push(PendingPage { records, width_px, page_pt, scale_factor, shift });
+    pub fn add_page_shifted(&mut self, records: Vec<PaintRecord>, width_px: f32, page_pt: (f32, f32), scale_factor: f32, shift: (f32, f32)) {
+        let layer = Layer { records, scale_factor, k: page_pt.0 / width_px.max(1.0), origin: shift, clip: None, hairline: Vec::new(), charts: Vec::new() };
+        self.pages.push(PendingPage { page_pt, number: None, links: Vec::new(), layers: vec![layer] });
     }
 
-    fn write_page(&mut self, pending: &PendingPage) {
-        let PendingPage { records, width_px, page_pt, scale_factor, shift } = pending;
-        let (records, width_px, page_pt, scale_factor, shift) = (records.as_slice(), *width_px, *page_pt, *scale_factor, *shift);
+    /// The page added last has its first layer's plain filled shapes at `frames` (see [`Layer::hairline`]).
+    pub fn hairline_last_page(&mut self, frames: Vec<(f32, f32, f32, f32)>, charts: Vec<(f32, f32, f32, f32)>) {
+        if let Some(layer) = self.pages.last_mut().and_then(|page| page.layers.first_mut()) {
+            layer.hairline = frames;
+            layer.charts = charts;
+        }
+    }
+
+    /// The page added last is numbered `number` (from 1) in its document and has `links` (`/Link` annotations; those that go to a page that is not in the file are left out).
+    pub fn link_last_page(&mut self, number: usize, links: Vec<PageLink>) {
+        if let Some(page) = self.pages.last_mut() {
+            page.number = Some(number);
+            page.links = links;
+        }
+    }
+
+    /// A page `page_pt` points large made of `layers` (a handout page: the slides' records each put in its place, and the text).
+    pub fn add_page_layers(&mut self, page_pt: (f32, f32), layers: Vec<Layer>) {
+        self.pages.push(PendingPage { page_pt, number: None, links: Vec::new(), layers });
+    }
+
+    /// The glyphs the platform drew itself, with what they drew and the font asked for (the browser version's Canvas text): each
+    /// distinct (font, glyph) once. Their fonts have no file; `substitute_drawn` gives them one.
+    pub fn drawn_glyphs(&self) -> Vec<(FontId, gpui_kit::GlyphId, DrawnGlyph)> {
+        let mut seen = std::collections::HashSet::new();
+        let mut found = Vec::new();
+        for record in self.pages.iter().flat_map(|page| page.layers.iter().flat_map(|layer| &layer.records)) {
+            if let PaintRecord::Glyph { font_id, glyph_id, emoji: false, .. } = record
+                && seen.insert((*font_id, *glyph_id))
+                && let Some(drawn) = self.text_system.drawn_glyph(*font_id, *glyph_id)
+            {
+                found.push((*font_id, *glyph_id, drawn));
+            }
+        }
+        found
+    }
+
+    /// Give the font file `data` (face `index`) for the id `font_id`, which the caller made up.
+    pub fn give_font(&mut self, font_id: FontId, data: Arc<Vec<u8>>, index: u32) {
+        self.given_fonts.insert(font_id, (data, index));
+    }
+
+    /// Replace the font and glyph of the drawn glyphs `replace` has an answer for (a font given with `give_font` and the glyph of its
+    /// own that draws the same text).
+    pub fn substitute_drawn(&mut self, replace: &mut dyn FnMut(FontId, gpui_kit::GlyphId) -> Option<(FontId, gpui_kit::GlyphId)>) {
+        for record in self.pages.iter_mut().flat_map(|page| page.layers.iter_mut().flat_map(|layer| &mut layer.records)) {
+            if let PaintRecord::Glyph { font_id, glyph_id, emoji: false, .. } = record
+                && let Some((font, glyph)) = replace(*font_id, *glyph_id)
+            {
+                (*font_id, *glyph_id) = (font, glyph);
+            }
+        }
+    }
+
+    /// Register the fonts the pages draw with, and the glyphs they use of each.
+    fn register_fonts(&mut self) {
+        let mut used = Vec::new();
+        for record in self.pages.iter().flat_map(|page| page.layers.iter().flat_map(|layer| &layer.records)) {
+            if let PaintRecord::Glyph { font_id, glyph_id, .. } = record {
+                used.push((*font_id, *glyph_id));
+            }
+        }
+        for (font_id, glyph_id) in used {
+            let font = self.fonts.entry(font_id).or_insert_with(|| {
+                let (data, synthetic, variations) = match self.given_fonts.get(&font_id) {
+                    Some(given) => (Some(given.clone()), (false, false), Vec::new()),
+                    None => (self.text_system.font_data(font_id), self.text_system.synthetic_style(font_id), self.text_system.font_variations(font_id)),
+                };
+                data.and_then(|(data, index)| {
+                    let characters = Arc::new(glyph_characters(&data, index));
+                    let glyph_count = glyph_count(&data, index);
+                    let extent = vertical_extent(&data, index);
+                    let advances = glyph_advances(&data, index, &variations);
+                    let coords: Vec<(krilla::text::Tag, f32)> = variations.iter().map(|(tag, value)| (krilla::text::Tag::new(tag), *value)).collect();
+                    let font = Font::new_variable(data.clone().into(), index, &coords)?;
+                    Some(PdfFont { font, characters, data, index, glyph_count, extent, advances, glyphs: Vec::new(), outlined: false, synthetic })
+                })
+            });
+            if let Some(font) = font
+                && glyph_id.0 < font.glyph_count
+            {
+                font.glyphs.push(glyph_id.0 as u16);
+            }
+        }
+    }
+
+    fn write_page(&mut self, pending: &PendingPage, index_of: &HashMap<usize, usize>) {
+        let page_pt = pending.page_pt;
         let Some(settings) = PageSettings::from_wh(page_pt.0, page_pt.1) else { return };
-        let k = page_pt.0 / width_px.max(1.0);
         let mut page = self.document.start_page_with(settings);
         let mut surface = page.surface();
+        for layer in &pending.layers {
+        let (records, scale_factor, k, shift) = (layer.records.as_slice(), layer.scale_factor, layer.k, layer.origin);
+        let hairline = print_color() == crate::export_print::PrintColor::BlackWhite;
+        let in_chart = |bounds: &Bounds<Pixels>| hairline && layer.charts.iter().any(|f| f32::from(bounds.left()) >= f.0 - 1.5 && f32::from(bounds.top()) >= f.1 - 1.5 && f32::from(bounds.right()) <= f.0 + f.2 + 1.5 && f32::from(bounds.bottom()) <= f.1 + f.3 + 1.5);
+        let edge = |bounds: &Bounds<Pixels>| hairline && layer.hairline.iter().any(|f| (f.0 - f32::from(bounds.left())).abs() < 1.5 && (f.1 - f32::from(bounds.top())).abs() < 1.5 && (f.2 - f32::from(bounds.size.width)).abs() < 1.5 && (f.3 - f32::from(bounds.size.height)).abs() < 1.5);
+        let clipped = match layer.clip {
+            Some((x, y, w, h)) => match rect_path(x, y, x + w, y + h) {
+                Some(path) => {
+                    surface.push_clip_path(&path, &FillRule::NonZero);
+                    true
+                }
+                None => continue,
+            },
+            None => false,
+        };
         surface.push_transform(&Transform::from_translate(shift.0, shift.1));
         surface.push_transform(&Transform::from_scale(k, k));
         let mut next = 0;
@@ -130,12 +266,16 @@ impl PdfWriter {
             }
             match record {
                 PaintRecord::Quad { bounds, clip, background, border_color, border_widths, corner_radii, border_style } => {
+                    IN_CHART.with(|c| c.set(in_chart(bounds)));
                     with_clip(&mut surface, clip, within(bounds, clip), |s| {
                         let outer = rounded_rect(bounds, corner_radii);
                         if let (Some(path), Some(fill)) = (&outer, fill_of(background, bounds)) {
                             s.set_stroke(None);
                             s.set_fill(Some(fill));
                             s.draw_path(path);
+                            if background.as_solid().is_some() && edge(bounds) {
+                                draw_hairline(s, path, k);
+                            }
                         }
                         let widths = [border_widths.top, border_widths.right, border_widths.bottom, border_widths.left].map(f32::from);
                         if widths.iter().all(|w| *w <= 0.0) || border_color.a <= 0.0 {
@@ -151,7 +291,7 @@ impl PdfWriter {
                             let radii = shrink(corner_radii, w / 2.0);
                             if let Some(path) = rounded_rect(&inset, &radii) {
                                 s.set_fill(None);
-                                let (paint, opacity) = color(*border_color);
+                                let (paint, opacity) = color(*border_color, PaintKind::Line);
                                 let dash = (*border_style == BorderStyle::Dashed).then(|| StrokeDash { array: vec![w * 3.0, w * 3.0], offset: 0.0 });
                                 s.set_stroke(Some(Stroke { paint: paint.into(), width: w, opacity, dash, ..Stroke::default() }));
                                 s.draw_path(&path);
@@ -161,7 +301,7 @@ impl PdfWriter {
                             // Uneven: each side as a band.
                             let (l, t, r, b) = (f32::from(bounds.left()), f32::from(bounds.top()), f32::from(bounds.right()), f32::from(bounds.bottom()));
                             let bands = [(l, t, r, t + widths[0]), (r - widths[1], t, r, b), (l, b - widths[2], r, b), (l, t, l + widths[3], b)];
-                            let (paint, opacity) = color(*border_color);
+                            let (paint, opacity) = color(*border_color, PaintKind::Line);
                             s.set_fill(Some(Fill { paint: paint.into(), opacity, rule: FillRule::NonZero }));
                             for (x0, y0, x1, y1) in bands {
                                 if let Some(path) = rect_path(x0, y0, x1, y1) {
@@ -177,6 +317,7 @@ impl PdfWriter {
                         None => triangles.iter().flatten().copied().collect(),
                     };
                     let Some(bounds) = bounds_of(&points) else { continue };
+                    IN_CHART.with(|c| c.set(in_chart(&bounds)));
                     let reach = outline.as_ref().and_then(|o| o.stroke).map_or(Pixels::ZERO, |s| s.width);
                     with_clip(&mut surface, clip, within(&bounds.dilate(reach), clip), |s| {
                         let path = match outline {
@@ -205,6 +346,9 @@ impl PdfWriter {
                                 s.set_stroke(None);
                                 s.set_fill(Some(fill));
                                 s.draw_path(&path);
+                                if background.as_solid().is_some() && edge(&bounds) {
+                                    draw_hairline(s, &path, k);
+                                }
                             }
                         }
                     });
@@ -252,7 +396,7 @@ impl PdfWriter {
                             let [[a, b], [c, d]] = m.rotation_scale;
                             s.push_transform(&Transform::from_row(a, c, b, d, m.translation[0] / scale_factor, m.translation[1] / scale_factor));
                         }
-                        let (paint, opacity) = color(*glyph_color);
+                        let (paint, opacity) = color(*glyph_color, PaintKind::Text);
                         // Slanted about the baseline: x moves left by a fifth of the height below it (y grows down).
                         if italic {
                             let y0 = f32::from(origin.y);
@@ -266,8 +410,13 @@ impl PdfWriter {
                         let mut glyphs = Vec::new();
                         for (i, (id, x)) in run.iter().enumerate() {
                             let start = text.len();
-                            if let Some(c) = characters.get(&id.0) {
-                                text.push_str(c);
+                            // The character the painting code noted for this glyph (a proportional typeface's stand-in draws オ, （ and １ with the glyphs of
+                            // ｵ, ( and 1, which the glyph id alone copies as): unless the glyph is several characters (a ligature, か + U+309A).
+                            let noted = gpui_kit::point(*x, origin.y);
+                            match (characters.get(&id.0), crate::render::glyph_text::noted(*font_id, *id, noted)) {
+                                (Some(c), Some(n)) if c.chars().count() == 1 && c.chars().next() != Some(n) => text.push(n),
+                                (Some(c), _) => text.push_str(c),
+                                (None, _) => {}
                             }
                             let advance = run.get(i + 1).map_or(0.0, |(_, next_x)| f32::from(*next_x - *x) / size.max(0.001));
                             glyphs.push(KrillaGlyph::new(GlyphId::new(id.0), advance, 0.0, 0.0, 0.0, start..text.len(), None));
@@ -297,10 +446,12 @@ impl PdfWriter {
                                 None => {
                                     // BGRA to RGBA, into one buffer of the right size.
                                     let mut rgba = vec![0u8; bytes.len()];
+                                    let mode = print_color();
                                     for (to, from) in rgba.chunks_exact_mut(4).zip(bytes.chunks_exact(4)) {
-                                        to[0] = from[2];
-                                        to[1] = from[1];
-                                        to[2] = from[0];
+                                        let (r, g, b) = mode.map((from[2], from[1], from[0]));
+                                        to[0] = r;
+                                        to[1] = g;
+                                        to[2] = b;
                                         to[3] = from[3];
                                     }
                                     let i = Image::from_rgba8(rgba, w, h);
@@ -336,7 +487,7 @@ impl PdfWriter {
                 }
                 PaintRecord::Line { bounds, color: line_color, clip, .. } => {
                     with_clip(&mut surface, clip, within(bounds, clip), |s| {
-                        let (paint, opacity) = color(*line_color);
+                        let (paint, opacity) = color(*line_color, PaintKind::Line);
                         if let Some(path) = rect_path(f32::from(bounds.left()), f32::from(bounds.top()), f32::from(bounds.right()), f32::from(bounds.bottom())) {
                             s.set_stroke(None);
                             s.set_fill(Some(Fill { paint: paint.into(), opacity, rule: FillRule::NonZero }));
@@ -360,13 +511,31 @@ impl PdfWriter {
         }
         surface.pop();
         surface.pop();
+        if clipped {
+            surface.pop();
+        }
+        }
         surface.finish();
+        for link in &pending.links {
+            let (x, y, w, h) = link.rect;
+            let Some(rect) = krilla::geom::Rect::from_xywh(x, y, w.max(0.1), h.max(0.1)) else { continue };
+            let target = match &link.to {
+                LinkTo::Url(url) => krilla::annotation::Target::Action(krilla::action::Action::Link(krilla::action::LinkAction::new(url.clone()))),
+                LinkTo::Page { number, x, y } => {
+                    let Some(&index) = index_of.get(number) else { continue };
+                    let (dest_x, dest_y) = link_destination(pending.page_pt.1, *x, *y);
+                    krilla::annotation::Target::Destination(krilla::destination::Destination::Xyz(krilla::destination::XyzDestination::new(index, krilla::geom::Point::from_xy(dest_x, dest_y))))
+                }
+            };
+            page.add_annotation(krilla::annotation::LinkAnnotation::new(rect, target).into());
+        }
         page.finish();
     }
 
-    /// Write the pages; the PDF's bytes, and the (PostScript) names of the
-    /// fonts that went in as outlines.
-    pub fn finish(mut self) -> Result<(Vec<u8>, Vec<String>), String> {
+    /// Write the pages; the PDF's bytes, the (PostScript) names of the
+    /// fonts that went in as outlines, and the glyphs left out for want of their font.
+    pub fn finish(mut self) -> Result<(Vec<u8>, Vec<String>, usize), String> {
+        self.register_fonts();
         // A font that cannot be subset to the glyphs it draws goes in as
         // outlines (its text cannot be copied, but it shows).
         for font in self.fonts.values_mut().flatten() {
@@ -378,14 +547,18 @@ impl PdfWriter {
             }
         }
         let pages = std::mem::take(&mut self.pages);
+        let index_of: HashMap<usize, usize> = pages.iter().enumerate().filter_map(|(i, p)| p.number.map(|n| (n, i))).collect();
+        PRINT_COLOR.with(|c| c.set(self.print_color));
         for page in &pages {
-            self.write_page(page);
+            self.write_page(page, &index_of);
         }
+        PRINT_COLOR.with(|c| c.set(crate::export_print::PrintColor::Color));
         let mut outlined: Vec<String> = self.fonts.values().flatten().filter(|f| f.outlined).map(|f| font_name(&f.data, f.index)).collect();
         outlined.sort();
         outlined.dedup();
         let pdf = self.document.finish().map_err(|e| crate::shell::i18n::format("_app.cannot-write-the-pdf-error", &[("error", &format!("{e:?}"))]))?;
-        Ok((pdf, outlined))
+        crate::render::glyph_text::set_recording(false);
+        Ok((pdf, outlined, self.missing_glyphs))
     }
 }
 
@@ -544,7 +717,7 @@ impl Grid {
 
     /// The picture of `alpha` (0 to 1 at each cell) in `rgba`'s colour, and the rectangle it covers.
     fn image(&self, alpha: &[f32], rgba: Rgba) -> (Image, Bounds<Pixels>) {
-        let (r, g, b) = ((rgba.r * 255.0).round() as u8, (rgba.g * 255.0).round() as u8, (rgba.b * 255.0).round() as u8);
+        let (r, g, b) = print_color().map_for(crate::export_print::PaintKind::Fill, ((rgba.r * 255.0).round() as u8, (rgba.g * 255.0).round() as u8, (rgba.b * 255.0).round() as u8));
         let pixels: Vec<u8> = alpha.iter().flat_map(|c| [r, g, b, (c * rgba.a * 255.0).round().clamp(0.0, 255.0) as u8]).collect();
         let image = Image::from_rgba8(pixels, self.cols as u32, self.rows as u32);
         let rect = Bounds::new(gpui_kit::point(gpui_kit::px(self.left), gpui_kit::px(self.top)), gpui_kit::size(gpui_kit::px(self.cols as f32 * self.pitch), gpui_kit::px(self.rows as f32 * self.pitch)));
@@ -609,6 +782,23 @@ fn pixel_hash(bytes: &[u8]) -> u64 {
         h = (h.rotate_left(5) ^ *b as u64).wrapping_mul(K);
     }
     h
+}
+
+/// The thin black line of the pure black and white print over `path` (a fill's own path): [`HAIRLINE_PT`] wide on the page, so `1 / k` of it in the
+/// window's pixels; round ends and joins, a miter limit of 10.
+fn draw_hairline(s: &mut Surface, path: &Path, k: f32) {
+    s.set_fill(None);
+    s.set_stroke(Some(Stroke {
+        paint: rgb::Color::new(0, 0, 0).into(),
+        width: HAIRLINE_PT / k.max(1e-6),
+        opacity: NormalizedF32::ONE,
+        line_cap: LineCap::Round,
+        line_join: LineJoin::Round,
+        miter_limit: 10.0,
+        ..Stroke::default()
+    }));
+    s.draw_path(path);
+    s.set_stroke(None);
 }
 
 fn rect_path(x0: f32, y0: f32, x1: f32, y1: f32) -> Option<Path> {
@@ -698,26 +888,33 @@ fn triangles_path(triangles: &[[gpui_kit::Point<Pixels>; 3]]) -> Option<Path> {
     pb.finish()
 }
 
-/// Whether the PDF writes colours as DeviceCMYK (the file has the CMYK mode on): each sRGB colour is turned to CMYK with the
-/// converter in use (the black ink's share is the converter's own); pictures stay RGB.
-static CMYK_EXPORT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-pub fn set_cmyk_export(on: bool) {
-    CMYK_EXPORT.store(on, std::sync::atomic::Ordering::Relaxed);
+thread_local! {
+    /// How the pages being written print their colours (the print settings' グレースケール / 白黒, #225): every colour, picture and shadow
+    /// of the vector PDF goes through `PrintColor::map`, as the picture route's pixels do.
+    static PRINT_COLOR: std::cell::Cell<crate::export_print::PrintColor> = const { std::cell::Cell::new(crate::export_print::PrintColor::Color) };
 }
 
-/// A colour and its opacity: DeviceCMYK in a file with the CMYK mode on, else sRGB.
-fn color(c: Hsla) -> (krilla::color::Color, NormalizedF32) {
+thread_local! {
+    /// What is being drawn is inside a chart (the pure black and white print keeps a chart's fills in grey).
+    static IN_CHART: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn print_color() -> crate::export_print::PrintColor {
+    PRINT_COLOR.with(|c| c.get())
+}
+
+/// A colour and its opacity. The PDF is always sRGB: the CMYK conversion of a print is the printer driver's (a file with the CMYK
+/// mode on shows its colours as the press would print them on the screen only).
+fn color(c: Hsla, kind: crate::export_print::PaintKind) -> (krilla::color::Color, NormalizedF32) {
     let Rgba { r, g, b, a } = Rgba::from(c);
     let u = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     let opacity = NormalizedF32::new(a.clamp(0.0, 1.0)).unwrap_or(NormalizedF32::ONE);
-    if CMYK_EXPORT.load(std::sync::atomic::Ordering::Relaxed) {
-        let k = crate::shell::cmyk::cmyk_of(ibis_doc_model::Rgb::from_rgb(u(r), u(g), u(b)));
-        // Percent to the 8 bits DeviceCMYK takes here.
-        let byte = |p: u8| ((p as f32) * 255.0 / 100.0).round() as u8;
-        return (krilla::color::cmyk::Color::new(byte(k.c), byte(k.m), byte(k.y), byte(k.k)).into(), opacity);
-    }
-    (rgb::Color::new(u(r), u(g), u(b)).into(), opacity)
+    let mode = match (print_color(), kind) {
+        (crate::export_print::PrintColor::BlackWhite, PaintKind::Fill) if IN_CHART.with(|c| c.get()) => crate::export_print::PrintColor::Gray,
+        (mode, _) => mode,
+    };
+    let (r, g, b) = mode.map_for(kind, (u(r), u(g), u(b)));
+    (rgb::Color::new(r, g, b).into(), opacity)
 }
 
 /// The fill for a background over `bounds`: a color, or a linear gradient
@@ -727,7 +924,7 @@ fn fill_of(background: &Background, bounds: &Bounds<Pixels>) -> Option<Fill> {
         if c.a <= 0.0 {
             return None;
         }
-        let (paint, opacity) = color(c);
+        let (paint, opacity) = color(c, PaintKind::Fill);
         return Some(Fill { paint: paint.into(), opacity, rule: FillRule::NonZero });
     }
     let (angle, stops) = background.as_linear_gradient()?;
@@ -739,7 +936,7 @@ fn fill_of(background: &Background, bounds: &Bounds<Pixels>) -> Option<Fill> {
     let stops = stops
         .iter()
         .map(|s| {
-            let (paint, opacity) = color(s.color);
+            let (paint, opacity) = color(s.color, PaintKind::Fill);
             Stop { offset: NormalizedF32::new(s.percentage.clamp(0.0, 1.0)).unwrap_or(NormalizedF32::ZERO), color: paint.into(), opacity }
         })
         .collect();
@@ -790,7 +987,7 @@ fn glyph_count(data: &[u8], index: u32) -> u32 {
 }
 
 /// A font's PostScript name, for messages.
-fn font_name(data: &[u8], index: u32) -> String {
+pub(crate) fn font_name(data: &[u8], index: u32) -> String {
     use skrifa::MetadataProvider as _;
     skrifa::FontRef::from_index(data, index)
         .ok()
@@ -865,6 +1062,20 @@ fn glyph_characters(data: &[u8], index: u32) -> HashMap<u32, String> {
         }
     }
     let mut out: HashMap<u32, String> = out.into_iter().map(|(g, (_, c))| (g, c.to_string())).collect();
+    // A glyph only a variation sequence reaches (an IVS of the cmap's format 14: 葛 + U+E0100) is copied as the base and its selector, so that
+    // the text copied from the PDF is the pair, not the plain kanji or nothing (GitHub issue #158). A glyph that a plain character also reaches
+    // keeps that character unless it is one of the odd ones (compatibility ideographs, private use).
+    {
+        use skrifa::charmap::MapVariant;
+        for (base, selector, variant) in font.charmap().variant_mappings() {
+            let MapVariant::Variant(glyph) = variant else { continue };
+            let (Some(base), Some(selector)) = (char::from_u32(base), char::from_u32(selector)) else { continue };
+            let odd = out.get(&glyph.to_u32()).is_none_or(|t| t.chars().next().is_none_or(|c| penalty(c as u32) > 0));
+            if odd {
+                out.insert(glyph.to_u32(), format!("{base}{selector}"));
+            }
+        }
+    }
     // A glyph the font's GSUB makes of several (a ligature, or か + U+309A as か゚: no character of the font's cmap is that glyph) is copied as
     // the characters of the glyphs it replaces, in order (GitHub issue #163: the PDF's text for か゚ and the like was empty).
     if let Ok(gsub) = font.gsub()
@@ -917,6 +1128,30 @@ mod tests {
         assert!(copied.contains("ch") && copied.contains("ffb"), "ligatures that no cmap entry reaches (Carlito's lookups 36 and 37) are copied as their letters");
         assert!(characters.values().any(|s| s.chars().count() > 1), "some glyph is copied as several characters");
         assert!(copied.contains("a") && copied.contains("A"), "single glyphs stay as they were");
+    }
+
+    /// GitHub issue #158: a glyph an IVS reaches (IPAmj Mincho's 葛 + U+E0100 and the like) is copied as the base and the selector. Reads the font the
+    /// Setup dialog downloaded (or the one under test/github-issue/158) and does nothing when this machine has none.
+    #[test]
+    fn a_glyph_an_ivs_reaches_is_copied_as_the_pair() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let candidates = [root.join("test/github-issue/158/ipamj-00601/ipamjm.ttf")];
+        let Some(path) = candidates.iter().find(|p| p.exists()) else { return };
+        let data = std::fs::read(path).unwrap();
+        let characters = glyph_characters(&data, 0);
+        use skrifa::MetadataProvider as _;
+        let font = skrifa::FontRef::from_index(&data, 0).unwrap();
+        let mut pairs = 0;
+        for (base, selector, variant) in font.charmap().variant_mappings() {
+            if let skrifa::charmap::MapVariant::Variant(glyph) = variant {
+                let text = characters.get(&glyph.to_u32()).expect("the glyph has a copied text");
+                let want = format!("{}{}", char::from_u32(base).unwrap(), char::from_u32(selector).unwrap());
+                if text == &want {
+                    pairs += 1;
+                }
+            }
+        }
+        assert!(pairs > 1000, "the IVS glyphs are copied as base + selector ({pairs} of them)");
     }
 
     fn bounds(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {

@@ -18,6 +18,17 @@ include!(concat!(env!("OUT_DIR"), "/material_icons.rs"));
 
 const PREFIX: &str = "icons/material/";
 
+/// The icon files the scenarios asked for that are not bundled (a path under `icons/material/` or `icons/ibis/` with no file here). In the Web version such a request goes to the
+/// server and is a 404 (the Review menu's three icons, K0037); on the desktop it is a blank. The scenario run lists them at its end and fails (`scenario.rs`).
+#[cfg(feature = "scenarios")]
+static MISSING: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// The paths asked for that no bundled file answers (sorted).
+#[cfg(feature = "scenarios")]
+pub fn missing_icon_requests() -> Vec<String> {
+    MISSING.lock().map(|m| m.iter().cloned().collect()).unwrap_or_default()
+}
+
 /// A bundled Material Symbols icon, by name (such as `format_bold`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Material(pub &'static str);
@@ -68,6 +79,10 @@ impl AssetSource for Assets {
             if let Some((_, data)) = MATERIAL_ICONS.iter().find(|(n, _)| *n == name) {
                 return Ok(Some(Cow::Borrowed(data)));
             }
+            #[cfg(feature = "scenarios")]
+            if let Ok(mut missing) = MISSING.lock() {
+                missing.insert(path.to_string());
+            }
         }
         // The browser fetches GPUI Kit's icons on first use and says "loading" as
         // an error until they are there; GPUI logs that as an ERROR in the
@@ -98,3 +113,86 @@ pub(crate) fn has(name: &str) -> bool {
     MATERIAL_ICONS.iter().any(|(n, _)| *n == name)
 }
 
+
+#[cfg(test)]
+mod bundled_icons_tests {
+    /// Every icon name the code gives a menu, a toolbar, a panel or a button (`Material("x")`, `item("id", "x")`, `Submenu::tr("id", "x", ..)`, `ToolButton::new("id", "x", ..)`, `.icon("x")`,
+    /// `icon: "x"`) has its file in `icons/material/`. The Web version asks the server for a name that is not bundled, and that is a 404 (the Review menu's accessibility, record_voice_over and find_in_page, K0037);
+    /// on the desktop it is a blank. The scenarios list what they drew that is missing as well (`scenario.rs`); this one reads the sources, so a menu no scenario opens is checked too.
+    #[test]
+    fn every_icon_name_in_the_sources_is_bundled() {
+        let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        // (what comes before, whether a first string (the id) comes before the name)
+        let patterns: [(&str, bool); 8] = [
+            ("Material(\"", false),
+            (".icon(\"", false),
+            ("icon: \"", false),
+            ("item(\"", true),
+            ("item_key(\"", true),
+            ("sub(\"", true),
+            ("Submenu::tr(\"", true),
+            ("ToolButton::new(\"", true),
+        ];
+        let names_in = |text: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            for (prefix, id_first) in patterns {
+                let mut from = 0;
+                while let Some(at) = text[from..].find(prefix) {
+                    let mut rest = &text[from + at + prefix.len()..];
+                    from += at + prefix.len();
+                    if id_first {
+                        // The id, then `, "name"`.
+                        let Some(end) = rest.find('"') else { break };
+                        rest = rest[end + 1..].trim_start_matches(|c: char| c == ',' || c.is_whitespace());
+                        let Some(after) = rest.strip_prefix('"') else { continue };
+                        rest = after;
+                    }
+                    let Some(end) = rest.find('"') else { break };
+                    let name = &rest[..end];
+                    if !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+                        out.push(name.to_string());
+                    }
+                }
+            }
+            // The filled variant is the file `<name>_fill.svg`.
+            let mut from = 0;
+            while let Some(at) = text[from..].find("Material::fill(\"") {
+                let rest = &text[from + at + "Material::fill(\"".len()..];
+                from += at + "Material::fill(\"".len();
+                if let Some(end) = rest.find('"') {
+                    out.push(format!("{}_fill", &rest[..end]));
+                }
+            }
+            out
+        };
+        let mut missing = std::collections::BTreeMap::<String, String>::new();
+        let mut files = Vec::new();
+        let mut stack: Vec<std::path::PathBuf> = std::fs::read_dir(&crates).unwrap().flatten().map(|e| e.path().join("src")).filter(|p| p.is_dir()).collect();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|n| n != "tests") {
+                        stack.push(path);
+                    }
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+        assert!(files.len() > 100, "the sources of the crates were read: {}", files.len());
+        for file in files {
+            // (This file's own comments give examples.)
+            if file.file_name().is_some_and(|n| n == "icons.rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&file).unwrap_or_default();
+            for name in names_in(&text) {
+                if !super::has(&name) {
+                    missing.entry(name).or_insert_with(|| file.file_name().unwrap().to_string_lossy().into_owned());
+                }
+            }
+        }
+        assert!(missing.is_empty(), "icon names with no file in icons/material/ (name: first file): {missing:?}");
+    }
+}

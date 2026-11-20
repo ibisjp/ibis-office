@@ -56,22 +56,24 @@ impl LanguageSetting {
 /// so that additions do not meet. Every file of the folders is listed here
 /// (a test checks it), and a key is in one file only (checked too).
 #[cfg(test)]
-const FILES: [&str; 6] = ["shell", "docx", "xlsx", "pptx", "fix", "menu_planned"];
-const JA: [&str; 6] = [
+const FILES: [&str; 7] = ["shell", "docx", "xlsx", "pptx", "fix", "menu_planned", "medical"];
+const JA: [&str; 7] = [
     include_str!("../i18n/ja/shell.tsv"),
     include_str!("../i18n/ja/docx.tsv"),
     include_str!("../i18n/ja/xlsx.tsv"),
     include_str!("../i18n/ja/pptx.tsv"),
     include_str!("../i18n/ja/fix.tsv"),
     include_str!("../i18n/ja/menu_planned.tsv"),
+    include_str!("../i18n/ja/medical.tsv"),
 ];
-const EN: [&str; 6] = [
+const EN: [&str; 7] = [
     include_str!("../i18n/en/shell.tsv"),
     include_str!("../i18n/en/docx.tsv"),
     include_str!("../i18n/en/xlsx.tsv"),
     include_str!("../i18n/en/pptx.tsv"),
     include_str!("../i18n/en/fix.tsv"),
     include_str!("../i18n/en/menu_planned.tsv"),
+    include_str!("../i18n/en/medical.tsv"),
 ];
 
 fn rows(text: &'static str) -> impl Iterator<Item = (&'static str, &'static str)> {
@@ -96,7 +98,7 @@ pub fn language() -> Language {
         1 => Language::Japanese,
         2 => Language::English,
         _ => {
-            let language = resolve(crate::settings::get("language").map_or(LanguageSetting::System, |s| LanguageSetting::parse(&s)));
+            let language = resolve(crate::settings::get("app.language").map_or(LanguageSetting::System, |s| LanguageSetting::parse(&s)));
             set_language(language);
             language
         }
@@ -105,8 +107,8 @@ pub fn language() -> Language {
 
 fn set_language(language: Language) {
     CURRENT.store(if language == Language::Japanese { 1 } else { 2 }, Ordering::Relaxed);
-    // The names saved in documents follow the UI too (ibis-pptx has no tables).
-    ibis_pptx::set_english_names(language == Language::English);
+    // The names saved in documents follow the UI too (ibis-formats has no tables).
+    ibis_formats::set_english_names(language == Language::English);
 }
 
 /// The language a setting shows.
@@ -119,12 +121,12 @@ pub fn resolve(setting: LanguageSetting) -> Language {
 
 /// The saved setting.
 pub fn setting() -> LanguageSetting {
-    crate::settings::get("language").map_or(LanguageSetting::System, |s| LanguageSetting::parse(&s))
+    crate::settings::get("app.language").map_or(LanguageSetting::System, |s| LanguageSetting::parse(&s))
 }
 
 /// Choose the language (saved; the windows are to be drawn again).
 pub fn set_setting(setting: LanguageSetting) {
-    crate::settings::set("language", setting.as_str());
+    crate::settings::set("app.language", setting.as_str());
     set_language(resolve(setting));
 }
 
@@ -157,6 +159,25 @@ pub fn text(key: &str) -> SharedString {
         },
         None => SharedString::from(key.to_string()),
     }
+}
+
+/// The words of `key` if the tables have them (nothing otherwise: no record of a miss, no key given back as the words). For a
+/// screen that tries more than one key for a command's name.
+pub fn lookup_words(key: &str) -> Option<SharedString> {
+    let (ja, en) = tables();
+    let found = match language() {
+        Language::English => en.get(key).or_else(|| ja.get(key)),
+        Language::Japanese => ja.get(key),
+    }?;
+    Some(SharedString::from(localize_keys(found, cfg!(target_os = "macos")).into_owned()))
+}
+
+/// The id whose Japanese words are `words` exactly (the first by id), for a table that must keep ids and not words (`toolbar_defaults.rs`).
+pub fn key_of_japanese(words: &str) -> Option<String> {
+    let (ja, _) = tables();
+    let mut found: Vec<&str> = ja.iter().filter(|(_, v)| **v == words).map(|(k, _)| *k).collect();
+    found.sort();
+    found.first().map(|k| k.to_string())
 }
 
 const MODIFIER_KEYS: [char; 4] = ['\u{2318}', '\u{2303}', '\u{2325}', '\u{21e7}'];

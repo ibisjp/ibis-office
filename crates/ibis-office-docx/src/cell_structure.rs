@@ -124,13 +124,13 @@ impl SlideEditor {
     }
     fn replace_structure_table(&mut self,table:FlowTable,cx:&mut Context<Self>) {
         let Some((container,index))=self.flow().and_then(|d|flow_command::locate(d,table.id)) else{return};
-        let command=FlowCommand::ReplaceBlocks {container,index,remove:1,blocks:vec![Block::Table(table)]};
+        let command=FlowCommand::ReplaceBlockRange {container,index,remove:1,blocks:vec![Block::Table(table)]};
         // Validate the bounded save path before changing the live document.
         // Wrapped/complex source cells can be rejected without losing work.
         if let Some(source)=self.source.as_ref() {
             let mut candidate=ibis_doc_model::Document::new(self.presentation().clone());
             if candidate.execute(vec![ibis_doc_model::Command::Flow(command.clone())]).is_err() {return;}
-            if let Err(error)=source.save(candidate.presentation(),ibis_pptx::SaveOptions::default()) {
+            if let Err(error)=source.save(candidate.presentation(),ibis_formats::SaveOptions::default()) {
                 self.status=Some(crate::shell::i18n::format("docx.cell-structure.merging-splitting-cells-can-t", &[("error", &error)]).into());cx.notify();return;
             }
         }

@@ -6,7 +6,7 @@ use ibis_doc_model::{Presentation, ShapeId, ShapeKind};
 use ibis_doc_model::{Clip, ClipOptions, EmuRect, MediaFormat, Picture, Shape};
 
 fn with_clip(link: Option<&str>) -> Presentation {
-    let mut p = ibis_pptx::read(&ibis_pptx::blank_file(ibis_pptx::Kind::Presentation).unwrap()).unwrap();
+    let mut p = ibis_formats::read(&ibis_formats::blank_file(ibis_formats::Kind::Presentation).unwrap()).unwrap();
     let poster = p.add_media(MediaFormat::Png, vec![0x89, 0x50, 0x4e, 0x47]);
     let file = p.add_media(MediaFormat::Mp4, Vec::new());
     let pic = Picture {

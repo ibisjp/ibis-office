@@ -73,8 +73,8 @@ pub(super) fn setup_deco(s: &mut Scenario, preset: &str, deco: &str) {
         edits.push(num(6, 4, 7.0));
         edits.push(num(6, 5, 8.0));
         edits.push(num(6, 6, 9.0));
-        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { slide, edits })];
-        let fmt = |r: CellRange, change: StyleChange| Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![r], change });
+        let mut commands = vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })];
+        let fmt = |r: CellRange, change: StyleChange| Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![r], change });
         let line = Some(Border { line: BorderLine::Thin, color: Rgb(0) });
         let a1 = range(0, 0, 0, 0);
         commands.push(fmt(a1, StyleChange::Bold(true)));
@@ -91,14 +91,14 @@ pub(super) fn setup_deco(s: &mut Scenario, preset: &str, deco: &str) {
         commands.push(fmt(range(1, 0, 1, 0), StyleChange::Fill(Some(Rgb(0x99CCFF)))));
         commands.push(fmt(range(1, 0, 1, 0), StyleChange::Border(Edge::Bottom, line)));
         commands.push(fmt(range(1, 1, 1, 1), StyleChange::NumberFormat("0.0".into())));
-        commands.push(Command::Sheet(SheetCommand::Merge { slide, range: range(0, 2, 1, 2), center: false }));
+        commands.push(Command::Sheet(SheetCommand::Merge { sheet: slide, range: range(0, 2, 1, 2), center: false }));
         let dest = range(4, 4, 6, 6);
         commands.push(fmt(dest, StyleChange::Fill(Some(Rgb(0xD9D9D9)))));
         commands.push(fmt(dest, StyleChange::Border(Edge::Left, line)));
-        commands.push(Command::Sheet(SheetCommand::SetComment { slide, row: 0, column: 0, comment: Some(SheetComment { row: 0, column: 0, author: "src".into(), text: "src note".into(), ..Default::default() }) }));
-        commands.push(Command::Sheet(SheetCommand::SetComment { slide, row: 6, column: 5, comment: Some(SheetComment { row: 6, column: 5, author: "dst".into(), text: "dst note".into(), ..Default::default() }) }));
+        commands.push(Command::Sheet(SheetCommand::SetComment { sheet: slide, row: 0, column: 0, comment: Some(SheetComment { row: 0, column: 0, author: "src".into(), text: "src note".into(), ..Default::default() }) }));
+        commands.push(Command::Sheet(SheetCommand::SetComment { sheet: slide, row: 6, column: 5, comment: Some(SheetComment { row: 6, column: 5, author: "dst".into(), text: "dst note".into(), ..Default::default() }) }));
         let rule = Validation { ranges: vec![a1], kind: "whole".into(), operator: "between".into(), formula1: Some("1".into()), formula2: Some("100".into()), allow_blank: true, ..Default::default() };
-        commands.push(Command::Sheet(SheetCommand::SetValidation { slide, ranges: vec![a1], rule: Some(rule) }));
+        commands.push(Command::Sheet(SheetCommand::SetValidation { sheet: slide, ranges: vec![a1], rule: Some(rule) }));
         let merged = match preset.as_str() {
             "m_in" => Some(range(4, 4, 4, 5)),
             "m_straddle" => Some(range(5, 5, 6, 6)),
@@ -112,15 +112,15 @@ pub(super) fn setup_deco(s: &mut Scenario, preset: &str, deco: &str) {
                 commands.push(fmt(dest, StyleChange::Border(edge, line)));
             }
             for (row, column, text) in [(4u32, 4u32, "c1"), (5, 4, "c2"), (5, 6, "c3")] {
-                commands.push(Command::Sheet(SheetCommand::SetComment { slide, row, column, comment: Some(SheetComment { row, column, author: String::new(), text: text.into(), ..Default::default() }) }));
+                commands.push(Command::Sheet(SheetCommand::SetComment { sheet: slide, row, column, comment: Some(SheetComment { row, column, author: String::new(), text: text.into(), ..Default::default() }) }));
             }
         }
         if deco == "refs" {
             let formula = |row: u32, column: u32, f: &str| CellEdit { row, column, input: CellInput::Formula(f.into()) };
-            commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits: vec![formula(8, 9, "A1+B2"), formula(2, 10, "C1"), formula(10, 11, "SUM(A1:C2)")] }));
+            commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![formula(8, 9, "A1+B2"), formula(2, 10, "C1"), formula(10, 11, "SUM(A1:C2)")] }));
         }
         if let Some(range) = merged {
-            commands.push(Command::Sheet(SheetCommand::Merge { slide, range, center: false }));
+            commands.push(Command::Sheet(SheetCommand::Merge { sheet: slide, range, center: false }));
         }
         // The widths first: selecting a column that holds a merged range takes the whole range in.
         for (column, chars) in [(0u32, 20.0f32), (1, 12.0), (2, 15.0), (3, 8.0), (4, 8.0), (5, 9.0), (6, 10.0), (7, 8.0), (8, 8.0), (9, 8.0), (10, 8.0), (11, 8.0)] {

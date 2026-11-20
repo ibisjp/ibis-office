@@ -30,7 +30,7 @@ enum CloseDialog { Button, Escape }
 const FILE: &str = "test/editing/xlsx-sales.xlsx";
 
 fn open_settings(s: &mut Scenario) {
-    s.update(|e, window, cx| e.open_settings(5, window, cx));
+    s.update(|e, window, cx| e.open_settings(crate::shell::settings_dialog::CATEGORY_SPREADSHEET, window, cx));
     s.settle();
 }
 

@@ -12,7 +12,7 @@
 
 use gpui_kit::*;
 use ibis_doc_model::{CellRange, Command, ShapeId, ShapeKind, SlideId};
-use ibis_pptx::SeriesRefs;
+use ibis_formats::SeriesRefs;
 
 use crate::editor::SlideEditor;
 use crate::format::with_format;
@@ -94,7 +94,7 @@ impl SlideEditor {
                 return None;
             }
         };
-        let opened = match ibis_pptx::open(data.workbook.clone()) {
+        let opened = match ibis_formats::open(data.workbook.clone()) {
             Ok(o) => o,
             Err(err) => {
                 self.set_status(format!("{}: {err}", crate::i18n::text("pptx.chart-data.cannot-open-chart-data")), cx);
@@ -135,11 +135,11 @@ impl SlideEditor {
             open.seen = now;
         }
         let Some(workbook_source) = workbook_source else { return };
-        let bytes = match workbook_source.save(&book, ibis_pptx::SaveOptions::default()) {
+        let bytes = match workbook_source.save(&book, ibis_formats::SaveOptions::default()) {
             Ok(b) => b,
             Err(err) => return log::warn!("Cannot save the chart data workbook: {err}"),
         };
-        let refs = ibis_pptx::grown_refs(&book, &old_refs);
+        let refs = ibis_formats::grown_refs(&book, &old_refs);
         if refs != old_refs {
             let shown = refs.clone();
             view.update(cx, |v, cx| {
@@ -150,26 +150,26 @@ impl SlideEditor {
         if let Some(open) = self.chart_data_window_mut() {
             open.refs = refs.clone();
         }
-        with_format!(self, apply_chart_data(self, slide, shape, &book, ibis_pptx::ChartData { workbook: bytes, series: refs }, cx));
+        with_format!(self, apply_chart_data(self, slide, shape, &book, ibis_formats::ChartData { workbook: bytes, series: refs }, cx));
     }
 
     /// Chart `shape`, a shape of page `slide`, made from `data` (`book` its workbook's model): its
     /// names and values put in when only they changed; else the chart as
     /// the file reads it with its series rewritten. (A chart in a document's text: `FormatEditor::apply_chart_data`.)
-    pub(crate) fn apply_shape_chart_data(&mut self, slide: SlideId, shape: ShapeId, book: &ibis_doc_model::Presentation, data: ibis_pptx::ChartData, cx: &mut Context<Self>) {
+    pub(crate) fn apply_shape_chart_data(&mut self, slide: SlideId, shape: ShapeId, book: &ibis_doc_model::Presentation, data: ibis_formats::ChartData, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else { return };
         let Some(ShapeKind::Chart(chart)) = self.presentation().slide(slide).and_then(|s| s.shape(shape)).map(|s| s.kind.clone()) else { return };
         // A chartEx chart is drawn from its part as written: read again from the file written with the data.
         if chart.ex.is_some() {
             let current = self.presentation().clone();
             match source.chart_ex_with_data(&current, slide, shape, data) {
-                Ok(read) if self.presentation().slide(slide).and_then(|s| s.shape(shape)).is_some_and(|s| s.kind != read.kind) => self.run(vec![Command::SetKind { slide, shape, kind: Box::new(read.kind) }], cx),
+                Ok(read) if self.presentation().slide(slide).and_then(|s| s.shape(shape)).is_some_and(|s| s.kind != read.kind) => self.run(vec![Command::SetShapeKind { slide, shape, kind: Box::new(read.kind) }], cx),
                 Ok(_) => {}
                 Err(err) => self.set_status(format!("{}: {err}", crate::i18n::text("pptx.chart-data.cannot-apply-chart-data")), cx),
             }
             return;
         }
-        let target = ibis_pptx::chart_from_data(&chart, book, &data.series);
+        let target = ibis_formats::chart_from_data(&chart, book, &data.series);
         source.set_chart_data(shape, target.clone(), data.clone());
         let same_shape = |a: &ibis_doc_model::Chart, b: &ibis_doc_model::Chart| {
             a.ex.is_none()
@@ -197,7 +197,7 @@ impl SlideEditor {
             }
         };
         if self.presentation().slide(slide).and_then(|s| s.shape(shape)).is_some_and(|s| s.kind != kind) {
-            self.run(vec![Command::SetKind { slide, shape, kind: Box::new(kind) }], cx);
+            self.run(vec![Command::SetShapeKind { slide, shape, kind: Box::new(kind) }], cx);
         }
     }
 
@@ -210,7 +210,7 @@ impl SlideEditor {
         let (xs, ys) = (sheet.column_offsets(), sheet.row_offsets());
         let at = |offsets: &[i64], i: u32| offsets[(i as usize).min(offsets.len() - 1)];
         let here = |f: &Option<String>| -> Option<CellRange> {
-            let (s, range) = ibis_pptx::parse_ref(f.as_deref()?)?;
+            let (s, range) = ibis_formats::parse_ref(f.as_deref()?)?;
             let s = s.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')).map_or_else(|| s.clone(), |x| x.replace("''", "'"));
             (s == name).then_some(range)
         };

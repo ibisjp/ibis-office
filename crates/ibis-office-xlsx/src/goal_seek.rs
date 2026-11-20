@@ -151,7 +151,7 @@ impl SlideEditor {
         let Some(((row, column), x)) = self.sheet_state().and_then(|s| s.panels.goal_seek.as_ref()).and_then(|p| p.found) else { return };
         let slide = self.current_slide;
         let edit = CellEdit { row, column, input: CellInput::Value(CellValue::Number(x)) };
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![edit] })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![edit] })]) {
             return self.goal_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);
         }
         self.wb_mut().panels.goal_seek = None;

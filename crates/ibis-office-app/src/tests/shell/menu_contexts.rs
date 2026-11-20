@@ -13,7 +13,7 @@ use crate::shell::chrome::MenuId;
 use crate::shell::menu_bar::{BarMenu, OVERFLOW_IX};
 use crate::shell::menu_context::ContextMenu;
 use crate::shell::menu_layout::{layout_context, LayoutItem};
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 use crate::docx::ext::*;
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
@@ -125,7 +125,7 @@ fn xlsx_shape() {
         let id = e.document.ids().new_shape_id();
         let frame = ibis_doc_model::EmuRect::new(1_000_000, 1_000_000, 1_500_000, 800_000);
         let slide = e.current_slide;
-        e.run(vec![ibis_doc_model::Command::InsertShape { slide, index: e.slide().shapes.len(), shape: ibis_doc_model::Shape::text_box(id, frame, "x") }], cx);
+        e.run(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(e.slide().shapes.len(), ibis_doc_model::Shape::text_box(id, frame, "x"))] }], cx);
         e.set_selection(vec![id]);
         cx.notify();
     });
@@ -147,7 +147,7 @@ fn closes_when_target_gone() {
             let id = e.document.ids().new_shape_id();
             let frame = ibis_doc_model::EmuRect::new(1_000_000, 1_000_000, 1_500_000, 800_000);
             let slide = e.current_slide;
-            e.run(vec![ibis_doc_model::Command::InsertShape { slide, index: e.slide().shapes.len(), shape: ibis_doc_model::Shape::text_box(id, frame, "x") }], cx);
+            e.run(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(e.slide().shapes.len(), ibis_doc_model::Shape::text_box(id, frame, "x"))] }], cx);
             e.set_selection(vec![id]);
             cx.notify();
         })

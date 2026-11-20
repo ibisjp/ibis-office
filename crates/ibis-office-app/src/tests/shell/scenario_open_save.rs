@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! Open and save without an edit, by the window's own path (review 0.8.5, 「開いた直後にフィールドの更新などでモデルを書き換える」).
-//! `crates/ibis-pptx/tests/roundtrip_corpus.rs` opens the bytes and saves the model as it was read. The window does more as it
+//! `crates/ibis-formats/tests/roundtrip_corpus.rs` opens the bytes and saves the model as it was read. The window does more as it
 //! opens a file (`SlideEditor::load`: fields, tables of contents, indexes, pages, pivots, row heights, dates), so a file nobody
 //! edited could be saved as another file, or not be saved. Here every public test file is opened as the window opens it, saved
 //! as 保存 saves it, and the saved file is compared with the original part by part. The result goes to
@@ -75,7 +75,7 @@ fn open_and_save_without_an_edit_keeps_every_part() {
             Err(error) => Some(format!("save: {error}")),
             Ok(()) => {
                 let after = std::fs::read(&target).unwrap_or_default();
-                match ibis_pptx::ibis_ooxml::canon::diff_packages(&original, &after, &[]) {
+                match ibis_formats::ibis_ooxml::canon::diff_packages(&original, &after, &[]) {
                     Ok(report) if report.is_same() => None,
                     Ok(report) => {
                         let names: Vec<String> = report.differences.iter().take(5).map(|(n, _)| n.clone()).collect();

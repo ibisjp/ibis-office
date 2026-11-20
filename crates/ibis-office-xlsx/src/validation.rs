@@ -607,7 +607,7 @@ impl SlideEditor {
                                 ibis_calc::input::Typed::Value(v, _) => CellInput::Value(v),
                                 ibis_calc::input::Typed::Formula(_) => CellInput::Value(CellValue::Text(text.clone())),
                             };
-                            if let Err(err) = this.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits: vec![CellEdit { row, column, input }] })]) {
+                            if let Err(err) = this.document.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits: vec![CellEdit { row, column, input }] })]) {
                                 log::warn!("choosing from the list rejected: {err}");
                             }
                             if let Some(s) = this.sheet_state_mut() {
@@ -770,6 +770,13 @@ impl SlideEditor {
         let r = rule.clone().unwrap_or(Validation { kind: "none".into(), operator: "between".into(), allow_blank: true, dropdown: true, ..Default::default() });
         // Bounds of dates and times shown as typed (a serial number read back).
         let shown = |f: &Option<String>| f.as_deref().unwrap_or("").trim_matches('"').to_string();
+        // A list's source or a custom rule's formula is shown as typed, with its `=` (the file has none): `INDIRECT(...)` shown without it would be
+        // read back as the items of a list (GitHub issue #260).
+        let first_shown = |r: &Validation| match (r.kind.as_str(), r.formula1.as_deref()) {
+            ("list", Some(f)) if !f.starts_with('"') => format!("={f}"),
+            ("custom", Some(f)) => format!("={f}"),
+            _ => shown(&r.formula1),
+        };
         let kind = KINDS.iter().map(|(k, _)| *k).find(|k| *k == r.kind).unwrap_or("none");
         let operator = OPERATORS.iter().map(|(k, _)| *k).find(|k| *k == r.operator).unwrap_or("between");
         let (style, error_title, error_text) = r.error.clone().unwrap_or(("stop".into(), String::new(), String::new()));
@@ -777,7 +784,7 @@ impl SlideEditor {
         let panel = ValidationPanel {
             kind,
             operator,
-            items: input("fix.validation.value-range-formula-list-comma", shown(&r.formula1), window, cx),
+            items: input("fix.validation.value-range-formula-list-comma", first_shown(&r), window, cx),
             second: input("fix.validation.second-value-between", shown(&r.formula2), window, cx),
             allow_blank: r.allow_blank,
             dropdown: r.dropdown,
@@ -882,7 +889,7 @@ impl SlideEditor {
         if ranges.is_empty() {
             return;
         }
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetValidation { slide, ranges, rule: Some(rule) })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetValidation { sheet: slide, ranges, rule: Some(rule) })]) {
             return self.validation_message(err.to_string(), cx);
         }
         self.status=Some(crate::shell::i18n::text("fix.validation.validation-rule-set").into());
@@ -908,7 +915,7 @@ impl SlideEditor {
             ..Default::default()
         };
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetValidation { slide, ranges: vec![range], rule: Some(rule) })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetValidation { sheet: slide, ranges: vec![range], rule: Some(rule) })]) {
             log::warn!("validation rejected: {err}");
         }
         cx.notify();
@@ -925,7 +932,7 @@ impl SlideEditor {
             return;
         }
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetValidation { slide, ranges, rule: None })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetValidation { sheet: slide, ranges, rule: None })]) {
             log::warn!("validation rejected: {err}");
         }
         self.validation_message(crate::shell::i18n::text("fix.validation.validation-rules-cleared").into(), cx);

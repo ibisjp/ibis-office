@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! Input fields of a sidebar panel that follow the document (see doc/rule/implimentationRule.md, "パネルの入力欄と文書の同期").
+//! Input fields of a sidebar panel that follow the document (see docs/rule/implimentationRule.md, "パネルの入力欄と文書の同期").
 //!
 //! A panel that edits the document through text fields must not keep its own copy of the value: the document
 //! changes under it (Undo / Redo, another cell selected, an external update) and the copy goes stale. So a field is

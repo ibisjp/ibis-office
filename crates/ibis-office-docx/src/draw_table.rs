@@ -115,7 +115,7 @@ impl SlideEditor {
             }
             return;
         }
-        let place = |insert: FlowCommand, size: ibis_doc_model::EmuSize, x: i64, y: i64| vec![insert, FlowCommand::PlaceShapeOnPage { at, size, x, y }];
+        let place = |insert: FlowCommand, size: ibis_doc_model::EmuSize, x: i64, y: i64| vec![insert, FlowCommand::SetShapePagePosition { at, size, x, y }];
         let commands = match kind {
             DrawKind::Shape(preset) => {
                 let size = ibis_doc_model::EmuSize::new(emu(w), emu(h));
@@ -124,7 +124,7 @@ impl SlideEditor {
             }
             DrawKind::Line { arrow } | DrawKind::Connector { arrow, .. } => {
                 let geometry = match kind {
-                    DrawKind::Connector { curved, .. } => ibis_pptx::preset_geometry(if curved { "curvedConnector3" } else { "bentConnector3" }),
+                    DrawKind::Connector { curved, .. } => ibis_formats::preset_geometry(if curved { "curvedConnector3" } else { "bentConnector3" }),
                     _ => None,
                 };
                 // The ends meet the connection sites of shapes near them (8 points), and the connector is glued to those.
@@ -156,11 +156,12 @@ impl SlideEditor {
         cx.notify();
     }
 
-    /// The box while it is drawn, on page `index` (`k` pixels to the point).
-    pub(crate) fn draw_table_overlay(&self, index: usize, k: f32) -> Option<AnyElement> {
+    /// The box while it is drawn, on page `index` (`k` pixels to the point), in the look of the insert mode of the three screens
+    /// (`shell::insert_band`).
+    pub(crate) fn draw_table_overlay(&self, index: usize, k: f32, color: Hsla) -> Option<AnyElement> {
         let b = self.doc_state()?.draw_box.filter(|b| b.page == index)?;
         let (x, y) = (b.start.0.min(b.now.0), b.start.1.min(b.now.1));
         let (w, h) = ((b.now.0 - b.start.0).abs(), (b.now.1 - b.start.1).abs());
-        Some(div().absolute().left(px(x * k)).top(px(y * k)).w(px(w * k)).h(px(h * k)).border_1().border_color(rgb(0x1a73e8)).bg(hsla(0.6, 0.8, 0.5, 0.08)).into_any_element())
+        Some(crate::shell::insert_band::band_element(Bounds::new(point(px(x * k), px(y * k)), size(px(w * k), px(h * k))), color))
     }
 }

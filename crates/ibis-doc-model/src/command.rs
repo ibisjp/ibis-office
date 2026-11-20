@@ -22,25 +22,22 @@ use crate::text::{TextBody, TextStyle};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     InsertSlide { index: usize, slide: Slide },
-    RemoveSlide { slide: SlideId },
-    InsertShape { slide: SlideId, index: usize, shape: Shape },
-    RemoveShape { slide: SlideId, shape: ShapeId },
-    /// Set a shape's frame. The shapes attached to it (see
-    /// [`Slide::attached`]) are moved and scaled with it.
-    SetFrame { slide: SlideId, shape: ShapeId, frame: EmuRect },
-    /// Set the frames of shapes exactly (attached shapes are not moved):
-    /// the inverse of [`Command::SetFrame`].
-    SetFrames { slide: SlideId, frames: Vec<(ShapeId, EmuRect)> },
-    /// Remove shapes exactly (with no attached shapes along): the inverse
-    /// of [`Command::InsertShapes`], and how a chart is removed with the
-    /// shapes drawn over it.
-    RemoveShapes { slide: SlideId, shapes: Vec<ShapeId> },
-    /// Insert shapes at indices, in ascending order (each index is where the
-    /// shape is once the ones before it are in).
-    InsertShapes { slide: SlideId, shapes: Vec<(usize, Shape)> },
+    DeleteSlide { slide: SlideId },
+    /// Insert shapes at indices, in ascending order (each index is where the shape is once the ones before it are in). Exactly: nothing else
+    /// changes. The inverse of [`Command::DeleteShape`].
+    InsertShape { slide: SlideId, shapes: Vec<(usize, Shape)> },
+    /// Delete shapes. `with_attached`: the shapes attached to each (see [`Slide::attached`]) go with it, and a shape that is attached cannot be named
+    /// without its owner (the delete of the user); not: exactly the shapes named, as when a chart is replaced or removed with the shapes drawn over it. The
+    /// inverse is [`Command::InsertShape`] of all that were removed.
+    DeleteShape { slide: SlideId, shapes: Vec<ShapeId>, with_attached: bool },
+    /// Set the frames of shapes. `with_attached`: the shapes attached to each follow it (moved and scaled with it, unless they are named too: then
+    /// their own frame is used), and a placeholder that takes its place from the layout has its own place from then on (the move of the user); not:
+    /// exactly the frames named (the inverse of the first, so it needs neither). The inverse is [`Command::SetFrame`] of the old frames of all shapes
+    /// that changed, not with attached.
+    SetFrame { slide: SlideId, frames: Vec<(ShapeId, EmuRect)>, with_attached: bool },
     /// Several commands as one (the inverse of an edit that changes several
     /// shapes, such as removing a chart with the shapes drawn over it).
-    Group(Vec<Command>),
+    Batch(Vec<Command>),
     /// Move a slide to `index` in the slide order (the index it has after
     /// the move).
     MoveSlide { slide: SlideId, index: usize },
@@ -62,12 +59,12 @@ pub enum Command {
     SetTextBody { slide: SlideId, shape: ShapeId, body: TextBody },
     /// Replace `remove` characters at character `at` of a shape's text with
     /// `insert`, keeping runs and their formatting (see [`TextBody::splice`]).
-    EditText { slide: SlideId, shape: ShapeId, at: usize, remove: usize, insert: String },
+    ReplaceTextRange { slide: SlideId, shape: ShapeId, at: usize, remove: usize, insert: String },
     /// Search replacement: inserted text takes the first matched run format.
     ReplaceText { slide: SlideId, shape: ShapeId, at: usize, remove: usize, insert: String },
     /// Replace what a shape is (the inverse of changes that turn a text box
     /// into an auto shape).
-    SetKind { slide: SlideId, shape: ShapeId, kind: Box<ShapeKind> },
+    SetShapeKind { slide: SlideId, shape: ShapeId, kind: Box<ShapeKind> },
     /// Give characters `start..end` of a shape's text a character format
     /// (範囲の文字の書式).
     SetCharacterFormat { slide: SlideId, shape: ShapeId, start: usize, end: usize, format: crate::text::CharacterFormat },
@@ -76,7 +73,7 @@ pub enum Command {
     SetParagraphFormat { slide: SlideId, shape: ShapeId, start: usize, end: usize, format: crate::text::ParagraphFormat },
     /// Whether placeholder `shape` has its own place (see
     /// [`crate::model::SlidePlaceholder`]); moving it gives it one.
-    SetOwnFrame { slide: SlideId, shape: ShapeId, own: bool },
+    SetPlaceholderOwnFrame { slide: SlideId, shape: ShapeId, own: bool },
     /// Replace a slide (the same id) with `slide`: レイアウトの適用
     /// (see [`Presentation::with_layout`]), and its own inverse.
     SetSlide { slide: Slide },
@@ -92,18 +89,18 @@ pub enum Command {
     /// Rename a master (マスター名の変更); its own inverse.
     RenameMaster { master: crate::model::MasterId, name: String },
     /// Add a master at `index` (a copy of another: its `copy_of` names it);
-    /// the inverse of `RemoveMaster`. Its layouts are added with
+    /// the inverse of `DeleteMaster`. Its layouts are added with
     /// `InsertLayout`.
     InsertMaster { index: usize, master: crate::model::Master },
     /// Remove a master no layout follows; the inverse of `InsertMaster`.
-    RemoveMaster { master: crate::model::MasterId },
+    DeleteMaster { master: crate::model::MasterId },
     /// Rename a layout (レイアウト名の変更); its own inverse.
     RenameLayout { layout: crate::model::LayoutId, name: String },
     /// Add a layout at `index` (a copy of another: its `copy_of` names it);
-    /// the inverse of `RemoveLayout`.
+    /// the inverse of `DeleteLayout`.
     InsertLayout { index: usize, layout: crate::model::Layout },
     /// Remove a layout no slide uses; the inverse of `InsertLayout`.
-    RemoveLayout { layout: crate::model::LayoutId },
+    DeleteLayout { layout: crate::model::LayoutId },
     /// The theme's colours and fonts changed (テーマの色・フォント). Only
     /// the theme itself: the shapes drawn in the new colours come with it
     /// as [`Command::SetSlide`]s; its own inverse.
@@ -128,11 +125,11 @@ pub enum Command {
     /// The file's CMYK mode (on or off, the profile's name, the colours given as CMYK), replaced as a whole.
     SetCmykMode { cmyk: crate::cmyk::CmykMode },
     /// Turn on (or off) ibisOffice's own features PowerPoint does not have, for the whole file.
-    SetIbisExtensions { enabled: bool },
+    SetExtendedFeatures { enabled: bool },
     /// 書き込みパスワード（`p:modifyVerifier`）を設定・解除する。
     SetModifyVerifier { verifier: Option<crate::model::ModifyVerifier> },
     /// ドキュメント プロパティ（タイトル・作成者・カスタムプロパティ等: `docProps/core.xml`, `docProps/app.xml`, `docProps/custom.xml`）.
-    SetDocProperties { properties: crate::flow::DocProperties },
+    SetDocumentProperties { properties: crate::flow::DocProperties },
     /// 既定の図形・線の書式設定（`<a:objectDefaults>`）。
     SetObjectDefaults { defaults: crate::model::ObjectDefaults },
     /// フォントの代替（フォント代替マップの更新）。
@@ -175,7 +172,7 @@ pub enum Command {
     /// セルの値を表示する数式連動 (`xdr:f`).
     SetShapeFormula { slide: SlideId, shape: ShapeId, formula: Option<String> },
     /// 背景グラフィックを表示しない: a slide's backdrop hidden or shown.
-    SetBackdropHidden { slide: SlideId, hidden: bool },
+    SetBackgroundGraphicsHidden { slide: SlideId, hidden: bool },
     /// Show or hide a shape (選択ウィンドウ's eye).
     SetShapeHidden { slide: SlideId, shape: ShapeId, hidden: bool },
     /// ズーム後に元へ戻る: a zoom shape returns to its origin slide after viewing (or not).
@@ -183,7 +180,7 @@ pub enum Command {
     /// The picture `shape` is a ズーム object (PowerPoint's スライド/セクション/サマリー ズーム) or is not one (`None`).
     SetZoomObject { slide: SlideId, shape: ShapeId, zoom: Option<crate::model::ZoomObject> },
     /// ズームの背景: a zoom shape shows the slide background or has a transparent background (`showBg`).
-    SetShapeZoomShowBg { slide: SlideId, shape: ShapeId, show_bg: Option<bool> },
+    SetShapeZoomShowBackground { slide: SlideId, shape: ShapeId, show_bg: Option<bool> },
     /// ズームの継続時間: zoom transition duration in milliseconds (`dur`).
     SetShapeZoomDuration { slide: SlideId, shape: ShapeId, duration_ms: Option<u32> },
     /// コネクタの接続（結合点）: what its ends are attached to (`a:stCxn`, `a:endCxn`).
@@ -278,19 +275,25 @@ impl Presentation {
     /// On error the presentation is unchanged.
     pub fn apply(&mut self, command: Command) -> Result<Command, EditError> {
         // A placeholder moved, resized or turned has its own place from then on.
-        if let Command::SetFrame { slide, shape, .. } | Command::SetTransform { slide, shape, .. } = &command {
-            let (slide, shape) = (*slide, *shape);
-            let takes_layouts = self.slide(slide).and_then(|s| s.placeholders.get(&shape)).is_some_and(|p| !p.own_frame);
-            if takes_layouts {
-                return self.apply(Command::Group(vec![command, Command::SetOwnFrame { slide, shape, own: true }]));
-            }
+        let moved: Vec<(SlideId, ShapeId)> = match &command {
+            Command::SetFrame { slide, frames, with_attached: true } => frames.iter().map(|(shape, _)| (*slide, *shape)).collect(),
+            Command::SetTransform { slide, shape, .. } => vec![(*slide, *shape)],
+            _ => Vec::new(),
+        };
+        let own: Vec<Command> = moved
+            .into_iter()
+            .filter(|(slide, shape)| self.slide(*slide).and_then(|s| s.placeholders.get(shape)).is_some_and(|p| !p.own_frame))
+            .map(|(slide, shape)| Command::SetPlaceholderOwnFrame { slide, shape, own: true })
+            .collect();
+        if !own.is_empty() {
+            let mut all = vec![command];
+            all.extend(own);
+            return self.apply(Command::Batch(all));
         }
         // A worksheet's page range reaches the shapes on it (sheet_command.rs `used_extents`).
         let on_sheet = |p: &Self, slide: SlideId| p.workbook.is_some() && p.slide(slide).is_some_and(|s| s.shapes.iter().any(|s| matches!(s.kind, ShapeKind::Sheet(_))));
         if let Command::InsertShape { slide, .. }
-        | Command::InsertShapes { slide, .. }
-        | Command::RemoveShape { slide, .. }
-        | Command::RemoveShapes { slide, .. }
+        | Command::DeleteShape { slide, .. }
         | Command::SetFrame { slide, .. }
         | Command::SetTransform { slide, .. } = &command
             && on_sheet(self, *slide)
@@ -301,11 +304,11 @@ impl Presentation {
     }
 
     fn apply_one(&mut self, command: Command) -> Result<Command, EditError> {
-        if !self.sections.is_empty() && matches!(&command,Command::InsertSlide {..}|Command::RemoveSlide {..}|Command::MoveSlide {..}) {
+        if !self.sections.is_empty() && matches!(&command,Command::InsertSlide {..}|Command::DeleteSlide {..}|Command::MoveSlide {..}) {
             let sections=self.sections.clone();let inverse=self.apply_primitive(command)?;self.reconcile_sections();
             return Ok(Command::SlideStructure {command:Box::new(inverse),sections});
         }
-        let structural=match &command {Command::InsertShape {slide,..}|Command::RemoveShape {slide,..}|Command::InsertShapes {slide,..}|Command::RemoveShapes {slide,..}=>Some(*slide),_=>None};
+        let structural=match &command {Command::InsertShape {slide,..}|Command::DeleteShape {slide,..}=>Some(*slide),_=>None};
         if let Some(slide)=structural {if let Some(groups)=self.slide(slide).filter(|s|!s.groups.is_empty()).map(|s|s.groups.clone()) {
             let inverse=self.apply_primitive(command)?;let target=self.slide_mut(slide).expect("structural edit retained slide");target.groups=target.live_groups(&groups);
             return Ok(Command::ShapeStructure {slide,command:Box::new(inverse),groups});
@@ -316,14 +319,14 @@ impl Presentation {
     fn apply_primitive(&mut self, command: Command) -> Result<Command, EditError> {
         match command {
             Command::ShapeStructure {slide,command,groups} => {
-                let target=match &*command {Command::InsertShape {slide,..}|Command::RemoveShape {slide,..}|Command::InsertShapes {slide,..}|Command::RemoveShapes {slide,..}=>Some(*slide),_=>None};
+                let target=match &*command {Command::InsertShape {slide,..}|Command::DeleteShape {slide,..}=>Some(*slide),_=>None};
                 if target!=Some(slide) {return Err(EditError::InvalidShapeGroups);}
                 let inverse=self.apply_primitive(*command)?;
                 if !self.slide(slide).is_some_and(|s|s.valid_groups(&groups)) {let _=self.apply_primitive(inverse);return Err(EditError::InvalidShapeGroups);}
                 let previous=std::mem::replace(&mut self.slide_mut(slide).expect("checked").groups,groups);Ok(Command::ShapeStructure {slide,command:Box::new(inverse),groups:previous})
             }
             Command::SlideStructure {command,sections} => {
-                if !matches!(&*command,Command::InsertSlide {..}|Command::RemoveSlide {..}|Command::MoveSlide {..}) {return Err(EditError::InvalidSections);}
+                if !matches!(&*command,Command::InsertSlide {..}|Command::DeleteSlide {..}|Command::MoveSlide {..}) {return Err(EditError::InvalidSections);}
                 let inverse=self.apply_primitive(*command)?;
                 if !self.valid_sections(&sections) {let _=self.apply_primitive(inverse);return Err(EditError::InvalidSections);}
                 let previous=std::mem::replace(&mut self.sections,sections);
@@ -339,9 +342,9 @@ impl Presentation {
                 let id = slide.id;
                 self.slides.insert(index, slide);
                 self.renumber_slides();
-                Ok(Command::RemoveSlide { slide: id })
+                Ok(Command::DeleteSlide { slide: id })
             }
-            Command::RemoveSlide { slide } => {
+            Command::DeleteSlide { slide } => {
                 let index = self.slide_index(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 if self.slides.len() == 1 {
                     return Err(EditError::LastSlide);
@@ -350,46 +353,7 @@ impl Presentation {
                 self.renumber_slides();
                 Ok(Command::InsertSlide { index, slide })
             }
-            Command::InsertShape { slide, index, shape } => {
-                let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
-                if index > s.shapes.len() {
-                    return Err(EditError::IndexOutOfRange);
-                }
-                if s.shape(shape.id).is_some() {
-                    return Err(EditError::DuplicateId);
-                }
-                let id = shape.id;
-                s.shapes.insert(index, shape);
-                Ok(Command::RemoveShape { slide, shape: id })
-            }
-            Command::RemoveShape { slide, shape } => {
-                let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
-                let index = s.shape_index(shape).ok_or(EditError::NoSuchShape(shape))?;
-                if s.is_attached(shape) {
-                    return Err(EditError::Attached(shape));
-                }
-                // The shapes attached to it go with it.
-                let attached = s.attached_to(shape);
-                if !attached.is_empty() {
-                    let shapes = std::iter::once(shape).chain(attached).collect();
-                    return self.apply_primitive(Command::RemoveShapes { slide, shapes });
-                }
-                let removed = s.shapes.remove(index);
-                Ok(Command::InsertShape { slide, index, shape: removed })
-            }
-            Command::RemoveShapes { slide, shapes } => {
-                let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
-                let mut indices: Vec<usize> = shapes.iter().map(|id| s.shape_index(*id).ok_or(EditError::NoSuchShape(*id))).collect::<Result<_, _>>()?;
-                indices.sort_unstable();
-                indices.dedup();
-                let mut removed: Vec<(usize, Shape)> = Vec::with_capacity(indices.len());
-                for &i in indices.iter().rev() {
-                    removed.push((i, s.shapes.remove(i)));
-                }
-                removed.reverse();
-                Ok(Command::InsertShapes { slide, shapes: removed })
-            }
-            Command::InsertShapes { slide, shapes } => {
+            Command::InsertShape { slide, shapes } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 // Ascending indices, each where it is after the ones before are in.
                 let mut expected = s.shapes.len();
@@ -403,41 +367,74 @@ impl Presentation {
                 for (index, shape) in shapes {
                     s.shapes.insert(index, shape);
                 }
-                Ok(Command::RemoveShapes { slide, shapes: ids })
+                Ok(Command::DeleteShape { slide, shapes: ids, with_attached: false })
             }
-            Command::SetFrame { slide, shape, frame } => {
+            Command::DeleteShape { slide, shapes, with_attached } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
-                if s.is_attached(shape) {
-                    return Err(EditError::Attached(shape));
+                let mut ids = shapes;
+                if with_attached {
+                    // A shape that is attached goes with its owner, not alone; the ones attached to a shape named go with it.
+                    for id in &ids {
+                        if s.is_attached(*id) && !ids.iter().any(|o| s.attached_to(*o).contains(id)) {
+                            return Err(EditError::Attached(*id));
+                        }
+                    }
+                    let mut more = Vec::new();
+                    for id in &ids {
+                        for a in s.attached_to(*id) {
+                            if !ids.contains(&a) && !more.contains(&a) {
+                                more.push(a);
+                            }
+                        }
+                    }
+                    ids.extend(more);
                 }
-                let attached = s.attached_to(shape);
-                let target = s.shapes.iter_mut().find(|x| x.id == shape).ok_or(EditError::NoSuchShape(shape))?;
-                let old = std::mem::replace(&mut target.frame, frame);
-                if attached.is_empty() {
-                    return Ok(Command::SetFrame { slide, shape, frame: old });
+                let mut indices: Vec<usize> = ids.iter().map(|id| s.shape_index(*id).ok_or(EditError::NoSuchShape(*id))).collect::<Result<_, _>>()?;
+                indices.sort_unstable();
+                indices.dedup();
+                let mut removed: Vec<(usize, Shape)> = Vec::with_capacity(indices.len());
+                for &i in indices.iter().rev() {
+                    removed.push((i, s.shapes.remove(i)));
                 }
-                // Attached shapes keep their place in the frame.
-                let mut frames = vec![(shape, old)];
-                for id in attached {
-                    let Some(a) = s.shapes.iter_mut().find(|x| x.id == id) else { continue };
-                    frames.push((id, a.frame));
-                    a.frame = follow(a.frame, old, frame);
-                }
-                Ok(Command::SetFrames { slide, frames })
+                removed.reverse();
+                Ok(Command::InsertShape { slide, shapes: removed })
             }
-            Command::SetFrames { slide, frames } => {
+            Command::SetFrame { slide, frames, with_attached } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 if let Some((missing, _)) = frames.iter().find(|(id, _)| s.shape(*id).is_none()) {
                     return Err(EditError::NoSuchShape(*missing));
                 }
-                let mut old = Vec::with_capacity(frames.len());
-                for (id, frame) in frames {
-                    let target = s.shapes.iter_mut().find(|x| x.id == id).expect("checked");
-                    old.push((id, std::mem::replace(&mut target.frame, frame)));
+                if with_attached {
+                    // A shape that is attached follows its owner, and is not moved alone.
+                    for (id, _) in &frames {
+                        if s.is_attached(*id) && !frames.iter().any(|(o, _)| s.attached_to(*o).contains(id)) {
+                            return Err(EditError::Attached(*id));
+                        }
+                    }
                 }
-                Ok(Command::SetFrames { slide, frames: old })
+                let mut old: Vec<(ShapeId, EmuRect)> = Vec::with_capacity(frames.len());
+                let mut follow_ups: Vec<(ShapeId, EmuRect, EmuRect, EmuRect)> = Vec::new();
+                for (id, frame) in &frames {
+                    let target = s.shapes.iter_mut().find(|x| x.id == *id).expect("checked");
+                    let was = std::mem::replace(&mut target.frame, *frame);
+                    old.push((*id, was));
+                    if with_attached {
+                        for a in s.attached_to(*id) {
+                            if !frames.iter().any(|(named, _)| *named == a) {
+                                follow_ups.push((a, was, *frame, EmuRect::default()));
+                            }
+                        }
+                    }
+                }
+                // Attached shapes keep their place in the frame.
+                for (id, from, to, _) in follow_ups {
+                    let Some(a) = s.shapes.iter_mut().find(|x| x.id == id) else { continue };
+                    old.push((id, a.frame));
+                    a.frame = follow(a.frame, from, to);
+                }
+                Ok(Command::SetFrame { slide, frames: old, with_attached: false })
             }
-            Command::Group(commands) => {
+            Command::Batch(commands) => {
                 let mut inverses = Vec::with_capacity(commands.len());
                 for command in commands {
                     match self.apply_one(command) {
@@ -451,7 +448,7 @@ impl Presentation {
                     }
                 }
                 inverses.reverse();
-                Ok(Command::Group(inverses))
+                Ok(Command::Batch(inverses))
             }
             Command::MoveSlide { slide, index } => {
                 let from = self.slide_index(slide).ok_or(EditError::NoSuchSlide(slide))?;
@@ -505,7 +502,7 @@ impl Presentation {
                         let body = body.clone();
                         let old = target.kind.clone();
                         target.kind = ShapeKind::Auto(AutoShape::text_box(fill, body));
-                        Ok(Command::SetKind { slide, shape, kind: Box::new(old) })
+                        Ok(Command::SetShapeKind { slide, shape, kind: Box::new(old) })
                     }
                     _ => Err(EditError::NotApplicable(shape)),
                 }
@@ -533,15 +530,15 @@ impl Presentation {
                         let mut auto = AutoShape::text_box(Fill::None, body);
                         auto.stroke = Some(stroke);
                         target.kind = ShapeKind::Auto(auto);
-                        Ok(Command::SetKind { slide, shape, kind: Box::new(old) })
+                        Ok(Command::SetShapeKind { slide, shape, kind: Box::new(old) })
                     }
                     _ => Err(EditError::NotApplicable(shape)),
                 }
             }
-            Command::SetKind { slide, shape, kind } => {
+            Command::SetShapeKind { slide, shape, kind } => {
                 let target = self.shape_mut(slide, shape)?;
                 let old = std::mem::replace(&mut target.kind, *kind);
-                Ok(Command::SetKind { slide, shape, kind: Box::new(old) })
+                Ok(Command::SetShapeKind { slide, shape, kind: Box::new(old) })
             }
             Command::SetText { slide, shape, text } => {
                 let body = self.shape_mut(slide, shape)?.text_body_mut().ok_or(EditError::NotText(shape))?;
@@ -561,7 +558,7 @@ impl Presentation {
                 body.replace_text(at, remove, &insert);
                 Ok(Command::SetTextBody { slide, shape, body: old })
             }
-            Command::EditText { slide, shape, at, remove, insert } => {
+            Command::ReplaceTextRange { slide, shape, at, remove, insert } => {
                 let body = self.shape_mut(slide, shape)?.text_body_mut().ok_or(EditError::NotText(shape))?;
                 let old = body.clone();
                 body.splice(at, remove, &insert);
@@ -579,11 +576,11 @@ impl Presentation {
                 body.format_paragraphs(start, end, &format);
                 Ok(Command::SetTextBody { slide, shape, body: old })
             }
-            Command::SetOwnFrame { slide, shape, own } => {
+            Command::SetPlaceholderOwnFrame { slide, shape, own } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 let ph = s.placeholders.get_mut(&shape).ok_or(EditError::NoSuchShape(shape))?;
                 let old = std::mem::replace(&mut ph.own_frame, own);
-                Ok(Command::SetOwnFrame { slide, shape, own: old })
+                Ok(Command::SetPlaceholderOwnFrame { slide, shape, own: old })
             }
             Command::SetSlide { slide } => {
                 let index = self.slide_index(slide.id).ok_or(EditError::NoSuchSlide(slide.id))?;
@@ -621,9 +618,9 @@ impl Presentation {
                 let id = master.id;
                 let index = index.min(self.masters.len());
                 self.masters.insert(index, master);
-                Ok(Command::RemoveMaster { master: id })
+                Ok(Command::DeleteMaster { master: id })
             }
-            Command::RemoveMaster { master } => {
+            Command::DeleteMaster { master } => {
                 if self.layouts.iter().any(|l| l.master == Some(master)) {
                     return Err(EditError::LayoutInUse);
                 }
@@ -643,9 +640,9 @@ impl Presentation {
                 let id = layout.id;
                 let index = index.min(self.layouts.len());
                 self.layouts.insert(index, layout);
-                Ok(Command::RemoveLayout { layout: id })
+                Ok(Command::DeleteLayout { layout: id })
             }
-            Command::RemoveLayout { layout } => {
+            Command::DeleteLayout { layout } => {
                 if self.slides.iter().any(|s| s.layout == Some(layout)) {
                     return Err(EditError::LayoutInUse);
                 }
@@ -743,9 +740,9 @@ impl Presentation {
                 let old = std::mem::replace(&mut self.cmyk, cmyk);
                 Ok(Command::SetCmykMode { cmyk: old })
             }
-            Command::SetIbisExtensions { enabled } => {
+            Command::SetExtendedFeatures { enabled } => {
                 let old = std::mem::replace(&mut self.ibis_extensions, enabled);
-                Ok(Command::SetIbisExtensions { enabled: old })
+                Ok(Command::SetExtendedFeatures { enabled: old })
             }
             Command::SetReadOnlyRecommended { read_only_recommended } => {
                 let old = std::mem::replace(&mut self.read_only_recommended, read_only_recommended);
@@ -755,9 +752,9 @@ impl Presentation {
                 let old = std::mem::replace(&mut self.modify_verifier, verifier);
                 Ok(Command::SetModifyVerifier { verifier: old })
             }
-            Command::SetDocProperties { properties } => {
+            Command::SetDocumentProperties { properties } => {
                 let old = std::mem::replace(&mut self.properties, properties);
-                Ok(Command::SetDocProperties { properties: old })
+                Ok(Command::SetDocumentProperties { properties: old })
             }
             Command::SetObjectDefaults { defaults } => {
                 let old = std::mem::replace(&mut self.object_defaults, defaults);
@@ -917,7 +914,7 @@ impl Presentation {
                 };
                 Ok(Command::SetShapeReturnToZoom { slide, shape, return_to_zoom: was })
             }
-            Command::SetShapeZoomShowBg { slide, shape, show_bg } => {
+            Command::SetShapeZoomShowBackground { slide, shape, show_bg } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 if s.shape(shape).is_none() {
                     return Err(EditError::NoSuchShape(shape));
@@ -926,7 +923,7 @@ impl Presentation {
                     Some(bg) => s.shape_zoom_show_bg.insert(shape, bg),
                     None => s.shape_zoom_show_bg.remove(&shape),
                 };
-                Ok(Command::SetShapeZoomShowBg { slide, shape, show_bg: old })
+                Ok(Command::SetShapeZoomShowBackground { slide, shape, show_bg: old })
             }
             Command::SetShapeZoomDuration { slide, shape, duration_ms } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
@@ -968,10 +965,10 @@ impl Presentation {
                     Ok(Command::SetGuides { slide, guides: std::mem::replace(&mut s.guides, guides) })
                 }
             },
-            Command::SetBackdropHidden { slide, hidden } => {
+            Command::SetBackgroundGraphicsHidden { slide, hidden } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
                 let was = std::mem::replace(&mut s.hide_backdrop, hidden);
-                Ok(Command::SetBackdropHidden { slide, hidden: was })
+                Ok(Command::SetBackgroundGraphicsHidden { slide, hidden: was })
             }
             Command::SetShapeHidden { slide, shape, hidden } => {
                 let s = self.slide_mut(slide).ok_or(EditError::NoSuchSlide(slide))?;
@@ -1030,7 +1027,7 @@ impl Presentation {
                 let (slide, shape) = match &*command {
                     Command::SetText { slide, shape, .. }
                     | Command::SetTextStyle { slide, shape, .. }
-                    | Command::EditText { slide, shape, .. }
+                    | Command::ReplaceTextRange { slide, shape, .. }
                     | Command::ReplaceText { slide, shape, .. }
                     | Command::SetCharacterFormat { slide, shape, .. }
                     | Command::SetParagraphFormat { slide, shape, .. }
@@ -1044,7 +1041,7 @@ impl Presentation {
                 match *command {
                     Command::SetText { text, .. } => body.set_text(&text),
                     Command::SetTextStyle { style, .. } => body.apply_style(style),
-                    Command::EditText { at, remove, insert, .. } => body.splice(at, remove, &insert),
+                    Command::ReplaceTextRange { at, remove, insert, .. } => body.splice(at, remove, &insert),
                     Command::ReplaceText { at, remove, insert, .. } => body.replace_text(at, remove, &insert),
                     Command::SetCharacterFormat { start, end, format, .. } => body.format_runs(start, end, &format),
                     Command::SetParagraphFormat { start, end, format, .. } => body.format_paragraphs(start, end, &format),
@@ -1098,6 +1095,32 @@ pub struct Document {
     /// The file this document is saved as (its whole path), for what the calculation says of it
     /// (`CELL("filename")`).
     file: Option<String>,
+    /// A touch gesture that can still be taken back (`begin_gesture`).
+    gesture: Option<GestureState>,
+    gesture_serial: u64,
+}
+
+/// What `Document` keeps while a gesture is open, to put the history back at `rollback_gesture`.
+#[derive(Clone, Debug)]
+struct GestureState {
+    serial: u64,
+    /// The undo steps below this many existed before the gesture: they are not the gesture's.
+    floor: usize,
+    /// The undo steps the gesture took away from below `floor` (`retract_last`): each as the commands that put it
+    /// back, the last retracted last.
+    retracted: Vec<Vec<Command>>,
+    /// The redo steps an edit of the gesture dropped (an edit clears the redo list), to put back.
+    saved_redo: Option<Vec<Vec<Command>>>,
+    clean_undo_len: Option<usize>,
+    repeat_sheet: Vec<crate::sheet_command::SheetCommand>,
+    repeat_sheet_group: bool,
+}
+
+/// A gesture opened by [`Document::begin_gesture`]; give it back to `commit_gesture` or `rollback_gesture`.
+#[derive(Debug)]
+#[must_use = "a gesture is ended with commit_gesture or rollback_gesture"]
+pub struct GestureMark {
+    serial: u64,
 }
 
 impl Default for Document {
@@ -1108,7 +1131,7 @@ impl Default for Document {
 
 impl Document {
     pub fn new(presentation: Presentation) -> Self {
-        Self { presentation, undo: Vec::new(), redo: Vec::new(), repeat_sheet:Vec::new(), repeat_sheet_group:false, clean_undo_len: Some(0), file: None }
+        Self { presentation, undo: Vec::new(), redo: Vec::new(), repeat_sheet:Vec::new(), repeat_sheet_group:false, clean_undo_len: Some(0), file: None, gesture: None, gesture_serial: 0 }
     }
 
     /// Mark the current state of the document as saved (clean).
@@ -1124,6 +1147,7 @@ impl Document {
         self.repeat_sheet.clear();
         self.repeat_sheet_group = false;
         self.clean_undo_len = Some(0);
+        self.gesture = None;
     }
 
     /// Mark the document as having unsaved changes.
@@ -1171,7 +1195,7 @@ impl Document {
     /// before it are rolled back and the document is unchanged.
     pub fn execute(&mut self, commands: Vec<Command>) -> Result<(), EditError> {
         let repeat:Vec<_> = commands.iter().filter_map(|command|match command {
-            Command::Sheet(edit @ (crate::SheetCommand::SetFormat{..}|crate::SheetCommand::Insert{..}|crate::SheetCommand::Delete{..}|crate::SheetCommand::ClearFormats{..}|crate::SheetCommand::ShiftCells{..})) => Some(edit.clone()),
+            Command::Sheet(edit @ (crate::SheetCommand::SetFormat{..}|crate::SheetCommand::Insert{..}|crate::SheetCommand::Delete{..}|crate::SheetCommand::ClearFormats{..}|crate::SheetCommand::InsertOrDeleteCells{..})) => Some(edit.clone()),
             _ => None,
         }).collect();
         let inverses = self.apply_all(commands)?;
@@ -1180,9 +1204,9 @@ impl Document {
                 self.clean_undo_len = None;
             }
             self.undo.push(inverses);
-            self.redo.clear();
+            self.drop_redo();
             let same_target = self.repeat_sheet_group && !repeat.is_empty() && !self.repeat_sheet.is_empty() && repeat.iter().chain(&self.repeat_sheet).all(|edit|match (repeat.first(),edit) {
-                (Some(crate::SheetCommand::SetFormat{slide:a,ranges:x,..}),crate::SheetCommand::SetFormat{slide:b,ranges:y,..}) => a==b && x==y,
+                (Some(crate::SheetCommand::SetFormat{sheet:a,ranges:x,..}),crate::SheetCommand::SetFormat{sheet:b,ranges:y,..}) => a==b && x==y,
                 _ => false,
             });
             if same_target {self.repeat_sheet.extend(repeat);} else {self.repeat_sheet = repeat;}
@@ -1205,14 +1229,16 @@ impl Document {
         if self.clean_undo_len.is_some_and(|clean| clean >= self.undo.len()) {
             self.clean_undo_len = None;
         }
+        // A step from before an open gesture is not amended (the gesture could not take it back): a new step.
+        let amend = self.gesture.as_ref().is_none_or(|g| self.undo.len() > g.floor);
         match self.undo.last_mut() {
-            Some(step) => {
+            Some(step) if amend => {
                 inverses.append(step);
                 *step = inverses;
             }
-            None => self.undo.push(inverses),
+            _ => self.undo.push(inverses),
         }
-        self.redo.clear();
+        self.drop_redo();
         Ok(())
     }
 
@@ -1223,10 +1249,22 @@ impl Document {
         if self.clean_undo_len.is_some_and(|clean| clean > self.undo.len()) {
             self.clean_undo_len = None;
         }
-        self.apply_all(step).is_ok()
+        match self.apply_all(step) {
+            Ok(back) => {
+                // A step of before an open gesture goes: the gesture keeps what puts it back.
+                if let Some(g) = self.gesture.as_mut().filter(|g| self.undo.len() < g.floor) {
+                    g.floor = self.undo.len();
+                    g.retracted.push(back);
+                }
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     pub fn undo(&mut self) -> bool {
+        // The user's own Undo while a gesture is open: the history is theirs now, the gesture can no longer be taken back.
+        self.gesture = None;
         let Some(step) = self.undo.pop() else { return false };
         match self.apply_all(step) {
             Ok(inverses) => {
@@ -1238,6 +1276,7 @@ impl Document {
     }
 
     pub fn redo(&mut self) -> bool {
+        self.gesture = None;
         let Some(step) = self.redo.pop() else { return false };
         match self.apply_all(step) {
             Ok(inverses) => {
@@ -1246,6 +1285,96 @@ impl Document {
             }
             Err(_) => false,
         }
+    }
+
+    /// An edit clears what could be redone; while a gesture is open the redo list is kept for `rollback_gesture`.
+    fn drop_redo(&mut self) {
+        if self.redo.is_empty() {
+            return;
+        }
+        match self.gesture.as_mut() {
+            Some(g) if g.saved_redo.is_none() => g.saved_redo = Some(std::mem::take(&mut self.redo)),
+            _ => self.redo.clear(),
+        }
+    }
+
+    /// Open a gesture: a user action (a touch from the finger going down until it leaves) whose edits are taken
+    /// back together by [`rollback_gesture`](Self::rollback_gesture) or made one undo step by
+    /// [`commit_gesture`](Self::commit_gesture). Every change of the document goes through `execute`, so the
+    /// history is all there is to put back. A gesture still open is committed first.
+    pub fn begin_gesture(&mut self) -> GestureMark {
+        if self.gesture.is_some() {
+            self.commit_open_gesture();
+        }
+        self.gesture_serial += 1;
+        let serial = self.gesture_serial;
+        self.gesture = Some(GestureState {
+            serial,
+            floor: self.undo.len(),
+            retracted: Vec::new(),
+            saved_redo: None,
+            clean_undo_len: self.clean_undo_len,
+            repeat_sheet: self.repeat_sheet.clone(),
+            repeat_sheet_group: self.repeat_sheet_group,
+        });
+        GestureMark { serial }
+    }
+
+    /// Whether `mark` is the gesture that is open now.
+    pub fn gesture_is_open(&self, mark: &GestureMark) -> bool {
+        self.gesture.as_ref().is_some_and(|g| g.serial == mark.serial)
+    }
+
+    /// Take back everything the gesture changed: the undo steps it made are undone (not redoable), the steps it
+    /// retracted are back, and the redo list and the saved/clean state are as they were. `false` if the gesture is
+    /// no longer open (the user's own Undo or Redo ended it, or a newer gesture began).
+    pub fn rollback_gesture(&mut self, mark: GestureMark) -> bool {
+        if !self.gesture_is_open(&mark) {
+            return false;
+        }
+        let Some(g) = self.gesture.take() else { return false };
+        let mut ok = true;
+        while self.undo.len() > g.floor {
+            let Some(step) = self.undo.pop() else { break };
+            ok &= self.apply_all(step).is_ok();
+        }
+        for back in g.retracted.into_iter().rev() {
+            match self.apply_all(back) {
+                Ok(inverses) => self.undo.push(inverses),
+                Err(_) => ok = false,
+            }
+        }
+        if let Some(redo) = g.saved_redo {
+            self.redo = redo;
+        }
+        self.clean_undo_len = g.clean_undo_len;
+        self.repeat_sheet = g.repeat_sheet;
+        self.repeat_sheet_group = g.repeat_sheet_group;
+        ok
+    }
+
+    /// Make the gesture final: the undo steps it made become one step (Undo once takes all of it back).
+    pub fn commit_gesture(&mut self, mark: GestureMark) {
+        if self.gesture_is_open(&mark) {
+            self.commit_open_gesture();
+        }
+    }
+
+    fn commit_open_gesture(&mut self) {
+        let Some(g) = self.gesture.take() else { return };
+        let made = self.undo.len().saturating_sub(g.floor);
+        if made < 2 {
+            return;
+        }
+        let old_len = self.undo.len();
+        // The inverses of the later steps run first.
+        let merged: Vec<Command> = self.undo.drain(g.floor..).rev().flatten().collect();
+        self.undo.push(merged);
+        self.clean_undo_len = match self.clean_undo_len {
+            Some(clean) if clean == old_len => Some(self.undo.len()),
+            Some(clean) if clean > g.floor => None,
+            other => other,
+        };
     }
 
     /// Apply in order; return inverses in the order that undoes them.
@@ -1278,24 +1407,20 @@ mod tests {
         let mut doc = Document::new(Presentation::new());
         let slide = doc.presentation().slides[0].id;
         let shape = doc.ids().new_shape_id();
-        doc.execute(vec![Command::InsertShape {
-            slide,
-            index: 0,
-            shape: Shape::text_box(shape, EmuRect::new(0, 0, 100, 50), "こんにちは"),
-        }])
+        doc.execute(vec![Command::InsertShape { slide, shapes: vec![(0, Shape::text_box(shape, EmuRect::new(0, 0, 100, 50), "こんにちは"))] }])
         .unwrap();
         (doc, slide, shape)
     }
 
     #[test]
     fn shape_group_hierarchy_undo_and_invalid_membership() {
-        use crate::{ShapeGroup,GroupMember};let (mut doc,slide,shape)=doc_with_box();let id=doc.ids().new_shape_id();let mut second=doc.presentation().slides[0].shapes[0].clone();second.id=id;doc.execute(vec![Command::InsertShape {slide,index:1,shape:second}]).unwrap();
+        use crate::{ShapeGroup,GroupMember};let (mut doc,slide,shape)=doc_with_box();let id=doc.ids().new_shape_id();let mut second=doc.presentation().slides[0].shapes[0].clone();second.id=id;doc.execute(vec![Command::InsertShape { slide, shapes: vec![(1, second)] }]).unwrap();
         let before=doc.presentation().clone();let groups=vec![ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id:"99".into(),name:"outer".into(),children:vec![GroupMember::Group(Box::new(ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id:"100".into(),name:"inner".into(),children:vec![GroupMember::Shape(shape)]})),GroupMember::Shape(id)]}];doc.execute(vec![Command::SetShapeGroups {slide,groups:groups.clone()}]).unwrap();let grouped=doc.presentation().clone();assert!(grouped.slides[0].valid_groups(&groups));assert!(doc.undo());assert_eq!(doc.presentation(),&before);assert!(doc.redo());assert_eq!(doc.presentation(),&grouped);
         for kind in 0..4 {let mut invalid=groups.clone();match kind {0=>invalid[0].native_id="invalid".into(),1=>invalid[0].children.push(GroupMember::Shape(shape)),2=>invalid[0].children.push(GroupMember::Shape(ShapeId(u64::MAX))),3=>invalid[0].name="bad\0name".into(),_=>unreachable!()}assert_eq!(doc.execute(vec![Command::SetShapeGroups {slide,groups:invalid}]),Err(EditError::InvalidShapeGroups));assert_eq!(doc.presentation(),&grouped);}
-        for command in [Command::RemoveShape {slide,shape},Command::RemoveShapes {slide,shapes:vec![shape,id]}] {let before=doc.presentation().clone();doc.execute(vec![command]).unwrap();let after=doc.presentation().clone();assert!(after.slides[0].valid_groups(&after.slides[0].groups));assert!(doc.undo());assert_eq!(doc.presentation(),&before);assert!(doc.redo());assert_eq!(doc.presentation(),&after);assert!(doc.undo());assert_eq!(doc.presentation(),&before);}
+        for command in [Command::DeleteShape { slide, shapes: vec![shape], with_attached: true },Command::DeleteShape { slide, shapes: vec![shape,id], with_attached: false }] {let before=doc.presentation().clone();doc.execute(vec![command]).unwrap();let after=doc.presentation().clone();assert!(after.slides[0].valid_groups(&after.slides[0].groups));assert!(doc.undo());assert_eq!(doc.presentation(),&before);assert!(doc.redo());assert_eq!(doc.presentation(),&after);assert!(doc.undo());assert_eq!(doc.presentation(),&before);}
         let mut duplicate=groups.clone();let GroupMember::Group(inner)=&mut duplicate[0].children[0] else {panic!("nested")};inner.native_id="99".into();assert_eq!(doc.execute(vec![Command::SetShapeGroups {slide,groups:duplicate}]),Err(EditError::InvalidShapeGroups));assert_eq!(doc.presentation(),&grouped);
-        assert!(doc.execute(vec![Command::SetShapeGroups {slide,groups:vec![]},Command::RemoveShape {slide,shape:ShapeId(u64::MAX)}]).is_err());assert_eq!(doc.presentation(),&grouped,"partial command failure restores hierarchy");
-        let mut attached=grouped.clone();attached.slides[0].attached.insert(shape,vec![id]);attached.slides[0].groups=vec![ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id:"200".into(),name:"attached owner".into(),children:vec![GroupMember::Shape(shape)]}];let mut doc=Document::new(attached.clone());doc.execute(vec![Command::RemoveShape {slide,shape}]).unwrap();let removed=doc.presentation().clone();assert!(removed.slides[0].groups.is_empty());assert!(removed.slides[0].shapes.is_empty());assert!(doc.undo());assert_eq!(doc.presentation(),&attached);assert!(doc.redo());assert_eq!(doc.presentation(),&removed);
+        assert!(doc.execute(vec![Command::SetShapeGroups {slide,groups:vec![]},Command::DeleteShape { slide, shapes: vec![ShapeId(u64::MAX)], with_attached: true }]).is_err());assert_eq!(doc.presentation(),&grouped,"partial command failure restores hierarchy");
+        let mut attached=grouped.clone();attached.slides[0].attached.insert(shape,vec![id]);attached.slides[0].groups=vec![ShapeGroup {has_unmodelled_children:false,soft_edge:None,native_id:"200".into(),name:"attached owner".into(),children:vec![GroupMember::Shape(shape)]}];let mut doc=Document::new(attached.clone());doc.execute(vec![Command::DeleteShape { slide, shapes: vec![shape], with_attached: true }]).unwrap();let removed=doc.presentation().clone();assert!(removed.slides[0].groups.is_empty());assert!(removed.slides[0].shapes.is_empty());assert!(doc.undo());assert_eq!(doc.presentation(),&attached);assert!(doc.redo());assert_eq!(doc.presentation(),&removed);
 
     }
 
@@ -1307,12 +1432,12 @@ mod tests {
         let sections=vec![Section {id:"{11111111-1111-1111-1111-111111111111}".into(),name:"first".into(),slides:ids[..2].to_vec()},Section {id:"{22222222-2222-2222-2222-222222222222}".into(),name:"second".into(),slides:ids[2..].to_vec()}];
         doc.execute(vec![Command::SetSections {sections:sections.clone()}]).unwrap();
         let fresh=doc.ids().new_slide_id();
-        for command in [Command::MoveSlide {slide:ids[0],index:2},Command::InsertSlide {index:1,slide:Slide::new(fresh)},Command::RemoveSlide {slide:ids[1]},Command::Group(vec![Command::MoveSlide {slide:ids[2],index:0},Command::RemoveSlide {slide:fresh}])] {
+        for command in [Command::MoveSlide {slide:ids[0],index:2},Command::InsertSlide {index:1,slide:Slide::new(fresh)},Command::DeleteSlide {slide:ids[1]},Command::Batch(vec![Command::MoveSlide {slide:ids[2],index:0},Command::DeleteSlide {slide:fresh}])] {
             let before=doc.presentation().clone();doc.execute(vec![command]).unwrap();let after=doc.presentation().clone();assert!(after.valid_sections(&after.sections));assert!(doc.undo());assert_eq!(doc.presentation(),&before);assert!(doc.redo());assert_eq!(doc.presentation(),&after);
         }
         let before=doc.presentation().clone();let good=before.sections.clone();
         for kind in 0..4 {let mut bad=good.clone();match kind {0=>bad[0].id="invalid".into(),1=>bad[1].id=bad[0].id.clone(),2=>{bad.iter_mut().find(|section|!section.slides.is_empty()).unwrap().slides.pop();},3=>bad[0].name="bad\0name".into(),_=>unreachable!()}assert_eq!(doc.execute(vec![Command::SetSections {sections:bad}]),Err(EditError::InvalidSections));assert_eq!(doc.presentation(),&before);}
-        assert!(doc.execute(vec![Command::MoveSlide {slide:ids[0],index:0},Command::RemoveSlide {slide:SlideId(u64::MAX)}]).is_err());assert_eq!(doc.presentation(),&before,"group rollback keeps section membership");
+        assert!(doc.execute(vec![Command::MoveSlide {slide:ids[0],index:0},Command::DeleteSlide {slide:SlideId(u64::MAX)}]).is_err());assert_eq!(doc.presentation(),&before,"group rollback keeps section membership");
     }
 
     #[test]
@@ -1330,7 +1455,7 @@ mod tests {
         let (mut doc, slide, shape) = doc_with_box();
         let before = doc.presentation().clone();
         doc.execute(vec![
-            Command::SetFrame { slide, shape, frame: EmuRect::new(10, 10, 200, 80) },
+            Command::SetFrame { slide, frames: vec![(shape, EmuRect::new(10, 10, 200, 80))], with_attached: true },
             Command::SetText { slide, shape, text: "変更".into() },
         ])
         .unwrap();
@@ -1347,7 +1472,7 @@ mod tests {
         let before = doc.presentation().clone();
         let err = doc.execute(vec![
             Command::SetText { slide, shape, text: "x".into() },
-            Command::RemoveShape { slide, shape: ShapeId(999) },
+            Command::DeleteShape { slide, shapes: vec![ShapeId(999)], with_attached: true },
         ]);
         assert_eq!(err, Err(EditError::NoSuchShape(ShapeId(999))));
         assert_eq!(doc.presentation(), &before);
@@ -1359,13 +1484,9 @@ mod tests {
     fn remove_and_restore_keeps_z_order() {
         let (mut doc, slide, first) = doc_with_box();
         let second = doc.ids().new_shape_id();
-        doc.execute(vec![Command::InsertShape {
-            slide,
-            index: 1,
-            shape: Shape::text_box(second, EmuRect::new(0, 0, 1, 1), ""),
-        }])
+        doc.execute(vec![Command::InsertShape { slide, shapes: vec![(1, Shape::text_box(second, EmuRect::new(0, 0, 1, 1), ""))] }])
         .unwrap();
-        doc.execute(vec![Command::RemoveShape { slide, shape: first }]).unwrap();
+        doc.execute(vec![Command::DeleteShape { slide, shapes: vec![first], with_attached: true }]).unwrap();
         doc.undo();
         let ids: Vec<_> = doc.presentation().slides[0].shapes.iter().map(|s| s.id).collect();
         assert_eq!(ids, vec![first, second]);
@@ -1393,7 +1514,7 @@ mod tests {
     #[test]
     fn last_slide_cannot_be_removed() {
         let (mut doc, slide, _) = doc_with_box();
-        assert_eq!(doc.execute(vec![Command::RemoveSlide { slide }]), Err(EditError::LastSlide));
+        assert_eq!(doc.execute(vec![Command::DeleteSlide { slide }]), Err(EditError::LastSlide));
     }
 
     #[test]
@@ -1413,7 +1534,7 @@ mod tests {
     fn edit_text_undoes_exactly() {
         let (mut doc, slide, shape) = doc_with_box();
         let before = doc.presentation().clone();
-        doc.execute(vec![Command::EditText { slide, shape, at: 2, remove: 1, insert: "ば".into() }]).unwrap();
+        doc.execute(vec![Command::ReplaceTextRange { slide, shape, at: 2, remove: 1, insert: "ば".into() }]).unwrap();
         assert_eq!(doc.presentation().slides[0].shapes[0].text_body().unwrap().text(), "こんばちは");
         doc.undo();
         assert_eq!(doc.presentation(), &before);
@@ -1433,7 +1554,7 @@ mod tests {
     fn move_slide_and_shape_undo() {
         let (mut doc, slide, first) = doc_with_box();
         let second = doc.ids().new_shape_id();
-        doc.execute(vec![Command::InsertShape { slide, index: 1, shape: Shape::text_box(second, EmuRect::new(0, 0, 1, 1), "") }]).unwrap();
+        doc.execute(vec![Command::InsertShape { slide, shapes: vec![(1, Shape::text_box(second, EmuRect::new(0, 0, 1, 1), ""))] }]).unwrap();
         let s2 = doc.ids().new_slide_id();
         doc.execute(vec![Command::InsertSlide { index: 1, slide: Slide::new(s2) }]).unwrap();
         let before = doc.presentation().clone();
@@ -1473,7 +1594,7 @@ mod tests {
         let mut body = crate::TextBody::default();
         body.paragraphs[0].runs = vec![Run { text: "1".into(), style: RunStyle { field: Some(TextField::SlideNumber), ..RunStyle::default() } }];
         let id = doc.ids().new_shape_id();
-        doc.execute(vec![Command::InsertShape { slide: a, index: 0, shape: Shape::new(id, EmuRect::new(0, 0, 1, 1), ShapeKind::TextBox(body)) }]).unwrap();
+        doc.execute(vec![Command::InsertShape { slide: a, shapes: vec![(0, Shape::new(id, EmuRect::new(0, 0, 1, 1), ShapeKind::TextBox(body)))] }]).unwrap();
         let b = doc.ids().new_slide_id();
         doc.execute(vec![Command::InsertSlide { index: 0, slide: Slide::new(b) }]).unwrap();
         assert_eq!(doc.presentation().slides[1].shapes[0].text_body().unwrap().text(), "2");
@@ -1527,5 +1648,112 @@ mod tests {
 
         assert!(doc.redo());
         assert_eq!(doc.presentation(), &modified);
+    }
+
+    // ----- gestures (a touch that can be taken back) -----
+
+    fn move_by(doc: &mut Document, slide: SlideId, shape: ShapeId, dx: i64) {
+        let rect = doc.presentation().slide(slide).unwrap().shape(shape).unwrap().frame;
+        doc.execute(vec![Command::SetFrame { slide, frames: vec![(shape, EmuRect::new(rect.x + dx, rect.y, rect.width, rect.height))], with_attached: true }]).unwrap();
+    }
+
+    fn frame_x(doc: &Document, slide: SlideId, shape: ShapeId) -> i64 {
+        doc.presentation().slide(slide).unwrap().shape(shape).unwrap().frame.x
+    }
+
+    fn insert_box(doc: &mut Document, slide: SlideId) {
+        let id = doc.ids().new_shape_id();
+        doc.execute(vec![Command::InsertShape { slide, shapes: vec![(0, Shape::text_box(id, EmuRect::new(5, 5, 10, 10), "x"))] }]).unwrap();
+    }
+
+    #[test]
+    fn rolling_a_gesture_back_restores_the_document_the_redo_list_and_the_clean_state() {
+        let (mut doc, slide, shape) = doc_with_box();
+        move_by(&mut doc, slide, shape, 10);
+        doc.undo();
+        doc.mark_clean();
+        let (undo_len, clean_x) = (doc.undo_len(), frame_x(&doc, slide, shape));
+        assert!(doc.can_redo() && !doc.is_dirty());
+
+        let mark = doc.begin_gesture();
+        move_by(&mut doc, slide, shape, 100);
+        move_by(&mut doc, slide, shape, 100);
+        assert_eq!(frame_x(&doc, slide, shape), clean_x + 200);
+        assert!(doc.is_dirty() && !doc.can_redo());
+
+        assert!(doc.rollback_gesture(mark));
+        assert_eq!(frame_x(&doc, slide, shape), clean_x);
+        assert_eq!((doc.undo_len(), doc.can_redo(), doc.is_dirty()), (undo_len, true, false));
+        // The redo that was there still works.
+        assert!(doc.redo());
+        assert_eq!(frame_x(&doc, slide, shape), clean_x + 10);
+    }
+
+    #[test]
+    fn a_committed_gesture_is_one_undo_step() {
+        let (mut doc, slide, shape) = doc_with_box();
+        let before = frame_x(&doc, slide, shape);
+        let steps = doc.undo_len();
+        let mark = doc.begin_gesture();
+        move_by(&mut doc, slide, shape, 5);
+        move_by(&mut doc, slide, shape, 7);
+        move_by(&mut doc, slide, shape, 11);
+        doc.commit_gesture(mark);
+        assert_eq!(doc.undo_len(), steps + 1);
+        assert!(doc.undo());
+        assert_eq!(frame_x(&doc, slide, shape), before);
+        assert!(doc.redo());
+        assert_eq!(frame_x(&doc, slide, shape), before + 23);
+    }
+
+    #[test]
+    fn a_gesture_that_changed_nothing_leaves_no_step() {
+        let (mut doc, ..) = doc_with_box();
+        let steps = doc.undo_len();
+        let mark = doc.begin_gesture();
+        doc.commit_gesture(mark);
+        assert_eq!(doc.undo_len(), steps);
+        let mark = doc.begin_gesture();
+        assert!(doc.rollback_gesture(mark));
+        assert_eq!(doc.undo_len(), steps);
+    }
+
+    #[test]
+    fn a_step_retracted_during_a_gesture_comes_back_at_rollback() {
+        let (mut doc, slide, shape) = doc_with_box();
+        let steps = doc.undo_len();
+        let mark = doc.begin_gesture();
+        // (an empty new box left by a tap elsewhere: the app retracts the step that made it)
+        assert!(doc.retract_last());
+        assert!(doc.presentation().slide(slide).unwrap().shape(shape).is_none());
+        insert_box(&mut doc, slide);
+        assert!(doc.rollback_gesture(mark));
+        assert_eq!(doc.undo_len(), steps);
+        assert!(doc.presentation().slide(slide).unwrap().shape(shape).is_some());
+        // and it is still one undo step that removes the box again
+        assert!(doc.undo());
+        assert!(doc.presentation().slide(slide).unwrap().shape(shape).is_none());
+    }
+
+    #[test]
+    fn an_amend_during_a_gesture_does_not_change_a_step_from_before_it() {
+        let (mut doc, slide, shape) = doc_with_box();
+        let steps = doc.undo_len();
+        let before = frame_x(&doc, slide, shape);
+        let mark = doc.begin_gesture();
+        let rect = doc.presentation().slide(slide).unwrap().shape(shape).unwrap().frame;
+        doc.amend_last(vec![Command::SetFrame { slide, frames: vec![(shape, EmuRect::new(rect.x + 9, rect.y, rect.width, rect.height))], with_attached: true }]).unwrap();
+        assert!(doc.rollback_gesture(mark));
+        assert_eq!((doc.undo_len(), frame_x(&doc, slide, shape)), (steps, before));
+    }
+
+    #[test]
+    fn the_users_own_undo_ends_the_gesture() {
+        let (mut doc, slide, shape) = doc_with_box();
+        let mark = doc.begin_gesture();
+        move_by(&mut doc, slide, shape, 3);
+        doc.undo();
+        assert!(!doc.gesture_is_open(&mark));
+        assert!(!doc.rollback_gesture(mark));
     }
 }

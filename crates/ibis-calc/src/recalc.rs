@@ -179,6 +179,9 @@ impl Recalc<'_> {
                 let had_cycle = self.cycle_detected.get();
                 self.cycle_detected.set(prev_cycle || had_cycle);
                 let is_dynamic = book.dynamic(cell.0, cell.1, cell.2);
+                // A reference that goes to the bottom of the sheet (`A.:A`: the leading blanks trimmed, the end not) has no room to spill from a
+                // cell below the first row: #SPILL! (Excel: ROWS(A.:A) is 1048574, the formula in E21 is #SPILL!; GitHub issue #258).
+                let v = if is_dynamic && ctx.spill_overflows_the_sheet(&v) { crate::eval::Value::Error(CellError::Spill) } else { v };
                 if is_dynamic
                     && !ctx.aborted
                     && let Some(spill) = ctx.spill_result(&v)
@@ -1473,6 +1476,46 @@ mod tests {
     }
 
     #[test]
+    fn trim_reference_from_file_issue_258() {
+        let mut book = MockBook::new(false);
+        book.dynamic = true;
+        // A1 and A4:A5 are blank: leading trim leaves A2:A5 (4 rows), trailing A1:A3 (3), both A2:A3 (2).
+        book.values.insert((0, 1, 0), CellValue::Number(1.0));
+        book.values.insert((0, 2, 0), CellValue::Number(2.0));
+        for (file, rows) in [("ROWS(_xlfn._TRO_ALL(A1:A5))", 2.0), ("ROWS(_xlfn._TRO_LEADING(A1:A5))", 4.0), ("ROWS(_xlfn._TRO_TRAILING(A1:A5))", 3.0)] {
+            let shown = crate::formula::from_file(file);
+            assert!(shown.contains(".:") || shown.contains(":."), "{shown}");
+            assert_eq!(evaluate(&book, (0, 0, 9), &shown).0, CellValue::Number(rows), "{file}");
+        }
+    }
+
+    /// Excel (the table of tasks/doc/requests/2026-11-19-258-trimref-result.md, 2, 3 and 18a-c): `A.:A` goes to the bottom of the sheet, so
+    /// ROWS is 1048574 and it cannot spill from a cell below row 1 (#SPILL!); `A:.A` and `A.:.A` end at the data.
+    #[test]
+    fn leading_trim_to_the_bottom_of_the_sheet_is_a_blocked_spill_issue_258() {
+        let mut book = MockBook::new(false);
+        book.dynamic = true;
+        // A3:A7 hold 1..5 (rows 1 and 2 blank), as the measurement's column A.
+        for (i, row) in (2u32..=6).enumerate() {
+            book.values.insert((0, row, 0), CellValue::Number((i + 1) as f64));
+        }
+        // What the recalculation asks before it spills a reference (`Ctx::spill_overflows_the_sheet`).
+        let overflows = |cell: (usize, u32, u32), formula: &str| {
+            let mut ctx = Ctx::new(&book, &crate::eval::Stored, cell.0, cell.1, cell.2);
+            let v = ctx.eval(&parse(formula).unwrap());
+            ctx.spill_overflows_the_sheet(&v)
+        };
+        assert!(overflows((0, 20, 4), "A.:A"), "E21: A.:A needs 1048574 rows");
+        assert!(!overflows((0, 40, 4), "A:.A") && !overflows((0, 60, 4), "A.:.A"), "the others end at the data");
+        assert_eq!(evaluate(&book, (0, 0, 4), "ROWS(A.:A)").0, CellValue::Number(1_048_574.0));
+        assert_eq!(evaluate(&book, (0, 0, 4), "ROWS(A.:.A)").0, CellValue::Number(5.0));
+        assert_eq!(evaluate(&book, (0, 0, 4), "ROWS(A:.A)").0, CellValue::Number(7.0));
+        // A:.A and A.:.A spill from E41 (rows 3-5 of the data, with the leading blanks for A:.A).
+        assert_eq!(evaluate(&book, (0, 40, 4), "A:.A").0, CellValue::Number(0.0));
+        assert_eq!(evaluate(&book, (0, 40, 4), "A.:.A").0, CellValue::Number(1.0));
+    }
+
+    #[test]
     fn optional_lambda_parameter_from_file_issue_168() {
         let mut book = MockBook::new(false);
         book.dynamic = true;
@@ -2016,7 +2059,9 @@ mod tests {
             ((0, 50, 39), "SUBSTITUTE(\"123\",\"12:30\",\"A1\",TRUE)", CellValue::Error(CellError::Value)),
             ((0, 50, 40), "DBCS(\"ｶﾞﾊﾟｳﾞ\")", CellValue::Text("ガパウ゛".to_string())),
             ((0, 50, 41), "LARGE({10, 20, 30}, 2.9)", CellValue::Number(10.0)),
-            ((0, 50, 42), "_xlfn.SWITCH({1,2;3,4}, 1, \"one\", 2, \"two\", \"default\")", CellValue::Text("default".to_string())),
+            // Excel 16.0.20527 (COM, 2026-11-18): the formula set as `Formula` is `=@SWITCH(...)` and shows "one"; set as `Formula2` it spills {"one","two";"default","default"}, so
+            // the cell holds "one" either way (before #236 the array was taken whole, and "default" was the expectation).
+            ((0, 50, 42), "_xlfn.SWITCH({1,2;3,4}, 1, \"one\", 2, \"two\", \"default\")", CellValue::Text("one".to_string())),
             ((0, 50, 43), "COUPDAYSNC(DATE(2021,1,1), DATE(2021,2,28), 2, 4)", CellValue::Number(57.0)),
             ((0, 50, 44), "COUPDAYBS(0, DATE(2021,2,28), 2, 0)", CellValue::Number(0.0)),
             ((0, 50, 45), "_xlfn.TRIMRANGE(L1:L10)", CellValue::Error(CellError::Ref)),
@@ -2441,9 +2486,9 @@ mod tests {
             // 1. Empty cell comparisons with literals
             ((0, 100, 0), "A1=0", CellValue::Bool(true)),
             ((0, 100, 1), "A1=\"\"", CellValue::Bool(true)),
-            ((0, 100, 2), "A1=FALSE", CellValue::Bool(false)),
+            ((0, 100, 2), "A1=FALSE", CellValue::Bool(true)), // (Excel 365: an empty cell is equal to FALSE, `isTEST2.xlsx`, GitHub #250)
             ((0, 100, 3), "A1=TRUE", CellValue::Bool(false)),
-            ((0, 100, 4), "A1<FALSE", CellValue::Bool(true)),
+            ((0, 100, 4), "A1<FALSE", CellValue::Bool(false)),
             ((0, 100, 5), "A1>FALSE", CellValue::Bool(false)),
             ((0, 100, 6), "A1<TRUE", CellValue::Bool(true)),
             ((0, 100, 7), "A1=B1", CellValue::Bool(true)), // two empty cells are equal
@@ -4551,6 +4596,12 @@ mod tests {
             ((0, 415, 4), "IF(FALSE, 10)", CellValue::Bool(false)),
             ((0, 415, 5), "IF(\"text\", 10, 20)", CellValue::Error(CellError::Value)),
 
+            // #236: an array condition or value is worked out element by element.
+            ((0, 9000, 0), "_xlfn.ARRAYTOTEXT(_xlfn.LET(_xlpm.a,{1;2;3},_xlfn.IFS(_xlpm.a=1,11,_xlpm.a=2,12,_xlpm.a=3,13,1,0)),1)", CellValue::Text("{11;12;13}".into())),
+            ((0, 9000, 1), "_xlfn.ARRAYTOTEXT(_xlfn.SWITCH({1,2,3},1,11,2,12,3,13,1,0),1)", CellValue::Text("{11,12,13}".into())),
+            ((0, 9000, 2), "_xlfn.ARRAYTOTEXT(_xlfn.SWITCH({1,2,4},1,11,2,12,3,13,0),1)", CellValue::Text("{11,12,0}".into())),
+            ((0, 9000, 3), "_xlfn.ARRAYTOTEXT(_xlfn.IFS({1,0,0},\"a\",{0,1,0},\"b\",1,\"c\"),1)", CellValue::Text("{\"a\",\"b\",\"c\"}".into())),
+            ((0, 9000, 4), "_xlfn.ARRAYTOTEXT(_xlfn.SWITCH({1,2},1,\"x\"),1)", CellValue::Text("{\"x\",#N/A}".into())),
             ((0, 420, 0), "IFS(1=2, \"a\", 2=3, \"b\", 3=3, \"c\")", CellValue::Text("c".into())),
             ((0, 420, 1), "IFS(1=2, \"a\", 2=3, \"b\")", CellValue::Error(CellError::NA)),
             ((0, 420, 2), "IFS(TRUE, 1, 2)", CellValue::Error(CellError::Value)), // Odd arg count

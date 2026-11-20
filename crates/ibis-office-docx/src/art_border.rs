@@ -16,10 +16,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use gpui_kit::{Image, ImageFormat};
 use ibis_doc_model::{ArtBorder, Rgb};
 #[cfg(not(target_family = "wasm"))]
-use ibis_pptx::art_borders::ArtBorderPictures;
-use ibis_pptx::art_borders::ArtPicture;
+use ibis_formats::art_borders::ArtBorderPictures;
+use ibis_formats::art_borders::ArtPicture;
 
-pub use ibis_pptx::art_borders::ArtPart;
+pub use ibis_formats::art_borders::ArtPart;
 
 #[cfg(not(target_family = "wasm"))]
 const ZIP: &str = "OfficeOpenXML-WordprocessingMLArtBorders.zip";
@@ -47,7 +47,7 @@ fn load() -> Option<ArtBorderPictures> {
     // no path of the build machine goes into it.
     if let Some(dir) = std::env::current_exe().ok().as_deref().and_then(std::path::Path::parent) {
         for up in ["../..", "../../..", "../../../.."] {
-            places.push(dir.join(up).join("crates/ibis-pptx/data/artborders").join(ZIP));
+            places.push(dir.join(up).join("crates/ibis-formats/data/artborders").join(ZIP));
         }
     }
     for place in places {
@@ -101,7 +101,7 @@ mod web {
             None => {}
         }
         let (base, client) = SOURCE.get()?;
-        let name = ibis_pptx::art_borders::file_name(art, part)?;
+        let name = ibis_formats::art_borders::file_name(art, part)?;
         map.insert((art, part), State::Pending);
         drop(map);
         PENDING.fetch_add(1, Ordering::Relaxed);
@@ -271,11 +271,11 @@ pub(crate) fn image(art: ArtBorder, part: ArtPart, tint: Option<Rgb>, px: u32) -
     // it: a line thinner than a pixel comes out whole or not at all (tried
     // 2026-10-06, the SVG's feMorphology too). So the outline is spread to
     // a pixel and made as light as Word's.
-    let spread_png = (spread > 0).then(|| ibis_pptx::art_borders::spread_thin(&picture.png, spread, OUTLINE_INK, mixed)).flatten();
+    let spread_png = (spread > 0).then(|| ibis_formats::art_borders::spread_thin(&picture.png, spread, OUTLINE_INK, mixed)).flatten();
     let source: &[u8] = spread_png.as_deref().unwrap_or(&picture.png);
     // A grey picture is recoloured by the SVG's filter; one in colour has
     // only its grey pixels recoloured, here (the filter cannot tell them).
-    let recoloured = rgb.filter(|_| !picture.grey).and_then(|rgb| ibis_pptx::art_borders::recolour_greys(source, rgb));
+    let recoloured = rgb.filter(|_| !picture.grey).and_then(|rgb| ibis_formats::art_borders::recolour_greys(source, rgb));
     let (rw, rh) = ((w * k).round().max(1.0), (h * k).round().max(1.0));
     let svg = match &recoloured {
         Some(png) => crate::render::picture_svg::art_border_picture(png, picture.width, picture.height, rw, rh, None),

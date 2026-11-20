@@ -28,7 +28,7 @@ pub(super) fn selected_tab_reveals_neighbour() {
     let ids = s.update(|e, w, cx| {
         for _ in 0..23 { e.insert_sheet(w, cx); }
         let ids: Vec<_> = e.presentation().slides.iter().map(|s| s.id).collect();
-        let commands = ids.iter().enumerate().map(|(i, id)| Command::Sheet(SheetCommand::RenameSheet { slide: *id, name: format!("Sheet_{i:02}_data") })).collect();
+        let commands = ids.iter().enumerate().map(|(i, id)| Command::Sheet(SheetCommand::RenameSheet { sheet: *id, name: format!("Sheet_{i:02}_data") })).collect();
         e.run_sheet(commands, cx);
         e.wb().tab_scroll.set_offset(point(px(0.), px(0.)));
         ids
@@ -62,7 +62,7 @@ pub(super) fn selected_tab_reveals_neighbour() {
 
     s.size(420., 720.);
     let index = 10;
-    s.update(|e, _, cx| e.run_sheet(vec![Command::Sheet(SheetCommand::RenameSheet { slide: ids[index], name: "あ".repeat(31) })], cx)); // i18n-ok: Japanese document fixture content and expected values, not UI labels.
+    s.update(|e, _, cx| e.run_sheet(vec![Command::Sheet(SheetCommand::RenameSheet { sheet: ids[index], name: "あ".repeat(31) })], cx)); // i18n-ok: Japanese document fixture content and expected values, not UI labels.
     s.update(|e, _, cx| {
         let scroll = &e.wb().tab_scroll;
         let tab = scroll.bounds_for_item(index).unwrap();
@@ -90,7 +90,7 @@ pub(super) fn double_click_requires_same_sheet() {
     let ids = s.update(|e, w, cx| {
         for _ in 0..23 { e.insert_sheet(w, cx); }
         let ids: Vec<_> = e.presentation().slides.iter().map(|s| s.id).collect();
-        let commands = ids.iter().enumerate().map(|(i, id)| Command::Sheet(SheetCommand::RenameSheet { slide: *id, name: format!("Sheet_{i:02}_data") })).collect();
+        let commands = ids.iter().enumerate().map(|(i, id)| Command::Sheet(SheetCommand::RenameSheet { sheet: *id, name: format!("Sheet_{i:02}_data") })).collect();
         e.run_sheet(commands, cx);
         ids
     });

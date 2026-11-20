@@ -5,6 +5,135 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-11-20
+
+The large changes of this version:
+
+- **ibisOffice speaks MCP** (#159): `ibisOffice --mcp` (and `ibisOffice-mcp.exe` on Windows) lets an AI app such as Claude Desktop or Claude Code open, read, edit and export documents, spreadsheets and presentations through tools, with safe defaults (see [docs/mcp.md](docs/mcp.md)).
+- **More kinds of files open**: PDF, XPS and OFD (read-only, with their signatures), Markdown with Mermaid diagrams, Japanese law XML and Lawtext, and medical documents (DICOM, FHIR, CDA, HL7 v2); OpenDocument files (.odt, .ods, .odp) are read through their own crate and drawn as the equivalent Office file.
+- **Slide transitions and animations are checked against PowerPoint's own recordings** (#88, #89): honeycomb, vortex, shred, ripple, wheel, doors, checker and many others are redrawn from measurements, and the 291 animation effects were compared one by one.
+- **Japanese typesetting follows Microsoft Word more closely** (#54, #188, #192 and others): punctuation squeeze, vertical columns, emphasis marks, superscripts, ruby, drop caps and tables were measured against Word.
+
+### Added
+
+#### All apps
+
+- MCP server (#159): `ibisOffice --mcp` speaks the Model Context Protocol over standard input and output. Tools open, close, save and export documents (`app_*`), and edit text and formats in documents (`docx_*`), cells and sheets in spreadsheets (`xlsx_*`) and slides and shapes in presentations (`pptx_*`); no folder is open to the tools until the user allows it, and limits apply to the number of documents, their size and the answers. `app_get_version` gives the app's version.
+- Open PDF, XPS and OFD files read-only (#235): the same menus and toolbar as the document view with what does not work disabled; text is selected by dragging or all at once, copied and searched (Ctrl+F or Cmd+F with next, previous and counts), and pages are reached from Edit > Go To. Signed PDF, XPS and OFD files show the information bar and signature report that Office files show.
+- Open Markdown files with a round trip, copy and paste of Markdown, Mermaid diagrams drawn in the app, and `--export md` on the command line (#226). Edit > Copy is a submenu with Copy and Copy as Markdown (Ctrl+C or Cmd+C stays Copy).
+- Open and save e-Gov law XML and Lawtext through Markdown, with `--export lawxml` and `--export lawtext` (#229).
+- Open medical documents (#246): DICOM (anonymised, with JPEG 2000, JPEG-LS and JPEG XL images), FHIR, CDA and HL7 v2 as documents.
+- Signed Office documents are detected and checked (digests and RSA signature values, with the certificate) and shown in a signature report (#232); saving an edited signed document, or saving it as another type, takes the signatures out as Office does.
+- On Windows and Linux a second launch hands its files, or a new window, to the running ibisOffice and exits, as on the Mac (#239).
+- Customize the toolbars (#241): Settings has a page for each of the three screens with the toolbar order per scene, a command list with live search, drag and drop into the order (with a red trash circle), separators, add to all scenes, and a preview; the quick access toolbar page opens the same dialog.
+- The start window has a menu (macOS: ibisOffice, File with New Document, New Spreadsheet, New Presentation, Open, Open Recent, Close).
+- Each screen's files get their own blue, green and orange icons in Finder, Explorer and the Linux file manager.
+- A window opens where the last one closed and fitted to the display; documents and spreadsheets keep their zoom in the file, and presentations open fitted to the window as PowerPoint opens them (#237).
+- Each new file of a kind in a session is numbered on (Document 1, Document 2, Book1, Book2) in the window title and the tab (#206). A Quick Access Toolbar command without an icon shows a ring, as Office does (#205).
+- The two-finger pinch zooms on every touch screen, in the Web version and in the apps (#209, #212).
+- The IME on Wayland (fcitx5, IBus) is told the surrounding text and handles delete-surrounding-text, so reconversion works (#182); on Windows reconversion answers with the selected text.
+- A self-drawn caret is black or white by the brightness of what is under it: the shape's fill, the slide or page colour, the cell's fill, or a picture's mean colour (#245).
+- Colors in CMYK-mode files: the color window draws its saturation and value square as the press prints it (a soft proof), with the profile button and View > Show print colours, and the mode mark and profile are kept when a .docx or .xlsx is saved (#133). Colors are still entered as RGB.
+- Fonts the PC already has, by English or Japanese name, are left out of the Setup download list (#233); an added font such as Character_GJMincho is loaded on macOS (#158).
+- The Android launcher icon is the blue hexagon alone, as large as the adaptive icon allows, on white (#247). The source holds the Android and iOS platform shells.
+
+#### Documents (.docx)
+
+- Insert > Page Break scrolls to the caret on the new page, and the caret after a page break stands at the end of the dashed line (#234).
+- A drop cap made in ibisOffice is saved in Word's form; its size and raise follow Word's rule from the font's ascent, descent and external leading (#191).
+- Superscript and subscript move by Word's rule (#192), the underline and strikethrough of fonts the Mac lacks (MS Mincho, MS Gothic, Meiryo, Yu Mincho, Yu Gothic) come from their font tables, and emphasis marks (kenten) are placed by Word's measured offsets (#54, #188).
+- Vertical text: the arrow keys follow the writing (#210); upright and sideways characters follow Word (#188); tate-chu-yoko squeezes as Word does (#188); the keys were measured on PowerPoint for Windows.
+- Link annotations in PDF export for URLs, mail addresses, bookmarks, shapes and text boxes, as Word and PowerPoint write them (#227).
+- The text of PDF export keeps the characters drawn (half-width kana, brackets and full-width forms no longer turn into other characters) (#54).
+- Equation brackets, fraction bars, radicals and operators keep their color, also in presentations (#197, #198).
+- Ruby, warichu, combined characters, enclosed characters and distributed text follow Microsoft Word (#180): a ruby longer than its base widens the base's box and is drawn once, not again at the line's end; rightVertical ruby alignment; Latin letters in distributed text and no break at the line's end; combined characters (two lines) are drawn; the characters inside an enclosed character sit as Word puts them; warichu is 5.0 pt in 10.5 pt text, left aligned and divided at the line's end as Word does.
+
+#### Spreadsheets (.xlsx)
+
+- Sheets selected together (worksheet groups) as in Excel: Ctrl or Shift+click on the tabs, Select All Sheets and Ungroup Sheets on the tab menu, a [Group] mark in the title; entries, formats, row heights, column widths, hyperlinks, validation and conditional formats apply to every sheet in the group as one undo (#238).
+- The query editor runs Power Query's M: a new crate `ibis-m-lang` holds the lexer, parser and evaluator with Table, List, Text, Date, Number and Duration functions (measured against Excel); queries Excel wrote are read and written back as written, step names follow the UI's language, and Excel.Workbook and CSV sources are read from their files.
+- Machine-readability check of a spreadsheet by the Digital Agency's rules in a task pane (#194), and Review > Check Machine Readability with links to the rule.
+- The workbook opens on the sheet it was saved on (#195, #214).
+- Insert > shapes, lines, connectors and text boxes are an insert mode with a cross pointer and a drag; Insert > Shapes is one tile submenu on all three screens.
+- A date, time or percent cell is edited as `2026/11/14`, `13:30:00` or `12%` (#199); a cell typed in full-width digits is taken as numbers, dates, times, percentages, currency or a formula starting with `=` (#240).
+- IFS and SWITCH take an array element by element and spill (#236). A formula started with `@` is a formula while it is typed, so the arrow keys and the mouse point at cells (#148).
+- Excel's trim reference operators (`.:`, `:.`, `.:.`) are read and saved as Excel writes them (#258); a blocked spill is saved as Excel saves it.
+- CSV, TSV and text files open in the font and size chosen in Settings (#243).
+
+#### Presentations (.pptx)
+
+- Printing, handouts, notes pages and outline pages as PowerPoint prints them (#225): layout, slide numbers, order across or down, grey and pure black-and-white printing by kind, print frames, and the vector PDF keeps text as text. The command line takes `--handout`, `--notes-pages`, `--outline-pages` and `--handout-order`.
+- Export > Web page writes the slides as an HTML page that opens on the first slide full screen and steps with the arrow keys, Space, Enter and PageUp or PageDown (#208); the spreadsheet screen exports the current sheet the same way.
+- The embedded sound of a transition plays in the slide show and stays when the effect is changed (#224).
+- Text in columns wraps around pictures, and linked text boxes flow their text from box to box; a chain whose text is all in the first box is flowed when the file is opened (#132, #131).
+- A new slide after a title slide gets the master's Title and Content layout (#220). Next from a hidden slide goes to the very next slide (#219).
+- A 3D-tilted shape is drawn in its tilted frame everywhere, in PDF and images too.
+
+#### Web version
+
+- A host page can drive the Web version: `window.IbisOffice` loads it (`connect`, a `listUrl` for the resource list, the host's start page behind the logo, theme, print, export, font download and watermark), and `docs/web-embedding.md` describes getting the Web zip, checking it and the smallest page.
+- Export > PDF and Print work in the browser version of the three screens, through the same code as the desktop.
+- The Web version no longer waits for every stored font before the first frame; fonts and the wasm file are fetched in parts, in parallel, with size and SHA-256 checks and retries, and characters typed or pasted after opening fetch the chunks they need (#152, #157).
+
+#### Command line
+
+- `--export md`, `--export lawxml`, `--export lawtext`, and `--export` of presentations with `--handout`, `--notes-pages` and `--outline-pages`; `app_export_document` through `ibisOffice --export`.
+
+### Changed
+
+#### All apps
+
+- Fonts missing on the PC are replaced by a stand-in that follows what Office and the file say, not the words of the typeface's name; Yu, MS, Meiryo, BIZ UD, HG, MS P and Century faces take their advances from their font files where the PC lacks them (#54, #213, #248).
+- Closing a dialog pane by its own Close button works for every pane (Queries and Connections, the query editor, data table, goal seek and others) (#211); a window asked to close comes to the front before it asks to save (#201); opening a file never replaces a window whose document has a file or a change.
+- The color picker is RGB only, without a CMYK segment, in files that are not in CMYK mode (#133).
+- A CMYK JPEG, with or without a Lab profile, is turned to sRGB through its embedded profile as PowerPoint does.
+- Pictures of unknown size (metafiles) are made at the size the screen shows, or 100 ppi in a PDF as PowerPoint writes them, and a cropped picture's canvas is only as large as its visible part.
+
+#### Documents (.docx)
+
+- Table cell margins follow Word: 108 twips only from a default table style, a style's own margins not inherited, and none when the file has no styles (#227).
+- Line heights follow Word for multiples below 1, `atLeast` lines, emphasis marks, grids and tate-chu-yoko (#179, #54).
+- Compatibility modes 14 and 15 squeeze punctuation and Japanese-Latin spaces as Word does for justified, left, centre and right text (#54).
+- Justified lines decide whether the next character fits as Microsoft Word measured: how the squeezing and the breaking choices are compared, how the squeeze is shared (spaces, then punctuation, then Japanese-Latin spaces), closing punctuation at a line's end, and Latin word spaces with `balanceSingleByteDoubleByteWidth`; the line height of MS typefaces is Word's (#164, #165).
+- Tables follow Word (#178): cell margins by unit (a percentage is 0, nil and auto take the table's default), fixed tables by `tblW` and `tcW`, automatic tables' percentage widths (a nested table's from the outer cell's text width), position and width in compatibility mode 14 and below, border thickness and text position, and splitting at the page's end a row that is not top aligned.
+
+#### Spreadsheets (.xlsx)
+
+- A printed or PDF hair border is a solid 0.14 pt line at any zoom; shape outlines are drawn no thinner than 0.14 pt, and the file keeps its width (#189).
+- Turned cell text sits as Excel places it, for angles of 1 to 89 degrees and 90 and more (#189).
+- Rows with the same number are merged as Excel reads them, and a `<row>` without a number takes the next one.
+- The Comma Style button has a round dot with a curved tail filling the button, not a small `,`; the Sigma button sits at the right end of the main toolbar (in More when the window is narrow), and the toolbar customize dialog can move it (#242).
+
+#### Presentations (.pptx)
+
+- Slide transitions drawn from PowerPoint's recordings (#88): honeycomb, vortex, shred (strip and rectangle; the pieces tilt with the top toward the viewer, and rectangles are the small squares of PowerPoint's), ripple, wheel, doors, window, comb, blinds, checker, ferris wheel and others.
+- Animations compared with PowerPoint's 291 effects (#89): timing of repeat, auto-reverse, accelerate and decelerate, fractional repeats, the soft edge of wipe, peek, circle, diamond, plus and wedge, dissolve, zoom, wheel, strips, split, flip and motion paths.
+- A pptx opens fitted to the window as PowerPoint opens it, whatever its view properties say (#237).
+- Vertical text follows PowerPoint: upright and sideways characters, the arrow keys, and the caret (#188, #189, #210).
+- Charts: inner shadows on bars, reversed category axes, pattern-filled bars, wrapped category labels, and a plot area pushed back inside the chart as PowerPoint does.
+
+#### For developers and forks
+
+- New crates: `ibis-doc-service` (the safe document service behind MCP), `ibis-mcp`, `ibis-m` and `ibis-m-lang` (Power Query M), `ibis-odf` (OpenDocument, above `ibis-formats`; callers open files through `ibis_odf::read` and `ibis_odf::open`), and `tools/ibis-font-subsetter`. The crate that reads and writes every format, formerly `ibis-pptx`, is `ibis-formats`.
+- Platform crates `gpui-android` and `gpui-ios` hold the Android and iOS shells, built only for their targets.
+- The shared message box, dialog, action bar and table are used by every dialog; menu, key and command names follow the rule in `docs/rule/commandNamingRule.md`.
+
+### Fixed
+
+- All apps: on the Web and Linux the shaper keeps GPOS offsets (palt, kerning) (#230); inside a host the File > Close goes through the same unsaved check as the close button; the IME candidate window opens under the cell when typing starts before the edit box is painted; the word being converted is committed to its cell before the name box takes the focus or another sheet is shown (#202); copying a shape no longer turns the window light (#200).
+- All apps: a system color font (CBDT, COLR, sbix or SVG) without an `m` glyph is kept, so emoji draw in .docx on Linux again (#255); a supplementary private-use character on the Mac is drawn from the font that has it (#251).
+- .docx: a section that restarts numbering after an even or odd page break gets no blank page (#223); footnotes and endnotes with their own mark get no automatic number (#228); a paragraph copied or split gets a new `w14:paraId` (#221); keepNext keeps a heading with the next paragraph's first two lines (#191); a justified list item's first line spreads over the room after the number and tab (#193); a text round a picture is broken by the same rule as other text (#196); `w:ptab` positions beside a picture (#196); the mail merge pane no longer wins over later dialogs (#204); HYPERLINK fields show their result.
+- .docx: Latin letters in vertical text sit with their baseline as Word draws them, full-width and half-width forms follow the font slot, and quotes and symbols advance by the typeface's width (#188).
+- .xlsx: the chart submenu's previews use the first 24 rows and 12 columns (#203); an error button's pop-up menu closes when the selection changes; the formula bar's IME underlines sit at the right height; saving repairs formulas Excel refuses, and trim operators never reach the file as `.:.` where Excel could not open them (#258).
+- .xlsx: an omitted IF branch or LAMBDA argument stays omitted, and a blank cell equals FALSE (#250); a list validation whose source is a formula shows its `=` in the dialog and the `x14:dataValidations` of Excel is kept (#260).
+- .pptx: a morph does not show the new slide's shapes waiting for their entrance effect (#218); changing a transition's effect keeps its sound (#224); a table cell's text direction keeps all six values (#222); the paragraph mark's style is saved as `endParaRPr` only, so editing and saving no longer change the line's size.
+- .pptx: wheel animations draw wedges on a finer grid, without stairs or a blob at the centre (#215).
+- .xlsx: on Windows, cells copied in ibisOffice and pasted into Microsoft Excel no longer add empty rows below; the cells are put on the clipboard as text, HTML Format and XML Spreadsheet in one opening, as Microsoft Excel does (#187).
+- .pptx: Zoom and Grow & Turn no longer wrap the text or push it out of the shape while they play; the shape and its text are scaled and turned as one picture, so line breaks and the text's place in the shape stay as before the effect (#216).
+- .pptx: the Turn entrance and exit no longer wrap the text into several lines while the shape narrows, and the shape no longer disappears in the flipped part of the turn (#217).
+- Web version: touch input no longer crashes the Web version through a clock call; the browser's clock is used (#207).
+- Windows: the drawing no longer vanishes and flashes about every 0.6 seconds while the window is resized; it was failing to be recreated at each size change (#253).
+
 ## [0.8.7] - 2026-11-13
 
 The two large changes of this version:
@@ -77,7 +206,7 @@ The two large changes of this version:
 
 #### Presentations (.pptx)
 
-- Slide transitions (#88): the options of every transition are settable and named by the side the slide comes from; transitions are read and written as Microsoft PowerPoint does; wheel, clock and dissolve are drawn; the 3D transitions (cube, box, rotate, orbit, flip, gallery, conveyor, switch, ferris wheel, fall over, page curls, peel off, curtains, wind, drape, airplane, origami and the other 2013 effects) are drawn as 3D motion fitted to Microsoft PowerPoint's own video frames.
+- Slide transitions (#88): the options of every transition are settable and named by the side the slide comes from; transitions are read and written as Microsoft PowerPoint does; wheel, clock and dissolve are drawn; the 3D transitions (cube, box, rotate, orbit, flip, gallery, conveyor, switch, ferris wheel, fall over, page curls, peel off, curtains, wind, drape, airplane, origami and the other 2013 effects) are drawn as 3D motion.
 - Animations (#89): colors, fill and outline, font changes, the lean of Light Speed and effects by letters or words are drawn as Microsoft PowerPoint draws them; the More Effects lists hold every effect Microsoft PowerPoint has (291 effects).
 - Text in columns (#77): vertical text takes columns too; the text box panel has a columns spinner (1 to 16) and a column spacing spinner.
 - Guides of the slide master and of each layout are read, shown on the slide, snapped to by moving and resizing, and shown with their distance from the middle while dragged (Alt for 0.01 cm); the normal view's guides are read and written as Microsoft PowerPoint 365 does, and a guide's color survives saving and opening again (#84).

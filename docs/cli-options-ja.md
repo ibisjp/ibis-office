@@ -75,8 +75,8 @@ ibisOffice --read-only report.docx
 | `--export` | `<format>` | エクスポート形式を指定します（必須）。<br>・`pdf`: ベクターグラフィックスと埋め込みフォントを含む高品質 PDF<br>・`png`: 各ページ/スライドを PNG 画像として連番出力<br>・`pdf-image`: ページを画像化して埋め込んだ PDF<br>・`ui`: エディタの UI 画面のスナップショット |
 | `--out-dir` | `<dir>` | 出力先ディレクトリを指定します（デフォルト: カレントディレクトリ `.`）。ディレクトリが存在しない場合は自動作成されます。 |
 | `--width` | `<px>` | PNG エクスポート時の画像の横幅ピクセル数を指定します（デフォルト: `1920`）。アスペクト比は自動維持されます。 |
-| `--slides` | `<range>` | 出力するスライドまたはページの範囲を指定します（例: `1`, `1,3-5`, `2-`）。省略時は全ページ/全スライドが出力されます。 |
-| `--layout` | （なし） | スライドのレイアウト情報を付加してエクスポートします。 |
+| `--range` | `<range>` | 出力するスライドまたはページの範囲を指定します（例: `1`, `1,3-5`, `2-`）。省略時は全ページ/全スライドが出力されます。以前の名前 `--slides` も使えますが、警告が出ます。 |
+| `--include-layout` | （なし） | スライドのレイアウト情報を付加してエクスポートします。以前の名前 `--layout` も使えますが、警告が出ます。 |
 
 **例:**
 ```bash
@@ -84,7 +84,7 @@ ibisOffice --read-only report.docx
 ibisOffice --export pdf presentation.pptx
 
 # 1ページ目から3ページ目までを幅 2560px の高解像度 PNG として dist/ に保存
-ibisOffice --export png --out-dir dist/ --width 2560 --slides 1-3 document.docx
+ibisOffice --export png --out-dir dist/ --width 2560 --range 1-3 document.docx
 ```
 
 ---
@@ -119,6 +119,7 @@ ibisOffice --export pdf --print-backgrounds --no-print-markup report.docx
 |---|---|---|
 | `--handout` | `<n>` | 1ページに複数のスライドを配置する配布資料形式で出力します。<br>指定可能な値: `1`, `2`, `3`, `4`, `6`, `8`, `9`, `16` |
 | `--handout-landscape` | （なし） | 配布資料の用紙の向きを「横向き（ランドスケープ）」にします。 |
+| `--handout-order` | `horizontal` \| `vertical` | 配布資料のスライドの並び順（デフォルト: `horizontal`。PowerPoint と同じ）。`horizontal` は横に並べてから次の行へ、`vertical` は縦に並べてから次の列へ進みます（1 ページ 4・6・9 枚の場合）。 |
 | `--print-frame` | （なし） | 各スライドの外周に細い枠線を付けて出力します（「スライドに枠を付けて印刷」）。 |
 | `--notes-pages` | （なし） | スライド画像の下に発表者ノートを配置した「ノート ページ」形式で出力します。 |
 | `--outline-pages` | （なし） | スライド内のテキスト階層のみを箇条書きで並べた「アウトライン」形式で出力します。 |
@@ -127,9 +128,11 @@ ibisOffice --export pdf --print-backgrounds --no-print-markup report.docx
 | オプション | 引数 | 説明 |
 |---|---|---|
 | `--handout-header` | `<text>` | 配布資料のヘッダー文字列を指定します。 |
-| `--handout-date` | `<text>` | 配布資料の日付欄の文字列を指定します。 |
+| `--handout-date` | `<text>` | 配布資料の日付欄の文字列を指定します（デフォルト: 今日の日付。配布資料マスターのヘッダーとフッターの設定で日付がオフなら出しません）。 |
 | `--handout-footer` | `<text>` | 配布資料のフッター文字列を指定します。 |
-| `--handout-number` | （なし） | 配布資料にページ番号を印刷します。 |
+| `--handout-number` | （なし） | 配布資料にページ番号を印刷します（デフォルトでオン。配布資料マスターのヘッダーとフッターの設定でオフなら出しませんが、このオプションを付けると出します）。 |
+| `--no-handout-date` | （なし） | 配布資料・ノート・アウトラインに日付を印刷しません。 |
+| `--no-handout-number` | （なし） | 配布資料・ノート・アウトラインにページ番号を印刷しません。 |
 
 **例:**
 ```bash
@@ -219,7 +222,7 @@ done
 ### 2. Web 掲載用の高解像度サムネイル画像の自動生成
 ```bash
 # スライド 1 枚目を幅 1920px の PNG として書き出し
-ibisOffice --export png --slides 1 --width 1920 --out-dir thumbnails/ presentation.pptx
+ibisOffice --export png --range 1 --width 1920 --out-dir thumbnails/ presentation.pptx
 ```
 
 ### 3. 会議用 2 in 1 白黒ハンドアウト PDF の作成

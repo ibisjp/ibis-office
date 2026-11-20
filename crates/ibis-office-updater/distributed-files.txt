@@ -11,3 +11,6 @@ Resources/artborders/ECMA-NOTICE.txt
 Resources/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip
 Resources/Licenses/Carlito-OFL.txt
 Resources/Licenses/license.md
+
+# 0.8.7: the MCP server (GitHub issue #159), next to ibisOffice.exe
+ibisOffice-mcp.exe

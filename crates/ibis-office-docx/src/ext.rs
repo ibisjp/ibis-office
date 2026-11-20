@@ -5,7 +5,7 @@
 //!
 //! The methods the files of this folder write for the editor (`#[ibis_office_macros::editor_ext(Name)] impl SlideEditor`)
 //! are methods of extension traits, one line each here. A file that calls a method written in another file brings them into
-//! scope with `use crate::ext::*;` (doc/rule/implimentationRule.md).
+//! scope with `use crate::ext::*;` (docs/rule/implimentationRule.md).
 // Every trait of the folder is listed, whether or not another file calls its methods yet: a line nobody uses is not a
 // mistake here. A method nobody calls is still reported at the method (`dead_code`).
 #![allow(unused_imports)]

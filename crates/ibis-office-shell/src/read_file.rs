@@ -9,10 +9,10 @@ use crate::timing;
 #[cfg(not(target_family = "wasm"))]
 pub struct Loaded {
     pub presentation: ibis_doc_model::Presentation,
-    pub source: std::sync::Arc<ibis_pptx::Source>,
+    pub source: std::sync::Arc<ibis_formats::Source>,
     /// The password a protected file was opened with: saving protects it again.
     pub password: Option<String>,
-    pub(crate) csv_stream: Option<std::sync::mpsc::Receiver<ibis_pptx::CsvProgressiveChunk>>,
+    pub(crate) csv_stream: Option<std::sync::mpsc::Receiver<ibis_formats::CsvProgressiveChunk>>,
 }
 
 /// What `read_file` says when the file is protected and needs its password.
@@ -51,23 +51,80 @@ fn read_file_unguarded(path: &std::path::Path, password: Option<&str>) -> Result
     timing::mark_read_start();
     let read_t0 = crate::clock::Instant::now();
     let mut data = std::fs::read(path).map_err(|e| e.to_string())?;
+    if path.extension().and_then(|e| e.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("pdf") || ext.eq_ignore_ascii_case("ofd") || ext.eq_ignore_ascii_case("xps") || ext.eq_ignore_ascii_case("oxps")) || data.starts_with(b"%PDF-") || ibis_ofd::is_ofd(&data) || ibis_xps::is_xps(&data) {
+        let raw: std::sync::Arc<[u8]> = data.into();
+        let page_boxes: Vec<(f32, f32)> = if ibis_ofd::is_ofd(&raw) {
+            let ofd = ibis_ofd::OfdContainer::from_bytes(raw.clone()).map_err(|e| e.to_string())?;
+            ofd.page_infos()
+                .into_iter()
+                .map(|p| (p.crop_box.width(), p.crop_box.height()))
+                .collect()
+        } else if ibis_xps::is_xps(&raw) {
+            let xps = ibis_xps::XpsContainer::from_bytes(raw.clone()).map_err(|e| e.to_string())?;
+            xps.page_infos()
+                .into_iter()
+                .map(|p| (p.crop_box.width(), p.crop_box.height()))
+                .collect()
+        } else {
+            let mut container = ibis_pdf::PdfContainer::from_bytes(raw.clone()).map_err(|e| e.to_string())?;
+            ibis_pdf::scene::collect_pages(&mut container)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|p| (p.crop_box.width(), p.crop_box.height()))
+                .collect()
+        };
+        let first_size = page_boxes
+            .first()
+            .map(|&(w, h)| ibis_doc_model::EmuSize::new((w as i64) * ibis_doc_model::EMU_PER_POINT, (h as i64) * ibis_doc_model::EMU_PER_POINT))
+            .unwrap_or_else(|| ibis_doc_model::EmuSize::new(595 * ibis_doc_model::EMU_PER_POINT, 842 * ibis_doc_model::EMU_PER_POINT));
+        let mut presentation = ibis_doc_model::Presentation::empty(first_size);
+        for (w, h) in &page_boxes {
+            let mut slide = ibis_doc_model::Slide::new(presentation.new_slide_id());
+            slide.size = Some(ibis_doc_model::EmuSize::new(
+                (*w as i64) * ibis_doc_model::EMU_PER_POINT,
+                (*h as i64) * ibis_doc_model::EMU_PER_POINT,
+            ));
+            presentation.slides.push(slide);
+        }
+        presentation.pdf_bytes = Some(raw);
+        let blank = ibis_formats::blank_file(ibis_formats::Kind::Document).map_err(|e| e.to_string())?;
+        let source = ibis_formats::open(blank).map_err(|e| e.to_string())?.source;
+        return Ok(Loaded { presentation, source: std::sync::Arc::new(source), password: None, csv_stream: None });
+    }
     let read_fs_ms = read_t0.elapsed().as_secs_f64() * 1000.0;
     timing::mark("read");
     let mut used = None;
-    if ibis_pptx::is_encrypted(&data) {
+    if ibis_formats::is_encrypted(&data) {
         let Some(password) = password else { return Err(NEEDS_PASSWORD.to_string()) };
-        data = ibis_pptx::decrypt(&data, password).map_err(|e| if e == ibis_pptx::DecryptError::WrongPassword { WRONG_PASSWORD.to_string() } else { e.to_string() })?;
+        data = ibis_formats::decrypt(&data, password).map_err(|e| if e == ibis_formats::DecryptError::WrongPassword { WRONG_PASSWORD.to_string() } else { e.to_string() })?;
         used = Some(password.to_string());
     }
     let open_t0 = crate::clock::Instant::now();
     // An old binary file (.xls, .ppt, .doc): read by its content, not by its extension.
-    let is_legacy_binary = ibis_pptx::is_legacy_binary(&data);
-    let external_document_format=ibis_pptx::docx_convert::DocxConvertFormat::from_path(path);
-    let open_result=if let Some(format)=external_document_format {
-        ibis_pptx::docx_convert::import_docx_format(&data,format).map(|opened|(opened,None))
+    let is_legacy_binary = ibis_formats::is_legacy_binary(&data);
+    let external_document_format = ibis_formats::docx_convert::DocxConvertFormat::from_path(path);
+    let open_result = if let Some(law_md) = ibis_formats::lawtext::path_input_to_markdown(path, &data).map_err(|e| {
+        note_open_failed(path);
+        e.to_string()
+    })? {
+        ibis_formats::markdown::open_markdown_with_base_dir(law_md.into_bytes(), path.parent()).map(|opened| (opened, None))
+    } else if let Some(dicom_md) = ibis_formats::dicom::input_to_markdown(&data).map_err(|e| {
+        note_open_failed(path);
+        e.to_string()
+    })? {
+        ibis_formats::markdown::open_markdown_with_base_dir(dicom_md.into_bytes(), path.parent()).map(|opened| (opened, None))
+    } else if let Some(fhir_md) = ibis_formats::fhir::input_to_markdown(&data).map_err(|e| {
+        note_open_failed(path);
+        e.to_string()
+    })? {
+        ibis_formats::markdown::open_markdown_with_base_dir(fhir_md.into_bytes(), path.parent()).map(|opened| (opened, None))
+    } else if external_document_format == Some(ibis_formats::docx_convert::DocxConvertFormat::Markdown) {
+        ibis_formats::markdown::open_markdown_with_base_dir(data, path.parent()).map(|opened| (opened, None))
+    } else if let Some(format) = external_document_format {
+        (if format == ibis_formats::docx_convert::DocxConvertFormat::Odt { ibis_odf::import_odt(&data) } else { ibis_formats::docx_convert::import_docx_format(&data, format) }).map(|opened| (opened, None))
     } else {
         // The volatile cells calculated again on open (CELL("filename") among them) need the file's path.
-        ibis_calc::eval::convert::with_opening_file(Some(path.to_string_lossy().into_owned()), || ibis_pptx::open_progressive(data,100_000))
+        ibis_calc::eval::convert::with_opening_file(Some(path.to_string_lossy().into_owned()), || ibis_odf::open_progressive_with(data, 100_000, crate::settings_dialog::csv_font().as_ref()))
     };
     let (opened, csv_stream) = open_result.map_err(|e| {
         note_open_failed(path);
@@ -92,4 +149,11 @@ fn note_open_failed(path: &std::path::Path) {
     for (_, driver) in crate::format::drivers() {
         driver.note_open_failed(path);
     }
+}
+
+/// Let the queries of a workbook read the files their sources name (`Excel.Workbook(File.Contents(path))`): the model has no file reader of
+/// its own, so it is given this one (the app's, which reads every format). Called once at start; the browser reads no files.
+#[cfg(not(target_family = "wasm"))]
+pub fn register_query_workbook_loader() {
+    ibis_doc_model::query::set_workbook_loader(|path| read_file(std::path::Path::new(path)).map(|loaded| loaded.presentation));
 }

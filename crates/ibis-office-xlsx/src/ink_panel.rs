@@ -189,7 +189,7 @@ impl SlideEditor {
             .collect();
         let n = used.into_iter().max().unwrap_or(0) + 1;
         let name = format("xlsx.ink.name", &[("n", &n)]);
-        self.run_sheet(vec![Command::InsertShape { slide, index, shape }, Command::SetShapeName { slide, shape: id, name }], cx);
+        self.run_sheet(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }, Command::SetShapeName { slide, shape: id, name }], cx);
         id
     }
 
@@ -206,7 +206,7 @@ impl SlideEditor {
             .map(|s| s.id)
             .collect();
         if !hit.is_empty() {
-            self.run_sheet(vec![Command::RemoveShapes { slide, shapes: hit }], cx);
+            self.run_sheet(vec![Command::DeleteShape { slide, shapes: hit, with_attached: false }], cx);
         }
     }
 
@@ -245,7 +245,7 @@ impl SlideEditor {
     pub(crate) fn ink_erase_selected(&mut self, cx: &mut Context<Self>) {
         let (slide, shapes) = (self.current_slide, self.ink_selected_ids());
         if !shapes.is_empty() {
-            self.run_sheet(vec![Command::RemoveShapes { slide, shapes }], cx);
+            self.run_sheet(vec![Command::DeleteShape { slide, shapes, with_attached: false }], cx);
         }
     }
 
@@ -253,7 +253,7 @@ impl SlideEditor {
     pub(crate) fn ink_erase_all(&mut self, cx: &mut Context<Self>) {
         let (slide, shapes) = (self.current_slide, self.ink_ids());
         if !shapes.is_empty() {
-            self.run_sheet(vec![Command::RemoveShapes { slide, shapes }], cx);
+            self.run_sheet(vec![Command::DeleteShape { slide, shapes, with_attached: false }], cx);
         }
     }
 
@@ -297,8 +297,8 @@ impl SlideEditor {
                 }
                 s
             };
-            commands.push(Command::RemoveShape { slide, shape: shape.id });
-            commands.push(Command::InsertShape { slide, index, shape: replacement });
+            commands.push(Command::DeleteShape { slide, shapes: vec![shape.id], with_attached: true });
+            commands.push(Command::InsertShape { slide, shapes: vec![(index, replacement)] });
             new_ids.push(id);
         }
         if commands.is_empty() {

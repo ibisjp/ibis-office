@@ -7,7 +7,7 @@
 //! sidebars and every command that left the menus are found by the search, and each of them has a door.
 use std::collections::HashSet;
 
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 use crate::shell::chrome::{MenuEntry, MenuId};
 use crate::shell::menu_context::{ContextState, ObjectKind};
@@ -22,6 +22,7 @@ pub fn all() -> Vec<(&'static str, fn())> {
         ("shell::sidebars_in_menu_for_every_screen", in_menu_for_every_screen),
         ("shell::sidebars_disabled_when_unavailable", disabled_when_unavailable),
         ("shell::sidebars_checked_state", checked_state),
+        ("shell::sidebars_follow_the_selected_shape_on_a_sheet", follow_selected_shape_on_sheet),
         ("shell::sidebars_search_index", search_index),
         ("shell::sidebars_i18n_complete", i18n_complete),
         ("shell::sidebars_submenu_rows_within_limit", submenu_rows_within_limit),
@@ -97,7 +98,8 @@ fn no_duplicates() {
 /// wrapped as a dialog (`modal_named`, `modeless_named`).
 fn chain_panels(source: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for line in source.lines().filter(|l| l.matches("or_else(").count() > 5) {
+    // The chain's line, and the line that returns the merge panel when no other panel is open (the chain is split there since #204).
+    for line in source.lines().filter(|l| l.matches("or_else(").count() > 5 || (l.contains("others.is_none()") && l.contains("return editor."))) {
         let mut rest = line;
         while let Some(at) = rest.find("editor.") {
             rest = &rest[at + "editor.".len()..];
@@ -116,17 +118,40 @@ fn chain_panels(source: &str) -> Vec<String> {
     out
 }
 
+/// The resident panels of a chain written one call to a line (`.or_else(|| self.name(cx))`, the chain of the xlsx `edit_panels.rs`): the panels the line does not wrap as a
+/// dialog (`modal_named`, `modeless_named`). The chain's own function (`edit_panel`, named by the table as one panel) shows them all, so each is a sidebar of its own.
+fn chain_panels_by_line(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix(".or_else(|| self.").or_else(|| trimmed.strip_prefix("self.")) else { continue };
+        let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        if !rest[name.len()..].starts_with("(cx)") || line.contains("_named(") || !name.ends_with("_panel") {
+            continue;
+        }
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
 /// A resident panel added to a pane chain with no sidebar in the table fails here; so does a table entry that names a panel the
-/// chain does not have.
+/// chain does not have. (A panel a screen shows beside the page is registered once, in its table: the Window menu's sidebar list, the menu search and the
+/// open and close are made from that row, so a panel that is not in the table is the mistake this test finds.)
 fn cover_pane_chain() {
     let sources = [
-        ("docx", include_str!("../../../../ibis-office-docx/src/lib.rs")),
-        ("xlsx", include_str!("../../../../ibis-office-xlsx/src/lib.rs")),
-        ("pptx", include_str!("../../../../ibis-office-pptx/src/lib.rs")),
+        ("docx", include_str!("../../../../ibis-office-docx/src/lib.rs"), ""),
+        ("xlsx", include_str!("../../../../ibis-office-xlsx/src/lib.rs"), include_str!("../../../../ibis-office-xlsx/src/edit_panels.rs")),
+        ("pptx", include_str!("../../../../ibis-office-pptx/src/lib.rs"), ""),
     ];
-    for ((name, source), kind) in sources.into_iter().zip([Kind::Document, Kind::Workbook, Kind::Presentation]) {
+    for ((name, source, inner), kind) in sources.into_iter().zip([Kind::Document, Kind::Workbook, Kind::Presentation]) {
         let named: HashSet<&str> = sidebars::of(kind).iter().flat_map(|d| d.panels.iter().copied()).collect();
-        let panels = chain_panels(source);
+        let mut panels = chain_panels(source);
+        let inner_panels = chain_panels_by_line(inner);
+        let missing_inner: Vec<_> = inner_panels.iter().filter(|p| !named.contains(p.as_str())).collect();
+        assert!(missing_inner.is_empty(), "{name}: resident panels of the editing chain (edit_panels.rs) with no sidebar in {name}/sidebars.rs (add a SidebarDef that names them): {missing_inner:?}");
+        panels.extend(inner_panels);
         assert!(panels.len() >= 6, "{name}: the chain's panels were not found in the source ({panels:?})");
         let missing: Vec<_> = panels.iter().filter(|p| !named.contains(p.as_str())).collect();
         assert!(missing.is_empty(), "{name}: resident panels of the pane chain with no sidebar in {name}/sidebars.rs (add a SidebarDef that names them): {missing:?}");
@@ -306,7 +331,7 @@ fn search_finds_every_removed_command() {
 /// The ids of the old menus' top-level items that the redesign takes out of the menu bar (`moved-and-removed.md`, "removed from the menus").
 const REMOVED_FROM_MENU: [(Kind, &[&str]); 3] = [
     (Kind::Document, &["format.text", "format.align", "format.spacing", "format.lists", "format.borders", "format.options", "format.clear", "docx.format-brush.lock", "docx.heading-numbers"]),
-    (Kind::Workbook, &["edit.duplicate", "format.text", "format.align", "format.borders", "format.clear", "xlsx.comma-style", "xlsx.phonetic-toggle", "xlsx.phonetic-edit", "xlsx.view-code", "xlsx.xml-source", "xlsx.xml-map-properties"]),
+    (Kind::Workbook, &["edit.duplicate", "format.text", "format.align", "format.borders", "format.clear", "xlsx.comma-style", "xlsx.toggle-phonetic", "xlsx.phonetic-edit", "xlsx.view-code", "xlsx.xml-source", "xlsx.xml-map-properties"]),
     (Kind::Presentation, &["pptx.motion", "format.text", "pptx.text.shadow", "format.align", "format.spacing", "format.lists", "format.borders", "format.clear", "pptx.paragraph.settings"]),
 ];
 
@@ -365,4 +390,20 @@ fn removed_from_menu_have_entry() {
             }
         });
     }
+}
+
+/// K0056: with a shape selected on a sheet the rows that need one (the shape's format, 図形の書式) are lit in the Window menu's Sidebar submenu and open the pane; with nothing selected they are grey.
+fn follow_selected_shape_on_sheet() {
+    use crate::xlsx::ext::*;
+    let mut s = Scenario::open(FILES[1].2);
+    let state = |s: &mut Scenario| sidebar_items(s).into_iter().find(|i| i.id == "sidebar.frame").expect("sidebar.frame is listed");
+    assert!(state(&mut s).disabled, "no shape selected: grey");
+    let id = s.update(|e, _, cx| e.insert_sheet_shape("rect", cx));
+    assert_eq!(s.with(|e, _| e.selected_sheet_shape()), Some(id), "the new shape is selected");
+    let item = state(&mut s);
+    assert!(item.enabled(), "a shape is selected: the 図形の書式 row is lit (hint {:?})", item.hint);
+    let handler = item.handler.clone().expect("it opens the pane");
+    s.update(move |e, w, cx| handler(e, w, cx));
+    s.settle();
+    assert!(s.with(|e, _| e.sheet_state().unwrap().panels.frame.is_some()), "the pane is open");
 }

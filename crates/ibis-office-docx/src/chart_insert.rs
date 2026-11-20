@@ -2,11 +2,11 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! 挿入 > グラフ in a document: an inline chart (DrawingML `c:chart` in a `w:drawing`) of a kind
-//! the menu offers (the same kinds and sample data as a presentation's, `ibis_pptx::NewChartKind`),
+//! the menu offers (the same kinds and sample data as a presentation's, `ibis_formats::NewChartKind`),
 //! at the caret, 6 × 3.5 inches as Word makes it. It is drawn as the charts a file has are.
 use gpui_kit::*;
 use ibis_doc_model::{Chart, ChartType, Fill, Stroke, EmuSize, FlowCommand, FlowPos, FlowRunKind, Shape, ShapeId, ShapeKind, SlideId};
-use ibis_pptx::NewChartKind;
+use ibis_formats::NewChartKind;
 
 use crate::shell::chart_panel::{ChartPanel, ChartPreset, chart_with_preset, ChartPanelActions, chart_panel_sidebar};
 use crate::shell::chrome::SidebarPanel;
@@ -16,23 +16,11 @@ use crate::ext::*;
 /// Word's size for a new chart: 6 × 3.5 inches.
 const CHART_SIZE: EmuSize = EmuSize::new(5_486_400, 3_200_400);
 
-thread_local! {
-    /// The charts of 挿入 > グラフ's pictures, by kind: made once (the chart a new one of the kind is, with the fixed data of
-    /// `shell::chart_insert::chart_with_preview_data`), as the data does not depend on the document.
-    static KIND_PREVIEWS: std::cell::RefCell<std::collections::HashMap<String, Option<std::rc::Rc<Chart>>>> = std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
 /// The items of 挿入 > グラフ of a document: every kind as a picture of a chart of fixed data over its name, in a grid
 /// (`menu_tiles.rs`; the part the pictures are drawn with is the sheet's, `shell::chart_insert::chart_preview_view`).
 pub(crate) fn chart_items() -> Vec<crate::shell::chrome::MenuEntry> {
-    // Four tiles to a row, as many as the shapes' menu (K0007).
+    // Three tiles to a row, as on the other screens (K0032: `shell::chart_insert::CHART_TILE_COLUMNS`).
     crate::shell::chart_insert::chart_items_with_thumbs(SlideEditor::doc_insert_chart, Some(SlideEditor::doc_chart_kind_thumbnail))
-        .into_iter()
-        .map(|entry| match entry {
-            crate::shell::chrome::MenuEntry::Item(item) => item.tile_columns(4).into(),
-            other => other,
-        })
-        .collect()
 }
 
 #[ibis_office_macros::editor_ext(ChartInsert)]
@@ -59,33 +47,17 @@ impl SlideEditor {
         }
     }
 
-    /// The 4:3 picture of the chart `kind` in the 挿入 > グラフ menu: a chart of the kind's fixed data.
+    /// The 4:3 picture of the chart `kind` in the 挿入 > グラフ menu: a chart of the kind's fixed data
+    /// (`shell::chart_insert::kind_thumbnail`, shared with the other screens, K0032).
     pub(crate) fn doc_chart_kind_thumbnail(&self, kind: NewChartKind, width: f32) -> AnyElement {
-        let key = format!("{kind:?}");
-        let cached = KIND_PREVIEWS.with(|cache| cache.borrow().get(&key).cloned());
-        let chart = match cached {
-            Some(chart) => chart,
-            None => {
-                let made = (|| {
-                    let source = self.source.clone()?;
-                    let (_, caret) = self.text_selection()?;
-                    let shape = source.new_doc_chart(self.presentation(), caret, ShapeId(u64::MAX), CHART_SIZE, kind).ok()?;
-                    match shape.kind {
-                        ShapeKind::Chart(chart) => Some(std::rc::Rc::new(crate::shell::chart_insert::chart_with_preview_data(*chart, kind))),
-                        _ => None,
-                    }
-                })();
-                // What could not be made now (no caret yet) is tried again the next time.
-                if made.is_some() {
-                    KIND_PREVIEWS.with(|cache| cache.borrow_mut().insert(key, made.clone()));
-                }
-                made
+        crate::shell::chart_insert::kind_thumbnail(self, "docx", kind, width, || {
+            let source = self.source.clone()?;
+            let (_, caret) = self.text_selection()?;
+            match source.new_doc_chart(self.presentation(), caret, ShapeId(u64::MAX), CHART_SIZE, kind).ok()?.kind {
+                ShapeKind::Chart(chart) => Some(*chart),
+                _ => None,
             }
-        };
-        match chart {
-            Some(chart) => crate::shell::chart_insert::chart_preview_view(self, &chart, width, 3.0 / 4.0),
-            None => div().size_full().bg(rgb(0xf5f5f5)).into_any_element(),
-        }
+        })
     }
 
     /// The chart selected (the one position of its paragraph the selection covers): where it is, its shape
@@ -239,10 +211,10 @@ impl SlideEditor {
 
     /// The data grid of chart `shape` changed (`book` its workbook's model, `data` the workbook as saved and the
     /// ranges): the chart made anew from it, in one step of undo, and the workbook kept for saving.
-    pub(crate) fn apply_doc_chart_data(&mut self, shape: ShapeId, book: &ibis_doc_model::Presentation, data: ibis_pptx::ChartData, cx: &mut Context<Self>) {
+    pub(crate) fn apply_doc_chart_data(&mut self, shape: ShapeId, book: &ibis_doc_model::Presentation, data: ibis_formats::ChartData, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else { return };
         let Some((at, chart)) = self.doc_chart_by_id(shape) else { return };
-        let target = ibis_pptx::chart_from_data(&chart, book, &data.series);
+        let target = ibis_formats::chart_from_data(&chart, book, &data.series);
         source.set_chart_data(shape, target.clone(), data);
         if target != chart {
             self.run_flow(vec![FlowCommand::SetChart { at, chart: Box::new(target) }], cx);

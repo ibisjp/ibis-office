@@ -79,7 +79,7 @@ fn table_name(){
         for (r,values) in [["Product","Quantity","Total"],["Alpha","2","10"],["Beta","3","15"],["Gamma","4","20"]].into_iter().enumerate(){
             for(c,value)in values.into_iter().enumerate(){edits.push(CellEdit{row:first_row+r as u32,column:c as u32,input:CellInput::Value(if r==0||c==0{CellValue::Text(value.into())}else{CellValue::Number(value.parse().unwrap())})});}
         }
-        e.run_sheet(vec![Command::Sheet(SheetCommand::SetCells{slide:e.current_slide,edits})],cx);
+        e.run_sheet(vec![Command::Sheet(SheetCommand::SetCells{sheet:e.current_slide,edits})],cx);
         e.set_cell(0,first_row);
     });
     let created=s.update(|e,_,cx|e.make_table(ibis_doc_model::CellRange{first_row,last_row:first_row+3,first_column:0,last_column:2},true,cx));
@@ -110,7 +110,7 @@ fn csv_path(){
     s.key("escape");
     assert!(s.with(|e,_|e.wb().panels.import_text.is_some()),"Escape closes the encoding popup, not its import dialog");
     assert!(s.with(|e,_|e.toolbar_search_open.is_none()),"Escape dismissed only the nested popup");
-    s.with(|e,_|{let p=e.wb().panels.import_text.as_ref().unwrap();let parsed=ibis_pptx::csv::import(p.data.as_ref().unwrap(),&ibis_pptx::csv::ImportOptions::default()).unwrap();assert_eq!(parsed.rows.len(),6);assert_eq!(parsed.rows[0],vec!["first-record","001"]);});
+    s.with(|e,_|{let p=e.wb().panels.import_text.as_ref().unwrap();let parsed=ibis_formats::csv::import(p.data.as_ref().unwrap(),&ibis_formats::csv::ImportOptions::default()).unwrap();assert_eq!(parsed.rows.len(),6);assert_eq!(parsed.rows[0],vec!["first-record","001"]);});
 }
 /// K0021 F: with オフ selected the ink pane stays open, but a click in the body places the caret and a drag selects text.
 fn docx_ink_off(){

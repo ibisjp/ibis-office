@@ -27,6 +27,7 @@ pub mod app_hooks;
 pub mod headless;
 #[cfg(target_family = "wasm")]
 pub mod web;
+pub mod web_pdf;
 pub mod app;
 #[cfg(not(target_family = "wasm"))]
 pub mod read_file;
@@ -44,12 +45,16 @@ pub(crate) mod svg_emf;
 #[cfg(headless_export)]
 pub mod pdf_picture;
 pub mod caret;
+pub mod gesture;
 pub mod document_memory;
 pub mod selection_handles;
 pub mod autocorrect;
 pub mod autorecover;
 pub mod editor;
 pub mod embed;
+pub mod host;
+pub mod host_editor;
+pub mod host_file_dialog;
 pub mod file_actions;
 pub mod file_watch;
 pub(crate) mod view_state;
@@ -57,6 +62,7 @@ pub(crate) mod message_box;
 pub(crate) mod extension_consent;
 pub mod cmyk;
 pub mod cmyk_profile;
+pub mod print_common;
 pub mod access_key;
 pub mod comments;
 #[cfg(not(target_family = "wasm"))]
@@ -80,6 +86,7 @@ pub mod shape_items;
 pub mod text_edit;
 pub mod text_keys;
 pub mod shape_state;
+pub mod insert_band;
 pub mod smartart;
 pub mod interaction;
 pub mod text_chains;
@@ -119,9 +126,10 @@ pub mod infobar;
 pub mod format;
 pub mod font_list;
 pub mod font_setup;
+pub mod resource_list;
 pub mod font_setup_dialog;
+pub mod fonts_late;
 pub mod replace_fonts;
-#[cfg(not(target_family = "wasm"))]
 pub mod rename_file;
 pub mod crop_units;
 pub mod crop_mode;
@@ -130,12 +138,17 @@ pub use ibis_office_base::i18n;
 pub mod settings;
 pub mod settings_dialog;
 pub mod qat;
+pub mod toolbar_layout;
+pub mod menu_id_migration;
+pub mod toolbar_defaults;
+pub mod toolbar_customize;
+pub mod toolbar_preview;
 #[cfg(not(target_family = "wasm"))]
 pub mod update;
 pub mod about;
 pub(crate) mod modify_password;
 #[cfg(not(target_family = "wasm"))]
-pub(crate) mod password_window;
+pub mod password_window;
 pub mod icons;
 pub mod palette;
 pub mod menu_bar;
@@ -158,6 +171,7 @@ pub mod spell_panel;
 pub mod symbols;
 pub mod user_name;
 pub mod save;
+pub mod signature;
 pub mod save_location;
 #[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "scenarios"))]
 pub mod scenario;
@@ -171,6 +185,7 @@ pub mod sidebars;
 pub mod draw_menu;
 pub(crate) mod bar_keys;
 pub mod start_view;
+pub mod start_menu;
 pub(crate) mod workspace;
 
 /// The old name of the status bar's module, which the formats' code may

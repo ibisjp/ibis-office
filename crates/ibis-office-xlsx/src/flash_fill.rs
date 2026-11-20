@@ -595,7 +595,7 @@ impl crate::shell::editor::SlideEditor {
             })
             .collect();
         let count = edits.len();
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide: edit.slide, edits })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: edit.slide, edits })]) {
             self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
             cx.notify();
             return true;
@@ -650,7 +650,7 @@ impl crate::shell::editor::SlideEditor {
         let edits: Vec<CellEdit> = targets.iter().zip(&values).filter(|(_, v)| !v.is_empty()).map(|(&r, v)| CellEdit { row: r, column, input: CellInput::Value(CellValue::Text(v.clone())) }).collect();
         let count = edits.len();
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })]) {
             self.status = Some(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into());
             return cx.notify();
         }

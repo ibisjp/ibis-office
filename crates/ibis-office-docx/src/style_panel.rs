@@ -66,7 +66,7 @@ impl SlideEditor {
         let Some((container, index)) = flow_command::locate(doc, start.para) else { return };
         let keep = self.text_selection();
         self.run_flow(
-            vec![FlowCommand::SetStyle { id, style: Some(style) }, FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(paragraph)] }],
+            vec![FlowCommand::SetStyle { id, style: Some(style) }, FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(paragraph)] }],
             cx,
         );
         if let (Some((a, c)), Some(state)) = (keep, self.doc_state_mut()) {

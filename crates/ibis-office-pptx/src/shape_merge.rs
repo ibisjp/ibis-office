@@ -48,12 +48,12 @@ impl SlideEditor {
         let mut ids = next.into_iter();
         let Some(made) = merge(&shapes, op, || ids.next().unwrap_or(ShapeId(u64::MAX))) else { return };
         let index = chosen.iter().filter_map(|id| slide.shape_index(*id)).min().unwrap_or(0);
-        let mut commands = vec![Command::RemoveShapes { slide: slide.id, shapes: chosen.clone() }];
+        let mut commands = vec![Command::DeleteShape { slide: slide.id, shapes: chosen.clone(), with_attached: false }];
         let new_ids: Vec<ShapeId> = made.iter().map(|s| s.id).collect();
         for (k, shape) in made.into_iter().enumerate() {
-            commands.push(Command::InsertShape { slide: slide.id, index: index + k, shape });
+            commands.push(Command::InsertShape { slide: slide.id, shapes: vec![(index + k, shape)] });
         }
-        if self.apply_pptx_commands_checked(vec![Command::Group(commands)], cx) {
+        if self.apply_pptx_commands_checked(vec![Command::Batch(commands)], cx) {
             self.set_selection(new_ids);
         }
     }

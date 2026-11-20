@@ -89,9 +89,9 @@ impl SlideEditor {
         };
         let slide = self.current_slide;
         let mut commands = vec![
-            Command::Sheet(SheetCommand::SetHyperlink { slide, range, link: Some(link) }),
-            Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: StyleChange::Color(Rgb(LINK_COLOR)) }),
-            Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change: StyleChange::Underline(true) }),
+            Command::Sheet(SheetCommand::SetHyperlink { sheet: slide, range, link: Some(link) }),
+            Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change: StyleChange::Color(Rgb(LINK_COLOR)) }),
+            Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change: StyleChange::Underline(true) }),
         ];
         if let Some(disp) = display_text.map(str::trim).filter(|s| !s.is_empty()) {
             if self.current_sheet().is_some_and(|(_, s)| {
@@ -103,7 +103,7 @@ impl SlideEditor {
                     column: range.first_column,
                     input: CellInput::Value(CellValue::Text(disp.to_string())),
                 }];
-                commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
+                commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits }));
             }
         } else if self.current_sheet().is_some_and(|(_, s)| {
             s.cell(range.first_row, range.first_column)
@@ -114,7 +114,7 @@ impl SlideEditor {
                 column: range.first_column,
                 input: CellInput::Value(CellValue::Text(address.trim_start_matches('#').to_string())),
             }];
-            commands.push(Command::Sheet(SheetCommand::SetCells { slide, edits }));
+            commands.push(Command::Sheet(SheetCommand::SetCells { sheet: slide, edits }));
         }
         if let Err(err) = self.document.execute(commands) {
             log::warn!("link rejected: {err}");
@@ -133,7 +133,7 @@ impl SlideEditor {
     pub(crate) fn remove_cell_link(&mut self, cx: &mut Context<Self>) {
         let Some(range) = self.selected_range() else { return };
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetHyperlink { slide, range, link: None })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetHyperlink { sheet: slide, range, link: None })]) {
             log::warn!("removing a link rejected: {err}");
         }
         cx.notify();

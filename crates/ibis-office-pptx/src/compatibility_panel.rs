@@ -304,10 +304,7 @@ impl SlideEditor {
             self.run(vec![ibis_doc_model::Command::SetSlide { slide }], cx);
         } else {
             self.run(
-                vec![ibis_doc_model::Command::RemoveShape {
-                    slide: slide_id,
-                    shape: shape_id,
-                }],
+                vec![ibis_doc_model::Command::DeleteShape { slide: slide_id, shapes: vec![shape_id], with_attached: true }],
                 cx,
             );
         }
@@ -327,10 +324,7 @@ impl SlideEditor {
         };
         self.current_slide = slide_id;
         self.run(
-            vec![ibis_doc_model::Command::RemoveShape {
-                slide: slide_id,
-                shape: shape_id,
-            }],
+            vec![ibis_doc_model::Command::DeleteShape { slide: slide_id, shapes: vec![shape_id], with_attached: true }],
             cx,
         );
         self.recheck_pptx_compatibility(cx);
@@ -617,7 +611,7 @@ impl SlideEditor {
             ;
 
         let panel_terminal_actions = bottom_actions;
-        Some(SidebarPanel::with_footer(text("pptx.compatibility-check"), content.into_any_element(), panel_terminal_actions))
+        Some(SidebarPanel::with_footer(text("review.compatibility-check"), content.into_any_element(), panel_terminal_actions))
     }
 }
 

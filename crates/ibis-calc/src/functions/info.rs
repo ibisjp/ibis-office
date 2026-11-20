@@ -12,8 +12,9 @@ pub(super) fn get(name: &str) -> Option<Func> {
     Some(match name {
         "NA" => |_, _| err(CellError::NA),
         "ISBLANK" => |c, a| is(c, a, |v| matches!(v, Value::Empty)),
-        "ISERR" => |c, a| is(c, a, |v| matches!(v, Value::Error(e) if *e != CellError::NA)),
-        "ISERROR" => |c, a| is(c, a, |v| matches!(v, Value::Error(_))),
+        // (A reference that is an element of an array, `TAKE(A3:A4,{2;1})`, is an error as a value: Excel 365, GitHub #250.)
+        "ISERR" => |c, a| is(c, a, |v| matches!(v, Value::Error(e) if *e != CellError::NA) || matches!(v, Value::Ref(_))),
+        "ISERROR" => |c, a| is(c, a, |v| matches!(v, Value::Error(_) | Value::Ref(_))),
         "ISNA" => |c, a| is(c, a, |v| matches!(v, Value::Error(CellError::NA))),
         "ISLOGICAL" => |c, a| is(c, a, |v| matches!(v, Value::Bool(_))),
         "ISNUMBER" => |c, a| is(c, a, |v| matches!(v, Value::Number(_))),
@@ -34,6 +35,20 @@ pub(super) fn get(name: &str) -> Option<Func> {
                 if data.len() == 1 { data[0].clone() } else { Value::Array(std::rc::Rc::new(crate::eval::Array::new(rows, columns, data))) }
             }
             Value::Error(e) => err(e),
+            // An array is not a reference: each element is #VALUE! (an error element as it is; Excel 365, `LET(a,INDEX({1;2},0,1),ISFORMULA(a))` is {#VALUE!;#VALUE!}, GitHub #250).
+            Value::Array(arr) => Value::Array(std::rc::Rc::new(crate::eval::Array::new(
+                arr.rows,
+                arr.columns,
+                arr.data
+                    .iter()
+                    .map(|v| match v {
+                        Value::Error(e) => err(*e),
+                        // A reference that is an element of the array (`TAKE(A3:A4,{2;1})`): whether its first cell holds a formula.
+                        Value::Ref(r) if !r.is_empty() => Value::Bool(c.book.formula(r[0].sheet, r[0].first_row, r[0].first_column).is_some()),
+                        _ => err(CellError::Value),
+                    })
+                    .collect(),
+            ))),
             _ => err(CellError::Value),
         },
         "N" => |c, a| {
@@ -158,14 +173,35 @@ pub(super) fn get(name: &str) -> Option<Func> {
 
 fn is(c: &mut Ctx, a: &[Expr], f: fn(&Value) -> bool) -> Value {
     let v = c.eval_scalar_or_array(&a[0]);
-    c.map1(v, |_, v| Value::Bool(f(&v)))
+    // An array that is an element of an array stands for its first element (`DROP({1;2},{0;1})` is an array of arrays).
+    c.map1(v, |_, v| match &v {
+        Value::Array(x) => Value::Bool(f(x.data.first().unwrap_or(&Value::Empty))),
+        _ => Value::Bool(f(&v)),
+    })
 }
 
 fn parity(c: &mut Ctx, a: &[Expr], even: bool) -> Value {
-    let v = c.eval_scalar_or_array(&a[0]);
+    let raw = c.eval(&a[0]);
+    // An omitted argument that passes through (`ISODD(IF(1,))`, a LAMBDA's omitted parameter) is #N/A; as an element of an array, #VALUE! (Excel, GitHub #250).
+    if matches!(raw, Value::Omitted) {
+        return err(CellError::NA);
+    }
+    // A range of several cells is not spread over the cells: one #VALUE! (Excel 365, `ISODD(A2:A3)`).
+    if matches!(&raw, Value::Ref(r) if !matches!(r.as_slice(), [a] if a.is_cell())) && !c.in_array_context {
+        return err(CellError::Value);
+    }
+    let v = match raw {
+        Value::Array(_) => raw,
+        raw => c.scalar_or_array_of(raw),
+    };
     let date1904 = c.date1904();
-    c.map1(v, |_, v| {
-        if let Value::Bool(_) = v {
+    c.map1(v, |ctx, v| {
+        // A reference to one cell that is an element of an array (`TAKE(A3:A4,{2;1})`) is that cell's value; one of several cells is #VALUE!.
+        let v = match v {
+            Value::Ref(r) if matches!(r.as_slice(), [a] if a.is_cell()) => ctx.deref_implicit(&r),
+            v => v,
+        };
+        if let Value::Bool(_) | Value::Omitted | Value::Ref(_) = v {
             return err(CellError::Value);
         }
         match to_number(&v, date1904) {

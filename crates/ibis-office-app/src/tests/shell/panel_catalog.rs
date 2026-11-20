@@ -252,7 +252,7 @@ pub(crate) fn dump_all_right_panels() {
         // Chart panel: insert a chart
         d!("doc_chart_panel", move |e, w, cx| {
             e.set_caret(ibis_doc_model::FlowPos::new(first_para, 0), false, cx);
-            e.doc_insert_chart(ibis_pptx::NewChartKind::Column3D, w, cx);
+            e.doc_insert_chart(ibis_formats::NewChartKind::Column3D, w, cx);
             e.open_doc_chart_panel(w, cx);
         }, doc_chart_panel);
 
@@ -390,7 +390,7 @@ pub(crate) fn dump_all_right_panels() {
         x!("sheet_alt_text_panel", |e, w, cx| e.open_sheet_alt_text_panel(w, cx), sheet_alt_text_panel);
 
         // Shape frame panel & control properties panel
-        s.menu("xlsx.insert-textbox");
+        s.menu("xlsx.insert-textbox"); s.place_armed();
         s.key("escape");
         x!("sheet_frame_panel", |e, w, cx| {
             let id = e.slide().shapes.last().unwrap().id;
@@ -515,7 +515,7 @@ pub(crate) fn dump_all_right_panels() {
             let slide=e.current_slide;e.run(vec![Command::SetAnimations{slide,animations}],cx);
             if e.pptx().is_none_or(|st| !st.animation_pane) { e.toggle_animation_pane(cx); }
         }, animation_pane);
-        s.toolbar_menu("motion", "pptx.anim.in.fly-bottom");
+        s.toolbar_menu("motion", "pptx.animation.in.fly-bottom");
         p!("animation_options_panel", |e, _, cx| e.open_animation_options_panel(0, cx), animation_options_panel);
         p!("reading_order_pane", |e, _, cx| e.open_reading_order_pane(cx), reading_order_pane);
         p!("selection_pane", |e, _, cx| {
@@ -850,7 +850,7 @@ fn seed_recovery_gallery(e:&mut crate::shell::editor::SlideEditor) {
 }
 
 fn seed_autocorrect_entry(e:&mut crate::shell::editor::SlideEditor,w:&mut gpui_kit::Window,cx:&mut gpui_kit::Context<crate::shell::editor::SlideEditor>) {
-    let p=match e.format.kind(){ibis_pptx::Kind::Document=>e.doc_state_mut().unwrap().autocorrect.as_mut().unwrap(),ibis_pptx::Kind::Workbook=>e.wb_mut().panels.autocorrect.as_mut().unwrap(),_=>e.shape_edit.autocorrect.as_mut().unwrap()};
+    let p=match e.format.kind(){ibis_formats::Kind::Document=>e.doc_state_mut().unwrap().autocorrect.as_mut().unwrap(),ibis_formats::Kind::Workbook=>e.wb_mut().panels.autocorrect.as_mut().unwrap(),_=>e.shape_edit.autocorrect.as_mut().unwrap()};
     p.entry_open=true;p.editing=Some(0);let (a,b)=p.working.table[0].clone();p.replace.update(cx,|i,cx|i.set_value(a,w,cx));p.with.update(cx,|i,cx|i.set_value(b,w,cx));
 }
 

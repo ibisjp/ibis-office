@@ -136,7 +136,7 @@ impl SlideEditor {
         blocks.extend(doc.body[first.clone()].iter().cloned());
         let Some(Block::Paragraph(moved)) = doc.body.get(this.start) else { return false };
         let id = moved.id;
-        let command = FlowCommand::ReplaceBlocks { container: flow_command::Container::Body, index: first.start, remove: second.end - first.start, blocks };
+        let command = FlowCommand::ReplaceBlockRange { container: flow_command::Container::Body, index: first.start, remove: second.end - first.start, blocks };
         let done = self.run_flow(vec![command], cx);
         if done {
             self.set_caret(FlowPos::new(id, 0), false, cx);
@@ -188,7 +188,7 @@ impl SlideEditor {
             cx.notify();
             return false;
         }
-        let command = FlowCommand::ReplaceBlocks { container: flow_command::Container::Body, index: start, remove: end - start, blocks };
+        let command = FlowCommand::ReplaceBlockRange { container: flow_command::Container::Body, index: start, remove: end - start, blocks };
         let done = self.run_flow(vec![command], cx);
         if done {
             self.set_caret(FlowPos::new(id, 0), false, cx);

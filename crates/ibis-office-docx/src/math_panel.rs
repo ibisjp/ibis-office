@@ -128,7 +128,7 @@ impl SlideEditor {
             control: None,
         };
         new_p.resolve(&doc.styles);
-        let cmd = FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(new_p)] };
+        let cmd = FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(new_p)] };
         self.run_flow(vec![cmd], cx)
     }
 
@@ -279,7 +279,7 @@ impl SlideEditor {
                         };
                     }
                     new_p.resolve(&doc.styles);
-                    let cmd = FlowCommand::ReplaceBlocks { container, index, remove: 1, blocks: vec![Block::Paragraph(new_p)] };
+                    let cmd = FlowCommand::ReplaceBlockRange { container, index, remove: 1, blocks: vec![Block::Paragraph(new_p)] };
                     return self.run_flow(vec![cmd], cx);
                 }
             }

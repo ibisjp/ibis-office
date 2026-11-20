@@ -18,6 +18,8 @@ pub(crate) use ibis_office_base::clock;
 pub(crate) use ibis_office_docx as docx;
 #[cfg(windows)]
 mod open_with;
+#[cfg(not(target_family = "wasm"))]
+mod single_instance;
 // The presentation screen is its own crate (tasks/doc/crate-split-plan.md, 14); the app and its tests name it `crate::pptx`.
 pub(crate) use ibis_office_pptx as pptx;
 mod render;
@@ -41,14 +43,18 @@ pub(crate) use shell::native_shape_clipboard;
 pub(crate) use shell::pdf_picture;
 // The workbook screen is its own crate (tasks/doc/crate-split-plan.md, 16); the app and the tests name it `crate::xlsx`.
 pub(crate) use ibis_office_xlsx as xlsx;
-#[cfg(headless_export)]
+#[cfg(any(headless_export, target_family = "wasm"))]
 mod export;
-#[cfg(headless_export)]
+#[cfg(any(headless_export, target_family = "wasm"))]
 mod export_print;
-#[cfg(headless_export)]
+#[cfg(any(headless_export, target_family = "wasm"))]
 mod export_text;
-#[cfg(headless_export)]
+#[cfg(any(headless_export, target_family = "wasm"))]
 mod pdf_vector;
+#[cfg(target_family = "wasm")]
+mod web_pdf;
+#[cfg(target_family = "wasm")]
+mod web_pdf_fonts;
 #[cfg(headless_export)]
 mod ui_snapshot;
 
@@ -88,6 +94,9 @@ mod docx_probe;
 #[cfg(all(target_os = "macos", feature = "scenarios"))]
 #[path = "tests/xlsx/corpus_report.rs"]
 pub(crate) mod xlsx_corpus_report;
+#[cfg(all(target_os = "macos", feature = "scenarios"))]
+#[path = "tests/xlsx/scenario_issue189.rs"]
+pub(crate) mod xlsx_issue189;
 #[cfg(all(test, target_os = "windows", feature = "export"))]
 #[path = "tests/xlsx/print_bounds.rs"]
 mod xlsx_print_bounds;
@@ -113,6 +122,8 @@ use gpui_kit::*;
 pub fn init(cx: &mut App) {
     register_hooks();
     shell::settings::migrate_on_startup();
+    #[cfg(not(target_family = "wasm"))]
+    shell::read_file::register_query_workbook_loader();
     // The window knows the system's fonts; the words (ibis-office-base) ask it for their English names.
     ibis_office_base::i18n::set_english_font_name(shell::font_list::english_name);
     gpui_kit::init(cx);
@@ -138,11 +149,11 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("backspace", DeleteSelection, context),
         KeyBinding::new("escape", CancelTool, context),
         // 表示の拡大・縮小（メニューの表示どおり。⌘= は ⌘+ のシフトなし）.
-        KeyBinding::new(&secondary("+"), ZoomInView, context),
-        KeyBinding::new(&secondary("="), ZoomInView, context),
-        KeyBinding::new(&secondary("-"), ZoomOutView, context),
-        KeyBinding::new(&secondary("0"), ZoomActualView, context),
-        KeyBinding::new(&secondary("alt-0"), ZoomFitView, context),
+        KeyBinding::new(&secondary("+"), ViewZoomIn, context),
+        KeyBinding::new(&secondary("="), ViewZoomIn, context),
+        KeyBinding::new(&secondary("-"), ViewZoomOut, context),
+        KeyBinding::new(&secondary("0"), ViewZoomActual, context),
+        KeyBinding::new(&secondary("alt-0"), ViewZoomFit, context),
         KeyBinding::new("ctrl-alt-1", ToggleSlideGridView, context),
         KeyBinding::new("ctrl-alt-2", ToggleOutlineView, context),
         KeyBinding::new("ctrl-alt-3", ToggleNotesPageView, context),
@@ -290,17 +301,34 @@ pub fn init(cx: &mut App) {
         // 挿入 > リンク: ⌘K (Ctrl+K), as PowerPoint.
         KeyBinding::new(&secondary("k"), InsertHyperlink, context),
         KeyBinding::new(if is_mac() { "cmd-enter" } else { "shift-f5" }, StartSlideshow, context),
-        KeyBinding::new(&secondary("o"), OpenFile, None),
+        KeyBinding::new(&secondary("o"), Open, None),
         KeyBinding::new(&secondary("n"), NewDocument, None),
         KeyBinding::new(&secondary("s"), Save, None),
         KeyBinding::new(&secondary("shift-s"), SaveAs, None),
-        KeyBinding::new(&secondary("p"), PrintFile, None),
+        KeyBinding::new(&secondary("p"), Print, None),
         KeyBinding::new("ctrl-shift-f", ToggleMenus, context),
         // As in Office: Command-W (Control-W elsewhere) closes the file.
         KeyBinding::new(&secondary("w"), CloseFile, None),
+        // The start window's own keys (a window with no file open has `start_menu::START_CONTEXT`): ⌘P is still Print in a document.
+        KeyBinding::new(&secondary("d"), StartNewDocument, Some(shell::start_menu::START_CONTEXT)),
+        KeyBinding::new(&secondary("e"), StartNewWorkbook, Some(shell::start_menu::START_CONTEXT)),
+        KeyBinding::new(&secondary("p"), StartNewPresentation, Some(shell::start_menu::START_CONTEXT)),
         KeyBinding::new(&secondary("q"), Quit, None),
         KeyBinding::new(&secondary(","), OpenSettings, None),
     ]);
+    // ウィンドウ > しまう and ibisOffice > ibisOffice を隠す: the keys of a Mac's apps.
+    if is_mac() {
+        // ⌘M is a document's own key (PowerPoint's new slide, `pptx.new-slide`): Minimize has it in the start window only (`start_menu::START_CONTEXT`).
+        cx.bind_keys([KeyBinding::new("cmd-m", MinimizeWindow, Some(shell::start_menu::START_CONTEXT)), KeyBinding::new("cmd-h", HideApp, None)]);
+    }
+    cx.on_action(|_: &MinimizeWindow, cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_, window, _| window.minimize_window());
+        }
+    });
+    cx.on_action(|_: &HideApp, cx| cx.hide());
+    #[cfg(not(target_family = "wasm"))]
+    cx.on_action(|_: &CheckForUpdates, cx| shell::update::check_now(cx));
     if is_mac(){cx.bind_keys([
         KeyBinding::new("ctrl-shift-up",sheet_ui::ExtendJumpUp,Some(editor::SHEET_CONTEXT)),
         KeyBinding::new("ctrl-shift-down",sheet_ui::ExtendJumpDown,Some(editor::SHEET_CONTEXT)),
@@ -342,7 +370,7 @@ pub fn init(cx: &mut App) {
 ///
 /// ```text
 /// ibisOffice [--slide <number>] [<file.pptx|file.xlsx|file.docx>]
-/// ibisOffice --export png|pdf|pdf-image [--out-dir <dir>] [--width <px>] [--slides 1,3-5] [--layout] <file.pptx|file.xlsx|file.docx>
+/// ibisOffice --export png|pdf|pdf-image [--out-dir <dir>] [--width <px>] [--range 1,3-5] [--include-layout] <file.pptx|file.xlsx|file.docx>
 /// ibisOffice --export ui [--out-dir <dir>] [--steps start,pagedown,end] [<file.pptx|file.xlsx|file.docx>]
 /// ibisOffice [--timing] [--quit-after-first-frame] [<file>]
 /// ```
@@ -362,8 +390,8 @@ pub fn init(cx: &mut App) {
 ///
 /// `--export ui` draws the whole editor window headless after each step
 /// (see `ui_snapshot.rs`), for checking the window without a screen.
-#[cfg(not(target_family = "wasm"))]
 #[derive(Default)]
+#[cfg_attr(target_family = "wasm", allow(dead_code))]
 struct Args {
     path: Option<std::path::PathBuf>,
     slide: Option<usize>,
@@ -394,6 +422,9 @@ struct Args {
     handout_date: Option<String>,
     handout_footer: Option<String>,
     handout_number: bool,
+    no_handout_date: bool,
+    no_handout_number: bool,
+    handout_order_vertical: bool,
     steps: Option<String>,
     /// `--timing`: print when each stage of starting was reached.
     timing: bool,
@@ -405,19 +436,33 @@ struct Args {
 
 #[cfg(not(target_family = "wasm"))]
 fn parse_args() -> Result<Args, String> {
+    parse_args_from(std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()))
+}
+
+/// The arguments `--export` takes, from a list of them (the browser version's PDF is made with the arguments the print settings give
+/// the desktop's `--export` run: `SlideEditor::write_pdf_with`).
+fn parse_args_from(arguments: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut args = Args::default();
-    let mut iter = std::env::args_os().skip(1);
+    let mut iter = arguments.into_iter();
     while let Some(arg) = iter.next() {
-        let arg = arg.to_string_lossy().into_owned();
-        let mut value = || iter.next().map(|v| v.to_string_lossy().into_owned()).ok_or_else(|| format!("{arg} needs a value"));
+        let mut value = || iter.next().ok_or_else(|| format!("{arg} needs a value"));
         match arg.as_str() {
             "--read-only" => args.read_only = true,
             "--slide" => args.slide = Some(value()?.parse().map_err(|_| "--slide needs a slide number".to_string())?),
             "--export" => args.export = Some(value()?),
             "--out-dir" => args.out_dir = Some(value()?.into()),
             "--width" => args.width = Some(value()?.parse().map_err(|_| "--width needs a width in pixels".to_string())?),
-            "--slides" => args.slides = Some(value()?),
-            "--layout" => args.layout = true,
+            "--range" => args.slides = Some(value()?),
+            // K0038: the old names still work, with a warning (`--slides` is pages for a document, and a singular `--slide` opens at one slide).
+            "--slides" => {
+                eprintln!("warning: --slides is the old name of --range");
+                args.slides = Some(value()?)
+            }
+            "--include-layout" => args.layout = true,
+            "--layout" => {
+                eprintln!("warning: --layout is the old name of --include-layout");
+                args.layout = true
+            }
             "--print-backgrounds" => args.print_backgrounds = true,
             "--print-hidden-text" => args.print_hidden_text = true,
             "--no-print-markup" => args.no_print_markup = true,
@@ -431,6 +476,15 @@ fn parse_args() -> Result<Args, String> {
             "--handout-date" => args.handout_date = Some(value()?),
             "--handout-footer" => args.handout_footer = Some(value()?),
             "--handout-number" => args.handout_number = true,
+            "--no-handout-date" => args.no_handout_date = true,
+            "--no-handout-number" => args.no_handout_number = true,
+            "--handout-order" => {
+                args.handout_order_vertical = match value()?.as_str() {
+                    "horizontal" => false,
+                    "vertical" => true,
+                    other => return Err(format!("--handout-order takes horizontal or vertical: {other}")),
+                }
+            }
             "--steps" => args.steps = Some(value()?),
             "--timing" => args.timing = true,
             "--quit-after-first-frame" => args.quit_after_first_frame = true,
@@ -442,9 +496,77 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
+/// What a handout, notes page or outline carries besides the slides. PowerPoint puts today's date and the page number on them unless
+/// the handout master's `p:hf` turns them off (the header and footer need a text, which only the arguments give); `--no-handout-date`
+/// and `--no-handout-number` turn them off.
+#[cfg(any(headless_export, target_family = "wasm"))]
+fn handout_marks(args: &Args, data: &[u8]) -> export_print::HandoutMarks {
+    let flags = ibis_formats::handout_master::header_footer_flags(data).ok();
+    let (date_on, number_on) = flags.map_or((true, true), |f| (f.date, f.number));
+    let date = args.handout_date.clone().or_else(|| (date_on && !args.no_handout_date).then(shell::header_footer::today));
+    let number = args.handout_number || (number_on && !args.no_handout_number);
+    export_print::HandoutMarks { header: args.handout_header.clone(), date: date.filter(|_| !args.no_handout_date), footer: args.handout_footer.clone(), number, layout: ibis_formats::handout_master::layout(data).ok(), notes: ibis_formats::handout_master::notes_frames(data).ok(), vertical_order: args.handout_order_vertical, slide_numbers: Vec::new(), slide_size_pt: None }
+}
+
+/// The options of an export from the arguments `--export` takes (`file` the file's bytes, for the notes' formatting and the handout master).
+#[cfg(any(headless_export, target_family = "wasm"))]
+fn export_options(args: &Args, format: export::Format, out_dir: std::path::PathBuf, name: String, file_name: Option<String>, data: &[u8]) -> Result<export::Options, String> {
+    let slides = args.slides.as_deref().map(export::parse_slides).transpose()?.unwrap_or_default();
+    Ok(export::Options {
+        format,
+        out_dir,
+        name,
+        width: args.width.unwrap_or(1920),
+        slides,
+        layout: args.layout,
+        file_name,
+        print_backgrounds: args.print_backgrounds,
+        print_hidden_text: args.print_hidden_text,
+        print_markup: !args.no_print_markup,
+        color: match args.print_color.as_deref() {
+            None | Some("color") => export_print::PrintColor::Color,
+            Some("gray") => export_print::PrintColor::Gray,
+            Some("bw") => export_print::PrintColor::BlackWhite,
+            Some(other) => return Err(format!("--print-color takes color, gray or bw: {other}")),
+        },
+        handout: args.handout,
+        frame: args.print_frame,
+        handout_landscape: args.handout_landscape,
+        notes_pages: args.notes_pages,
+        outline_pages: args.outline_pages,
+        notes_source: args.notes_pages.then(|| data.to_vec()),
+        handout_marks: handout_marks(args, data),
+    })
+}
+
 /// `--export`: write the slides of the file and quit, without a window.
 #[cfg(not(target_family = "wasm"))]
 fn run_export(args: &Args, format: &str) -> Result<(), String> {
+    if matches!(format, "md" | "markdown" | "lawxml" | "lawtext") {
+        let path = args.path.as_deref().ok_or("name the .docx, .md, .xml, or .lawtext file to export")?;
+        let out_dir = args.out_dir.clone().unwrap_or_else(|| ".".into());
+        std::fs::create_dir_all(&out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "document".into());
+        let raw_data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        // A Law XML or Lawtext file goes through Markdown, as it does when opened.
+        let law_md = ibis_formats::lawtext::path_input_to_markdown(path, &raw_data).map_err(|e| format!("{}: {e}", path.display()))?;
+        let is_text_md = law_md.is_some() || path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown"));
+        let data = law_md.map(String::into_bytes).unwrap_or(raw_data);
+        let presentation = if is_text_md {
+            ibis_formats::markdown::open_markdown_with_base_dir(data, path.parent()).map_err(|e| format!("{}: {e}", path.display()))?.presentation
+        } else {
+            ibis_odf::read(&data).map_err(|e| format!("{}: {e}", path.display()))?
+        };
+        let (ext, content) = match format {
+            "lawxml" => ("xml", ibis_formats::lawtext::export_presentation_to_law_xml(&presentation)),
+            "lawtext" => ("lawtext", ibis_formats::lawtext::export_presentation_to_lawtext(&presentation)),
+            _ => ("md", ibis_formats::markdown::export_presentation_to_markdown(&presentation)),
+        };
+        let content = content.map_err(|e| format!("{}: {e}", path.display()))?;
+        let out_path = out_dir.join(format!("{stem}.{ext}"));
+        std::fs::write(&out_path, content.as_bytes()).map_err(|e| format!("{}: {e}", out_path.display()))?;
+        return Ok(());
+    }
     #[cfg(headless_export)]
     {
         let format = match format {
@@ -452,7 +574,7 @@ fn run_export(args: &Args, format: &str) -> Result<(), String> {
                 let path = args.path.as_deref().ok_or("name the .xlsx or .xls file")?;
                 // Read as the PDF export reads it, so the rows are the ones its pages are laid out from.
                 let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-                let presentation = ibis_pptx::read(&data).map_err(|e| format!("{}: {e}", path.display()))?;
+                let presentation = ibis_odf::read(&data).map_err(|e| format!("{}: {e}", path.display()))?;
                 return export::row_heights(presentation, args.out_file.as_deref());
             }
             "ui" => {
@@ -474,41 +596,16 @@ fn run_export(args: &Args, format: &str) -> Result<(), String> {
             "png" => export::Format::Png,
             "pdf" => export::Format::Pdf,
             "pdf-image" => export::Format::PdfImage,
-            other => return Err(format!("--export takes png, pdf, pdf-image, row-heights or ui: {other}")),
+            other => return Err(format!("--export takes png, pdf, pdf-image, md, row-heights or ui: {other}")),
         };
         let path = args.path.as_deref().ok_or("name the .pptx, .xlsx or .docx file to export")?;
         let out_dir = args.out_dir.clone().unwrap_or_else(|| ".".into());
         std::fs::create_dir_all(&out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
         let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "slides".into());
         let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let presentation = ibis_pptx::read(&data).map_err(|e| format!("{}: {e}", path.display()))?;
-        let slides = args.slides.as_deref().map(export::parse_slides).transpose()?.unwrap_or_default();
+        let presentation = ibis_odf::read(&data).map_err(|e| format!("{}: {e}", path.display()))?;
         let file_name = path.file_name().map(|s| s.to_string_lossy().into_owned());
-        let options = export::Options {
-            format,
-            out_dir,
-            name,
-            width: args.width.unwrap_or(1920),
-            slides,
-            layout: args.layout,
-            file_name,
-            print_backgrounds: args.print_backgrounds,
-            print_hidden_text: args.print_hidden_text,
-            print_markup: !args.no_print_markup,
-            color: match args.print_color.as_deref() {
-                None | Some("color") => export_print::PrintColor::Color,
-                Some("gray") => export_print::PrintColor::Gray,
-                Some("bw") => export_print::PrintColor::BlackWhite,
-                Some(other) => return Err(format!("--print-color takes color, gray or bw: {other}")),
-            },
-            handout: args.handout,
-            frame: args.print_frame,
-            handout_landscape: args.handout_landscape,
-            notes_pages: args.notes_pages,
-            outline_pages: args.outline_pages,
-            notes_source: args.notes_pages.then(|| data.clone()),
-            handout_marks: export_print::HandoutMarks { header: args.handout_header.clone(), date: args.handout_date.clone(), footer: args.handout_footer.clone(), number: args.handout_number, layout: ibis_pptx::handout_master::layout(&data).ok() },
-        };
+        let options = export_options(args, format, out_dir, name, file_name, &data)?;
         export::export(presentation, &options)
     }
     #[cfg(not(headless_export))]
@@ -553,8 +650,15 @@ fn url_path(url: &str) -> Option<std::path::PathBuf> {
 
 
 /// Native entry point; see [`Args`] for the command line.
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(not(target_family = "wasm"), not(target_os = "android"), not(target_os = "ios")))]
 pub fn run_native() {
+    // `ibisOffice --mcp ...`: the MCP server (GitHub issue #159), headless: no window, no hooks of the windows. (On Windows the GUI program has no standard
+    // input and output: `ibisOffice-mcp.exe` is the same server.)
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if std::env::args().nth(1).as_deref() == Some("--mcp") {
+        ibis_calc::eval::convert::set_clock(clock::calc_clock);
+        std::process::exit(ibis_mcp::run_from_args(std::env::args().skip(2)));
+    }
     register_hooks();
     // TODAY, NOW and a date typed without its year read the local time.
     ibis_calc::eval::convert::set_clock(clock::calc_clock);
@@ -572,6 +676,19 @@ pub fn run_native() {
         }
         // Done: the caches of what was drawn (hundreds of thousands of
         // shaped lines for a large workbook) are not freed one by one.
+        std::process::exit(0);
+    }
+    // One ibisOffice to a user (GitHub issue #239): where one is running, a second start (the app's icon, a file association, the command line) hands its
+    // file, or a new window, to it and ends. macOS does that itself (Launch Services). Not for a run that is measured or read only, nor with
+    // `IBIS_NO_SINGLE_INSTANCE` set (the tests and the scenario runs that start the program).
+    #[cfg(any(windows, target_os = "linux"))]
+    let single = !args.quit_after_first_frame
+        && !args.timing
+        && !args.read_only
+        && args.slide.is_none()
+        && std::env::var_os("IBIS_NO_SINGLE_INSTANCE").is_none();
+    #[cfg(any(windows, target_os = "linux"))]
+    if single && single_instance::hand_over(&single_instance::requests_for(args.path.as_deref())) {
         std::process::exit(0);
     }
     // Explorer's "Open with" list gets ibisOffice for csv and tsv (Windows).
@@ -613,6 +730,37 @@ pub fn run_native() {
             }
             let pending: Vec<std::path::PathBuf> = std::mem::take(&mut opener.borrow_mut().1);
             init(cx);
+            // This process answers the second starts of the user (see above); each request is handed to the app on its own thread's behalf.
+            #[cfg(any(windows, target_os = "linux"))]
+            if single {
+                let (sender, mut receiver) = futures::channel::mpsc::unbounded::<Vec<single_instance::Request>>();
+                let sender = std::sync::Mutex::new(sender);
+                match single_instance::serve(move |requests| {
+                    if let Ok(sender) = sender.lock() {
+                        sender.unbounded_send(requests).ok();
+                    }
+                }) {
+                    Ok(()) => {
+                        cx.spawn(async move |cx| {
+                            use futures::StreamExt;
+                            while let Some(requests) = receiver.next().await {
+                                cx.update(|cx| {
+                                    for request in requests {
+                                        match request {
+                                            single_instance::Request::Open(path) => open_path_in_app(path, cx),
+                                            single_instance::Request::NewWindow => open_window_with(cx, |_, _, _| {}),
+                                        }
+                                    }
+                                    cx.activate(true);
+                                });
+                            }
+                        })
+                        .detach();
+                        cx.on_app_quit(|_| async { single_instance::stop() }).detach();
+                    }
+                    Err(err) => log::warn!("cannot answer second starts: {err}"),
+                }
+            }
             // The files that are open are watched for changes by other apps (shell/file_watch.rs).
             shell::file_watch::start(cx);
             // macOS keeps an app running after its last window closes; quit instead.
@@ -693,6 +841,70 @@ mod web {
     /// load, and GPUI's `.SystemUIFont` alias resolves to IBM Plex Sans on web.
     const UI_FONT: &[u8] = include_bytes!("../fonts/IBMPlexSans-Regular.ttf");
 
+    /// Runs `f` with the app (what the host's calls act on). Nothing happens before the editor started.
+    fn with_app<R>(f: impl FnOnce(&mut App) -> R) -> Option<R> {
+        APPLICATION.with(|app| app.borrow().as_ref().map(|handle| handle.update(f)))
+    }
+
+    /// Whether the editor window exists, so the host's calls (`host_load` and the others) act on it. `run` returns before that: the app
+    /// starts when the GPU is ready. The page waits for this before it tells the host `ready`.
+    #[wasm_bindgen]
+    pub fn host_editor_ready() -> bool {
+        with_app(|cx| crate::shell::host_editor::with_editor(cx, |_, _, _| ()).is_some()).unwrap_or(false)
+    }
+
+    /// The host gives a document (`IbisOfficeHandle.load`): shown as the page's document, tied to the host's file when `bound`.
+    #[wasm_bindgen]
+    pub fn host_load(name: String, bytes: Vec<u8>, version: String, folder_id: Option<String>, read_only: bool, read_only_message: Option<String>, bound: bool) -> Result<(), JsValue> {
+        let result = with_app(|cx| crate::shell::host_editor::with_editor(cx, |editor, window, cx| editor.host_load(name, bytes, version, folder_id, read_only, read_only_message, bound, window, cx)));
+        match result.flatten() {
+            Some(Ok(())) => Ok(()),
+            Some(Err(error)) => Err(JsValue::from_str(&error)),
+            None => Err(JsValue::from_str("the editor is not running")),
+        }
+    }
+
+    /// The host switches read-only on or off (`IbisOfficeHandle.setReadOnly`).
+    #[wasm_bindgen]
+    pub fn host_set_read_only(read_only: bool, message: Option<String>) {
+        with_app(|cx| crate::shell::host_editor::with_editor(cx, |editor, window, cx| editor.host_set_read_only(read_only, message, window, cx)));
+    }
+
+    /// A notice of the host for the information bar (`IbisOfficeHandle.notify`; no `level` clears them).
+    #[wasm_bindgen]
+    pub fn host_notify(level: Option<String>, message: Option<String>, id: Option<String>) {
+        use crate::shell::host_editor::{HostNotice, HostNoticeLevel};
+        let notice = match (level.as_deref(), message) {
+            (Some(level), Some(message)) => Some(HostNotice {
+                level: match level {
+                    "error" => HostNoticeLevel::Error,
+                    "warn" => HostNoticeLevel::Warn,
+                    _ => HostNoticeLevel::Info,
+                },
+                message,
+                id,
+            }),
+            _ => None,
+        };
+        with_app(|cx| crate::shell::host_editor::with_editor(cx, |editor, _, cx| editor.host_notify(notice, cx)));
+    }
+
+    /// The document as a save would write it (`IbisOfficeHandle.snapshot`).
+    #[wasm_bindgen]
+    pub fn host_snapshot() -> Result<Vec<u8>, JsValue> {
+        match with_app(|cx| crate::shell::host_editor::with_editor(cx, |editor, window, cx| editor.host_bytes(window, cx))).flatten() {
+            Some(Ok(bytes)) => Ok(bytes),
+            Some(Err(error)) => Err(JsValue::from_str(&error)),
+            None => Err(JsValue::from_str("the editor is not running")),
+        }
+    }
+
+    /// The file name of `host_snapshot`.
+    #[wasm_bindgen]
+    pub fn host_snapshot_name() -> String {
+        with_app(|cx| crate::shell::host_editor::with_editor(cx, |editor, _, _| editor.file_name.as_ref().map(|n| n.to_string()).unwrap_or_default())).flatten().unwrap_or_default()
+    }
+
     /// Start the editor in the page. Icons are fetched from
     /// `<asset_base>/assets/icons/*.svg`. Pass an absolute URL such as
     /// `location.origin`: the icon loader fetches with reqwest, which rejects
@@ -702,16 +914,13 @@ mod web {
     /// cannot be read) the editor shows the start view.
     #[wasm_bindgen]
     pub async fn run(asset_base: Option<String>, file_name: Option<String>, file: Option<Vec<u8>>) -> Result<(), JsValue> {
-        let document = file.and_then(|data| match ibis_pptx::read(&data) {
+        let document = file.and_then(|data| match ibis_odf::read(&data) {
             Ok(presentation) => Some((presentation, file_name.unwrap_or_default().into())),
             Err(err) => {
                 log::error!("{err}");
                 None
             }
         });
-        // The fonts downloaded with セットアップ are kept in the browser's IndexedDB; they are given to the text system when the
-        // first document is drawn (render::shape_view), so they are read before the editor starts.
-        crate::render::shape_view::set_web_fonts(crate::shell::web::load_downloaded_fonts().await);
         crate::register_hooks();
         gpui_kit::platform::web_init();
 
@@ -729,6 +938,7 @@ mod web {
         // editor gives it the browser's (`clock::calc_clock`, in the browser's
         // time zone; see `SlideEditor::new`).
         ibis_calc::eval::convert::set_clock(crate::clock::calc_clock);
+        crate::export::set_web_text_system(platform.text_system());
         let http_client = Arc::new(platform.fetch_http_client());
         // The art page borders' pictures are fetched from the same place.
         crate::docx::art_border::set_web_source(asset_base.clone().unwrap_or_default(), http_client.clone());
@@ -745,6 +955,8 @@ mod web {
                 .expect("failed to load the UI font");
             super::init(cx);
             Theme::global_mut(cx).font_family = "IBM Plex Sans".into();
+            // The blocks of the fonts the page's manifest lists (GitHub issue #157, stage 2): the fonts are known before a document opens, the base block of each comes behind.
+            crate::shell::web::load_subset_blocks(cx, Vec::new(), true);
             let blank = document.is_none().then(crate::shell::web::new_kind_of_address).flatten();
             super::open_editor(document, None, cx);
             if let Some(kind) = blank {
@@ -752,9 +964,279 @@ mod web {
             }
             // The fonts that can be downloaded, asked about at the first start of a version (セットアップ).
             crate::shell::font_setup_dialog::start(cx);
+            // The fonts downloaded with セットアップ (kept in the browser's IndexedDB) are read behind the first drawing, not before it (#157).
+            crate::shell::web::load_downloaded_fonts_in_background(cx);
         });
         APPLICATION.with(|app| *app.borrow_mut() = Some(handle));
         Ok(())
+    }
+}
+
+#[cfg(target_os = "android")]
+mod android_entry {
+    const UI_FONT: &[u8] = include_bytes!("../fonts/IBMPlexSans-Regular.ttf");
+
+    #[unsafe(no_mangle)]
+    pub extern "Rust" fn android_main(android_app: gpui_android::android_activity::AndroidApp) {
+        gpui_android::init_logging();
+        super::register_hooks();
+        ibis_calc::eval::convert::set_clock(super::clock::calc_clock);
+
+        let platform = std::rc::Rc::new(gpui_android::AndroidPlatform::new(android_app));
+        let app = super::Application::with_platform(platform)
+            .with_assets(crate::shell::icons::Assets::new(""));
+        let mut fonts: Vec<std::borrow::Cow<'static, [u8]>> =
+            vec![std::borrow::Cow::Borrowed(UI_FONT)];
+        for path in [
+            "/system/fonts/NotoSansCJK-Regular.ttc",
+            "/system/fonts/NotoSerifCJK-Regular.ttc",
+            "/system/fonts/Roboto-Regular.ttf",
+            "/system/fonts/Roboto-Bold.ttf",
+            "/system/fonts/DroidSansMono.ttf",
+        ] {
+            if let Ok(bytes) = std::fs::read(path) {
+                log::info!("Loaded Android system font: {path} ({} bytes)", bytes.len());
+                fonts.push(std::borrow::Cow::Owned(bytes));
+            }
+        }
+        if let Err(err) = app.text_system().add_fonts(fonts) {
+            log::error!("Failed to register fonts on Android: {err}");
+        }
+        let names = app.text_system().all_font_names();
+        let ui_font = ["Noto Sans CJK JP", "Noto Sans JP", "IBM Plex Sans"]
+            .into_iter()
+            .find(|name| names.iter().any(|n| n == name))
+            .unwrap_or("IBM Plex Sans")
+            .to_string();
+        log::info!("Android UI font selected: {ui_font} (total {} families)", names.len());
+
+        let opener: std::rc::Rc<
+            std::cell::RefCell<(Option<super::AsyncApp>, Vec<std::path::PathBuf>)>,
+        > = Default::default();
+        let handed = opener.clone();
+        app.on_open_urls(move |urls| {
+            let paths: Vec<std::path::PathBuf> =
+                urls.iter().filter_map(|u| super::url_path(u)).collect();
+            let mut state = handed.borrow_mut();
+            match state.0.clone() {
+                Some(cx) => {
+                    drop(state);
+                    cx.update(|cx| {
+                        paths
+                            .into_iter()
+                            .for_each(|p| super::open_path_in_app(p, cx))
+                    });
+                }
+                None => state.1.extend(paths),
+            }
+        });
+        app.run(move |cx| {
+            opener.borrow_mut().0 = Some(cx.to_async());
+            let pending: Vec<std::path::PathBuf> = std::mem::take(&mut opener.borrow_mut().1);
+            super::init(cx);
+            super::shell::file_watch::start(cx);
+            gpui_kit::component::Theme::global_mut(cx).font_family = ui_font.into();
+            if let Some((first, rest)) = pending.split_first() {
+                super::open_path_in_app(first.clone(), cx);
+                for p in rest {
+                    super::open_path_in_app(p.clone(), cx);
+                }
+            } else {
+                super::open_editor(None, None, cx);
+            }
+        });
+    }
+}
+
+#[cfg(target_os = "ios")]
+mod ios_entry {
+    use std::cell::RefCell;
+    use std::ffi::c_void;
+    use std::rc::Rc;
+
+    const UI_FONT: &[u8] = include_bytes!("../fonts/IBMPlexSans-Regular.ttf");
+
+    thread_local! {
+        static PLATFORM: RefCell<Option<Rc<gpui_ios::IosPlatform>>> = const { RefCell::new(None) };
+        static APP_HANDLE: RefCell<Option<gpui_kit::gpui::ApplicationHandle>> = const { RefCell::new(None) };
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ibis_ios_start(
+        ui_view: *mut c_void,
+        logical_width: f32,
+        logical_height: f32,
+        scale_factor: f32,
+    ) {
+        if PLATFORM.with(|p| p.borrow().is_some()) {
+            return;
+        }
+        let Some(view) = gpui_ios::make_non_null_view(ui_view) else {
+            return;
+        };
+        super::register_hooks();
+        ibis_calc::eval::convert::set_clock(super::clock::calc_clock);
+
+        let platform = Rc::new(gpui_ios::IosPlatform::new(
+            view,
+            logical_width,
+            logical_height,
+            scale_factor,
+        ));
+        PLATFORM.with(|p| *p.borrow_mut() = Some(Rc::clone(&platform)));
+
+        let app = super::Application::with_platform(platform)
+            .with_assets(crate::shell::icons::Assets::new(""));
+        let mut fonts: Vec<std::borrow::Cow<'static, [u8]>> =
+            vec![std::borrow::Cow::Borrowed(UI_FONT)];
+        unsafe extern "C" {
+            fn ibis_ios_find_font_path(name: *const std::ffi::c_char) -> *mut std::ffi::c_char;
+            fn ibis_ios_free_c_string(ptr: *mut std::ffi::c_char);
+        }
+        for font_name in [
+            c"HiraginoSans-W3",
+            c"HiraginoSans-W6",
+            c"PingFangSC-Regular",
+            c".AppleSystemUIFont",
+        ] {
+            let ptr = unsafe { ibis_ios_find_font_path(font_name.as_ptr()) };
+            if !ptr.is_null() {
+                let path = unsafe { std::ffi::CStr::from_ptr(ptr) }
+                    .to_string_lossy()
+                    .into_owned();
+                unsafe { ibis_ios_free_c_string(ptr) };
+                if let Ok(bytes) = std::fs::read(&path) {
+                    fonts.push(std::borrow::Cow::Owned(bytes));
+                }
+            }
+        }
+        let _ = app.text_system().add_fonts(fonts);
+        let names = app.text_system().all_font_names();
+        let ui_font = [
+            "Hiragino Sans",
+            "Hiragino Kaku Gothic ProN",
+            "PingFang SC",
+            "IBM Plex Sans",
+        ]
+        .into_iter()
+        .find(|name| names.iter().any(|n| n == name))
+        .unwrap_or("IBM Plex Sans")
+        .to_string();
+
+        let opener: Rc<RefCell<(Option<super::AsyncApp>, Vec<std::path::PathBuf>)>> =
+            Default::default();
+        let handed = opener.clone();
+        app.on_open_urls(move |urls| {
+            let paths: Vec<std::path::PathBuf> =
+                urls.iter().filter_map(|u| super::url_path(u)).collect();
+            let mut state = handed.borrow_mut();
+            match state.0.clone() {
+                Some(cx) => {
+                    drop(state);
+                    cx.update(|cx| {
+                        paths
+                            .into_iter()
+                            .for_each(|p| super::open_path_in_app(p, cx))
+                    });
+                }
+                None => state.1.extend(paths),
+            }
+        });
+
+        let handle = app.run_embedded(move |cx| {
+            opener.borrow_mut().0 = Some(cx.to_async());
+            let pending: Vec<std::path::PathBuf> = std::mem::take(&mut opener.borrow_mut().1);
+            super::init(cx);
+            super::shell::file_watch::start(cx);
+            gpui_kit::component::Theme::global_mut(cx).font_family = ui_font.into();
+            if let Some((first, rest)) = pending.split_first() {
+                super::open_path_in_app(first.clone(), cx);
+                for p in rest {
+                    super::open_path_in_app(p.clone(), cx);
+                }
+            } else {
+                super::open_editor(None, None, cx);
+            }
+        });
+        APP_HANDLE.with(|slot| *slot.borrow_mut() = Some(handle));
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ibis_ios_tick() {
+        PLATFORM.with(|p| {
+            if let Some(platform) = p.borrow().as_ref() {
+                platform.tick();
+            }
+        });
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ibis_ios_resize(logical_width: f32, logical_height: f32, scale_factor: f32) {
+        PLATFORM.with(|p| {
+            if let Some(platform) = p.borrow().as_ref() {
+                platform.resize(logical_width, logical_height, scale_factor);
+            }
+        });
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ibis_ios_touch_began(x: f32, y: f32) {
+        PLATFORM.with(|p| {
+            if let Some(platform) = p.borrow().as_ref() {
+                platform.touch_began(x, y);
+            }
+        });
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ibis_ios_touch_moved(x: f32, y: f32) {
+        PLATFORM.with(|p| {
+            if let Some(platform) = p.borrow().as_ref() {
+                platform.touch_moved(x, y);
+            }
+        });
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ibis_ios_touch_ended(x: f32, y: f32, cancelled: bool) {
+        PLATFORM.with(|p| {
+            if let Some(platform) = p.borrow().as_ref() {
+                platform.touch_ended(x, y, cancelled);
+            }
+        });
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ibis_ios_pinch(x: f32, y: f32, delta: f32, phase: u8) {
+        PLATFORM.with(|p| {
+            if let Some(platform) = p.borrow().as_ref() {
+                platform.pinch(x, y, delta, phase);
+            }
+        });
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ibis_ios_lifecycle(phase: u8) {
+        let phase = match phase {
+            0 => gpui_kit::gpui::AppLifecyclePhase::Active,
+            1 => gpui_kit::gpui::AppLifecyclePhase::Inactive,
+            2 => gpui_kit::gpui::AppLifecyclePhase::Background,
+            _ => gpui_kit::gpui::AppLifecyclePhase::Foreground,
+        };
+        PLATFORM.with(|p| {
+            if let Some(platform) = p.borrow().as_ref() {
+                platform.lifecycle(phase);
+            }
+        });
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn ibis_ios_memory_warning() {
+        PLATFORM.with(|p| {
+            if let Some(platform) = p.borrow().as_ref() {
+                platform.memory_warning();
+            }
+        });
     }
 }
 

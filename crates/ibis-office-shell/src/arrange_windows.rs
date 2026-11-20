@@ -17,7 +17,7 @@ use crate::editor::SlideEditor;
 /// 整列's 作業中のブックのウィンドウを整列する): the kind of file, its path, and the name the window goes by while the
 /// file has no path.
 pub struct WindowFile {
-    kind: ibis_pptx::Kind,
+    kind: ibis_formats::Kind,
     path: Option<PathBuf>,
     name: String,
 }

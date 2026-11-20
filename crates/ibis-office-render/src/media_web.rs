@@ -17,74 +17,26 @@ pub type Frame = Arc<RenderImage>;
 /// Frames wider than this are drawn smaller (reading back a 4K frame thirty times a second is not worth it).
 const MAX_FRAME_WIDTH: u32 = 1280;
 
-/// The element for `bytes`: `{ el, url }`, or `null` when the browser cannot play `mime`.
-const OPEN: &str = "
-const probe = document.createElement(video ? 'video' : 'audio');
-// Chrome does not list QuickTime but plays the H.264 movies in it: they are offered as MP4 (the bytes are the same container family).
-if (!probe.canPlayType(mime) && mime === 'video/quicktime') mime = 'video/mp4';
-if (!probe.canPlayType(mime)) return null;
-const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
-probe.src = url;
-probe.preload = 'auto';
-probe.playsInline = true;
-probe.loop = false;
-probe.__t = -1;
-// What the browser says when it cannot play (the element's error, a refused play()), and when the length is known: read by `Player`.
-probe.addEventListener('error', () => {
-  const e = probe.error;
-  probe.__err = e ? ('media error ' + e.code + (e.message ? ': ' + e.message : '')) : 'media error';
-});
-probe.addEventListener('loadedmetadata', () => { probe.__meta = true; });
-probe.load();
-return { el: probe, url };
-";
-
-/// The newest frame of `el` as `{ data, width, height }` (RGBA), or `null` when it has none that was not taken yet.
-const GRAB: &str = "
-if (el.readyState < 2 || !el.videoWidth) return null;
-if (el.currentTime === el.__t) return null;
-el.__t = el.currentTime;
-const k = Math.min(1, maxw / el.videoWidth);
-const w = Math.max(1, Math.round(el.videoWidth * k)), h = Math.max(1, Math.round(el.videoHeight * k));
-if (!el.__c || el.__c.width !== w || el.__c.height !== h) {
-  el.__c = new OffscreenCanvas(w, h);
-  el.__g = el.__c.getContext('2d', { willReadFrequently: true });
-}
-el.__g.drawImage(el, 0, 0, w, h);
-return { data: el.__g.getImageData(0, 0, w, h).data, width: w, height: h };
-";
-
-/// Plays `el`; a refusal is kept in `__err` for `Player::take_error` (the status bar says it).
-const PLAY: &str = "const p = el.play(); if (p && p.catch) p.catch((e) => { el.__err = 'play: ' + (e && e.name ? e.name : 'refused') + (e && e.message ? ' - ' + e.message : ''); });";
-
-/// Lets the element go: stopped, its Blob freed.
-const CLOSE: &str = "el.pause(); el.removeAttribute('src'); el.load(); URL.revokeObjectURL(url);";
-
-/// The width over the height of the video in `bytes`, from its metadata (`null` when the browser cannot read one in time).
-const ASPECT: &str = "return (async () => {
-  const v = document.createElement('video');
-  if (!v.canPlayType(mime) && mime === 'video/quicktime') mime = 'video/mp4';
-  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
-  try {
-    v.preload = 'metadata';
-    v.src = url;
-    await new Promise((resolve, reject) => { v.onloadedmetadata = resolve; v.onerror = reject; setTimeout(reject, 8000); });
-    return v.videoWidth > 0 && v.videoHeight > 0 ? v.videoWidth / v.videoHeight : null;
-  } catch (e) {
-    return null;
-  } finally {
-    v.removeAttribute('src');
-    v.load();
-    URL.revokeObjectURL(url);
-  }
-})();";
-
-thread_local! {
-    static ASPECT_FN: js_sys::Function = js_sys::Function::new_with_args("bytes,mime", ASPECT);
-    static OPEN_FN: js_sys::Function = js_sys::Function::new_with_args("bytes,mime,video", OPEN);
-    static GRAB_FN: js_sys::Function = js_sys::Function::new_with_args("el,maxw", GRAB);
-    static PLAY_FN: js_sys::Function = js_sys::Function::new_with_args("el", PLAY);
-    static CLOSE_FN: js_sys::Function = js_sys::Function::new_with_args("el,url", CLOSE);
+// The browser-side helpers are functions of `js/web_scripts.js` (no `new Function`: a host page's Content-Security-Policy has no `unsafe-eval`).
+#[wasm_bindgen::prelude::wasm_bindgen(module = "/js/web_scripts.js")]
+extern "C" {
+    /// The width over the height of the video in `bytes`, from its metadata (a promise of a number, or `null` when the browser cannot read one in time).
+    #[wasm_bindgen(thread_local_v2, js_name = aspectFn)]
+    static ASPECT_FN: js_sys::Function;
+    /// The element for `bytes`: `{ el, url }`, or `null` when the browser cannot play `mime`.
+    #[wasm_bindgen(thread_local_v2, js_name = openFn)]
+    static OPEN_FN: js_sys::Function;
+    /// The newest frame of `el` as `{ data, width, height }` (RGBA), or `null` when it has none that was not taken yet.
+    #[wasm_bindgen(thread_local_v2, js_name = grabFn)]
+    static GRAB_FN: js_sys::Function;
+    /// Plays `el`; a refusal is kept in `__err` for `Player::take_error` (the status bar says it).
+    #[wasm_bindgen(thread_local_v2, js_name = playFn)]
+    static PLAY_FN: js_sys::Function;
+    /// Lets the element go: stopped, its Blob freed.
+    #[wasm_bindgen(thread_local_v2, js_name = closeFn)]
+    static CLOSE_FN: js_sys::Function;
+    #[wasm_bindgen(thread_local_v2, js_name = canPlayFn)]
+    static CAN_PLAY_FN: js_sys::Function;
 }
 
 fn get(target: &JsValue, name: &str) -> JsValue {
@@ -101,11 +53,7 @@ fn ms(seconds: f64) -> u32 {
 
 /// Whether the browser can play content type `mime`.
 pub fn can_play(mime: &str) -> bool {
-    let probe = js_sys::Function::new_with_args(
-        "mime",
-        "const v = document.createElement('video'); return !!v.canPlayType(mime) || (mime === 'video/quicktime' && !!v.canPlayType('video/mp4'));",
-    );
-    probe.call1(&JsValue::NULL, &JsValue::from_str(mime)).ok().and_then(|v| v.as_bool()).unwrap_or(false)
+    CAN_PLAY_FN.with(|f| f.call1(&JsValue::NULL, &JsValue::from_str(mime))).ok().and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
 /// The width over the height of the video in `data`, as `media_player::video_aspect` gives it on the desktop; read from the metadata

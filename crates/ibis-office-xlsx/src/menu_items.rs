@@ -129,7 +129,7 @@ fn window_end(editor: &SlideEditor) -> Vec<MenuEntry> {
         // The workbook's `menus()` (`xlsx/toolbar.rs`) connects the panel of arranging the windows, hiding the window and
         // the panel of showing a hidden window.
         item("xlsx.arrange-all", "dashboard").into(),
-        item("xlsx.view-side-by-side", "splitscreen")
+        item("view.side-by-side", "splitscreen")
             .checked(editor.side_by_side)
             .on(|this, window, cx| {
                 this.toggle_view_side_by_side(window, cx);
@@ -195,7 +195,7 @@ fn data_menu() -> Vec<MenuEntry> {
         item("xlsx.named-ranges", "label").into(),
         item("xlsx.validation", "rule").into(),
         item("xlsx.validation.circle-invalid", "radio_button_unchecked").into(),
-        item("xlsx.validation.clear-circles", "clear").into(),
+        item("xlsx.validation.clear-circles", "close").into(),
         item("xlsx.split-text", "view_column").into(),
     ]
 }

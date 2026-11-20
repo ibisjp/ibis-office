@@ -16,7 +16,7 @@ fn paste(s: &mut Scenario, text: &str) {
 fn workbook() -> Scenario {
     let mut s = Scenario::start_view();
     s.size(1000., 700.);
-    s.update(|e, w, cx| e.new_file(ibis_pptx::Kind::Workbook, w, cx));
+    s.update(|e, w, cx| e.new_file(ibis_formats::Kind::Workbook, w, cx));
     s
 }
 fn cell_editor() {

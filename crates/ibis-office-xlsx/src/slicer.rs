@@ -54,7 +54,7 @@ impl SlideEditor {
                     let kept = slicer.items.iter().zip(selected).filter(|(_, s)| **s).map(|(i, _)| i.label.clone()).collect();
                     filter.columns.push((column, ColumnFilter::Values(kept)));
                 }
-                self.run_sheet(vec![Command::Sheet(SheetCommand::SetTableFilter { slide, index, filter: Some(filter) })], cx);
+                self.run_sheet(vec![Command::Sheet(SheetCommand::SetTableFilter { sheet: slide, index, filter: Some(filter) })], cx);
             }
             SlicerSource::Pivot { field, pivots } => {
                 for name in pivots {

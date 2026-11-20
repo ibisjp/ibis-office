@@ -9,7 +9,7 @@
 //! spec can be tested without a window. [`SlideEditor::context_state`] reads the selection of the open screen into
 //! the state; the lines of each menu are the tables of `menu_layout_data.rs` (`layout_context`).
 use gpui_kit::SharedString;
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 use crate::editor::SlideEditor;
 

@@ -32,6 +32,7 @@ tools.settings	Settings…
 help.search	Search Menus
 help.help	Help
 help.shortcuts	Keyboard Shortcuts
+help.source-code	Source Code (AGPL)…
 help.about	About ibisOffice
 file.new.document	Document
 file.new.workbook	Spreadsheet
@@ -678,6 +679,7 @@ align.right	Align Right
 align.justify	Justify
 status.hint.textbox	Click or drag on the slide to place a text box
 status.hint.esc	Press Esc to finish editing
+status.hint.shape	Click or drag to place the shape (Esc to cancel)
 _shell.chart-styles	Chart Styles
 file.protect	Protect with Password…
 _shell.password	Password
@@ -687,7 +689,7 @@ _shell.confirm-password	Confirm Password
 _shell.the-password-is-not-correct	The password is not correct
 _shell.enter-a-password	Enter a password
 _shell.the-passwords-do-not-match	The passwords do not match
-_shell.remove-password	Remove Password
+_shell.remove-password	&Remove Password
 OK	OK
 _shell.a-forgotten-password-cannot-be-recovered	A forgotten password cannot be recovered.
 _shell.password-required-to-open-the-file	Password required to open the file
@@ -773,7 +775,7 @@ settings.trust.links-warning	Show a warning bar when I open a workbook that link
 settings.trust.links-note	The values of the links stay as last saved. Update them with the bar or with Data > Workbook Links.
 settings.trust.macros	Macros
 settings.trust.macros-note	VBA macros are not run. A file with macros (.xlsm and the like) is saved with its macros as they are.
-settings.qat.note	Choose the commands to put in the title row above the toolbar, beside undo and redo. Only the commands the open document's menus have are shown.
+settings.qat.note	Choose the commands to put in the title row above the toolbar, beside undo and redo. The same for the three formats; a command a document does not have is not shown in it.
 settings.qat.order	Selected Commands (Order)
 settings.qat.add	Add
 settings.qat.remove	Remove
@@ -821,6 +823,7 @@ settings.view.scrollbars-always	Always show scroll bars
 file.save-format.docx	Word Document (.docx)
 file.save-format.dotx	Word Template (.dotx)
 file.save-format.odt	OpenDocument Text (.odt)
+file.save-format.md	Markdown Document (.md)
 file.save-format.xlsx	Excel Workbook (.xlsx)
 file.save-format.xltx	Excel Template (.xltx)
 file.save-format.xls	Excel 97-2003 Workbook (.xls)
@@ -936,6 +939,7 @@ shell.file-name-menu.copy-path	Copy File Path
 shell.file-name-menu.rename	Rename File…
 shell.file-name-menu.name-copied	Copied the file name
 shell.file-name-menu.path-copied	Copied the file path
+shell.file-name-menu.path-copy-failed	Could not copy (no permission for the clipboard)
 shell.file-name-menu.renamed	Renamed the file
 shell.rename-file.title	Rename File
 shell.rename-file.name	File name
@@ -1052,7 +1056,7 @@ menu.context.gone	The menu was closed because its target is gone
 menu.overflow	More menus
 window.list	Window List…
 window.next	Next Window
-window.prev	Previous Window
+window.previous	Previous Window
 window.current	Current window
 window.more	More Windows ({n})…
 sidebar.navigation	Navigation Pane
@@ -1063,7 +1067,7 @@ sidebar.cell-format	Format Cells
 sidebar.picture	Picture Settings
 sidebar.text-box	Text Box Settings
 sidebar.chart	Format Chart
-sidebar.frame	Size and Properties
+sidebar.frame	Format Shape
 sidebar.table-design	Table Design
 sidebar.pivot-fields	PivotTable Fields
 sidebar.tabs	Tabs and Leaders
@@ -1088,6 +1092,8 @@ sidebar.spelling	Spelling and Grammar
 sidebar.thesaurus	Thesaurus
 sidebar.word-count	Word Count
 sidebar.accessibility	Accessibility Checker
+sidebar.machine-readability	Digital Agency: Machine Readability Check
+sidebar.filter	Filter
 sidebar.screen-reader	Screen Reader Navigation
 sidebar.read-aloud	Read Aloud
 sidebar.ink	Ink
@@ -1134,10 +1140,6 @@ window.tile-side-by-side	Tile Side by Side
 window.tile-stacked	Tile Top to Bottom
 window.bring-all-front	Bring All to Front
 window.close-all	Close All Documents
-color.editor.cyan	Cyan
-color.editor.magenta	Magenta
-color.editor.yellow	Yellow
-color.editor.black	Black
 shell.infobar.cmyk.title	CMYK
 shell.infobar.cmyk.hint.message	To show colors close to print, choose a profile (ICC). A simple conversion is being used now.
 shell.infobar.cmyk.missing.message	This file uses {name}. It was not found.
@@ -1158,8 +1160,12 @@ shell.cmyk.profile.none-found	No CMYK profile found on this computer (searched: 
 shell.cmyk.profile.web-note	The browser cannot look for profiles on this computer. The file you choose is kept in this browser.
 shell.action.cancel	Cancel
 shell.ibis-ext.title	ibisOffice feature
-shell.ibis-ext.message	This feature is not in PowerPoint. Do you want to turn it on?
-color.dialog.cmyk-mode	CMYK mode (print gamut)
+shell.ibis-ext.message	This feature is not in Microsoft Office. Do you want to turn it on?
+view.print-colors	Show in Print Colors
+shell.print.cmyk-heading	Colour (CMYK)
+shell.print.cmyk-mode	CMYK mode (print gamut)
+shell.print.cmyk-note	The screen shows colours as they look when printed. The printer driver does the conversion to CMYK.
+shell.print.save-settings	Save settings
 shell.find.previous-tip	Previous
 shell.find.next-tip	Next
 shell.find.all-tip	Find All
@@ -1168,6 +1174,12 @@ settings.spreadsheet	Spreadsheet
 settings.spreadsheet.formula-bar-font	Formula bar font for letters and digits
 settings.spreadsheet.formula-bar-font-note	The font for letters and digits in the formula bar, for example one that tells a full stop from a comma. Characters the chosen font lacks, such as Japanese, are shown in the usual font.
 settings.spreadsheet.formula-bar-font-default	Default (the app font)
+settings.spreadsheet.csv	When opening CSV, TSV and text files
+settings.spreadsheet.csv-font	Display font
+settings.spreadsheet.csv-font-default	Default (Yu Gothic)
+settings.spreadsheet.csv-font-size	Font size
+settings.spreadsheet.csv-font-size-unit	pt
+settings.spreadsheet.csv-note	The font and size the cells are shown in when a CSV (csv, tsv, txt) file is opened. Files already open do not change.
 shell.font-setup.title	Setup
 shell.font-setup.heading	Download Fonts
 shell.font-setup.col.name	Font Name
@@ -1185,3 +1197,207 @@ shell.font-setup.progress	Downloading {name} ({index}/{count}, {received} / {tot
 shell.font-setup.failed	{name} could not be installed ({count} failed). {error}
 shell.font-setup.cancelled	Cancelled.
 shell.font-setup.done	Installed. The fonts are in the font lists now.
+shell.panel-message.title	Message
+shell.host.saving	Saving…
+shell.host.exported	Exported
+shell.host.error-title	Could not save
+shell.host.error-save-as	Could not save. Please use Save As.
+shell.host.error-network	Cannot communicate with the server. Please try saving again when the connection is back.
+shell.host.error-network-status	Cannot communicate with the server. Please try saving again when the connection is back.
+shell.host.error-unauthorized	Your sign-in has expired. Please sign in again and then save.
+shell.host.error-exists	A file with the same name already exists. Please change the name.
+shell.host.error-too-large	The file is too large to save.
+shell.host.error-other	Could not save.
+shell.host-file.title-open	Open
+shell.host-file.title-save-as	Save As
+shell.host-file.title-copy	Save a Copy
+shell.host-file.title-export	Export
+shell.host-file.more	Show more…
+shell.host-file.deferred	Show the rest
+shell.host-file.deferred-loading	Fetching...
+shell.host-file.deferred-empty	There were no other joined folders.
+shell.host-file.loading	Loading…
+shell.host-file.empty	No files
+shell.host-file.col.folders	Folders
+shell.host-file.col.name	Name
+shell.host-file.col.updated	Date modified
+shell.host-file.col.size	Size
+shell.host-file.file-name	File name
+shell.host-file.file-type	File type
+shell.host-file.type-docx	Word Document (*.docx)
+shell.host-file.type-xlsx	Excel Workbook (*.xlsx)
+shell.host-file.type-pptx	PowerPoint Presentation (*.pptx)
+shell.host-file.open	Open
+shell.host-file.opening	Opening…
+shell.host-file.save	Save
+shell.host-file.export	Export
+shell.host-file.open-local	Open from local storage
+shell.host-file.save-local	Save to local (download)
+shell.host-file.error-empty	Enter a file name
+shell.host-file.error-char	The file name has a character that cannot be used: {char}
+shell.host-file.error-end	A file name cannot start with a space or end with a period
+shell.host-file.error-long	The file name is too long
+shell.host-file.error-list	Could not get the list
+shell.host-file.error-open-title	Could not open
+shell.host-file.error-open	Could not open the file.
+shell.host-file.error-no-permission	Cannot save in this folder (no permission to write)
+shell.host-file.overwrite-title	Confirm overwrite
+shell.host-file.overwrite	{name} already exists. Do you want to replace it?
+shell.file-name-menu.get-path	Get Path
+shell.host-file.error-rename	Could not rename the file.
+shell.host-file.error-path-title	Cannot get the path
+shell.host-file.error-path	Could not get the path.
+shell.infobar.host.readonly.title	Read-only
+shell.infobar.host.readonly.message	This document is read-only.
+shell.infobar.host.save-as	Save As
+shell.infobar.host.notice.title	Notice
+shell.infobar.host.notice.message	A notice from the host.
+shell.infobar.host.notice.error	Error
+shell.infobar.host.notice.warn	Warning
+shell.infobar.host.notice.info	Notice
+shell.web-pdf.making	Making the PDF…
+shell.web-pdf.exported	Exported to PDF
+shell.web-pdf.print-opened	The PDF was opened in a new tab. Print it from the browser
+shell.web-pdf.pictures-skipped	In the browser version the print settings for colour, frame, handouts, notes and outline do not apply to the PDF. The pages were made as they are
+shell.web-pdf.missing-glyphs	Could not get the font data, so {count} characters are missing from the PDF
+shell.host.export-not-allowed	Exporting in this format is turned off.
+shell.infobar.signature.title	Digital Signature
+shell.infobar.signature.message	This document has digital signatures. Editing and saving it will remove them.
+shell.infobar.signature.inspect	Check Signatures…
+shell.signature.confirm.title	Digital Signature
+shell.signature.confirm.save	This document has digital signatures. Saving will remove the digital signatures. Do you want to continue?
+shell.signature.confirm.export	This document has digital signatures. A file you export or save in another format will not carry them. Do you want to continue?
+shell.signature.report.title	Check Digital Signatures
+shell.signature.report.none	This file has no digital signatures.
+shell.signature.report.broken	The digital signatures are stored incorrectly ({reason}).
+shell.signature.report.head	Signature {n} ({part}): {result}
+shell.signature.report.signer	  Signer (name written in the certificate): {name}
+shell.signature.report.value	  Signature value: {state}
+shell.signature.report.digests	  Digests of the signed parts: {matched} of {total} match
+shell.signature.report.detail	  - {what}: {state}
+shell.signature.report.more	  - and {count} more
+shell.signature.report.notice	Only the signature value and the digests of the parts the signature covers were compared. The certificate's trust and revocation, time stamps, and whether the signature covers the whole document were not checked, so this is not a judgment that the signature is valid. To check the document after editing, save it and open the saved file again.
+shell.signature.result.consistent	the signature value and digests match
+shell.signature.result.mismatch	something does not match (the file may have been changed after it was signed)
+shell.signature.result.unsupported	an algorithm or transform is not supported, so some parts could not be checked
+shell.signature.result.uninspectable	some parts could not be checked
+shell.signature.result.malformed	the signature is malformed ({reason})
+shell.signature.check.match	matches
+shell.signature.check.mismatch	does not match
+shell.signature.check.part-missing	the part is missing
+shell.signature.check.unsupported	not supported ({what})
+shell.signature.check.uninspectable	cannot be checked ({reason})
+shell.signature.reason.external	it points outside the file; it is not fetched
+shell.signature.reason.no-key	the signature has no certificate or key
+shell.signature.reason.bad-key	the certificate cannot be read
+shell.signature.reason.target-missing	the target does not exist
+shell.signature.reason.not-xml	it is not XML
+shell.signature.malformed.relationships	a relationships part cannot be read
+shell.signature.malformed.origin-missing	there are signature parts but no relationship to the signature origin
+shell.signature.malformed.origin-part-missing	the signature origin part is missing
+shell.signature.malformed.signature-part-missing	a signature part is missing
+shell.signature.malformed.unreadable	the signature part cannot be read
+shell.signature.malformed.xml	the signature is not well-formed XML
+shell.signature.malformed.not-signature	the root is not a Signature element
+shell.signature.malformed.no-signed-info	SignedInfo is missing
+shell.signature.malformed.no-signature-value	SignatureValue is missing
+shell.signature.malformed.no-reference	there is no Reference
+shell.signature.malformed.bad-reference	a Reference has no DigestMethod or DigestValue
+shell.signature.malformed.bad-base64	the signature value or a digest is not base64
+shell.infobar.signature.message-viewer	This file has digital signatures. It is shown as it is and is not changed here.
+shell.signature.report.pdf-signer	  Signer (name written in the signature field): {name}
+shell.signature.report.pdf-reason	  Reason: {reason}
+shell.signature.report.pdf-format	  Signature format: {name}
+shell.signature.report.pdf-notice	Only the structure was compared: whether the byte range the signature covers fits the file and whether the file was added to after it was signed. The signature value (the certificate's signature), the certificate's trust and revocation, and time stamps were not checked, so this is not a judgment that the signature is valid.
+shell.signature.report.xps-count	This file has {count} digital signature(s). Their values and digests were not compared.
+shell.signature.result.pdf-whole	the signed range covers the whole file
+shell.signature.result.pdf-later	the file was added to after it was signed (revision {revision}, {count} object(s) changed)
+shell.signature.result.pdf-invalid	the signed range is malformed or does not fit the file
+shell.signature.report.ofd-algorithms	  Algorithms: signature {sig}, digest {check}
+toolbar.scene.doc.none	None
+toolbar.scene.doc.table	Table
+toolbar.scene.doc.image	Picture
+toolbar.scene.sheet.cell	Cells
+toolbar.scene.slide.none	None
+toolbar.scene.slide.shape	Shape
+toolbar.scene.slide.image	Picture
+toolbar.scene.slide.video	Video
+toolbar.scene.slide.line	Line
+toolbar.scene.slide.table	Table
+settings.document	Document
+settings.presentation	Presentation
+settings.toolbar	Toolbar
+settings.toolbar.note	Choose and reorder the buttons on the toolbar of this kind of file, for each context.
+settings.toolbar.customize	Customize Toolbar
+settings.toolbar.default	Default
+settings.toolbar.customized	Customized
+toolbar.customize.context	Context
+toolbar.customize.font-size	Font Size
+toolbar.customize.commands	Commands
+toolbar.customize.search	Search commands
+toolbar.customize.count	{n} found
+toolbar.customize.order	Toolbar Order
+toolbar.customize.add-separator	Add Separator
+toolbar.customize.separator	Separator
+toolbar.customize.reset	Reset
+toolbar.customize.reset-scene	Reset This Context
+toolbar.customize.reset-all	Reset All Contexts
+toolbar.customize.undo	Undo
+toolbar.customize.redo	Redo
+toolbar.customize.add	Add
+toolbar.customize.remove	Remove
+toolbar.customize.added	Added
+toolbar.customize.hide-added	Hide added commands
+toolbar.customize.preview	Preview
+toolbar.customize.changed	Modified
+toolbar.customize.empty	Add commands from the list on the left.
+toolbar.customize.no-hit	No command matches "{q}".
+toolbar.customize.menu-button	Placed as a menu button (▼) that opens the submenu
+toolbar.customize.toolbar-buttons	Toolbar Buttons
+toolbar.customize.unknown-default	The default order of this context is known once a document in that state has been open.
+toolbar.customize.popular	Common Commands
+toolbar.customize.set.align-h	Horizontal Alignment (left, centre, right and ▼)
+toolbar.customize.set.align-v	Vertical Alignment (top, middle, bottom and ▼)
+toolbar.customize.all-scenes	Add to all contexts
+settings.qat.customize	Customize Quick Access Toolbar
+review.accessibility-check	Check Accessibility…
+review.compatibility-check	Check Compatibility…
+edit.go-to	Go To…
+page.paper-a3	A3 (297 x 420 mm)
+page.paper-a4	A4 (210 x 297 mm)
+page.paper-b5	B5 (182 x 257 mm)
+arrange.send-to-back	Send to Back
+arrange.send-backward	Send Backward
+arrange.bring-forward	Bring Forward
+arrange.bring-to-front	Bring to Front
+insert.signature-line	Signature Line…
+table.banded-columns	Banded Columns
+table.first-column	First Column
+table.header-row	Header Row
+table.last-column	Last Column
+table.total-row	Total Row
+table.banded-rows	Banded Rows
+view.side-by-side	View Side by Side
+arrange.align-bottom	Align Bottom
+arrange.align-center	Align Center
+arrange.align-left	Align Left
+arrange.align-middle	Align Middle
+arrange.align-right	Align Right
+arrange.align-top	Align Top
+shell.pdf.signatures	Signatures: {count}
+shell.pdf.signatures-mismatch	Signatures: {count} (altered or mismatched)
+shell.pdf.signatures-verified	Signatures: {count} (verified with SM3 and SM2)
+shell.pdf.signatures-digests	Signatures: {count} (SM3 digests match)
+window.open-pdf-in-preview	Open in Preview
+window.open-pdf-in-edge	Open in Microsoft Edge
+shell.pdf.page-number	Page number
+shell.pdf.page-of	/ {total}
+shell.pdf.go	Go
+file.new-document	New Document
+file.new-workbook	New Spreadsheet
+file.new-presentation	New Presentation
+file.close-window	Close Window
+window.minimize	Minimize
+app.services	Services
+app.hide	Hide ibisOffice
+file.copy-download	Save a Copy (Download)

@@ -4,7 +4,7 @@
 //! ibisOffice's own text features PowerPoint does not have (`ibis_doc_model::ibis_text`): text wrap round pictures and
 //! videos (GitHub issue #132) and linked text boxes (#131).
 //!
-//! A file uses them only once the user said yes to the question "この機能は PowerPoint にない機能です。有効にしますか？"
+//! A file uses them only once the user said yes to the question "この機能は Microsoft Office にない機能です。有効にしますか？"
 //! (`SlideEditor::require_ibis_extensions`); the answer is kept in the file.
 
 use ibis_doc_model::{Command, Emu, ObjectWrap, ObjectWrapKind, ShapeId, ShapeKind};

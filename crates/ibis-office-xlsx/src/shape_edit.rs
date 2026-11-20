@@ -22,18 +22,11 @@ pub(crate) fn sheet_text_style() -> TextStyle {
     TextStyle { font_size: 1100, ..TextStyle::default() }
 }
 
-/// Default preset shapes available in the worksheet Insert > Shapes menu:
-/// (preset, item id, label, icon).
-pub(crate) const SHEET_SHAPES: &[(&str, &str, &str, &str)] = &[
-    ("rect", "xlsx.shape.rect", "", "rectangle"),
-    ("roundRect", "xlsx.shape.round-rect", "", "rounded_corner"),
-    ("ellipse", "xlsx.shape.ellipse", "", "circle"),
-    ("triangle", "xlsx.shape.triangle", "", "change_history"),
-    ("rightArrow", "xlsx.shape.right-arrow", "", "arrow_forward"),
-    ("star5", "xlsx.shape.star5", "", "star"),
-    ("wedgeRectCallout", "xlsx.shape.callout", "", "chat_bubble"),
-    ("heart", "xlsx.shape.heart", "", "favorite"),
-];
+/// The size of a shape put by a click, and of a text box (EMU): Excel's usual ones for a click are about this.
+pub(crate) const SHEET_SHAPE_SIZE: (i64, i64) = (2_000_000, 1_200_000);
+pub(crate) const SHEET_TEXT_BOX_SIZE: (i64, i64) = (2_000_000, 1_000_000);
+/// The height an elbow or curved connector put by a click bends in (EMU).
+const SHEET_CONNECTOR_BEND_HEIGHT: i64 = 1_000_000;
 
 #[ibis_office_macros::editor_ext(ShapeEdit)]
 impl SlideEditor {
@@ -51,10 +44,64 @@ impl SlideEditor {
         }
     }
 
+    /// Insert > a shape, a line or a text box: the insert mode (the shell's `Tool`, as the 文書画面 and プレゼンテーション画面 have it).
+    /// The pointer is a cross; the drag from the mouse-down to the mouse-up point draws the object in that box (`finish_sheet_insert`),
+    /// a click puts it at its usual size, Esc drops the drag, and a second Esc leaves the mode (K0035).
+    pub fn begin_sheet_insert(&mut self, tool: crate::shell::editor::Tool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_read_only() {
+            return;
+        }
+        self.set_tool(tool, window, cx);
+    }
+
+    /// The mouse went up in the insert mode: the object takes the box of the drag (from the point pressed to the point released,
+    /// in the sheet's coordinates; the two-cell anchor of the file is made of it when it is saved). Whether the drag was the mode's.
+    pub(crate) fn finish_sheet_insert(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        use crate::shell::editor::{Drag, Tool};
+        let tool = self.tool;
+        if !matches!(tool, Tool::TextBox | Tool::Shape(_) | Tool::Line { .. }) {
+            return false;
+        }
+        let Some(Drag::Create { start, current }) = self.drag.take() else { return false };
+        self.tool = Tool::Select;
+        let Some(layout) = self.sheet_layout_at(start) else {
+            cx.notify();
+            return true;
+        };
+        let (a, b) = (layout.to_emu(start), layout.to_emu(current));
+        let dragged = (current.x - start.x).abs() >= px(crate::shell::editor::DRAG_THRESHOLD) || (current.y - start.y).abs() >= px(crate::shell::editor::DRAG_THRESHOLD);
+        match tool {
+            Tool::Shape(preset) => {
+                let frame = if dragged { crate::shell::interaction::drawn_frame(a, b, event.modifiers.shift) } else { EmuRect::new(a.x, a.y, SHEET_SHAPE_SIZE.0, SHEET_SHAPE_SIZE.1) };
+                self.insert_sheet_shape_in(preset, frame, cx);
+            }
+            Tool::TextBox => {
+                let frame = if dragged { crate::shell::interaction::drawn_frame(a, b, false) } else { EmuRect::new(a.x, a.y, SHEET_TEXT_BOX_SIZE.0, SHEET_TEXT_BOX_SIZE.1) };
+                self.insert_sheet_textbox_in(frame, window, cx);
+            }
+            Tool::Line { kind, arrow } => {
+                let (frame, flip_h, flip_v) = if dragged {
+                    crate::shell::interaction::line_frame(a, b, event.modifiers.shift && kind == crate::shell::shape_items::LineKind::Straight)
+                } else {
+                    let height = if kind == crate::shell::shape_items::LineKind::Straight { 0 } else { SHEET_CONNECTOR_BEND_HEIGHT };
+                    (EmuRect::new(a.x, a.y, SHEET_SHAPE_SIZE.0, height), false, false)
+                };
+                self.insert_sheet_connector_in(frame, flip_h, flip_v, kind, arrow, cx);
+            }
+            Tool::Select => {}
+        }
+        cx.notify();
+        true
+    }
+
     /// Insert a text box on the worksheet at the current selection.
     pub fn insert_sheet_textbox(&mut self, window: &mut Window, cx: &mut Context<Self>) -> ShapeId {
         let (x, y) = self.sheet_insertion_origin();
-        let frame = EmuRect::new(x, y, 2_000_000, 1_000_000);
+        self.insert_sheet_textbox_in(EmuRect::new(x, y, SHEET_TEXT_BOX_SIZE.0, SHEET_TEXT_BOX_SIZE.1), window, cx)
+    }
+
+    /// Insert a text box on the worksheet in `frame`.
+    pub(crate) fn insert_sheet_textbox_in(&mut self, frame: EmuRect, window: &mut Window, cx: &mut Context<Self>) -> ShapeId {
         let id = self.document.ids().new_shape_id();
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
@@ -63,7 +110,7 @@ impl SlideEditor {
         let mut auto = ibis_doc_model::AutoShape::text_box(Fill::Solid(Color::opaque(ibis_doc_model::Rgb(NEW_TEXT_BOX_FILL))), body);
         auto.stroke = Some(Stroke::solid(Color::BLACK, NEW_TEXT_BOX_LINE_WIDTH));
         let shape = Shape::new(id, frame, ShapeKind::Auto(auto));
-        self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
+        self.run_sheet(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }], cx);
         self.set_selection(vec![id]);
         self.begin_edit(id, false, window, cx);
         cx.notify();
@@ -188,7 +235,7 @@ impl SlideEditor {
                 let mut body = TextBody::plain("", sheet_text_style());
                 mutator(&mut body);
                 next_auto.text = Some(body);
-                commands.push(Command::SetKind {
+                commands.push(Command::SetShapeKind {
                     slide,
                     shape: shape_id,
                     kind: Box::new(ShapeKind::Auto(next_auto)),
@@ -228,7 +275,7 @@ impl SlideEditor {
             {
                 let mut next_auto = auto;
                 next_auto.text = Some(TextBody::plain("", sheet_text_style()));
-                commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                commands.push(Command::SetShapeKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
             }
             let char_len = self
                 .slide()
@@ -307,7 +354,7 @@ impl SlideEditor {
             {
                 let mut next_auto = auto;
                 next_auto.text = Some(TextBody::plain("", sheet_text_style()));
-                commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                commands.push(Command::SetShapeKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
             }
             let char_len = self
                 .slide()
@@ -454,7 +501,7 @@ impl SlideEditor {
                 self.fill_sheet_shape(Fill::Solid(Color::opaque(*rgb)), cx);
                 return true;
             }
-            StyleChange::Vertical(v) => {
+            StyleChange::VerticalAlignment(v) => {
                 let anchor = match v {
                     CellVerticalAlign::Top => VerticalAnchor::Top,
                     CellVerticalAlign::Center => VerticalAnchor::Middle,
@@ -473,7 +520,7 @@ impl SlideEditor {
                         let mut body = TextBody::plain("", sheet_text_style());
                         body.anchor = anchor;
                         next_auto.text = Some(body);
-                        commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                        commands.push(Command::SetShapeKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
                     }
                 }
                 if !commands.is_empty() {
@@ -481,7 +528,7 @@ impl SlideEditor {
                 }
                 return true;
             }
-            StyleChange::Wrap(wrap) => {
+            StyleChange::WrapText(wrap) => {
                 let mut commands = Vec::new();
                 for &(shape_id, _) in &targets {
                     if let Some(body) = self.slide().shape(shape_id).and_then(|s| s.text_body()).cloned() {
@@ -493,7 +540,7 @@ impl SlideEditor {
                         let mut body = TextBody::plain("", sheet_text_style());
                         body.wrap = *wrap;
                         next_auto.text = Some(body);
-                        commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                        commands.push(Command::SetShapeKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
                     }
                 }
                 if !commands.is_empty() {
@@ -501,7 +548,7 @@ impl SlideEditor {
                 }
                 return true;
             }
-            StyleChange::Align(cell_align) => {
+            StyleChange::HorizontalAlignment(cell_align) => {
                 let align = match cell_align {
                     CellAlign::Left | CellAlign::General | CellAlign::Fill => TextAlign::Left,
                     CellAlign::Center | CellAlign::CenterAcross => TextAlign::Center,
@@ -520,7 +567,7 @@ impl SlideEditor {
                         let mut style = sheet_text_style();
                         style.align = align;
                         next_auto.text = Some(TextBody::plain("", style));
-                        commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                        commands.push(Command::SetShapeKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
                     }
                     let char_len = self.slide().shape(shape_id).and_then(|s| s.text_body()).map_or(0, |b| b.text().chars().count());
                     let (start, end) = if from < to { (from, to) } else { (0, char_len) };
@@ -541,7 +588,7 @@ impl SlideEditor {
                 self.run_sheet(commands, cx);
                 return true;
             }
-            StyleChange::Indent(_) => {
+            StyleChange::IndentLevel(_) => {
                 return self.step_sheet_shape_indent(true, cx);
             }
             _ => {}
@@ -602,7 +649,7 @@ impl SlideEditor {
                     format.underline_kind = Some(Underline::Single);
                 }
             },
-            StyleChange::Strike(_) => {
+            StyleChange::Strikethrough(_) => {
                 format.strike = Some(if !cur_strike { Strike::Single } else { Strike::None });
             }
             StyleChange::FontSize(s) => format.font_size = Some(*s),
@@ -634,7 +681,7 @@ impl SlideEditor {
                     style.color = c;
                 }
                 next_auto.text = Some(TextBody::plain("", style));
-                commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                commands.push(Command::SetShapeKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
             }
             let char_len = self.slide().shape(shape_id).and_then(|s| s.text_body()).map_or(0, |b| b.text().chars().count());
             let (start, end) = if from < to { (from, to) } else { (0, char_len) };
@@ -702,7 +749,7 @@ impl SlideEditor {
                     let mut style = sheet_text_style();
                     style.font_size = ibis_doc_model::step_font_size(style.font_size, larger);
                     next_auto.text = Some(TextBody::plain("", style));
-                    commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                    commands.push(Command::SetShapeKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
                 }
                 continue;
             };
@@ -807,7 +854,7 @@ impl SlideEditor {
             {
                 let mut next_auto = auto;
                 next_auto.text = Some(TextBody::plain("", sheet_text_style()));
-                commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
+                commands.push(Command::SetShapeKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(next_auto)) });
             }
             let char_len = shape.text_body().map_or(0, |b| b.text().chars().count());
             let (start, end) = if range.start < range.end { (range.start, range.end) } else { (0, char_len) };
@@ -831,12 +878,16 @@ impl SlideEditor {
     /// Insert an auto shape preset on the worksheet.
     pub fn insert_sheet_shape(&mut self, preset: &str, cx: &mut Context<Self>) -> ShapeId {
         let (x, y) = self.sheet_insertion_origin();
-        let frame = EmuRect::new(x, y, 2_000_000, 1_200_000);
+        self.insert_sheet_shape_in(preset, EmuRect::new(x, y, SHEET_SHAPE_SIZE.0, SHEET_SHAPE_SIZE.1), cx)
+    }
+
+    /// Insert an auto shape preset on the worksheet in `frame`.
+    pub(crate) fn insert_sheet_shape_in(&mut self, preset: &str, frame: EmuRect, cx: &mut Context<Self>) -> ShapeId {
         let id = self.document.ids().new_shape_id();
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
         let shape = crate::shell::shape_items::new_shape(id, preset, frame);
-        self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
+        self.run_sheet(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }], cx);
         self.set_selection(vec![id]);
         cx.notify();
         id
@@ -844,13 +895,25 @@ impl SlideEditor {
 
     /// Insert a line or arrow line on the worksheet.
     pub(crate) fn insert_sheet_line(&mut self, arrow: bool, cx: &mut Context<Self>) -> ShapeId {
+        use crate::shell::shape_items::{ArrowKind, LineKind};
+        self.insert_sheet_connector(LineKind::Straight, if arrow { ArrowKind::Single } else { ArrowKind::None }, cx)
+    }
+
+    /// Insert a line or connector (straight, elbow or curved) with its arrow heads on the worksheet (挿入 > 図形, K0031).
+    pub(crate) fn insert_sheet_connector(&mut self, kind: crate::shell::shape_items::LineKind, arrow: crate::shell::shape_items::ArrowKind, cx: &mut Context<Self>) -> ShapeId {
         let (x, y) = self.sheet_insertion_origin();
-        let frame = EmuRect::new(x, y, 2_000_000, 0);
+        // A straight line has no height; an elbow or a curve needs one to bend in.
+        let height = if kind == crate::shell::shape_items::LineKind::Straight { 0 } else { SHEET_CONNECTOR_BEND_HEIGHT };
+        self.insert_sheet_connector_in(EmuRect::new(x, y, SHEET_SHAPE_SIZE.0, height), false, false, kind, arrow, cx)
+    }
+
+    /// Insert a line or connector on the worksheet in `frame` (`flip_h`, `flip_v`: it runs up or to the left).
+    pub(crate) fn insert_sheet_connector_in(&mut self, frame: EmuRect, flip_h: bool, flip_v: bool, kind: crate::shell::shape_items::LineKind, arrow: crate::shell::shape_items::ArrowKind, cx: &mut Context<Self>) -> ShapeId {
         let id = self.document.ids().new_shape_id();
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
-        let shape = crate::shell::shape_items::new_line(id, frame, false, false, arrow);
-        self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
+        let shape = crate::shell::shape_items::new_connector(id, frame, flip_h, flip_v, kind, arrow);
+        self.run_sheet(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }], cx);
         self.set_selection(vec![id]);
         cx.notify();
         id
@@ -900,7 +963,7 @@ impl SlideEditor {
         if paste{self.position_sheet_paste(std::slice::from_mut(&mut shape),stamp);}
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
-        self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
+        self.run_sheet(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }], cx);
         self.set_selection(vec![id]);
         cx.notify();
         Some(id)
@@ -987,8 +1050,8 @@ impl SlideEditor {
             let initial_frame = EmuRect::new(0, 0, (w as i64 * 9525).max(1), (h as i64 * 9525).max(1));
             let shape = Shape::new(id, initial_frame, ShapeKind::Picture(picture));
             let index = self.slide().shapes.len() + i;
-            commands.push(Command::InsertShape { slide, index, shape });
-            commands.push(Command::Sheet(SheetCommand::PlacePictureInCell { slide, shape: id, row, column }));
+            commands.push(Command::InsertShape { slide, shapes: vec![(index, shape)] });
+            commands.push(Command::Sheet(SheetCommand::PlacePictureInCell { sheet: slide, shape: id, row, column }));
         }
         if !commands.is_empty() {
             self.run_sheet(commands, cx);
@@ -1054,7 +1117,7 @@ impl SlideEditor {
         } else {
             self.current_cell().unwrap_or((0, 0))
         };
-        self.run_sheet(vec![Command::Sheet(SheetCommand::PlacePictureInCell { slide, shape: shape_id, row, column: col })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::PlacePictureInCell { sheet: slide, shape: shape_id, row, column: col })], cx);
         cx.notify();
     }
 
@@ -1070,12 +1133,12 @@ impl SlideEditor {
         let col = xs.windows(2).position(|w| x_pos >= w[0] && x_pos < w[1]).map(|i| i as u32).unwrap_or(0);
         let row = ys.windows(2).position(|w| y_pos >= w[0] && y_pos < w[1]).map(|i| i as u32).unwrap_or(0);
 
-        let mut commands = vec![Command::Sheet(SheetCommand::PlacePictureOverCells { slide, shape: shape_id, row, column: col })];
+        let mut commands = vec![Command::Sheet(SheetCommand::PlacePictureOverCells { sheet: slide, shape: shape_id, row, column: col })];
         if shape.frame.width < 1_428_750 || shape.frame.height < 1_428_750 {
             let mut enlarged = shape.frame;
             enlarged.width = enlarged.width.max(1_428_750);
             enlarged.height = enlarged.height.max(1_428_750);
-            commands.push(Command::SetFrame { slide, shape: shape_id, frame: enlarged });
+            commands.push(Command::SetFrame { slide, frames: vec![(shape_id, enlarged)], with_attached: true });
         }
         self.run_sheet(commands, cx);
         self.set_selection(vec![shape_id]);
@@ -1168,7 +1231,7 @@ impl SlideEditor {
         }
 
         if new_frame != target.frame {
-            self.run_sheet(vec![Command::SetFrame { slide, shape: shape_id, frame: new_frame }], cx);
+            self.run_sheet(vec![Command::SetFrame { slide, frames: vec![(shape_id, new_frame)], with_attached: true }], cx);
         }
     }
 
@@ -1194,7 +1257,7 @@ impl SlideEditor {
                 if shape.frame.x != target_x {
                     let mut frame = shape.frame;
                     frame.x = target_x;
-                    commands.push(Command::SetFrame { slide, shape: shape.id, frame });
+                    commands.push(Command::SetFrame { slide, frames: vec![(shape.id, frame)], with_attached: true });
                 }
                 at += shape.frame.width as f64 + gap;
             }
@@ -1215,7 +1278,7 @@ impl SlideEditor {
                 if shape.frame.y != target_y {
                     let mut frame = shape.frame;
                     frame.y = target_y;
-                    commands.push(Command::SetFrame { slide, shape: shape.id, frame });
+                    commands.push(Command::SetFrame { slide, frames: vec![(shape.id, frame)], with_attached: true });
                 }
                 at += shape.frame.height as f64 + gap;
             }
@@ -1351,7 +1414,7 @@ impl SlideEditor {
             }
             let mut new_auto = auto.clone();
             new_auto.shadow = shadow;
-            commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(new_auto)) });
+            commands.push(Command::SetShapeKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Auto(new_auto)) });
         }
         if !commands.is_empty() {
             self.run_sheet(commands, cx);
@@ -1407,7 +1470,7 @@ impl SlideEditor {
     /// テキストボックス・図形内の文字の取り消し線をトグル.
     pub(crate) fn format_sheet_text_strikethrough(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let _ = window;
-        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::Strike(true), cx);
+        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::Strikethrough(true), cx);
     }
 
     /// テキストボックス・図形内の文字色を変更.
@@ -1432,7 +1495,7 @@ impl SlideEditor {
             ibis_doc_model::TextAlign::Justify => ibis_doc_model::CellAlign::Justify,
             ibis_doc_model::TextAlign::Distributed => ibis_doc_model::CellAlign::Distributed,
         };
-        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::Align(cell_align), cx);
+        self.format_sheet_shape_text(&ibis_doc_model::StyleChange::HorizontalAlignment(cell_align), cx);
     }
 
     /// テキストボックス・図形の上下方向（垂直）の配置を変更.
@@ -1511,7 +1574,7 @@ impl SlideEditor {
 
     /// 選択中の図形の形状（プリセット geometry）を変更する (XLSX-OBJECT-002).
     pub(crate) fn change_sheet_shape(&mut self, preset: &str, cx: &mut Context<Self>) {
-        let Some(geometry) = ibis_pptx::preset_geometry(preset) else { return };
+        let Some(geometry) = ibis_formats::preset_geometry(preset) else { return };
         let slide = self.current_slide;
         let mut ids = self.selected_ids();
         if ids.is_empty() {
@@ -1526,7 +1589,7 @@ impl SlideEditor {
                 ShapeKind::Auto(a) if a.geometry != geometry => {
                     let mut next = a.clone();
                     next.geometry = geometry.clone();
-                    commands.push(Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(next)) });
+                    commands.push(Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(next)) });
                 }
                 ShapeKind::TextBox(tb) => {
                     let auto = ibis_doc_model::AutoShape {
@@ -1542,7 +1605,7 @@ impl SlideEditor {
                         reflection: None,
                         bevel: None,
                     };
-                    commands.push(Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(auto)) });
+                    commands.push(Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(auto)) });
                 }
                 _ => {}
             }
@@ -1590,7 +1653,7 @@ impl SlideEditor {
                                 let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Svg, png.clone());
                                 self.resources.add_picture(media, ibis_doc_model::MediaFormat::Svg, &png);
                                 pic.media = media;
-                                commands.push(Command::SetKind {
+                                commands.push(Command::SetShapeKind {
                                     slide: slide_id,
                                     shape: shape_id,
                                     kind: Box::new(ShapeKind::Picture(pic)),
@@ -1598,11 +1661,7 @@ impl SlideEditor {
                                 let (w_emu, h_emu) = super::copy_picture::sheet_range_emu_size(&sheet, range);
                                 let new_frame = EmuRect::new(frame.x, frame.y, w_emu, h_emu);
                                 if new_frame != frame {
-                                    commands.push(Command::SetFrame {
-                                        slide: slide_id,
-                                        shape: shape_id,
-                                        frame: new_frame,
-                                    });
+                                    commands.push(Command::SetFrame { slide: slide_id, frames: vec![(shape_id, new_frame)], with_attached: true });
                                 }
                             }
                         }
@@ -1698,18 +1757,14 @@ impl SlideEditor {
             let media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Svg, png.clone());
             self.resources.add_picture(media, ibis_doc_model::MediaFormat::Svg, &png);
             pic.media = media;
-            commands.push(Command::SetKind {
+            commands.push(Command::SetShapeKind {
                 slide: slide_id,
                 shape: shape_id,
                 kind: Box::new(ShapeKind::Picture(pic)),
             });
             let new_frame = EmuRect::new(frame.x, frame.y, w_emu, h_emu);
             if new_frame != frame {
-                commands.push(Command::SetFrame {
-                    slide: slide_id,
-                    shape: shape_id,
-                    frame: new_frame,
-                });
+                commands.push(Command::SetFrame { slide: slide_id, frames: vec![(shape_id, new_frame)], with_attached: true });
             }
         }
 
@@ -1768,7 +1823,7 @@ impl SlideEditor {
         let shape = Shape::new(id, frame, ShapeKind::TextBox(body));
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
-        self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
+        self.run_sheet(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }], cx);
         self.set_selection(vec![id]);
         cx.notify();
         id
@@ -2021,7 +2076,7 @@ impl SlideEditor {
 
     /// Insert a screenshot of an available window (window snapshot).
     pub(crate) fn insert_sheet_screenshot_window(&mut self, cx: &mut Context<Self>) -> Option<ShapeId> {
-        let (data, _, _) = ibis_pptx::screenshot_snapshot(640, 360);
+        let (data, _, _) = ibis_formats::screenshot_snapshot(640, 360);
         self.insert_sheet_picture("Screenshot_Window.png", data, cx)
     }
 
@@ -2030,7 +2085,7 @@ impl SlideEditor {
         if let Some(id) = self.insert_sheet_screenshot_from_clipboard(cx) {
             return Some(id);
         }
-        let (data, _, _) = ibis_pptx::screenshot_snapshot(480, 270);
+        let (data, _, _) = ibis_formats::screenshot_snapshot(480, 270);
         self.insert_sheet_picture("Screen_Clipping.png", data, cx)
     }
 
@@ -2073,7 +2128,7 @@ impl SlideEditor {
         let shape = Shape::text_box(id, frame, format!("📦 {name}"));
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
-        self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
+        self.run_sheet(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }], cx);
         self.set_selection(vec![id]);
         cx.notify();
         id
@@ -2084,7 +2139,7 @@ impl SlideEditor {
         let (x, y) = self.sheet_insertion_origin();
         let frame = EmuRect::new(x, y, 3_000_000, 1_200_000);
         let id = self.document.ids().new_shape_id();
-        let label = crate::shell::i18n::text("xlsx.signature-line");
+        let label = crate::shell::i18n::text("insert.signature-line");
         let text = if signer.is_empty() {
             format!("✕ _______________________________\n{label}") // i18n-ok: signature placeholder
         } else if title.is_empty() {
@@ -2095,7 +2150,7 @@ impl SlideEditor {
         let shape = Shape::text_box(id, frame, text);
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
-        self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
+        self.run_sheet(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }], cx);
         self.set_selection(vec![id]);
         cx.notify();
         id

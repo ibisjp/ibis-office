@@ -6,7 +6,7 @@
 //! Rendering is split by area: `chrome.rs`, `status_bar.rs`, `workspace.rs` and
 //! `thumbnails.rs` add `impl SlideEditor` blocks for their part of the window.
 
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::slider::{SliderEvent, SliderScale, SliderState};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -18,8 +18,9 @@ use ibis_doc_model::{
 };
 
 use crate::render::shape_view::Resources;
+use crate::chrome::SidebarPanel;
 use crate::format::{FormatState, state_for_model, with_format};
-use crate::actions::{CancelTool, CloseFile, DeleteSelection, NextSlide, OpenFile, PreviousSlide, Redo, Undo};
+use crate::actions::{CancelTool, CloseFile, DeleteSelection, NextSlide, Open, PreviousSlide, Redo, Undo};
 
 /// Key context of the editor; see the bindings in `ibis_office_app::init`.
 pub const CONTEXT: &str = "SlideEditor";
@@ -86,7 +87,7 @@ const ZOOM_LIST_DOWN: f32 = 0.8;
 const WHEEL_ZOOM_STEP: f32 = 1.1;
 const WHEEL_ZOOM_DOUBLING: f32 = 150.0;
 /// A press that moves less than this is a click, not a drag, in pixels.
-const DRAG_THRESHOLD: f32 = 3.0;
+pub const DRAG_THRESHOLD: f32 = 3.0;
 /// The smallest side a text box can be resized to, in EMU (0.1 in).
 const MIN_SHAPE_SIDE: i64 = 91_440;
 
@@ -94,6 +95,10 @@ const MIN_SHAPE_SIDE: i64 = 91_440;
 pub enum Tool {
     Select,
     TextBox,
+    /// The insert mode of a preset shape (`ST_ShapeType`, such as `"rect"`), as the sheet's Insert > Shapes arms it.
+    Shape(&'static str),
+    /// The insert mode of a line or connector (straight, elbow, curved; its arrow heads), as `shape_state::Tool::Line`.
+    Line { kind: crate::shape_items::LineKind, arrow: crate::shape_items::ArrowKind },
 }
 
 /// A pointer drag in progress. Frames are previewed while dragging and
@@ -406,15 +411,19 @@ pub struct SlideEditor {
     pub save_note: Option<SharedString>,
     /// A chart's workbook (データの編集): the ranges its series take their
     /// data from, framed on the sheet.
-    pub chart_ranges: Option<Vec<ibis_pptx::SeriesRefs>>,
+    pub chart_ranges: Option<Vec<ibis_formats::SeriesRefs>>,
     /// The workbook's grid only (no title row, menus, toolbar, side pane or status bar): a workbook editor
     /// embedded in a panel of another editor (the chart's データの編集 in the presentation's pane).
     pub grid_only: bool,
     /// フォントの置換 (the panel shared by the document, spreadsheet and presentation screens: `shell/replace_fonts.rs`).
     pub replace_fonts: Option<crate::replace_fonts::ReplaceFontsState>,
     /// ファイル名を変更 (the dialog of the menu at the file name in the title row: `shell/rename_file.rs`).
-    #[cfg(not(target_family = "wasm"))]
     pub rename_file: Option<crate::rename_file::RenameFileState>,
+    /// The host that embeds the editor and keeps the file (`shell/host_editor.rs`): the file the document is tied to, read-only by the host.
+    pub host: crate::host_editor::EditorHost,
+    /// パスワード (the dialog that asks for or sets a password: `shell/password_window.rs`).
+    #[cfg(not(target_family = "wasm"))]
+    pub password_dialog: Option<crate::password_window::PasswordState>,
     /// ツール > 設定 (the modal dialog of the app's settings: `shell/settings_dialog.rs`).
     pub settings: Option<crate::settings_dialog::SettingsDialog>,
     /// Recently opened files, most recent first, for ファイル > 履歴.
@@ -468,6 +477,8 @@ pub struct SlideEditor {
     pub dialog: super::dialog::DialogState,
     _dialog_keystrokes: Subscription,
     pub ruler_settings_open: bool,
+    /// The touch gesture that can still be taken back, from the first finger down (`shell/gesture.rs`, #209).
+    pub(crate) gesture: Option<crate::gesture::GestureTransaction>,
     pub ruler_settings_ui: std::rc::Rc<std::cell::RefCell<std::collections::BTreeMap<String, Bounds<Pixels>>>>,
     /// Whether the right pane is on screen and whether its toggle can show it, as `render_sidebar` found them this
     /// frame (it runs before the title row and the menus): the one place their buttons read, so a button never says
@@ -491,7 +502,7 @@ pub struct SlideEditor {
     pub toolbar_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
     /// Where the open file came from, for saving it (`shell/save.rs`);
     /// `None` for a new document or one that cannot be saved.
-    pub source: Option<std::sync::Arc<ibis_pptx::Source>>,
+    pub source: Option<std::sync::Arc<ibis_formats::Source>>,
     /// The file's path, for ⌘S (none in the browser, or for a new document).
     #[cfg(not(target_family = "wasm"))]
     pub path: Option<std::path::PathBuf>,
@@ -514,15 +525,20 @@ pub struct SlideEditor {
     pub(crate) about_open: bool,
     /// A comment's delete waiting for the answer (shell/comments.rs).
     pub comment_delete: Option<crate::comments::PendingDelete>,
-    /// The CMYK mode was turned on from the colour picker: the picker shows the colours as printed at its next draw.
-    pub(crate) cmyk_picker_refresh: bool,
+    /// 表示 > 印刷の色で表示: the screen shows the colours as the press prints them (a file with the CMYK mode on; on by default).
+    pub(crate) soft_proof: bool,
+    /// The file's CMYK mode as it was when a print panel was opened: Cancel (and the window's close) put it back, 設定を保存 and
+    /// 印刷 keep what was set (`shell/print_common.rs`).
+    pub(crate) print_cmyk_origin: Option<ibis_doc_model::CmykMode>,
     /// The information bar about the CMYK profile (shell/cmyk_profile.rs), while it is showing.
     pub cmyk_notice: Option<crate::cmyk_profile::CmykNotice>,
+    /// The file's digital signatures: whether it has any and whether the user was told saving invalidates them (shell/signature.rs).
+    pub signature: crate::signature::SignatureState,
     /// Whether the save confirmation was asked by closing the window (its close button, or quitting the app) rather
     /// than by ファイル > 閉じる: once answered, the window goes instead of showing the start view (GitHub issue #27).
     pub close_window_after_confirm: bool,
     /// Whether the confirmation dialog asking to specify the Office executable path is open (#26).
-    pub(crate) office_path_confirm_dialog_open: bool,
+    pub office_path_confirm_dialog_open: bool,
     /// The watching of the file on disk for changes by other apps, and the question it asks (shell/file_watch.rs).
     pub watch: crate::file_watch::ExternalWatch,
     /// Whether side-by-side comparison mode (並べて比較 / XLSX-VIEW-013) is active.
@@ -552,7 +568,7 @@ pub struct SlideEditor {
     /// Summary text of repairs applied (XLSX-FILE-020).
     pub repair_summary: Option<String>,
     /// Detailed report of repairs applied (XLSX-FILE-020).
-    pub repair_report: Option<ibis_pptx::repair::RepairReport>,
+    pub repair_report: Option<ibis_formats::repair::RepairReport>,
     /// The open file was read from an old binary format (.xls, .ppt, .doc) and not yet saved in a current one: the compatibility bar is shown.
     pub opened_from_legacy: bool,
     /// Whether this document is opened in read-only / viewing mode (--read-only or ?view=1).
@@ -577,14 +593,10 @@ impl SlideEditor {
         let dialog_keystrokes = cx.intercept_keystrokes(move |event, window, app| {
             if window.window_handle() == owner {
                 editor.update(app, |this, cx| {
-                    if this.panel_message.is_some() && matches!(event.keystroke.key.as_str(), "enter" | "escape") {
-                        this.dismiss_panel_message(cx);
-                        cx.stop_propagation(); return;
-                    }
                     // Every message box by the keyboard (K0012, shell/message_box.rs): Tab and Shift+Tab move the ring over its
                     // buttons, Enter and Space press the ringed one, Esc presses the cancel.
-                    if matches!(this.interaction_layer(), crate::dialog::InteractionLayer::Save | crate::dialog::InteractionLayer::FileChanged
-                        | crate::dialog::InteractionLayer::CommentDelete | crate::dialog::InteractionLayer::Alert | crate::dialog::InteractionLayer::Ask)
+                    if matches!(this.interaction_layer(), crate::dialog::InteractionLayer::External | crate::dialog::InteractionLayer::Save | crate::dialog::InteractionLayer::FileChanged
+                        | crate::dialog::InteractionLayer::CommentDelete | crate::dialog::InteractionLayer::Alert | crate::dialog::InteractionLayer::Ask | crate::dialog::InteractionLayer::Message)
                         && !event.keystroke.modifiers.platform && !event.keystroke.modifiers.control && !event.keystroke.modifiers.alt {
                         use crate::message_box::KeyResult;
                         match this.msgbox.key(event.keystroke.key.as_str(), event.keystroke.modifiers.shift) {
@@ -683,9 +695,7 @@ impl SlideEditor {
                         && let Some(&pt) = candidates.get(idx)
                     {
                         this.set_toolbar_font_size(pt, window, cx);
-                    } else if let Ok(pt) = query.trim().parse::<f32>()
-                        && (1.0..=1638.0).contains(&pt)
-                    {
+                    } else if let Some(pt) = parse_font_size(&query) {
                         this.set_toolbar_font_size(pt, window, cx);
                     } else if this.font_size_filtering
                         && let Some(&pt) = candidates.first()
@@ -772,8 +782,10 @@ impl SlideEditor {
             chart_ranges: None,
             grid_only: false,
             replace_fonts: None,
-            #[cfg(not(target_family = "wasm"))]
             rename_file: None,
+            host: Default::default(),
+            #[cfg(not(target_family = "wasm"))]
+            password_dialog: None,
             settings: None,
             #[cfg(not(target_family = "wasm"))]
             recent_files: crate::recent_files::load(),
@@ -804,6 +816,7 @@ impl SlideEditor {
             dialog: Default::default(),
             _dialog_keystrokes: dialog_keystrokes,
             ruler_settings_open: false,
+            gesture: None,
             ruler_settings_ui: Default::default(),
             right_pane: Default::default(),
             sidebar_width: crate::chrome::SIDEBAR_WIDTH,
@@ -827,8 +840,10 @@ impl SlideEditor {
             ask: None,
             about_open: false,
             comment_delete: None,
-            cmyk_picker_refresh: false,
             cmyk_notice: None,
+            signature: Default::default(),
+            soft_proof: true,
+            print_cmyk_origin: None,
             close_window_after_confirm: false,
             office_path_confirm_dialog_open: false,
             watch: Default::default(),
@@ -866,28 +881,30 @@ impl SlideEditor {
 
     /// Make `source` (of the file just given to `load`) the one saving writes from. `load` changes the model as it opens it
     /// (fields, tables of contents, pages, pivots, row heights, dates), which is not an edit: the model as it is now is
-    /// the baseline, so saving without an edit writes the original file (`ibis_pptx::Source::rebased`).
+    /// the baseline, so saving without an edit writes the original file (`ibis_formats::Source::rebased`).
     ///
     /// The exception is a table of contents the file marks for making again (`w:dirty`, `w:updateFields`): Word makes it as it
     /// opens the file and saves it made (`docx::toc017_unupdated_toc_is_made_on_open`), so that stays a change to save.
-    pub fn set_loaded_source(&mut self, source: std::sync::Arc<ibis_pptx::Source>) {
+    pub fn set_loaded_source(&mut self, source: std::sync::Arc<ibis_formats::Source>) {
         let marked_toc = source.baseline().flow.as_ref().is_some_and(|doc| {
             doc.body.iter().any(|b| {
                 matches!(b, ibis_doc_model::Block::Paragraph(p) if (doc.update_fields || p.field_dirty) && p.field_start.as_ref().is_some_and(|f| f.trim_start().to_ascii_uppercase().starts_with("TOC")))
             })
         });
+        self.note_loaded_signatures(&source);
         self.source = Some(if marked_toc { source } else { source.rebased(self.presentation()) });
     }
 
     /// Whether this editor is currently in read-only / viewing mode (either via `--read-only` or during CSV streaming).
     pub fn is_read_only(&self) -> bool {
-        self.read_only || self.is_csv_streaming || self.is_xlsx_mark_as_final() || self.is_modify_locked()
+        self.read_only || self.host.read_only.is_some() || self.is_csv_streaming || self.is_xlsx_mark_as_final() || self.is_modify_locked()
     }
 
     /// Replace the open presentation, dropping undo history and selection.
     pub fn load(&mut self, mut presentation: Presentation, name: SharedString, window: &mut Window, cx: &mut Context<Self>) {
         with_format!(self, show_end(self, window, cx));
         self.opened_from_legacy = presentation.opened_from_legacy;
+        self.signature = Default::default();
         self.modify_unlocked = false;
         self.zoom_menu_open = false;
         self.editing = None;
@@ -910,9 +927,9 @@ impl SlideEditor {
         crate::clock::debug_timing::report("load: prepare_model (update_fields_on_open, expand_pages, pivots, row heights)", timing);
         // A presentation's date fields show today, as PowerPoint's do.
         if presentation.flow.is_none() && presentation.workbook.is_none() {
-            presentation.refresh_dates(&crate::clock::local_now(), &ibis_pptx::script_pieces);
+            presentation.refresh_dates(&crate::clock::local_now(), &ibis_formats::script_pieces);
         }
-        self.current_slide = presentation.slides[0].id;
+        self.current_slide = presentation.slides.first().map(|s| s.id).unwrap_or(ibis_doc_model::SlideId(0));
         self.format = state_for_model(&presentation, window, cx);
         // What was selected, copied or being typed in the file before is not the new file's (the format's own state is new too).
         self.shape_edit = Default::default();
@@ -922,6 +939,7 @@ impl SlideEditor {
         // fitted to the width without it): `FormatEditor::sidebar_on_request`.
         self.sidebar_open = !self.is_read_only() && !with_format!(self, sidebar_on_request());
         self.document = Document::new(presentation);
+        self.reflow_chains_on_load();
         self.document_memory = Default::default();
         self.source = None;
         #[cfg(not(target_family = "wasm"))]
@@ -930,6 +948,23 @@ impl SlideEditor {
             self.protection_password = None;
         }
         self.zoom = with_format!(self, initial_zoom(self));
+        // A document's and a presentation's zoom is the file's (Word's `w:zoom`, PowerPoint's slide view scale); a file that has none, and a new
+        // file, take the zoom the last window was at (GitHub issue #237). A workbook's zoom is its sheets' own.
+        if self.document.presentation().workbook.is_none() {
+            let presentation = self.document.presentation();
+            match presentation.view_zoom {
+                // A file that asks to be fitted (`w:zoom/@w:val` = bestFit, ...) is fitted, whatever the last window was at.
+                None if presentation.view_fit => self.zoom = None,
+                Some(percent) => self.zoom = Some((percent as f32 / 100.0).clamp(MIN_ZOOM, MAX_ZOOM)),
+                // A presentation with no zoom of its own (the viewProps has none, or `varScale` is 1: PowerPoint fits it) opens fitted.
+                None if presentation.flow.is_none() => {}
+                None => {
+                    if let Some(last) = last_zoom() {
+                        self.zoom = last;
+                    }
+                }
+            }
+        }
         self.workspace_scroll.set_offset(Point::default());
         self.sidebar_scroll.set_offset(Point::default());
         // The document's split, reading mode, focus mode and the way its pages move are in its own state, which is
@@ -943,6 +978,9 @@ impl SlideEditor {
         self.window_number = None;
         self.save_confirm_dialog_open = false;
         self.office_path_confirm_dialog_open = false;
+        // The browser version: the blocks of the fonts the document names that the page has (GitHub issue #157, stage 2).
+        #[cfg(target_family = "wasm")]
+        crate::web::request_subset_blocks_for(self.used_fonts(), self.used_text(), cx);
         // The file read before is no longer this window's (`open_read` records the new one).
         self.watch.dialog = false;
         self.watch.asked = None;
@@ -956,7 +994,7 @@ impl SlideEditor {
             .file_name
             .as_ref()
             .and_then(|n| n.rsplit_once('.'))
-            .filter(|(_, ext)| ibis_pptx::Kind::has_macros(ext))
+            .filter(|(_, ext)| ibis_formats::Kind::has_macros(ext))
             .map(|_| crate::i18n::text("_shell.macros-in-this-file-will-not-run-they-are-preser"));
         // A presentation opens with the keys on the slide list (Home, End,
         // the arrows move between slides without a click first).
@@ -1010,14 +1048,34 @@ impl SlideEditor {
     }
 
     /// Ask for a .pptx, .xlsx or .docx file and open it.
-    pub(crate) fn open_file(&mut self, _: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_file(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_edit(window, cx);
+        // A host that keeps the files: its file window (after the question about unsaved changes), not the OS's picker.
+        if crate::host::capabilities().list_folder {
+            self.host_after_unsaved_check(crate::host_editor::HostAfter::Open, window, cx);
+            return;
+        }
+        // The browser's page has one editor, so the file replaces the document: not before the question about a document that was changed, or a new one that was typed in
+        // (K0054; on the desktop `open_path_or_raise` opens it in a window of its own).
+        #[cfg(target_family = "wasm")]
+        if self.has_document && !self.replaceable_by_open() && (self.is_dirty() || self.file_path().is_none()) {
+            self.commit_pending_edit(window, cx);
+            self.host.after_confirm = Some(crate::host_editor::HostAfter::OpenLocal);
+            self.ask_to_save(false, cx);
+            return;
+        }
+        self.open_file_local(window, cx);
+    }
+
+    /// The OS's (the browser's) file picker, and the file opened as this window's document: the way 開く works without a host, and the
+    /// host's file window's ローカルストレージから開く.
+    pub(crate) fn open_file_local(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(not(target_family = "wasm"))]
         {
             let picked = cx.prompt_for_paths(PathPromptOptions {
                 files: true,
                 directories: false,
-                extensions: ibis_pptx::Kind::OPENABLE_EXTENSIONS.iter().map(|e| e.to_string()).collect(),
+                extensions: ibis_formats::Kind::OPENABLE_EXTENSIONS.iter().map(|e| e.to_string()).collect(),
                 multiple: false,
                 prompt: Some(crate::i18n::text("_shell.open").into()),
             });
@@ -1040,7 +1098,7 @@ impl SlideEditor {
             };
             let name: SharedString = name.into();
             let closed = this.update(cx, |this, _| this.closed).unwrap_or_default();
-            let kind = name.rsplit_once('.').and_then(|(_, e)| ibis_pptx::Kind::from_extension(e));
+            let kind = name.rsplit_once('.').and_then(|(_, e)| ibis_formats::Kind::from_extension(e));
             this.update_in(cx, |this, window, cx| match kind {
                 Some(kind) if !this.has_document => this.begin_loading(kind, name.clone(), window, cx),
                 _ => this.set_status(crate::i18n::format("file.opening", &[("name", &name)]), cx),
@@ -1049,24 +1107,15 @@ impl SlideEditor {
             // Let the empty document show before reading the file, which
             // holds the page while it runs.
             cx.background_executor().timer(std::time::Duration::from_millis(50)).await;
-            let result = ibis_pptx::open(data).map_err(|e| e.to_string());
+            let result = ibis_odf::open(data).map_err(|e| e.to_string());
             this.update_in(cx, |this, window, cx| match result {
                 // Closed (ファイル > 閉じる) while it was read.
                 _ if this.closed != closed => {}
                 Ok(opened) => {
-                    let is_ppsx = name.rsplit_once('.').is_some_and(|(_, e)| ibis_pptx::is_slideshow(e));
-                    let is_tmpl = name.rsplit_once('.').is_some_and(|(_, e)| ibis_pptx::is_template(e));
-                    let doc_name = if is_tmpl {
-                        crate::file_actions::new_file_name(ibis_pptx::Kind::of(&opened.presentation))
-                    } else {
-                        name
-                    };
-                    this.load(opened.presentation, doc_name, window, cx);
-                    this.set_loaded_source(std::sync::Arc::new(opened.source));
-                    // (A presentation opens without the speaker notes, as a new one does.)
-                    with_format!(this, file_opened(this));
-                    if is_ppsx {
-                        with_format!(this, show_start(this, window, cx));
+                    this.apply_opened(name, opened, window, cx);
+                    // A file of local storage is not the host's: the host lets go of the one before.
+                    if crate::host::is_connected() {
+                        this.host_document_changed(crate::host::DocumentSource::Local);
                     }
                 }
                 Err(err) => this.fail_loading(crate::i18n::format("file.open-failed", &[("name", &name), ("error", &err)]), cx),
@@ -1074,6 +1123,20 @@ impl SlideEditor {
             .ok();
         })
         .detach();
+    }
+
+    /// Show a file read from bytes (the browser's local file, a host's file): as the window's document, under `name`.
+    pub(crate) fn apply_opened(&mut self, name: SharedString, opened: ibis_formats::Opened, window: &mut Window, cx: &mut Context<Self>) {
+        let is_ppsx = name.rsplit_once('.').is_some_and(|(_, e)| ibis_formats::is_slideshow(e));
+        let is_tmpl = name.rsplit_once('.').is_some_and(|(_, e)| ibis_formats::is_template(e));
+        let doc_name = if is_tmpl { crate::file_actions::next_new_file_name(ibis_formats::Kind::of(&opened.presentation)) } else { name };
+        self.load(opened.presentation, doc_name, window, cx);
+        self.set_loaded_source(std::sync::Arc::new(opened.source));
+        // (A presentation opens without the speaker notes, as a new one does.)
+        with_format!(self, file_opened(self));
+        if is_ppsx {
+            with_format!(self, show_start(self, window, cx));
+        }
     }
 
     /// Open the .pptx, .xlsx or .docx at `path` and put it first in the
@@ -1099,7 +1162,7 @@ impl SlideEditor {
     ) {
         self.commit_edit(window, cx);
         let name: SharedString = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into();
-        let kind = path.extension().and_then(|e| e.to_str()).and_then(ibis_pptx::Kind::from_extension);
+        let kind = path.extension().and_then(|e| e.to_str()).and_then(ibis_formats::Kind::from_extension);
         match kind {
             Some(kind) if !self.has_document => self.begin_loading(kind, name.clone(), window, cx),
             _ => self.set_status(crate::i18n::format("file.opening", &[("name", &name)]), cx),
@@ -1118,9 +1181,9 @@ impl SlideEditor {
                 // Closed (ファイル > 閉じる) while it was read.
                 _ if this.closed != closed => {}
                 Ok(loaded) => {
-                    let is_tmpl = path.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_template);
+                    let is_tmpl = path.extension().and_then(|e| e.to_str()).is_some_and(ibis_formats::is_template);
                     if is_tmpl {
-                        let tmpl_name = crate::file_actions::new_file_name(ibis_pptx::Kind::of(&loaded.presentation));
+                        let tmpl_name = crate::file_actions::next_new_file_name(ibis_formats::Kind::of(&loaded.presentation));
                         this.load(loaded.presentation, tmpl_name, window, cx);
                         this.set_loaded_source(loaded.source);
                         this.path = None;
@@ -1128,7 +1191,7 @@ impl SlideEditor {
                     } else if path.extension().is_some_and(|e| ["xls", "ods", "ppt", "pps", "pot", "odp", "otp", "odt", "ott", "doc", "dot", "rtf", "txt", "text", "html", "htm", "pdf"].iter().any(|x| e.eq_ignore_ascii_case(x))) {
                         // An old workbook or presentation (or an OpenDocument workbook) is read as a new .xlsx or .pptx: saving asks where, and leaves the old file as it is.
                         let stem = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                        let extension = crate::format::info(ibis_pptx::Kind::of(&loaded.presentation)).extension;
+                        let extension = crate::format::info(ibis_formats::Kind::of(&loaded.presentation)).extension;
                         this.load(loaded.presentation, format!("{stem}.{extension}").into(), window, cx);
                         this.set_loaded_source(loaded.source);
                         this.path = None;
@@ -1218,8 +1281,9 @@ impl SlideEditor {
                         this.restore_view_state(&view, window, cx);
                     }
                     this.recent_files = crate::recent_files::add(&path);
+                    crate::app::set_app_menus(cx);
                     crate::timing::document_loaded(window);
-                    if path.extension().and_then(|e| e.to_str()).is_some_and(ibis_pptx::is_slideshow) {
+                    if path.extension().and_then(|e| e.to_str()).is_some_and(ibis_formats::is_slideshow) {
                         with_format!(this, show_start(this, window, cx));
                     }
                     // A file with a password to modify: asked for, or read as it is.
@@ -1230,7 +1294,7 @@ impl SlideEditor {
                 // A protected file: its password is asked for.
                 Err(err) if err == crate::read_file::NEEDS_PASSWORD || err == crate::read_file::WRONG_PASSWORD => {
                     this.fail_loading(String::new(), cx);
-                    crate::password_window::ask_to_open(cx.entity().downgrade(), path.clone(), slide, err == crate::read_file::WRONG_PASSWORD, window, cx);
+                    this.ask_password_to_open(path.clone(), slide, err == crate::read_file::WRONG_PASSWORD, window, cx);
                 }
                 Err(err) => {
                     let message = crate::i18n::format("file.open-failed", &[("name", &name), ("error", &err)]);
@@ -1254,8 +1318,8 @@ impl SlideEditor {
     /// Show an empty document of `kind`, titled `name`, with 「読み込み中...」
     /// over it until the file is loaded (`load`) or cannot be
     /// (`fail_loading`).
-    pub fn begin_loading(&mut self, kind: ibis_pptx::Kind, name: SharedString, window: &mut Window, cx: &mut Context<Self>) {
-        self.load(ibis_pptx::blank(kind), name, window, cx);
+    pub fn begin_loading(&mut self, kind: ibis_formats::Kind, name: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        self.load(ibis_formats::blank(kind), name, window, cx);
         self.loading = true;
         // The bar of the loading box moves while the file is read.
         cx.spawn_in(window, async move |this, cx| {
@@ -1290,6 +1354,12 @@ impl SlideEditor {
             window.remove_window();
             #[cfg(target_family = "wasm")]
             let _ = window;
+            return;
+        }
+        // In a host (ibisWorks's iframe): the menu's 閉じる goes the way the × of the top right does, the question about unsaved changes and then the host told to close
+        // (`embed_close`). Closing the file here would leave the page white, with the host not told (K0037).
+        if crate::host::is_connected() {
+            self.host_after_unsaved_check(crate::host_editor::HostAfter::Close, window, cx);
             return;
         }
         if self.format_info().several_windows.is_some() && self.file_id != 0 {
@@ -1337,7 +1407,7 @@ impl SlideEditor {
 
     /// The window's close button (the red button on a Mac, × elsewhere): whether the window may close now. With edits
     /// not saved in the last window on its file, it stays and asks whether to save them (GitHub issue #27).
-    pub(crate) fn window_should_close(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn window_should_close(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
         if self.save_confirm_dialog_open {
             // Already asking: the answer closes it.
             return false;
@@ -1351,6 +1421,9 @@ impl SlideEditor {
             // Another window shows the same file, with the edits: only this view goes.
             return true;
         }
+        // The window may be behind another (its close button works on a window that is not active): bring it to the front, so
+        // the question can be seen (GitHub issue #201). The same for every route (button, Alt+F4, 終了, すべて閉じる).
+        window.activate_window();
         self.ask_to_save(true, cx);
         false
     }
@@ -1359,12 +1432,30 @@ impl SlideEditor {
     /// from closing it.
     pub(crate) fn finish_close_after_confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_confirm_dialog_open = false;
+        // With a host: what the question was asked for goes on (open another file, a new one, the host's close), the window stays.
+        if let Some(after) = self.host.after_confirm.take() {
+            self.close_window_after_confirm = false;
+            self.host_run_after(after, window, cx);
+            return;
+        }
         if std::mem::take(&mut self.close_window_after_confirm) {
             self.force_close_file(window, cx);
             window.remove_window();
         } else {
             self.force_close_file(window, cx);
         }
+    }
+
+    /// Whether a file opened from this window takes its place: a window with no document (the start window), or a new document that was never changed (it has no file, no
+    /// edit, nothing to undo). Any other window keeps its document: the file opens in a window of its own (K0054: a new workbook with a typed cell was closed, unasked, by the
+    /// file opened over it). The one rule for every way of opening (ファイル > 開く, the recent files, a drop, the Finder).
+    pub fn replaceable_by_open(&self) -> bool {
+        !self.has_document
+            || (!self.loading
+                && self.file_path().is_none()
+                && !self.is_dirty()
+                && !self.document.can_undo()
+                && !self.document.can_redo())
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -1427,7 +1518,7 @@ impl SlideEditor {
         }
         let theme = cx.theme();
         // How far a large file has got (only the reading that reports it, such as a big workbook's): a bar along the bottom edge of the box.
-        let progress = ibis_pptx::progress::current();
+        let progress = ibis_formats::progress::current();
         Some(
             div().absolute().inset_0().flex().items_center().justify_center().child(
                 div()
@@ -1466,6 +1557,41 @@ impl SlideEditor {
         self.presentation()
             .slide(self.current_slide)
             .unwrap_or(&self.presentation().slides[0])
+    }
+
+    /// The colour of the caret in the text being edited in a shape (see `caret::color_over`): over the shape's own fill, else over the slide's background, else
+    /// over white.
+    pub fn text_caret_color(&self) -> Hsla {
+        Self::caret_color_in(self.slide(), self.text_editing().map(|e| e.shape), &self.resources)
+    }
+
+    /// `text_caret_color` for the text of `shape` on `slide`: over the shape's own fill (a picture's: its average colour), else over the background the
+    /// slide is drawn on (`slide_backdrop_rgb`).
+    pub fn caret_color_in(slide: &Slide, shape: Option<ShapeId>, res: &Resources) -> Hsla {
+        let own = shape.and_then(|id| slide.shape(id)).and_then(|s| match &s.kind {
+            ibis_doc_model::ShapeKind::Auto(a) => Self::fill_rgb(&a.fill, res),
+            _ => None,
+        });
+        crate::caret::color_over(own.or_else(|| Self::slide_backdrop_rgb(slide, res)), ibis_doc_model::Rgb::WHITE)
+    }
+
+    /// The colour that stands for a fill: its own (`Fill::backdrop_rgb`) or its picture's average.
+    fn fill_rgb(fill: &ibis_doc_model::Fill, res: &Resources) -> Option<ibis_doc_model::Rgb> {
+        fill.backdrop_rgb().or_else(|| fill.media().and_then(|m| res.mean_color(m)))
+    }
+
+    /// The colour of the background a slide is drawn on, as `slide_backdrop` draws it: the slide's own background (layout and master backgrounds are in it
+    /// when the file is read), else the last shape of the layout and the master that covers the slide (a full-slide rectangle or picture), else `None`.
+    pub fn slide_backdrop_rgb(slide: &Slide, res: &Resources) -> Option<ibis_doc_model::Rgb> {
+        if let Some(c) = Self::fill_rgb(&slide.background, res) {
+            return Some(c);
+        }
+        let size = slide.size.unwrap_or(ibis_doc_model::EmuSize { width: 12_192_000, height: 6_858_000 });
+        slide.shown_backdrop().iter().rev().filter(|s| s.frame.width * 10 >= size.width * 9 && s.frame.height * 10 >= size.height * 9).find_map(|s| match &s.kind {
+            ibis_doc_model::ShapeKind::Auto(a) => Self::fill_rgb(&a.fill, res),
+            ibis_doc_model::ShapeKind::Picture(p) => res.mean_color(p.media),
+            _ => None,
+        })
     }
 
     pub fn selected_shape(&self) -> Option<&Shape> {
@@ -1580,6 +1706,11 @@ impl SlideEditor {
         };
         self.workspace_scroll.set_offset(offset);
         with_format!(self, zoom_set(self, zoom));
+        // What the window is zoomed to is kept for the next file and written to this one when it is saved (GitHub issue #237).
+        if self.document.presentation().workbook.is_none() {
+            remember_zoom(zoom);
+            self.document.presentation_mut().view_zoom = zoom.map(|z| (z * 100.0).round() as u16);
+        }
         cx.notify();
     }
 
@@ -1633,158 +1764,70 @@ impl SlideEditor {
         self.set_zoom(Some(zoom), window, cx);
     }
 
-    /// Open the Zoom dialog.
+    /// Open the Zoom dialog (the shared modal dialog: `zoom_panel_if_open`).
     pub fn open_zoom_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.end_text_edit(window, cx);
+        if self.dialog.active {
+            self.close_dialog(window, cx);
+        }
         let percent = (self.current_zoom() * 100.0).round() as u32;
         self.zoom_dialog_input.update(cx, |input, cx| input.set_value(percent.to_string(), window, cx));
         self.zoom_dialog_open = true;
+        self.sidebar_open = true;
         self.zoom_dialog_input.update(cx, |input, cx| input.focus(window, cx));
-        cx.notify();
-    }
-
-    /// Close the Zoom dialog.
-    pub(crate) fn close_zoom_dialog(&mut self, cx: &mut Context<Self>) {
-        self.zoom_dialog_open = false;
         cx.notify();
     }
 
     /// Apply the zoom specified in the zoom dialog.
     pub fn apply_zoom_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.zoom_dialog_input.read(cx).value().to_string();
+        self.close_dialog(window, cx);
         if let Some(percent) = parse_percent(&text) {
             let clamped = (percent / 100.0).clamp(MIN_ZOOM, MAX_ZOOM);
             self.set_zoom(Some(clamped), window, cx);
         }
-        self.zoom_dialog_open = false;
-        self.focus_handle.focus(window, cx);
-        cx.notify();
     }
 
     /// Set zoom to fit to window from the zoom dialog.
     pub fn fit_zoom_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_dialog(window, cx);
         self.set_zoom(None, window, cx);
-        self.zoom_dialog_open = false;
-        self.focus_handle.focus(window, cx);
-        cx.notify();
     }
 
-    /// Render the Zoom modal dialog.
-    pub(crate) fn render_zoom_dialog(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The Zoom dialog's panel: the presets, the fit button and the percent, with OK and Cancel.
+    pub(crate) fn zoom_panel_if_open(&mut self, cx: &mut Context<Self>) -> Option<SidebarPanel> {
+        if !self.zoom_dialog_open { return None; }
         let theme = cx.theme();
-        let input = self.zoom_dialog_input.clone();
         let current_val = self.zoom_dialog_input.read(cx).value().to_string();
         let is_fit = self.zoom.is_none();
-
-        let presets = [400, 200, 100, 66, 50, 33];
-
-        let preset_buttons = presets.into_iter().map(|pct| {
-            let selected = !is_fit && current_val.trim() == pct.to_string();
-            div()
-                .id(("zoom-preset", pct as usize))
-                .px_3()
-                .py_1p5()
-                .rounded_sm()
-                .border_1()
+        let chip = |id: SharedString, label: SharedString, selected: bool| {
+            div().id(id).px_3().py_1p5().rounded_sm().border_1()
                 .border_color(if selected { theme.primary } else { theme.border })
                 .bg(if selected { theme.accent } else { theme.background })
-                .cursor_pointer()
-                .text_sm()
+                .cursor_pointer().text_sm()
                 .text_color(if selected { theme.primary } else { theme.foreground })
-                .child(format!("{pct}%"))
+                .child(label)
+        };
+        let presets = [400, 200, 100, 66, 50, 33].into_iter().map(|pct: u32| {
+            chip(format!("zoom-preset-{pct}").into(), format!("{pct}%").into(), !is_fit && current_val.trim() == pct.to_string())
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.zoom_dialog_input.update(cx, |inp, cx| inp.set_value(pct.to_string(), window, cx));
                     cx.notify();
                 }))
         });
-
-        super::dialog::confirmation_surface("zoom-dialog-backdrop", false)
-            .child(
-                v_flex()
-                    .id("zoom-dialog")
-                    .w(px(380.))
-                    .bg(theme.background)
-                    .border_1()
-                    .border_color(theme.border)
-                    .rounded_md()
-                    .shadow_xl()
-                    .p_5()
-                    .gap_4()
-                    // 1. ヘッダー
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .items_center()
-                            .child(div().font_weight(FontWeight::BOLD).text_base().child(crate::i18n::text("zoom.dialog.title")))
-                            .child(
-                                div()
-                                    .id("zoom-dialog-close")
-                                    .cursor_pointer()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .hover(|s| s.text_color(theme.foreground))
-                                    .child("✕")
-                                    .on_click(cx.listener(|this, _, _, cx| this.close_zoom_dialog(cx))),
-                            ),
-                    )
-                    // 2. プリセット
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.muted_foreground)
-                                    .child(crate::i18n::text("zoom.dialog.presets")),
-                            )
-                            .child(
-                                h_flex()
-                                    .flex_wrap()
-                                    .gap_2()
-                                    .children(preset_buttons)
-                                    .child(
-                                        div()
-                                            .id("zoom-preset-fit")
-                                            .px_3()
-                                            .py_1p5()
-                                            .rounded_sm()
-                                            .border_1()
-                                            .border_color(if is_fit { theme.primary } else { theme.border })
-                                            .bg(if is_fit { theme.accent } else { theme.background })
-                                            .cursor_pointer()
-                                            .text_sm()
-                                            .text_color(if is_fit { theme.primary } else { theme.foreground })
-                                            .child(crate::i18n::text("zoom.dialog.fit"))
-                                            .on_click(cx.listener(|this, _, window, cx| this.fit_zoom_dialog(window, cx))),
-                                    ),
-                            ),
-                    )
-                    // 3. 倍率入力
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_3()
-                            .child(div().text_sm().child(crate::i18n::text("zoom.dialog.percent")))
-                            .child(Input::new(&input).w(px(80.)))
-                            .child(div().text_sm().child("%")),
-                    )
-                    // 4. ボタン群
-                    .child(
-                        h_flex()
-                            .justify_end()
-                            .gap_2()
-                            .child(
-                                crate::chrome::action_button("zoom-dialog-cancel")
-                                    .label(crate::i18n::text("_shell.cancel"))
-                                    .on_click(cx.listener(|this, _, _, cx| this.close_zoom_dialog(cx))),
-                            )
-                            .child(
-                                crate::chrome::primary_button("zoom-dialog-ok")
-                                    .label(crate::i18n::text("OK"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.apply_zoom_dialog(window, cx))),
-                            ),
-                    ),
-            )
+        let fit = chip("zoom-preset-fit".into(), crate::i18n::text("zoom.dialog.fit"), is_fit)
+            .on_click(cx.listener(|this, _, window, cx| this.fit_zoom_dialog(window, cx)));
+        let body = crate::chrome::panel_form()
+            .child(v_flex().gap_2()
+                .child(div().text_xs().font_weight(FontWeight::MEDIUM).text_color(theme.muted_foreground).child(crate::i18n::text("zoom.dialog.presets")))
+                .child(h_flex().flex_wrap().gap_2().children(presets).child(fit)))
+            .child(crate::chrome::text_field_row(crate::i18n::text("zoom.dialog.percent"),
+                crate::chrome::transient_text_field(&self.zoom_dialog_input).width(px(80.))));
+        let actions = crate::chrome::action_bar()
+            .action(crate::chrome::ActionDefinition::new("zoom-dialog-ok", crate::i18n::text("shell.action.ok"), crate::chrome::ActionButtonKind::Primary)
+                .on_click(cx.listener(|this, _, window, cx| this.apply_zoom_dialog(window, cx))))
+            .action(crate::chrome::dialog_cancel_definition(cx));
+        Some(SidebarPanel::with_footer(crate::i18n::text("zoom.dialog.title"), body.into_any_element(), actions))
     }
 
     /// Open a new window duplicating current presentation or open path.
@@ -1992,7 +2035,7 @@ impl SlideEditor {
     /// The other windows of the format `kind`, for 並べて比較: those on the file `file_id` if there are any, else those on other files.
     pub(crate) fn find_other_windows_of(
         my_entity_id: gpui::EntityId,
-        kind: ibis_pptx::Kind,
+        kind: ibis_formats::Kind,
         file_id: u64,
         cx: &mut App,
     ) -> Vec<(AnyWindowHandle, Entity<SlideEditor>)> {
@@ -2190,6 +2233,7 @@ impl SlideEditor {
     pub fn message_box_focus(&self) -> usize { self.msgbox.focus() }
     pub fn close_save_confirm_dialog(&mut self, cx: &mut Context<Self>) {
         self.save_confirm_dialog_open = false;
+        self.host.after_confirm = None;
         self.close_window_after_confirm = false;
         cx.notify();
     }
@@ -2281,11 +2325,11 @@ impl SlideEditor {
         {
             let is_bundle = app_path.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"));
             let mut cmd = if is_bundle {
-                let mut c = std::process::Command::new("open");
+                let mut c = std::process::Command::new("open"); // gesture-ok: the menu command that opens the file in Word, not a press handler
                 c.arg("-a").arg(app_path);
                 c
             } else {
-                std::process::Command::new(app_path)
+                std::process::Command::new(app_path) // gesture-ok: same menu command
             };
             if let Some(doc_path) = &self.path {
                 cmd.arg(doc_path);
@@ -2294,7 +2338,7 @@ impl SlideEditor {
         }
         #[cfg(target_os = "windows")]
         {
-            let mut cmd = std::process::Command::new(app_path);
+            let mut cmd = std::process::Command::new(app_path); // gesture-ok: same menu command
             if let Some(doc_path) = &self.path {
                 cmd.arg(doc_path);
             }
@@ -2365,51 +2409,16 @@ impl SlideEditor {
     }
 
     pub(crate) fn render_office_path_confirm_dialog(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
         let title = crate::i18n::text("window.open-in-office.confirm-title");
         let message = crate::i18n::format("window.open-in-office.specify-path", &[("app", &self.office_app_name())]);
-
-        super::dialog::confirmation_surface("office-path-confirm-dialog-backdrop", false)
-            .child(
-                v_flex()
-                    .id("office-path-confirm-dialog")
-                    .w(px(380.))
-                    .p_6()
-                    .rounded_lg()
-                    .bg(theme.background)
-                    .border_1()
-                    .border_color(theme.border)
-                    .shadow_xl()
-                    .gap_4()
-                    .child(
-                        div()
-                            .text_base()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.foreground)
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(message),
-                    )
-                    .child(
-                        h_flex()
-                            .justify_end()
-                            .gap_2()
-                            .child(
-                                crate::chrome::action_button("office-path-confirm-cancel")
-                                    .label(crate::i18n::text("_shell.cancel"))
-                                    .on_click(cx.listener(|this, _, _, cx| this.close_office_path_confirm_dialog(cx))),
-                            )
-                            .child(
-                                crate::chrome::primary_button("office-path-confirm-ok")
-                                    .label("OK")
-                                    .on_click(cx.listener(|this, _, window, cx| this.confirm_office_path_dialog(window, cx))),
-                            ),
-                    ),
-            )
+        use crate::chrome::{ActionButtonKind, ActionDefinition, action_bar};
+        // The shared message box and action bar (Alt access keys, the primary button first, Cancel last).
+        let actions = action_bar()
+            .action(ActionDefinition::new("office-path-confirm-ok", "OK", ActionButtonKind::Primary)
+                .on_click(cx.listener(|this, _, window, cx| this.confirm_office_path_dialog(window, cx))))
+            .action(ActionDefinition::new("office-path-confirm-cancel", crate::i18n::text("_shell.cancel"), ActionButtonKind::Normal)
+                .on_click(cx.listener(|this, _, _, cx| this.close_office_path_confirm_dialog(cx))));
+        super::message_box::message_box("office-path-confirm-dialog-backdrop", title.into(), message.into(), actions, &self.msgbox, false, cx)
     }
 
     pub fn confirm_save_and_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2521,7 +2530,7 @@ impl SlideEditor {
     }
 
     /// The rubber band of a text box being drawn.
-    pub(crate) fn creation_rect(&self) -> Option<EmuRect> {
+    pub fn creation_rect(&self) -> Option<EmuRect> {
         let Some(Drag::Create { start, current }) = self.drag else { return None };
         let layout = self.slide_layout()?;
         Some(EmuRect::from_corners(layout.to_emu(start), layout.to_emu(current)))
@@ -2669,7 +2678,7 @@ impl SlideEditor {
             if self.slide().shape(shape).is_some_and(|s| matches!(s.kind, ShapeKind::Sheet(_) | ShapeKind::Page { .. })) {
                 return;
             }
-            self.execute(vec![Command::RemoveShape { slide: self.current_slide, shape }], cx);
+            self.execute(vec![Command::DeleteShape { slide: self.current_slide, shapes: vec![shape], with_attached: true }], cx);
         }
     }
 
@@ -2678,7 +2687,7 @@ impl SlideEditor {
         if self.cancel_table_reorder(window,cx){return;}
         if with_format!(self, cancel_tool_early(self, window, cx)) { return; }
         if self.zoom_dialog_open {
-            self.close_zoom_dialog(cx);
+            self.close_dialog(window, cx);
             return;
         }
         if with_format!(self, cancel_tool_late(self, window, cx)) { return; }
@@ -2686,10 +2695,30 @@ impl SlideEditor {
             self.end_text_edit(window, cx);
         } else if self.tool != Tool::Select {
             self.tool = Tool::Select;
-        } else {
+        } else if self.selection.is_some() {
             self.selection = None;
+        } else if self.host_escape_closes(window, cx) {
+            return;
         }
         cx.notify();
+    }
+
+    /// In a host's iframe (ibisWorks) that has a close button, Esc that nothing else took closes the editor when there is nothing unsaved (the host is told with closeRequested, as the ×
+    /// does); with unsaved changes it does nothing (K0037). True when the question about closing was started (or the host told).
+    pub fn host_escape_closes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.has_document
+            && !self.loading
+            && !self.show_running()
+            && crate::host::is_connected()
+            && crate::embed::show_close()
+            && self.interaction_layer() == crate::dialog::InteractionLayer::Document
+            && self.open_menu.is_none()
+            && !self.is_dirty()
+        {
+            self.host_after_unsaved_check(crate::host_editor::HostAfter::Close, window, cx);
+            return true;
+        }
+        false
     }
 
     /// Esc while the pointer drags (a shape, or a selection in the edited text): the drag is dropped, and the text's caret goes
@@ -2709,12 +2738,12 @@ impl SlideEditor {
         false
     }
 
-    pub(crate) fn set_tool(&mut self, tool: Tool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_tool(&mut self, tool: Tool, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_edit(window, cx);
         // A document's pages are laid out from its text; no text box is put on them.
         let tool = if self.allows_shapes() { tool } else { Tool::Select };
         self.tool = tool;
-        if tool == Tool::TextBox {
+        if tool != Tool::Select {
             self.selection = None;
         }
         cx.notify();
@@ -2732,12 +2761,19 @@ impl SlideEditor {
         self.end_text_edit(window, cx);
         let index = self.presentation().slide_index(self.current_slide).map_or(0, |i| i + 1);
         let id = self.document.ids().new_slide_id();
-        let layout = self.slide().layout;
+        let layout = self.layout_for_slide_after(self.current_slide);
         let slide = self.new_slide(index, id, layout);
         self.execute(vec![Command::InsertSlide { index, slide }], cx);
         self.set_current_slide(id);
         self.selection = None;
         self.set_selection(Vec::new());
+    }
+
+    /// The layout of a slide added after `slide`: its own, but "Title and Content" after a title slide
+    /// ([`ibis_doc_model::Presentation::layout_after`]). Every way of adding a slide goes by this.
+    pub fn layout_for_slide_after(&self, slide: ibis_doc_model::SlideId) -> Option<ibis_doc_model::LayoutId> {
+        let layout = self.presentation().slide(slide).and_then(|s| s.layout)?;
+        Some(self.presentation().layout_after(layout))
     }
 
     /// A new slide `id` to put at `index`, following `layout` (else the
@@ -2773,7 +2809,7 @@ impl SlideEditor {
         let chosen = self.selected_slide_ids();
         if chosen.len() > 1 && chosen.len() < self.presentation().slides.len() {
             let first = chosen.iter().filter_map(|id| self.presentation().slide_index(*id)).min().unwrap_or(index);
-            self.execute(vec![Command::Group(chosen.into_iter().map(|slide| Command::RemoveSlide { slide }).collect())], cx);
+            self.execute(vec![Command::Batch(chosen.into_iter().map(|slide| Command::DeleteSlide { slide }).collect())], cx);
             let slides = &self.presentation().slides;
             let target = slides[first.min(slides.len() - 1)].id;
             self.set_current_slide(target);
@@ -2781,14 +2817,18 @@ impl SlideEditor {
             with_format!(self, clear_page_selection(self));
             return;
         }
-        self.execute(vec![Command::RemoveSlide { slide: self.current_slide }], cx);
+        self.execute(vec![Command::DeleteSlide { slide: self.current_slide }], cx);
         let slides = &self.presentation().slides;
         let target = slides[index.min(slides.len() - 1)].id;
         self.set_current_slide(target);
         self.selection = None;
     }
 
-    fn step_slide(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn step_slide(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // PowerPoint for Windows (#210): Page Up and Page Down in an edited text leave it and show the previous or the next slide.
+        if self.text_editing().is_some() {
+            self.end_text_edit(window, cx);
+        }
         if self.editing.is_some() {
             return;
         }
@@ -3068,7 +3108,7 @@ impl SlideEditor {
         self.commit_edit(window, cx);
         self.focus_handle.focus(window, cx);
         match self.tool {
-            Tool::TextBox if self.allows_shapes() => {
+            Tool::TextBox | Tool::Shape(_) | Tool::Line { .. } if self.allows_shapes() => {
                 self.drag = Some(Drag::Create { start: event.position, current: event.position });
             }
             _ => self.selection = None,
@@ -3086,8 +3126,8 @@ impl SlideEditor {
     ) {
         if self.dialog_is_modal() { cx.stop_propagation(); return; }
         self.finish_crop_mode(true, cx);
-        if self.tool == Tool::TextBox {
-            // Drawing a text box may start on top of another shape.
+        if self.tool != Tool::Select {
+            // Drawing a text box or a shape may start on top of another shape.
             return self.on_workspace_down(event, window, cx);
         }
         if with_format!(self, shape_press_early(self, event, cx)) {
@@ -3222,18 +3262,20 @@ impl SlideEditor {
                                     s.frame.width,
                                     s.frame.height,
                                 );
-                                Some(Command::SetFrame { slide, shape: id, frame: next })
+                                Some(Command::SetFrame { slide, frames: vec![(id, next)], with_attached: true })
                             })
                             .collect();
                         self.execute(cmds, cx);
                     } else {
-                        self.execute(vec![Command::SetFrame { slide, shape, frame }], cx);
+                        self.execute(vec![Command::SetFrame { slide, frames: vec![(shape, frame)], with_attached: true }], cx);
                     }
                     if let Some(edit) = self.editing.as_mut() {
                         edit.edit.is_new = false;
                     }
                 }
             }
+            // A shape or a line armed by a screen that places them itself (the sheet's, `FormatEditor::pointer_up`) is not a text box.
+            Drag::Create { .. } if self.tool != Tool::TextBox => self.tool = Tool::Select,
             Drag::Create { start, current } => {
                 let frame = if moved(start, current) {
                     let r = EmuRect::from_corners(layout.to_emu(start), layout.to_emu(current));
@@ -3244,7 +3286,7 @@ impl SlideEditor {
                 let id = self.document.ids().new_shape_id();
                 let index = self.slide().shapes.len();
                 self.execute(
-                    vec![Command::InsertShape { slide, index, shape: Shape::text_box(id, frame, "") }],
+                    vec![Command::InsertShape { slide, shapes: vec![(index, Shape::text_box(id, frame, ""))] }],
                     cx,
                 );
                 self.tool = Tool::Select;
@@ -3297,6 +3339,11 @@ pub(crate) fn zoom_levels() -> Vec<u32> {
     levels
 }
 
+/// A font size typed in points (1 to 1638, what Word accepts), such as `10.5` or ` 12 `.
+pub fn parse_font_size(text: &str) -> Option<f32> {
+    text.trim().parse::<f32>().ok().filter(|pt| pt.is_finite() && (1.0..=1638.).contains(pt))
+}
+
 /// A zoom typed in percent, such as `150`, `150%` or ` 72.5 `.
 pub(crate) fn parse_percent(text: &str) -> Option<f32> {
     let text = text.trim();
@@ -3330,6 +3377,24 @@ fn zoom_modifier_is_mac() -> bool {
 }
 
 /// Pixels per EMU at `zoom`, 1.0 being 100%.
+/// The key of the zoom the last window was at in the app's settings: `fit` or the percent.
+pub(crate) const LAST_ZOOM_KEY: &str = "app.last-zoom";
+
+/// Keep the zoom of the window (`None` fits the page) as the one the next file opens at when it has none of its own.
+pub(crate) fn remember_zoom(zoom: Option<f32>) {
+    crate::settings::set(LAST_ZOOM_KEY, &zoom.map_or("fit".to_string(), |z| format!("{}", (z * 100.0).round() as i32)));
+}
+
+/// The zoom the last window was at: `Some(None)` fits the page; `None` when none was kept.
+pub(crate) fn last_zoom() -> Option<Option<f32>> {
+    let value = crate::settings::get(LAST_ZOOM_KEY)?;
+    let value = value.trim();
+    if value == "fit" {
+        return Some(None);
+    }
+    value.parse::<f32>().ok().filter(|p| p.is_finite() && *p > 0.0).map(|p| Some((p / 100.0).clamp(MIN_ZOOM, MAX_ZOOM)))
+}
+
 pub fn zoom_scale(zoom: f32) -> f32 {
     zoom * PX_PER_INCH_AT_100 / ibis_doc_model::EMU_PER_INCH as f32
 }
@@ -3354,14 +3419,55 @@ impl Focusable for SlideEditor {
     }
 }
 
+#[cfg(target_family = "wasm")]
+thread_local! {
+    /// When (`clock::unix_millis`) the open file's characters were last looked at for the chunks of the fonts the page has (`follow_subset_chunks`).
+    static SUBSET_FOLLOWED_AT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// A look is waiting for the quiet time to be over.
+    static SUBSET_FOLLOW_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(target_family = "wasm")]
+impl SlideEditor {
+    /// GitHub issue #157, stage 2: the chunks that have the characters of the open file are taken when it is opened (`request_subset_blocks_for`); a character typed or pasted
+    /// afterwards may be in a chunk not taken yet (it is drawn with the viewer's own font until it comes). Looked at no oftener than every 300 ms while the screen is drawn
+    /// (the file's text is read each time), and only when a font the page has chunks of has a chunk that is not taken. A chunk that is wanted comes, and the windows draw again
+    /// (`fonts_late::fonts_arrived`).
+    fn follow_subset_chunks(&mut self, cx: &mut Context<Self>) {
+        if !self.has_document || !crate::render::subset_fonts::any_chunk_missing() {
+            return;
+        }
+        let now = crate::clock::unix_millis();
+        if now.saturating_sub(SUBSET_FOLLOWED_AT.with(|t| t.get())) < 300 {
+            // Drawn again soon after the last look: look once more when the quiet time is over (the typing may be the last thing before the screen rests).
+            if !SUBSET_FOLLOW_PENDING.with(|p| p.replace(true)) {
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(std::time::Duration::from_millis(350)).await;
+                    let _ = this.update(cx, |editor, cx| {
+                        SUBSET_FOLLOW_PENDING.with(|p| p.set(false));
+                        editor.follow_subset_chunks(cx);
+                    });
+                })
+                .detach();
+            }
+            return;
+        }
+        SUBSET_FOLLOWED_AT.with(|t| t.set(now));
+        crate::web::request_subset_blocks_for(self.used_fonts(), self.used_text(), cx);
+    }
+}
+
 impl Render for SlideEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::cmyk::set_display_gamut(self.has_document && self.cmyk_on());
+        crate::cmyk::set_display_gamut(self.has_document && self.cmyk_on() && self.soft_proof);
         self.sync_zoom_slider(window, cx);
         if self.zoom_menu_open && !self.has_document {
             self.zoom_menu_open = false;
         }
         with_format!(self, before_render(self, window, cx));
+        // The browser version: the characters typed or pasted after the file was opened that the chunks taken so far lack are followed (GitHub issue #157).
+        #[cfg(target_family = "wasm")]
+        self.follow_subset_chunks(cx);
         if self.interaction_layer().is_confirmation() {
             if self.dialog.drag.take().is_some() {window.release_pointer();}
             self.cancel_table_reorder(window,cx);
@@ -3374,7 +3480,8 @@ impl Render for SlideEditor {
             .children(with_format!(self, root_event_surface(self, cx)))
             .child(gpui_kit::component::popup_guard::begin())
             .child(gpui_kit::component::popup_guard::catcher())
-            .key_context(CONTEXT)
+            // A window with no file open (the start window) has the keys of `start_menu.rs` besides the editor's.
+            .key_context(if self.has_document { CONTEXT } else { crate::start_menu::START_WINDOW_CONTEXTS })
             // A press that closes a popup only closes it (`popup_guard`): the root asks first, `popup_guard::catcher` decides.
             .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
                 // The press that closed a menu is swallowed now, so a stale mark must not turn the next press on the bar into a close.
@@ -3386,7 +3493,7 @@ impl Render for SlideEditor {
             }))
             .capture_any_mouse_up(cx.listener(|this, event: &MouseUpEvent, window, cx| {
                 if with_format!(this, range_pick_up(this, window, cx)) {cx.stop_propagation();return;}
-                if this.dialog.drag.take().is_some() { cx.notify(); }
+                if let Some(drag)=this.dialog.drag.take() { this.finish_dialog_drag(drag); cx.notify(); }
                 if !this.dialog_allows_pointer(event.position, window) { cx.stop_propagation(); }
             }))
             .capture_key_down(cx.listener(Self::dialog_key))
@@ -3404,7 +3511,7 @@ impl Render for SlideEditor {
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 #[cfg(not(target_family = "wasm"))]
                 for path in paths.paths() {
-                    if path.extension().and_then(|e| e.to_str()).and_then(ibis_pptx::Kind::from_extension).is_some() {
+                    if path.extension().and_then(|e| e.to_str()).and_then(ibis_formats::Kind::from_extension).is_some() {
                         // The file this window has (it cannot be looked up from the app while it is updating) is raised, not opened again.
                         if this.shows_path(path) {
                             window.activate_window();
@@ -3416,18 +3523,30 @@ impl Render for SlideEditor {
                 #[cfg(target_family = "wasm")]
                 let _ = (this, paths, window, cx);
             }))
-            .on_action(cx.listener(|e,_:&crate::actions::AddPresentationSlide,w,cx|{if e.pages_are_slides(){e.add_slide(w,cx);}}))
+            .on_action(cx.listener(|e,_:&crate::actions::AddSlide,w,cx|{if e.pages_are_slides(){e.add_slide(w,cx);}}))
             .on_action(cx.listener(Self::undo))
             .on_action(cx.listener(Self::redo))
             .on_action(cx.listener(Self::delete_selection))
             .on_action(cx.listener(Self::cancel_tool))
             .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(|_, _: &crate::actions::OpenStartWindow, _, cx| crate::app::open_editor(None, None, cx)))
-            .on_action(cx.listener(|this, _: &crate::actions::NewDocument, window, cx| this.new_file(this.kind(), window, cx)))
+            .on_action(cx.listener(|this, _: &crate::actions::NewDocument, window, cx| {
+                let kind = if this.kind() == ibis_formats::Kind::Pdf { ibis_formats::Kind::Document } else { this.kind() };
+                this.new_file(kind, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &crate::actions::StartNewDocument, window, cx| this.new_file(ibis_formats::Kind::Document, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::actions::StartNewWorkbook, window, cx| this.new_file(ibis_formats::Kind::Workbook, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::actions::StartNewPresentation, window, cx| this.new_file(ibis_formats::Kind::Presentation, window, cx)))
+            .on_action(cx.listener(|this, action: &crate::actions::OpenRecent, window, cx| {
+                #[cfg(not(target_family = "wasm"))]
+                this.open_path_or_raise(action.path.clone(), window, cx);
+                #[cfg(target_family = "wasm")]
+                let _ = (this, action, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &crate::actions::NewFromTemplate, window, cx| this.new_from_template(window, cx)))
             // Also on the start view (⌘W closes its window; the menu's ファイル > 閉じる was greyed there, #75).
             .on_action(cx.listener(Self::close_file))
-            .when(self.has_document, |d| d.on_action(cx.listener(Self::save)).on_action(cx.listener(Self::save_as)).on_action(cx.listener(|this, _: &crate::actions::PrintFile, window, cx| this.print(window, cx))))
+            .when(self.has_document, |d| d.on_action(cx.listener(Self::save)).on_action(cx.listener(Self::save_as)).on_action(cx.listener(|this, _: &crate::actions::Print, window, cx| this.print(window, cx))))
             .when(self.has_document, |d| {
                 d.on_action(cx.listener(|this, _: &crate::actions::ToggleMenus, _, cx| {
                     if !this.show_menu_bar {
@@ -3439,10 +3558,10 @@ impl Render for SlideEditor {
                     cx.notify();
                 }))
             })
-            .on_action(cx.listener(|this, _: &crate::actions::ZoomInView, window, cx| this.step_zoom(true, window, cx)))
-            .on_action(cx.listener(|this, _: &crate::actions::ZoomOutView, window, cx| this.step_zoom(false, window, cx)))
-            .on_action(cx.listener(|this, _: &crate::actions::ZoomActualView, window, cx| this.set_zoom(Some(1.0), window, cx)))
-            .on_action(cx.listener(|this, _: &crate::actions::ZoomFitView, window, cx| this.set_zoom(None, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::actions::ViewZoomIn, window, cx| this.step_zoom(true, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::actions::ViewZoomOut, window, cx| this.step_zoom(false, window, cx)))
+            .on_action(cx.listener(|this, _: &crate::actions::ViewZoomActual, window, cx| this.set_zoom(Some(1.0), window, cx)))
+            .on_action(cx.listener(|this, _: &crate::actions::ViewZoomFit, window, cx| this.set_zoom(None, window, cx)))
             .on_action(cx.listener(Self::next_slide))
             .on_action(cx.listener(Self::previous_slide))
             .on_action(cx.listener(|this, _: &crate::actions::FirstSlide, window, cx| this.end_slide(false, window, cx)))
@@ -3502,6 +3621,9 @@ impl Render for SlideEditor {
             // The slide show takes the whole window, in place of the rest.
             .when_some(with_format!(self, show_element(self, window, cx)), |d, show| d.child(show))
             .when(!with_format!(self, show_in_main(self)), |d| self.render_window(d, window, cx))
+            // The touch gestures of the whole window (`shell/gesture.rs`): here, once, for every format.
+            .child(crate::gesture::touch_session_listener(cx))
+            .when_some(crate::host::watermark().filter(|_| self.has_document), |d, mark| d.child(crate::host_editor::watermark_overlay(&mark, window)))
             .map(|d| self.render_dialog_stack(d, window, cx))
             .map(|d| {
                 #[cfg(not(target_family = "wasm"))]
@@ -3517,6 +3639,9 @@ impl SlideEditor {
     fn render_window(&mut self, d: Stateful<Div>, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         #[cfg(not(target_family = "wasm"))]
         self.sync_open_documents(window, cx);
+        // A host that embeds the editor is told when the unsaved-changes mark changes (the browser version too: it has no table of
+        // open documents, but it has hosts).
+        self.host_sync_dirty();
         self.sync_context_menus(cx);
         #[cfg(not(target_family = "wasm"))]
         self.advance_window_switcher(window, cx);
@@ -3524,13 +3649,19 @@ impl SlideEditor {
         // and the toolbar (the first two hidden by the toolbar's ^), the
         // document with the sidebar on its right, and the status bar.
         if !self.has_document {
+            // A host that has no start window (`ui.startWindow` off: ibisWorks) gets a blank window until its document comes (no flash of the start view; K0037).
+            if crate::host::is_connected() && !crate::host::options().start_window {
+                return d;
+            }
             window.set_window_title(&crate::start_view::start_title());
             // The settings dialog (modal) over the start view: its panel is built, and drawn, by the sidebar's code as in a document.
             // The セットアップ dialog (K0001) is shown the same way: the first window at launch is often this one.
             if self.settings.is_some() || self.font_setup_is_open() {
                 let _ = self.render_sidebar(window, cx);
             }
-            return d.child(self.render_title_row(window, cx)).child(self.render_start_view(cx));
+            // Windows and Linux: the start window's menus below the title row (macOS has them in the system's menu bar).
+            let d = d.child(self.render_title_row(window, cx)).when(crate::start_menu::shows_bar(), |d| d.child(self.render_menu_bar(window, cx)));
+            return d.child(self.render_start_view(cx));
         }
         let compact = self.chrome_compact;
         let focus = with_format!(self, chrome_hidden(self));
@@ -3574,7 +3705,7 @@ impl SlideEditor {
 
     /// Apply a font size (in points) chosen or typed in the toolbar font size pulldown (#120).
     pub(crate) fn commit_toolbar_font_size(&mut self,window:&mut Window,cx:&mut Context<Self>){
-        if self.font_size_edit_dirty && let Ok(value)=self.font_size_edit_input.read(cx).value().trim().parse::<f32>() && value.is_finite() && (1.0..=1638.).contains(&value) {self.font_size_edit_dirty=false;self.set_toolbar_font_size(value,window,cx);}
+        if self.font_size_edit_dirty && let Some(value)=parse_font_size(self.font_size_edit_input.read(cx).value().as_str()) {self.font_size_edit_dirty=false;self.set_toolbar_font_size(value,window,cx);}
         self.focus_handle.focus(window,cx);cx.notify();
     }
     pub fn set_toolbar_font_size(&mut self, pt: f32, window: &mut Window, cx: &mut Context<Self>) {
@@ -3943,6 +4074,244 @@ pub fn wheel_zoom_listener(cx: &Context<SlideEditor>) -> impl IntoElement {
     .left_0()
     .size_full()
 }
+
+impl SlideEditor {
+    /// What a touch on the page can change in the window now, for `GestureTransaction` (`shell/gesture.rs`). Here, not there,
+    /// because it names every private field of the editor.
+    pub(crate) fn take_view_snapshot(&self) -> crate::gesture::ViewSnapshot {
+        let editor = self;
+        // Every field of both structs is named, so that one added later does not compile until it is decided here.
+        // A field is in the snapshot when a touch on the page (a press, a drag, a tap) can change it. The others are
+        // panels, dialogs, menus, caches and settings that a touch on the page does not change, or that the document
+        // history already carries (`document`).
+        let SlideEditor {
+                focus_handle: _,
+                list_focus: _,
+                list_scroll: _,
+                wheel: _,
+                open_menu: _,
+                menu_dismissed_at: _,
+                menu_notice: _,
+                bar_contexts: _,
+                #[cfg(not(target_family = "wasm"))]
+                open_documents: _,
+                #[cfg(not(target_family = "wasm"))]
+                window_was_active: _,
+                #[cfg(not(target_family = "wasm"))]
+                window_switcher: _,
+                #[cfg(target_family = "wasm")]
+                wheel_at: _,
+                #[cfg(target_os = "windows")]
+                wheel_notches: _,
+                document: _,
+                document_memory: _,
+                current_slide,
+                selection,
+                tool,
+                shape_edit,
+                drag,
+                crop_mode: _,
+                editing: _,
+                workspace_bounds: _,
+                workspace_scroll,
+                zoom,
+                zoom_slider: _,
+                status_layout: _,
+                zoom_controls_bounds: _,
+                logo_bounds: _,
+                bar_keys: _,
+                draw_button_bounds: _,
+                zoom_trigger_bounds: _,
+                _zoom_subscription: _,
+                zoom_menu_open: _,
+                zoom_input: _,
+                _zoom_input_subscription: _,
+                zoom_dialog_open: _,
+                zoom_dialog_input: _,
+                _zoom_dialog_subscription: _,
+                entity_id: _,
+                font_size_menu_open: _,
+                font_size_edit_input: _,
+                font_size_edit_dirty: _,
+                _font_size_edit_subscription: _,
+                font_size_input: _,
+                _font_size_input_subscription: _,
+                font_size_scroll: _,
+                font_size_selected: _,
+                font_size_filtering: _,
+                toolbar_search_inputs: _,
+                toolbar_search_hints: _,
+                toolbar_search_scrolls: _,
+                toolbar_search_selected: _,
+                toolbar_search_open: _,
+                toolbar_search_spec: _,
+                toolbar_dropdown_instance: _,
+                toolbar_search_popup_items: _,
+                sidebar_scroll: _,
+                resources: _,
+                picture_watch: _,
+                file_name: _,
+                status: _,
+                save_note: _,
+                chart_ranges: _,
+                grid_only: _,
+                replace_fonts: _,
+                rename_file: _,
+                host: _,
+                #[cfg(not(target_family = "wasm"))]
+                password_dialog: _,
+                settings: _,
+                #[cfg(not(target_family = "wasm"))]
+                recent_files: _,
+                #[cfg(not(target_family = "wasm"))]
+                protection_password: _,
+                recent_colors: _,
+                last_colors: _,
+                last_choices: _,
+                #[cfg(not(target_family = "wasm"))]
+                recent_scroll: _,
+                #[cfg(not(target_family = "wasm"))]
+                recent_exists: _,
+                #[cfg(not(target_family = "wasm"))]
+                recent_checking: _,
+                has_document: _,
+                closed: _,
+                loading: _,
+                format,
+                format_prefs: _,
+                sidebar_open: _,
+                last_find_query: _,
+                sidebar_layout: _,
+                active_row_dnd: _,
+                link_hover: _,
+                link_text_positions: _,
+                link_popup: _,
+                theme_colors_ui: _,
+                dialog: _,
+                _dialog_keystrokes: _,
+                ruler_settings_open: _,
+                gesture: _,
+                ruler_settings_ui: _,
+                right_pane: _,
+                sidebar_width: _,
+                sidebar_drag: _,
+                symbol: _,
+                outline_open: _,
+                ruler_unit: _,
+                gridlines_open: _,
+                chrome_compact: _,
+                toolbar_bounds: _,
+                source: _,
+                #[cfg(not(target_family = "wasm"))]
+                path: _,
+                file_id: _,
+                window_number: _,
+                save_confirm_dialog_open: _,
+                msgbox: _,
+                panel_message: _,
+                alert: _,
+                ask: _,
+                about_open: _,
+                comment_delete: _,
+                // The CMYK display and the print panel's undo point are settings, not what a touch changes.
+                soft_proof: _,
+                print_cmyk_origin: _,
+                cmyk_notice: _,
+                signature: _,
+                close_window_after_confirm: _,
+                office_path_confirm_dialog_open: _,
+                watch: _,
+                side_by_side: _,
+                sync_scrolling: _,
+                side_by_side_peer: _,
+                is_syncing_scroll: _,
+                last_synced_scroll: _,
+                is_recovered: _,
+                active_autorecover_file: _,
+                autorecover_settings: _,
+                recover_unsaved: _,
+                autorecover_off: _,
+                last_autorecover_ms: _,
+                autorecover_timer_started: _,
+                is_repaired: _,
+                repair_summary: _,
+                repair_report: _,
+                opened_from_legacy: _,
+                read_only: _,
+                modify_unlocked: _,
+                show_menu_bar: _,
+                show_toolbar: _,
+                is_csv_streaming: _,
+        } = editor;
+        let crate::shape_state::ShapeEditState {
+                selection: shape_selection,
+                tool: shape_tool,
+                drag: shape_drag,
+                shift: shape_shift,
+                clipboard: _,
+                clipboard_groups: _,
+                edit: shape_edit_text,
+                positions: _,
+                goal_x: shape_goal_x,
+                pending_click: shape_pending_click,
+                spell_cache: _,
+                guides: _,
+                gridlines: _,
+                snap_to_grid: _,
+                snap_to_shape: _,
+                align_to_slide: _,
+                chart_panel: _,
+                chart_data: _,
+                compress_panel: _,
+                theme_panel: _,
+                autocorrect: _,
+                symbols: _,
+                character_format_copy: _,
+                paragraph_format_copy: _,
+                clipboard_stamp: _,
+                read_only_dismissed: _,
+                defaults: _,
+                link_mode: _,
+                pending_chain_copies: _,
+                chain_display_cache: _,
+                chain_select_all: _,
+                pastes: _,
+                clipboard_slide: _,
+                crop_panel: _,
+                frame_panel: _,
+                find: _,
+                spelling: _,
+                header_footer: _,
+                selection_pane: _,
+                thesaurus: _,
+                size_panel: _,
+                insets_panel: _,
+                glow_panel: _,
+                shadow_panel: _,
+                gradient_panel: _,
+                paragraph_panel: _,
+                alt_text_panel: _,
+                popup: _,
+        } = shape_edit;
+        crate::gesture::ViewSnapshot {
+            selection: *selection,
+            current_slide: *current_slide,
+            tool: *tool,
+            drag: *drag,
+            shape_selection: shape_selection.clone(),
+            shape_tool: *shape_tool,
+            shape_drag: shape_drag.clone(),
+            shape_shift: *shape_shift,
+            shape_edit: shape_edit_text.clone(),
+            shape_goal_x: *shape_goal_x,
+            shape_pending_click: *shape_pending_click,
+            zoom: *zoom,
+            scroll: workspace_scroll.offset(),
+            format: format.gesture_view(),
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

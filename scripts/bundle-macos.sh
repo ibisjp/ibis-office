@@ -59,6 +59,11 @@ cp "$BIN_DIR/ibisOffice" "$APP/Contents/MacOS/ibisOffice"
 # notarized) app, so it cannot be swapped for another.
 cp "$BIN_DIR/ibisOfficeUpdater" "$APP/Contents/MacOS/ibisOfficeUpdater"
 cp crates/ibis-office-app/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# The icons of the files ibisOffice opens (K0048): the blue document, green spreadsheet and orange presentation icons, which the
+# document types below name (made by scripts/gen-doc-icons.py).
+cp crates/ibis-office-app/icons/doc/document.icns "$APP/Contents/Resources/DocIcon.icns"
+cp crates/ibis-office-app/icons/doc/spreadsheet.icns "$APP/Contents/Resources/SheetIcon.icns"
+cp crates/ibis-office-app/icons/doc/presentation.icns "$APP/Contents/Resources/SlideIcon.icns"
 # The third-party components in the app and the notices their licences ask
 # for (made afresh from the dependencies), and Carlito's licence on its own
 # (OFL-1.1 asks for it with the font).
@@ -69,7 +74,7 @@ cp crates/ibis-office-render/fonts/carlito/OFL.txt "$APP/Contents/Resources/Lice
 # The pictures of Word's art page borders: ECMA-376's zip, unmodified, with
 # its notice (read when a document uses an art border; not in the executable).
 mkdir -p "$APP/Contents/Resources/artborders"
-cp crates/ibis-pptx/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip crates/ibis-pptx/data/artborders/ECMA-NOTICE.txt "$APP/Contents/Resources/artborders/"
+cp crates/ibis-formats/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip crates/ibis-formats/data/artborders/ECMA-NOTICE.txt "$APP/Contents/Resources/artborders/"
 
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -101,22 +106,76 @@ cat > "$APP/Contents/Info.plist" <<EOF
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
+			<key>CFBundleTypeName</key><string>OFD document</string>
+			<key>CFBundleTypeRole</key><string>Viewer</string>
+			<key>LSHandlerRank</key><string>Alternate</string>
+			<key>CFBundleTypeExtensions</key><array><string>ofd</string></array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key><string>XPS document</string>
+			<key>CFBundleTypeRole</key><string>Viewer</string>
+			<key>LSHandlerRank</key><string>Alternate</string>
+			<key>CFBundleTypeExtensions</key><array><string>xps</string><string>oxps</string></array>
+		</dict>
+		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Office document</string>
+			<string>Document (Word, OpenDocument text)</string>
+			<key>CFBundleTypeIconFile</key>
+			<string>DocIcon</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>org.openxmlformats.presentationml.presentation</string>
-				<string>org.openxmlformats.spreadsheetml.sheet</string>
 				<string>org.openxmlformats.wordprocessingml.document</string>
+				<string>com.microsoft.word.doc</string>
+				<string>com.microsoft.word.dot</string>
+				<string>org.oasis-open.opendocument.text</string>
+				<string>org.oasis-open.opendocument.text-template</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>docx</string>
+				<string>docm</string>
+				<string>doc</string>
+				<string>dot</string>
+				<string>odt</string>
+				<string>ott</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Spreadsheet (Excel, OpenDocument spreadsheet)</string>
+			<key>CFBundleTypeIconFile</key>
+			<string>SheetIcon</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.openxmlformats.spreadsheetml.sheet</string>
+				<string>com.microsoft.excel.xls</string>
+				<string>com.microsoft.excel.xlt</string>
+				<string>org.oasis-open.opendocument.spreadsheet</string>
+				<string>org.oasis-open.opendocument.spreadsheet-template</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>xlsx</string>
+				<string>xlsm</string>
+				<string>xls</string>
+				<string>xlt</string>
+				<string>ods</string>
+				<string>ots</string>
 			</array>
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>CSV / TSV text table</string>
+			<key>CFBundleTypeIconFile</key>
+			<string>SheetIcon</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
@@ -135,56 +194,31 @@ cat > "$APP/Contents/Info.plist" <<EOF
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Old Office and OpenDocument file (Word 97-2003, PowerPoint 97-2003, Excel 97-2003, OpenDocument text, spreadsheet and presentation)</string>
+			<string>Presentation (PowerPoint, OpenDocument presentation)</string>
+			<key>CFBundleTypeIconFile</key>
+			<string>SlideIcon</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.microsoft.word.doc</string>
-				<string>com.microsoft.word.dot</string>
+				<string>org.openxmlformats.presentationml.presentation</string>
 				<string>com.microsoft.powerpoint.ppt</string>
 				<string>com.microsoft.powerpoint.pps</string>
 				<string>com.microsoft.powerpoint.pot</string>
-				<string>com.microsoft.excel.xls</string>
-				<string>com.microsoft.excel.xlt</string>
-				<string>org.oasis-open.opendocument.text</string>
-				<string>org.oasis-open.opendocument.text-template</string>
-				<string>org.oasis-open.opendocument.spreadsheet</string>
-				<string>org.oasis-open.opendocument.spreadsheet-template</string>
 				<string>org.oasis-open.opendocument.presentation</string>
 				<string>org.oasis-open.opendocument.presentation-template</string>
 			</array>
 			<key>CFBundleTypeExtensions</key>
 			<array>
-				<string>doc</string>
-				<string>dot</string>
+				<string>pptx</string>
+				<string>pptm</string>
 				<string>ppt</string>
 				<string>pps</string>
 				<string>pot</string>
-				<string>xls</string>
-				<string>xlt</string>
-				<string>odt</string>
-				<string>ott</string>
-				<string>ods</string>
-				<string>ots</string>
 				<string>odp</string>
 				<string>otp</string>
-			</array>
-		</dict>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>Office document with macros (the macros do not run)</string>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>LSHandlerRank</key>
-			<string>Alternate</string>
-			<key>CFBundleTypeExtensions</key>
-			<array>
-				<string>docm</string>
-				<string>xlsm</string>
-				<string>pptm</string>
 			</array>
 		</dict>
 	</array>

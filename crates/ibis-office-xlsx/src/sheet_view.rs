@@ -26,9 +26,9 @@ const CELL_PADDING_PT: f32 = 2.0;
 /// A column's width counts 5 pixels of padding besides its characters (ECMA-376 Part 1 18.3.1.13: 2 px a
 /// side and 1 for the grid line), so a text has the column less 5 px: 2.5 px = 1.875 pt a side on Windows
 /// (0.75 pt a pixel). Excel for Mac counts a pixel as a point and 4 pt in all.
-const ROOM_PADDING_PT: f32 = match ibis_pptx::EXCEL_METRICS {
-    ibis_pptx::ExcelMetrics::Windows => 2.5 * 0.75,
-    ibis_pptx::ExcelMetrics::Mac => 2.0,
+const ROOM_PADDING_PT: f32 = match ibis_formats::EXCEL_METRICS {
+    ibis_formats::ExcelMetrics::Windows => 2.5 * 0.75,
+    ibis_formats::ExcelMetrics::Mac => 2.0,
 };
 /// Where a printed cell's text starts: 21 of the printer's pixels (1/600 inch) from the column's left, whatever the Normal font (Excel for
 /// Windows' PDFs of `pad-*.xlsx`: Calibri 11 and 20, ＭＳ Ｐゴシック 11, 游ゴシック 11, Arial 10).
@@ -110,7 +110,7 @@ fn whole_point_advances(line: &mut ShapedLine, px_per_point: f32, printed: bool)
         return;
     }
     // Excel for Windows rounds to a whole pixel (0.75 pt) on the screen and to the printer's (0.12 pt) in print, the Mac's to a point.
-    let unit = px_per_point * if printed { 72.0 / 600.0 } else { ibis_pptx::EXCEL_METRICS.pixel_pt() as f32 };
+    let unit = px_per_point * if printed { 72.0 / 600.0 } else { ibis_formats::EXCEL_METRICS.pixel_pt() as f32 };
     let old: Vec<f32> = line.runs.iter().flat_map(|r| r.glyphs.iter().map(|g| f32::from(g.position.x))).collect();
     if old.is_empty() {
         return;
@@ -327,7 +327,8 @@ pub fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resou
                 // measured at once (a screenful is the first paint's).
                 let cell_bands = layout.cell_bands.get_or_init(|| Bands::new(layout.cells.iter().map(|c| (c.rect.0, c.rect.1, c.rect.2 - c.rect.0, c.rect.3 - c.rect.1))));
                 let found = cell_bands.find(top, bottom);
-                let ts_key = (std::sync::Arc::as_ptr(window.text_system()) as usize as u64).wrapping_mul(0x517C_C1B7_2722_0A95);
+                // Fonts that came later (the browser version reads the downloaded fonts behind the first drawing, GitHub issue #157) change what a text measures.
+                let ts_key = ((std::sync::Arc::as_ptr(window.text_system()) as usize as u64) ^ crate::render::shape_view::fonts_generation().wrapping_mul(0xA24B_AED4_963E_E407)).wrapping_mul(0x517C_C1B7_2722_0A95);
                 {
                     let mut items = layout.items.borrow_mut();
                     if items.len() != layout.cells.len() {
@@ -495,7 +496,10 @@ pub fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resou
                                                 .translate(pivot)
                                                 .rotate(Radians(angle))
                                                 .translate(point(ScaledPixels(-pivot.x.0), ScaledPixels(-pivot.y.0)));
-                                            let _ = window.paint_glyph_transformed(turned, run.font_id, glyph.id, px(p_size), t.color, transformation);
+                                            if let Some(c) = t.pieces.get(p_idx).and_then(|p| p.text.get(glyph.index..)).and_then(|t| t.chars().next()) {
+                                        crate::render::glyph_text::note(run.font_id, glyph.id, turned, c);
+                                    }
+                                    let _ = window.paint_glyph_transformed(turned, run.font_id, glyph.id, px(p_size), t.color, transformation);
                                         }
                                     }
                                 }
@@ -519,7 +523,31 @@ pub fn sheet_element(sheet: &Arc<Sheet>, frame: EmuRect, scale: f32, res: &Resou
                                 if let Ok(line) = piece {
                                     // A box the font's height, its top the ascent above the baseline.
                                     let origin = point(o.x + px(x), o.y + px(t.baseline) - line.ascent);
-                                    line.paint(origin, line.ascent + line.descent, TextAlign::Left, None, window, cx).ok();
+                                    // A PDF being written copies the glyphs as the characters asked for, not as the characters their glyph ids reverse-map to (a stand-in for a
+                                    // proportional typeface draws オ, （ and １ with the glyphs of ｵ, ( and 1): painted where `paint` puts them, each noted (`glyph_text`).
+                                    let text = t.pieces.get(pi).map(|p| p.text.as_str());
+                                    let (piece_color, piece_strike) = match t.pieces.get(pi).and_then(|p| p.run.as_ref()) {
+                                        Some(r) => (r.color.unwrap_or(t.color), r.strike),
+                                        None => (t.color, t.strike),
+                                    };
+                                    if crate::render::glyph_text::recording()
+                                        && !piece_strike
+                                        && let Some(text) = text
+                                        && text.chars().any(|c| ('\u{3000}'..='\u{ffef}').contains(&c))
+                                        && line.runs.iter().all(|r| r.glyphs.iter().all(|g| !g.is_emoji))
+                                    {
+                                        for r in &line.runs {
+                                            for g in &r.glyphs {
+                                                let at = point(origin.x + g.position.x, origin.y + line.ascent + g.position.y);
+                                                if let Some(c) = text.get(g.index..).and_then(|t| t.chars().next()) {
+                                                    crate::render::glyph_text::note(r.font_id, g.id, at, c);
+                                                }
+                                                let _ = window.paint_glyph(at, r.font_id, g.id, line.font_size, piece_color);
+                                            }
+                                        }
+                                    } else {
+                                        line.paint(origin, line.ascent + line.descent, TextAlign::Left, None, window, cx).ok();
+                                    }
                                 } else if let Some((on, tick, descent)) = t.checkbox {
                                     // The box stands on the bottom of the text's line (the baseline and the font's descent below it): Excel's
                                     // boxes at 6, 12 and 18 pt are 0.26 em lower than one standing on the baseline, the descent of the font.
@@ -808,6 +836,11 @@ thread_local! {
     pub static PRINT_REGIONS: std::cell::RefCell<Vec<(LayoutKey, std::sync::Weak<Sheet>, Vec<EmuRect>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// How many layouts are kept (the scenarios use it).
+pub fn layouts_kept() -> usize {
+    LAYOUTS.with(|cache| cache.borrow().len())
+}
+
 /// Forget the layouts kept: they hold their sheets, so that an edit would copy every cell of a big sheet before changing one (the layout of the changed sheet is made again at the next draw).
 pub fn release_layouts() {
     LAYOUTS.with(|cache| cache.borrow_mut().clear());
@@ -841,7 +874,7 @@ pub fn layout_key(sheet: &Arc<Sheet>, scale: f32, res: &Resources) -> LayoutKey 
     let breaks = res.print_breaks.borrow();
     let breaks_key = breaks.0.iter().chain(&breaks.1).fold(breaks.0.len() as i64, |h, v| h.wrapping_mul(31).wrapping_add(*v));
     drop(breaks);
-    (sheet.cells.content_id(), Arc::as_ptr(sheet) as usize, res.layout_generation, scale.to_bits(), res.print, res.print_scale.get().to_bits(), breaks_key, crate::render::web_image::generation())
+    (sheet.cells.content_id(), Arc::as_ptr(sheet) as usize, res.layout_generation.wrapping_add((crate::render::shape_view::fonts_generation() as usize).wrapping_mul(0x9E37_79B1)), scale.to_bits(), res.print, res.print_scale.get().to_bits(), breaks_key, crate::render::web_image::generation())
 }
 
 fn cached_layout(sheet: &Arc<Sheet>, scale: f32, res: &Resources) -> Rc<SheetLayout> {
@@ -1239,15 +1272,21 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             if ctx.print && ctx.breaks.1.contains(&xs[(range.first_column as usize).min(xs.len() - 1)]) { 0.0 } else { grow_left },
             if ctx.print && ctx.breaks.0.contains(&ys[(range.first_row as usize).min(ys.len() - 1)]) { 0.0 } else { grow_top },
         );
+        // Printed by Excel for Windows, a fill runs from its cell's top and left edge to one pixel of the printer (1/600 inch) past the
+        // bottom and right edge, over the grid line after it, and not back over the line before it (its PDFs of 40 probes with a fill
+        // in each cell, 100, 95 and 75 %: a fill 12.36 pt high in a row of 12.24).
+        let win_print = ctx.print && *sheet.printed && ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows && ctx.print_scale > 0.0;
+        let (grow_left, grow_top) = if win_print { (0.0, 0.0) } else { (grow_left, grow_top) };
+        let fill_past = if win_print { (72.0 / 600.0 / ctx.print_scale) as f32 * px_per_point } else { 0.0 };
         let fill_left = if range.first_column == 0 { left } else { left - grow_left * fill_unit };
         let fill_top = if range.first_row == 0 { top } else { top - grow_top * fill_unit };
         if bottom <= top || right <= left {
             // A hidden row or column (one a filter hides): no fill, though
             // the fill's grown edge would show as a line (XAF-00003).
         } else if let Some(grad) = &style.gradient {
-            out.gradients.push(((fill_left, fill_top, right - fill_left, bottom - fill_top), grad.to_fill()));
+            out.gradients.push(((fill_left, fill_top, right + fill_past - fill_left, bottom + fill_past - fill_top), grad.to_fill()));
         } else if let Some((preset, fg, bg)) = &style.pattern {
-            out.fills.push(Quad { rect: (fill_left, fill_top, right - fill_left, bottom - fill_top), color: hsla(opaque(*bg)) });
+            out.fills.push(Quad { rect: (fill_left, fill_top, right + fill_past - fill_left, bottom + fill_past - fill_top), color: hsla(opaque(*bg)) });
             // Excel's tiles for a cell's patterns (not PowerPoint's), 1 pt per cell.
             let tile = ibis_doc_model::spreadsheet_pattern_of_preset(preset).and_then(ibis_doc_model::spreadsheet_pattern_tile).or_else(|| ibis_doc_model::pattern_tile(preset));
             if let Some(tile) = tile {
@@ -1292,7 +1331,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                 }
             }
         } else if let Some(color) = style.fill {
-            out.fills.push(Quad { rect: (fill_left, fill_top, right - fill_left, bottom - fill_top), color: hsla(opaque(color)) });
+            out.fills.push(Quad { rect: (fill_left, fill_top, right + fill_past - fill_left, bottom + fill_past - fill_top), color: hsla(opaque(color)) });
         }
         let display = fill_sources.get(&(cell.row, cell.column)).copied().unwrap_or(cell);
         // Printed, Excel leaves out text of more than 32 pt that is well over its row's height (its PDFs of xlsx-XFNT:
@@ -1469,7 +1508,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             // stroked) filled with the paper's checkerboard of points, as
             // the straight hair line (Excel's PDFs of xlsx-XBRD: a pattern
             // fill of that outline).
-            if ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Mac
+            if ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Mac
                 && let (BorderLine::Hair, Some((sc, kx, ky))) = (b.line, PRINT_GRID.with(|g| g.get()))
             {
                 let p = px_per_point;
@@ -1776,6 +1815,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
         let v_to = bottom + far(&effective_bottom_border);
         let h_from = if effective_left_line.is_some() { left + far(&effective_left_line) } else { left - border_unit };
         let h_to = right + far(&effective_right_line);
+        let win_ends = (ctx.print && ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows && ctx.print_scale > 0.0).then_some(ctx.print_scale as f32);
         let edges = [
             (&own_top, true, row_break(r), top, h_from, h_to, beaten(&own_top, neighbour_edge(r, c, 0), true)),
             (&own_bottom, true, false, bottom, h_from, h_to, beaten(&own_bottom, neighbour_edge(r, c, 1), false)),
@@ -1794,15 +1834,39 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
             (is_double(&effective_top_border), is_double(&effective_bottom_border)),
             (is_double(&effective_top_border), is_double(&effective_bottom_border)),
         ];
-        for (i, (b, horizontal, at_page_start, at, from, to, beaten)) in edges.into_iter().enumerate() {
-            if beaten {
+        for (i, (b, horizontal, at_page_start, at, from, to, edge_beaten)) in edges.into_iter().enumerate() {
+            if edge_beaten {
                 continue;
             }
             if let Some(b) = b {
                 let lines = if horizontal { &mut out.borders } else { &mut out.vertical_borders };
                 let (start_double, end_double) = corners[i];
-                if b.line == BorderLine::Double && (start_double || end_double) {
-                    let p = border_unit;
+                // Excel for Windows: the ends follow the lines that meet at each corner (`win_corner_end`).
+                let (from, to) = if let Some(s) = win_ends {
+                    // The line that shows on a shared edge (the one that wins the cell's own and its neighbour's).
+                    let shown = |own: Option<ibis_doc_model::Border>, other: Option<ibis_doc_model::Border>, other_first: bool| match (own, other) {
+                        (Some(_), Some(n)) if beaten(&own, Some(n), other_first) => Some(n.line),
+                        (Some(o), _) => Some(o.line),
+                        (None, n) => n.map(|n| n.line),
+                    };
+                    let (left_line, right_line) = (shown(own_left, neighbour_edge(r, c, 2), true), shown(own_right, neighbour_edge(r, c, 3), false));
+                    let (top_line, bottom_line) = (shown(own_top, neighbour_edge(r, c, 0), true), shown(own_bottom, neighbour_edge(r, c, 1), false));
+                    let end = |other: Option<BorderLine>, start: bool, wins_tie: bool| win_corner_end(b.line, other, start, wins_tie, s, px_per_point);
+                    match i {
+                        0 | 1 => (left + end(left_line, true, false), right + end(right_line, false, true)),
+                        2 => (top + end(top_line, true, true), bottom + end(bottom_line, false, true)),
+                        _ => (top + end(top_line, true, false), bottom + end(bottom_line, false, true)),
+                    }
+                } else {
+                    (from, to)
+                };
+                if b.line == BorderLine::Double && (start_double || end_double) && win_ends.is_none() {
+                    // Excel for Windows prints each of the two lines (and the gap) as round(8 s) printer pixels (see `border_quads`).
+                    let win_unit = (ctx.print && ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows && ctx.print_scale > 0.0).then(|| {
+                        let s = ctx.print_scale as f32;
+                        (8.0 * s + 0.5).floor().max(1.0) * (72.0 / 600.0) * border_unit / s
+                    });
+                    let p = win_unit.unwrap_or(border_unit);
                     let color = hsla(opaque(b.color));
                     // The line nearer the cell's start side ([at − 2, at − 1])
                     // and the one after it ([at, at + 1]); which is outer
@@ -1810,8 +1874,11 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
                     let first_outer = i == 0 || i == 2;
                     let (lo, hi) = if horizontal { (left, right) } else { (top, bottom) };
                     let at_shifted = if at_page_start { at + 2.0 * p } else { at };
-                    for (offset, outer) in [(-2.0, first_outer), (0.0, !first_outer)] {
-                        let a = if start_double { if outer { lo - 2.0 * p } else { lo } } else if horizontal { from } else { from - p };
+                    // Excel for Windows centres the pair on the grid line ([at − 1½, at − ½] and [at + ½, at + 1½]; see `border_quads`).
+                    let win_print = ctx.print && ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows && !at_page_start;
+                    let offsets = if win_print { [(-1.5, first_outer), (0.5, !first_outer)] } else { [(-2.0, first_outer), (0.0, !first_outer)] };
+                    for (offset, outer) in offsets {
+                        let a = if start_double { if outer { lo - 2.0 * p } else { lo } } else if horizontal || win_print { from } else { from - p };
                         let z = if end_double { if outer { hi + p } else { hi - p } } else { to };
                         let edge = at_shifted + offset * p;
                         let rect = if horizontal { (a, edge, z - a, p) } else { (edge, a, p, z - a) };
@@ -1827,11 +1894,38 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
     // borders, use them; otherwise (when covered cells are omitted) fall back to the top-left cell's border styling.
     // Adjacent cells with identical borders along an edge are grouped into contiguous segments.
     for m in sheet.merges.iter().filter(|m| in_part(m.first_row)) {
+        // Excel for Windows: a merged range's outer lines end by the lines that meet at its corners (`win_corner_end`).
+        let win_ends = (ctx.print && ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows && ctx.print_scale > 0.0).then_some(ctx.print_scale as f32);
+        let shown_at = |r: u32, c: u32, edge: u8| -> Option<ibis_doc_model::Border> {
+            let own = border_at(Some(r), Some(c), edge);
+            let other = neighbour_edge(r, c, edge);
+            if beaten(&own, other, edge % 2 == 0) { other } else { own.or(other) }
+        };
+        let (left_line, right_line) = (shown_at(m.first_row, m.first_column, 2).map(|b| b.line), shown_at(m.first_row, m.last_column, 3).map(|b| b.line));
+        let (top_line, bottom_line) = (shown_at(m.first_row, m.first_column, 0).map(|b| b.line), shown_at(m.last_row, m.first_column, 1).map(|b| b.line));
+        // The shift of an edge's first and last coordinate: [start, end] for the border (of the edge's own style) at those cells.
+        let ends = |first: Option<ibis_doc_model::Border>, last: Option<ibis_doc_model::Border>, start_line: Option<BorderLine>, end_line: Option<BorderLine>, start_tie: bool| -> (f32, f32) {
+            match win_ends {
+                Some(s) => (
+                    first.map_or(0.0, |b| win_corner_end(b.line, start_line, true, start_tie, s, px_per_point)),
+                    last.map_or(0.0, |b| win_corner_end(b.line, end_line, false, true, s, px_per_point)),
+                ),
+                None => (0.0, 0.0),
+            }
+        };
+        let top_ends = ends(border_at(Some(m.first_row), Some(m.first_column), 0), border_at(Some(m.first_row), Some(m.last_column), 0), left_line, right_line, false);
+        let bottom_ends = ends(border_at(Some(m.last_row), Some(m.first_column), 1), border_at(Some(m.last_row), Some(m.last_column), 1), left_line, right_line, false);
+        let left_ends = ends(border_at(Some(m.first_row), Some(m.first_column), 2), border_at(Some(m.last_row), Some(m.first_column), 2), top_line, bottom_line, true);
+        let right_ends = ends(border_at(Some(m.first_row), Some(m.last_column), 3), border_at(Some(m.last_row), Some(m.last_column), 3), top_line, bottom_line, false);
+        let (xs_shifted, ys_shifted) = (
+            |ends: (f32, f32)| move |c: u32| x(c) + if c == m.first_column { ends.0 } else if c == m.last_column + 1 { ends.1 } else { 0.0 },
+            |ends: (f32, f32)| move |r: u32| y(r) + if r == m.first_row { ends.0 } else if r == m.last_row + 1 { ends.1 } else { 0.0 },
+        );
         // Top edge: at y(m.first_row), from x(m.first_column) to x(m.last_column + 1)
         draw_contiguous_borders(
             m.first_column,
             m.last_column,
-            &x,
+            xs_shifted(top_ends),
             |c| {
                 let own = border_at(Some(m.first_row), Some(c), 0);
                 (!beaten(&own, neighbour_edge(m.first_row, c, 0), true)).then_some(own).flatten()
@@ -1847,7 +1941,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
         draw_contiguous_borders(
             m.first_column,
             m.last_column,
-            &x,
+            xs_shifted(bottom_ends),
             |c| {
                 let own = border_at(Some(m.last_row), Some(c), 1);
                 (!beaten(&own, neighbour_edge(m.last_row, c, 1), false)).then_some(own).flatten()
@@ -1863,7 +1957,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
         draw_contiguous_borders(
             m.first_row,
             m.last_row,
-            &y,
+            ys_shifted(left_ends),
             |r| {
                 let own = border_at(Some(r), Some(m.first_column), 2);
                 (!beaten(&own, neighbour_edge(r, m.first_column, 2), true)).then_some(own).flatten()
@@ -1879,7 +1973,7 @@ fn layout(sheet: &Sheet, scale: f32, ctx: &LayoutContext, overlay: Option<&super
         draw_contiguous_borders(
             m.first_row,
             m.last_row,
-            &y,
+            ys_shifted(right_ends),
             |r| {
                 let own = border_at(Some(r), Some(m.last_column), 3);
                 (!beaten(&own, neighbour_edge(r, m.last_column, 3), false)).then_some(own).flatten()
@@ -2128,6 +2222,13 @@ fn hair_cells(r: (f32, f32, f32, f32), grid: (f32, f32, f32)) -> Vec<(f32, f32, 
 /// half the step, a step apart.
 const DOT_STEP: f32 = 0.96;
 
+/// The width of the stroke Excel for Windows draws a hair border with in a PDF, in paper points: the least line width of the format (the fill under it is 0.12 pt, one pixel of
+/// 600 dpi; the two together look 0.14 pt thick).
+const WIN_HAIR_STROKE_PT: f32 = 0.14;
+
+/// The thinnest a printed hair line is drawn in pixels when the output is a raster, as it was drawn before (a quarter of the dotted tile's step).
+const WIN_HAIR_FLOOR_PX: f32 = DOT_STEP / 4.0;
+
 /// The dash pattern of a dotted border printed at `scale` (paper points per sheet point), in pixels (`px_per_point`
 /// a sheet point): the lengths of a dot and a gap, and how far into them the line starts, `start` sheet points
 /// from the sheet's origin, which is `origin` sheet points from the paper's corner.
@@ -2166,6 +2267,45 @@ fn dash_pattern(line: BorderLine) -> Option<&'static [f32]> {
     })
 }
 
+/// Where a printed border line of Excel for Windows ends at a corner, as an offset from the grid line (printed pixels' worth of
+/// `px_per_point` units, along the line: start = left/top end, else right/bottom end). Excel for Windows' PDFs of a cell with
+/// every pair of styles on the two lines that meet (none, thin, medium, thick, double, hair; at 100 % and 75 %,
+/// tasks/doc/xls-goal-20261112.md 10.): a line either runs over the other line (to its outer edge: the left/top one at a start,
+/// the right/bottom one at an end) or stops at its inner edge, by priority: thick > medium > thin > hair > double > no line,
+/// and a tie goes to the line that was named `wins_tie` for that corner (a horizontal line stops at a vertical one on the
+/// left; the vertical lines run over a horizontal one at their bottom end and, on the left, at their top end; on the right a
+/// horizontal one runs over the vertical line's top). A line's edges are those of its drawing: thin, medium and thick are
+/// round(8 s), round(16 s), round(24 s) printer pixels wide centred on the grid line, a double is three round(8 s) pixels, a
+/// hair and no line are one printer pixel to the right/below the grid line.
+fn win_corner_end(own: BorderLine, other: Option<BorderLine>, start: bool, wins_tie: bool, print_scale: f32, px_per_point: f32) -> f32 {
+    let s = print_scale.max(0.01);
+    let px = 72.0 / 600.0 * px_per_point / s;
+    let count = |n: f32| (n * s + 0.5).floor().max(1.0);
+    let extent = |l: Option<BorderLine>| -> (f32, f32, i32) {
+        match l {
+            None => (0.0, px, -1),
+            Some(BorderLine::Hair) => (0.0, px, 1),
+            Some(BorderLine::Double) => {
+                let h = 1.5 * count(8.0) * px;
+                (-h, h, 0)
+            }
+            Some(l) => {
+                let h = count(8.0 * l.width()) * px / 2.0;
+                (-h, h, l.width() as i32 + 1)
+            }
+        }
+    };
+    let (_, _, own_priority) = extent(Some(own));
+    let (low, high, other_priority) = extent(other);
+    // Two doubles: the line that meets another stops (Excel's PDF: both lines of a double stop at the other double's outer edge).
+    let both_double = own == BorderLine::Double && other == Some(BorderLine::Double);
+    let runs_over = own_priority > other_priority || (wins_tie && own_priority == other_priority && !(both_double && !start));
+    match (start, runs_over) {
+        (true, true) | (false, false) => low,
+        _ => high,
+    }
+}
+
 /// Which of two lines on a shared edge Excel shows: the higher rank (as its
 /// PDF prints every pair of styles).
 fn border_rank(line: BorderLine) -> u8 {
@@ -2201,11 +2341,26 @@ fn screen_border_pixels(line: BorderLine) -> f32 {
 fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, at_page_start: bool, at: f32, from: f32, to: f32, px_per_point: f32, out: &mut Vec<Quad>) {
     // On the screen (not printed) a fixed number of pixels, whatever the zoom.
     let screen = PRINT_GRID.with(|g| g.get()).is_none() && !crate::render::chart_view::VECTOR_EXPORT.with(|v| v.get());
-    let win_printed_hair = !screen && b.line == BorderLine::Hair && ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Windows;
+    let win_printed_hair = !screen && b.line == BorderLine::Hair && ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows;
+    // Excel for Windows prints a border 8 (thin, dotted, dashed, each line of a double), 16 (medium) or 24 (thick)
+    // printer pixels (600 dpi) wide at 100 %, and at another scale rounds that count to whole pixels, at least 1: its
+    // PDFs of 4-side borders at every scale from 10 % to 150 % (141 files, tasks/doc/xls-goal-20261112.md 9.) have
+    // thin, medium and thick lines of round(8 s), round(16 s) and round(24 s) pixels, a double line's two lines and the
+    // gap between them of round(8 s) each (a printer pixel is 72/600 pt).
+    let win_print_scale = PRINT_GRID.with(|g| g.get()).filter(|_| ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows).map(|(s, _, _)| s.max(0.01));
+    let win_pixels = |per_full: f32| win_print_scale.map(|s| (per_full * s + 0.5).floor().max(1.0) * (72.0 / 600.0) * px_per_point / s);
     let t = if screen {
         screen_border_pixels(b.line)
     } else if win_printed_hair {
-        (DOT_STEP / 4.0 * px_per_point).max(DOT_STEP / 4.0)
+        // Excel for Windows' PDF (Windows measurement, xlsx hair at zoom 100, 75 and 50 %): each edge is a fill of 0.12 pt (one pixel of 600 dpi) and a stroke of 0.14 pt
+        // (square caps) on the same centre line and the same range, a solid line of 0.14 pt whatever the zoom (a thin line is 0.96, 0.72, 0.48: it follows the zoom). `px_per_point`
+        // is the pixels of a sheet point, which is `scale` paper points.
+        let scale = PRINT_GRID.with(|g| g.get()).map_or(1.0, |g| g.0).max(0.01);
+        (WIN_HAIR_STROKE_PT / scale * px_per_point).max(WIN_HAIR_FLOOR_PX)
+    } else if b.line == BorderLine::Double && win_print_scale.is_some() {
+        3.0 * win_pixels(8.0).unwrap_or(0.0)
+    } else if let Some(t) = win_pixels(8.0 * b.line.width()) {
+        t
     } else {
         (b.line.width() * px_per_point).max(thinnest_line())
     };
@@ -2218,21 +2373,29 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, at_page_start: boo
     // every side of a cell. `rect` takes the near edge of the line.
     // On a page's first row or column after a break (`at_page_start`), shift
     // so the line starts at `at` on its own page instead of reaching into the previous page.
+    // Excel for Windows prints every style centred on the grid line (its PDFs of probes of the 10 styles at 100 % and
+    // 75 %, and of thin, medium and thick ones at 25 % to 100 %: thin [g - 0.48, g + 0.48] pt, medium [g - 0.96, g + 0.96],
+    // thick [g - 1.44, g + 1.44], double two lines [g - 1.44, g - 0.48] and [g + 0.48, g + 1.44], the dashes and dots
+    // likewise; the cell's fill starts at g). The sheet's first row and column keep their lines on the sheet, from g
+    // (the page shows nothing above or left of its cells).
+    let win_print = PRINT_GRID.with(|g| g.get()).is_some() && ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows;
+    // A column's line starts a unit above its top end on Excel for Mac (below); Excel for Windows' ends are set by the caller (`win_corner_end`).
+    let v_back = if win_print { 0.0 } else { border_unit };
     let grid = at;
-    let near = |t: f32| if at_page_start { grid } else { grid - t.min(2.0 * border_unit) };
+    let near = |t: f32| if at_page_start { grid } else if win_print { grid - t / 2.0 } else { grid - t.min(2.0 * border_unit) };
     let rect = |lo: f32, t: f32, a: f32, z: f32| {
         if horizontal {
-            (a, lo, z - a, t)
+            (a, if win_print { lo.max(0.0) } else { lo }, z - a, t)
         } else {
             (lo.max(0.0), a, t, z - a)
         }
     };
-    if (b.line == BorderLine::Dotted || (b.line == BorderLine::Hair && ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Mac))
+    if (b.line == BorderLine::Dotted || (b.line == BorderLine::Hair && ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Mac))
         && let Some(grid) = PRINT_GRID.with(|g| g.get())
     {
-        // Printed: a 1 pt line, on the paper's points.
-        let t = px_per_point;
-        let (from, to) = if horizontal { (from, to) } else { (from - px_per_point, to) };
+        // Printed: a 1 pt line, on the paper's points (Excel for Windows: 8 printer pixels at 100 %, rounded at another scale).
+        let t = win_pixels(8.0).unwrap_or(px_per_point);
+        let (from, to) = if horizontal { (from, to) } else { (from - if win_print { 0.0 } else { px_per_point }, to) };
         let (x, y, w, h) = rect(near(t), t, from, to);
         let p = px_per_point;
         if b.line == BorderLine::Dotted {
@@ -2256,10 +2419,10 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, at_page_start: boo
         let p = px_per_point;
         let (anchor_x, anchor_y) = DASH_ANCHOR.with(|a| a.get());
         let anchor = if horizontal { anchor_x } else { anchor_y };
-        let (from, to) = if horizontal { (from, to) } else { (from - p, to) };
+        let (from, to) = if horizontal { (from, to) } else { (from - if win_print { 0.0 } else { p }, to) };
         let (start, end) = (from / p, to / p);
-        let far = if at_page_start { grid / p + 2.0 } else { grid / p };
-        let nearer = if at_page_start { grid / p } else { grid / p - 2.0 };
+        let far = if at_page_start { grid / p + 2.0 } else if win_print { grid / p + 1.0 } else { grid / p };
+        let nearer = if at_page_start { grid / p } else if win_print { grid / p - 1.0 } else { grid / p - 2.0 };
         let (y_lo, y_hi) = (nearer.min(far), nearer.max(far));
         let pattern = [9.0f32, 3.0, 3.0, 3.0];
         let period: f32 = pattern.iter().sum();
@@ -2289,8 +2452,8 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, at_page_start: boo
     match b.line {
         BorderLine::Double => {
             let thin = t / 3.0;
-            let (from, to) = if horizontal { (from, to) } else { (from - border_unit, to) };
-            let g0 = if at_page_start { grid } else { grid - 2.0 * thin };
+            let (from, to) = if horizontal { (from, to) } else { (from - v_back, to) };
+            let g0 = if at_page_start { grid } else if win_print { (grid - 1.5 * thin).max(0.0) } else { grid - 2.0 * thin };
             out.push(Quad { rect: rect(g0, thin, from, to), color });
             out.push(Quad { rect: rect(g0 + 2.0 * thin, thin, from, to), color });
         }
@@ -2304,7 +2467,7 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, at_page_start: boo
             let anchor = if horizontal { anchor_x } else { anchor_y };
             // A column's dashes start, as its solid line does, a unit
             // above (Excel's PDF of xlsx-XBRD).
-            let from = if horizontal { from } else { from - border_unit };
+            let from = if horizontal { from } else { from - v_back };
             let (start, end) = (from / px_per_point, to / px_per_point);
             if !screen {
                 // Printed, the dashes are one line with its pattern, from where the pattern's period starts.
@@ -2337,8 +2500,10 @@ fn border_quads(b: &ibis_doc_model::Border, horizontal: bool, at_page_start: boo
             let (from, to) = if horizontal {
                 (from, to)
             } else {
-                (from - border_unit, to)
+                (from - v_back, to)
             };
+            // The square caps of a hair's stroke reach half its width past the range at each end.
+            let (from, to) = if win_printed_hair { (from - t / 2.0, to + t / 2.0) } else { (from, to) };
             out.push(Quad { rect: rect(near(t), t, from, to), color });
         }
     }
@@ -2487,6 +2652,8 @@ struct CellFont {
     descent: f32,
     /// How far above its baseline Excel prints the furigana of text in this font, in ems (`ruby_rise`).
     rise: f32,
+    /// The font's external leading in ems (`external_leading`; 0 where the font cannot be measured).
+    leading: f32,
     /// The typefaces the sheet's rich text names for parts of a cell (`<rPr><rFont>`), by name.
     runs: Arc<Vec<(String, Font)>>,
     /// The fonts the sheet's furigana are drawn in (`PhoneticDetail::font`), by typeface.
@@ -2730,7 +2897,8 @@ fn cell_font(style: &CellStyle, res: &Resources) -> CellFont {
         .map(|_| (0.8799, 0.1201))
         .unwrap_or_else(|| res.metrics(&font));
     let rise = ruby_rise(style.font.as_deref(), res).unwrap_or(ascent);
-    CellFont { font, plain, latin_scale, ascent, descent, rise, runs: Arc::default(), ruby: Arc::default() }
+    let leading = external_leading(style.font.as_deref(), res).unwrap_or(0.0);
+    CellFont { font, plain, latin_scale, ascent, descent, rise, leading, runs: Arc::default(), ruby: Arc::default() }
 }
 
 /// How far above the text's baseline Excel for Windows prints its furigana, in ems of the text's font: the font's `usWinAscent` plus
@@ -2740,8 +2908,15 @@ fn cell_font(style: &CellStyle, res: &Resources) -> CellFont {
 /// against 9.48 pt, 0.24 pt off, unexplained: `tasks/doc/m121-xlsx-phonetic.md`).
 fn ruby_rise(font: Option<&str>, res: &Resources) -> Option<f32> {
     let m = res.win_row_metrics(font?.trim())?;
-    let leading = (m.hhea_line_gap + m.hhea_ascent - m.hhea_descent - m.win_ascent - m.win_descent).max(0.0);
-    Some(((m.win_ascent + leading / 2.0) / m.units_per_em) as f32)
+    Some(m.win_ascent as f32 / m.units_per_em as f32 + external_leading(font, res)? / 2.0)
+}
+
+/// A font's external leading in ems: `hhea` ascender − descender + lineGap − `usWinAscent` − `usWinDescent`, never negative (0 for ＭＳ 明朝 and Meiryo,
+/// 0.315 for 游ゴシック). Excel for Windows gives a turned line this much more room on the side of the text's end: 游ゴシック's text turned 90 degrees or
+/// more sits 3.2 pt (10.56 pt: 0.31 em) further left against the right of its cell than ＭＳ 明朝's and Meiryo's do, at 9, 10.5 and 14 pt
+/// (the 999 patterns of `tasks/doc/requests/2026-11-14-189-rest-many-patterns-result.md`).
+fn external_leading(font: Option<&str>, res: &Resources) -> Option<f32> {
+    Some(res.win_row_metrics(font?.trim())?.external_leading())
 }
 
 /// Lay out a cell's text into lines, measuring with `measure` (text, font,
@@ -3440,20 +3615,27 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         };
 
         let (pad_left, pad_right) = (TEXT_PAD_LEFT_PT * px_per_point, TEXT_PAD_RIGHT_PT * px_per_point);
+        // Against the right of the cell, a line turned 90 degrees or more sits its font's external leading further left (游ゴシック 0.31 em: 3.2 pt at
+        // 10.56 pt, 2.4 at 9, 4.3 at 14; ＭＳ 明朝 and Meiryo 0 within 0.5 pt).
+        let leading_shift = if style.rotation >= 90 { cell.font.leading * text_size } else { 0.0 };
         let baseline_x0 = match style.align {
             CellAlign::Center | CellAlign::CenterAcross | CellAlign::Distributed => {
-                if style.rotation >= 90 {
-                    (left + right - (min_bx + max_bx)) / 2.0 - 3.5 * px_per_point
-                } else {
-                    (left + right - w * cos) / 2.0 - 1.0 * px_per_point
-                }
+                // The whole turned line box is centred across the cell (Excel for Windows, 游ゴシック 11 pt at 30 to 60 degrees: the ink's centre is where
+                // unturned text's is). From 90 degrees the text sits left of it by half the font's external leading (游ゴシック 0.16 em, 1.7 pt at 10.56 pt; ＭＳ 明朝
+                // and Meiryo have none), where it was a fixed 3.5 pt. What is left, about 1 pt in ＭＳ 明朝 and Meiryo at any angle (a shift of the box
+                // towards the bottom left, the same at 9, 10.5 and 14 pt), has no rule yet: the 999 patterns of
+                // `tasks/doc/requests/2026-11-14-189-rest-many-patterns-result.md`.
+                let shift = if style.rotation >= 90 { cell.font.leading * text_size / 2.0 } else { 0.0 };
+                (left + right - (min_bx + max_bx)) / 2.0 - shift
             }
             CellAlign::Right => {
-                right - pad_right - indent - max_bx
+                right - pad_right - indent - max_bx - leading_shift
             }
             CellAlign::General => {
+                // "Standard" is "right" from 90 to 135 degrees and "left" under 60 and at 180, with the same position as the one it is called
+                // (Excel for Windows, 972 cells: the origin's x differs by 0.12 pt at most from the aligned one's).
                 if kind == CellKind::Number || (style.rotation >= 90 && style.rotation < 180) {
-                    right - pad_right - indent - max_bx - 3.5 * px_per_point
+                    right - pad_right - indent - max_bx - leading_shift
                 } else {
                     left + pad_left + indent - min_bx
                 }
@@ -3565,7 +3747,7 @@ fn text_items(cell: &CellText, px_per_point: f32, measure: &dyn Fn(&str, &Font, 
         // top, the next one down (its PDFs of xlsx-XALN: top, centred and
         // bottom lines in 48 pt rows at 13, 28 and 43 pt where these are
         // 12.73, 27.75 and 42.78).
-        if !is_vertical && (line_count == 1 || ibis_pptx::EXCEL_METRICS != ibis_pptx::ExcelMetrics::Windows || matches!(vertical, CellVerticalAlign::Justify | CellVerticalAlign::Distributed)) {
+        if !is_vertical && (line_count == 1 || ibis_formats::EXCEL_METRICS != ibis_formats::ExcelMetrics::Windows || matches!(vertical, CellVerticalAlign::Justify | CellVerticalAlign::Distributed)) {
             baseline = (baseline / px_per_point - 1e-3).ceil() * px_per_point;
         }
         // (Fitted to Excel's PDFs of xlsx-XBASE and XFNT; the cause not
@@ -4150,7 +4332,7 @@ fn proportional_japanese(typeface: Option<&str>) -> bool {
 pub(crate) fn line_pitch(typeface: Option<&str>, japanese: bool) -> Option<f32> {
     let name = typeface?;
     if name.starts_with("ＭＳ") || name.starts_with("MS ") { // i18n-ok（フォント名の判定（表示名ではなく、フォント名の接頭辞））
-        Some(if ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Windows { 13.5 / 11.0 } else { 13.0 / 9.0 })
+        Some(if ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows { 13.5 / 11.0 } else { 13.0 / 9.0 })
     } else if name.starts_with("Meiryo") || name.starts_with("メイリオ") { // i18n-ok（フォント名の判定（表示名ではなく、フォント名の接頭辞））
         Some(11.0 / 8.0)
     } else if name.starts_with("Calibri") || name.starts_with("Carlito") {
@@ -4273,7 +4455,7 @@ mod tests {
         let cell = CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: "ab\ncd".into(), kind: CellKind::Text, general: None,
             style: CellStyle { rotation: 255, wrap: true, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 100., 200.), spans: [(0., 100.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| {
@@ -4285,6 +4467,61 @@ mod tests {
         assert_eq!(out.len(), 4);
     }
 
+    /// GitHub issue #189 (7): a centred turned text of 1 to 89 degrees has its whole line box (the font's ascent to descent, the text's width long, turned) centred across the
+    /// cell, not only the baseline's projection (Excel for Windows' PDF of 游ゴシック 11 pt, 30, 45 and 60 degrees: the ink's centre is 0.7 pt left of the cell's centre at every
+    /// angle, as for the same text unturned; the baseline's projection put it 3.0, 4.3 and 5.0 pt further left).
+    #[test]
+    fn a_centred_turned_text_has_its_line_box_centred_across_the_cell() {
+        for rotation in [30u8, 45, 60, 89] {
+            let cell = CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
+                text: "回転文字".into(), kind: CellKind::Text, general: None,
+                style: CellStyle { align: CellAlign::Center, vertical: ibis_doc_model::CellVerticalAlign::Center, rotation, font_size: 1100, ..Default::default() },
+                font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.9849, descent: 0.3022, rise: 0.9849, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+                rect: (0., 0., 84.6, 80.), spans: [(0., 84.6); 3], row_gap: None,
+            };
+            let measure = |t: &str, _: &gpui_kit::Font, size: f32| t.chars().count() as f32 * size;
+            let mut out = Vec::new();
+            text_items(&cell, 1., &measure, &mut out);
+            assert_eq!(out.len(), 1);
+            let item = &out[0];
+            let (a, d, w) = (0.9849 * 11.0, 0.3022 * 11.0, 44.0);
+            let (sin, cos) = (-(rotation as f32)).to_radians().sin_cos();
+            let xs = [a * sin, w * cos + a * sin, w * cos - d * sin, -d * sin].map(|u| item.left + u);
+            let (lo, hi) = xs.iter().fold((f32::MAX, f32::MIN), |(l, h), &x| (l.min(x), h.max(x)));
+            assert!(((lo + hi) / 2.0 - 84.6 / 2.0).abs() < 0.01, "rotation {rotation}: the line box spans {lo}..{hi} in a cell 84.6 wide");
+        }
+    }
+
+    /// GitHub issue #189: "standard" alignment of a turned text is the position of "right" from 90 to 135 degrees (Excel for Windows, 972 cells: the origin's x differs by 0.12 pt at
+    /// most), and a line turned 90 degrees or more sits its font's external leading further left against the right of the cell (游ゴシック 0.315 em), half of it from the centre.
+    #[test]
+    fn a_turned_texts_standard_alignment_is_right_from_90_degrees_and_leading_moves_it_left() {
+        let at = |rotation: u8, align: CellAlign, leading: f32| {
+            let cell = CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
+                text: "回転文字".into(), kind: CellKind::Text, general: None,
+                style: CellStyle { align, vertical: ibis_doc_model::CellVerticalAlign::Center, rotation, font_size: 1050, ..Default::default() },
+                font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.9849, descent: 0.3022, rise: 0.9849, leading, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+                rect: (0., 0., 84.6, 80.), spans: [(0., 84.6); 3], row_gap: None,
+            };
+            let measure = |t: &str, _: &gpui_kit::Font, size: f32| t.chars().count() as f32 * size;
+            let mut out = Vec::new();
+            text_items(&cell, 1., &measure, &mut out);
+            out[0].left
+        };
+        for rotation in [90u8, 120, 135] {
+            assert_eq!(at(rotation, CellAlign::General, 0.315), at(rotation, CellAlign::Right, 0.315), "rotation {rotation}");
+            let shift = at(rotation, CellAlign::Right, 0.0) - at(rotation, CellAlign::Right, 0.315);
+            assert!((shift - 0.315 * 10.5).abs() < 1e-3, "rotation {rotation}: right moves {shift}");
+            let centre = at(rotation, CellAlign::Center, 0.0) - at(rotation, CellAlign::Center, 0.315);
+            assert!((centre - 0.315 * 10.5 / 2.0).abs() < 1e-3, "rotation {rotation}: centre moves {centre}");
+        }
+        for rotation in [30u8, 60] {
+            assert_eq!(at(rotation, CellAlign::Right, 0.0), at(rotation, CellAlign::Right, 0.315), "rotation {rotation}: nothing under 90");
+            assert_eq!(at(rotation, CellAlign::General, 0.0), at(rotation, CellAlign::Left, 0.0), "rotation {rotation}: standard is left");
+        }
+        assert_eq!(at(180, CellAlign::General, 0.0), at(180, CellAlign::Left, 0.0), "standard at 180 degrees is left");
+    }
+
     /// GitHub issue #75: text set to "distributed" (均等割り付け) is laid out as one piece a character and spread over the
     /// cell's width (it was set as centred text, close together).
     #[test]
@@ -4292,7 +4529,7 @@ mod tests {
         let cell = CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: "家族手当制度がある".into(), kind: CellKind::Text, general: None,
             style: CellStyle { align: CellAlign::Distributed, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 200., 20.), spans: [(0., 200.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 10.;
@@ -4316,7 +4553,7 @@ mod tests {
         let make = |text: &str| CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { vertical: CellVerticalAlign::Justify, wrap: true, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 100., 60.), spans: [(0., 100.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 5.;
@@ -4338,7 +4575,7 @@ mod tests {
         let make = |text: &str| CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { vertical: CellVerticalAlign::Distributed, wrap: true, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 100., 60.), spans: [(0., 100.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 5.;
@@ -4379,7 +4616,7 @@ mod tests {
         let cell = CellText { runs: Some(std::sync::Arc::new(runs.clone())), phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: "AAAA BBBB CCCC DDDD".into(), kind: CellKind::Text, general: None,
             style: CellStyle { wrap: true, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 60., 100.), spans: [(0., 100.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 5.;
@@ -4399,7 +4636,7 @@ mod tests {
         let make = |text: &str| CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: text.into(), kind: CellKind::Text, general: None,
             style: CellStyle { align: CellAlign::Fill, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 34., 20.), spans: [(0., 100.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 5.;
@@ -4525,7 +4762,7 @@ mod tests {
         let make = |text: &str, kind: CellKind, align: CellAlign| CellText { runs: None, phonetic: None, checkbox: None, printed: false, text_extra: 0.0,
             text: text.into(), kind, general: None,
             style: CellStyle { align, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (10., 0., 110., 20.), spans: [(10., 110.); 3], row_gap: None,
         };
         let measure = |t: &str, _: &gpui_kit::Font, _: f32| t.chars().count() as f32 * 5.;
@@ -4557,7 +4794,7 @@ mod tests {
             kind: CellKind::Text,
             general: None,
             style: CellStyle { vertical: vert, font_size: 1000, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 100., height),
             spans: [(0., 100.); 3], row_gap: None,
         };
@@ -4587,7 +4824,7 @@ mod tests {
                 wrap: true,
                 ..Default::default()
             },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             // Cell height = 15.0, where each line height is 10.0, so 3 lines overflow the cell.
             rect: (0., 0., 100., 15.),
             spans: [(0., 100.); 3], row_gap: None,
@@ -4622,7 +4859,7 @@ mod tests {
                 shrink,
                 ..Default::default()
             },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 50., 30.),
             spans: [(0., 50.); 3], row_gap: None,
         };
@@ -4659,7 +4896,7 @@ mod tests {
                 kind: CellKind::Text,
                 general: None,
                 style: CellStyle { font_size: 1100, align: CellAlign::Left, ..Default::default() },
-                font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.9, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+                font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.9, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
                 rect: (0., 0., 200., 60.),
                 spans: [(0., 200.); 3],
                 row_gap: None,
@@ -4697,7 +4934,7 @@ mod tests {
             kind: CellKind::Text,
             general: None,
             style: CellStyle { font_size: 1200, ..Default::default() },
-            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
+            font: CellFont { font: font("Arial"), plain: font("Arial"), latin_scale: 1., ascent: 0.8, descent: 0.2, rise: 0.8, leading: 0.0, runs: std::sync::Arc::default(), ruby: std::sync::Arc::default() },
             rect: (0., 0., 100., 40.),
             spans: [(0., 100.); 3],
             row_gap: None,
@@ -4804,6 +5041,46 @@ mod tests {
         }
     }
 
+    /// A printed hair border (Excel for Windows' PDF) is a solid line of 0.14 pt on the grid line's centre, whatever the zoom: the quad is 0.14 paper points thick (a sheet point is
+    /// `scale` paper points; the pixels here are those of a sheet point, 1 each) and reaches 0.07 pt past each end of its range (the stroke's square caps); thin follows the zoom.
+    #[test]
+    fn a_printed_hair_border_is_a_solid_line_of_014_pt_at_any_zoom() {
+        use ibis_doc_model::BorderLine::{Hair, Thin};
+        use super::{PRINT_GRID, border_quads};
+        for scale in [1.0f32, 0.75, 0.5] {
+            for horizontal in [true, false] {
+                let draw = |line| {
+                    PRINT_GRID.with(|g| g.set(Some((scale, 0.0, 0.0))));
+                    let mut quads = Vec::new();
+                    let border = ibis_doc_model::Border { line, color: ibis_doc_model::Rgb(0) };
+                    // A sheet point is 10 pixels (a 10 times larger picture) so that the thin part is not under a floor.
+                    border_quads(&border, horizontal, false, 1000.0, 100.0, 600.0, 10.0, &mut quads);
+                    PRINT_GRID.with(|g| g.set(None));
+                    quads
+                };
+                let what = format!("scale {scale} horizontal {horizontal}");
+                let quads = draw(Hair);
+                assert_eq!(quads.len(), 1, "{what}: one solid line");
+                let (x, y, w, h) = quads[0].rect;
+                let (across, across_at, along, along_at) = if horizontal { (h, y, w, x) } else { (w, x, h, y) };
+                // 0.14 paper points are 0.14 / scale sheet points, 10 pixels each.
+                let want = 0.14 / scale * 10.0;
+                assert!((across - want).abs() < 1e-3, "{what}: {across} thick, want {want}");
+                assert!((across_at + across / 2.0 - 1000.0).abs() < 1e-3, "{what}: centred on the grid line, at {across_at}");
+                // Along a row the range is 100 to 600; along a column it starts a unit (10 pixels) earlier on Excel for Mac (Excel for
+                // Windows: the caller sets the ends, `win_corner_end`).
+                let back = if ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows { 0.0 } else { 10.0 };
+                let (len, start) = if horizontal { (500.0 + want, 100.0 - want / 2.0) } else { (500.0 + back + want, 100.0 - back - want / 2.0) };
+                assert!((along - len).abs() < 1e-2 && (along_at - start).abs() < 1e-2, "{what}: along {along_at} {along}, want {start} {len}");
+                let thin = draw(Thin);
+                let thin_across = if horizontal { thin[0].rect.3 } else { thin[0].rect.2 };
+                // Excel for Windows: round(8 s) printer pixels of 0.12 pt (`border_quads`).
+                let thin_want = if ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows { (8.0 * scale + 0.5).floor().max(1.0) * 0.12 / scale * 10.0 } else { Thin.width() * 10.0 };
+                assert!((thin_across - thin_want).abs() < 1e-2, "{what}: thin follows the zoom in sheet points, {thin_across}");
+            }
+        }
+    }
+
     /// The lengths of a dashed border's dashes and gaps are its pattern's (`dash_pattern`, in sheet points): 3 and 1 for
     /// `dashed`, 9 and 3 for `mediumDashed`, 9 3 3 3 for a dash-dot, at any size.
     #[test]
@@ -4830,8 +5107,8 @@ mod tests {
                 // The grid scale is 1 here: a sheet point is a paper point, and `scale` pixels.
                 assert!(l.pattern.iter().all(|v| (v - 0.48 * scale).abs() < 1e-3 * scale), "scale {scale} horizontal {horizontal}: {:?}", l.pattern);
                 assert!(l.phase >= 0.0 && l.phase < 0.96 * scale, "the phase is in the tile: {}", l.phase);
-                // The line starts 10 sheet points along (a column starts a point earlier: 9), which is 0.4 (0.36) into a tile.
-                let want = if horizontal { 0.4 } else { 0.36 };
+                // The line starts 10 sheet points along (a column starts a point earlier on Excel for Mac: 9), which is 0.4 (0.36) into a tile.
+                let want = if horizontal || ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows { 0.4 } else { 0.36 };
                 assert!((l.phase - want * scale).abs() < 1e-3 * scale, "scale {scale} horizontal {horizontal}: phase {}", l.phase);
             }
         }

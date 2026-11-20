@@ -10,7 +10,7 @@
 //! This test looks at the shell (`crates/ibis-office-shell/src`, named `shell/` below) and `src/docx/` with a plain search: a `thread_local!` there is allowed
 //! only when it is listed below with the reason it is not per-window state. Add a line only after checking that two windows
 //! open at once cannot disturb each other through it (the scenario `shell::followup_recent_menu_other_window`).
-//! Rule: doc/rule/implimentationRule.md, 「ウィンドウごとの UI 状態」.
+//! Rule: docs/rule/implimentationRule.md, 「ウィンドウごとの UI 状態」.
 
 use std::path::{Path, PathBuf};
 

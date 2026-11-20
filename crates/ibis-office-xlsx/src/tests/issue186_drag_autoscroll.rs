@@ -190,7 +190,7 @@ pub(crate) fn frozen_rows_stay_and_the_drag_scrolls_the_rest() {
     let mut s = book();
     s.update(|e, _, cx| {
         let slide = e.current_slide;
-        e.run_sheet(vec![Command::Sheet(SheetCommand::Freeze { slide, frozen: Some((1, 2)) })], cx);
+        e.run_sheet(vec![Command::Sheet(SheetCommand::Freeze { sheet: slide, frozen: Some((1, 2)) })], cx);
     });
     s.settle();
     s.click_cell("C5");

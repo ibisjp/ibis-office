@@ -34,7 +34,7 @@ BUILDS = {
 }
 # What each build ships besides the app: the AppImage's runtime is in the Linux one.
 EXTRA_PACKAGES = {"linux": ["ibis-appimage"]}
-OWN = {"ibis-office-app", "ibis-office-shell", "ibis-office-pptx", "ibis-office-docx", "ibis-office-xlsx", "ibis-office-render", "ibis-office-base", "ibis-doc-model", "ibis-pptx", "ibis-emf", "ibis-eot", "ibis-imgdiff", "ibis-appimage"}
+OWN = {"ibis-office-app", "ibis-office-shell", "ibis-office-pptx", "ibis-office-docx", "ibis-office-xlsx", "ibis-office-render", "ibis-office-base", "ibis-doc-model", "ibis-formats", "ibis-emf", "ibis-eot", "ibis-imgdiff", "ibis-appimage"}
 
 
 def run(*args):
@@ -192,10 +192,10 @@ def write(build):
                 own_texts.append((f"{p['name']} {p['version']}（{lic}）", open(path, encoding="utf-8", errors="replace").read().strip()))
                 break
 
-    ecma = open(os.path.join(ROOT, "crates", "ibis-pptx", "data", "ECMA-NOTICE.txt"), encoding="utf-8").read().strip()
+    ecma = open(os.path.join(ROOT, "crates", "ibis-formats", "data", "ECMA-NOTICE.txt"), encoding="utf-8").read().strip()
     # The art page borders' pictures: the desktop app reads them from the zip
     # in its Resources; the web version serves its PNG files one by one.
-    ecma_art = open(os.path.join(ROOT, "crates", "ibis-pptx", "data", "artborders", "ECMA-NOTICE.txt"), encoding="utf-8").read().strip()
+    ecma_art = open(os.path.join(ROOT, "crates", "ibis-formats", "data", "artborders", "ECMA-NOTICE.txt"), encoding="utf-8").read().strip()
     plex = open(os.path.join(ROOT, "crates", "ibis-office-app", "fonts", "OFL.txt"), encoding="utf-8").read().strip()
     carlito = open(os.path.join(ROOT, "crates", "ibis-office-render", "fonts", "carlito", "OFL.txt"), encoding="utf-8").read().strip()
     assets = json.loads(run("cargo", "metadata", "--locked", "--format-version", "1"))
@@ -212,6 +212,9 @@ def write(build):
         bundled.append(("IBM Plex Sans", "UI の文字（Web 版）", "SIL Open Font License 1.1"))
     else:
         bundled.append(("Carlito", "Calibri が入っていないときの代わりの文字", "SIL Open Font License 1.1"))
+    if build != "web":
+        # The transition sounds (crates/ibis-formats/sounds/): CC0 sounds of Kenney and of OpenGameArt's authors, and five of ibis inc.'s own; the web version carries none (it fetches them).
+        bundled.append(("画面切り替えの音 18 種（Kenney・OpenGameArt の作者の音と ibis inc. の音）", "プレゼンテーションの画面切り替えの音（実行ファイルに埋め込み）", "CC0-1.0（ibis inc. 自作の 5 種は本体と同じ）"))
     bundled.append(("Lucide", "アイコン（`assets/icons/`）" if build == "web" else "アイコン（実行ファイルに埋め込み）", "ISC"))
     # Material Symbols: the chrome's icons (crates/ibis-office-shell/icons/material/),
     # embedded in the binary on both builds.
@@ -237,6 +240,7 @@ def write(build):
           *rows,
           "",
           "MPL-2.0 の部品は、ソースを改変せずに使っています。ソースは上の入手先と crates.io から入手できます。",
+          *(["", "Independent JPEG Group（IJG）のライセンスの部品（libjpeg 由来の DCT を含むもの）を使っています。This software is based in part on the work of the Independent JPEG Group."] if any("IJG" in r for r in rows) else []),
           "",
           "## 著作権表示",
           "",
@@ -248,6 +252,9 @@ def write(build):
           "",
           *(["### IBM Plex Sans", "", "```text", plex, "```", ""] if build == "web" else
             ["### Carlito", "", "```text", carlito, "```", ""]),
+          *(["### 画面切り替えの音（Kenney・OpenGameArt の作者の CC0 の音）", "",
+             "Sounds of Kenney Vleugels (https://www.kenney.nl) and of qubodup and Cassie-OrbitGames on OpenGameArt, released as CC0 1.0 Universal (public domain dedication); changed only by "
+             "cutting, fading, normalising and encoding as Ogg Vorbis. Sources, files and licence text: `crates/ibis-formats/sounds/`.", ""] if build != "web" else []),
           "### Lucide",
           "",
           "```text", lucide, "```",

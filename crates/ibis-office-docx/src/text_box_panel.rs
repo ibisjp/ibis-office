@@ -15,13 +15,19 @@ use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
 use crate::ext::*;
 
+/// A rotation in 60000ths of a degree as the panel's field shows it (degrees, without a trailing `.0`).
+fn degrees(rotation: i32) -> String {
+    let d = f64::from(rotation) / 60_000.0;
+    if (d - d.round()).abs() < 1e-6 { format!("{}", d.round() as i64) } else { format!("{d:.2}") }
+}
+
 /// What the panel shows of a text box: where it is, its text, size, place and text format.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextBoxInfo {
     pub at: FlowPos,
     pub(crate) text: String,
-    /// Width, height and offset (points, as the panel's fields hold them).
-    pub geometry: [String; 4],
+    /// Width, height and offset (points) and the rotation (degrees), as the panel's fields hold them.
+    pub geometry: [String; 5],
     pub(crate) font_size: String,
     pub color: String,
     pub(crate) bold: bool,
@@ -53,8 +59,8 @@ pub struct TextBoxInfo {
 /// The panel's fields, and the text box they edit.
 pub struct TextBoxState {
     pub text: Entity<TextareaState>,
-    /// Width, height, left and top (points).
-    pub geometry: [Entity<InputState>; 4],
+    /// Width, height, left and top (points) and the rotation (degrees).
+    pub geometry: [Entity<InputState>; 5],
     pub(crate) font_size: Entity<InputState>,
     pub color: Entity<InputState>,
     pub fill: Entity<InputState>,
@@ -279,7 +285,7 @@ impl SlideEditor {
                     let found = Some(TextBoxInfo {
                         at: FlowPos::new(p.id, offset),
                         text: text_body.text(),
-                        geometry: [points(shape.frame.width), points(shape.frame.height), points(x), points(y)],
+                        geometry: [points(shape.frame.width), points(shape.frame.height), points(x), points(y), degrees(shape.rotation)],
                         font_size: format!("{}", size as f32 / 100.0),
                         color: format!("{:06X}", color.0 & 0xffffff),
                         bold,
@@ -1035,10 +1041,10 @@ impl SlideEditor {
                     format.underline_kind = Some(ibis_doc_model::Underline::Single);
                 }
             }
-            ibis_doc_model::RunChange::Strike(v) => {
+            ibis_doc_model::RunChange::Strikethrough(v) => {
                 format.strike = Some(if *v { ibis_doc_model::Strike::Single } else { ibis_doc_model::Strike::None });
             }
-            ibis_doc_model::RunChange::DoubleStrike(v) => {
+            ibis_doc_model::RunChange::DoubleStrikethrough(v) => {
                 format.strike = Some(if *v { ibis_doc_model::Strike::Double } else { ibis_doc_model::Strike::None });
             }
             ibis_doc_model::RunChange::Position(pos) => {
@@ -1081,7 +1087,7 @@ impl SlideEditor {
             }
             for target_at in targets {
                 if self.shape_text_body_at(target_at).is_some() {
-                    commands.push(FlowCommand::FormatShapeText {
+                    commands.push(FlowCommand::SetShapeCharacterFormat {
                         at: target_at,
                         range: None,
                         format: format.clone(),
@@ -1089,7 +1095,7 @@ impl SlideEditor {
                 }
             }
         } else {
-            commands.push(FlowCommand::FormatShapeText {
+            commands.push(FlowCommand::SetShapeCharacterFormat {
                 at,
                 range: (from < to).then_some((from, to)),
                 format,
@@ -1198,7 +1204,7 @@ impl SlideEditor {
         let theme = cx.theme();
         let mut selected_color = theme.primary;
         selected_color.a = 0.25;
-        let caret_color = theme.foreground;
+        let caret_color = crate::shell::caret::color_over(self.shape_at(edit_at).and_then(|s| s.backdrop_rgb()).or_else(|| self.flow().and_then(|d| d.page_color)), ibis_doc_model::Rgb::WHITE);
         let entity = cx.entity();
 
         let blue = rgb(0x1a73e8);
@@ -1439,7 +1445,7 @@ impl SlideEditor {
             out.push(crop.into_any_element());
             return out;
         }
-        out.extend(self.draw_table_overlay(index, k));
+        out.extend(self.draw_table_overlay(index, k, cx.theme().primary));
         out.extend(self.wrap_points_overlay(index, k));
         out.extend(self.docx_ink_overlay(index, k));
         if let Some(editing) = self.box_edit_overlay(index, k, cx) {
@@ -1504,7 +1510,7 @@ impl SlideEditor {
     /// 挿入 > 図形: a floating shape of preset `preset` at the caret (Word's blue with a darker line), selected.
     /// The command that inserts a preset shape (`size` in EMU) at `caret`.
     pub(crate) fn shape_command(preset: &str, caret: FlowPos, size: ibis_doc_model::EmuSize) -> Option<FlowCommand> {
-        let geometry = ibis_pptx::preset_geometry(preset)?;
+        let geometry = ibis_formats::preset_geometry(preset)?;
         Some(FlowCommand::InsertShape { at: caret, size, geometry, fill: Some(Rgb(0x4472C4)), line: Some((Rgb(0x2F528F), 12_700)) })
     }
     pub fn doc_insert_shape(&mut self, preset: &str, cx: &mut Context<Self>) {
@@ -1530,7 +1536,7 @@ impl SlideEditor {
     /// 挿入 > 図形 > 直線・コネクタ clicked on the page: at the usual size, at the caret.
     pub(crate) fn doc_insert_connector(&mut self, preset: Option<&str>, arrow: bool, cx: &mut Context<Self>) {
         let Some((_, caret)) = self.text_selection() else { return };
-        let geometry = preset.and_then(ibis_pptx::preset_geometry);
+        let geometry = preset.and_then(ibis_formats::preset_geometry);
         let size = if geometry.is_some() { ibis_doc_model::EmuSize::new(2_160_000, 1_080_000) } else { ibis_doc_model::EmuSize::new(2_160_000, 0) };
         let command = Self::connector_command(geometry, arrow, caret, size, false, false, Default::default());
         if self.run_flow(vec![command], cx) {
@@ -1578,7 +1584,7 @@ impl SlideEditor {
                 s
             })
         };
-        let geometry = [field(&info.geometry[0], window, cx), field(&info.geometry[1], window, cx), field(&info.geometry[2], window, cx), field(&info.geometry[3], window, cx)];
+        let geometry = [field(&info.geometry[0], window, cx), field(&info.geometry[1], window, cx), field(&info.geometry[2], window, cx), field(&info.geometry[3], window, cx), field(&info.geometry[4], window, cx)];
         let font_size = field(&info.font_size, window, cx);
         let color = field(&info.color, window, cx);
         let fill = field(&info.fill, window, cx);
@@ -1707,7 +1713,7 @@ impl SlideEditor {
         let Some(state) = self.doc_state().and_then(|s| s.text_box.as_ref()) else { return };
         let value = |e: &Entity<InputState>| e.read(cx).value().trim().to_string();
         let text = state.text.read(cx).value().to_string();
-        let geometry = [value(&state.geometry[0]), value(&state.geometry[1]), value(&state.geometry[2]), value(&state.geometry[3])];
+        let geometry = [value(&state.geometry[0]), value(&state.geometry[1]), value(&state.geometry[2]), value(&state.geometry[3]), value(&state.geometry[4])];
         let (font_size, color) = (value(&state.font_size), value(&state.color));
         let (bold, italic) = (state.bold, state.italic);
         let initial = state.initial.clone();
@@ -1725,6 +1731,10 @@ impl SlideEditor {
         if size.is_some() || offset.is_some() {
             commands.push(FlowCommand::SetShapeGeometry { at, size, offset });
             commands.push(FlowCommand::RerouteConnectors);
+        }
+        // 回転 (degrees; the shape keeps it in 60000ths of a degree, 0 to 360 degrees).
+        if geometry[4] != initial.geometry[4] && let Ok(turn) = geometry[4].parse::<f32>() && turn.is_finite() {
+            commands.push(FlowCommand::SetShapeRotation { at, rotation: ((f64::from(turn).rem_euclid(360.0)) * 60_000.0).round() as i32 });
         }
         let new_size = (font_size != initial.font_size).then(|| font_size.parse::<f32>().ok().filter(|v| (1.0..=1638.0).contains(v)).map(|v| (v * 2.0).round() as u32 * 50)).flatten();
         let new_color = (color != initial.color).then(|| u32::from_str_radix(color.trim_start_matches('#'), 16).ok().filter(|_| color.trim_start_matches('#').len() == 6).map(Rgb)).flatten();
@@ -1779,14 +1789,14 @@ impl SlideEditor {
             text_effects.glow=(a.text_glow!=b.text_glow).then_some(a.text_glow);
         }
         if new_size.is_some() || new_color.is_some() || new_bold.is_some() || new_italic.is_some() {
-            commands.push(FlowCommand::SetShapeTextFormat { at, bold: new_bold, italic: new_italic, size: new_size, color: new_color });
+            commands.push(FlowCommand::SetShapeTextBasicFormat { at, bold: new_bold, italic: new_italic, size: new_size, color: new_color });
         }
         if state.anchor != initial.anchor {
             commands.push(FlowCommand::SetShapeAnchor { at, anchor: state.anchor });
         }
         if text_effects != ibis_doc_model::CharacterFormat::default() && self.shape_text_body_at(at).is_some() {
             let range = self.box_edit_target(cx).0.and_then(|(target, from, to, _)| (target == at && from < to).then_some((from, to)));
-            commands.push(FlowCommand::FormatShapeText { at, range, format: text_effects });
+            commands.push(FlowCommand::SetShapeCharacterFormat { at, range, format: text_effects });
         }
         if commands.is_empty() {
             return;
@@ -1853,7 +1863,7 @@ impl SlideEditor {
         if text != initial.text {
             commands.push(FlowCommand::SetShapeText { at, text: text.clone() });
         }
-        commands.push(FlowCommand::SetShapeRangeFormat { at, from, to, bold: Some(bold), italic: Some(italic), size, color });
+        commands.push(FlowCommand::SetShapeTextRangeBasicFormat { at, from, to, bold: Some(bold), italic: Some(italic), size, color });
         let keep = self.text_selection();
         if self.run_flow(commands, cx) {
             if let (Some((a, c)), Some(state)) = (keep, self.doc_state_mut()) {
@@ -1942,7 +1952,7 @@ impl SlideEditor {
             unit: pane::SizeUnit::Point,
             width: state.geometry[0].clone(),
             height: state.geometry[1].clone(),
-            rotation: None,
+            rotation: Some(state.geometry[4].clone()),
             left: floating.then(|| state.geometry[2].clone()),
             top: floating.then(|| state.geometry[3].clone()),
             fill: (!is_line).then(|| state.fill.clone()),

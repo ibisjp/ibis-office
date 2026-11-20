@@ -1,0 +1,29 @@
+[package]
+name = "gpui-android"
+description = "Android platform backend for GPUI using android-activity and gpui-pre-wgpu."
+license = "AGPL-3.0-only"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+gpui = { version = "=0.3.6", package = "gpui-pre", default-features = false }
+gpui_wgpu = { version = "=0.3.6", package = "gpui-pre-wgpu" }
+gpui_util = { version = "=0.3.6", package = "gpui-pre-util" }
+raw-window-handle = "0.6"
+anyhow = "1"
+async-task = "4"
+futures = "0.3"
+parking_lot = "0.12"
+log = "0.4"
+uuid = { version = "1", features = ["v4"] }
+smallvec = "1.6"
+scheduler = { version = "=0.3.6", package = "gpui-pre-scheduler" }
+
+# What only an Android build can compile (ndk-sys refuses any other target): the crate is a member of the workspace, so `cargo check --workspace` on a
+# desktop passes over it (lib.rs is empty there).
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+ndk = { version = "0.9", features = ["rwh_06"] }
+android_logger = "0.14"
+jni = "0.21"

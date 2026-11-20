@@ -599,13 +599,14 @@ impl SlideEditor {
             return;
         }
         let Some((column, row)) = self.current_cell() else { return };
+        let date1904 = self.presentation().workbook.as_ref().is_some_and(|w| w.date1904);
         let text = if keep_content {
             self.current_sheet().and_then(|(_, sheet)| sheet.cell(row, column).map(|c| (sheet, c))).and_then(|(sheet, c)| match &c.formula {
                 Some(f) => Some(format!("={}", sheet.formula_shown(row, column, f))),
                 None if super::sheet_ui::spilled_ghost_formula_on(sheet, row, column).is_some() => None,
                 None => Some(match &c.value {
                     // A number as typed, not as shown.
-                    CellValue::Number(n) => ibis_calc::eval::number_to_text(*n),
+                    CellValue::Number(n) => ibis_calc::input::number_edit_text(*n, &sheet.styles[c.style as usize].number_format, date1904),
                     _ => c.text.clone(),
                 }),
             })
@@ -672,7 +673,11 @@ impl SlideEditor {
             return true;
         }
         if let Some(s) = self.sheet_state_mut() { s.validation_choices = None; }
-        let had = self.sheet_state_mut().and_then(|s| s.cell_edit.take()).is_some();
+        let taken = self.sheet_state_mut().and_then(|s| s.cell_edit.take());
+        let had = taken.is_some();
+        if taken.is_some_and(|e| e.marked.is_some()) {
+            discard_ime_session(cx);
+        }
         if had {
             cx.notify();
         }
@@ -689,6 +694,11 @@ impl SlideEditor {
         let chosen = self.sheet_state().and_then(|s| s.validation_choices.as_ref()).and_then(|_| candidates.get(self.validation_choice_index(candidates.len()))).cloned();
         if let Some(s) = self.sheet_state_mut() { s.validation_choices = None; }
         let Some(mut edit) = self.sheet_state_mut().and_then(|s| s.cell_edit.take()) else { return };
+        // The text still being composed goes into this cell as it stands (as Excel does); the input method's session ends here, so
+        // what it was composing is not carried on into the cell chosen next (#202).
+        if edit.marked.is_some() {
+            discard_ime_session(cx);
+        }
         if let Some(chosen) = chosen { edit.text = chosen; }
         // A pivot table's cell: a label is renamed, a value refuses.
         if self.commit_pivot_entry(edit.slide, edit.row, edit.column, &edit.text, cx) {
@@ -701,7 +711,8 @@ impl SlideEditor {
                 edit.text = formula;
             }
         }
-        if super::formula_reference::is_formula(&edit.text){edit.text=super::formula_reference::close_parentheses(&edit.text);}
+        // (An `@sum(` in a cell formatted as Text stays as it was typed.)
+        if super::formula_reference::is_formula(&edit.text) && !edit.text.starts_with(['@', '\u{ff20}']) {edit.text=super::formula_reference::close_parentheses(&edit.text);}
         if let Some(s) = self.sheet_state_mut() {
             s.last_fill = None;
             s.validation_warning = None;
@@ -715,6 +726,8 @@ impl SlideEditor {
             (CellInput::Clear, None)
         } else if text_formatted {
             (CellInput::Value(CellValue::Text(edit.text.strip_prefix('\'').unwrap_or(&edit.text).to_string())), None)
+        } else if let Some(n) = month_day_as_fraction(&edit.text, sheet.and_then(|sheet| sheet.cell(edit.row, edit.column).map(|c| sheet.styles[c.style as usize].number_format.as_str()))) {
+            (CellInput::Value(CellValue::Number(n)), None)
         } else {
             match parse_input(&edit.text, date1904) {
                 Typed::Formula(f) => {
@@ -769,10 +782,10 @@ impl SlideEditor {
             .map(|sheet| sheet.cell(edit.row, edit.column).map_or("General".to_string(), |c| sheet.styles[c.style as usize].number_format.clone()))
             .is_some_and(|f| f == "General");
         let mut commands = link_commands;
-        commands.push(Command::Sheet(SheetCommand::SetCells { slide: edit.slide, edits: vec![ModelEdit { row: edit.row, column: edit.column, input: input.clone() }] }));
+        commands.push(Command::Sheet(SheetCommand::SetCells { sheet: edit.slide, edits: vec![ModelEdit { row: edit.row, column: edit.column, input: input.clone() }] }));
         if let (Some(code), true) = (format.clone(), general) {
             let range = CellRange { first_row: edit.row, first_column: edit.column, last_row: edit.row, last_column: edit.column };
-            commands.push(Command::Sheet(SheetCommand::SetFormat { slide: edit.slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
+            commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: edit.slide, ranges: vec![range], change: StyleChange::NumberFormat(code) }));
         }
         // オートコレクト: a URL or an email address typed alone becomes a link
         // (the link's colour and underline, one step with the entry).
@@ -781,9 +794,9 @@ impl SlideEditor {
         {
             let range = CellRange { first_row: edit.row, first_column: edit.column, last_row: edit.row, last_column: edit.column };
             let link = ibis_doc_model::Hyperlink { range, target: Some(target), location: None, tooltip: None };
-            commands.push(Command::Sheet(SheetCommand::SetHyperlink { slide: edit.slide, range, link: Some(link) }));
-            commands.push(Command::Sheet(SheetCommand::SetFormat { slide: edit.slide, ranges: vec![range], change: StyleChange::Color(ibis_doc_model::Rgb(0x0563C1)) }));
-            commands.push(Command::Sheet(SheetCommand::SetFormat { slide: edit.slide, ranges: vec![range], change: StyleChange::Underline(true) }));
+            commands.push(Command::Sheet(SheetCommand::SetHyperlink { sheet: edit.slide, range, link: Some(link) }));
+            commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: edit.slide, ranges: vec![range], change: StyleChange::Color(ibis_doc_model::Rgb(0x0563C1)) }));
+            commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: edit.slide, ranges: vec![range], change: StyleChange::Underline(true) }));
         }
         // Text with a line break (⌥Enter): the cell wraps and its row grows
         // to the lines, as Excel's do (in the same step).
@@ -795,7 +808,7 @@ impl SlideEditor {
             } else {
                 match &c.value {
                     CellValue::Text(t) => t != &edit.text,
-                    CellValue::Number(n) => ibis_calc::eval::number_to_text(*n) != edit.text,
+                    CellValue::Number(n) => ibis_calc::input::number_edit_text(*n, &sheet.map_or("General", |sh| sh.styles[c.style as usize].number_format.as_str()), date1904) != edit.text,
                     CellValue::Empty => !edit.text.is_empty(),
                     _ => c.text != edit.text,
                 }
@@ -805,13 +818,13 @@ impl SlideEditor {
         let newly_broken = broken && !orig_text.contains('\n');
         if newly_broken && sheet.is_some_and(|sheet| !sheet.cell(edit.row, edit.column).is_some_and(|c| sheet.styles[c.style as usize].wrap)) {
             let range = CellRange { first_row: edit.row, first_column: edit.column, last_row: edit.row, last_column: edit.column };
-            commands.push(Command::Sheet(SheetCommand::SetFormat { slide: edit.slide, ranges: vec![range], change: StyleChange::Wrap(true) }));
+            commands.push(Command::Sheet(SheetCommand::SetFormat { sheet: edit.slide, ranges: vec![range], change: StyleChange::WrapText(true) }));
         }
         // Parts in their own fonts (set on a selection while typing) go with the text.
         if let (Some(runs), CellInput::Value(CellValue::Text(t))) = (&edit.runs, &input)
             && runs.iter().map(|r| r.text.as_str()).collect::<String>() == *t
         {
-            commands.push(Command::Sheet(SheetCommand::SetRuns { slide: edit.slide, row: edit.row, column: edit.column, runs: runs.clone() }));
+            commands.push(Command::Sheet(SheetCommand::SetRuns { sheet: edit.slide, row: edit.row, column: edit.column, runs: runs.clone() }));
         }
         let cell_size = self.presentation().slide(edit.slide).and_then(ibis_doc_model::sheet_calc::sheet_of_slide).and_then(|sh| sh.cell(edit.row, edit.column).map(|c| sh.styles[c.style as usize].font_size)).unwrap_or(1100);
         // A part given another size while typing grows the row too, though the text is the same (Excel fits the row on the entry).
@@ -819,7 +832,7 @@ impl SlideEditor {
         let taller = (content_changed || runs_changed) && matches!((&edit.runs, &input), (Some(runs), CellInput::Value(CellValue::Text(_))) if runs.iter().any(|r| r.size.is_some_and(|size| size > cell_size)));
         let is_merged = sheet.is_some_and(|sh| sh.merge_at(edit.row, edit.column).is_some_and(|m| m.first_row != m.last_row || m.first_column != m.last_column));
         let row_is_fixed = sheet.is_some_and(|sh| sh.custom_rows.contains(&edit.row));
-        let mut result = self.document.execute(commands.clone());
+        let mut result = self.document.execute(self.group_commands(commands.clone()));
         if !is_merged && !row_is_fixed && (newly_broken || taller) && result.is_ok() && edit.slide == self.current_slide {
             let ts = cx.text_system().clone();
             let rows = self.current_sheet().map(|(_, s)| s.rows.get(edit.row as usize).copied().unwrap_or(0)).unwrap_or(0);
@@ -831,7 +844,7 @@ impl SlideEditor {
             if !fit.is_empty() {
                 self.document.undo();
                 commands.extend(fit);
-                result = self.document.execute(commands.clone());
+                result = self.document.execute(self.group_commands(commands.clone()));
             }
         }
         // A number entered that is wider than its column widens the column, unless the width was set by hand (as in Excel).
@@ -841,7 +854,7 @@ impl SlideEditor {
         {
             self.document.undo();
             commands.push(widen);
-            result = self.document.execute(commands);
+            result = self.document.execute(self.group_commands(commands));
         }
         match result {
             Ok(_) => {
@@ -885,7 +898,7 @@ impl SlideEditor {
             _ => cell.text.as_str(),
         };
         let needed = super::headers::fitted_width(self.excel_text_width(shown, style, ts));
-        (needed > current).then_some(Command::Sheet(SheetCommand::SetColumnWidthAuto { slide, first: column, last: column, size: needed }))
+        (needed > current).then_some(Command::Sheet(SheetCommand::SetColumnWidthAuto { sheet: slide, first: column, last: column, size: needed }))
     }
 
     /// Clear the selected cells' values (Delete when not typing).
@@ -907,7 +920,7 @@ impl SlideEditor {
             return;
         }
         let slide = self.current_slide;
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits })]) {
+        if let Err(err) = self.document.execute(self.group_commands(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })])) {
             log::warn!("clearing rejected: {err}");
         }
         self.sync_peers(cx);
@@ -1031,14 +1044,14 @@ impl SlideEditor {
         if edit.slide != slide || (edit.note.is_none() && super::formula_reference::is_formula(&edit.text)) {
             return false;
         }
-        if !matches!(change, StyleChange::Bold(_) | StyleChange::Italic(_) | StyleChange::Underline(_) | StyleChange::UnderlineKind(_) | StyleChange::Strike(_) | StyleChange::Color(_) | StyleChange::ColorTheme(..) | StyleChange::FontSize(_) | StyleChange::Font(_)) {
+        if !matches!(change, StyleChange::Bold(_) | StyleChange::Italic(_) | StyleChange::Underline(_) | StyleChange::UnderlineKind(_) | StyleChange::Strikethrough(_) | StyleChange::Color(_) | StyleChange::ColorTheme(..) | StyleChange::FontSize(_) | StyleChange::Font(_)) {
             return false;
         }
         // The caret alone: the change waits for the text typed next (the same toggle again takes it back).
         let Some(sel) = edit.selection() else {
             let pending = edit.pending.get_or_insert_with(|| PendingFormat { changes: Vec::new(), style: style.clone() });
             let same = |a: &StyleChange, b: &StyleChange| std::mem::discriminant(a) == std::mem::discriminant(b);
-            let toggles = matches!(change, StyleChange::Bold(_) | StyleChange::Italic(_) | StyleChange::Underline(_) | StyleChange::Strike(_));
+            let toggles = matches!(change, StyleChange::Bold(_) | StyleChange::Italic(_) | StyleChange::Underline(_) | StyleChange::Strikethrough(_));
             if toggles && pending.changes.iter().any(|c| same(c, change)) {
                 pending.changes.retain(|c| !same(c, change));
             } else {
@@ -1134,7 +1147,15 @@ impl SlideEditor {
     }
 
     pub(crate) fn cell_selected_range(&self) -> Option<UTF16Selection> {
-        let caret = self.cell_edit().map_or(0, |e| e.caret);
+        let edit = self.cell_edit();
+        let caret = edit.map_or(0, |e| e.caret);
+        // The selected text is told to the input method (reconversion: the Convert key / macOS re-convert over it), except while
+        // composing, when the caret is at the end of what is composed.
+        if let Some(e) = edit.filter(|e| e.marked.is_none()) {
+            if let Some(range) = e.selection() {
+                return Some(UTF16Selection { range, reversed: e.caret < e.anchor.unwrap_or(e.caret) });
+            }
+        }
         Some(UTF16Selection { range: caret..caret, reversed: false })
     }
 
@@ -1203,7 +1224,29 @@ impl SlideEditor {
 
     pub(crate) fn cell_bounds_for_range(&self, element: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
         let edit = self.cell_edit()?;
-        Some(edit.rect.get().unwrap_or(Bounds::new(element.origin, size(px(100.), px(20.)))))
+        // Typed into the formula bar (a press on it put the caret there): the bar's composing text, not the cell's.
+        if edit.dragging_in_bar
+            && let Some(state) = self.sheet_state()
+            && let Some(rect) = state.bar_marked_rect.get().or_else(|| state.bar_bounds.get())
+        {
+            return Some(rect);
+        }
+        let whole = edit.rect.get().unwrap_or(Bounds::new(element.origin, size(px(100.), px(20.))));
+        // While text is being composed: the last character of it, on the line it is on (a wrapped or scrolled cell too), so the input method's candidate window opens under
+        // the newest character and not under the whole box (K0020).
+        let layout = edit.layout.borrow().clone();
+        if let (Some(marked), Some(layout)) = (&edit.marked, layout)
+            && marked.end > marked.start
+        {
+            let end = byte_at(&edit.text, marked.end).min(edit.text.len());
+            let last = edit.text[..end].char_indices().last().map_or(0, |(i, _)| i);
+            if let Some(line) = layout.lines.iter().find(|l| l.start <= last && last < l.end).or_else(|| layout.lines.last()) {
+                let (x0, x1) = (line.x_at(last), line.x_at(end));
+                let top = line.baseline - line.ascent - edit.scroll_y.get();
+                return Some(Bounds::new(point(whole.origin.x + px(x0), whole.origin.y + px(top)), size(px((x1 - x0).max(1.0)), px(line.ascent + line.descent))));
+            }
+        }
+        Some(whole)
     }
 }
 
@@ -1301,7 +1344,7 @@ fn apply_to_runs(runs: Vec<CellRun>, b0: usize, b1: usize, change: &StyleChange,
             StyleChange::Italic(_) => run.italic = Some(italic_on),
             StyleChange::Underline(_) => run.underline = Some(if underline_on { ibis_doc_model::CellUnderline::Single } else { ibis_doc_model::CellUnderline::None }),
             StyleChange::UnderlineKind(u) => run.underline = Some(*u),
-            StyleChange::Strike(_) => run.strike = Some(strike_on),
+            StyleChange::Strikethrough(_) => run.strike = Some(strike_on),
             StyleChange::Color(c) | StyleChange::ColorTheme(c, _) => run.color = Some(*c),
             StyleChange::FontSize(s) => run.size = Some(*s),
             StyleChange::Font(f) => run.font = f.clone(),
@@ -1573,3 +1616,28 @@ mod caret_items_tests {
     }
 }
 
+
+/// Ends the input method's composition session once the app has taken the composing text in (a cell was left, or typing was given up).
+/// Deferred: the window is borrowed while the editor updates.
+pub(crate) fn discard_ime_session(cx: &mut Context<SlideEditor>) {
+    cx.defer(move |cx| {
+        if let Some(handle) = cx.active_window() {
+            handle.update(cx, |_, window, _| window.discard_marked_text()).ok();
+        }
+    });
+}
+
+
+/// `9/30` typed into a cell that has a number format (`#,##0`), not General or a date: Excel reads it as the fraction 9 / 30 = 0.3, not as
+/// September 30th (Windows Japanese Excel, `９／３０` and `9/30` alike, GitHub issue #240); pasted, it is the date. `None` when it is not two
+/// whole numbers around a `/`, or the cell's format is General, Text or a date.
+pub(crate) fn month_day_as_fraction(text: &str, number_format: Option<&str>) -> Option<f64> {
+    let code = number_format.filter(|c| !matches!(*c, "General" | "@" | ""))?;
+    let narrow: String = text.chars().map(|c| if ('\u{FF10}'..='\u{FF19}').contains(&c) { char::from_u32(c as u32 - 0xFEE0).unwrap_or(c) } else if c == '\u{FF0F}' { '/' } else { c }).collect();
+    let (a, b) = narrow.trim().split_once('/')?;
+    let whole = |p: &str| (!p.is_empty() && p.len() <= 2 && p.bytes().all(|c| c.is_ascii_digit())).then(|| p.parse::<f64>().ok()).flatten();
+    let (a, b) = (whole(a)?, whole(b)?);
+    let parsed = ibis_calc::numfmt::parsed(code);
+    let section = parsed.first()?;
+    (!section.invalid && !section.is_date() && b != 0.0).then(|| a / b)
+}

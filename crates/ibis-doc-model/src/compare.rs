@@ -348,7 +348,7 @@ fn compare_notes(
         let o_note = original.iter().find(|n| n.id == r_note.id).or_else(|| original.get(idx));
         if let Some(o_note) = o_note {
             let blocks = compare_in(&o_note.blocks, &r_note.blocks, author, date, opts, next_id, combine);
-            out.push(Note { id: r_note.id, blocks });
+            out.push(Note { id: r_note.id, blocks, custom_mark: r_note.custom_mark });
         } else {
             out.push(r_note.clone());
         }
@@ -659,13 +659,13 @@ mod tests {
         let mut doc1 = FlowDocument::default();
         doc1.body = vec![paragraph(1, "本文1")];
         doc1.header = vec![paragraph(2, "ヘッダー旧")];
-        doc1.footnotes = vec![Note { id: 1, blocks: vec![paragraph(3, "脚注旧")] }];
+        doc1.footnotes = vec![Note { id: 1, blocks: vec![paragraph(3, "脚注旧")], ..Default::default() }];
         doc1.comments = vec![Comment { id: 10, author: "Alice".into(), initials: "A".into(), date: "d1".into(), blocks: vec![paragraph(4, "コメント1")], parent: None, done: false, para_id: None }];
 
         let mut doc2 = FlowDocument::default();
         doc2.body = vec![paragraph(1, "本文2")];
         doc2.header = vec![paragraph(2, "ヘッダー新")];
-        doc2.footnotes = vec![Note { id: 1, blocks: vec![paragraph(3, "脚注新")] }];
+        doc2.footnotes = vec![Note { id: 1, blocks: vec![paragraph(3, "脚注新")], ..Default::default() }];
         doc2.comments = vec![Comment { id: 20, author: "Bob".into(), initials: "B".into(), date: "d2".into(), blocks: vec![paragraph(5, "コメント2")], parent: None, done: false, para_id: None }];
 
         let out = compare_documents_with(&doc1, &doc2, "Reviewer", "2026-10-17T00:00:00Z", &CompareOptions::default());

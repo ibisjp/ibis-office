@@ -9,7 +9,7 @@
 use image::{Rgba, RgbaImage};
 
 pub(crate) use crate::export_text::TextLayer;
-use crate::export_text::{Align, NoteFlow, draw_text};
+use crate::export_text::{Align, Canvas, NoteFlow, Picture, draw_text, draw_text_on_baseline, multiply};
 
 /// How the slides are printed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -22,8 +22,74 @@ pub enum PrintColor {
     BlackWhite,
 }
 
-/// The handout page, in points (A4, portrait), and its margin.
-pub const HANDOUT_PAGE: (f32, f32) = (595.0, 842.0);
+/// The page of handouts, notes and the outline when the file does not say (its `notesSz` is missing): 7.5 x 10 inches, in points.
+pub const HANDOUT_PAGE: (f32, f32) = (540.0, 720.0);
+
+/// The page's size in points: the file's notes page size (`notesSz`).
+fn page_of(marks: &HandoutMarks) -> (f32, f32) {
+    marks.layout.as_ref().map_or(HANDOUT_PAGE, |l| (l.page.0 as f32 / 12700.0, l.page.1 as f32 / 12700.0))
+}
+
+/// The height of the box a slide goes in at a place of the 1, 2, 3 and 6 to a page handouts, as a fraction of the page (1 to a page: 576 pt of 720,
+/// 2: 262.8, 3 and 6: 158.4; Microsoft 365's PDFs of 130 slide sizes, 16:9, 4:3, 16:10, A4 and portrait, #225); the 4 and 9 to a page and anything
+/// else go in the 4:3 box of the place's width.
+fn place_box_height(per_page: usize) -> Option<f32> {
+    match per_page {
+        1 => Some(0.8),
+        2 => Some(0.365),
+        3 | 6 => Some(0.22),
+        _ => None,
+    }
+}
+
+/// Whether a place takes the snap of [`snap_scale`] (1, 2 and 3 to a page: the rule held for 130 sizes; not measured for the others).
+fn snaps(per_page: usize) -> bool {
+    matches!(per_page, 1..=3)
+}
+
+/// PowerPoint's scale of a slide that fits its box at `fit` (the box's width or height over the slide's): a slide near its own size or half of
+/// it is drawn at exactly that. With Z the percentage `fit` rounds to, the target T is 100 (looked at first) or 50, and Z from 0.94 T to 1.20 T
+/// makes the scale T per cent. 0.94 and 1.20 are what Microsoft 365's PDFs show (the window's edges found for 16:9 widths 200 to 1000 and for
+/// 4:3 and portrait slides, and 40 random sizes of 1 to 3 to a page predicted; the reason for the values is not known): an exception the project
+/// allows (docs/rule/implimentationRule.md).
+fn snap_scale(fit: f32) -> f32 {
+    let z = (fit * 100.0).round();
+    for t in [100.0_f32, 50.0] {
+        if z >= 0.94 * t && z <= 1.20 * t {
+            return t / 100.0;
+        }
+    }
+    fit
+}
+
+/// PowerPoint's own places for 1, 2, 3, 4, 6 and 9 slides to a portrait handout page (they are not in the file; the handout
+/// master holds only the header, date, footer and page number), as fractions of the page: the slide's width, the centres of its
+/// columns (from the left) and of its rows (from the bottom: the first row has the largest). A slide is as large as fits a 4:3 box of that width, in the middle of its place. Measured on
+/// PowerPoint's PDFs (Microsoft 365 16.0.20527) of a 16:9 deck, 6 layouts, 54 slides: every place within 0.1 pt of
+/// `0.07·W` (margin), `0.41·W`, `0.26·W`, centres `0.275·W`, `0.725·W`, `0.2/0.5/0.8·W`, `0.79/0.5/0.21·H`, `0.7175/0.2825·H`.
+fn powerpoint_places(per_page: usize) -> Option<(f32, &'static [f32], &'static [f32])> {
+    const COLUMN_ONE: &[f32] = &[0.5];
+    const COLUMN_TWO: &[f32] = &[0.275, 0.725];
+    const COLUMN_THREE: &[f32] = &[0.2, 0.5, 0.8];
+    const ROWS_TWO: &[f32] = &[0.7175, 0.2825];
+    const ROWS_THREE: &[f32] = &[0.79, 0.5, 0.21];
+    match per_page {
+        1 => Some((0.86, COLUMN_ONE, &[0.5])),
+        2 => Some((0.86, COLUMN_ONE, ROWS_TWO)),
+        3 => Some((0.41, &[0.275], ROWS_THREE)),
+        4 => Some((0.41, COLUMN_TWO, ROWS_TWO)),
+        6 => Some((0.41, COLUMN_TWO, ROWS_THREE)),
+        9 => Some((0.26, COLUMN_THREE, ROWS_THREE)),
+        _ => None,
+    }
+}
+
+/// The size of the number under a slide of a handout, in points; and how far under the frame's bottom its baseline is (13.0 pt, a constant of PowerPoint's output).
+const SLIDE_NUMBER_PT: f32 = 9.96;
+const SLIDE_NUMBER_BASELINE_PT: f32 = 13.0;
+
+/// The pitch of the memo lines beside a slide of a 3 to a page handout, in points (PowerPoint: 17.76 on a 540 pt page, 21 lines).
+const MEMO_PITCH_PT: f32 = 17.76;
 
 /// What a handout carries besides the slides (ヘッダーとフッター > ノートと配布資料).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -34,7 +100,16 @@ pub struct HandoutMarks {
     /// The number of the page, bottom right.
     pub number: bool,
     /// Where they go and how big: the file's handout master (the corners, 10 pt, if `None`).
-    pub layout: Option<ibis_pptx::handout_master::HandoutLayout>,
+    pub layout: Option<ibis_formats::handout_master::HandoutLayout>,
+    /// Where a notes page puts the slide's picture and the notes' text: the file's notes master (the usual places if `None`).
+    pub notes: Option<ibis_formats::handout_master::NotesFrames>,
+    /// The handout's slides go down a column before the next (PowerPoint's 縦, `HandoutOrder` vertical); across a row first if not.
+    pub vertical_order: bool,
+    /// The number each slide of the handout carries under it, in the order of the slides on it (PowerPoint's own output, which no setting turns
+    /// off): the slide's number (the first slide's number counted in, a hidden slide's number skipped). Empty: none.
+    pub slide_numbers: Vec<usize>,
+    /// The size of the file's slides in points (their proportions alone when `None`).
+    pub slide_size_pt: Option<(f32, f32)>,
 }
 /// The notes of a slide as a printed page carries them.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -47,7 +122,24 @@ pub struct NoteText {
 pub struct NotePara {
     pub level: u8,
     pub bullet: Option<String>,
+    /// The typeface of the bullet (its advance puts the text after it); `None`: the text's own.
+    pub bullet_font: Option<String>,
     pub runs: Vec<NoteRun>,
+    /// Where the paragraph sits, when it is not the notes' indent by level (the outline page's titles and bodies).
+    pub layout: Option<ParaLayout>,
+}
+
+/// A paragraph's own margins and spacing, in points.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ParaLayout {
+    /// The left margin of the text from the box's left edge.
+    pub left_pt: f32,
+    /// How far the bullet (or number) hangs left of the text.
+    pub hang_pt: f32,
+    /// The space above the paragraph.
+    pub before_pt: f32,
+    /// The pitch of its lines.
+    pub pitch_pt: f32,
 }
 
 /// A run of notes: bold, its size in points (12 if `None`) and colour.
@@ -62,13 +154,53 @@ pub struct NoteRun {
 impl NoteText {
     /// Plain notes: a paragraph for each line.
     pub fn plain(text: &str) -> Self {
-        NoteText { paragraphs: text.split('\n').map(|line| NotePara { level: 0, bullet: None, runs: vec![NoteRun { text: line.to_string(), ..Default::default() }] }).collect() }
+        NoteText { paragraphs: text.split('\n').map(|line| NotePara { level: 0, bullet: None, bullet_font: None, runs: vec![NoteRun { text: line.to_string(), ..Default::default() }], layout: None }).collect() }
     }
 }
 
 const MARGIN: f32 = 36.0;
 /// Pixels per point of a handout page's picture.
 pub(crate) const PX_PER_PT: f32 = 2.0;
+/// The width of the frame PowerPoint draws ("Frame slides"): 0.96 pt (1.28 of the units of its print PDF, which are 0.75 pt), measured on PrintOut PDFs of slides, notes pages and handouts with and without the option (`tasks/doc/requests/2026-11-18-225-frame.md`).
+pub(crate) const FRAME_PT: f32 = 0.96;
+
+/// What a colour is for: PowerPoint prints the grey and the black-and-white pages by the kind of thing, not by one rule for every colour (Windows
+/// PowerPoint's `PrintOut` PDFs, `tasks/doc/requests/2026-11-16-225-print-color-result.md`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaintKind {
+    /// The colour of an area (a shape's fill, a gradient's stops, a shadow).
+    Fill,
+    /// The colour of a line (a shape's outline, a border, a rule).
+    Line,
+    /// The colour of text.
+    Text,
+    /// A picture's pixels.
+    Picture,
+}
+
+impl PrintColor {
+    /// The colour `rgb` of a `kind` of thing prints as. In grey: a fill and a picture in the Rec.709 luma of the colour
+    /// (0.2126 R + 0.7152 G + 0.0722 B: red 54, 00B050 132, 0070C0 94, yellow 237, greys as they are), lines black, text black (white text stays white).
+    /// In black and white: fills white (a gradient too), lines and text black, pictures grey as in grey (no dither). In colour: as it is.
+    pub fn map_for(self, kind: PaintKind, rgb: (u8, u8, u8)) -> (u8, u8, u8) {
+        let luma = || {
+            let v = ibis_doc_model::Rgb::from_rgb(rgb.0, rgb.1, rgb.2).luma();
+            (v, v, v)
+        };
+        match (self, kind) {
+            (PrintColor::Color, _) => rgb,
+            (_, PaintKind::Picture) | (PrintColor::Gray, PaintKind::Fill) => luma(),
+            (PrintColor::BlackWhite, PaintKind::Fill) => (255, 255, 255),
+            (PrintColor::Gray, PaintKind::Text) if rgb == (255, 255, 255) => rgb,
+            (_, PaintKind::Line | PaintKind::Text) => (0, 0, 0),
+        }
+    }
+
+    /// The colour of a picture's pixel (see `map_for`): what the picture route (`recolor`), which cannot tell a fill from a line, applies.
+    pub fn map(self, rgb: (u8, u8, u8)) -> (u8, u8, u8) {
+        self.map_for(PaintKind::Picture, rgb)
+    }
+}
 
 /// `image` in the colour `mode`.
 pub fn recolor(image: &mut RgbaImage, mode: PrintColor) {
@@ -76,10 +208,8 @@ pub fn recolor(image: &mut RgbaImage, mode: PrintColor) {
         return;
     }
     for pixel in image.pixels_mut() {
-        // Rec. 601 luma, the weights a grey print is made with.
-        let luma = (0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32).round() as u8;
-        let value = if mode == PrintColor::BlackWhite { if luma >= 128 { 255 } else { 0 } } else { luma };
-        *pixel = Rgba([value, value, value, pixel[3]]);
+        let (r, g, b) = mode.map((pixel[0], pixel[1], pixel[2]));
+        *pixel = Rgba([r, g, b, pixel[3]]);
     }
 }
 
@@ -118,31 +248,66 @@ pub fn handout_grid(per_page: u8, landscape: bool) -> (usize, usize) {
 /// 2 and 3), each as large as its place takes at its own proportions, with a
 /// frame if `framed`. Each page with its size in points.
 pub fn handouts(slides: &[RgbaImage], per_page: u8, framed: bool, landscape: bool, marks: &HandoutMarks, layer: &mut dyn TextLayer) -> Vec<(RgbaImage, (f32, f32))> {
+    let sizes: Vec<(f32, f32)> = slides.iter().map(|s| (s.width() as f32, s.height() as f32)).collect();
+    handouts_on(&sizes, per_page, framed, landscape, marks, layer, &mut |size| ImageCanvas::new(size, slides)).into_iter().map(|(canvas, size)| (canvas.page, size)).collect()
+}
+
+/// The layout of [`handouts`] over a canvas: `sizes` are the slides' sizes (any unit: their proportions are used), `blank` makes a blank
+/// page of the size in points it is given.
+pub(crate) fn handouts_on<C: Canvas>(sizes: &[(f32, f32)], per_page: u8, framed: bool, landscape: bool, marks: &HandoutMarks, layer: &mut dyn TextLayer, blank: &mut dyn FnMut((f32, f32)) -> C) -> Vec<(C, (f32, f32))> {
     let (columns, rows) = handout_grid(per_page, landscape);
     let per_page = columns * rows;
-    let (page_w, page_h) = if landscape { (HANDOUT_PAGE.1, HANDOUT_PAGE.0) } else { HANDOUT_PAGE };
+    let (page_w, page_h) = if landscape { (page_of(marks).1, page_of(marks).0) } else { page_of(marks) };
+    // PowerPoint's own places (portrait, 1 to 9); anything else (on its side, 8 or 16) is shared out evenly.
+    let places = if landscape { None } else { powerpoint_places(per_page) };
     let cell_w = (page_w - 2.0 * MARGIN) / columns as f32;
     let cell_h = (page_h - 2.0 * MARGIN) / rows as f32;
     // Room between slides.
     let gap = if per_page > 1 { 12.0 } else { 0.0 };
-    slides
-        .chunks(per_page)
+    (0..sizes.len())
+        .step_by(per_page.max(1))
         .enumerate()
-        .map(|(page_number, group)| {
-            let mut page = RgbaImage::from_pixel((page_w * PX_PER_PT) as u32, (page_h * PX_PER_PT) as u32, Rgba([255, 255, 255, 255]));
-            for (i, slide) in group.iter().enumerate() {
-                let (column, row) = (i % columns, i / columns);
-                let (avail_w, avail_h) = (cell_w - gap, cell_h - gap);
-                let scale = (avail_w / slide.width().max(1) as f32 * PX_PER_PT).min(avail_h / slide.height().max(1) as f32 * PX_PER_PT);
-                let (w, h) = (((slide.width() as f32 * scale).round() as u32).max(1), ((slide.height() as f32 * scale).round() as u32).max(1));
-                let mut picture = image::imageops::resize(slide, w, h, image::imageops::FilterType::Triangle);
-                if framed {
-                    frame(&mut picture);
+        .map(|(page_number, first)| {
+            let mut page = blank((page_w, page_h));
+            for (i, index) in (first..sizes.len().min(first + per_page)).enumerate() {
+                let slide = sizes[index];
+                let (column, row) = if marks.vertical_order { (i / rows, i % rows) } else { (i % columns, i / columns) };
+                let (w, h, x, y) = if let Some((width, xs, ys)) = places {
+                    // As large as fits the place's box, in the middle of its place.
+                    let box_w = width * page_w;
+                    let box_h = place_box_height(per_page).map_or(box_w * 0.75, |f| f * page_h);
+                    // The slide's size in points (the file's), for the snap below; the proportions of `sizes` if it is not known.
+                    let pt = marks.slide_size_pt.filter(|_| sizes.iter().all(|s| *s == sizes[0])).unwrap_or(slide);
+                    let fit = (box_w / pt.0.max(1.0)).min(box_h / pt.1.max(1.0));
+                    let scale = if snaps(per_page) { snap_scale(fit) } else { fit };
+                    let (w, h) = (((pt.0 * scale * PX_PER_PT).round() as u32).max(1), ((pt.1 * scale * PX_PER_PT).round() as u32).max(1));
+                    let (cx, cy) = (xs[column] * page_w * PX_PER_PT, (1.0 - ys[row]) * page_h * PX_PER_PT);
+                    (w, h, cx - w as f32 / 2.0, cy - h as f32 / 2.0)
+                } else {
+                    let (avail_w, avail_h) = (cell_w - gap, cell_h - gap);
+                    let scale = (avail_w / slide.0.max(1.0) * PX_PER_PT).min(avail_h / slide.1.max(1.0) * PX_PER_PT);
+                    let (w, h) = (((slide.0 * scale).round() as u32).max(1), ((slide.1 * scale).round() as u32).max(1));
+                    // Centred in its cell.
+                    (w, h, (MARGIN + column as f32 * cell_w) * PX_PER_PT + (cell_w * PX_PER_PT - w as f32) / 2.0, (MARGIN + row as f32 * cell_h) * PX_PER_PT + (cell_h * PX_PER_PT - h as f32) / 2.0)
+                };
+                page.put_slide(index, (x.round(), y.round()), (w, h), framed);
+                if let Some(number) = marks.slide_numbers.get(index) {
+                    // The slide's number under its frame, its left at the frame's: 9.96 pt, in 0.149 grey, its baseline 13.0 pt under the frame's
+                    // bottom (Microsoft 365's PDFs, 1, 2 and 3 to a page of a 16:9 deck: 229.43 to 216.34, 386.03 to 372.98, 489.63 to 476.62).
+                    let size = SLIDE_NUMBER_PT * PX_PER_PT;
+                    let baseline = y.round() + h as f32 + SLIDE_NUMBER_BASELINE_PT * PX_PER_PT;
+                    draw_text_on_baseline(layer, &mut page, PX_PER_PT, &number.to_string(), x.round(), baseline, size, Some((38, 38, 38)));
                 }
-                // Centred in its cell.
-                let x = (MARGIN + column as f32 * cell_w) * PX_PER_PT + (cell_w * PX_PER_PT - w as f32) / 2.0;
-                let y = (MARGIN + row as f32 * cell_h) * PX_PER_PT + (cell_h * PX_PER_PT - h as f32) / 2.0;
-                image::imageops::overlay(&mut page, &picture, x.round() as i64, y.round() as i64);
+                if per_page == 3 && places.is_some() {
+                    // Lines for notes to the right of each slide, as many as its height takes, from just under its top.
+                    let pitch = MEMO_PITCH_PT * page_w / HANDOUT_PAGE.0 * PX_PER_PT;
+                    let left = x.round() + w as f32 + 0.04 * page_w * PX_PER_PT;
+                    let right = (1.0 - 0.07) * page_w * PX_PER_PT;
+                    let count = (h as f32 / pitch + 0.01).floor() as usize;
+                    for line in 1..=count {
+                        page.put_rule((left, y.round() + line as f32 * pitch), right - left, 0.96 * PX_PER_PT);
+                    }
+                }
             }
             draw_marks(layer, &mut page, marks, page_number + 1, (page_w, page_h));
             (page, (page_w, page_h))
@@ -155,28 +320,44 @@ pub fn handouts(slides: &[RgbaImage], per_page: u8, framed: bool, landscape: boo
 /// footer and page number the notes carry. Notes that do not fit go on further pages
 /// (the text only, from the top). Each page with its size in points.
 pub fn notes_pages(slides: &[RgbaImage], notes: &[NoteText], marks: &HandoutMarks, layer: &mut dyn TextLayer) -> Vec<(RgbaImage, (f32, f32))> {
-    let (page_w, page_h) = HANDOUT_PAGE;
-    // The slide as wide as the page's text allows, from the top; the notes under it.
-    let side = 72.0;
-    let top = 60.0;
-    let blank = || RgbaImage::from_pixel((page_w * PX_PER_PT) as u32, (page_h * PX_PER_PT) as u32, Rgba([255, 255, 255, 255]));
+    let sizes: Vec<(f32, f32)> = slides.iter().map(|s| (s.width() as f32, s.height() as f32)).collect();
+    notes_pages_on(&sizes, notes, false, marks, layer, &mut |size| ImageCanvas::new(size, slides)).into_iter().map(|(canvas, size)| (canvas.page, size)).collect()
+}
+
+/// The layout of [`notes_pages`] over a canvas (see [`handouts_on`]).
+pub(crate) fn notes_pages_on<C: Canvas>(sizes: &[(f32, f32)], notes: &[NoteText], framed: bool, marks: &HandoutMarks, layer: &mut dyn TextLayer, blank: &mut dyn FnMut((f32, f32)) -> C) -> Vec<(C, (f32, f32))> {
+    let (page_w, page_h) = page_of(marks);
+    // The slide image and the notes' body as the file's notes master puts them (EMU of the notes page, to points of this one).
+    let (kx, ky) = marks.notes.as_ref().map_or((1.0 / 12700.0, 1.0 / 12700.0), |n| (page_w / n.page.0.max(1) as f32, page_h / n.page.1.max(1) as f32));
+    let frame_pt = |f: (i64, i64, i64, i64)| (f.0 as f32 * kx, f.1 as f32 * ky, f.2 as f32 * kx, f.3 as f32 * ky);
+    let body = marks.notes.as_ref().map_or((685800, 4400550, 5486400, 3600450), |n| n.body);
+    let (body_x, body_y, body_w, body_h) = frame_pt(body);
+    // The text sits inside its box by the text box's insets (0.1 in, 0.05 in).
+    let (inset_x, inset_y) = (7.2, 3.6);
+    let text_w = body_w - 2.0 * inset_x;
     let mut pages = Vec::new();
-    for (i, slide) in slides.iter().enumerate() {
-        let mut page = blank();
-        let avail_w = page_w - 2.0 * side;
-        let scale = avail_w / slide.width().max(1) as f32 * PX_PER_PT;
-        let (w, h) = (((slide.width() as f32 * scale).round() as u32).max(1), ((slide.height() as f32 * scale).round() as u32).max(1));
-        let mut picture = image::imageops::resize(slide, w, h, image::imageops::FilterType::Triangle);
-        frame(&mut picture);
-        image::imageops::overlay(&mut page, &picture, (side * PX_PER_PT) as i64, (top * PX_PER_PT) as i64);
-        let text_top = top * PX_PER_PT + h as f32 + 28.0 * PX_PER_PT;
-        let mut flow = start_notes(notes.get(i), avail_w * PX_PER_PT);
-        draw_notes(layer, &mut flow, &mut page, (side * PX_PER_PT, text_top, avail_w * PX_PER_PT, (page_h - 56.0) * PX_PER_PT - text_top));
+    for (i, slide) in sizes.iter().enumerate() {
+        let mut page = blank((page_w, page_h));
+        // The notes master's image box (a file without one: 5486400 EMU wide with the slide's proportions).
+        let image = marks.notes.as_ref().map_or((685800, 1143000, 5486400, (5486400.0 * slide.1 / slide.0.max(1.0)).round() as i64), |n| n.image);
+        let (image_x, image_y, image_w, image_h) = frame_pt(image);
+        // As large as fits the image's box, in the middle of it.
+        let scale = (image_w / slide.0.max(1.0)).min(image_h / slide.1.max(1.0)) * PX_PER_PT;
+        let (w, h) = (((slide.0 * scale).round() as u32).max(1), ((slide.1 * scale).round() as u32).max(1));
+        let (x, y) = (image_x * PX_PER_PT + (image_w * PX_PER_PT - w as f32) / 2.0, image_y * PX_PER_PT + (image_h * PX_PER_PT - h as f32) / 2.0);
+        page.put_slide(i, (x.round(), y.round()), (w, h), true);
+        if framed {
+            // "Frame slides" on a notes page frames the page: in PowerPoint's A4 print the frame is the notes page (540 x 720 pt) at the scale 1.1024 that fits it to the paper's width
+            // (595.2 x 793.68 pt, 24.12 pt from the top and the bottom), a line of 0.96 pt on the paper.
+            page.put_frame((0.0, 0.0, page_w, page_h), FRAME_PT);
+        }
+        let mut flow = start_notes(notes.get(i), text_w * PX_PER_PT);
+        draw_notes(layer, &mut flow, &mut page, ((body_x + inset_x) * PX_PER_PT, (body_y + inset_y) * PX_PER_PT, text_w * PX_PER_PT, (body_h - 2.0 * inset_y) * PX_PER_PT));
         pages.push(page);
-        // What did not fit: pages of text, from the top.
+        // What did not fit: pages of text, from the top of the slide image.
         while notes_left(&flow) {
-            let mut more = blank();
-            draw_notes(layer, &mut flow, &mut more, (side * PX_PER_PT, top * PX_PER_PT, avail_w * PX_PER_PT, (page_h - 56.0 - top) * PX_PER_PT));
+            let mut more = blank((page_w, page_h));
+            draw_notes(layer, &mut flow, &mut more, ((body_x + inset_x) * PX_PER_PT, image_y * PX_PER_PT, text_w * PX_PER_PT, (page_h - 56.0 - image_y) * PX_PER_PT));
             pages.push(more);
         }
     }
@@ -193,14 +374,19 @@ pub fn notes_pages(slides: &[RgbaImage], notes: &[NoteText], marks: &HandoutMark
 /// アウトライン: the slides' titles (with their numbers) and body paragraphs as text, the levels indented, over pages of an A4
 /// portrait sheet; with the header, date, footer and page number the notes carry. Each page with its size in points.
 pub fn outline_pages(text: &NoteText, marks: &HandoutMarks, layer: &mut dyn TextLayer) -> Vec<(RgbaImage, (f32, f32))> {
-    let (page_w, page_h) = HANDOUT_PAGE;
-    let (side, top) = (72.0, 60.0);
-    let blank = || RgbaImage::from_pixel((page_w * PX_PER_PT) as u32, (page_h * PX_PER_PT) as u32, Rgba([255, 255, 255, 255]));
+    outline_pages_on(text, marks, layer, &mut |size| ImageCanvas::new(size, &[])).into_iter().map(|(canvas, size)| (canvas.page, size)).collect()
+}
+
+/// The layout of [`outline_pages`] over a canvas (see [`handouts_on`]).
+pub(crate) fn outline_pages_on<C: Canvas>(text: &NoteText, marks: &HandoutMarks, layer: &mut dyn TextLayer, blank: &mut dyn FnMut((f32, f32)) -> C) -> Vec<(C, (f32, f32))> {
+    let (page_w, page_h) = page_of(marks);
+    // The text's box as PowerPoint's outline page has it (PDF of a 540 x 720 pt page: x 60 to 480, y from 60 down to 652.8, as fractions of the page).
+    let (side, top, bottom) = (page_w * 60.0 / 540.0, page_h * 60.0 / 720.0, page_h * 67.2 / 720.0);
     let mut flow = start_notes(Some(text), (page_w - 2.0 * side) * PX_PER_PT);
     let mut pages = Vec::new();
     loop {
-        let mut page = blank();
-        draw_notes(layer, &mut flow, &mut page, (side * PX_PER_PT, top * PX_PER_PT, (page_w - 2.0 * side) * PX_PER_PT, (page_h - 56.0 - top) * PX_PER_PT));
+        let mut page = blank((page_w, page_h));
+        draw_notes(layer, &mut flow, &mut page, (side * PX_PER_PT, top * PX_PER_PT, (page_w - 2.0 * side) * PX_PER_PT, (page_h - bottom - top) * PX_PER_PT));
         pages.push(page);
         if !notes_left(&flow) {
             break;
@@ -216,6 +402,180 @@ pub fn outline_pages(text: &NoteText, marks: &HandoutMarks, layer: &mut dyn Text
         .collect()
 }
 
+/// A handout, notes or outline page as pixels (the picture PDF).
+pub(crate) struct ImageCanvas<'a> {
+    pub(crate) page: RgbaImage,
+    slides: &'a [RgbaImage],
+}
+
+impl<'a> ImageCanvas<'a> {
+    fn new((page_w, page_h): (f32, f32), slides: &'a [RgbaImage]) -> Self {
+        ImageCanvas { page: RgbaImage::from_pixel((page_w * PX_PER_PT) as u32, (page_h * PX_PER_PT) as u32, Rgba([255, 255, 255, 255])), slides }
+    }
+}
+
+impl Canvas for ImageCanvas<'_> {
+    fn width(&self) -> f32 {
+        self.page.width() as f32
+    }
+
+    fn put_slide(&mut self, index: usize, at: (f32, f32), (w, h): (u32, u32), framed: bool) {
+        let mut picture = image::imageops::resize(&self.slides[index], w, h, image::imageops::FilterType::Triangle);
+        if framed {
+            frame(&mut picture);
+        }
+        image::imageops::overlay(&mut self.page, &picture, at.0.round() as i64, at.1.round() as i64);
+    }
+
+    fn put_text(&mut self, picture: &Picture, rows: (u32, u32), at: (i64, i64)) {
+        if let Picture::Image(image) = picture {
+            multiply(&mut self.page, image, rows, at);
+        }
+    }
+
+    fn put_frame(&mut self, rect: (f32, f32, f32, f32), line: f32) {
+        let (x, y, w, h) = (rect.0 * PX_PER_PT, rect.1 * PX_PER_PT, rect.2 * PX_PER_PT, rect.3 * PX_PER_PT);
+        let t = (line * PX_PER_PT).round().max(1.0) as i64;
+        let (pw, ph) = (self.page.width() as i64, self.page.height() as i64);
+        for k in 0..t {
+            for i in (x.round() as i64)..((x + w).round() as i64) {
+                for j in [y.round() as i64 + k, (y + h).round() as i64 - 1 - k] {
+                    if (0..pw).contains(&i) && (0..ph).contains(&j) {
+                        self.page.put_pixel(i as u32, j as u32, Rgba([0, 0, 0, 255]));
+                    }
+                }
+            }
+            for j in (y.round() as i64)..((y + h).round() as i64) {
+                for i in [x.round() as i64 + k, (x + w).round() as i64 - 1 - k] {
+                    if (0..pw).contains(&i) && (0..ph).contains(&j) {
+                        self.page.put_pixel(i as u32, j as u32, Rgba([0, 0, 0, 255]));
+                    }
+                }
+            }
+        }
+    }
+
+    fn put_rule(&mut self, at: (f32, f32), len: f32, thickness: f32) {
+        let (x0, x1) = (at.0.round().max(0.0) as u32, ((at.0 + len).round().max(0.0) as u32).min(self.page.width()));
+        let top = (at.1 - thickness / 2.0).round();
+        for row in 0..(thickness.round().max(1.0) as i64) {
+            let y = top as i64 + row;
+            if y >= 0 && (y as u32) < self.page.height() {
+                for x in x0..x1 {
+                    self.page.put_pixel(x, y as u32, Rgba([0, 0, 0, 255]));
+                }
+            }
+        }
+    }
+}
+
+/// What a slide's window painted, to be put on a handout or notes page as it is (the vector PDF): its records, its width in logical
+/// pixels, the device pixels to a logical one, and its size in points.
+pub(crate) struct SlideRecords {
+    pub(crate) records: Vec<gpui_kit::PaintRecord>,
+    pub(crate) width: f32,
+    pub(crate) density: f32,
+    pub(crate) size_pt: (f32, f32),
+    /// The frames of the slide's plain filled shapes without a line (`pdf_vector::Layer::hairline`).
+    pub(crate) hairline: Vec<(f32, f32, f32, f32)>,
+    /// The frames of its charts (`pdf_vector::Layer::charts`).
+    pub(crate) charts: Vec<(f32, f32, f32, f32)>,
+}
+
+/// A handout, notes or outline page as the records of its parts (the vector PDF): the slides' own records and the text's, each put
+/// where the layout says and cut to its place, so everything on the page stays vector and the text stays text.
+pub(crate) struct VectorCanvas<'a> {
+    width: f32,
+    slides: &'a [SlideRecords],
+    pub(crate) layers: Vec<crate::pdf_vector::Layer>,
+}
+
+impl<'a> VectorCanvas<'a> {
+    pub(crate) fn new((page_w, _): (f32, f32), slides: &'a [SlideRecords]) -> Self {
+        VectorCanvas { width: page_w * PX_PER_PT, slides, layers: Vec::new() }
+    }
+}
+
+impl Canvas for VectorCanvas<'_> {
+    fn width(&self) -> f32 {
+        self.width
+    }
+
+    fn put_slide(&mut self, index: usize, at: (f32, f32), (w, h): (u32, u32), framed: bool) {
+        let Some(slide) = self.slides.get(index) else { return };
+        let (x, y, w, h) = (at.0 / PX_PER_PT, at.1 / PX_PER_PT, w as f32 / PX_PER_PT, h as f32 / PX_PER_PT);
+        self.layers.push(crate::pdf_vector::Layer { records: slide.records.clone(), scale_factor: slide.density, k: w / slide.width.max(1.0), origin: (x, y), clip: Some((x, y, w, h)), hairline: slide.hairline.clone(), charts: slide.charts.clone() });
+        if framed {
+            // PowerPoint's frame: 0.96 pt, its outer edge at the slide's (the stroke's middle half of it in).
+            let line = FRAME_PT;
+            let bounds = gpui_kit::Bounds::new(gpui_kit::point(gpui_kit::px(x), gpui_kit::px(y)), gpui_kit::size(gpui_kit::px(w), gpui_kit::px(h)));
+            let edge = gpui_kit::Edges::all(gpui_kit::px(line));
+            let record = gpui_kit::PaintRecord::Quad {
+                bounds,
+                clip: bounds,
+                background: gpui_kit::Background::from(gpui_kit::Hsla { h: 0.0, s: 0.0, l: 0.0, a: 0.0 }),
+                border_color: gpui_kit::Hsla { h: 0.0, s: 0.0, l: 0.0, a: 1.0 },
+                border_widths: edge,
+                corner_radii: gpui_kit::Corners::default(),
+                border_style: gpui_kit::BorderStyle::Solid,
+            };
+            self.layers.push(crate::pdf_vector::Layer { records: vec![record], scale_factor: 1.0, k: 1.0, origin: (0.0, 0.0), clip: None, hairline: Vec::new(), charts: Vec::new() });
+        }
+    }
+
+    fn put_text(&mut self, picture: &Picture, rows: (u32, u32), at: (i64, i64)) {
+        let Picture::Painted { records, width, density, .. } = picture else { return };
+        let k = density / PX_PER_PT;
+        let (x, y) = (at.0 as f32 / PX_PER_PT, at.1 as f32 / PX_PER_PT);
+        // The lines in the rows only (a long text is cut into pages: each page takes what is in its rows).
+        let (from, to) = (rows.0 as f32 - 2.0, rows.1 as f32 + 2.0);
+        let inside = |top: gpui_kit::Pixels| {
+            let y = f32::from(top) * density;
+            y >= from && y <= to
+        };
+        let records = records
+            .iter()
+            .filter(|r| match r {
+                gpui_kit::PaintRecord::Glyph { origin, .. } => inside(origin.y),
+                gpui_kit::PaintRecord::Line { bounds, .. } => inside(bounds.top()),
+                _ => true,
+            })
+            .cloned()
+            .collect();
+        let clip = (x, y, *width as f32 / PX_PER_PT, (rows.1 - rows.0) as f32 / PX_PER_PT);
+        self.layers.push(crate::pdf_vector::Layer { records, scale_factor: *density, k, origin: (x, y - rows.0 as f32 / PX_PER_PT), clip: Some(clip), hairline: Vec::new(), charts: Vec::new() });
+    }
+
+    fn put_frame(&mut self, rect: (f32, f32, f32, f32), line: f32) {
+        let bounds = gpui_kit::Bounds::new(gpui_kit::point(gpui_kit::px(rect.0), gpui_kit::px(rect.1)), gpui_kit::size(gpui_kit::px(rect.2), gpui_kit::px(rect.3)));
+        let record = gpui_kit::PaintRecord::Quad {
+            bounds,
+            clip: bounds,
+            background: gpui_kit::Background::from(gpui_kit::Hsla { h: 0.0, s: 0.0, l: 0.0, a: 0.0 }),
+            border_color: gpui_kit::Hsla { h: 0.0, s: 0.0, l: 0.0, a: 1.0 },
+            border_widths: gpui_kit::Edges::all(gpui_kit::px(line)),
+            corner_radii: gpui_kit::Corners::default(),
+            border_style: gpui_kit::BorderStyle::Solid,
+        };
+        self.layers.push(crate::pdf_vector::Layer { records: vec![record], scale_factor: 1.0, k: 1.0, origin: (0.0, 0.0), clip: None, hairline: Vec::new(), charts: Vec::new() });
+    }
+
+    fn put_rule(&mut self, at: (f32, f32), len: f32, thickness: f32) {
+        let (x, y, w, h) = (at.0 / PX_PER_PT, (at.1 - thickness / 2.0) / PX_PER_PT, len / PX_PER_PT, thickness / PX_PER_PT);
+        let bounds = gpui_kit::Bounds::new(gpui_kit::point(gpui_kit::px(x), gpui_kit::px(y)), gpui_kit::size(gpui_kit::px(w), gpui_kit::px(h)));
+        let record = gpui_kit::PaintRecord::Quad {
+            bounds,
+            clip: bounds,
+            background: gpui_kit::Background::from(gpui_kit::Hsla { h: 0.0, s: 0.0, l: 0.0, a: 1.0 }),
+            border_color: gpui_kit::Hsla { h: 0.0, s: 0.0, l: 0.0, a: 0.0 },
+            border_widths: gpui_kit::Edges::default(),
+            corner_radii: gpui_kit::Corners::default(),
+            border_style: gpui_kit::BorderStyle::Solid,
+        };
+        self.layers.push(crate::pdf_vector::Layer { records: vec![record], scale_factor: 1.0, k: 1.0, origin: (0.0, 0.0), clip: None, hairline: Vec::new(), charts: Vec::new() });
+    }
+}
+
 type NotesFlow = Option<NoteFlow>;
 
 /// The notes' text laid out for boxes `width` pixels wide.
@@ -223,7 +583,7 @@ fn start_notes(text: Option<&NoteText>, width: f32) -> NotesFlow {
     text.and_then(|t| NoteFlow::new(t, width.round() as u32))
 }
 
-fn draw_notes(layer: &mut dyn TextLayer, flow: &mut NotesFlow, page: &mut RgbaImage, rect: (f32, f32, f32, f32)) {
+fn draw_notes(layer: &mut dyn TextLayer, flow: &mut NotesFlow, page: &mut dyn Canvas, rect: (f32, f32, f32, f32)) {
     if let Some(flow) = flow {
         flow.draw_next(layer, page, rect);
     }
@@ -235,8 +595,8 @@ fn notes_left(flow: &NotesFlow) -> bool {
 
 /// The header, date, footer and page number of a handout page: where the
 /// handout master puts them, or in the margins' corners.
-fn draw_marks(layer: &mut dyn TextLayer, page: &mut RgbaImage, marks: &HandoutMarks, number: usize, (page_w, page_h): (f32, f32)) {
-    use ibis_pptx::handout_master::Mark;
+fn draw_marks(layer: &mut dyn TextLayer, page: &mut dyn Canvas, marks: &HandoutMarks, number: usize, (page_w, page_h): (f32, f32)) {
+    use ibis_formats::handout_master::Mark;
     if let Some(layout) = &marks.layout {
         // The master's boxes, scaled from the notes page to this one; the text inside as its box says.
         let (kx, ky) = (page_w * PX_PER_PT / layout.page.0.max(1) as f32, page_h * PX_PER_PT / layout.page.1.max(1) as f32);
@@ -296,15 +656,154 @@ mod tests {
     fn colours() {
         let mut gray = solid(2, 2, [255, 0, 0]);
         recolor(&mut gray, PrintColor::Gray);
-        assert_eq!(gray.get_pixel(0, 0), &Rgba([76, 76, 76, 255]));
+        // Rec.709 (PowerPoint's: red 54).
+        assert_eq!(gray.get_pixel(0, 0), &Rgba([54, 54, 54, 255]));
+        // A picture is as in grey in black and white too (no threshold, no dither).
         let mut bw = solid(2, 2, [255, 0, 0]);
         recolor(&mut bw, PrintColor::BlackWhite);
-        assert_eq!(bw.get_pixel(0, 0), &Rgba([0, 0, 0, 255]));
-        let mut light = solid(2, 2, [250, 250, 200]);
-        recolor(&mut light, PrintColor::BlackWhite);
-        assert_eq!(light.get_pixel(1, 1), &Rgba([255, 255, 255, 255]));
+        assert_eq!(bw.get_pixel(0, 0), &Rgba([54, 54, 54, 255]));
         let mut same = solid(2, 2, [10, 20, 30]);
         recolor(&mut same, PrintColor::Color);
         assert_eq!(same.get_pixel(0, 0), &Rgba([10, 20, 30, 255]));
+    }
+
+    /// PowerPoint's colours of the kinds of thing (Windows PowerPoint's PDFs of `PrintOut`, #225): in grey the fills in Rec.709 (red 54, 00B050 132, 0070C0 94,
+    /// yellow 237), lines and text black, white text white; in black and white fills white, lines and text black.
+    #[test]
+    fn colours_by_kind() {
+        use PaintKind::*;
+        let colors = [(255, 0, 0), (0, 0xB0, 0x50), (0, 0x70, 0xC0), (255, 255, 0), (0xD9, 0xD9, 0xD9), (0x59, 0x59, 0x59)];
+        let grey: Vec<u8> = colors.iter().map(|&c| PrintColor::Gray.map_for(Fill, c).0).collect();
+        assert_eq!(grey, [54, 132, 94, 237, 217, 89]);
+        for c in colors {
+            assert_eq!(PrintColor::Gray.map_for(Line, c), (0, 0, 0));
+            assert_eq!(PrintColor::Gray.map_for(Text, c), (0, 0, 0));
+            assert_eq!(PrintColor::BlackWhite.map_for(Fill, c), (255, 255, 255));
+            assert_eq!(PrintColor::BlackWhite.map_for(Line, c), (0, 0, 0));
+            assert_eq!(PrintColor::BlackWhite.map_for(Text, c), (0, 0, 0));
+            assert_eq!(PrintColor::Color.map_for(Fill, c), c);
+        }
+        assert_eq!(PrintColor::Gray.map_for(Text, (255, 255, 255)), (255, 255, 255), "white text stays white in grey");
+        assert_eq!(PrintColor::BlackWhite.map_for(Text, (255, 255, 255)), (0, 0, 0), "and is black in black and white");
+    }
+
+    struct NoText;
+    impl TextLayer for NoText {
+        fn typeset(&mut self, _: &ibis_doc_model::TextBody, _: u32, _: u32) -> Option<(Picture, Vec<(f32, f32)>)> {
+            None
+        }
+    }
+
+    /// The places PowerPoint gives 16:9 slides on its 540 x 720 pt page (Microsoft 365's PDFs: 3 to a page at (37.8, 89.1 to 631.1)
+    /// 221.4 x 124.5, 4 to a page at x 37.8 and 280.8, 9 to a page 140.4 wide) and the 7 memo lines beside a slide of a 3 to a page.
+    #[test]
+    fn handout_places_are_powerpoints() {
+        let slides: Vec<RgbaImage> = (0..9).map(|_| solid(160, 90, [200, 0, 0])).collect();
+        let red_box = |page: &RgbaImage, from: (u32, u32), to: (u32, u32)| {
+            let mut found: Option<(u32, u32, u32, u32)> = None;
+            for y in from.1..to.1 {
+                for x in from.0..to.0 {
+                    let p = page.get_pixel(x, y);
+                    if p[0] == 200 && p[1] == 0 {
+                        found = Some(found.map_or((x, y, x, y), |f| (f.0.min(x), f.1.min(y), f.2.max(x), f.3.max(y))));
+                    }
+                }
+            }
+            found.expect("a slide")
+        };
+        let marks = HandoutMarks::default();
+        let near = |got: u32, pt: f32| (got as f32 / PX_PER_PT - pt).abs() <= 0.5;
+        let three = handouts(&slides, 3, false, false, &marks, &mut NoText);
+        let page = &three[0].0;
+        assert_eq!(three[0].1, (540.0, 720.0));
+        // The top slide: from x 37.8 pt, 221.4 pt wide, 631.1 pt from the bottom (88.9 pt down), 124.5 pt high.
+        let (x0, y0, x1, y1) = red_box(page, (0, 0), (page.width() / 2, 440));
+        assert!(near(x0, 37.8) && near(x1 + 1, 259.2) && near(y0, 88.9) && near(y1 + 1, 213.4), "{:?}", (x0, y0, x1, y1));
+        // Seven lines of 0.96 pt beside it, from 21.6 pt right of the slide to 37.8 pt from the page's edge.
+        let column = (370.0 * PX_PER_PT) as u32;
+        let rows = (0..440).filter(|&y| page.get_pixel(column, y)[0] == 0).count() as f32 / PX_PER_PT;
+        assert!((rows - 7.0 * 0.96).abs() < 1.5, "{rows}");
+        // 4 to a page: the second column starts at 280.8 pt; 9 to a page: three columns of 140.4 pt.
+        let four = handouts(&slides, 4, false, false, &marks, &mut NoText);
+        let (x0, ..) = red_box(&four[0].0, (page.width() / 2, 0), (page.width(), 440));
+        assert!(near(x0, 280.8), "{x0}");
+        let nine = handouts(&slides, 9, false, false, &marks, &mut NoText);
+        let (x0, _, x1, _) = red_box(&nine[0].0, (0, 0), (nine[0].0.width() * 7 / 20, 300));
+        assert!(near(x0, 37.8) && near(x1 + 1, 178.2), "{:?}", (x0, x1));
+    }
+
+    /// A 4:3 slide's places (Microsoft 365's PDFs of a 4:3 deck, #225): 1 to a page 464.5 x 348.4, 4 to a page 221.4 x 166.0, 9 to a page
+    /// 140.4 x 105.2. (2, 3 and 6 to a page are 360 x 270 and 211.2 x 158.4 there: the rule is not known yet.)
+    #[test]
+    fn handout_places_of_a_four_to_three_slide() {
+        let slides: Vec<RgbaImage> = (0..9).map(|_| solid(160, 120, [200, 0, 0])).collect();
+        let marks = HandoutMarks::default();
+        let near = |got: f32, pt: f32| (got / PX_PER_PT - pt).abs() <= 0.5;
+        // (slides to a page, x, width, height, top of the first row from the page's top)
+        for (n, x, w, h, top) in [(1u8, 37.8, 464.5, 348.4, 185.7), (4, 37.8, 221.4, 166.0, 120.1), (9, 37.8, 140.4, 105.2, 98.6)] {
+            let page = &handouts(&slides, n, false, false, &marks, &mut NoText)[0].0;
+            // The first slide: the red inside the box it is expected in (nothing else is that close to it).
+            let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+            for (px, py, q) in page.enumerate_pixels() {
+                if q[0] == 200 && q[1] == 0 && (px as f32 / PX_PER_PT) < x + w + 1.0 && (py as f32 / PX_PER_PT) < top + h + 1.0 {
+                    (x0, y0, x1, y1) = (x0.min(px), y0.min(py), x1.max(px), y1.max(py));
+                }
+            }
+            let got = (x0 as f32, y0 as f32, x1 as f32 + 1.0 - x0 as f32, y1 as f32 + 1.0 - y0 as f32);
+            assert!(near(got.0, x) && near(got.1, top) && near(got.2, w) && near(got.3, h), "{n} to a page: {got:?}");
+        }
+    }
+
+    /// The 1, 2 and 3 to a page frames of slides of different sizes (Microsoft 365's PDFs, #225): a scale near 100% or 50% snaps to it (a 960 x 540
+    /// slide is 480 x 270 at 1 and 2 to a page, a 720 x 405 one 464.4 x 261.2), and a 4:3 slide is as tall as the 2, 3 and 6 to a page boxes let it.
+    #[test]
+    fn handout_frames_snap_to_a_whole_or_half_scale() {
+        let near = |got: f32, pt: f32| (got / PX_PER_PT - pt).abs() <= 0.5;
+        // (slide size in pt, slides to a page, the first slide's width and height in pt)
+        let cases = [
+            ((720.0, 405.0), 1u8, 464.4, 261.2),
+            ((960.0, 540.0), 1, 480.0, 270.0),
+            ((960.0, 540.0), 2, 480.0, 270.0),
+            ((720.0, 405.0), 2, 464.4, 261.2),
+            ((720.0, 540.0), 1, 464.4, 348.3),
+            ((720.0, 540.0), 2, 360.0, 270.0),
+            ((720.0, 540.0), 3, 211.2, 158.4),
+            ((720.0, 540.0), 6, 211.2, 158.4),
+            ((720.0, 405.0), 3, 221.4, 124.5),
+            ((1200.0, 675.0), 1, 464.4, 261.2),
+            ((400.0, 225.0), 1, 400.0, 225.0),
+        ];
+        for ((sw, sh), n, w, h) in cases {
+            let slides: Vec<RgbaImage> = (0..2).map(|_| solid((sw / 4.0) as u32, (sh / 4.0) as u32, [200, 0, 0])).collect();
+            let marks = HandoutMarks { slide_size_pt: Some((sw, sh)), ..Default::default() };
+            let page = &handouts(&slides, n, false, false, &marks, &mut NoText)[0].0;
+            let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+            for (px, py, q) in page.enumerate_pixels() {
+                if q[0] == 200 && q[1] == 0 && px < (page.width() as f32 * if n >= 3 { 0.5 } else { 1.0 }) as u32 && (n == 1 || (py as f32) < page.height() as f32 / if n == 2 { 2.0 } else { 3.0 }) {
+                    (x0, y0, x1, y1) = (x0.min(px), y0.min(py), x1.max(px), y1.max(py));
+                }
+            }
+            let got = ((x1 + 1 - x0) as f32, (y1 + 1 - y0) as f32);
+            assert!(near(got.0, w) && near(got.1, h), "{sw}x{sh} to {n} a page: {got:?}");
+        }
+    }
+
+    /// 縦の順 (PowerPoint's HandoutOrder vertical): the second slide of 4 to a page is under the first, not beside it.
+    #[test]
+    fn vertical_order_goes_down_the_column() {
+        let slides = vec![solid(160, 90, [200, 0, 0]), solid(160, 90, [0, 200, 0]), solid(160, 90, [0, 0, 200]), solid(160, 90, [200, 200, 0])];
+        let green_at = |vertical: bool| {
+            let marks = HandoutMarks { vertical_order: vertical, ..Default::default() };
+            let page = &handouts(&slides, 4, false, false, &marks, &mut NoText)[0].0;
+            let (mut x, mut y) = (0, 0);
+            for (px, py, p) in page.enumerate_pixels() {
+                if p[0] == 0 && p[1] == 200 && p[2] == 0 {
+                    (x, y) = (px, py);
+                }
+            }
+            (x < page.width() / 2, y < page.height() / 2)
+        };
+        assert_eq!(green_at(false), (false, true), "across: top right");
+        assert_eq!(green_at(true), (true, false), "down: bottom left");
     }
 }

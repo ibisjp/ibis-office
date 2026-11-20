@@ -131,7 +131,7 @@ impl SlideEditor {
         let shape = Shape::new(id, frame, ShapeKind::Control(Arc::new(control)));
         let slide = self.current_slide;
         let index = self.slide().shapes.len();
-        self.run_sheet(vec![Command::InsertShape { slide, index, shape }], cx);
+        self.run_sheet(vec![Command::InsertShape { slide, shapes: vec![(index, shape)] }], cx);
         self.selection = Some(id);
         cx.notify();
     }
@@ -237,7 +237,7 @@ impl SlideEditor {
         next.three_d = three_d_val;
 
         let slide = self.current_slide;
-        let edit = SheetCommand::EditControl { slide, shape, control: next };
+        let edit = SheetCommand::EditControl { sheet: slide, shape, control: next };
         self.run_sheet(vec![Command::Sheet(edit)], cx);
         self.wb_mut().panels.control_properties = None;
         cx.notify();

@@ -25,7 +25,7 @@ use crate::docx::scenarios::DocSteps;
 use crate::xlsx::scenarios::SheetSteps;
 use crate::shell::chrome::{Handler, MenuEntry};
 use crate::shell::menu_layout::{layout, layout_context, LayoutItem, DRAW_MENU};
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 use crate::pptx::ext::*;
 use crate::docx::ext::*;
 use crate::xlsx::ext::*;
@@ -42,6 +42,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::menu_every_item_is_bound_and_acts_docx", acts_docx),
         ("shell::menu_every_item_is_bound_and_acts_xlsx", acts_xlsx),
         ("shell::menu_every_item_is_bound_and_acts_pptx", acts_pptx),
+        ("shell::menu_every_item_is_bound_and_acts_pdf", acts_pdf),
         ("shell::menu_states_enable_hard_items_pptx", states_enable_hard_items_pptx),
         ("shell::menu_states_of_the_made_files", states_of_the_made_files),
         ("shell::menu_suspect_docx_select_cell", suspect_docx_select_cell),
@@ -169,6 +170,12 @@ fn doc_caret(s: &mut Scenario) {
     s.click_text(FlowPos::new(id, 0));
 }
 
+/// The caret's paragraph has a drop cap (Word's form: a frame paragraph of the capital and the body), so Drop Cap > None has one to take away.
+fn doc_drop_cap(s: &mut Scenario) {
+    doc_caret(s);
+    s.menu("docx.drop-cap.drop");
+}
+
 fn doc_table(s: &mut Scenario) {
     doc_caret(s);
     s.menu("docx.table.insert-2x2");
@@ -196,7 +203,7 @@ fn insert_shape(s: &mut Scenario) {
         let id = e.document.ids().new_shape_id();
         let frame = ibis_doc_model::EmuRect::new(1_000_000, 1_000_000, 1_500_000, 800_000);
         let slide = e.current_slide;
-        e.run(vec![ibis_doc_model::Command::InsertShape { slide, index: e.slide().shapes.len(), shape: ibis_doc_model::Shape::text_box(id, frame, "x") }], cx);
+        e.run(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(e.slide().shapes.len(), ibis_doc_model::Shape::text_box(id, frame, "x"))] }], cx);
         e.set_selection(vec![id]);
         cx.notify();
     });
@@ -244,7 +251,7 @@ fn doc_split(s: &mut Scenario) {
 }
 
 fn sheet_rectangle(s: &mut Scenario) {
-    try_menu(s, "xlsx.shape.rect");
+    try_menu(s, "shape.rect"); s.place_armed();
 }
 
 fn pivot_cell(s: &mut Scenario) {
@@ -266,7 +273,7 @@ fn pptx_rectangle(s: &mut Scenario) {
         let frame = ibis_doc_model::EmuRect::new(1_000_000, 1_000_000, 1_500_000, 800_000);
         let slide = e.current_slide;
         let kind = ibis_doc_model::ShapeKind::Auto(ibis_doc_model::AutoShape::new(ibis_doc_model::Geometry::Rect, ibis_doc_model::Fill::None, None));
-        e.run(vec![ibis_doc_model::Command::InsertShape { slide, index: e.slide().shapes.len(), shape: ibis_doc_model::Shape::new(id, frame, kind) }], cx);
+        e.run(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(e.slide().shapes.len(), ibis_doc_model::Shape::new(id, frame, kind))] }], cx);
         e.set_selection(vec![id]);
         cx.notify();
     });
@@ -298,18 +305,18 @@ fn doc_references(s: &mut Scenario) {
     s.menu("docx.reference.insert-citation");
     doc_caret_in(s, 3);
     s.key("shift-end");
-    s.menu("docx.toa.mark-category-1");
+    s.menu("docx.table-of-authorities.mark-category-1");
     // The bibliography before the seventh paragraph, the table of authorities before the fifth.
     doc_caret_in(s, 6);
     s.menu("docx.reference.bibliography");
     doc_caret_in(s, 4);
-    s.menu("docx.toa");
+    s.menu("docx.table-of-authorities");
     // Now one more of each, so that both tables are out of date.
     doc_caret_in(s, 2);
     s.menu("docx.reference.insert-citation");
     doc_caret_in(s, 3);
     s.key("shift-end");
-    s.menu("docx.toa.mark-category-2");
+    s.menu("docx.table-of-authorities.mark-category-2");
     doc_caret_in(s, 2);
 }
 
@@ -376,7 +383,7 @@ fn pptx_two_rectangles(s: &mut Scenario) {
         let frame = ibis_doc_model::EmuRect::new(1_800_000, 1_200_000, 1_500_000, 800_000);
         let slide = e.current_slide;
         let kind = ibis_doc_model::ShapeKind::Auto(ibis_doc_model::AutoShape::new(ibis_doc_model::Geometry::Rect, ibis_doc_model::Fill::None, None));
-        e.run(vec![ibis_doc_model::Command::InsertShape { slide, index: e.slide().shapes.len(), shape: ibis_doc_model::Shape::new(id, frame, kind) }], cx);
+        e.run(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(e.slide().shapes.len(), ibis_doc_model::Shape::new(id, frame, kind))] }], cx);
         let mut ids: Vec<_> = first.iter().copied().collect();
         ids.push(id);
         e.set_selection(ids);
@@ -468,7 +475,7 @@ fn undone_slide(s: &mut Scenario) {
 /// A shape with an animation on it, selected.
 fn animated(s: &mut Scenario) {
     s.select_shape(0);
-    try_menu(s, "add.pptx.anim.in.fade");
+    try_menu(s, "add.pptx.animation.in.fade");
     s.select_shape(0);
 }
 
@@ -640,9 +647,12 @@ fn run_screen(screen: &Screen) {
             }
             let Some(handler) = handler_of(&mut s, row.id) else { continue };
             eprintln!("[{}:{}] {}", screen.name, state_name, row.id);
+            crate::shell::external::take_launched();
             s.update(|e, w, cx| handler(e, w, cx));
             let after = steady_or(&mut s, "", false);
-            let acted = after != baseline;
+            // Opening a page or another app is acting too (the test run's gate records it instead of starting it: K0036's
+            // ヘルプ > ソースコード opens the project's page).
+            let acted = after != baseline || !crate::shell::external::take_launched().is_empty();
             let o = outcomes.entry(row.id).or_default();
             o.label = row.label.clone();
             o.path = row.path.clone();
@@ -691,6 +701,7 @@ const DOCX_STATES: &[State] = &[
     ("text selected", None, doc_text_selected),
     ("all", None, select_all),
     ("table", None, doc_table),
+    ("drop cap", None, doc_drop_cap),
     ("references out of date", None, doc_references),
     ("picture", None, doc_picture),
     ("split", None, doc_split),
@@ -774,7 +785,7 @@ const IDLE_OK: &[(&str, &str)] = &[
     ("xlsx.new-from-template", "opens the template picker window"),
     ("pptx.new-from-template", "opens the template picker window"),
     ("image.file", "native open dialog"),
-    ("docx.image.file", "native open dialog"),
+    ("docx.picture.file", "native open dialog"),
     ("docx.picture.replace", "native open dialog"),
     ("insert.audio", "native open dialog"),
     ("insert.video", "native open dialog"),
@@ -791,8 +802,8 @@ const IDLE_OK: &[(&str, &str)] = &[
     ("view.fullscreen", "the platform window's full screen (the headless window has none)"),
     // The window list's line of the window that is already in front, and what needs a second window.
     ("window.open.", "chooses a window that is already in front"),
-    ("docx.view-side-by-side", "needs a second window"),
-    ("xlsx.view-side-by-side", "needs a second window"),
+    ("view.side-by-side", "needs a second window"),
+    ("view.side-by-side", "needs a second window"),
     // The state already has the value the item sets.
     ("docx.cell.direction.lrtb", "already horizontal"),
     ("docx.cell.margins.normal", "already the normal margins"),
@@ -806,8 +817,9 @@ const IDLE_OK: &[(&str, &str)] = &[
     ("view.zoom-100", "already 100%"),
     ("view.zoom-fit", "already fitted"),
     ("xlsx.normal-view", "already the normal view"),
-    ("xlsx.paper-a4", "already A4"),
+    ("page.paper-a4", "already A4"),
     ("xlsx.scale-", "already 100% / automatic"),
+    ("xlsx.print-scale-100", "the sample prints at 100% already (the old id was xlsx.scale-100, under the prefix above)"),
     ("xlsx.shape-effect.shadow-none", "no shadow yet"),
     ("pptx.normal-view", "already the normal view"),
     ("pptx.slide-size.", "already wide and landscape"),
@@ -815,17 +827,17 @@ const IDLE_OK: &[(&str, &str)] = &[
     ("pptx.text.warp.none", "no warp yet"),
     ("pptx.picture.artistic.none", "no effect yet"),
     ("pptx.wrap.none", "no wrapping yet"),
-    ("pptx.anim.after.hold", "the default"),
-    ("pptx.anim.build.whole", "the default"),
-    ("pptx.anim.delay.0", "the default"),
-    ("pptx.anim.duration.500", "the default"),
-    ("pptx.anim.repeat.none", "the default"),
-    ("pptx.anim.smooth.none", "the default"),
-    ("pptx.anim.start.click", "the default"),
+    ("pptx.animation.after.hold", "the default"),
+    ("pptx.animation.build.whole", "the default"),
+    ("pptx.animation.delay.0", "the default"),
+    ("pptx.animation.duration.500", "the default"),
+    ("pptx.animation.repeat.none", "the default"),
+    ("pptx.animation.smooth.none", "the default"),
+    ("pptx.animation.start.click", "the default"),
     ("pptx.reset-placement", "no placeholder was moved"),
-    ("pptx.order.forward", "one object only"),
-    ("xlsx.order-forward", "one object only"),
-    ("xlsx.order-front", "one object only"),
+    ("arrange.bring-forward", "one object only"),
+    ("arrange.bring-forward", "one object only"),
+    ("arrange.bring-to-front", "one object only"),
     ("xlsx.move-sheet-first", "one sheet only"),
     ("xlsx.move-sheet-left", "one sheet only"),
     ("table.distribute-", "the new table's rows and columns are equal already"),
@@ -836,7 +848,7 @@ const IDLE_OK: &[(&str, &str)] = &[
     ("docx.footnote.previous", "no footnotes in the sample"),
     ("docx.form.", "no content controls in the sample"),
     ("docx.notes.show", "no footnotes or endnotes in the sample"),
-    ("docx.toc.update-", "no table of contents in the sample"),
+    ("docx.table-of-contents.update-", "no table of contents in the sample"),
     ("docx.track.", "no tracked changes in the sample"),
     ("docx.find.", "no search text was typed"),
     ("docx.merge.match-fields", "no data source for the mail merge"),
@@ -851,6 +863,7 @@ const IDLE_OK: &[(&str, &str)] = &[
 fn screen_of(name: &str) -> Screen {
     match name {
         "docx" => Screen { name: "docx", file: DOCX, states: DOCX_STATES, kind: Kind::Document },
+        "pdf" => Screen { name: "pdf", file: "test/editing/mac-office-shape.pdf", states: &[("nothing", None, none)], kind: Kind::Pdf },
         "xlsx" => Screen { name: "xlsx", file: XLSX, states: XLSX_STATES, kind: Kind::Workbook },
         _ => Screen { name: "pptx", file: PPTX, states: PPTX_STATES, kind: Kind::Presentation },
     }
@@ -866,6 +879,11 @@ fn acts_xlsx() {
 
 fn acts_pptx() {
     run_screen(&screen_of("pptx"));
+}
+
+/// A PDF that is looked at has the document's menus, with what it cannot do grey: what is enabled runs.
+fn acts_pdf() {
+    run_screen(&screen_of("pdf"));
 }
 
 // ---- The static audit ----
@@ -925,7 +943,7 @@ const STATIC_OK: &[(&str, &str)] = &[
 /// the group and everything under it stays in the toolbar, the shortcut keys and the command search.
 const REMOVED_GROUPS: &[(&str, &[&str])] = &[
     ("docx", &["format.text", "format.align", "format.spacing", "format.lists", "format.borders", "format.options", "format.clear", "docx.format-brush.lock", "docx.heading-numbers"]),
-    ("xlsx", &["format.text", "format.align", "format.borders", "format.clear", "edit.duplicate", "xlsx.comma-style", "xlsx.phonetic-edit", "xlsx.phonetic-toggle", "xlsx.view-code", "xlsx.xml-map-properties", "xlsx.xml-source"]),
+    ("xlsx", &["format.text", "format.align", "format.borders", "format.clear", "edit.duplicate", "xlsx.comma-style", "xlsx.phonetic-edit", "xlsx.toggle-phonetic", "xlsx.view-code", "xlsx.xml-map-properties", "xlsx.xml-source"]),
     ("pptx", &["format.text", "format.align", "format.spacing", "format.lists", "format.borders", "format.clear", "pptx.motion", "pptx.paragraph.settings", "pptx.text.shadow"]),
 ];
 
@@ -1002,8 +1020,8 @@ const LEFT_OUT: &[(&str, &[&str])] = &[
         "docx.sync-scrolling",
         "docx.template.attach",
         "docx.textbox.edit",
-        "docx.toc.from-entries",
-        "docx.toc.manual",
+        "docx.table-of-contents.from-entries",
+        "docx.table-of-contents.manual",
         "docx.view.mini-toolbar",
         "edit.paste-match",
         "edit.paste-plain",
@@ -1078,7 +1096,7 @@ const LABEL_VARIES: &[&str] = &[
     // One line for each hidden sheet, named by the sheet (`xlsx/toolbar.rs`); each runs its own `unhide_sheet(i)`.
     "xlsx.unhide-sheet",
     // One line for each shape of the slide, named by the shape (the animation menu's trigger lines).
-    "pptx.anim.trigger.shape-item",
+    "pptx.animation.trigger.shape-item",
     // One line for each layout of the deck, named by the layout (the new slide's gallery): a deck made by another program names its own.
     "pptx.new-slide.layout",
     // One line for each layout of the deck, named by the layout (編集 ▸ スライド ▸ レイアウト: apply it to the slide, #84 #85 #62).
@@ -1192,6 +1210,7 @@ fn static_audit(screen: &Screen) {
             // The right-click menus of the screen's own places (they are not in the bar's context menus).
             let mut popups: Vec<Vec<MenuEntry>> = Vec::new();
             match screen.kind {
+                Kind::Pdf => {}
                 Kind::Document => popups.push(e.doc_body_popup_entries()),
                 Kind::Workbook => {
                     popups.push(e.cell_menu());
@@ -1255,6 +1274,7 @@ fn static_audit(screen: &Screen) {
     // The lines the redesign's table (`menu-items.tsv`, from the appendix) lists, by their place and words, that no state's bar has.
     if let Ok(table) = std::fs::read_to_string(crate::shell::scenario::repo_root().join("tasks/doc/menu-redesign/menu-items.tsv")) {
         let screen_key = match screen.kind {
+            Kind::Pdf => "doc",
             Kind::Document => "doc",
             Kind::Workbook => "sheet",
             Kind::Presentation => "slide",
@@ -1285,6 +1305,7 @@ fn static_audit(screen: &Screen) {
         // What the redesign's spec (the appendix, `menu-items.tsv`) lists for the screen: ids and words. A command the spec does not list
         // (by id or by words) was left out on purpose (`moved-and-removed.md`: kept in the toolbar, the shortcut, the command search).
         let screen_key = match screen.kind {
+            Kind::Pdf => "doc",
             Kind::Document => "doc",
             Kind::Workbook => "sheet",
             Kind::Presentation => "slide",
@@ -1428,7 +1449,7 @@ fn suspect_pptx_shadow() {
         let frame = ibis_doc_model::EmuRect::new(1_000_000, 1_000_000, 1_500_000, 800_000);
         let slide = e.current_slide;
         let kind = ibis_doc_model::ShapeKind::Auto(ibis_doc_model::AutoShape::new(ibis_doc_model::Geometry::Rect, ibis_doc_model::Fill::None, None));
-        e.run(vec![ibis_doc_model::Command::InsertShape { slide, index: e.slide().shapes.len(), shape: ibis_doc_model::Shape::new(id, frame, kind) }], cx);
+        e.run(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(e.slide().shapes.len(), ibis_doc_model::Shape::new(id, frame, kind))] }], cx);
         e.set_selection(vec![id]);
         cx.notify();
     });

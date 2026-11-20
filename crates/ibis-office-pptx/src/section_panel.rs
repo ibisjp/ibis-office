@@ -42,7 +42,7 @@ impl SlideEditor {
         if next<0 || next>=sections.len() as isize {return;}sections.swap(index,next as usize);
         let desired=sections.iter().flat_map(|s|s.slides.iter().copied()).collect::<Vec<_>>();let mut order=self.presentation().slides.iter().map(|s|s.id).collect::<Vec<_>>();let mut commands=Vec::new();
         for (at,&slide) in desired.iter().enumerate() {let Some(from)=order.iter().position(|&s|s==slide) else {return};if from!=at {commands.push(Command::MoveSlide {slide,index:at});order.remove(from);order.insert(at,slide);}}
-        commands.push(Command::SetSections {sections});self.apply_pptx_commands_checked(vec![Command::Group(commands)],cx);
+        commands.push(Command::SetSections {sections});self.apply_pptx_commands_checked(vec![Command::Batch(commands)],cx);
     }
     pub fn open_section_panel(&mut self,rename:bool,w:&mut Window,cx:&mut Context<Self>) {
         self.end_text_edit(w,cx);

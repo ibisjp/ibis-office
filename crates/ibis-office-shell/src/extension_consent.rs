@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
-//! CMYK as a feature PowerPoint does not have. The question before the first use ("この機能は PowerPoint にない機能です。
+//! CMYK as a feature PowerPoint does not have. The question before the first use ("この機能は Microsoft Office にない機能です。
 //! 有効にしますか？", OK / キャンセル) is the one every ibisOffice feature of that kind shares: `SlideEditor::require_ibis_extensions`
 //! (its answer is the file's one flag `Presentation::ibis_extensions`, in the message box of `SlideEditor::ask`). This file adds
 //! what CMYK needs on top: its own mode flag (`CmykMode::enabled`, in the file), turned on with the consent.

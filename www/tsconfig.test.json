@@ -1,0 +1,11 @@
+{
+  // The tests of the loader and the bridge (node, no browser): compiled to target/www-test and run with `node --test` (scripts/test-web.sh).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../target/www-test",
+    "declaration": false,
+    "lib": ["es2022", "dom", "dom.iterable"]
+  },
+  "files": [],
+  "include": ["host-loader.ts", "ibisoffice-host.ts", "chunked-fetch.ts", "subset-fetch.ts", "test/*.ts"]
+}

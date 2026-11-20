@@ -125,12 +125,18 @@ pub(super) fn copy_round_trip() {
         let ranges = vec![CellRange { first_row: 0, first_column: 0, last_row: 0, last_column: 0 }];
         let commands = [StyleChange::Bold(true), StyleChange::Fill(Some(Rgb(0x336699))), StyleChange::NumberFormat("0.00".into())]
             .into_iter()
-            .map(|change| Command::Sheet(SheetCommand::SetFormat { slide, ranges: ranges.clone(), change }))
+            .map(|change| Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: ranges.clone(), change }))
             .collect();
         e.document.execute(commands).unwrap();
     });
     select(&mut s, CellRange { first_row: 0, first_column: 0, last_row: 1, last_column: 2 });
     s.update(|e, _, cx| e.copy_cells(false, cx));
+    // #187: the text ends each of the two rows with exactly one row end (CRLF on Windows, as Excel), nothing after the last.
+    let text = s.with(|e, _| e.sheet_state().and_then(|st| st.clip.as_ref().map(|c| c.text.clone())).unwrap());
+    let end = crate::clipboard::ROW_END;
+    assert_eq!(text.matches(end).count(), 2, "{text:?}");
+    assert!(text.ends_with(end) && !text.ends_with(&format!("{end}{end}")), "{text:?}");
+    assert_eq!(text.matches('\n').count(), 2, "{text:?}");
     let html = crate::native_shape_clipboard::read_html().expect("the copy put a table on the clipboard");
     assert!(html.contains("ProgId content=Excel.Sheet"), "{html}");
     let cells = read(&html, false).expect("a table");

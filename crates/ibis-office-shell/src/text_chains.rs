@@ -9,8 +9,9 @@ use ibis_doc_model::{Command, ShapeId, ShapeKind};
 
 use crate::editor::SlideEditor;
 
-/// What a chain's box offers the text: the width its lines are broken to (EMU, along the lines) and the room for the lines
-/// (points, across them: the height of the text area, or the width of a vertical box).
+/// What a chain's box offers the text: the width its lines are broken to (EMU, along the lines; a column's in a text in columns) and the
+/// room for the lines (points, across them: the height of the text area, or the width of a vertical box; all the columns' together in a
+/// text in columns, the lines going down one and on from the top of the next).
 pub fn chain_space(shape: &ibis_doc_model::Shape) -> Option<(f64, f32)> {
     let body = shape.text_body()?;
     let (fw, fh) = (shape.frame.width as f64, shape.frame.height as f64);
@@ -21,7 +22,36 @@ pub fn chain_space(shape: &ibis_doc_model::Shape) -> Option<(f64, f32)> {
     let (w, h) = (r - l, b - t);
     let i = body.insets;
     let (along, across, a_ins, c_ins) = if body.vertical { (h, w, i.top + i.bottom, i.left + i.right) } else { (w, h, i.left + i.right, i.top + i.bottom) };
-    Some(((along - a_ins as f64).max(0.0), ((across - c_ins as f64).max(0.0) / ibis_doc_model::EMU_PER_POINT as f64) as f32))
+    let (along, across) = ((along - a_ins as f64).max(0.0), ((across - c_ins as f64).max(0.0) / ibis_doc_model::EMU_PER_POINT as f64) as f32);
+    match shape.text_body().filter(|b| b.columns > 1) {
+        Some(body) => {
+            let count = body.columns.clamp(1, 16) as f64;
+            Some((((along - (count - 1.0) * body.column_spacing as f64) / count).max(1.0), across * count as f32))
+        }
+        None => Some((along, across)),
+    }
+}
+
+/// The columns of a box's text (`numCol`), for measuring the lines the way they are put in them: the height of a column and the distance from one
+/// column's left edge to the next's (points), and the number of columns; `None` for a text in one.
+pub fn chain_columns(shape: &ibis_doc_model::Shape) -> Option<(f32, f32, usize)> {
+    let body = shape.text_body()?;
+    if body.columns <= 1 {
+        return None;
+    }
+    let (fw, fh) = (shape.frame.width as f64, shape.frame.height as f64);
+    let (l, t, r, b) = match &shape.kind {
+        ShapeKind::Auto(auto) => auto.geometry.text_rect(fw, fh),
+        _ => (0.0, 0.0, fw, fh),
+    };
+    let (w, h) = (r - l, b - t);
+    let i = body.insets;
+    let (along, across, a_ins, c_ins) = if body.vertical { (h, w, i.top + i.bottom, i.left + i.right) } else { (w, h, i.left + i.right, i.top + i.bottom) };
+    let count = body.columns.clamp(1, 16) as usize;
+    let total = (along - a_ins as f64).max(0.0);
+    let column = ((total - (count as f64 - 1.0) * body.column_spacing as f64) / count as f64).max(1.0);
+    let point = ibis_doc_model::EMU_PER_POINT as f64;
+    Some((((across - c_ins as f64).max(1.0) / point) as f32, ((column + body.column_spacing as f64) / point) as f32, count))
 }
 
 impl SlideEditor {
@@ -55,7 +85,18 @@ impl SlideEditor {
         let capacities: Vec<f32> = spaces.iter().map(|s| s.1).collect();
         let text = self.resources.window_text_system();
         let res = &self.resources;
-        Some(ibis_doc_model::ibis_text::flow_text(full, &capacities, &mut |p, b| res.measure_paragraph(shapes[b].text_body().expect("a box has text"), p, spaces[b].0, false, false, 1.0, None, &text)))
+        // The lines wrap round the pictures that say so (text wrap, #132): the room each box has for lines is what they leave.
+        res.set_wrap(slide);
+        let obstacles: Vec<_> = shapes.iter().map(|s| res.chain_obstacles(s)).collect();
+        let columns: Vec<_> = shapes.iter().map(|s| chain_columns(s)).collect();
+        Some(ibis_doc_model::ibis_text::flow_text(full, &capacities, &mut |p, b, top| {
+            let body = shapes[b].text_body().expect("a box has text");
+            let among = obstacles[b].as_ref().map(|o| (o, top));
+            match columns[b] {
+                Some(columns) => res.measure_paragraph_columns(body, p, spaces[b].0, false, false, 1.0, among, columns, &text),
+                None => res.measure_paragraph(body, p, spaces[b].0, false, false, 1.0, among, &text),
+            }
+        }))
     }
 
     /// `full` flowed through `boxes`: the command that makes the slide's chains and the boxes' texts so (`None` when a box
@@ -109,6 +150,47 @@ impl SlideEditor {
             self.sync_selection();
             cx.notify();
         }
+    }
+
+    /// The boxes of a chain a file holds with no text at all (a shape the file wrote with an empty `p:txBody`, read as a shape without text) get an empty text of the
+    /// first box's make, so that the text can flow on into them.
+    fn give_empty_chain_boxes_a_text(&mut self, boxes: &[ShapeId]) {
+        let Some(template) = boxes.iter().find_map(|b| self.slide().shape(*b).and_then(|s| s.text_body()).cloned()) else { return };
+        let empty = ibis_doc_model::TextBody { paragraphs: vec![ibis_doc_model::text::Paragraph::default()], ..template };
+        let slide = self.current_slide;
+        let Some(slide) = self.document.presentation_mut().slides.iter_mut().find(|s| s.id == slide) else { return };
+        for b in boxes {
+            if let Some(shape) = slide.shapes.iter_mut().find(|s| s.id == *b) {
+                if shape.text_body().is_none() {
+                    if let ShapeKind::Auto(auto) = &mut shape.kind {
+                        auto.text = Some(empty.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Every chain of every slide flowed through its boxes when a file has just been opened, and not as a change (no undo step, the file stays as it was read): a
+    /// presentation saved with all the text in the first box of a chain (by another program, or edited by hand) is laid out as PowerPoint's linked boxes are, the
+    /// text running on into the next box where the first is full, not out of the first box's bottom.
+    pub fn reflow_chains_on_load(&mut self) {
+        let slides: Vec<ibis_doc_model::SlideId> = self.document.presentation().slides.iter().filter(|s| !s.text_chains.is_empty()).map(|s| s.id).collect();
+        if slides.is_empty() {
+            return;
+        }
+        let keep = self.current_slide;
+        for id in slides {
+            self.set_current_slide(id);
+            for chain in self.slide().text_chains.clone() {
+                let Some(&first) = chain.boxes.first() else { continue };
+                self.give_empty_chain_boxes_a_text(&chain.boxes);
+                let command = self.reflow_command(first);
+                if let Some(command) = command {
+                    let _ = self.document.presentation_mut().apply(command);
+                }
+            }
+        }
+        self.set_current_slide(keep);
     }
 
     /// Every chain of the slide flowed again, as part of the last undo step: after any change (a box deleted, moved or resized, its

@@ -6,12 +6,12 @@
 # the release's download, the same files as the playground's app/ (see
 # scripts/playground.sh), into target/dist/:
 #
-#   ibisOffice-<version>-Web.zip              index.html, main.js, license.md, pkg/, assets/
+#   ibisOffice-<version>-Web.zip              index.html, main.js (+ boot.js, host-loader.js), ibisoffice-host.js and .d.ts, license.md, pkg/, assets/
 #   ibisOffice-<version>-Web.zip.sha256       SHA-256 of the zip ("shasum -a 256" format)
 #   ibisOffice-<version>-Web.files.sha256     SHA-256 of every file in the zip, by path
 #
 # Whoever embeds the browser version checks what it fetched with these
-# (publish/doc/web-embedding.md). The zip is reproducible: files in sorted
+# (publish/docs/web-embedding.md). The zip is reproducible: files in sorted
 # order, a fixed modification time, no extra fields, so the same www/ gives the
 # same zip. The paths in the zip are relative to its root (it is the app/ folder).
 #
@@ -30,7 +30,7 @@ WANT=$(awk -F'\t' '$1 == "wasm" { sub(/\r$/, "", $2); print $2 }' version.txt)
   exit 1
 }
 
-for f in www/index.html www/main.js www/license.md www/pkg/ibis_office_app.js www/pkg/ibis_office_app_bg.wasm \
+for f in www/index.html www/main.js www/boot.js www/host-loader.js www/chunked-fetch.js www/subset-fetch.js www/build-info.js www/ibisoffice-host.js www/ibisoffice-host.d.ts www/license.md www/pkg/ibis_office_app.js www/pkg/ibis_office_app_bg.wasm \
          www/assets/icons www/assets/artborders/ECMA-NOTICE.txt; do
   [[ -e $f ]] || { echo "$f is missing; build www/ first: scripts/build-web.sh --release" >&2; exit 1; }
 done
@@ -46,7 +46,8 @@ import hashlib, os, sys, zipfile
 out, name = sys.argv[1:3]
 # What the playground's app/ holds (scripts/playground.sh): no typings (*.d.ts), no .DS_Store.
 files = []
-for top in ("index.html", "main.js", "license.md"):
+# ibisoffice-host.js and .d.ts are for the host page (the bridge `attachIframe` and the types; publish/docs/web-embedding.md).
+for top in ("index.html", "main.js", "boot.js", "host-loader.js", "chunked-fetch.js", "subset-fetch.js", "build-info.js", "ibisoffice-host.js", "ibisoffice-host.d.ts", "license.md"):
     files.append(os.path.join("www", top))
 for top in ("pkg", "assets"):
     for root, _dirs, names in os.walk(os.path.join("www", top)):

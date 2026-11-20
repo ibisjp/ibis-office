@@ -234,6 +234,9 @@ pub fn tate_chu_yoko_fit_scale(advances: &[f32]) -> Option<u32> {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RunStyle {
     pub font_size: Option<u32>,
+    /// The run says no size of its own (`a:rPr` without `sz`): `font_size` is the one the styles give it. PowerPoint's line height counts
+    /// such a run at the larger of that size and its paragraph mark's.
+    pub size_inherited: bool,
     pub bold: Option<bool>,
     pub italic: Option<bool>,
     pub underline: bool,
@@ -414,6 +417,9 @@ pub struct Bullet {
     /// A bullet drawn with a symbol typeface (`a:buFont` Wingdings, Symbol): `text` is the Unicode character that stands in
     /// for its glyph where the typeface is not installed; this is what the file says.
     pub symbol: Option<SymbolBullet>,
+    /// The typeface the bullet character is set in (`a:buFont` of a plain typeface), whose advance puts the text after the
+    /// bullet; `None`: the paragraph's own first run's.
+    pub font: Option<String>,
 }
 
 /// The glyph of a symbol typeface (Wingdings, Symbol) a bullet is drawn with.
@@ -517,9 +523,29 @@ pub struct Paragraph {
     pub no_hanging_punct: bool,
     /// `a:pPr/@latinLnBrk` on: a line may break inside a Latin word.
     pub latin_line_break: bool,
+    /// The formatting of the line break (`a:br`) that ends this line, when the break has its own (the break's formatting is the line's end,
+    /// as the paragraph mark is the last line's: PowerPoint's line height follows it). Kept apart from `end_style` so that an edit of the
+    /// runs, which writes no `a:br` of its own, does not leave the model with a copy of the old formatting.
+    pub line_end: Option<RunStyle>,
 }
 
 impl Paragraph {
+    /// The formatting of the paragraph mark as PowerPoint draws it: the paragraph's `a:endParaRPr`, or, when it states none of its own (no
+    /// size, weight, colour or typeface), the formatting of the last run. It is derived, not stored in `end_style`, so that editing the last
+    /// run (which has no `endParaRPr` written for it) leaves the model the file reads back as. A line ended by a line break ends in the
+    /// break's formatting (`line_end`).
+    pub fn mark_style(&self) -> RunStyle {
+        if let Some(end) = &self.line_end {
+            return end.clone();
+        }
+        let e = &self.end_style;
+        let own = e.font_size.is_some() || e.bold.is_some() || e.italic.is_some() || e.color.is_some() || e.font.is_some() || e.fallback_font.is_some();
+        match self.runs.last() {
+            Some(last) if !own => last.style.clone(),
+            _ => e.clone(),
+        }
+    }
+
     fn char_count(&self) -> usize {
         self.runs.iter().map(|r| r.text.chars().count()).sum()
     }
@@ -629,10 +655,37 @@ pub struct CharacterFormat {
     pub glow: Option<Option<(crate::drawing::Color, i64)>>,
     /// `Some(None)` clears the proofing language.
     pub lang: Option<Option<String>>,
+    /// What the run stops saying of its own, so that the styles it inherits from decide again (MCP's `null`, `tasks/doc/design/2026-11-17-159-mcp.md` 6.6).
+    pub reset: CharacterReset,
+}
+
+/// The character formats a run is taken back to the inherited ones of.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CharacterReset {
+    pub size: bool,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub color: bool,
 }
 
 impl CharacterFormat {
     fn apply(&self, run: &mut RunStyle, text: &str) {
+        if self.reset.size {
+            run.font_size = None;
+        }
+        if self.reset.bold {
+            run.bold = None;
+        }
+        if self.reset.italic {
+            run.italic = None;
+        }
+        if self.reset.underline {
+            run.underline = false;
+        }
+        if self.reset.color {
+            run.color = None;
+        }
         if let Some(v) = self.font_size {
             run.font_size = Some(v.clamp(TextStyle::MIN_FONT_SIZE, TextStyle::MAX_FONT_SIZE));
         }
@@ -945,6 +998,10 @@ pub struct TextBody {
     pub style: TextStyle,
     pub insets: Insets,
     pub anchor: VerticalAnchor,
+    /// The whole text block is centred between the insets, apart from the lines' alignment (`bodyPr/@anchorCtr`, a cell's `tcPr/@anchorCtr`).
+    pub anchor_center: bool,
+    /// The space before the first paragraph and after the last one counts (`bodyPr/@spcFirstLastPara`).
+    pub space_first_last: bool,
     /// Wrap lines at the frame's width.
     pub wrap: bool,
     /// How text fits within its shape or frame (`a:bodyPr`).
@@ -989,6 +1046,8 @@ impl Default for TextBody {
             style: TextStyle::default(),
             insets: Insets::default(),
             anchor: VerticalAnchor::Top,
+            anchor_center: false,
+            space_first_last: false,
             wrap: true,
             autofit: TextAutofit::None,
             font_scale: 100_000,
@@ -1070,6 +1129,7 @@ impl TextBody {
             if self.paragraphs[p1].runs.is_empty() {
                 self.paragraphs[p1].end_style = tail.end_style;
             }
+            self.paragraphs[p1].line_end = tail.line_end.clone();
             self.paragraphs[p1].runs.extend(tail.runs);
             self.paragraphs.drain(p1 + 1..=p2);
         }
@@ -1079,6 +1139,8 @@ impl TextBody {
         for (i, line) in insert.split('\n').enumerate() {
             if i > 0 {
                 let tail = self.paragraphs[paragraph].split_off(offset);
+                // The first half now ends where the paragraph is split, not in the line break the second half still has.
+                self.paragraphs[paragraph].line_end = None;
                 paragraph += 1;
                 self.paragraphs.insert(paragraph, tail);
                 offset = 0;
@@ -1376,7 +1438,7 @@ impl TextBody {
                         scheme: s.name().to_string(),
                         start_at: if shown == start_for_level { start_for_level } else { 1 },
                     });
-                    paragraph.bullet = Some(Bullet { text, picture: None, size: 100_000, color: None, auto, symbol: None });
+                    paragraph.bullet = Some(Bullet { text, picture: None, size: 100_000, color: None, auto, symbol: None, font: None });
                     // A hanging indent the width of the mark, as PowerPoint sets.
                     if paragraph.indent >= 0 {
                         let hang = if scheme.is_some() { 342_900 } else { 228_600 };
@@ -1411,7 +1473,7 @@ impl TextBody {
                                 let (picture, size, color) = paragraph.bullet.as_ref()
                                     .map(|b| (b.picture.clone(), b.size, b.color))
                                     .unwrap_or((None, 100_000, None));
-                                paragraph.bullet = Some(Bullet { text, picture, size, color, auto, symbol: None });
+                                paragraph.bullet = Some(Bullet { text, picture, size, color, auto, symbol: None, font: None });
                             }
                         }
                     }

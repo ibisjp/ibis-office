@@ -113,7 +113,9 @@ impl SlideEditor {
         if self.ink_release(cx) {
             return true;
         }
-        let _ = &window;
+        if self.finish_sheet_insert(event, window, cx) {
+            return true;
+        }
         if self.end_ruler_margin_drag(cx) {
             return true;
         }
@@ -178,6 +180,10 @@ impl SlideEditor {
         if self.cancel_cell_jump(window, cx) {
             return true;
         }
+        // Esc while the box of the insert mode is dragged: the drag is dropped (the mode stays; a second Esc leaves it).
+        if self.drag.is_some() && self.cancel_pointer_drag(cx) {
+            return true;
+        }
         // Esc takes the copied cells' dashed outline away (Excel's; K0011).
         if let Some(state) = self.sheet_state_mut()
             && state.copy_outline
@@ -199,36 +205,35 @@ impl SlideEditor {
     /// template (.xltx, .xltm). The file's password encrypts only the template. A copy named .tsv, .tab or .txt is the workbook's
     /// own package and a copy as .xls has no report of what was left out (as the shell did before the formats were cut apart).
     #[cfg(not(target_family = "wasm"))]
-    pub(crate) fn xlsx_bytes_for_path(&self, path: &std::path::Path, source: &ibis_pptx::Source, copy: bool) -> Option<Result<crate::shell::format::FileBytes, String>> {
+    pub(crate) fn xlsx_bytes_for_path(&self, path: &std::path::Path, source: &ibis_formats::Source, copy: bool) -> Option<Result<crate::shell::format::FileBytes, String>> {
         use crate::shell::format::FileBytes;
         let extension = path.extension()?;
         let is = |names: &[&str]| names.iter().any(|name| extension.eq_ignore_ascii_case(name));
         let plain = |bytes: Vec<u8>| FileBytes { bytes, protect: false, note: None };
         if is(&["csv"]) {
             let index = self.presentation().slide_index(self.current_slide).unwrap_or(0);
-            return Some(Ok(plain(ibis_pptx::csv::sheet_to_csv(self.presentation(), index))));
+            return Some(Ok(plain(ibis_formats::csv::sheet_to_csv(self.presentation(), index))));
         }
         if !copy && is(&["tsv", "tab", "txt"]) {
             let index = self.presentation().slide_index(self.current_slide).unwrap_or(0);
-            return Some(Ok(plain(ibis_pptx::csv::sheet_to_tsv(self.presentation(), index))));
+            return Some(Ok(plain(ibis_formats::csv::sheet_to_tsv(self.presentation(), index))));
         }
         if is(&["ods"]) {
-            return Some(ibis_pptx::write_ods_with_source(self.presentation(), source).map(plain).map_err(|e| e.to_string()));
+            return Some(ibis_odf::write_ods_with_source(self.presentation(), source).map(plain).map_err(|e| e.to_string()));
         }
         if is(&["xls"]) {
             if copy {
-                return Some(ibis_pptx::write_xls(self.presentation()).map(plain).map_err(|e| e.to_string()));
+                return Some(ibis_formats::write_xls(self.presentation()).map(plain).map_err(|e| e.to_string()));
             }
-            return Some(ibis_pptx::write_xls_report(self.presentation()).map(|(bytes, report)| FileBytes { bytes, protect: false, note: Some(crate::shell::xls_note::note(&report)) }).map_err(|e| e.to_string()));
+            return Some(ibis_formats::write_xls_report(self.presentation()).map(|(bytes, report)| FileBytes { bytes, protect: false, note: Some(crate::shell::xls_note::note(&report)) }).map_err(|e| e.to_string()));
         }
         if is(&["xltx", "xltm"]) {
-            return Some(source.save_template(self.presentation(), ibis_pptx::SaveOptions::default()).map(|bytes| FileBytes { bytes, protect: true, note: None }).map_err(|e| e.to_string()));
+            return Some(source.save_template(self.presentation(), ibis_formats::SaveOptions::default()).map(|bytes| FileBytes { bytes, protect: true, note: None }).map_err(|e| e.to_string()));
         }
         None
     }
 
     /// What the PDF of the workbook is made from: the active sheet, the whole workbook or the selection (印刷する対象).
-    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn xlsx_pdf_job(&self) -> Result<crate::shell::format::PdfJob, String> {
         let print_what = self.wb().print_what;
         let current_idx = self.presentation().slide_index(self.current_slide).unwrap_or(0);
@@ -255,7 +260,7 @@ impl SlideEditor {
                     }
                 }
                 let source = self.source.clone().ok_or(crate::shell::i18n::text("_shell.this-file-cannot-be-saved-yet").to_string())?;
-                let b = source.save(&p, ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?;
+                let b = source.save(&p, ibis_formats::SaveOptions::default()).map_err(|e| e.to_string())?;
                 (b, Some(vec![current_idx + 1]), None)
             }
         };

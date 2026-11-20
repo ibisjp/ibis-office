@@ -114,7 +114,7 @@ pub struct EditPanels {
     pub(crate) splits: std::collections::HashMap<ibis_doc_model::SlideId, super::split_view::SplitPanes>,
     /// The built-in cell styles with the workbook's theme (made when the
     /// menu is first shown).
-    pub(crate) cell_styles: std::cell::RefCell<Option<std::rc::Rc<Vec<ibis_pptx::PresetCellStyle>>>>,
+    pub(crate) cell_styles: std::cell::RefCell<Option<std::rc::Rc<Vec<ibis_formats::PresetCellStyle>>>>,
     /// データ > 数式の検証…
     pub(crate) evaluate_formula: Option<super::formula_audit::EvaluateFormulaPanel>,
     /// データ > ウォッチ ウィンドウ…
@@ -129,6 +129,8 @@ pub struct EditPanels {
     pub threaded_comment: Option<super::threaded_comments::ThreadedCommentPanel>,
     /// ツール > アクセシビリティ チェック…
     pub accessibility: Option<super::accessibility_panel::AccessibilityPanel>,
+    /// ツール > 機械可読性チェック…
+    pub machine_readability: Option<super::machine_readability_panel::MachineReadabilityPanel>,
     /// ツール > 互換性チェック…
     pub(crate) compatibility: Option<super::compatibility_panel::CompatibilityPanel>,
     /// 表示 > 選択ウィンドウ… (ワークシート上の図形・画像・グラフ一覧).
@@ -214,6 +216,7 @@ impl EditPanels {
         self.alt_text = None;
         self.threaded_comment = None;
         self.accessibility = None;
+        self.machine_readability = None;
         self.compatibility = None;
         self.selection_pane = None;
         self.frame = None;
@@ -289,6 +292,7 @@ impl crate::shell::editor::SlideEditor {
             .or_else(|| self.sheet_doc_properties_panel(cx).map(|panel| panel.modal_named("sheet_doc_properties_panel")))
             .or_else(|| self.sheet_alt_text_panel(cx).map(|panel|panel.modal_named("sheet_alt_text_panel")))
             .or_else(|| self.xlsx_accessibility_panel(cx))
+            .or_else(|| self.machine_readability_panel(cx))
             .or_else(|| self.xlsx_compatibility_panel(cx).map(|panel| panel.modal_named("xlsx_compatibility_panel")))
             .or_else(|| self.xlsx_selection_pane_panel(cx))
             .or_else(|| self.sheet_frame_panel(cx))

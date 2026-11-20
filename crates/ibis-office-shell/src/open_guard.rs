@@ -86,6 +86,15 @@ impl SlideEditor {
             }
             return;
         }
+        // A window with a document of its own keeps it: the file opens in another window (the browser's page has one editor: `open_file`).
+        #[cfg(not(target_family = "wasm"))]
+        if !self.replaceable_by_open() {
+            crate::app::open_editor_for(path, None, cx);
+            return;
+        }
+        #[cfg(not(target_family = "wasm"))]
         self.open_path(path, None, window, cx);
+        #[cfg(target_family = "wasm")]
+        let _ = (path, window);
     }
 }

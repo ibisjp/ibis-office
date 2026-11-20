@@ -38,16 +38,35 @@ pub enum DialogMode {
 
 /// One authority for input ownership. A confirmation always supersedes a settings/range session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InteractionLayer { Document, Settings, SheetRange, Message, Zoom, Save, External, FileChanged, CommentDelete, Alert, Ask, About }
+pub enum InteractionLayer { Document, Settings, SheetRange, Message, Save, External, FileChanged, CommentDelete, Alert, Ask, About }
 impl InteractionLayer {
     pub fn allows_range_pick(self) -> bool { self == Self::SheetRange }
-    pub fn is_confirmation(self) -> bool { matches!(self,Self::Message|Self::Zoom|Self::Save|Self::External|Self::FileChanged|Self::CommentDelete|Self::Alert|Self::Ask|Self::About) }
+    pub fn is_confirmation(self) -> bool { matches!(self,Self::Message|Self::Save|Self::External|Self::FileChanged|Self::CommentDelete|Self::Alert|Self::Ask|Self::About) }
 }
 
 #[derive(Clone, Copy)]
 pub enum DialogDrag {
     Move { pointer: Point<Pixels>, origin: Point<Pixels> },
     Resize { pointer: Point<Pixels>, bounds: Bounds<Pixels>, edge: ResizeEdge },
+}
+
+/// The dialogs that keep the size the user gave them (K0045): `(dialog key, width setting, height setting)`. The size is written when a
+/// resize ends and read when the dialog opens; the settings are the app's own (the file on the desktop, the localStorage in the browser).
+const REMEMBERED_SIZE: &[(&str, &str, &str)] = &[("host_file_dialog", "dialog.host-file.width", "dialog.host-file.height")];
+
+fn remembered_size_keys(key: Option<&str>) -> Option<(&'static str, &'static str)> {
+    let key = key?;
+    REMEMBERED_SIZE.iter().find(|(k, _, _)| *k == key).map(|(_, w, h)| (*w, *h))
+}
+
+fn remembered_number(setting: &str) -> Option<f32> {
+    crate::settings::get(setting).and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| v.is_finite() && *v > 0.)
+}
+
+/// The size the user gave the dialog `key` last time (not yet fitted to the window), if it keeps one.
+pub(crate) fn remembered_size(key: Option<&str>) -> Option<(f32, f32)> {
+    let (w, h) = remembered_size_keys(key)?;
+    Some((remembered_number(w)?, remembered_number(h)?))
 }
 
 #[derive(Default)]
@@ -92,7 +111,6 @@ impl SlideEditor {
         else if self.alert.is_some() {InteractionLayer::Alert}
         else if self.ask.is_some() {InteractionLayer::Ask}
         else if self.about_open {InteractionLayer::About}
-        else if self.zoom_dialog_open {InteractionLayer::Zoom}
         else if self.panel_message.is_some() {InteractionLayer::Message}
         else if with_format!(self, range_pick_active(self)) {InteractionLayer::SheetRange}
         else if self.sidebar_open && self.dialog.active {InteractionLayer::Settings}
@@ -101,7 +119,7 @@ impl SlideEditor {
     /// Render and route from the same discriminant. Callers cannot place a confirmation below a modeless panel.
     pub(crate) fn render_dialog_stack(&mut self, d: Stateful<Div>, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let layer=self.interaction_layer();
-        if layer.is_confirmation() && layer != InteractionLayer::Zoom {
+        if layer.is_confirmation() {
             // Native text input and widget actions must not keep targeting a covered field.
             if self.dialog.confirmation_restore.is_none() {
                 self.dialog.confirmation_restore=window.focused(cx).or_else(||Some(self.focus_handle.clone()));
@@ -110,7 +128,7 @@ impl SlideEditor {
         } else if let Some(previous)=self.dialog.confirmation_restore.take() {
             if self.has_document {previous.focus(window,cx);} else {self.focus_handle.focus(window,cx);}
         }
-        if !matches!(layer, InteractionLayer::Save|InteractionLayer::FileChanged|InteractionLayer::CommentDelete|InteractionLayer::Alert|InteractionLayer::Ask) { self.msgbox.clear(); }
+        if !matches!(layer, InteractionLayer::External|InteractionLayer::Save|InteractionLayer::FileChanged|InteractionLayer::CommentDelete|InteractionLayer::Alert|InteractionLayer::Ask|InteractionLayer::Message) { self.msgbox.clear(); }
         let d=d.children(self.dialog.overlay.take());
         match layer {
             InteractionLayer::External=>d.child(self.render_office_path_confirm_dialog(window,cx)),
@@ -121,7 +139,6 @@ impl SlideEditor {
             InteractionLayer::Alert=>d.child(self.render_alert(cx)),
             InteractionLayer::Ask=>d.child(self.render_ask(cx)),
             InteractionLayer::About=>d.child(self.render_about(cx)),
-            InteractionLayer::Zoom=>d.child(self.render_zoom_dialog(window,cx)),
             InteractionLayer::Message=>d.child(self.render_panel_message(cx)),
             _=>d.children(self.render_hyperlink_context()),
         }
@@ -139,7 +156,7 @@ impl SlideEditor {
         self.dialog.drag = None;
         cx.notify();
     }
-    pub(crate) fn dismiss_alert(&mut self, cx: &mut Context<Self>) {
+    pub fn dismiss_alert(&mut self, cx: &mut Context<Self>) {
         self.alert = None;
         cx.notify();
     }
@@ -209,29 +226,32 @@ impl SlideEditor {
         with_format!(self, panel_message_dismissed(self, cx));
         cx.notify();
     }
+    /// The message of `show_panel_message`: the shared message box with OK (Enter and Escape press it). A format may put it
+    /// beside what it is about (`panel_message_origin`: the sheet's rejected cell, which stays in view).
     pub(crate) fn render_panel_message(&self, cx: &Context<Self>) -> impl IntoElement {
-        let editor_measure = cx.entity().downgrade();
-        // The same occluding shell is used by every blocking confirmation.
-        confirmation_surface("panel-message-backdrop", false)
-            .when(self.sidebar_open && !with_format!(self, panel_message_anchored(self)),|d|d.justify_end())
-            .child(v_flex().id("panel-message").relative()
-                .when_some(with_format!(self, panel_message_origin(self)),|d,p|d.absolute().left(p.x).top(p.y))
-                .w(px(380.)).max_w_full().p_5().gap_4()
-                .child(canvas(|_,_,_|(),move |bounds,_,_,cx| {
-                    let editor=editor_measure.clone();
-                    cx.defer(move |cx| { let _=editor.update(cx,|e,cx| { with_format!(e, panel_message_measured(e, bounds, cx)); }); });
-                }).absolute().inset_0())
-                .bg(rgb(0xffffff)).rounded_lg().shadow_lg()
-                .child(self.panel_message.clone().unwrap_or_default())
-                .child(h_flex().justify_center().child(super::chrome::primary_button("panel-message-ok")
-                    .label("OK")
-                    .on_click(cx.listener(|e,_,_,cx|{e.dismiss_panel_message(cx);})))))
+        use super::chrome::{ActionButtonKind, ActionDefinition, action_bar};
+        let editor = cx.entity().downgrade();
+        let place = super::message_box::MessageBoxPlace {
+            origin: with_format!(self, panel_message_origin(self)),
+            measured: Box::new(move |bounds, cx| {
+                let editor = editor.clone();
+                cx.defer(move |cx| { let _ = editor.update(cx, |e, cx| { with_format!(e, panel_message_measured(e, bounds, cx)); }); });
+            }),
+        };
+        let ok = ActionDefinition::new("panel-message-ok", super::i18n::text("shell.action.ok"), ActionButtonKind::Primary)
+            .on_click(cx.listener(|e, _, _, cx| e.dismiss_panel_message(cx)));
+        super::message_box::message_box_at("panel-message", super::i18n::text("shell.panel-message.title"),
+            self.panel_message.clone().unwrap_or_default(), action_bar().action(ok), &self.msgbox, false, Some(place), cx)
     }
     pub fn dialog_is_modal(&self) -> bool {
         self.sidebar_open && self.dialog.active && self.dialog.mode == DialogMode::Modal
     }
 
     pub fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A print panel closed with its × (or Esc) is Cancel: the CMYK mode set in it goes back.
+        if matches!(self.dialog.key, Some("print_panel" | "doc_print_panel" | "xlsx_print_panel")) {
+            self.cancel_print_cmyk(cx);
+        }
         if self.dialog.key==Some("color_picker_dialog"){self.close_color_picker_dialog(window,cx);return;}
         if self.theme_colors_ui.editing && matches!(self.dialog.key,Some("docx_theme_panel"|"xlsx_theme_panel"|"theme_panel")) {self.set_theme_colors_editor(false,window,cx);return;}
         if with_format!(self, close_dialog(self, window, cx)) { return; }
@@ -247,7 +267,7 @@ impl SlideEditor {
     }
 
     /// Discard only the current command's UI draft. Applied document edits and unrelated live panes stay intact.
-    fn discard_current_dialog(&mut self) {
+    pub(crate) fn discard_current_dialog(&mut self) {
         let Some(key) = self.dialog.key.take() else { return; };
         match key {
             "symbol_panel" => {
@@ -258,9 +278,13 @@ impl SlideEditor {
             "autorecover_settings_panel" => { self.autorecover_settings = None; return; }
             "recover_unsaved_panel" => { self.recover_unsaved = None; return; }
             "replace_fonts_panel" => { self.replace_fonts = None; return; }
-            #[cfg(not(target_family = "wasm"))]
             "rename_file_panel" => { self.rename_file = None; return; }
+            #[cfg(not(target_family = "wasm"))]
+            "password_dialog" => { self.password_dialog = None; return; }
+            "host_file_dialog" => { self.host_fd_discard(); return; }
+            "zoom_dialog" => { self.zoom_dialog_open = false; return; }
             "font_setup_dialog" => { self.font_setup_discard(); return; }
+            "toolbar_customize_dialog" => { if let Some(s) = self.settings.as_mut() { s.customize = None; } return; }
             "settings_dialog" => { self.settings = None; self.toolbar_search_open = None; return; }
             _ => {}
         }
@@ -313,7 +337,6 @@ impl SlideEditor {
             InteractionLayer::Document | InteractionLayer::SheetRange => Scope::Off,
             // A modal dialog owns the keys; a modeless one only while the focus is in it.
             InteractionLayer::Settings => if self.dialog_is_modal() || self.dialog.focus.as_ref().is_some_and(|f| f.contains_focused(window, cx)) {Scope::Dialog} else {Scope::Off},
-            InteractionLayer::Zoom => Scope::Dialog,
             _ => Scope::MessageBox,
         };
         match dispatch(window, key, scope) {
@@ -325,10 +348,10 @@ impl SlideEditor {
     pub(crate) fn dialog_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.key=="escape"&&self.cancel_table_reorder(window,cx){cx.stop_propagation();return;}
         let key = &event.keystroke;
+        if self.customize_key(event, window, cx) {window.prevent_default();cx.stop_propagation();return;}
         if self.access_key_pressed(key, window, cx) {window.prevent_default();cx.stop_propagation();return;}
         // The menu bar's keys: Alt+letter, Alt+J, Alt+D, F10 (Windows and Linux).
         if self.bar_key_down(key, window, cx) {window.prevent_default();cx.stop_propagation();return;}
-        if self.interaction_layer() == InteractionLayer::Zoom {return;}
         if self.interaction_layer().is_confirmation() {
             if self.panel_message.is_some() && matches!(key.key.as_str(),"escape"|"enter") {self.dismiss_panel_message(cx);}
             else if self.interaction_layer()==InteractionLayer::External && key.key == "escape" {self.close_office_path_confirm_dialog(cx);}
@@ -427,7 +450,6 @@ impl SlideEditor {
                             else if this.dismiss_external_update_if_open(cx) {}
                             else if this.comment_delete.is_some() {this.comment_delete = None; cx.notify();}
                             else if this.panel_message.is_some() {this.dismiss_panel_message(cx);}
-                            else if this.interaction_layer()==InteractionLayer::Zoom {this.close_zoom_dialog(cx);}
                             else if !this.interaction_layer().is_confirmation() && !this.dialog.esc_blocked && !this.popup_takes_escape(cx) && !cx.has_active_drag() { this.close_dialog(window, cx); }
                         }
                         cx.stop_propagation();
@@ -436,6 +458,19 @@ impl SlideEditor {
             });
         }
         element
+    }
+
+    /// A drag of the dialog ended: a resize keeps the size for the next time the dialog opens (K0045), a splitter keeps its place.
+    pub(crate) fn finish_dialog_drag(&mut self, drag: DialogDrag) {
+        match drag {
+            DialogDrag::Resize { .. } => {
+                if let (Some((w, h)), Some(bounds)) = (remembered_size_keys(self.dialog.key), self.dialog.bounds) {
+                    crate::settings::set(w, &format!("{}", f32::from(bounds.size.width).round() as i32));
+                    crate::settings::set(h, &format!("{}", f32::from(bounds.size.height).round() as i32));
+                }
+            }
+            DialogDrag::Move { .. } => {}
+        }
     }
 
     pub(crate) fn move_dialog(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -503,6 +538,8 @@ impl SlideEditor {
                 // The page setup dialog is 30 % wider than the default (its segment rows hold many items).
                 Some("page_setup_panel") => 520. * 1.3,
                 Some("settings_dialog") => crate::settings_dialog::DIALOG_WIDTH,
+                Some("toolbar_customize_dialog") => crate::toolbar_customize::DIALOG_WIDTH,
+                Some("host_file_dialog") => crate::host_file_dialog::DIALOG_WIDTH,
                 _ => 520.,
             };
             let width = px(preferred).min(viewport.width).max(px(320.));
@@ -512,27 +549,40 @@ impl SlideEditor {
             self.dialog.focus_initialized = false;
             self.dialog.footer_height = if footer.is_some() { px(super::chrome::BUTTON_HEIGHT + 2. * super::chrome::ACTION_BAR_PADDING_Y + 1.) } else { px(0.) };
             let height = px(560.).min((viewport.height - px(80.)).max(px(180.)));
+            // The size the user gave it last time (kept to the window's view), else the default.
+            let remembered = remembered_size(self.dialog.key);
+            let (width, height) = match remembered {
+                Some((w, h)) => (px(w).min(viewport.width).max(px(320.).min(viewport.width)), px(h).min(viewport.height).max(px(260.).min(viewport.height))),
+                None => (width, height),
+            };
             self.dialog.bounds = Some(Bounds::new(
                 point(if matches!(self.dialog.key,Some("tab_stop_editor" | "chart_series_editor" | "names_dialog")) {viewport.width-width} else if self.dialog.key==Some("animation_options_panel") {
                     // At the main window's right edge, next to the animation pane (the list stays in sight).
                     let pane=if self.right_pane.shown {px(self.sidebar_width.max(super::chrome::SIDEBAR_WIDTH))} else {px(0.)};
                     (viewport.width-pane-width).max(px(0.))
                 } else {(viewport.width - width) / 2.}, (viewport.height - height) / 2.), size(width, height)));
+            // A remembered size is a size the user chose: the height is the bounds' own, not the content's.
+            self.dialog.user_resized = remembered.is_some();
             self.dialog.title = panel.title.clone();
             self.dialog.scroll = ScrollHandle::new();
         }
         let focus = self.dialog.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         self.dialog.mode = mode;
         self.dialog.active = true;
+        // A dialog with a remembered size follows the window when it gets narrower or lower (the remembered value stays as it was).
+        if remembered_size_keys(self.dialog.key).is_some() {
+            let fitted = resize::fit_to_viewport(self.dialog.bounds.unwrap(), viewport);
+            if Some(fitted) != self.dialog.bounds { self.dialog.bounds = Some(fitted); }
+        }
         let bounds = self.dialog.bounds.unwrap();
         let scroll = self.dialog.scroll.clone();
         let manual = self.dialog.user_resized;
         let inert = self.dialog.inert;
         let autocorrect_parent = with_format!(self, autocorrect_dialog_parent_open(self));
-        let fill_height = !with_format!(self, range_pick_active(self)) && (matches!(self.dialog.key,Some("field_panel"|"function_panel"|"dedupe_panel"|"settings_dialog")) || (autocorrect_parent && matches!(self.dialog.key,Some("doc_autocorrect_panel"|"autocorrect_panel"|"pptx_autocorrect_panel"))));
+        let fill_height = !with_format!(self, range_pick_active(self)) && (matches!(self.dialog.key,Some("field_panel"|"function_panel"|"dedupe_panel"|"settings_dialog"|"toolbar_customize_dialog"|"host_file_dialog")) || (autocorrect_parent && matches!(self.dialog.key,Some("doc_autocorrect_panel"|"autocorrect_panel"|"pptx_autocorrect_panel"))));
         let max_height = (viewport.height - px(80.)).max(px(100.));
         // The settings dialog is as high as its content wants (the table fills it), not as high as the window allows.
-        let fixed_height = (self.dialog.key==Some("settings_dialog")).then(||px(crate::settings_dialog::DIALOG_HEIGHT).min(max_height));
+        let fixed_height = match self.dialog.key { Some("toolbar_customize_dialog") => Some(px(crate::toolbar_customize::DIALOG_HEIGHT).min(max_height)), Some("settings_dialog") => Some(px(crate::settings_dialog::DIALOG_HEIGHT).min(max_height)), Some("host_file_dialog") => Some(px(crate::host_file_dialog::DIALOG_HEIGHT).min(max_height)), _ => None };
         let max_body = (max_height - px(46.) - self.dialog.footer_height - header_height).max(px(0.));
         let editor_measure = cx.entity().downgrade();
         let footer_measure = cx.entity().downgrade();
@@ -599,7 +649,7 @@ impl SlideEditor {
             .children(if inert { Vec::new() } else { resize::handles(cx) })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                this.dialog.drag = None;
+                if let Some(drag) = this.dialog.drag.take() { this.finish_dialog_drag(drag); }
                 cx.stop_propagation();
             }))
             .into_any_element();
@@ -650,7 +700,8 @@ fn dialog_drag_surface(cx: &Context<SlideEditor>) -> impl IntoElement {
             window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
                 if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
                     let _ = released.update(cx, |this, cx| {
-                        if this.dialog.drag.take().is_some() {
+                        if let Some(drag)=this.dialog.drag.take() {
+                            this.finish_dialog_drag(drag);
                             window.release_pointer(); cx.notify(); cx.stop_propagation();
                         }
                     });

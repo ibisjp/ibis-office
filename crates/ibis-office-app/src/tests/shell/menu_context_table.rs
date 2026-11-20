@@ -4,7 +4,7 @@
 //! The shell's context menus (`menu_context.rs` of ibis-office-shell) as each format's table makes them: the outer contexts
 //! are the formats' (`FormatInfo::outer_contexts`), so this test runs where the formats are registered.
 
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 use crate::shell::menu_context::ContextMenu::*;
 use crate::shell::menu_context::ObjectKind as O;

@@ -102,10 +102,10 @@ fn slide_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
 fn arrange_menu() -> Vec<MenuEntry> {
     vec![
         sub("pptx.order", "flip_to_front", vec![
-            item("pptx.order.front", "flip_to_front").shortcut("⌥⇧⌘↑").into(),
-            item("pptx.order.forward", "arrow_upward").shortcut("⌥⌘↑").into(),
-            item("pptx.order.backward", "arrow_downward").shortcut("⌥⌘↓").into(),
-            item("pptx.order.back", "flip_to_back").shortcut("⌥⇧⌘↓").into(),
+            item("arrange.bring-to-front", "flip_to_front").shortcut("⌥⇧⌘↑").into(),
+            item("arrange.bring-forward", "arrow_upward").shortcut("⌥⌘↑").into(),
+            item("arrange.send-backward", "arrow_downward").shortcut("⌥⌘↓").into(),
+            item("arrange.send-to-back", "flip_to_back").shortcut("⌥⇧⌘↓").into(),
         ]),
         sub("pptx.align", "align_horizontal_left", vec![]),
         sub("pptx.distribute", "horizontal_distribute", vec![]),
@@ -118,7 +118,7 @@ fn arrange_menu() -> Vec<MenuEntry> {
         item("pptx.smartart-to-shapes", "shapes").into(),
         item("pptx.smartart.convert-text", "account_tree").into(),
         item("pptx.smartart.add-shape", "add_circle").into(),
-        item("pptx.smartart.remove-shape", "remove_circle").into(),
+        item("pptx.smartart.remove-shape", "do_not_disturb_on").into(),
         item("pptx.smartart.add-assistant", "person_add").into(),
         item("pptx.smartart.move-up", "arrow_upward").into(),
         item("pptx.smartart.move-down", "arrow_downward").into(),
@@ -135,7 +135,7 @@ fn arrange_menu() -> Vec<MenuEntry> {
             item("pptx.smartart.layout.relationship", "sync_alt").into(),
             item("pptx.smartart.layout.matrix", "grid_view").into(),
             item("pptx.smartart.layout.pyramid", "change_history").into(),
-            item("pptx.smartart.layout.picture", "insert_photo").into(),
+            item("pptx.smartart.layout.picture", "image").into(),
         ]),
         sub("pptx.smartart.color", "palette", vec![
             item("pptx.smartart.color.colorful", "palette").into(),

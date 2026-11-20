@@ -2,7 +2,7 @@
 // Copyright (c) ibis inc.
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! スライド マスター表示 (表示 > スライド マスター): a slide master, or one of its
-//! layouts, edited as a slide (`ibis_pptx::master_page`): the shapes can be
+//! layouts, edited as a slide (`ibis_formats::master_page`): the shapes can be
 //! moved, resized, changed, added and taken away as on any slide. What
 //! is made here goes into the master (or the layout) when the page is left for
 //! another or the view is closed; the file is then read again from what
@@ -13,7 +13,7 @@ use gpui_kit::component::input::InputState;
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use ibis_pptx::master_page::{self, LevelStyle, Page, StyleKind};
+use ibis_formats::master_page::{self, LevelStyle, Page, StyleKind};
 
 use crate::shell::chrome::SidebarPanel;
 use crate::shell::editor::SlideEditor;
@@ -210,7 +210,7 @@ impl SlideEditor {
         let Some(source) = self.source.clone() else {
             return self.set_status(crate::shell::i18n::text("pptx.master-view.master-document-cannot-edited-yet").to_string(), cx);
         };
-        let bytes = match source.save(self.presentation(), ibis_pptx::SaveOptions::default()) {
+        let bytes = match source.save(self.presentation(), ibis_formats::SaveOptions::default()) {
             Ok(bytes) => bytes,
             Err(err) => return self.set_status(crate::shell::i18n::format("file.save-failed", &[("error", &err)]), cx),
         };
@@ -263,7 +263,7 @@ impl SlideEditor {
             view.thumbs_of = print;
         }
         let timing = crate::clock::debug_timing::start();
-        let opened = master_page::build(&view.base, &part).map_err(|e| e.to_string()).and_then(|temp| ibis_pptx::open(temp).map_err(|e| e.to_string()));
+        let opened = master_page::build(&view.base, &part).map_err(|e| e.to_string()).and_then(|temp| ibis_formats::open(temp).map_err(|e| e.to_string()));
         crate::clock::debug_timing::report("master switch: build and open the page", timing);
         match opened {
             Ok(opened) => {
@@ -387,7 +387,7 @@ impl SlideEditor {
     /// The page shown, as edited, put into the file the view holds.
     fn merge_master_page(&mut self, view: &MasterView) -> Result<Vec<u8>, String> {
         let source = self.source.clone().ok_or_else(|| crate::shell::i18n::text("_pptx.can-t-save").to_string())?;
-        let edited = source.save(self.presentation(), ibis_pptx::SaveOptions::default()).map_err(|e| e.to_string())?;
+        let edited = source.save(self.presentation(), ibis_formats::SaveOptions::default()).map_err(|e| e.to_string())?;
         master_page::apply(&view.base, &edited, &view.pages[view.current].part).map_err(|e| e.to_string())
     }
 
@@ -501,7 +501,7 @@ impl SlideEditor {
             (page.name.clone(), view.pages[..view.current].iter().filter(|p| !p.master && p.name == page.name).count())
         });
         self.end_text_edit(window, cx);
-        let merged = self.merge_master_page(&view).and_then(|bytes| ibis_pptx::open(bytes).map_err(|e| e.to_string()));
+        let merged = self.merge_master_page(&view).and_then(|bytes| ibis_formats::open(bytes).map_err(|e| e.to_string()));
         let (opened, view) = match merged {
             Ok(opened) => (opened, view),
             Err(err) => {
@@ -614,7 +614,7 @@ impl SlideEditor {
         if let Some(view) = MasterView::of_mut(&mut *self.format) {
             for i in 0..view.pages.len() {
                 if i != view.current && view.thumbs.get(i).is_some_and(Option::is_none) {
-                    let opened = master_page::build(&view.base, &view.pages[i].part).map_err(|e| e.to_string()).and_then(|temp| ibis_pptx::open(temp).map_err(|e| e.to_string()));
+                    let opened = master_page::build(&view.base, &view.pages[i].part).map_err(|e| e.to_string()).and_then(|temp| ibis_formats::open(temp).map_err(|e| e.to_string()));
                     if let Ok(opened) = opened && let Some(slide) = opened.presentation.slides.first().cloned() {
                         let size = opened.presentation.size_of(&slide);
                         let resources = crate::render::shape_view::Resources::new(&opened.presentation, cx);

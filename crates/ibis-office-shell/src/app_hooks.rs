@@ -8,7 +8,7 @@
 use std::sync::OnceLock;
 
 use gpui_kit::App;
-use ibis_pptx::Kind;
+use ibis_formats::Kind;
 
 use crate::format::FormatDriver;
 
@@ -19,6 +19,10 @@ pub struct AppHooks {
     pub app_init: fn(&mut App),
     /// The drivers of every format, by kind (a new format adds one line, in the app's `format_drivers.rs`).
     pub drivers: &'static [(Kind, &'static dyn FormatDriver)],
+    /// The browser version's PDF (`SlideEditor::web_pdf`): the export of the desktop's `--export pdf`, made in the page from the file's
+    /// bytes, the slides and arguments of a `PdfJob`, the file's name and the arguments of its format (`FormatEditor::export_args`).
+    #[cfg(target_family = "wasm")]
+    pub web_pdf: fn(crate::format::PdfJob, String, Vec<&'static str>) -> crate::web_pdf::PdfFuture,
 }
 
 static HOOKS: OnceLock<AppHooks> = OnceLock::new();
@@ -40,6 +44,12 @@ fn hooks() -> &'static AppHooks {
 
 pub(crate) fn app_init(cx: &mut App) {
     (hooks().app_init)(cx)
+}
+
+/// The PDF of `job` made in the page.
+#[cfg(target_family = "wasm")]
+pub(crate) fn web_pdf(job: crate::format::PdfJob, file_name: String, extra_args: Vec<&'static str>) -> crate::web_pdf::PdfFuture {
+    (hooks().web_pdf)(job, file_name, extra_args)
 }
 
 pub(crate) fn drivers() -> &'static [(Kind, &'static dyn FormatDriver)] {

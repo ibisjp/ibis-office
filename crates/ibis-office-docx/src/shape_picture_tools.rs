@@ -360,7 +360,7 @@ impl SlideEditor {
             "rect" => Geometry::Rect,
             "roundRect" => Geometry::RoundRect { radius: 15_000 },
             "ellipse" => Geometry::Ellipse,
-            other => ibis_pptx::geometry::preset(other).unwrap_or(Geometry::Rect),
+            other => ibis_formats::geometry::preset(other).unwrap_or(Geometry::Rect),
         };
 
         match &mut shape.kind {
@@ -398,7 +398,7 @@ impl SlideEditor {
         }
         let Some(block_idx) = found else { return };
 
-        let cmd = FlowCommand::ReplaceBlocks {
+        let cmd = FlowCommand::ReplaceBlockRange {
             container: ibis_doc_model::Container::Body,
             index: block_idx,
             remove: 1,
@@ -439,7 +439,7 @@ impl SlideEditor {
 
         let mut commands = Vec::new();
         // Format text in shape
-        commands.push(FlowCommand::SetShapeRangeFormat {
+        commands.push(FlowCommand::SetShapeTextRangeBasicFormat {
             at: info.at,
             from: 0,
             to: info.text.chars().count().max(1),
@@ -484,7 +484,7 @@ impl SlideEditor {
                     "white" => Some(Rgb(0xffffff)),
                     _ => None,
                 };
-                commands.push(FlowCommand::SetShapeRangeFormat {
+                commands.push(FlowCommand::SetShapeTextRangeBasicFormat {
                     at: info.at,
                     from: 0,
                     to: char_count,
@@ -727,7 +727,7 @@ impl SlideEditor {
                     }
                 }
                 if changed {
-                    commands.push(FlowCommand::ReplaceBlocks {
+                    commands.push(FlowCommand::ReplaceBlockRange {
                         container: ibis_doc_model::Container::Body,
                         index: b_idx,
                         remove: 1,

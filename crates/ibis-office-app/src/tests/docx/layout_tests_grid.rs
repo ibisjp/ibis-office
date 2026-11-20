@@ -59,7 +59,7 @@ fn laid_out(file: &str) -> Arc<Pagination> {
 #[cfg(windows)]
 fn laid_out(file: &str) -> Arc<Pagination> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/corpus-report/docx").join(file);
-    let mut presentation = ibis_pptx::read(&std::fs::read(path).expect("the file")).expect("a document");
+    let mut presentation = ibis_formats::read(&std::fs::read(path).expect("the file")).expect("a document");
     let (_platform, mut cx) = crate::export::headless_app();
     cx.allow_parking();
     let resources = cx.update(|app| {
@@ -484,7 +484,9 @@ fn a_combined_run_stays_whole(file: &str) {
 
 /// The lines of ＭＳ 明朝 in a table's cell of a document with a line grid (`linesAndChars`, no `adjustLineHeightInTable`) are 1.3 times the size
 /// apart, whatever the size (Word's PDF of `smallsize-grid230-mincho-w41453.docx`: 5.04 / 6.00 / 6.96 / 8.04 / 9.00 / 9.96 pt text at 6.48 /
-/// 7.68-7.80 / 9.0-9.12 / 10.32-10.44 / 11.64-11.76 / 12.96 pt, the cell's lines off the 11.5 pt grid).
+/// 7.68-7.80 / 9.0-9.12 / 10.32-10.44 / 11.64-11.76 / 12.96 pt, the cell's lines off the 11.5 pt grid). The first character of a cell is at the body's left, x 90.38 (Word's XPS: 90.38 and
+/// the border's 0.48; a file with no styles.xml has no cell margin; Word's XPS of the probe, `tasks/doc/requests/2026-11-18-227-margin-s1-result.md`; the earlier 95 to 96.5 was
+/// the glyph after the あ, a misreading).
 #[cfg_attr(windows, test)]
 fn lines_in_a_cell_off_the_grid_are_1_3_times_the_size_apart() {
     let pages = laid_out("smallsize-grid230-mincho-w41453.docx");
@@ -494,8 +496,9 @@ fn lines_in_a_cell_off_the_grid_are_1_3_times_the_size_apart() {
             if let Item::Text { x, y, text, size: s, .. } = item
                 && text.as_ref() == "\u{3042}"
                 && (*s - size).abs() < 0.01
-                && *x > 95.0
-                && *x < 96.5
+                && *x > 90.0
+                && *x < 91.5
+                && *y < 400.0 // the table's cells; the body lines under it are on the grid
             {
                 ys.push(*y);
             }

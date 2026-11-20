@@ -6,8 +6,11 @@
 //! wasm32-unknown-unknown (the web version showed a blank page for a .docx
 //! until 2026-10-06). clippy.toml refuses them too, but clippy is not run
 //! on every change, so this looks for them in the source with a plain
-//! search. Files named clock.rs, tests/, and the ibis-office-updater crate
-//! (a desktop program of its own, never built for the browser) are left out.
+//! search. Files named clock.rs, tests/, and what is never built for the browser are left out:
+//! the ibis-office-updater and ibis-appimage crates (desktop programs of their own), the MCP server
+//! (ibis-mcp and ibis-doc-service: standard input and output and child processes, a dependency of the
+//! app only where it is not wasm: `ibis-office-app/Cargo.toml`), the phones' platform layers
+//! (gpui-android, gpui-ios) and the examples (programs run by hand on a desktop).
 
 use std::path::{Path, PathBuf};
 
@@ -17,7 +20,8 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         let name = entry.file_name();
         if path.is_dir() {
-            if name != "tests" && name != "target" && name != "ibis-office-updater" && name != "ibis-appimage" {
+            let not_wasm = ["ibis-office-updater", "ibis-appimage", "ibis-mcp", "ibis-doc-service", "gpui-android", "gpui-ios", "examples"];
+            if name != "tests" && name != "target" && !not_wasm.iter().any(|n| name == *n) {
                 rust_files(&path, out);
             }
         } else if path.extension().is_some_and(|e| e == "rs") && name != "clock.rs" {

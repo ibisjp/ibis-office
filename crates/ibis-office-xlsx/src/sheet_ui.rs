@@ -8,6 +8,7 @@
 //! They are drawn in the editor only; the worksheet itself (and what is
 //! exported) is drawn by `sheet_view.rs`.
 
+/// The formula bar is one line tall: the input method's underline sits 2 px above the text's baseline position so its lower edge is not cut by the bar (K0044, the user's request).
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
@@ -417,6 +418,8 @@ impl SlideEditor {
         let editing_text = self.cell_edit().filter(|e| e.slide == self.current_slide && e.note.is_none()).map(|e| e.text.clone());
         // While typed into, the bar shows the caret and the selection as the cell does.
         let bar_rect = self.sheet_state().map(|s| s.bar_bounds.clone());
+        let bar_marked = self.sheet_state().map(|s| s.bar_marked_rect.clone());
+        if let Some(m) = &bar_marked { m.set(None); }
         let expanded = self.sheet_state().is_some_and(|s| s.bar_expanded);
         let bar_scroll = self.sheet_state().map(|s| s.bar_scroll.clone());
         let bar_height=self.formula_bar_height(window);
@@ -446,9 +449,9 @@ impl SlideEditor {
             (None, Some((_, sheet)), Some((column, row))) => {
                 let content = sheet.cell(row, column).map(|cell| match &cell.formula {
                     Some(formula) => format!("={}", sheet.formula_shown(row, column, formula)),
-                    // A number as it is (a date or time as shown), as Excel's bar shows it.
+                    // A number as Excel's bar shows it (a date or time as a date or time, a percentage with %; #199).
                     None => match &cell.value {
-                        ibis_doc_model::CellValue::Number(n) if !ibis_calc::numfmt::parsed(&sheet.styles[cell.style as usize].number_format).first().is_some_and(|s| s.is_date()) => ibis_calc::eval::number_to_text(*n),
+                        ibis_doc_model::CellValue::Number(n) => ibis_calc::input::number_edit_text(*n, &sheet.styles[cell.style as usize].number_format, self.presentation().workbook.as_ref().is_some_and(|w| w.date1904)),
                         _ => cell.text.clone(),
                     },
                 });
@@ -507,6 +510,10 @@ impl SlideEditor {
                         div()
                             .w_full()
                             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
+                                // The cell being typed into takes what was typed (the input method's composing text too) before the name box takes the focus (#202).
+                                if this.cell_edit().is_some() {
+                                    this.commit_cell_edit(cx);
+                                }
                                 this.wb_mut().jump.select_on_release = !this.wb().jump.name_box.read(cx).focus_handle(cx).is_focused(window);
                             }))
                             .on_mouse_up(
@@ -589,6 +596,7 @@ impl SlideEditor {
                     .child(match editing_bar_lines {
                         Some(lines) => {
                             let fg = theme.foreground;
+                            let bar_caret = crate::shell::caret::color_over_theme(theme.background);
                             let bar_focus=self.focus_handle.clone();
                             let rows = lines.into_iter().map(|bar_line| {
                                 let text = bar_line.text;
@@ -597,6 +605,7 @@ impl SlideEditor {
                                 let caret = bar_line.caret_byte;
                                 let marked_underlines = bar_line.marked_underlines;
                                 let overlay_text = text.clone();
+                                let bar_marked = bar_marked.clone();
                                 h_flex()
                                     .relative()
                                     .h(px(BAR_LINE_HEIGHT))
@@ -640,12 +649,26 @@ impl SlideEditor {
                                                             ));
                                                         }
                                                     }
+                                                    // The last character of the composing text: the input method's candidate window opens under it (K0020).
+                                                    if let (Some(m), Some(end)) = (&bar_marked, marked_underlines.iter().map(|(_, r)| r.end).max()) {
+                                                        let end = end.min(overlay_text.len());
+                                                        let last = overlay_text[..end].char_indices().last().map_or(0, |(i, _)| i);
+                                                        let (x0, x1) = (x_at(last), x_at(end));
+                                                        m.set(Some(Bounds::new(point(bounds.origin.x + x0, top), gpui_kit::size((x1 - x0).max(px(1.)), px(14.)))));
+                                                    }
                                                     for (style, r) in &marked_underlines {
                                                         let (x0, x1) = (x_at(r.start), x_at(r.end));
                                                         if x1 > x0 {
                                                             // The bar's text is 0.875 rem; a point is 4/3 pixels at the bar's scale.
                                                             let k = 4.0 / 3.0;
-                                                            crate::render::ime_text::paint_span(window, point(bounds.origin.x + x0, top), k, *style, f32::from(size) / k, f32::from(x1 - x0), f32::from(top - bounds.origin.y) + shaped.as_ref().map_or(0.0, |s| f32::from(s.ascent)), fg);
+                                                            {
+                                                                // The typeface's own baseline in the row: its line (ascent + descent) is centred in the row, as the text of the row is; the
+                                                                // lines are brought up where they would pass the row's clip (the bar is `overflow_hidden`), whatever the typeface (K0044).
+                                                                let (ascent, descent) = shaped.as_ref().map_or((0.0, 0.0), |s| (f32::from(s.ascent), f32::from(s.descent)));
+                                                                let height = f32::from(bounds.size.height);
+                                                                let baseline = crate::render::ime_text::underline_baseline_within((height + ascent - descent) / 2.0, height, f32::from(size) / k, k);
+                                                                crate::render::ime_text::paint_span(window, point(bounds.origin.x + x0, bounds.origin.y), k, *style, f32::from(size) / k, f32::from(x1 - x0), baseline, fg);
+                                                            }
                                                         }
                                                     }
                                                     if let Some(c) = caret.filter(|_| bar_focus.is_focused(window) && crate::shell::caret::visible(format!("bar:{caret:?}:{}",overlay_text.len()),window,_cx)) {
@@ -655,7 +678,7 @@ impl SlideEditor {
                                                         let caret_top = window.pixel_snap(top);
                                                         window.paint_quad(fill(
                                                             Bounds::new(point(caret_x, caret_top), gpui_kit::size(px(1.), px(14.))),
-                                                            fg,
+                                                            bar_caret,
                                                         ));
                                                     }
                                                 },
@@ -708,9 +731,7 @@ impl SlideEditor {
                         this.focus_handle.focus(window, cx);
                     })),
             )
-            // Over the sheet, under the name box.
-            .when(self.wb().jump.goto_open, |d| d.relative().child(deferred(self.render_goto(cx)).with_priority(1)))
-            .when(self.wb().table_dialog.is_some(), |d| d.relative().children(self.render_table_dialog(cx)));
+;
         div().flex().flex_col().flex_shrink_0().child(bar).when(expanded,|d|d.child(self.formula_bar_splitter(cx)))
     }
 
@@ -808,7 +829,7 @@ impl SlideEditor {
             self.select_slide(drag.id, window, cx);
         }
         if let Some(to) = to.filter(|_| drag.changed()) {
-            self.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::MoveSheet { slide: drag.id, to })], cx);
+            self.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::MoveSheet { sheet: drag.id, to })], cx);
         }
         self.request_sheet_tab_reveal(drag.id, cx);
         true
@@ -839,6 +860,8 @@ impl SlideEditor {
         let make_tab = |index: usize, slide: &ibis_doc_model::Slide, overlay: bool| {
             let id = slide.id;
             let current = id == self.current_slide;
+            // A sheet selected with the others: white as the present one, without its green.
+            let grouped = !current && self.in_sheet_group(id);
             let name = slide.name.clone().unwrap_or_else(|| format!("Sheet{}", index + 1));
             // The sheet's tab colour: a bar of it under the sheet name both
             // when active and when inactive.
@@ -855,7 +878,13 @@ impl SlideEditor {
                 .border_r_1()
                 .border_color(border)
                 .map(|d| {
-                    if current || overlay {
+                    if grouped && !overlay {
+                        let d = d.bg(background).text_color(theme.foreground);
+                        match tab_fill {
+                            Some(fill) => d.child(div().absolute().left_0().right_0().bottom_0().h(px(4.)).bg(fill)),
+                            None => d,
+                        }
+                    } else if current || overlay {
                         let bar = tab_fill.unwrap_or(green);
                         let d = d.bg(background).text_color(if current { green.into() } else { muted });
                         let d = if current { d.font_weight(FontWeight::SEMIBOLD) } else { d };
@@ -887,7 +916,9 @@ impl SlideEditor {
                     if clicks >= 2 && previous == Some((id, clicks - 1)) {
                         return this.begin_sheet_rename(id, window, cx);
                     }
-                    this.select_slide(id, window, cx);
+                    // Ctrl (⌘ on a Mac) and Shift select several sheets together (`sheet_group.rs`).
+                    let modifiers = event.modifiers();
+                    this.sheet_tab_click(id, modifiers.control || modifiers.platform, modifiers.shift, window, cx);
                     this.request_sheet_tab_reveal(id, cx);
                     this.focus_handle.focus(window, cx);
                 }))
@@ -1337,9 +1368,10 @@ impl SlideEditor {
             Some(if m.copy { CursorStyle::DragCopy } else { CursorStyle::ClosedHand })
         } else if self.sheet_state().is_some_and(|s| s.fill_source.is_some()) {
             Some(if self.sheet_state().is_some_and(|s| s.fill_copy) { CursorStyle::DragCopy } else { CursorStyle::Crosshair })
-        } else if self.ink_pen().is_some() {
-            // The pen of the Draw panel is the mode: the pointer shows it.
-            Some(CursorStyle::Crosshair)
+        } else if self.ink_pen().is_some() || self.tool != Tool::Select {
+            // The pen of the Draw panel and the insert mode are modes: the pointer shows it (the insert mode's is the one of the three
+            // screens).
+            Some(crate::shell::insert_band::insert_cursor())
         } else {
             None
         };
@@ -1503,6 +1535,7 @@ impl SlideEditor {
                 .map(|suffix| (suffix, self.resources.font(&ibis_doc_model::TextStyle { font: Some(effective_font.to_string()), ..Default::default() })));
             let selection = e.selection().map(|r| (super::cell_edit::byte_at(&e.text, r.start), super::cell_edit::byte_at(&e.text, r.end)));
             let caret = e.caret_byte();
+            let cell_caret = crate::shell::caret::color_over(style.fill, ibis_doc_model::Rgb::WHITE);
             let marked_underlines = e.marked_underlines();
             let marked_size_pt = style.font_size as f32 / 100.0;
             // The displayed line the caret is on (where two lines meet, the one it was put on).
@@ -1634,7 +1667,7 @@ impl SlideEditor {
                             }
                             if let Some(l) = painted.lines.get(shown_line).filter(|_| caret_focus.is_focused(window) && crate::shell::caret::visible(format!("cell:{caret}:{}",painted.lines.len()),window,cx)) {
                                 let cx0 = l.x_at(caret);
-                                window.paint_quad(fill(Bounds::new(point(o.x + px(cx0), o.y + px(l.baseline - l.ascent)), gpui_kit::size(px(1.0), px(l.ascent + l.descent))), rgb(0x000000)));
+                                window.paint_quad(fill(Bounds::new(point(o.x + px(cx0), o.y + px(l.baseline - l.ascent)), gpui_kit::size(px(1.0), px(l.ascent + l.descent))), cell_caret));
                             }
                         },
                     )
@@ -2151,8 +2184,8 @@ impl SlideEditor {
 
     /// Press on a worksheet: select the cell under the pointer.
     pub(crate) fn on_sheet_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tool == Tool::TextBox {
-            // A text box may be drawn over the sheet.
+        if self.tool != Tool::Select {
+            // The insert mode (a shape, a line or a text box) draws over the sheet.
             return self.on_workspace_down(event, window, cx);
         }
         // The pen of the Draw panel draws (or erases) over the cells.
@@ -2911,7 +2944,7 @@ impl SlideEditor {
                 let percent = zoom.map(|z| (z * 100.0).round() as u16).filter(|&z| z != 100);
                 if sheet.zoom != percent {
                     let slide = self.current_slide;
-                    let _ = self.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetZoom { slide, zoom: percent })]);
+                    let _ = self.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetZoom { sheet: slide, zoom: percent })]);
                 }
             }
         }
@@ -3602,7 +3635,7 @@ impl SlideEditor {
             }))
             .on_action(cx.listener(|this, _: &CalculateSheet, _, cx| {
                 let slide = this.current_slide;
-                this.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::CalculateSheet { slide })], cx);
+                this.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::CalculateSheet { sheet: slide })], cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleShowFormulas, _, cx| this.toggle_show_formulas(cx)))
             .on_action(cx.listener(|this, _: &ReapplyFilter, _, cx| this.reapply_auto_filter(cx)))
@@ -3853,7 +3886,11 @@ impl SlideEditor {
         if !self.is_workbook() || self.editing.is_some() {
             return cx.propagate();
         }
+        if self.dialog.active {
+            self.close_dialog(window, cx);
+        }
         self.wb_mut().jump.goto_open = true;
+        self.sidebar_open = true;
         self.wb_mut().jump.goto_error = None;
         let initial_val = self.wb().jump.goto_history.first().cloned().unwrap_or_default();
         self.wb().jump.goto_input.update(cx, |input, cx| {
@@ -3947,9 +3984,9 @@ impl SlideEditor {
     }
 
     pub(crate) fn close_goto(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The shared dialog's close clears `goto_open` (`discard_xlsx_dialog`).
         self.wb_mut().jump.goto_open = false;
-        self.focus_handle.focus(window, cx);
-        cx.notify();
+        self.close_dialog(window, cx);
     }
 
     /// Esc in the name box or the ジャンプ dialog: leave it, the selection
@@ -4058,117 +4095,71 @@ impl SlideEditor {
         cancelled
     }
 
-    /// The ジャンプ dialog, under the name box: destinations list, 参照先 with Special, OK and キャンセル.
-    fn render_goto(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The ジャンプ dialog (the shared modal dialog): destinations list and 参照先; OK, 特殊 and キャンセル.
+    pub(crate) fn goto_panel(&mut self, cx: &mut Context<Self>) -> Option<crate::shell::chrome::SidebarPanel> {
+        if !self.sheet_state().is_some_and(|s| s.jump.goto_open) { return None; }
         let theme = cx.theme();
         let destinations = self.goto_destinations();
         let current_val = self.wb().jump.goto_input.read(cx).value().trim().to_string();
-
-        v_flex()
-            .id("goto")
-            .absolute()
-            .top(px(34.))
-            .left(px(8.))
-            .w(px(340.))
-            .p_3()
-            .gap_2()
-            .bg(theme.background)
+        let list = v_flex()
+            .id("goto-destinations-list")
+            .h(px(130.))
+            .overflow_y_scroll()
             .border_1()
             .border_color(theme.border)
-            .rounded_md()
-            .shadow_lg()
-            .occlude()
-            .on_mouse_down_out(cx.listener(|this, _, window, cx| this.close_goto(window, cx)))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).text_sm().child(crate::shell::i18n::text("_xlsx.go-to"))),
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(div().text_xs().text_color(theme.muted_foreground).child(crate::shell::i18n::text("xlsx.goto-destination")))
-                    .child(
-                        v_flex()
-                            .id("goto-destinations-list")
-                            .h(px(130.))
-                            .overflow_y_scroll()
-                            .border_1()
-                            .border_color(theme.border)
-                            .rounded_sm()
-                            .bg(theme.background)
-                            .p_1()
-                            .gap_0p5()
-                            .children(if destinations.is_empty() {
-                                vec![div().p_2().text_xs().text_color(theme.muted_foreground).child(crate::shell::i18n::text("xlsx.goto-no-destinations")).into_any_element()]
-                            } else {
-                                destinations.into_iter().enumerate().map(|(idx, (dest, is_named))| {
-                                    let is_selected = current_val.eq_ignore_ascii_case(&dest);
-                                    let d_clone = dest.clone();
-                                    let d_clone2 = dest.clone();
-                                    h_flex()
-                                        .id(ElementId::NamedInteger("goto-item".into(), idx as u64))
-                                        .px_2()
-                                        .py_1()
-                                        .rounded_sm()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .justify_between()
-                                        .when(is_selected, |s| s.bg(theme.primary.opacity(0.15)))
-                                        .hover(|h| h.bg(theme.muted))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.select_goto_item(&d_clone, window, cx);
-                                        }))
-                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
-                                            if ev.button == MouseButton::Left && ev.click_count >= 2 {
-                                                this.double_click_goto_item(&d_clone2, window, cx);
-                                            }
-                                        }))
-                                        .child(div().text_xs().child(dest))
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(theme.muted_foreground)
-                                                .child(if is_named { crate::shell::i18n::text("xlsx.goto-type-name") } else { crate::shell::i18n::text("xlsx.goto-type-history") })
-                                        )
-                                        .into_any_element()
-                                }).collect()
-                            })
-                    )
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(div().text_xs().text_color(theme.muted_foreground).child(crate::shell::i18n::text("_xlsx.reference")))
-                    .child(Input::new(&self.wb().jump.goto_input).small()),
-            )
-            .when_some(self.wb().jump.goto_error.clone(), |d, error| d.child(div().text_xs().text_color(theme.danger).child(error)))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .pt_1()
-                    .child(
-                        Button::new("goto-special")
-                            .small()
-                            .label(crate::shell::i18n::text("xlsx.goto-special-button"))
-                            .on_click(cx.listener(|this, _, window, cx| this.open_goto_special_from_goto(window, cx)))
-                    )
-                    .child(
-                        crate::shell::chrome::action_bar_host(crate::shell::chrome::action_bar()
-                            .action(
-                                crate::shell::chrome::ActionDefinition::new("goto-ok", "", crate::shell::chrome::ActionButtonKind::Primary)
-                                    .label("OK")
-                                    .on_click(cx.listener(|this, _, window, cx| this.confirm_goto(window, cx))),
-                            )
-                            .action(
-                                crate::shell::chrome::ActionDefinition::new("goto-cancel", "", crate::shell::chrome::ActionButtonKind::Normal)
-                                    .label(crate::shell::i18n::text("_shell.cancel"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.close_goto(window, cx))),
-                            )),
-                    )
-            )
+            .rounded_sm()
+            .bg(theme.background)
+            .p_1()
+            .gap_0p5()
+            .children(if destinations.is_empty() {
+                vec![div().p_2().text_xs().text_color(theme.muted_foreground).child(crate::shell::i18n::text("xlsx.goto-no-destinations")).into_any_element()]
+            } else {
+                destinations.into_iter().enumerate().map(|(idx, (dest, is_named))| {
+                    let is_selected = current_val.eq_ignore_ascii_case(&dest);
+                    let d_clone = dest.clone();
+                    let d_clone2 = dest.clone();
+                    h_flex()
+                        .id(ElementId::NamedInteger("goto-item".into(), idx as u64))
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .items_center()
+                        .justify_between()
+                        .when(is_selected, |s| s.bg(theme.primary.opacity(0.15)))
+                        .hover(|h| h.bg(theme.muted))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.select_goto_item(&d_clone, window, cx);
+                        }))
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
+                            if ev.button == MouseButton::Left && ev.click_count >= 2 {
+                                this.double_click_goto_item(&d_clone2, window, cx);
+                            }
+                        }))
+                        .child(div().text_xs().child(dest))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(if is_named { crate::shell::i18n::text("xlsx.goto-type-name") } else { crate::shell::i18n::text("xlsx.goto-type-history") })
+                        )
+                        .into_any_element()
+                }).collect()
+            });
+        let body = crate::shell::chrome::panel_form()
+            .child(v_flex().gap_1()
+                .child(div().text_xs().text_color(theme.muted_foreground).child(crate::shell::i18n::text("xlsx.goto-destination")))
+                .child(list))
+            .child(crate::shell::chrome::text_field_row(crate::shell::i18n::text("_xlsx.reference"), crate::shell::chrome::text_field(&self.wb().jump.goto_input).full_width()))
+            .when_some(self.wb().jump.goto_error.clone(), |d, error| d.child(div().text_xs().text_color(theme.danger).child(error)));
+        // The primary button first, then the other answers, Cancel last.
+        let actions = crate::shell::chrome::action_bar()
+            .action(crate::shell::chrome::ActionDefinition::new("goto-ok", "OK", crate::shell::chrome::ActionButtonKind::Primary)
+                .on_click(cx.listener(|this, _, window, cx| this.confirm_goto(window, cx))))
+            .action(crate::shell::chrome::ActionDefinition::new("goto-special", crate::shell::i18n::text("xlsx.goto-special-button"), crate::shell::chrome::ActionButtonKind::Normal)
+                .on_click(cx.listener(|this, _, window, cx| this.open_goto_special_from_goto(window, cx))))
+            .action(crate::shell::chrome::dialog_cancel_definition(cx));
+        Some(crate::shell::chrome::SidebarPanel::with_footer(crate::shell::i18n::text("_xlsx.go-to"), body.into_any_element(), actions))
     }
 }
 
@@ -4297,7 +4288,7 @@ mod tests {
 
         // 1. Put =SEQUENCE(3,3,1,1) in A1 (0, 0)
         doc.execute(vec![Command::Sheet(SheetCommand::SetCells {
-            slide: slide_id,
+            sheet: slide_id,
             edits: vec![CellEdit { row: 0, column: 0, input: CellInput::Formula("SEQUENCE(3,3,1,1)".into()) }],
         })])
         .unwrap();
@@ -4330,7 +4321,7 @@ mod tests {
 
         // 2. Block the spill by putting "blocker" in B2 (1, 1) -> A1 becomes #SPILL!
         doc.execute(vec![Command::Sheet(SheetCommand::SetCells {
-            slide: slide_id,
+            sheet: slide_id,
             edits: vec![CellEdit { row: 1, column: 1, input: CellInput::Value(CellValue::Text("blocker".into())) }],
         })])
         .unwrap();

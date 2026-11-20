@@ -1,0 +1,40 @@
+[package]
+name = "ibis-formats"
+description = "Reads and saves PowerPoint (.pptx), Excel (.xlsx) and Word (.docx) files for ibisOffice."
+license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64 = "0.22"
+ibis-calc.workspace = true
+ibis-doc-model.workspace = true
+j2k-rs.workspace = true
+ibis-ooxml.workspace = true
+miniz_oxide = "0.8"
+roxmltree = "0.21"
+encoding_rs = "0.8"
+pure_jpegls = "2.1"
+jxl-oxide = { version = "0.12", default-features = false }
+dicom-object = { version = "0.10.1", default-features = false, features = ["deflate"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+# Ogg Vorbis decoder (MIT OR Apache-2.0, pure Rust) for the transition sounds the apps ship (transition_sounds.rs).
+lewton = "0.10"
+
+[dev-dependencies]
+# Tests of ibis-formats that read an OpenDocument file or convert to .odt (ibis-odf sits above this crate).
+ibis-odf.workspace = true
+dicom-core = "0.10.1"
+
+[[bin]]
+name = "ibis-office-roundtrip"
+path = "src/bin/roundtrip.rs"
+
+[[bin]]
+name = "ibis-office-geometry"
+path = "src/bin/geometry.rs"
+
+[[bin]]
+name = "ibis-calc-check"
+path = "src/bin/calc_check.rs"

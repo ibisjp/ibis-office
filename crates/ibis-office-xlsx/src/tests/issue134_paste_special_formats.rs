@@ -29,7 +29,7 @@ fn format_cells(s: &mut Scenario, range: CellRange) {
         let slide = e.current_slide;
         let commands: Vec<Command> = [StyleChange::Bold(true), StyleChange::Fill(Some(Rgb(0x336699))), StyleChange::NumberFormat("0.00".into())]
             .into_iter()
-            .map(|change| Command::Sheet(SheetCommand::SetFormat { slide, ranges: vec![range], change }))
+            .map(|change| Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: vec![range], change }))
             .collect();
         e.document.execute(commands).unwrap();
     });

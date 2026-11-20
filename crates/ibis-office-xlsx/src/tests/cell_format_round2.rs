@@ -170,7 +170,7 @@ pub(crate) fn spinner_fields_select_all_on_focus() {
     let _probe = buttons::Probe::new();
     let mut s = open();
     // Alignment: the indent is a field with ▲▼ (in the Format tab, under the text direction).
-    s.update(|e, _, cx| e.panel_change(StyleChange::Indent(12), cx));
+    s.update(|e, _, cx| e.panel_change(StyleChange::IndentLevel(12), cx));
     s.settle();
     assert_eq!(text(&mut s, "indent"), "12");
     focus(&mut s, "code");
@@ -253,7 +253,7 @@ pub(crate) fn live_update_on_off_and_apply() {
     assert!(!s.with(|e, _| e.sheet_state().unwrap().custom_format.as_ref().unwrap().live), "OFF is restored");
     assert!(buttons::bounds("cell-format-apply").is_some());
     // ON again: what waits is written; the setting is ON.
-    s.update(|e, _, cx| e.panel_change(StyleChange::Strike(true), cx));
+    s.update(|e, _, cx| e.panel_change(StyleChange::Strikethrough(true), cx));
     assert!(!style(&mut s).strike);
     click_ui(&mut s, "cell-format-live");
     assert!(style(&mut s).strike, "turning it on writes the draft");

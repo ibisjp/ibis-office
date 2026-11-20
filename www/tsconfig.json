@@ -8,7 +8,9 @@
     "lib": ["es2022", "dom", "dom.iterable"],
     "strict": true,
     "noEmitOnError": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    // ibisoffice-host.d.ts ships with the Web archive next to ibisoffice-host.js (the other .d.ts files are not used).
+    "declaration": true
   },
-  "files": ["main.ts"]
+  "files": ["main.ts", "boot.ts", "ibisoffice-host.ts"]
 }

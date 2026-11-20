@@ -333,7 +333,7 @@ impl SlideEditor {
             }
         }
         let slide = self.current_slide;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::SetCells { slide, edits })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })], cx);
         let cell = ibis_doc_model::cell_name(column, row);
         self.status = Some(format("xlsx.names.toast.pasted", &[("n", &rows_written.saturating_sub(1).to_string()), ("cell", &cell)]).into());
         cx.notify();

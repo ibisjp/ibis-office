@@ -61,8 +61,8 @@ for size in 16 24 32 48 256; do
     "$STAGE/share/icons/hicolor/${size}x${size}/apps/jp.ne.ibis.ibisOffice.png"
 done
 
-cp crates/ibis-pptx/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip \
-  crates/ibis-pptx/data/artborders/ECMA-NOTICE.txt \
+cp crates/ibis-formats/data/artborders/OfficeOpenXML-WordprocessingMLArtBorders.zip \
+  crates/ibis-formats/data/artborders/ECMA-NOTICE.txt \
   "$STAGE/share/ibisOffice/artborders/"
 
 python3 scripts/gen-web-licenses.py linux

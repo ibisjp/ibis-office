@@ -15,6 +15,9 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::message_box_keys_ask_and_alert", message_box_keys_ask_and_alert),
         ("shell::access_key_dialog", dialog),
         ("shell::access_key_off_on_mac", off_on_mac),
+        ("shell::password_dialog_shared_bar", password_dialog_shared_bar),
+        ("shell::password_dialog_keys", password_dialog_keys),
+        ("shell::office_path_confirm_message_box", office_path_confirm_message_box),
     ]
 }
 
@@ -183,4 +186,85 @@ fn save_confirm_by_the_keyboard() {
     s.key("enter");
     assert!(s.with(|e, _| !e.save_confirm_dialog_open), "Enter on cancel closes the prompt");
     assert!(s.with(|e, _| e.path.is_some()), "the window is still open with its file");
+}
+
+/// K0034: the password dialogs are the shared dialog (modal, shared action bar): the buttons are in the order primary, cancel,
+/// remove; on Windows and Linux (`override_supported(true)`) Alt+letter presses them, and on macOS (off) it does not.
+fn password_dialog_shared_bar() {
+    let _on = access_key::override_supported(true);
+    let _probe = buttons::Probe::new();
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    s.update(|e, window, cx| e.ask_password_to_set(true, window, cx));
+    s.settle();
+    assert!(s.with(|e, _| e.password_dialog_open() && e.dialog_is_modal()), "the dialog is a modal shared dialog");
+    s.screenshot("password-dialog-set");
+    let x = |id: &str| f32::from(buttons::bounds(id).unwrap_or_else(|| panic!("the action bar has {id}")).origin.x);
+    assert!(x("password-ok") < x("dialog-cancel") && x("dialog-cancel") < x("password-remove"), "primary, then cancel, then remove");
+    // Alt+C is Cancel.
+    s.key("alt-c");
+    assert!(s.with(|e, _| !e.password_dialog_open() && e.password_dialog.is_none()), "Alt+C cancels");
+    assert_eq!(access_key::duplicate_marks(), 0);
+
+    // 書き込みパスワード asked for: OK, read-only, cancel.
+    s.update(|e, window, cx| e.ask_password_to_modify(window, cx));
+    s.settle();
+    assert!(x("password-ok") < x("password-read-only") && x("password-read-only") < x("dialog-cancel"));
+    s.key("alt-r");
+    assert!(s.with(|e, _| !e.password_dialog_open()), "Alt+R opens the file read only");
+    drop(s);
+
+    // No access key on macOS.
+    let _off = access_key::override_supported(false);
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    s.update(|e, window, cx| e.ask_password_to_set(false, window, cx));
+    s.settle();
+    s.key("alt-c");
+    assert!(s.with(|e, _| e.password_dialog_open()), "no access key on macOS");
+    buttons::click(&mut s, "dialog-cancel");
+    assert!(s.with(|e, _| !e.password_dialog_open()));
+}
+
+/// K0034: Enter, Ctrl+Enter and Escape of the password dialog; a wrong confirmation is told in the dialog.
+fn password_dialog_keys() {
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    // One field (a password asked for): Enter presses OK; an empty password stays with an error.
+    s.update(|e, window, cx| e.ask_password_to_modify(window, cx));
+    s.settle();
+    s.key("enter");
+    assert!(s.with(|e, _| e.password_dialog_open()), "an empty password does not close the dialog");
+    assert!(s.with(|e, _| e.password_dialog.as_ref().is_some_and(|d| d.has_error())), "the error is shown");
+    s.key("escape");
+    assert!(s.with(|e, _| e.password_dialog.is_none()), "Esc cancels");
+
+    // Two fields (a password set): the confirmation must match; Ctrl+Enter presses OK.
+    s.update(|e, window, cx| e.ask_password_to_set(false, window, cx));
+    s.settle();
+    s.type_text("secret");
+    s.key("tab");
+    s.type_text("other");
+    s.key(if cfg!(target_os = "macos") { "cmd-enter" } else { "ctrl-enter" });
+    assert!(s.with(|e, _| e.password_dialog_open() && e.password_dialog.as_ref().is_some_and(|d| d.has_error())), "a different confirmation stays with an error");
+    s.key("escape");
+    assert!(s.with(|e, _| e.password_dialog.is_none() && e.protection_password.is_none()), "Esc leaves no password");
+
+    s.update(|e, window, cx| e.ask_password_to_set(false, window, cx));
+    s.settle();
+    s.type_text("secret");
+    s.key("tab");
+    s.type_text("secret");
+    s.key(if cfg!(target_os = "macos") { "cmd-enter" } else { "ctrl-enter" });
+    assert!(s.with(|e, _| e.password_dialog.is_none() && e.protection_password.as_deref() == Some("secret")), "Ctrl+Enter sets the password");
+}
+
+/// K0034: the question about the Office app's path is the shared message box: OK first, then キャンセル; Alt+C cancels.
+fn office_path_confirm_message_box() {
+    let _on = access_key::override_supported(true);
+    let _probe = buttons::Probe::new();
+    let mut s = Scenario::open("test/editing/docx-report.docx");
+    s.update(|e, _, cx| { e.office_path_confirm_dialog_open = true; cx.notify(); });
+    s.settle();
+    let x = |id: &str| f32::from(buttons::bounds(id).unwrap_or_else(|| panic!("the box has {id}")).origin.x);
+    assert!(x("office-path-confirm-ok") < x("office-path-confirm-cancel"), "OK first, then cancel");
+    s.key("alt-c");
+    assert!(s.with(|e, _| !e.office_path_confirm_dialog_open), "Alt+C cancels");
 }

@@ -253,7 +253,7 @@ impl SlideEditor {
 
     /// Apply a predefined theme effect preset to the presentation.
     pub(crate) fn apply_theme_effects(&mut self, preset_id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return };
+        let Some(preset) = ibis_formats::theme_effects::find_effect_preset(preset_id) else { return };
         self.end_text_edit(window, cx);
         let commands = match &self.source {
             Some(source) => source.retheme_effects(self.presentation(), preset.id).map_err(|e| e.to_string()),
@@ -271,7 +271,7 @@ impl SlideEditor {
     /// Check if the current presentation matches a given theme effect preset.
     pub fn is_theme_effects_active(&self, preset_id: &str) -> bool {
         let current = self.presentation().theme_effects.as_deref().unwrap_or("office");
-        let Some(preset) = ibis_pptx::theme_effects::find_effect_preset(preset_id) else { return false };
+        let Some(preset) = ibis_formats::theme_effects::find_effect_preset(preset_id) else { return false };
         current.eq_ignore_ascii_case(preset.id) || current.eq_ignore_ascii_case(preset.name)
     }
 
@@ -406,7 +406,7 @@ pub fn theme_palette_selected_items(_editor: &SlideEditor) -> Vec<MenuEntry> {
 }
 
 pub fn theme_effects_items(editor: &SlideEditor) -> Vec<MenuEntry> {
-    ibis_pptx::theme_effects::THEME_EFFECTS
+    ibis_formats::theme_effects::THEME_EFFECTS
         .iter()
         .map(|preset| {
             let pid = preset.id;

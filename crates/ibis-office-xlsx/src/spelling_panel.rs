@@ -241,7 +241,7 @@ impl SlideEditor {
         if !stale && (!edits.is_empty() || !commands.is_empty()) {
             let slide = self.current_slide;
             if !edits.is_empty() {
-                commands.insert(0, Command::Sheet(SheetCommand::SetCells { slide, edits }));
+                commands.insert(0, Command::Sheet(SheetCommand::SetCells { sheet: slide, edits }));
             }
             if let Err(err) = self.document.execute(commands) {
                 log::warn!("spelling change rejected: {err}");

@@ -30,6 +30,16 @@ impl ResizeEdge {
     }
 }
 
+/// The bounds kept inside the window's view (the dialog never exceeds the window, and its edges stay in it). The width and height
+/// shrink to the view but not below the dialogs' minimum (320 x 180, or the view itself when the view is smaller).
+pub(crate) fn fit_to_viewport(bounds: Bounds<Pixels>, viewport: Size<Pixels>) -> Bounds<Pixels> {
+    let width = bounds.size.width.min(viewport.width).max(px(320.).min(viewport.width));
+    let height = bounds.size.height.min(viewport.height).max(px(180.).min(viewport.height));
+    let left = bounds.origin.x.min(viewport.width - width).max(px(0.));
+    let top = bounds.origin.y.min(viewport.height - height).max(px(0.));
+    Bounds::new(point(left, top), size(width, height))
+}
+
 /// Resolve corners before edges. Called during window capture, before body scrollbars.
 pub(crate) fn edge_at(bounds: Bounds<Pixels>, position: Point<Pixels>) -> Option<ResizeEdge> {
     use self::ResizeEdge::*;

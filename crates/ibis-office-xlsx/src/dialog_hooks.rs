@@ -56,6 +56,8 @@ impl SlideEditor {
             "queries_panel" => { state.panels.queries = None; }
             "cells_dialog_panel" => { state.panels.cells_dialog = None; }
             "external_links_panel" => { state.panels.external_links = None; }
+            "table_dialog" => { state.table_dialog = None; }
+            "goto_dialog" => { state.jump.goto_open = false; }
             "goto_special_panel" => { state.panels.goto_special = None; }
             "paste_names_panel" => { state.panels.paste_names = None; state.panels.sheet_in = None; }
             "sheet_transfer_panel" => { state.panels.sheet_transfer = None; }
@@ -121,7 +123,7 @@ impl SlideEditor {
             self.set_cell(column, row);
             if self.current_sheet().is_some_and(|(_, s)|s.cell(row,column).is_some_and(|c|c.formula.is_some() || !c.value.is_empty())) {
                 self.run_sheet(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells {
-                    slide: self.current_slide,
+                    sheet: self.current_slide,
                     edits: vec![ibis_doc_model::CellEdit {row,column,input:ibis_doc_model::CellInput::Clear}],
                 })],cx);
             }

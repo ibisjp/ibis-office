@@ -216,7 +216,7 @@ impl SlideEditor {
             }
             None
         };
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetProtection { slide, protection })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetProtection { sheet: slide, protection })]) {
             return self.protect_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);
         }
         self.wb_mut().panels.protect = None;
@@ -517,7 +517,7 @@ impl SlideEditor {
         } else {
             new_prs.push(ProtectedRange { name: title, ranges, hash, legacy: None });
         }
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetProtectedRanges { slide, ranges: new_prs })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetProtectedRanges { sheet: slide, ranges: new_prs })]) {
             return self.allow_edit_ranges_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);
         }
         if let Some(p) = self.wb_mut().panels.allow_edit_ranges.as_mut() {
@@ -535,7 +535,7 @@ impl SlideEditor {
         let mut new_prs = sheet.protected_ranges.clone();
         new_prs.remove(idx);
         let new_len = new_prs.len();
-        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetProtectedRanges { slide, ranges: new_prs })]) {
+        if let Err(err) = self.document.execute(vec![Command::Sheet(SheetCommand::SetProtectedRanges { sheet: slide, ranges: new_prs })]) {
             return self.allow_edit_ranges_message(crate::shell::i18n::format("edit.refused", &[("error", &err)]).into(), cx);
         }
         if let Some(p) = self.wb_mut().panels.allow_edit_ranges.as_mut() {

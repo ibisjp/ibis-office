@@ -55,7 +55,7 @@ impl SlideEditor {
         let disabled = self.loading;
         let start: Handler = Rc::new(|this: &mut SlideEditor, window, cx| this.start_slideshow(window, cx));
         let from_start: Handler = Rc::new(|this: &mut SlideEditor, window, cx| {
-            this.show_slide_number(1, window, cx);
+            this.select_first_show_slide(window, cx);
             this.start_slideshow(window, cx);
         });
         let mut items: Vec<MenuEntry> = vec![

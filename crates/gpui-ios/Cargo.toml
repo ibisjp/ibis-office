@@ -1,0 +1,18 @@
+[package]
+name = "gpui-ios"
+description = "iOS platform backend for GPUI using UIKit and gpui-pre-wgpu (Metal)."
+license = "AGPL-3.0-only"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+gpui = { version = "=0.3.6", package = "gpui-pre", default-features = false }
+gpui_wgpu = { version = "=0.3.6", package = "gpui-pre-wgpu" }
+gpui_util = { version = "=0.3.6", package = "gpui-pre-util" }
+raw-window-handle = "0.6"
+anyhow = "1"
+futures = "0.3"
+parking_lot = "0.12"
+log = "0.4"
+uuid = { version = "1", features = ["v4"] }

@@ -20,8 +20,16 @@ pub(crate) fn reset() {
     }
 }
 
-/// The default user name discovered from system or environment.
-pub fn default_user_name() -> &'static str {
+/// The default user name: the name the host gave (`user.name` of its options: the person logged in to the host's service), else the
+/// one discovered from the system or the environment.
+pub fn default_user_name() -> String {
+    if let Some(name) = crate::host::options().user_name {
+        return name;
+    }
+    system_user_name().to_string()
+}
+
+fn system_user_name() -> &'static str {
     static NAME: OnceLock<String> = OnceLock::new();
     NAME.get_or_init(|| {
         #[cfg(target_os = "macos")]
@@ -45,7 +53,7 @@ pub fn user_name() -> String {
             }
         }
     }
-    default_user_name().to_string()
+    default_user_name()
 }
 
 /// The user's initials: custom override if set, else initials derived from user_name.

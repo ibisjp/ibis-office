@@ -73,3 +73,17 @@ impl RenderOnce for Caret {
         )
     }
 }
+
+/// The colour of an editing caret over `background` (the colour under it: a shape's fill, a slide's or a page's, a cell's), `fallback` when that is not known:
+/// black over a light one, white over a dark one (Rec.709 luma, [`ibis_doc_model::Rgb::caret_over`]). It does not follow the appearance of the screen (a dark
+/// screen has white slides, pages and cells all the same): all three formats' own-drawn carets take it.
+pub fn color_over(background: Option<ibis_doc_model::Rgb>, fallback: ibis_doc_model::Rgb) -> Hsla {
+    rgb(background.unwrap_or(fallback).caret_over().0).into()
+}
+
+/// `color_over` for a background that is a theme colour (the formula bar's, a field's): the colour of the caret over it.
+pub fn color_over_theme(background: Hsla) -> Hsla {
+    let c: Rgba = background.into();
+    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    color_over(Some(ibis_doc_model::Rgb::from_rgb(byte(c.r), byte(c.g), byte(c.b))), ibis_doc_model::Rgb::WHITE)
+}

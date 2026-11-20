@@ -423,7 +423,7 @@ fn format_fields(fields: &SyncedFields, editor: &SlideEditor, subs: &mut Vec<Sub
         read: |e| e.panel_style().indent as u32,
         show: |v| v.to_string(),
         parse: |t| t.trim().parse::<u32>().ok().map(|n| n.min(250)),
-        write: |e, v, cx| e.panel_change(StyleChange::Indent(v), cx),
+        write: |e, v, cx| e.panel_change(StyleChange::IndentLevel(v), cx),
     }, editor, subs, window, cx);
     let font_color = fields.add(FieldSpec::<Rgb> {
         id: "font-color", placeholder: "", commit: Commit::Typing,
@@ -624,10 +624,10 @@ impl SlideEditor {
         }
         let Some(range) = self.selected_range() else { return };
         let (slide, ranges) = (self.current_slide, self.selected_ranges());
-        let wrap_on = changes.iter().any(|c| matches!(c, StyleChange::Wrap(true) | StyleChange::Rotation(1..=255)));
+        let wrap_on = changes.iter().any(|c| matches!(c, StyleChange::WrapText(true) | StyleChange::Rotation(1..=255)));
         let mut commands: Vec<ibis_doc_model::Command> = changes
             .into_iter()
-            .map(|change| ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetFormat { slide, ranges: ranges.clone(), change }))
+            .map(|change| ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetFormat { sheet: slide, ranges: ranges.clone(), change }))
             .collect();
         self.run_sheet(commands.clone(), cx);
         // Wrapping or turning on: the rows grow to the lines, as Excel's do (in the same step).
@@ -812,8 +812,8 @@ impl SlideEditor {
                     let t_label = if is_custom { text("xlsx.format-pane.rotation-numeric") } else {
                         ROTATIONS.iter().find(|(_, d)| *d == style.rotation).map(|(n, _)| text(n)).unwrap_or_default()
                     };
-                    let h_items: Vec<MenuEntry> = horizontal.into_iter().map(|(n, a)| choice("xlsx.halign", text(n), style.align == a, StyleChange::Align(a))).collect();
-                    let v_items: Vec<MenuEntry> = vertical.into_iter().map(|(n, a)| choice("xlsx.valign", text(n), style.vertical == a, StyleChange::Vertical(a))).collect();
+                    let h_items: Vec<MenuEntry> = horizontal.into_iter().map(|(n, a)| choice("xlsx.halign", text(n), style.align == a, StyleChange::HorizontalAlignment(a))).collect();
+                    let v_items: Vec<MenuEntry> = vertical.into_iter().map(|(n, a)| choice("xlsx.valign", text(n), style.vertical == a, StyleChange::VerticalAlignment(a))).collect();
                     let mut t_items: Vec<MenuEntry> = Vec::new();
                     for &(n, d) in ROTATIONS.iter() {
                         t_items.push(MenuItem::new("xlsx.rotation", text(n)).checked(!is_custom && style.rotation == d).on(move |this, _, cx| {
@@ -840,9 +840,9 @@ impl SlideEditor {
                             |this, deg, _, cx| this.apply_pane_rotation(&format!("{}", deg as i32), cx),
                         )))
                         .child(h_flex().gap_1().flex_wrap()
-                            .child(change_check("cell-format-wrap".into(), text("_xlsx.wrap-text"), style.wrap, StyleChange::Wrap(!style.wrap), cx))
-                            .child(change_check("cell-format-shrink".into(), text("_xlsx.shrink-to-fit"), style.shrink, StyleChange::Shrink(!style.shrink), cx)))
-                        .child(pane.marked("cell-format-indent", text_field_row(text("_xlsx.indent"),crate::shell::chrome::text_field(&indent).spinner("cell-indent",crate::shell::chrome::SpinnerSpec::new(1.).range(0.,250.).integer_only(),cx,|e,n,_,cx|e.panel_change(StyleChange::Indent(n as u32),cx)))));
+                            .child(change_check("cell-format-wrap".into(), text("_xlsx.wrap-text"), style.wrap, StyleChange::WrapText(!style.wrap), cx))
+                            .child(change_check("cell-format-shrink".into(), text("_xlsx.shrink-to-fit"), style.shrink, StyleChange::ShrinkToFit(!style.shrink), cx)))
+                        .child(pane.marked("cell-format-indent", text_field_row(text("_xlsx.indent"),crate::shell::chrome::text_field(&indent).spinner("cell-indent",crate::shell::chrome::SpinnerSpec::new(1.).range(0.,250.).integer_only(),cx,|e,n,_,cx|e.panel_change(StyleChange::IndentLevel(n as u32),cx)))));
                 }
                 FormatTab::Font => {
                     // Bold, italic, underline and strike: the toolbar's buttons, in a row.
@@ -853,7 +853,7 @@ impl SlideEditor {
                         toggle("cell-format-bold", "format_bold", "_shell.bold-b", style.bold, StyleChange::Bold(!style.bold), cx),
                         toggle("cell-format-italic", "format_italic", "_shell.italic-i", style.italic, StyleChange::Italic(!style.italic), cx),
                         toggle("cell-format-underline", "format_underlined", "_shell.underline-u", style.underline.enabled(), StyleChange::Underline(!style.underline.enabled()), cx),
-                        toggle("cell-format-strike", "format_strikethrough", "pptx.chrome.strikethrough", style.strike, StyleChange::Strike(!style.strike), cx),
+                        toggle("cell-format-strike", "format_strikethrough", "pptx.chrome.strikethrough", style.strike, StyleChange::Strikethrough(!style.strike), cx),
                     ];
                     let u_label = |u: ibis_doc_model::CellUnderline| match u {
                         ibis_doc_model::CellUnderline::None => text("_xlsx.no-underline"),

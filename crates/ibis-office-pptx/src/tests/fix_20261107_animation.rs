@@ -213,7 +213,7 @@ fn dialogs_before_the_pane() {
     let mut s = Scenario::open("test/editing/pptx-plan.pptx");
     s.size(1280., 720.);
     s.click_shape(0);
-    s.toolbar_menu("motion", "pptx.anim.in.fade");
+    s.toolbar_menu("motion", "pptx.animation.in.fade");
     s.update(|e, _, cx| e.toggle_animation_pane(cx));
     s.settle();
     let modal = |s: &mut Scenario| s.with(|e, _| e.dialog_is_modal());

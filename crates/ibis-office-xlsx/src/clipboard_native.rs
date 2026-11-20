@@ -42,13 +42,13 @@ fn comp_obj() -> Vec<u8> {
 
 /// The compound file that holds the workbook `xlsx` as an embedded Excel worksheet.
 pub(crate) fn embed_source(xlsx: &[u8]) -> Vec<u8> {
-    use ibis_pptx::ibis_ooxml::cfb::{Item, write_with_clsid};
+    use ibis_formats::ibis_ooxml::cfb::{Item, write_with_clsid};
     write_with_clsid(&[Item::stream("Package", xlsx.to_vec()), Item::stream("\u{1}CompObj", comp_obj())], EXCEL_SHEET_12)
 }
 
 /// The workbook (`.xlsx`) inside an embedded object, if it is a compound file with a `Package` stream.
 pub(crate) fn package_of(bytes: &[u8]) -> Option<Vec<u8>> {
-    let package = ibis_pptx::ibis_ooxml::cfb::stream(bytes, "Package").ok()?;
+    let package = ibis_formats::ibis_ooxml::cfb::stream(bytes, "Package").ok()?;
     package.starts_with(b"PK").then_some(package)
 }
 
@@ -57,7 +57,7 @@ pub(crate) fn package_of(bytes: &[u8]) -> Option<Vec<u8>> {
 /// columns count from the first cell. The merged ranges come back as ranges of the clip. `None` when it is not a workbook with
 /// cells.
 pub(crate) fn read(bytes: &[u8], slide: SlideId, text: &str) -> Option<(Clip, Vec<CellRange>)> {
-    let presentation = ibis_pptx::read_xlsx(&package_of(bytes)?).ok()?;
+    let presentation = ibis_formats::read_xlsx(&package_of(bytes)?).ok()?;
     let sheet = presentation.slides.iter().find_map(|s| crate::shell::editor::sheet_of(s).map(|(_, sheet)| sheet.clone()))?;
     if sheet.cells.is_empty() {
         return None;
@@ -147,7 +147,7 @@ pub(crate) fn write(clip: &Clip, merges: &[CellRange]) -> Option<Vec<u8>> {
     if clip.cells.is_empty() || clip.cells.len() > MAX_CELLS {
         return None;
     }
-    let opened = ibis_pptx::open(ibis_pptx::blank_file(ibis_pptx::Kind::Workbook).ok()?).ok()?;
+    let opened = ibis_formats::open(ibis_formats::blank_file(ibis_formats::Kind::Workbook).ok()?).ok()?;
     let slide = opened.presentation.slides.iter().find(|s| crate::shell::editor::sheet_of(s).is_some())?.id;
     let default_column = crate::shell::editor::sheet_of(opened.presentation.slides.iter().find(|s| s.id == slide)?)?.1.default_column;
     // Where the clip's first row and column were.
@@ -162,11 +162,11 @@ pub(crate) fn write(clip: &Clip, merges: &[CellRange]) -> Option<Vec<u8>> {
         };
         cells.push(PutCell { row: c.orig_row, column: c.orig_column, input, style: Some(c.style.clone()) });
     }
-    let mut commands = vec![Command::Sheet(SheetCommand::PutCells { slide, cells })];
+    let mut commands = vec![Command::Sheet(SheetCommand::PasteCells { sheet: slide, cells })];
     for (rel, width) in &clip.col_widths {
         if *width != default_column {
             let column = left + rel;
-            commands.push(Command::Sheet(SheetCommand::SetSize { slide, axis: ibis_doc_model::sheet_command::Axis::Columns, first: column, last: column, size: *width }));
+            commands.push(Command::Sheet(SheetCommand::SetSize { sheet: slide, axis: ibis_doc_model::sheet_command::Axis::Columns, first: column, last: column, size: *width }));
         }
     }
     for (rel_r, rel_c, comment) in &clip.comments {
@@ -174,20 +174,20 @@ pub(crate) fn write(clip: &Clip, merges: &[CellRange]) -> Option<Vec<u8>> {
         let mut comment = comment.clone();
         comment.row = row;
         comment.column = column;
-        commands.push(Command::Sheet(SheetCommand::SetComment { slide, row, column, comment: Some(comment) }));
+        commands.push(Command::Sheet(SheetCommand::SetComment { sheet: slide, row, column, comment: Some(comment) }));
     }
     for (rel, rule) in &clip.validations {
         let target = CellRange { first_row: top + rel.first_row, first_column: left + rel.first_column, last_row: top + rel.last_row, last_column: left + rel.last_column };
         let mut rule = rule.clone();
         rule.ranges = vec![target];
-        commands.push(Command::Sheet(SheetCommand::SetValidation { slide, ranges: vec![target], rule: Some(rule) }));
+        commands.push(Command::Sheet(SheetCommand::SetValidation { sheet: slide, ranges: vec![target], rule: Some(rule) }));
     }
     for m in merges {
         let range = CellRange { first_row: top + m.first_row, first_column: left + m.first_column, last_row: top + m.last_row, last_column: left + m.last_column };
-        commands.push(Command::Sheet(SheetCommand::PasteMerge { slide, range }));
+        commands.push(Command::Sheet(SheetCommand::PasteMerge { sheet: slide, range }));
     }
     let mut document = Document::new(opened.presentation.clone());
     document.execute(commands).ok()?;
-    let xlsx = opened.source.save(document.presentation(), ibis_pptx::SaveOptions::default()).ok()?;
+    let xlsx = opened.source.save(document.presentation(), ibis_formats::SaveOptions::default()).ok()?;
     Some(embed_source(&xlsx))
 }

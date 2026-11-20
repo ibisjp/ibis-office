@@ -97,7 +97,7 @@ impl MergeImport {
     pub(crate) fn raw_rows(&self) -> Vec<Vec<String>> {
         self.sheets
             .get(self.sheet)
-            .map(|(_, text)| ibis_pptx::csv::parse(text.trim_start_matches('\u{feff}')))
+            .map(|(_, text)| ibis_formats::csv::parse(text.trim_start_matches('\u{feff}')))
             .unwrap_or_default()
     }
     pub(crate) fn table(&self) -> (Vec<String>, Vec<Vec<String>>) {
@@ -138,7 +138,7 @@ pub(crate) fn read_recipient_file(path: &std::path::Path) -> Result<MergeImport,
         .to_ascii_lowercase();
     let sheets: Vec<(String, String)> = match ext.as_str() {
         "xlsx" | "xlsm" | "xls" => {
-            let book = ibis_pptx::read(&bytes).map_err(|_| error())?;
+            let book = ibis_odf::read(&bytes).map_err(|_| error())?;
             if book.workbook.is_none() {
                 return Err(error());
             }
@@ -148,7 +148,7 @@ pub(crate) fn read_recipient_file(path: &std::path::Path) -> Result<MergeImport,
                 .map(|(i, s)| {
                     (
                         s.name.clone().unwrap_or_else(|| (i + 1).to_string()),
-                        String::from_utf8_lossy(&ibis_pptx::csv::sheet_to_tsv(&book, i))
+                        String::from_utf8_lossy(&ibis_formats::csv::sheet_to_tsv(&book, i))
                             .into_owned(),
                     )
                 })
@@ -156,13 +156,13 @@ pub(crate) fn read_recipient_file(path: &std::path::Path) -> Result<MergeImport,
         }
         "csv" | "tsv" => vec![(
             tr("merge.flow.data").to_string(),
-            ibis_pptx::csv::decode(&bytes).map_err(|_| error())?,
+            ibis_formats::csv::decode(&bytes).map_err(|_| error())?,
         )],
         _ => return Err(tr("merge.flow.unsupported").to_string()),
     };
     let rows: Vec<Vec<String>> = sheets
         .first()
-        .map(|(_, text)| ibis_pptx::csv::parse(text.trim_start_matches('\u{feff}')))
+        .map(|(_, text)| ibis_formats::csv::parse(text.trim_start_matches('\u{feff}')))
         .unwrap_or_default();
     let end_row = rows.len().max(1);
     let end_column = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);

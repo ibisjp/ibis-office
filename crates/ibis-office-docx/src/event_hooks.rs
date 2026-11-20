@@ -31,7 +31,7 @@ impl SlideEditor {
     pub(crate) fn docx_box_edit_splice(&mut self, start: usize, remove: usize, insert: &str, typing: bool, cx: &mut Context<Self>) -> Option<bool> {
         let (at, edit) = self.doc_state().and_then(|s| s.box_edit.as_ref()).map(|b| (b.at, b.edit.clone()))?;
         let join = edit.is_new || (typing && edit.typing);
-        let cmd = ibis_doc_model::FlowCommand::SpliceShapeText { at, start, remove, insert: insert.to_string() };
+        let cmd = ibis_doc_model::FlowCommand::ReplaceShapeTextRange { at, start, remove, insert: insert.to_string() };
         let keep = self.text_selection();
         let done = if join {
             let res = self.document.amend_last(vec![Command::Flow(cmd)]);

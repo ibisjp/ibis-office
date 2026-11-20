@@ -100,7 +100,7 @@ impl SlideEditor {
         }).unwrap_or((0, 0));
         let emu = (height_pt.clamp(0.0, 409.0) * EMU_PER_POINT as f32).round() as Emu;
         let slide = self.current_slide;
-        let _ = self.document.execute(vec![Command::Sheet(SheetCommand::SetSize { slide, axis: Axis::Rows, first, last, size: emu })]);
+        let _ = self.document.execute(self.group_commands(vec![Command::Sheet(SheetCommand::SetSize { sheet: slide, axis: Axis::Rows, first, last, size: emu })]));
         cx.notify();
     }
 
@@ -112,7 +112,7 @@ impl SlideEditor {
         let pt = width_chars.clamp(0.0, 255.0) * 6.4;
         let emu = (pt * EMU_PER_POINT as f32).round() as Emu;
         let slide = self.current_slide;
-        let _ = self.document.execute(vec![Command::Sheet(SheetCommand::SetSize { slide, axis: Axis::Columns, first, last, size: emu })]);
+        let _ = self.document.execute(self.group_commands(vec![Command::Sheet(SheetCommand::SetSize { sheet: slide, axis: Axis::Columns, first, last, size: emu })]));
         self.fit_wrapped_rows(ibis_doc_model::CellRange { first_row: 0, last_row: u32::MAX, first_column: first, last_column: last }, cx);
         cx.notify();
     }
@@ -136,7 +136,7 @@ impl SlideEditor {
         };
 
         let slide = self.current_slide;
-        let _ = self.document.execute(vec![Command::Sheet(SheetCommand::SetSize { slide, axis, first, last, size: emu })]);
+        let _ = self.document.execute(self.group_commands(vec![Command::Sheet(SheetCommand::SetSize { sheet: slide, axis, first, last, size: emu })]));
         if axis == Axis::Columns {
             self.fit_wrapped_rows(ibis_doc_model::CellRange { first_row: 0, last_row: u32::MAX, first_column: first, last_column: last }, cx);
         }

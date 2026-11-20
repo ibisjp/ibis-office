@@ -4,7 +4,7 @@
 //! An equal-width button group: the buttons are measured first, and every button takes the widest one's width.
 use super::{ActionButtonKind, ActionButtonStyle, styled_action_button};
 use gpui_kit::component::button::Button;
-use gpui_kit::component::Disableable as _;
+use gpui_kit::component::{Disableable as _, Sizable as _};
 use gpui_kit::*;
 use std::rc::Rc;
 
@@ -29,10 +29,11 @@ impl ButtonGroupItem {
         self.click = Some(Rc::new(click));
         self
     }
-    fn button(&self, cx: &App, width: Option<Pixels>) -> Button {
+    fn button(&self, cx: &App, width: Option<Pixels>, compact: bool) -> Button {
         let click = self.click.clone();
-        let mut button = styled_action_button(self.id.clone(), ActionButtonStyle { kind: self.kind }, Some(cx))
-            .label(self.label.clone()).disabled(self.disabled);
+        let mut button = styled_action_button(self.id.clone(), ActionButtonStyle { kind: self.kind }, Some(cx)).disabled(self.disabled);
+        // Compact: the size of the other controls inside a dialog body (small text), not the action bar's.
+        button = if compact { button.small().child(div().text_sm().child(self.label.clone())) } else { button.label(self.label.clone()) };
         if let Some(width) = width { button = button.w(width).max_w_full(); }
         if let Some(click) = click { button = button.on_click(move |e, w, cx| click(e, w, cx)); }
         button
@@ -45,12 +46,15 @@ impl ButtonGroupItem {
 pub struct ButtonGroup {
     items: Vec<ButtonGroupItem>,
     stacked: bool,
+    compact: bool,
 }
 pub fn button_group(items: impl IntoIterator<Item = ButtonGroupItem>) -> ButtonGroup {
-    ButtonGroup { items: items.into_iter().collect(), stacked: false }
+    ButtonGroup { items: items.into_iter().collect(), stacked: false, compact: false }
 }
 impl ButtonGroup {
     pub fn stacked(mut self) -> Self { self.stacked = true; self }
+    /// For a button among the form controls of a dialog body: small text like the labels and fields beside it.
+    pub fn compact(mut self) -> Self { self.compact = true; self }
 }
 impl IntoElement for ButtonGroup {
     type Element = Self;
@@ -63,10 +67,10 @@ impl Element for ButtonGroup {
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> { None }
     fn request_layout(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, cx: &mut App) -> (LayoutId, AnyElement) {
         let widest = self.items.iter().map(|item| {
-            let mut probe = item.button(cx, None).into_any_element();
+            let mut probe = item.button(cx, None, self.compact).into_any_element();
             probe.layout_as_root(size(AvailableSpace::MaxContent, AvailableSpace::MaxContent), window, cx).width
         }).fold(px(0.), |a, b| a.max(b));
-        let buttons: Vec<Button> = self.items.iter().map(|item| item.button(cx, Some(widest))).collect();
+        let buttons: Vec<Button> = self.items.iter().map(|item| item.button(cx, Some(widest), self.compact)).collect();
         let mut root = if self.stacked {
             gpui_kit::component::v_flex().items_start().gap_2().children(buttons).max_w_full().into_any_element()
         } else {

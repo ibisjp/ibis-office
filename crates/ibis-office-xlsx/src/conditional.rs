@@ -1078,7 +1078,7 @@ mod tests {
             // Change B1 to "Banana" via SheetCommand::SetCells; B2 (=B1) recalculates and book_context updates
             let mut doc = Document::new(presentation);
             doc.execute(vec![Command::Sheet(SheetCommand::SetCells {
-                slide: slide_id,
+                sheet: slide_id,
                 edits: vec![CellEdit {
                     row: 0,
                     column: 1,

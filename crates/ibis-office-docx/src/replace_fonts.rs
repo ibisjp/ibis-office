@@ -27,6 +27,19 @@ pub(crate) fn document_used_fonts(doc: &ibis_doc_model::FlowDocument) -> Vec<Str
     fonts.into_iter().collect()
 }
 
+/// The text of the document's runs: the characters its fonts have to draw.
+pub(crate) fn document_used_text(doc: &ibis_doc_model::FlowDocument) -> String {
+    let mut text = String::new();
+    for p in ibis_doc_model::flow_command::all_paragraphs_everywhere(doc) {
+        for r in &p.runs {
+            if let FlowRunKind::Text(t) = &r.kind {
+                text.push_str(t.as_ref());
+            }
+        }
+    }
+    text
+}
+
 /// The commands that set `replacement` on the text runs of `doc` drawn in `target`, and how many runs they change.
 pub(crate) fn document_replace_commands(doc: &ibis_doc_model::FlowDocument, target: &str, replacement: &str) -> (Vec<FlowCommand>, usize) {
     let mut commands = Vec::new();

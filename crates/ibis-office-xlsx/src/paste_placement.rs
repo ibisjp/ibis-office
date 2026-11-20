@@ -17,7 +17,7 @@ struct LastPaste {
 #[ibis_office_macros::editor_ext(PastePlacement)]
 impl SlideEditor {
     pub(crate) fn position_sheet_paste(&mut self, shapes: &mut [Shape], stamp: u64) {
-        let Some(bounds) = ibis_pptx::shape_clipboard::drawing_bounds(shapes) else {
+        let Some(bounds) = ibis_formats::shape_clipboard::drawing_bounds(shapes) else {
             return;
         };
         let cell = self.current_cell();

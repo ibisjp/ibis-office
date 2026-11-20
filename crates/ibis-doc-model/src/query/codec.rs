@@ -3,7 +3,7 @@
 // Additional terms under AGPL-3.0 section 7(b): see NOTICE.
 //! The queries of a workbook as text, to keep in the file (`xl/ibisQueries.txt`):
 //! one line a query header or a step, fields separated by tabs.
-use super::{Agg, Clause, Culture, JoinKind, Op, Parameter, QType, Query, Source, SplitBy, Step};
+use super::{Agg, CharClass, Clause, Culture, JoinKind, Missing, Op, Parameter, QType, Query, Source, SplitBy, Step, Transform};
 
 /// Separators the text can hold in XML (the control characters cannot be written there): `␟` between the items
 /// of a list and `␞` between the parts of an item.
@@ -69,6 +69,8 @@ fn op_name(o: Op) -> &'static str {
         Op::EndsWith => "ends",
         Op::IsNull => "null",
         Op::IsNotNull => "notnull",
+        Op::DoesNotBeginWith => "notbegins",
+        Op::DoesNotEndWith => "notends",
     }
 }
 
@@ -108,6 +110,25 @@ fn join_of(s: &str) -> Option<JoinKind> {
     JoinKind::ALL.into_iter().find(|k| join_name(*k) == s)
 }
 
+fn class_name(c: CharClass) -> char {
+    match c {
+        CharClass::Lower => 'l',
+        CharClass::Upper => 'u',
+        CharClass::Digit => 'd',
+        CharClass::NonDigit => 'n',
+    }
+}
+
+fn class_of(c: char) -> Option<CharClass> {
+    Some(match c {
+        'l' => CharClass::Lower,
+        'u' => CharClass::Upper,
+        'd' => CharClass::Digit,
+        'n' => CharClass::NonDigit,
+        _ => return None,
+    })
+}
+
 fn type_name(t: QType) -> &'static str {
     match t {
         QType::Any => "any",
@@ -118,6 +139,11 @@ fn type_name(t: QType) -> &'static str {
         QType::DateTime => "datetime",
         QType::Time => "time",
         QType::Logical => "logical",
+        QType::Currency => "currency",
+        QType::Percentage => "percentage",
+        QType::Int32 => "int32",
+        QType::DateTimeZone => "datetimezone",
+        QType::Duration => "duration",
     }
 }
 
@@ -153,15 +179,35 @@ fn aggregations(a: &[(String, Agg, Option<String>)]) -> String {
     a.iter().map(|(n, g, c)| format!("{}\u{241e}{}\u{241e}{}", esc(n), agg_name(*g), c.as_deref().map(esc).unwrap_or_default())).collect::<Vec<_>>().join(&LIST.to_string())
 }
 
+fn numbers(v: &[usize]) -> String {
+    v.iter().map(usize::to_string).collect::<Vec<_>>().join(",")
+}
+
+fn unnumbers(s: &str) -> Option<Vec<usize>> {
+    if s.is_empty() { Some(Vec::new()) } else { s.split(',').map(|x| x.parse().ok()).collect() }
+}
+
+fn aggregations_of(f: &str) -> Option<Vec<(String, Agg, Option<String>)>> {
+    if f.is_empty() {
+        return Some(Vec::new());
+    }
+    f.split(LIST)
+        .map(|p| {
+            let parts: Vec<&str> = p.split('\u{241e}').collect();
+            (parts.len() == 3).then(|| Some((unesc(parts[0]), agg_of(parts[1])?, if parts[2].is_empty() { None } else { Some(unesc(parts[2])) }))).flatten()
+        })
+        .collect()
+}
+
 fn step_fields(step: &Step) -> Vec<String> {
     let s = |x: &str| esc(x);
     match step {
         Step::PromoteHeaders => vec!["promote".into()],
         Step::DemoteHeaders => vec!["demote".into()],
-        Step::ChangeType { column, ty, culture } => vec!["type".into(), s(column), type_name(*ty).into(), s(culture.name())],
+        Step::ChangeType { column, ty, culture, apart } => vec!["type".into(), s(column), type_name(*ty).into(), s(culture.name()), if *apart { "1" } else { "0" }.into()],
         Step::SelectColumns(c) => vec!["select".into(), list(c)],
         Step::RemoveColumns(c) => vec!["remove".into(), list(c)],
-        Step::RenameColumn { from, to } => vec!["rename".into(), s(from), s(to)],
+        Step::RenameColumns(renames) => std::iter::once("rename".to_string()).chain(renames.iter().flat_map(|(from, to)| [s(from), s(to)])).collect(),
         Step::ReorderColumns(c) => vec!["reorder".into(), list(c)],
         Step::FilterRows { column, op, value } => vec!["filter".into(), s(column), op_name(*op).into(), s(value)],
         Step::KeepTopRows(n) => vec!["keeptop".into(), n.to_string()],
@@ -173,10 +219,21 @@ fn step_fields(step: &Step) -> Vec<String> {
         Step::RemoveErrors(c) => vec!["removeerrors".into(), list(c)],
         Step::ReplaceErrors { columns, with } => vec!["replaceerrors".into(), list(columns), s(with)],
         Step::Sort(k) => vec!["sort".into(), pairs(k)],
-        Step::SplitColumn { column, by } => match by {
-            SplitBy::Delimiter(d) => vec!["split".into(), s(column), "delimiter".into(), s(d)],
-            SplitBy::Length(n) => vec!["split".into(), s(column), "length".into(), n.to_string()],
-        },
+        Step::SplitColumn { column, by, columns } => {
+            let mut f = match by {
+                SplitBy::Delimiter(d) => vec!["split".into(), s(column), "delimiter".into(), s(d)],
+                SplitBy::Length(n) => vec!["split".into(), s(column), "length".into(), n.to_string()],
+                SplitBy::AnyDelimiter(ds) => vec!["split".into(), s(column), "any".into(), list(ds)],
+                SplitBy::EachDelimiter { delimiters, from_end } => vec!["split".into(), s(column), if *from_end { "eachend" } else { "each" }.into(), list(delimiters)],
+                SplitBy::Positions { positions, from_end } => vec!["split".into(), s(column), if *from_end { "positionsend" } else { "positions" }.into(), numbers(positions)],
+                SplitBy::Lengths { lengths, from_end } => vec!["split".into(), s(column), if *from_end { "lengthsend" } else { "lengths" }.into(), numbers(lengths)],
+                SplitBy::Once { length, from_end } => vec!["split".into(), s(column), if *from_end { "onceend" } else { "once" }.into(), length.to_string()],
+                SplitBy::Transition { from, to } => vec!["split".into(), s(column), "transition".into(), format!("{}{}", class_name(*from), class_name(*to))],
+            };
+            // The number of columns it makes, when Power Query wrote their names.
+            f.push(columns.to_string());
+            f
+        }
         Step::MergeColumns { columns, separator, name } => vec!["mergecolumns".into(), list(columns), s(separator), s(name)],
         Step::ReplaceValue { column, find, with, whole_cell } => vec!["replace".into(), s(column), s(find), s(with), if *whole_cell { "1" } else { "0" }.into()],
         Step::ReplaceNull { columns, with } => vec!["replacenull".into(), list(columns), s(with)],
@@ -193,9 +250,22 @@ fn step_fields(step: &Step) -> Vec<String> {
         Step::GroupBy { keys, aggregations: a } => vec!["group".into(), list(keys), aggregations(a)],
         Step::Merge { right, left_keys, right_keys, kind, expand } => vec!["merge".into(), s(right), list(left_keys), list(right_keys), join_name(*kind).into(), list(expand)],
         Step::Append { other } => vec!["append".into(), s(other)],
-        Step::AddColumn { name, formula } => vec!["addcolumn".into(), s(name), s(formula)],
+        Step::AddColumn { name, formula, ty } => vec!["addcolumn".into(), s(name), s(formula), ty.map(type_name).unwrap_or_default().into()],
         Step::AddConditionalColumn { name, clauses: c, otherwise } => vec!["addconditional".into(), s(name), clauses(c), s(otherwise)],
         Step::AddIndexColumn { name, start, step } => vec!["addindex".into(), s(name), start.to_string(), step.to_string()],
+        // The condition as its M text.
+        Step::FilterCondition(cond) => vec!["filtercond".into(), s(&super::text_m::cond_text(cond))],
+        Step::WithMissing { inner, missing } => {
+            let mut f = vec!["missing".into(), if *missing == Missing::Ignore { "ignore" } else { "usenull" }.into()];
+            f.extend(step_fields(inner));
+            f
+        }
+        Step::Transform { column, function } => vec!["transform".into(), s(column), s(&function.to_m())],
+        Step::GroupByLocal { keys, aggregations: a } => vec!["grouplocal".into(), list(keys), aggregations(a)],
+        Step::AlternateRows { offset, skip, take } => vec!["alternate".into(), offset.to_string(), skip.to_string(), take.to_string()],
+        Step::KeepRange { offset, count } => vec!["range".into(), offset.to_string(), count.map(|c| c.to_string()).unwrap_or_default()],
+        Step::DuplicateColumn { column, new_name } => vec!["duplicate".into(), s(column), s(new_name)],
+        Step::Code { names, bindings, result } => vec!["code".into(), list(names), s(bindings), s(result)],
     }
 }
 
@@ -206,10 +276,17 @@ fn step_of(f: &[&str]) -> Option<Step> {
     Some(match *f.first()? {
         "promote" => Step::PromoteHeaders,
         "demote" => Step::DemoteHeaders,
-        "type" => Step::ChangeType { column: a(1)?, ty: type_of(f.get(2)?)?, culture: culture_of(&a(3)?) },
+        "type" => Step::ChangeType { column: a(1)?, ty: type_of(f.get(2)?)?, culture: culture_of(&a(3)?), apart: f.get(4) == Some(&"1") },
         "select" => Step::SelectColumns(l(1)?),
         "remove" => Step::RemoveColumns(l(1)?),
-        "rename" => Step::RenameColumn { from: a(1)?, to: a(2)? },
+        // `rename`, then the old and the new name of each column (a step of one column, from before, is the same: two fields).
+        "rename" => {
+            let names: Vec<String> = f[1..].iter().map(|x| unesc(x)).collect();
+            if names.is_empty() || names.len() % 2 != 0 {
+                return None;
+            }
+            Step::RenameColumns(names.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect())
+        }
         "reorder" => Step::ReorderColumns(l(1)?),
         "filter" => Step::FilterRows { column: a(1)?, op: op_of(f.get(2)?)?, value: a(3)? },
         "keeptop" => Step::KeepTopRows(n(1)?),
@@ -230,7 +307,23 @@ fn step_of(f: &[&str]) -> Option<Step> {
                 })
                 .collect::<Option<_>>()?
         }),
-        "split" => Step::SplitColumn { column: a(1)?, by: if *f.get(2)? == "length" { SplitBy::Length(n(3)?) } else { SplitBy::Delimiter(a(3)?) } },
+        "split" => Step::SplitColumn {
+            column: a(1)?,
+            columns: f.get(4).and_then(|x| x.parse().ok()).unwrap_or(0),
+            by: match *f.get(2)? {
+                "once" | "onceend" => SplitBy::Once { length: n(3)?, from_end: *f.get(2)? == "onceend" },
+                "transition" => {
+                    let c: Vec<char> = f.get(3)?.chars().collect();
+                    SplitBy::Transition { from: class_of(*c.first()?)?, to: class_of(*c.get(1)?)? }
+                }
+                "length" => SplitBy::Length(n(3)?),
+                "any" => SplitBy::AnyDelimiter(l(3)?),
+                "each" | "eachend" => SplitBy::EachDelimiter { delimiters: l(3)?, from_end: *f.get(2)? == "eachend" },
+                "positions" | "positionsend" => SplitBy::Positions { positions: unnumbers(f.get(3)?)?, from_end: *f.get(2)? == "positionsend" },
+                "lengths" | "lengthsend" => SplitBy::Lengths { lengths: unnumbers(f.get(3)?)?, from_end: *f.get(2)? == "lengthsend" },
+                _ => SplitBy::Delimiter(a(3)?),
+            },
+        },
         "mergecolumns" => Step::MergeColumns { columns: l(1)?, separator: a(2)?, name: a(3)? },
         "replace" => Step::ReplaceValue { column: a(1)?, find: a(2)?, with: a(3)?, whole_cell: *f.get(4)? == "1" },
         "replacenull" => Step::ReplaceNull { columns: l(1)?, with: a(2)? },
@@ -259,9 +352,20 @@ fn step_of(f: &[&str]) -> Option<Step> {
         },
         "merge" => Step::Merge { right: a(1)?, left_keys: l(2)?, right_keys: l(3)?, kind: join_of(f.get(4)?)?, expand: l(5)? },
         "append" => Step::Append { other: a(1)? },
-        "addcolumn" => Step::AddColumn { name: a(1)?, formula: a(2)? },
+        "addcolumn" => Step::AddColumn { name: a(1)?, formula: a(2)?, ty: match f.get(3) {
+            Some(t) if !t.is_empty() => Some(type_of(t)?),
+            _ => None,
+        } },
         "addconditional" => Step::AddConditionalColumn { name: a(1)?, clauses: unclauses(f.get(2)?)?, otherwise: a(3)? },
         "addindex" => Step::AddIndexColumn { name: a(1)?, start: f.get(2)?.parse().ok()?, step: f.get(3)?.parse().ok()? },
+        "filtercond" => Step::FilterCondition(super::m_parse::cond_expr(&a(1)?)?),
+        "missing" => Step::WithMissing { inner: Box::new(step_of(&f[2..])?), missing: if *f.get(1)? == "ignore" { Missing::Ignore } else { Missing::UseNull } },
+        "transform" => Step::Transform { column: a(1)?, function: Transform::from_m(&a(2)?)? },
+        "grouplocal" => Step::GroupByLocal { keys: l(1)?, aggregations: aggregations_of(f.get(2)?)? },
+        "alternate" => Step::AlternateRows { offset: n(1)?, skip: n(2)?, take: n(3)? },
+        "range" => Step::KeepRange { offset: n(1)?, count: if f.get(2)?.is_empty() { None } else { Some(n(2)?) } },
+        "duplicate" => Step::DuplicateColumn { column: a(1)?, new_name: a(2)? },
+        "code" => Step::Code { names: unlist(f.get(1)?), bindings: a(2)?, result: a(3)? },
         _ => return None,
     })
 }
@@ -278,6 +382,8 @@ pub fn encode_queries(queries: &[Query], parameters: &[Parameter]) -> String {
             Source::Blank => out.push_str("source\tblank\n"),
             Source::Table(t) => out.push_str(&format!("source\ttable\t{}\n", esc(t))),
             Source::Range { sheet, range } => out.push_str(&format!("source\trange\t{}\t{}\n", esc(sheet), esc(range))),
+            Source::Csv { path, delimiter, columns, encoding, quote } => out.push_str(&format!("source\tcsv\t{}\t{}\t{columns}\t{encoding}\t{}\n", esc(path), esc(delimiter), esc(quote))),
+            Source::Workbook { path, item, sheet } => out.push_str(&format!("source\tworkbook\t{}\t{}\t{}\n", esc(path), esc(item), if *sheet { "sheet" } else { "table" })),
         }
         for step in &q.steps {
             out.push_str(&format!("step\t{}\n", step_fields(step).join("\t")));
@@ -303,6 +409,8 @@ pub fn decode_queries(text: &str) -> (Vec<Query>, Vec<Parameter>) {
                     q.source = match f.get(1).copied() {
                         Some("blank") => Source::Blank,
                         Some("range") if f.len() >= 4 => Source::Range { sheet: unesc(f[2]), range: unesc(f[3]) },
+                        Some("csv") if f.len() >= 7 => Source::Csv { path: unesc(f[2]), delimiter: unesc(f[3]), columns: f[4].parse().unwrap_or(0), encoding: f[5].parse().unwrap_or(65001), quote: unesc(f[6]) },
+                        Some("workbook") if f.len() >= 5 => Source::Workbook { path: unesc(f[2]), item: unesc(f[3]), sheet: f[4] == "sheet" },
                         _ => Source::Table(f.get(2).map(|t| unesc(t)).unwrap_or_default()),
                     };
                 }

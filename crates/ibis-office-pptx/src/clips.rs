@@ -25,6 +25,17 @@ pub(crate) struct Playing {
     pub(crate) passed_bookmarks: std::collections::HashSet<String>,
 }
 
+/// The sound of a transition being played (#224).
+pub(crate) struct TransitionPlaying {
+    /// The embedded audio, or none for one of the shipped sounds (`ibis_formats::transition_sounds`).
+    pub(crate) media: Option<MediaId>,
+    /// The sound runs again from its start when it ends (`p:stSnd/@loop`).
+    pub(crate) looped: bool,
+    pub(crate) player: Player,
+    /// Which sound this is: the watcher of an earlier one stops when another has taken its place.
+    pub(crate) generation: usize,
+}
+
 /// The volume a clip is saved with (the ribbon's 音量), 0 to 1.
 pub(crate) fn volume_of(clip: &Clip) -> f32 {
     match clip.options.volume {
@@ -37,6 +48,19 @@ pub(crate) fn volume_of(clip: &Clip) -> f32 {
 
 /// How often the frames of the video playing are taken.
 const FRAME_MS: u64 = 33;
+
+/// The WAV file of the shipped transition sound called `name`, written once to the temporary directory.
+#[cfg(not(target_family = "wasm"))]
+fn shipped_sound_file(name: &str) -> Option<PathBuf> {
+    let wav = ibis_formats::transition_sounds::wav(name)?;
+    let dir = std::env::temp_dir().join(format!("ibisOffice-clips-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(format!("transition-{}.wav", ibis_formats::transition_sounds::id_of(name)));
+    if std::fs::metadata(&path).map(|f| f.len()).ok() != Some(wav.len() as u64) {
+        std::fs::write(&path, &wav).ok()?;
+    }
+    Some(path)
+}
 
 /// The file of clip `media` for the player: written once to the temporary directory.
 fn clip_file(presentation: &ibis_doc_model::Presentation, media: MediaId, link: Option<&str>, base: Option<&Path>) -> Option<PathBuf> {
@@ -103,6 +127,72 @@ fn percent_decode(text: &str) -> String {
 
 #[ibis_office_macros::editor_ext(Clips)]
 impl SlideEditor {
+    /// The sound of the transition of the slide just shown (`p:sndAc`): played from its start (the one before stopped), or the one playing stopped (`p:endSnd`); a slide whose
+    /// transition has no sound action leaves a playing sound alone, as PowerPoint does. The audio is the wav the file embeds (`Slide::transition_sound`).
+    pub(crate) fn play_transition_sound(&mut self, cx: &mut Context<Self>) {
+        use ibis_doc_model::TransitionSound;
+        let Some(sound) = self.slide().transition.as_ref().and_then(|t| t.sound.clone()) else { return };
+        match sound {
+            TransitionSound::Stop => self.stop_transition_sound(),
+            TransitionSound::Play { name, loop_sound } => {
+                // The wav the file embeds, else the shipped sound the name says (a sound chosen in the menu has no embedded audio until it is saved and read again).
+                let media = self.slide().transition_sound;
+                self.stop_transition_sound();
+                #[cfg(target_family = "wasm")]
+                let player = match media {
+                    Some(media) => self.presentation().media(media).and_then(|m| m.format.av_type().and_then(|(_, mime)| Player::open_bytes(&m.data, mime, false))),
+                    // The sound the page fetched (`web::fetch_transition_sound`: when the sound was chosen), as a WAV.
+                    None => ibis_formats::transition_sounds::wav(&name).and_then(|wav| Player::open_bytes(&wav, "audio/wav", false)),
+                };
+                #[cfg(not(target_family = "wasm"))]
+                let player = match media {
+                    Some(media) => clip_file(self.presentation(), media, None, None).and_then(|path| Player::open(&path, false)),
+                    None => shipped_sound_file(&name).and_then(|path| Player::open(&path, false)),
+                };
+                let Some(player) = player else { return };
+                player.set_volume(1.0);
+                player.play();
+                let Some(state) = self.pptx_mut() else { return };
+                let generation = state.transition_sound.as_ref().map_or(0, |p| p.generation) + 1;
+                state.transition_sound = Some(TransitionPlaying { media, looped: loop_sound, player, generation });
+                if loop_sound {
+                    cx.spawn(async move |this, cx| loop {
+                        cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
+                        let alive = this.update(cx, |this, _| this.poll_transition_sound(generation)).unwrap_or(false);
+                        if !alive {
+                            break;
+                        }
+                    })
+                    .detach();
+                }
+            }
+        }
+    }
+
+    /// One tick of a looping transition sound: run again when it has ended. Whether this sound (of `generation`) is still the one to play.
+    fn poll_transition_sound(&mut self, generation: usize) -> bool {
+        let Some(playing) = self.pptx_mut().and_then(|s| s.transition_sound.as_ref()).filter(|p| p.generation == generation) else { return false };
+        if playing.looped && playing.player.finished() {
+            playing.player.rewind();
+            playing.player.play();
+        }
+        true
+    }
+
+    /// The transition sound stopped (a new one, `p:endSnd`, or the end of the show).
+    /// Whether a transition sound is playing now (a test's question).
+    pub(crate) fn transition_sound_playing(&mut self) -> bool {
+        self.pptx_mut().is_some_and(|s| s.transition_sound.is_some())
+    }
+
+    pub(crate) fn stop_transition_sound(&mut self) {
+        if let Some(state) = self.pptx_mut() {
+            if let Some(playing) = state.transition_sound.take() {
+                playing.player.pause();
+            }
+        }
+    }
+
     /// The clip of a shape.
     pub(crate) fn clip_of(shape: &Shape) -> Option<Clip> {
         match &shape.kind {
@@ -438,7 +528,7 @@ impl SlideEditor {
             return None;
         }
         let aspect = if audio { 1.0 } else { aspect.unwrap_or(16.0 / 9.0) };
-        let (poster, _, _) = ibis_pptx::clip_poster(audio, aspect);
+        let (poster, _, _) = ibis_formats::clip_poster(audio, aspect);
         let placeholder = if !audio { self.empty_content_placeholder_for("media") } else { None };
         let (replaced, frame) = match placeholder {
             Some((old_id, ph_frame)) => {
@@ -475,10 +565,10 @@ impl SlideEditor {
         let slide = self.current_slide;
         let mut commands = Vec::new();
         if let Some(old) = replaced {
-            commands.push(Command::RemoveShapes { slide, shapes: vec![old] });
+            commands.push(Command::DeleteShape { slide, shapes: vec![old], with_attached: false });
         }
         let index = self.slide().shapes.len() - usize::from(replaced.is_some());
-        commands.push(Command::InsertShape { slide, index, shape });
+        commands.push(Command::InsertShape { slide, shapes: vec![(index, shape)] });
         commands.push(Command::SetAspectLocked { slide, shape: id, locked: true });
         // The rows the animation pane lists for a clip, as PowerPoint 16 makes them (AddMediaObject2: no effect in the main
         // sequence) and as the save writes them (`pptx_media_timing`): a click on the video 一時停止, a click on the audio 再生.
@@ -576,7 +666,7 @@ impl SlideEditor {
         let mut commands = Vec::new();
         for (id, mut new_pic) in targets {
             new_pic.media = poster_media;
-            commands.push(Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Picture(new_pic)) });
+            commands.push(Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Picture(new_pic)) });
         }
         if !commands.is_empty() {
             self.run(commands, cx);
@@ -600,11 +690,11 @@ impl SlideEditor {
 
         let mut commands = Vec::new();
         for (id, mut new_pic, audio, aspect) in targets {
-            let (poster, _, _) = ibis_pptx::clip_poster(audio, aspect);
+            let (poster, _, _) = ibis_formats::clip_poster(audio, aspect);
             let poster_media = self.document.ids().add_media(ibis_doc_model::MediaFormat::Png, poster.clone());
             self.resources.add_picture(poster_media, ibis_doc_model::MediaFormat::Png, &poster);
             new_pic.media = poster_media;
-            commands.push(Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Picture(new_pic)) });
+            commands.push(Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Picture(new_pic)) });
         }
         if !commands.is_empty() {
             self.run(commands, cx);
@@ -750,7 +840,7 @@ impl SlideEditor {
                         f(&mut clip.options);
                         let mut new_pic = pic.clone();
                         new_pic.clip = Some(clip);
-                        commands.push(Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Picture(new_pic)) });
+                        commands.push(Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Picture(new_pic)) });
                     }
                 }
             }
@@ -800,7 +890,7 @@ impl SlideEditor {
         let shape = ibis_doc_model::Shape::text_box(shape_id, ibis_doc_model::EmuRect::new(x, y, w, h), format!("📦 {name}"));
         let slide = self.current_slide;
         let idx = self.slide().shapes.len();
-        self.run(vec![ibis_doc_model::Command::InsertShape { slide, index: idx, shape }], cx);
+        self.run(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(idx, shape)] }], cx);
     }
 
     /// 挿入 > オブジェクトの挿入…: choose an external file and place it on the slide as an embedded object icon.
@@ -843,7 +933,7 @@ impl SlideEditor {
         let shape = ibis_doc_model::Shape::text_box(shape_id, ibis_doc_model::EmuRect::new(x, y, w, h), format!("📎 {name}"));
         let slide = self.current_slide;
         let idx = self.slide().shapes.len();
-        self.run(vec![ibis_doc_model::Command::InsertShape { slide, index: idx, shape }], cx);
+        self.run(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(idx, shape)] }], cx);
     }
 }
 

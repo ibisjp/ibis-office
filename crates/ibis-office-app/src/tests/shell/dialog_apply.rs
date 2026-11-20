@@ -333,7 +333,7 @@ fn extra_dialogs() {
     s.update(|e, w, cx| {
         e.document
             .execute(vec![Command::Sheet(SheetCommand::SetCells {
-                slide: e.current_slide,
+                sheet: e.current_slide,
                 edits: vec![
                     CellEdit {
                         row: 0,

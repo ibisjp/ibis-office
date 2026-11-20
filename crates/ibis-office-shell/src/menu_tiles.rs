@@ -174,7 +174,7 @@ pub(crate) fn tile_row(items: &[MenuItem], editor: &WeakEntity<SlideEditor>) -> 
         let Some(handler) = items.get(active.get()).filter(|item| item.enabled()).and_then(|item| item.handler.clone()) else { return };
         editor.update(cx, |this, cx| {
             this.ruler_settings_open = false;
-            handler(this, window, cx)
+            crate::chrome::dispatch(&handler, this, window, cx)
         }).ok();
     })
 }

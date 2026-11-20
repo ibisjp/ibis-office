@@ -192,8 +192,8 @@ impl SlideEditor {
             .source
             .as_ref()
             .and_then(|source| source.sheet_chart_refs(shape, chart))
-            .and_then(|refs| ibis_pptx::refs_range(&refs))
-            .map(|(sheet, range, _)| ibis_pptx::format_ref(&sheet, range))
+            .and_then(|refs| ibis_formats::refs_range(&refs))
+            .map(|(sheet, range, _)| ibis_formats::format_ref(&sheet, range))
             .unwrap_or_default();
         if input.read(cx).value().as_ref() != text {
             input.update(cx, |state, cx| state.set_value(text, window, cx));
@@ -285,7 +285,7 @@ impl SlideEditor {
                 .unwrap_or(0);
             format!("Sheet{}", index + 1)
         });
-        let text = if qualified {ibis_pptx::format_ref(&name,range)} else {
+        let text = if qualified {ibis_formats::format_ref(&name,range)} else {
             let first=ibis_doc_model::cell_name(range.first_column,range.first_row);
             if range.first_column==range.last_column&&range.first_row==range.last_row {first} else {format!("{}:{}",first,ibis_doc_model::cell_name(range.last_column,range.last_row))}
         };

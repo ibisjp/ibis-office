@@ -68,19 +68,19 @@ docx.text.case.katakana	Katakana
 docx.text.case.hiragana	Hiragana
 docx.text.enclose.none	(None)
 docx.paragraph.details#2	Details…
-docx.toc.update-menu	Update Table of Contents
-docx.toc.update-dialog	Update Table of Contents…
-docx.toc.update-dialog.title	Update Table of Contents
-docx.toc.update-dialog.prompt	Word is updating the table of contents. Select one of the following options
-docx.toc.update-page-numbers-only	Update page numbers only
-docx.toc.update-entire-table	Update entire table
-docx.toc.update-ok	OK
-docx.toc.update-cancel	Cancel
+docx.table-of-contents.update-menu	Update Table of Contents
+docx.table-of-contents.update-dialog	Update Table of Contents…
+docx.table-of-contents.update-dialog.title	Update Table of Contents
+docx.table-of-contents.update-dialog.prompt	Word is updating the table of contents. Select one of the following options
+docx.table-of-contents.update-page-numbers-only	Update page numbers only
+docx.table-of-contents.update-entire-table	Update entire table
+docx.table-of-contents.update-ok	OK
+docx.table-of-contents.update-cancel	Cancel
 docx.table-of-figures	Table of Figures
 docx.table-of-figures.figure	Table of Figures (Figures)
 docx.table-of-figures.table	Table of Figures (Tables)
 docx.table-of-figures.equation	Table of Figures (Equations)
-docx.xref.none	No Captions Found
+docx.cross-reference.none	No Captions Found
 docx.caption.figure	Caption (Figure)
 docx.caption.table	Caption (Table)
 docx.caption.equation	Caption (Equation)
@@ -133,7 +133,7 @@ docx.section-next	Section Break (Next Page)
 docx.section-continuous	Section Break (Continuous)
 docx.section-odd	Section Break (Odd Page)
 docx.section-even	Section Break (Even Page)
-docx.image.file	From File…
+docx.picture.file	From File…
 docx.cell.merge-right	Merge with Right Cell
 docx.cell.split-grid	Split Cells by Grid Column
 docx.table.repeat-header	Repeat Header Rows
@@ -144,9 +144,6 @@ docx.page.direction.horizontal	Horizontal
 docx.page.direction.vertical	Vertical
 docx.page.portrait	Portrait
 docx.page.landscape	Landscape
-docx.page.a4	A4
-docx.page.b5	B5
-docx.page.a3	A3
 docx.page.letter	Letter
 docx.page.margins-normal	Margins: Normal
 docx.page.margins-narrow	Margins: Narrow
@@ -200,44 +197,44 @@ docx.text.opentype.num-form.default	Default
 docx.text.opentype.num-form.lining	Lining
 docx.text.opentype.num-form.old-style	OldStyle
 docx.text.opentype.cntxt-alts	Use Contextual Alternates
-docx.toc.levels	Levels Shown in Table of Contents
-docx.xref	Cross-reference
-docx.xref.dialog	Cross-reference…
-docx.xref.title	Cross-reference
-docx.xref.type	Reference type
-docx.xref.type.heading	Heading
-docx.xref.type.bookmark	Bookmark
-docx.xref.type.footnote	Footnote
-docx.xref.type.endnote	Endnote
-docx.xref.type.caption	Figure/Table
-docx.xref.kind	Insert reference to
-docx.xref.kind.text	Text
-docx.xref.kind.page	Page number
-docx.xref.kind.paragraph	Paragraph number
-docx.xref.kind.note	Note number
-docx.xref.kind.label_number	Only label and number
-docx.xref.kind.entire_caption	Entire caption
-docx.xref.kind.caption_text	Only caption text
-docx.xref.kind.relative	Relative position
-docx.xref.hyperlink	Insert as hyperlink
-docx.xref.insert	Insert
-docx.xref.close	Close
-docx.xref.empty	(No referable items found)
-docx.xref.inserted	Cross-reference inserted.
+docx.table-of-contents.levels	Levels Shown in Table of Contents
+docx.cross-reference	Cross-reference
+docx.cross-reference.dialog	Cross-reference…
+docx.cross-reference.title	Cross-reference
+docx.cross-reference.type	Reference type
+docx.cross-reference.type.heading	Heading
+docx.cross-reference.type.bookmark	Bookmark
+docx.cross-reference.type.footnote	Footnote
+docx.cross-reference.type.endnote	Endnote
+docx.cross-reference.type.caption	Figure/Table
+docx.cross-reference.kind	Insert reference to
+docx.cross-reference.kind.text	Text
+docx.cross-reference.kind.page	Page number
+docx.cross-reference.kind.paragraph	Paragraph number
+docx.cross-reference.kind.note	Note number
+docx.cross-reference.kind.label_number	Only label and number
+docx.cross-reference.kind.entire_caption	Entire caption
+docx.cross-reference.kind.caption_text	Only caption text
+docx.cross-reference.kind.relative	Relative position
+docx.cross-reference.hyperlink	Insert as hyperlink
+docx.cross-reference.insert	Insert
+docx.cross-reference.close	Close
+docx.cross-reference.empty	(No referable items found)
+docx.cross-reference.inserted	Cross-reference inserted.
 docx.date	Date & Time
 docx.track	Track Changes
 docx.table	Table
 docx.list.start	Start At
 docx.list	Restart Numbering
-docx.para.pagination	Line and Page Breaks
-docx.para.suppress-auto-hyphens	Don't Hyphenate
-docx.para.overflow-punct	Hanging Punctuation
-docx.para.auto-space-de	Automatically Adjust Space Between Asian and Latin Text
-docx.para.auto-space-dn	Automatically Adjust Space Between Asian Text and Numbers
-docx.para.kinsoku	Use Asian Rules for Controlling First and Last Characters
-docx.para.word-wrap	Allow Latin Text to Wrap in the Middle of a Word
-docx.para.bidi	Right-to-Left Text Direction
-docx.para.snap-to-grid	Snap to Grid
+docx.paragraph.pagination	Line and Page Breaks
+docx.paragraph.suppress-auto-hyphens	Don't Hyphenate
+docx.paragraph.overflow-punct	Hanging Punctuation
+docx.paragraph.auto-space-de	Automatically Adjust Space Between Asian and Latin Text
+docx.paragraph.auto-space-dn	Automatically Adjust Space Between Asian Text and Numbers
+docx.paragraph.kinsoku	Use Asian Rules for Controlling First and Last Characters
+docx.paragraph.word-wrap	Allow Latin Text to Wrap in the Middle of a Word
+docx.paragraph.bidi	Right-to-Left Text Direction
+docx.paragraph.snap-to-grid	Snap to Grid
 docx.page	Page Setup
 docx.line-numbers	Line Numbers
 docx.line-numbers.none	None
@@ -295,7 +292,7 @@ docx.page-number.top-left	Left
 docx.page-number.top-center	Center
 docx.page-number.top-right	Right
 docx.page-number.current	Current Position
-docx.toc	Table of Contents
+docx.table-of-contents	Table of Contents
 docx.cell-borders.all-borders	All Borders
 docx.color-panel.check-6-digit-rgb-value	Check the 6-digit RGB value (e.g. 2A7FC1) and the text selection.
 docx.color-panel.rgb-6-digit-hex	RGB (6-digit hex)
@@ -609,7 +606,7 @@ docx.table.select.table	Select Table
 docx.table.cell-insert	Insert Cells
 docx.table.cell-insert.shift-right	Insert Cells (Shift Right)
 docx.table.cell-insert.shift-down	Insert Cells (Shift Down)
-docx.table.cell-delete	Delete Cells
+docx.table.delete-cell	Delete Cells
 docx.table.cell-delete.shift-left	Delete Cells (Shift Left)
 docx.table.cell-delete.shift-up	Delete Cells (Shift Up)
 docx.toolbar.select-cell	Select Cell
@@ -713,6 +710,8 @@ docx.paste-special.keep-source	Keep Source Formatting
 docx.paste-special.match-format	Match Destination Formatting
 docx.paste-special.text-only	Keep Text Only
 docx.paste-special.format-only	Paste Formatting Only
+docx.paste-special.markdown	Paste as Markdown
+docx.edit.copy-markdown	Copy as Markdown
 docx.options.paste-default	Default Paste Behavior
 docx.options.paste-default.keep-source	Keep Source Formatting (Default)
 docx.options.paste-default.merge-format	Merge Formatting
@@ -777,10 +776,6 @@ docx.picture.layout-in-cell	Layout in Table Cell
 docx.picture.move-with-text	Move with Text
 docx.picture.fix-position-on-page	Fix Position on Page
 docx.picture.zorder	Order (Picture)
-docx.picture.zorder.front	Bring to Front
-docx.picture.zorder.forward	Bring Forward
-docx.picture.zorder.backward	Send Backward
-docx.picture.zorder.back	Send to Back
 docx.toolbar.order-picture	Order (Picture)
 docx.picture.align-distribute	Align & Distribute (Picture)
 docx.picture.align.left	Align Left
@@ -883,7 +878,6 @@ docx.selection-pane	Selection Pane…
 docx.selection-pane.title	Selection
 docx.selection-pane.empty	No shapes or pictures in this document.
 docx.picture.name	Object Name
-docx.accessibility-check	Check Accessibility…
 docx.accessibility.title	Accessibility
 docx.accessibility.passed	No accessibility issues found.
 docx.accessibility.missing-alt	Missing alternative text
@@ -1001,7 +995,6 @@ docx.options.print.update-links	Update linked data before printing
 docx.options.print.backgrounds	Print background colors and images
 docx.options.print.hidden-text	Print hidden text
 docx.options.print.markup	Print Markup
-docx.go-to	Go To…
 docx.goto.title	Go To
 docx.goto.what	Go to what
 docx.goto.page	Page
@@ -1047,7 +1040,6 @@ docx.find.no-selection	No selection
 docx.view.one-page	One Page
 docx.view.multiple-pages	Multiple Pages
 docx.view.page-width	Page Width
-docx.view.zoom-100	100%
 insert.rich-text	Rich Text
 insert.plain-text	Plain Text
 insert.picture-control	Picture Content Control
@@ -1091,7 +1083,6 @@ docx.new-window	New Window
 docx.arrange-all	Arrange All
 docx.split	Split
 docx.remove-split	Remove Split
-docx.view-side-by-side	View Side by Side
 docx.sync-scrolling	Synchronous Scrolling
 docx.reset-window-position	Reset Window Position
 docx.interaction	Mode
@@ -1117,7 +1108,7 @@ docx.find.format.find-active	Find Format
 docx.find.format.replace-active	Replace Format
 docx.toolbar.shape-text-box-format	Shape and Text Box Format…
 docx.text-box-panel.place-cursor-before-after-text	Place the cursor before or after a text box
-docx.toc.manual	Manual Table of Contents
+docx.table-of-contents.manual	Manual Table of Contents
 docx.language	Language
 docx.language.ja	Japanese
 docx.language.en-US	English (United States)
@@ -1166,7 +1157,7 @@ docx.merge-panel.cannot-read-file	Cannot read the file
 docx.merge-panel.there-no-recipient-list	There is no recipient list
 docx.merge-panel.there-no-document	There is no document
 docx.merge-panel.mail-merge	Mail Merge
-docx.merge	Mail Merge…
+docx.mail-merge	Mail Merge…
 merge.done	Saved the results for {n} recipients
 docx.picture-panel.picture-corrections	Picture Corrections
 docx.picture-panel.brightness-10-percent	Brightness −10%
@@ -1345,21 +1336,21 @@ docx.recover-unsaved	Recover Unsaved Files…
 docx.insert.draw-table	Draw Table
 docx.backup-always	Always Create Backup Copy
 _docx.backup-of-stem	Backup of {stem}.wbk
-docx.toc.mark-entry	Mark Table of Contents Entry
-docx.toc.mark-level-1	Level 1
-docx.toc.mark-level-2	Level 2
-docx.toc.mark-level-3	Level 3
-docx.toc.from-entries	Table of Contents from Entries
+docx.table-of-contents.mark-entry	Mark Table of Contents Entry
+docx.table-of-contents.mark-level-1	Level 1
+docx.table-of-contents.mark-level-2	Level 2
+docx.table-of-contents.mark-level-3	Level 3
+docx.table-of-contents.from-entries	Table of Contents from Entries
 docx.editing.select-text-mark-toc-entry	Select the text to mark as a table of contents entry, within one paragraph
-docx.toa.mark	Mark Citation
-docx.toa.mark-category-1	Cases
-docx.toa.mark-category-2	Statutes
-docx.toa.mark-category-3	Other Authorities
-docx.toa.mark-category-4	Rules
-docx.toa.mark-category-5	Treatises
-docx.toa.mark-category-6	Regulations
-docx.toa	Table of Authorities
-docx.toa.update	Update Table of Authorities
+docx.table-of-authorities.mark	Mark Citation
+docx.table-of-authorities.mark-category-1	Cases
+docx.table-of-authorities.mark-category-2	Statutes
+docx.table-of-authorities.mark-category-3	Other Authorities
+docx.table-of-authorities.mark-category-4	Rules
+docx.table-of-authorities.mark-category-5	Treatises
+docx.table-of-authorities.mark-category-6	Regulations
+docx.table-of-authorities	Table of Authorities
+docx.table-of-authorities.update	Update Table of Authorities
 docx.editing.select-text-mark-citation	Select the text to mark as a citation, within one paragraph
 _docx.toa-category-1	Cases
 _docx.toa-category-2	Statutes
@@ -1723,7 +1714,6 @@ docx.insert.icon	Icons…
 docx.insert.smartart	SmartArt
 docx.insert.wordart	WordArt
 docx.insert.wordart-styles	WordArt Styles
-docx.signature-line	Signature Line…
 docx.wordart.style1	Style 1
 docx.wordart.style2	Style 2
 docx.wordart.style3	Style 3
@@ -1773,7 +1763,6 @@ docx.inspect-panel.no-hidden-text	No hidden text was found
 docx.inspect.remove-all	Remove All
 docx.inspect-panel.reinspect	Reinspect
 docx.inspect-panel.reinspection-complete	Reinspection complete
-docx.compatibility-check	Check Compatibility…
 docx.compat.title	Compatibility Checker
 docx.compat.summary-hint	Check for features that may be lost or degraded in earlier versions of Word
 docx.compat.recheck	Recheck
@@ -2103,6 +2092,7 @@ docx.convert.format.rtf	Rich Text Format (.rtf)
 docx.convert.format.txt	Plain Text (.txt)
 docx.convert.format.html	Web Page (.html)
 docx.convert.format.odt	OpenDocument Text (.odt)
+docx.convert.format.md	Markdown Document (.md)
 docx.convert.export-title	Export to Another Format
 docx.convert.export-path	Output file path
 docx.convert.export-btn	Export

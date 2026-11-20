@@ -9,7 +9,7 @@ use crate::shell::scenario::{Scenario, button_probe as buttons};
 
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     vec![
-        ("shell::menus_20261112_docx_shape_submenu_is_a_grid_of_eight_small_tiles", shape_submenu),
+        ("shell::menus_20261112_docx_shape_submenu_is_a_grid_of_four_small_tiles", shape_submenu),
         ("shell::menus_20261112_docx_text_box_item_is_above_the_pictures", text_box_item),
         ("shell::menus_20261112_pptx_text_box_item_is_above_the_pictures", pptx_text_box_item),
         ("shell::menus_20261112_docx_chart_submenu_pictures_insert", chart_submenu),
@@ -18,7 +18,7 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
 
 const DOCX: &str = "test/editing/docx-report.docx";
 
-fn path_to(entries: &[MenuEntry], id: &str) -> Option<Vec<usize>> {
+pub(super) fn path_to(entries: &[MenuEntry], id: &str) -> Option<Vec<usize>> {
     let focusable = |e: &MenuEntry| match e {
         MenuEntry::Item(item) => item.enabled(),
         MenuEntry::Submenu(_) => true,
@@ -39,7 +39,7 @@ fn path_to(entries: &[MenuEntry], id: &str) -> Option<Vec<usize>> {
     None
 }
 
-fn open_submenu(s: &mut Scenario, id: &str, label: &str) {
+pub(super) fn open_submenu(s: &mut Scenario, id: &str, label: &str) {
     let (index, path) = s.with(|e, _| {
         let menus = e.menu_bar_menus();
         let index = menus.menus.iter().position(|(m, _)| *m == MenuId::Insert).expect("the insert menu");
@@ -80,13 +80,14 @@ fn counts(s: &mut Scenario) -> (usize, usize) {
     })
 }
 
-fn center(id: &str) -> (f32, f32) {
+pub(super) fn center(id: &str) -> (f32, f32) {
     let b = buttons::bounds(id).unwrap_or_else(|| panic!("no tile {id}"));
     (f32::from(b.center().x), f32::from(b.center().y))
 }
 
-/// The shapes are small tiles, eight to a row, each picture half as wide as a chart's: the six lines and the rectangle and the rounded
-/// rectangle share the first row, the ellipse starts the next; a click on a tile arms the shape and a drag on the page inserts it.
+/// The shapes are small tiles, four to a row (K0031), each picture half as wide as a chart's: the first four lines share the first row, the
+/// two curves and the rectangle and the rounded rectangle the second, the ellipse starts the third; a click on a tile arms the shape and a
+/// drag on the page inserts it.
 fn shape_submenu() {
     let _probe = buttons::Probe::new();
     let mut s = Scenario::open(DOCX);
@@ -95,13 +96,14 @@ fn shape_submenu() {
     let ids: Vec<String> = buttons::all().into_iter().filter(|id| id.starts_with("menu-item-docx.shape.") || id.starts_with("menu-item-shape.")).collect();
     assert!(ids.len() >= 12, "the lines and the shapes are tiles: {ids:?}");
     let at = |id: &str| buttons::bounds(id).unwrap_or_else(|| panic!("no tile {id}"));
-    let (line, arrow, rect, round, ellipse) = (at("menu-item-docx.shape.line"), at("menu-item-docx.shape.arrow"), at("menu-item-shape.rect"), at("menu-item-shape.roundRect"), at("menu-item-shape.ellipse"));
-    let curved_arrow = at("menu-item-docx.shape.curved-arrow");
-    assert_eq!(line.origin.y, curved_arrow.origin.y, "the six lines share a row");
-    assert!(arrow.origin.x > line.origin.x && curved_arrow.origin.x > arrow.origin.x, "left to right");
-    assert_eq!(rect.origin.y, line.origin.y, "the grid is one block: the shapes fill the lines' row");
+    let (line, arrow, elbow_arrow) = (at("menu-item-docx.shape.line"), at("menu-item-docx.shape.arrow"), at("menu-item-docx.shape.elbow-arrow"));
+    let (curved_arrow, rect, round, ellipse) = (at("menu-item-docx.shape.curved-arrow"), at("menu-item-shape.rect"), at("menu-item-shape.roundRect"), at("menu-item-shape.ellipse"));
+    assert_eq!(line.origin.y, elbow_arrow.origin.y, "four to a row");
+    assert!(arrow.origin.x > line.origin.x && elbow_arrow.origin.x > arrow.origin.x, "left to right");
+    assert!(curved_arrow.origin.y > line.origin.y, "the fifth tile is on the next row");
+    assert_eq!(rect.origin.y, curved_arrow.origin.y, "the grid is one block: the shapes fill the lines' row");
     assert_eq!(rect.origin.y, round.origin.y);
-    assert!(ellipse.origin.y > round.origin.y, "eight to a row");
+    assert!(ellipse.origin.y > round.origin.y, "four to a row");
     // A tile is the chart tile's picture halved (116 / 2 = 58 plus the 4 px padding at both sides), a picture over a name.
     assert_eq!(f32::from(line.size.width), 58. + 8., "a tile's picture is half a chart tile's");
     assert_eq!(f32::from(round.origin.x - rect.origin.x), f32::from(rect.size.width), "tiles touch");
@@ -126,13 +128,11 @@ fn chart_submenu() {
     let pie = center("menu-item-pptx.insert-chart.column");
     let column = buttons::bounds("menu-item-pptx.insert-chart.column").expect("a tile");
     let stacked = buttons::bounds("menu-item-pptx.insert-chart.stacked-column").expect("a tile");
-    assert_eq!(column.origin.y, stacked.origin.y, "tiles, four to a row");
+    assert_eq!(column.origin.y, stacked.origin.y, "tiles, three to a row");
     let third = buttons::bounds("menu-item-pptx.insert-chart.percent-stacked-column").expect("a tile");
     let fourth = buttons::bounds("menu-item-pptx.insert-chart.3d-clustered-column").expect("a tile");
-    let fifth = buttons::bounds("menu-item-pptx.insert-chart.3d-stacked-column").expect("a tile");
-    assert_eq!(column.origin.y, third.origin.y, "tiles, four to a row");
-    assert_eq!(column.origin.y, fourth.origin.y, "tiles, four to a row");
-    assert!(fifth.origin.y > column.origin.y, "the fifth tile is on the next row");
+    assert_eq!(column.origin.y, third.origin.y, "tiles, three to a row (K0032)");
+    assert!(fourth.origin.y > column.origin.y, "the fourth tile is on the next row");
     // The pictures further down (lines, pies, scatter charts…): the submenu scrolled, and a picture of each stage.
     for stage in 1..=3 {
         s.wheel((636., 420.), -400.);

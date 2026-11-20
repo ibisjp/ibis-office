@@ -202,12 +202,12 @@ impl SlideEditor {
 
     pub(super) fn duplicate_conditional_rule(&mut self, index: usize, rule: usize, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(slide) = self.conditional_manager_slide() else { return };
-        self.run_conditional_manager(vec![Command::Sheet(SheetCommand::DuplicateConditionalRule { slide, index, rule })], cx);
+        self.run_conditional_manager(vec![Command::Sheet(SheetCommand::DuplicateConditionalRule { sheet: slide, index, rule })], cx);
     }
 
     pub(super) fn delete_conditional_rule(&mut self, index: usize, rule: usize, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(slide) = self.conditional_manager_slide() else { return };
-        self.run_conditional_manager(vec![Command::Sheet(SheetCommand::DeleteConditionalRule { slide, index, rule })], cx);
+        self.run_conditional_manager(vec![Command::Sheet(SheetCommand::DeleteConditionalRule { sheet: slide, index, rule })], cx);
     }
 
     /// A rule row dropped on another: the rule moves to that place in the evaluation order (one undo step).
@@ -230,7 +230,7 @@ impl SlideEditor {
             return;
         }
         // The rule moves one place at a time, so the whole move is one command list (one undo step).
-        let commands = (0..at.abs_diff(to)).map(|_| Command::Sheet(SheetCommand::MoveConditionalRule { slide, index: from.0, rule: from.1, up: to < at })).collect();
+        let commands = (0..at.abs_diff(to)).map(|_| Command::Sheet(SheetCommand::MoveConditionalRule { sheet: slide, index: from.0, rule: from.1, up: to < at })).collect();
         self.run_conditional_manager(commands, cx);
     }
 

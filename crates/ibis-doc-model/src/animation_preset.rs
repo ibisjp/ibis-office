@@ -81,27 +81,27 @@ impl BehaviorTime {
     }
 }
 
-/// Smooth start and end (`accel`, `decel`, 1/1000 % of the time each; SMIL 3.0 / ECMA-376 19.5.3): the speed rises over the first
-/// `accel` and falls over the last `decel` of the time, the share of the way `p` (0 to 1) being the distance covered.
+/// Smooth start and end (`accel`, `decel`, 1/1000 % of the time each; ECMA-376 19.5.3): the speed rises over the first `accel` and falls
+/// over the last `decel` of the time, the share of the way `p` (0 to 1) being the distance covered. The speed rises as a half cosine
+/// (not SMIL's straight ramp, whose distance is a quadratic): PowerPoint's videos of 16 effects with 9 settings of (accel, decel) at 1 s
+/// and 2 s (Windows, 2026-11-18, `tasks/doc/requests/2026-11-18-89-accel-decel-result.md`) agree with it to 0.5 to 1 px
+/// (SMIL's: 8 to 100 px). With `V = 1 / (1 - a/2 - d/2)` the speed in the middle, the distance is `V (p/2 - a sin(pi p / a) / (2 pi))` in
+/// the first `a`, `V (p - a/2)` after it, and the same turned round in the last `d`. `accel + decel` over 1 leaves `decel = 1 - accel`.
 pub fn ease(p: f64, accel: u32, decel: u32) -> f64 {
     let p = p.clamp(0.0, 1.0);
     if accel == 0 && decel == 0 {
         return p;
     }
-    let (mut a, mut d) = (f64::from(accel) / 100_000.0, f64::from(decel) / 100_000.0);
-    let total = a + d;
-    if total > 1.0 {
-        a /= total;
-        d /= total;
-    }
-    let v_max = 2.0 / (2.0 - a - d);
-    if a > 0.0 && p <= a {
-        0.5 * (v_max / a) * p * p
-    } else if d > 0.0 && p >= 1.0 - d {
-        let remain = 1.0 - p;
-        1.0 - 0.5 * (v_max / d) * remain * remain
+    let a = (f64::from(accel) / 100_000.0).clamp(0.0, 1.0);
+    let d = (f64::from(decel) / 100_000.0).clamp(0.0, 1.0 - a);
+    let v = 1.0 / (1.0 - a / 2.0 - d / 2.0);
+    let ramp = |x: f64, len: f64| v * (x / 2.0 - len * (std::f64::consts::PI * x / len).sin() / (2.0 * std::f64::consts::PI));
+    if a > 0.0 && p < a {
+        ramp(p, a)
+    } else if d > 0.0 && p > 1.0 - d {
+        1.0 - ramp(1.0 - p, d)
     } else {
-        0.5 * a * v_max + v_max * (p - a)
+        v * (p - a / 2.0)
     }
 }
 
@@ -455,8 +455,22 @@ fn opaque_motion_path(raw: &str) -> Option<&str> {
 
 /// The state the `behaviours` of an effect leave the shape in `ms` after the effect begins; `b` is the shape's own box.
 pub fn sample(behaviours: &[AnimBehavior], ms: f64, b: PptBox) -> PresetState {
+    sample_eased(behaviours, ms, b, (0, 0))
+}
+
+/// [`sample`] for an effect whose own time node says `parent` = (`accel`, `decel`): each behaviour's smooth start and end is the effect's where
+/// that is not 0, else its own, applied to its own stretch of time (PowerPoint's videos: the effect's value does not stretch over the
+/// whole effect, a behaviour that begins late or ends early runs its own curve; a behaviour's own `decel` stays when the effect's is 0).
+pub fn sample_eased(behaviours: &[AnimBehavior], ms: f64, b: PptBox, parent: (u32, u32)) -> PresetState {
+    // The behaviours act in the order they begin (the file lists them as it likes): ジッパー（終了） lists the shrink that begins at
+    // 1230 ms before the growth that ends there, and the growth must not undo the shrink (PowerPoint's video, 24 frames of 2 s).
+    if behaviours.windows(2).any(|w| w[0].begin > w[1].begin) {
+        let mut sorted = behaviours.to_vec();
+        sorted.sort_by_key(|b| b.begin);
+        return sample_eased(&sorted, ms, b, parent);
+    }
     let mut s = PresetState::default();
-    for bh in behaviours {
+    for (idx, bh) in behaviours.iter().enumerate() {
         if ms < f64::from(bh.begin) {
             continue;
         }
@@ -473,10 +487,18 @@ pub fn sample(behaviours: &[AnimBehavior], ms: f64, b: PptBox) -> PresetState {
             } else {
                 x.min(1.0)
             };
-            bh.time.filtered(ease(x, bh.time.accel, bh.time.decel))
+            bh.time.filtered(ease(x, if parent.0 != 0 { parent.0 } else { bh.time.accel }, if parent.1 != 0 { parent.1 } else { bh.time.decel }))
         };
-        // Where the shape is now (`ppt_x` without the `#`): what the behaviours before this one have left.
-        let cur = PptBox { x: s.x.unwrap_or(b.x), y: s.y.unwrap_or(b.y), w: s.w.unwrap_or(b.w), h: s.h.unwrap_or(b.h) };
+        // Where the shape is (`ppt_x` without the `#`) when this behaviour begins: what the behaviours before this one have left by
+        // then. A behaviour that begins with the effect sees the shape's own box, however far the behaviours running beside it have
+        // got (フリップ（終了）: the width goes to -2 times itself while the shift is half of the width it began with: its
+        // centre moves by 0.5 of the width, not by the changing one; PowerPoint's video, frames 0 to 24 of 1 s).
+        let cur = if bh.begin == 0 {
+            b
+        } else {
+            let before = sample_eased(&behaviours[..idx], f64::from(bh.begin), b, parent);
+            PptBox { x: before.x.unwrap_or(b.x), y: before.y.unwrap_or(b.y), w: before.w.unwrap_or(b.w), h: before.h.unwrap_or(b.h) }
+        };
         match &bh.kind {
             BehaviorKind::Set { attr, value } => {
                 if attr == "style.visibility" {
@@ -649,16 +671,47 @@ pub fn scatter(i: usize) -> f64 {
     (x % 1000) as f64 / 1000.0
 }
 
+/// A progress from 0 to 1 over `t` (0 to 1) that speeds up over the first `a` of the time, goes steadily, and slows down over the last `a`.
+fn trapezoid(t: f64, a: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    let v = 1.0 / (1.0 - a);
+    if t < a {
+        v * t * t / (2.0 * a)
+    } else if t > 1.0 - a {
+        1.0 - v * (1.0 - t) * (1.0 - t) / (2.0 * a)
+    } else {
+        v * (t - a / 2.0)
+    }
+}
+
 /// How many slices a round or diagonal filter is drawn in (rectangles are all a window clips to).
 const SLICES: usize = 10;
 const SLATS: usize = 6;
 const BARS: usize = 12;
 /// The bands and columns a sector is drawn in.
-const SECTOR_ROWS: usize = 24;
-const SECTOR_COLS: usize = 96;
+const SECTOR_ROWS: usize = 180;
+const SECTOR_COLS: usize = 320;
 /// The squares ディゾルブ is drawn in.
-const DISSOLVE_ROWS: usize = 18;
-const DISSOLVE_COLS: usize = 32;
+/// The squares ディゾルブ is drawn in (PowerPoint's picture is finer: see `dissolve_value`).
+const DISSOLVE_ROWS: usize = 64;
+const DISSOLVE_COLS: usize = 64;
+/// The lattice of random values PowerPoint's ディゾルブ is made of, along each side of the shape.
+const DISSOLVE_LATTICE: usize = 256;
+
+/// The random picture of ディゾルブ at (`u`, `v`) (0 to 1 across the shape's box): a lattice of 256 x 256 fixed random values, linearly interpolated, stretched to
+/// the shape's bounding box. PowerPoint for Windows (1080p and 720p, 60 and 30 frames a second, shapes of 20, 50 and 100 % of the slide's width, 16:9 and 4:3):
+/// the autocorrelation's half width of the mask is 0.0021 of the shape's width and 0.0022 of its height, in every size, 256 lattice points give the correlations
+/// measured along both axes, the same picture stretched to each box matches 96 to 97 % of the pixels, and it is the same in every run.
+fn dissolve_value(u: f64, v: f64) -> f64 {
+    let n = DISSOLVE_LATTICE;
+    let (x, y) = (u.clamp(0.0, 1.0) * (n - 1) as f64, v.clamp(0.0, 1.0) * (n - 1) as f64);
+    let (i, j) = ((x.floor() as usize).min(n - 2), (y.floor() as usize).min(n - 2));
+    let (fx, fy) = (x - i as f64, y - j as f64);
+    let at = |a: usize, b: usize| scatter(b * n + a);
+    let top = at(i, j) * (1.0 - fx) + at(i + 1, j) * fx;
+    let bottom = at(i, j + 1) * (1.0 - fx) + at(i + 1, j + 1) * fx;
+    top * (1.0 - fy) + bottom * fy
+}
 
 /// The pattern of filter `name(arg)` at `q` of its way in, as cells; `None` for a filter that is not drawn as rectangles.
 /// `aspect` is the frame's width over its height.
@@ -723,15 +776,23 @@ fn cells(name: &str, arg: &str, q: f64, aspect: f64) -> Option<Vec<Cell>> {
             )
         }
         "checkerboard" => {
-            const N: usize = 4;
+            // 6 x 6 cells of the shape's own size, every second row (across) or column (down) shifted by half a cell, all
+            // cells moving together, each anchored at the left (across) or the top (down) (PowerPoint's video of the exit, a shape
+            // of 480 x 180 pt: the holes are 6 per row 107 px apart in 1280 px frames, the rows 40 px).
+            const N: usize = 6;
             let across = arg != "down";
+            let size = 1.0 / N as f64;
+            let clip = |r: Rect| -> Rect { [r[0].clamp(0.0, 1.0), r[1].clamp(0.0, 1.0), r[2].clamp(0.0, 1.0), r[3].clamp(0.0, 1.0)] };
             let mut out = Vec::new();
-            for row in 0..N {
-                for col in 0..N {
-                    let outer: Rect = [col as f64 / N as f64, row as f64 / N as f64, (col + 1) as f64 / N as f64, (row + 1) as f64 / N as f64];
-                    // The squares of one colour first, the others after.
-                    let local = if (row + col) % 2 == 0 { (q * 2.0).min(1.0) } else { (q * 2.0 - 1.0).max(0.0) };
-                    out.push(Cell { outer, inner: strip(outer, if across { 'l' } else { 't' }, local), ring: false });
+            for line in 0..N {
+                let shift = if line % 2 == 1 { 0.5 } else { 0.0 };
+                for k in 0..=N {
+                    let a = (k as f64 - shift) * size;
+                    if a >= 1.0 - 1e-9 || a + size <= 1e-9 {
+                        continue;
+                    }
+                    let outer: Rect = if across { [a, line as f64 * size, a + size, (line + 1) as f64 * size] } else { [line as f64 * size, a, (line + 1) as f64 * size, a + size] };
+                    out.push(Cell { outer: clip(outer), inner: clip(strip(outer, if across { 'l' } else { 't' }, q)), ring: false });
                 }
             }
             Some(out)
@@ -798,9 +859,10 @@ fn cells(name: &str, arg: &str, q: f64, aspect: f64) -> Option<Vec<Cell>> {
 
 /// The part of the frame (fractions of it) inside a sector shape, as rectangles: `rows` bands, in each the runs of `cols` cells
 /// whose centre `inside` says is in. `inside` is given the angle of the cell's centre from the frame's centre, in degrees,
-/// clockwise from straight up (0 to 360). Rectangles are all a window clips to, so a sector is a staircase of them. `aspect`
-/// is the frame's width over its height (the angle is of the picture, not of the unit square).
-pub fn sector_rects(rows: usize, cols: usize, aspect: f64, inside: &dyn Fn(f64) -> bool) -> Vec<Rect> {
+/// clockwise from straight up (0 to 360), taken in the frame's own units (half its width and half its height are both 1, so a
+/// wide frame's sector spreads sideways by its width: the angle of PowerPoint's transition wheel is measured so, see
+/// `transition_plan::soft_phi`; `aspect` is no longer used by it). A sector is a staircase of rectangles.
+pub fn sector_rects(rows: usize, cols: usize, _aspect: f64, inside: &dyn Fn(f64) -> bool) -> Vec<Rect> {
     let mut out = Vec::new();
     for r in 0..rows {
         let y = (r as f64 + 0.5) / rows as f64;
@@ -808,7 +870,7 @@ pub fn sector_rects(rows: usize, cols: usize, aspect: f64, inside: &dyn Fn(f64) 
         for c in 0..=cols {
             let hit = c < cols && {
                 let x = (c as f64 + 0.5) / cols as f64;
-                let angle = ((x - 0.5) * aspect).atan2(0.5 - y).to_degrees();
+                let angle = (2.0 * x - 1.0).atan2(1.0 - 2.0 * y).to_degrees();
                 inside(angle.rem_euclid(360.0))
             };
             match (hit, run) {
@@ -837,6 +899,196 @@ fn swept_sectors(name: &str, arg: &str, q: f64, aspect: f64, rows: usize, cols: 
     let width = 360.0 / spokes as f64;
     let swept = width * q;
     sector_rects(rows, cols, aspect, &|a: f64| a.rem_euclid(width) <= swept)
+}
+
+/// The soft edge of ホイール (the width of the band as a share of a spoke's sector) and the ends of the sweep, measured on PowerPoint
+/// for Windows (Microsoft 365, `CreateVideo` 1280 x 720, 30 frames a second, 2 seconds, a red box of 12 x 3, 5 x 5 and 3 x 7 inches
+/// on white, spokes 1, 2, 3, 4 and 8, 15 slides for 開始 and for 終了; the new look's share of each pixel against the angle clockwise
+/// from straight up in the box's own units, modulo the sector, `1 - B((phi - c) / w + 1/2)` with B the half cosine step, per frame):
+/// `w` is 0.195 to 0.205 of the sector (median 0.197) for every box and spoke count, `c` runs at a constant speed over the effect's
+/// time (frame by frame it goes 0.0187 of a sector, the same in the first and the last frames) from -0.065..-0.08 to 1.063..1.082
+/// (taken as -0.07 and 1.07); one set of these for all 15 slides leaves an rms error of 0.011 to 0.043 of the share per frame
+/// (mean 0.023; the higher with 8 spokes, whose hard edges are thin). The same for 終了, whose box is what has not been swept.
+const WHEEL_BAND: f64 = 0.197;
+/// The soft edge of the animations' circle, diamond, plus and wedge as a share of the distance the shape covers (`big` of `transition_plan::soft_phi`; a slide
+/// transition's is a third of it), the same as ホイール's share of a sector. Measured on PowerPoint for Windows (`CreateVideo`, 1280 x 720, 30 frames a second,
+/// 2 seconds, a shape of 640 x 240 px, the new look's share of each pixel against `phi`, `1 - B((phi - c) / w + 1/2)`, per frame): w / big 0.188 to 0.197 (median
+/// 0.195) in 円 内・外, ひし形 内・外, プラス 内・外, くさび, ボックス 内・外 and スプリット (外, both ways: 0.097 of the whole extent, `big` being its half; rms error of the
+/// share 0.007 to 0.026), `c` at a constant speed from -w/2 to big + w/2, as the transitions.
+const SOFT_BAND: f64 = WHEEL_BAND;
+const WHEEL_C0: f64 = -0.07;
+const WHEEL_C1: f64 = 1.07;
+const WHEEL_ROWS: usize = 180;
+const WHEEL_COLS: usize = 320;
+const WHEEL_LEVELS: usize = 32;
+
+/// The share (0 to 1) of the new look at `phi` (0 to 1 of the sector, from where the sweep started) of ホイール at `q` of its time.
+pub fn wheel_share(phi: f64, q: f64) -> f64 {
+    let c = WHEEL_C0 + (WHEEL_C1 - WHEEL_C0) * q.clamp(0.0, 1.0);
+    let u = ((phi - c) / WHEEL_BAND + 0.5).clamp(0.0, 1.0);
+    1.0 - (1.0 - (std::f64::consts::PI * u).cos()) / 2.0
+}
+
+/// ストリップ of an animation at `q` (0 to 1): the shape's 16 x 15 blocks with their opacity, sweeping from the corner `(x0, y0)`.
+/// Going out (`!enter`) the blocks the sweep has not reached stay.
+fn strips_tiles(x0: f64, y0: f64, q: f64, enter: bool) -> Vec<(Rect, f64)> {
+    const COLS: usize = 16;
+    const ROWS: usize = 15;
+    let mut out = Vec::new();
+    for j in 0..ROWS {
+        for i in 0..COLS {
+            let rect: Rect = [i as f64 / COLS as f64, j as f64 / ROWS as f64, (i + 1) as f64 / COLS as f64, (j + 1) as f64 / ROWS as f64];
+            let s = (((rect[0] + rect[2]) / 2.0 - x0).abs() + ((rect[1] + rect[3]) / 2.0 - y0).abs()) / 2.0;
+            let u = ((q - 0.87 * s) / 0.13).clamp(0.0, 1.0);
+            let alpha = (1.0 - (std::f64::consts::PI * u).cos()) / 2.0;
+            let alpha = if enter { alpha } else { 1.0 - alpha };
+            if alpha > 0.004 {
+                out.push((rect, alpha));
+            }
+        }
+    }
+    out
+}
+
+/// Like `reveal_rects`, with an opacity for each window: ホイール has a soft front (`wheel_share`), the others are whole (1).
+pub fn reveal_windows(filter: &str, enter: bool, progress: f64, aspect: f64) -> Option<Vec<(Rect, f64)>> {
+    reveal_windows_sized(filter, enter, progress, aspect, None)
+}
+
+/// The share of a point (0.75 pt, a pixel of the 96 dpi PowerPoint's 1280 x 720 video) a bar of ランダム ストライプ is thick.
+const RANDOM_BAR_PT: f64 = 0.75;
+
+/// ランダム ストライプ at `progress`: the shape cut into bars a pixel thick (`extent_pt` long across), each coming in (or going) at a time of its own, all of
+/// them uniformly between a tenth and nine tenths of the effect's time. Measured on PowerPoint for Windows (`CreateVideo`, 1280 x 720, 30 frames a
+/// second, a shape of 640 x 240 px, 15 frames of effect): per row (水平) and per column (垂直) every bar is a pixel (425 of 645 runs of a single column, 207 of
+/// 245 rows), switches once and without a fade (0.1 % of the rows' pixels in between), at frames spread evenly over 12 of the 15 (counts 5 to 74 over 12 frames).
+fn random_bars(horizontal: bool, enter: bool, q: f64, extent_pt: f64) -> Vec<Rect> {
+    let n = ((extent_pt / RANDOM_BAR_PT).ceil() as usize).clamp(1, 4096);
+    let shown = |i: usize| (q >= 0.1 + 0.8 * scatter(i)) == enter;
+    let mut out = Vec::new();
+    let mut start: Option<usize> = None;
+    for i in 0..=n {
+        match (i < n && shown(i), start) {
+            (true, None) => start = Some(i),
+            (false, Some(a)) => {
+                let (a, z) = (a as f64 / n as f64, i as f64 / n as f64);
+                out.push(if horizontal { [0.0, a, 1.0, z] } else { [a, 0.0, z, 1.0] });
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// `reveal_windows` for a shape of `size_pt` (width, height in points), when it is known: ランダム ストライプ takes its bars from the size.
+pub fn reveal_windows_sized(filter: &str, enter: bool, progress: f64, aspect: f64, size_pt: Option<(f64, f64)>) -> Option<Vec<(Rect, f64)>> {
+    let (name, arg) = split_filter(filter);
+    if name == "randombar" && let Some((w, h)) = size_pt {
+        let horizontal = arg != "vertical";
+        let q = progress.clamp(0.0, 1.0);
+        return Some(random_bars(horizontal, enter, q, if horizontal { h } else { w }).into_iter().map(|r| (r, 1.0)).collect());
+    }
+    if name == "wipe" {
+        // ワイプ (and the wipe of のぞき込み): a soft edge, a linear ramp of opacity a seventh of the shape's extent along the wipe, whose front runs
+        // from a ramp's width before the start edge to the far edge at a constant speed (PowerPoint for Windows, the video of the 291 effects,
+        // 0.5 s at 30 frames a second, a shape of 645 x 245 px, the four directions: the 10 % to 90 % part of the ramp is 0.113 of the width
+        // (0.110 to 0.114 of the height), that is a ramp of 0.142 = 1/7; the opacity falls by 0.087 per 8 px of 92, a straight line; the mean
+        // opacity rises by 0.0755 a frame, 15 frames, 1 + 1/7 of the extent in all). Going out, what is left is the opposite opacity.
+        const WIPE_BAND: f64 = 1.0 / 7.0;
+        const STRIPS: usize = 96;
+        let q = progress.clamp(0.0, 1.0);
+        let from = match arg {
+            "left" => 'l',
+            "right" => 'r',
+            "up" => 't',
+            _ => 'b',
+        };
+        let front = q * (1.0 + WIPE_BAND);
+        let mut out = Vec::new();
+        for i in 0..STRIPS {
+            let (a, z) = (i as f64 / STRIPS as f64, (i + 1) as f64 / STRIPS as f64);
+            let mid = (a + z) / 2.0;
+            let (rect, distance): (Rect, f64) = match from {
+                'l' => ([a, 0.0, z, 1.0], mid),
+                'r' => ([a, 0.0, z, 1.0], 1.0 - mid),
+                't' => ([0.0, a, 1.0, z], mid),
+                _ => ([0.0, a, 1.0, z], 1.0 - mid),
+            };
+            let shown = ((front - distance) / WIPE_BAND).clamp(0.0, 1.0);
+            let alpha = if enter { shown } else { 1.0 - shown };
+            if alpha > 0.004 {
+                out.push((rect, alpha));
+            }
+        }
+        return Some(out);
+    }
+    if name == "wheel" {
+        let spokes = arg.parse::<usize>().ok().filter(|n| (1..=16).contains(n)).unwrap_or(4);
+        let sector = 360.0 / spokes as f64;
+        let q = progress.clamp(0.0, 1.0);
+        let share: Vec<Vec<f64>> = (0..WHEEL_ROWS)
+            .map(|r| {
+                let y = (r as f64 + 0.5) / WHEEL_ROWS as f64;
+                (0..WHEEL_COLS)
+                    .map(|c| {
+                        let x = (c as f64 + 0.5) / WHEEL_COLS as f64;
+                        let angle = (2.0 * x - 1.0).atan2(1.0 - 2.0 * y).to_degrees().rem_euclid(360.0);
+                        let s = wheel_share(angle.rem_euclid(sector) / sector, q);
+                        if enter { s } else { 1.0 - s }
+                    })
+                    .collect()
+            })
+            .collect();
+        return Some(crate::transition_plan::share_windows_of_levels(&share, WHEEL_LEVELS));
+    }
+    if matches!(name, "circle" | "diamond" | "plus" | "wedge" | "box" | "barn" | "split") {
+        // 円・ひし形・プラス・くさび: the slide transitions' soft shapes (`transition_plan::soft_shape_alpha_band`), in the shape's own box (a circle is
+        // an ellipse in a wide box), with the narrower soft edge of the animations (`SOFT_BAND`). `(in)` enters from the outside.
+        use crate::transition_plan::{SoftShape, soft_shape_alpha_band, SOFT_COLUMNS, SOFT_LEVELS, SOFT_ROWS};
+        let shape = match name {
+            "circle" => SoftShape::Circle,
+            "diamond" => SoftShape::Diamond,
+            "plus" => SoftShape::Plus,
+            "box" => SoftShape::Box,
+            // スプリット: `outVertical` opens along the width, `outHorizontal` along the height; `in...` closes in from the sides.
+            "barn" | "split" => if arg.contains("ertical") { SoftShape::SplitAcross } else { SoftShape::SplitDown },
+            _ => SoftShape::Wedge,
+        };
+        let inward = if matches!(name, "barn" | "split") { arg.starts_with("in") } else { arg == "in" };
+        let q = progress.clamp(0.0, 1.0);
+        let share: Vec<Vec<f64>> = (0..SOFT_ROWS)
+            .map(|r| {
+                let y = (r as f64 + 0.5) / SOFT_ROWS as f64;
+                (0..SOFT_COLUMNS)
+                    .map(|c| {
+                        let x = (c as f64 + 0.5) / SOFT_COLUMNS as f64;
+                        let s = soft_shape_alpha_band(shape, 0, inward, q, x, y, 1.0, Some(SOFT_BAND));
+                        if enter { s } else { 1.0 - s }
+                    })
+                    .collect()
+            })
+            .collect();
+        return Some(crate::transition_plan::share_windows_of_levels(&share, SOFT_LEVELS));
+    }
+    if name == "strips" {
+        // ストリップ: a soft diagonal sweep from the corner the content comes from (`strips(downLeft)` moves down and left, so it
+        // starts at the top right, as the slide transition's strips do). Measured on PowerPoint for Windows (the video of the 291
+        // effects, 0.5 s, the four directions, a shape of 640 x 240 px on 1280 x 720): the shape is 16 x 15 blocks (40 x 16 px; the
+        // count for other sizes is not measured), each fading in by the cosine of `u = (q - 0.87 s) / 0.13`, `q` the share of the
+        // time and `s` (0 to 1) the sum of the block's distances from the corner over 2; rms error of the share 0.029 in all four.
+        let (x0, y0) = match arg {
+            "downLeft" => (1.0, 0.0),
+            "downRight" => (0.0, 0.0),
+            "upRight" => (0.0, 1.0),
+            _ => (1.0, 1.0),
+        };
+        // Going out the sweep starts at the opposite corner (the content leaves the way it came: 0.7 % against 4.2 % with the
+        // coming-in corner, the exits of the 291 effects).
+        let (x0, y0) = if enter { (x0, y0) } else { (1.0 - x0, 1.0 - y0) };
+        return Some(strips_tiles(x0, y0, progress.clamp(0.0, 1.0), enter));
+    }
+    reveal_rects(filter, enter, progress, aspect).map(|v| v.into_iter().map(|r| (r, 1.0)).collect())
 }
 
 /// The rectangles of the frame (fractions) that are shown while filter `filter` has run `progress` of its time, bringing the shape
@@ -879,12 +1131,13 @@ pub fn reveal_rects(filter: &str, enter: bool, progress: f64, aspect: f64) -> Op
         }));
     }
     if name == "dissolve" {
-        // ディゾルブ: the frame cut into small squares, each taking its turn (by its own share, `scatter`) to appear (or to go).
+        // ディゾルブ: the frame cut into small squares, each appearing (or going) when the threshold, which runs from 0 to 1 with the time, passes its value of the
+        // random picture (`dissolve_value`); the share of the shape drawn then follows an S (0.077 at 0.64 s of 2, 0.30 at 0.8 s, 0.5 at 1.0 s, 0.946 at 1.6 s: PowerPoint's).
         let mut v = Vec::new();
         for r in 0..DISSOLVE_ROWS {
             let mut run: Option<usize> = None;
             for c in 0..=DISSOLVE_COLS {
-                let shown = c < DISSOLVE_COLS && (scatter(r * DISSOLVE_COLS + c) < q) == enter;
+                let shown = c < DISSOLVE_COLS && (dissolve_value((c as f64 + 0.5) / DISSOLVE_COLS as f64, (r as f64 + 0.5) / DISSOLVE_ROWS as f64) < q) == enter;
                 match (shown, run) {
                     (true, None) => run = Some(c),
                     (false, Some(start)) => {
@@ -896,6 +1149,15 @@ pub fn reveal_rects(filter: &str, enter: bool, progress: f64, aspect: f64) -> Op
             }
         }
         return Some(v);
+    }
+    if name == "blinds" || name == "checkerboard" {
+        // The slats / cells open (and close) along a trapezoid of speed: a start and an end of 13 % of the time each, the middle
+        // faster (PowerPoint's video of the exits, 0.5 s and 4 s: the share left is linear between 6.8 % and 93.2 % of the time and
+        // soft outside it; 6 videos, 130 frames, fitted 0.11 to 0.15). Going out, what is left is the part coming in would show at
+        // the time reversed (the tops of the slats, the left of the cells), not what it leaves out.
+        let p = trapezoid(q, 0.13);
+        let cells = cells(name, arg, if enter { p } else { 1.0 - p }, aspect)?;
+        return Some(cells.into_iter().filter(|c| c.inner[2] > c.inner[0] && c.inner[3] > c.inner[1]).map(|c| c.inner).collect());
     }
     let cells = cells(name, arg, q, aspect)?;
     let mut out = Vec::new();
@@ -939,7 +1201,7 @@ pub struct PresetDef {
 
 macro_rules! preset {
     ($id:literal, $name:literal, [$(($sub:literal, $opt:literal, $filter:literal)),+ $(,)?]) => {
-        PresetDef { id: $id, key: concat!("pptx.anim.preset.", $name), options: &[$(($sub, concat!("pptx.anim.preset.", $name, ".", $opt), $filter)),+] }
+        PresetDef { id: $id, key: concat!("pptx.animation.preset.", $name), options: &[$(($sub, concat!("pptx.animation.preset.", $name, ".", $opt), $filter)),+] }
     };
 }
 
@@ -992,6 +1254,44 @@ mod tests {
         eval_expr(text, &box_var(B, B, Some(0.5)))
     }
 
+    /// The area (of the shape's box, 0 to 1) a filter's windows cover, each at its opacity.
+    fn covered(windows: &[(Rect, f64)]) -> f64 {
+        windows.iter().map(|(r, o)| (r[2] - r[0]) * (r[3] - r[1]) * o).sum()
+    }
+
+    /// The soft shapes are the slide transitions' (one function, `soft_shape_alpha_band`) with the animations' narrower edge: a diamond coming in from the outside leaves
+    /// the middle and a band of soft edge, and what it brings in is the rest; going out is the other way round.
+    #[test]
+    fn circle_diamond_plus_and_wedge_have_a_soft_edge() {
+        for filter in ["circle(out)", "circle(in)", "diamond(out)", "diamond(in)", "plus(out)", "plus(in)", "wedge", "box(out)", "box(in)", "barn(outVertical)", "barn(inVertical)", "barn(outHorizontal)", "barn(inHorizontal)"] {
+            let at = |enter: bool, p: f64| reveal_windows(filter, enter, p, 4.0 / 3.0).map(|w| covered(&w)).expect(filter);
+            assert!(at(true, 0.0) < 0.01 && at(true, 1.0) > 0.99, "{filter}: {} {}", at(true, 0.0), at(true, 1.0));
+            assert!(at(false, 0.0) > 0.99 && at(false, 1.0) < 0.01, "{filter}");
+            // Growing steadily: the share shown is not hard-edged (a hard edge shows only opacities of 1).
+            let w = reveal_windows(filter, true, 0.4, 4.0).unwrap();
+            assert!(w.iter().any(|(_, o)| *o < 0.99) && at(true, 0.3) < at(true, 0.5), "{filter}");
+        }
+        // A diamond coming in leaves from the middle (`out`) or from the corners (`in`): the middle of the box at a third of the time.
+        let middle = |filter: &str| reveal_windows(filter, true, 0.3, 4.0).unwrap().iter().any(|(r, o)| r[0] < 0.5 && r[2] > 0.5 && r[1] < 0.5 && r[3] > 0.5 && *o > 0.9);
+        assert!(middle("diamond(out)") && !middle("diamond(in)"));
+    }
+
+    /// ランダム ストライプ: bars a pixel (0.75 pt) thick, each coming in once, between a tenth and nine tenths of the time; the share shown grows steadily and
+    /// a bar that has come in stays.
+    #[test]
+    fn random_bars_are_pixels_that_come_in_at_random_times() {
+        let size = Some((480.0, 180.0));
+        let share = |filter: &str, enter: bool, p: f64| covered(&reveal_windows_sized(filter, enter, p, 480.0 / 180.0, size).unwrap());
+        for filter in ["randombar(vertical)", "randombar(horizontal)"] {
+            assert!(share(filter, true, 0.05) < 1e-9 && (share(filter, true, 0.95) - 1.0).abs() < 1e-9 && share(filter, false, 0.95) < 1e-9, "{filter}");
+            let (a, b, c) = (share(filter, true, 0.3), share(filter, true, 0.5), share(filter, true, 0.7));
+            assert!(a < b && b < c && (b - 0.5).abs() < 0.08 && (a - 0.25).abs() < 0.08, "{filter}: {a} {b} {c}");
+        }
+        // A bar is a pixel thick: 640 of them across 480 pt, so none is thicker than a few of them.
+        let w = reveal_windows_sized("randombar(vertical)", true, 0.5, 2.0, size).unwrap();
+        assert!(w.len() > 100 && w.iter().all(|(r, o)| *o == 1.0 && r[2] - r[0] < 0.1), "{} windows", w.len());
+    }
+
     #[test]
     fn expressions_are_evaluated() {
         assert_eq!(num("#ppt_x"), Some(0.5));
@@ -1003,6 +1303,34 @@ mod tests {
         // PowerPoint's 'Basic Zoom' from the bottom: `min`/`max` and a number without its leading zero.
         assert!((num("(6*min(max(#ppt_w*#ppt_h,.3),1)-7.4)/-.7*#ppt_w").unwrap() - 0.2 * (6.0 * 0.3 - 7.4) / -0.7).abs() < 1e-9);
         assert_eq!(num("#nope"), None);
+    }
+
+    /// ストリップ coming in starts at the corner opposite to the direction's name (`downLeft` at the top right); going out at the
+    /// other one; its front is soft (blocks at a share between 0 and 1).
+    #[test]
+    fn strips_start_at_the_corner_opposite_the_direction() {
+        let at = |filter: &str, enter: bool, x: f64, y: f64| {
+            let w = reveal_windows(filter, enter, 0.3, 1.0).expect("strips");
+            w.iter().find(|(r, _)| r[0] <= x && x < r[2] && r[1] <= y && y < r[3]).map_or(0.0, |w| w.1)
+        };
+        assert!(at("strips(downLeft)", true, 0.95, 0.05) > at("strips(downLeft)", true, 0.05, 0.95) + 0.5);
+        assert!(at("strips(upLeft)", true, 0.95, 0.95) > at("strips(upLeft)", true, 0.05, 0.05) + 0.5);
+        assert!(at("strips(downLeft)", false, 0.95, 0.05) > at("strips(downLeft)", false, 0.05, 0.95) + 0.5);
+        let soft = reveal_windows("strips(downLeft)", true, 0.5, 1.0).unwrap().iter().filter(|(_, a)| *a > 0.05 && *a < 0.95).count();
+        assert!(soft > 0);
+    }
+
+    /// ホイール is drawn on a grid twice as fine (320 x 180) and with 32 levels of opacity: PowerPoint's edge is smooth to the pixel, and the
+    /// coarser grid (160 x 90, 16 levels) showed steps along it and a square block where 8 spokes meet at the middle.
+    #[test]
+    fn the_wheels_band_has_many_levels() {
+        let w = reveal_windows("wheel(8)", true, 0.5, 1.0).expect("wheel");
+        let mut levels: Vec<u32> = w.iter().map(|(_, a)| (a * 1e6) as u32).collect();
+        levels.sort_unstable();
+        levels.dedup();
+        assert!(levels.len() >= 30, "{}", levels.len());
+        // The middle: no window of a coarse cell's size (1/160 of the width) reaches into it (a window is as thin as a 320th).
+        assert!(w.iter().any(|(r, _)| r[2] - r[0] < 1.5 / 320.0 || r[3] - r[1] < 1.5 / 180.0));
     }
 
     /// Fly-in from the left: x goes from `0-#ppt_w/2` to `#ppt_x`, linearly.
@@ -1033,6 +1361,27 @@ mod tests {
         assert!((v - 0.15).abs() < 1e-9);
     }
 
+    /// ワイプ as the windows a shape is drawn through: a linear ramp a seventh of the extent wide, the front running from before the start
+    /// edge to beyond the far one (PowerPoint for Windows' video of the 291 effects).
+    #[test]
+    fn a_wipe_has_a_soft_linear_edge_a_seventh_wide() {
+        let at = |q: f64, x: f64| -> f64 {
+            let w = reveal_windows("wipe(left)", true, q, 2.0).unwrap();
+            w.iter().find(|(r, _)| r[0] <= x && x < r[2]).map_or(0.0, |&(_, a)| a)
+        };
+        // Nothing at the start, everything at the end.
+        assert!(at(0.0, 0.01) < 0.01 && (at(1.0, 0.99) - 1.0).abs() < 1e-9);
+        // The ramp at half time: its front at 0.5 * 8/7 = 0.5714, the ramp from 0.4286: 10 % at 0.5571 and 90 % at 0.4429.
+        assert!((at(0.5, 0.4429) - 0.9).abs() < 0.03 && (at(0.5, 0.5571) - 0.1).abs() < 0.03);
+        assert!((at(0.5, 0.50) - 0.5).abs() < 0.04);
+        // Going out it is the opposite.
+        let out = reveal_windows("wipe(left)", false, 0.5, 2.0).unwrap();
+        assert!(out.iter().find(|(r, _)| r[0] <= 0.1 && 0.1 < r[2]).is_none());
+        // From the right the same ramp, mirrored.
+        let right = reveal_windows("wipe(right)", true, 0.5, 2.0).unwrap();
+        assert!((right.iter().find(|(r, _)| r[0] <= 0.5 && 0.5 < r[2]).unwrap().1 - 0.5).abs() < 0.04);
+    }
+
     #[test]
     fn a_wipe_covers_the_frame_by_its_progress() {
         let half = reveal_rects("wipe(down)", true, 0.5, 2.0).unwrap();
@@ -1055,6 +1404,12 @@ mod tests {
         let squares = |q: f64, enter: bool| reveal_rects("dissolve", enter, q, 1.0).unwrap().iter().map(|r| (r[2] - r[0]) * (r[3] - r[1])).sum::<f64>();
         assert!(squares(0.0, true) < 0.01 && (squares(1.0, true) - 1.0).abs() < 0.01 && (squares(0.5, true) - 0.5).abs() < 0.08);
         assert!((squares(0.5, true) + squares(0.5, false) - 1.0).abs() < 1e-9);
+        // The share drawn at 0.4 and 0.8 of the time of PowerPoint's (2 s: 0.16 at 0.64 s... the mean opacity 0.30 at 0.8 s, 0.946 at 1.6 s).
+        assert!((squares(0.4, true) - 0.30).abs() < 0.05 && (squares(0.8, true) - 0.946).abs() < 0.04, "{} {}", squares(0.4, true), squares(0.8, true));
+        // The picture is a fixed one, and a threshold only ever adds squares.
+        let a = reveal_rects("dissolve", true, 0.3, 1.0).unwrap();
+        assert_eq!(a, reveal_rects("dissolve", true, 0.3, 1.0).unwrap());
+        assert!(squares(0.2, true) < squares(0.3, true));
         assert!(reveal_rects("fade", true, 0.5, 1.0).is_none());
     }
 
@@ -1107,6 +1462,30 @@ mod tests {
         // Slower than constant speed at the start, faster in the middle.
         assert!(ease(0.1, 50_000, 0) < 0.1);
         assert!(ease(0.9, 0, 50_000) > 0.9);
+    }
+
+    /// The smooth start and end of the effect's own time node go to each behaviour, over the behaviour's own stretch of time; a behaviour's
+    /// own is kept where the effect's is 0 (PowerPoint's video of 開始 38: the bounce's `decel` 50 000 stays under the effect's (0, 0), is
+    /// replaced by 25 000 under (0, 25 000), and the first behaviour's end does not move with the effect's accel).
+    #[test]
+    fn the_effects_smooth_start_and_end_go_to_each_behaviour() {
+        let set = |begin: u32, dur: u32, decel: u32| AnimBehavior {
+            kind: BehaviorKind::Anim { attr: "ppt_x".into(), keys: vec![(0, "0".into()), (100_000, "1".into())], formula: None, discrete: false },
+            begin,
+            dur,
+            time: BehaviorTime { decel, ..Default::default() },
+        };
+        let b = PptBox { x: 0.5, y: 0.5, w: 0.2, h: 0.2 };
+        let x = |bh: &[AnimBehavior], ms: f64, parent: (u32, u32)| sample_eased(bh, ms, b, parent).x.unwrap();
+        // A second behaviour of 400 ms after a first of 600 ms: the first ends at 600 ms whatever the effect's accel.
+        let two = [set(0, 600, 0), set(600, 400, 50_000)];
+        assert!((x(&two, 599.9, (100_000, 0)) - 1.0).abs() < 1e-3 && (x(&two, 599.9, (0, 0)) - 1.0).abs() < 1e-3);
+        assert!((x(&two, 300.0, (100_000, 0)) - ease(0.5, 100_000, 0)).abs() < 1e-9);
+        // The behaviour's own decel under (0, 0); the effect's replaces it where it is not 0.
+        let mid = |parent: (u32, u32)| x(&two, 900.0, parent);
+        assert!((mid((0, 0)) - ease(0.75, 0, 50_000)).abs() < 1e-9);
+        assert!((mid((0, 25_000)) - ease(0.75, 0, 25_000)).abs() < 1e-9);
+        assert!((mid((25_000, 0)) - ease(0.75, 25_000, 50_000)).abs() < 1e-9);
     }
 
     /// 軌跡 inside an effect (PowerPoint's presetID 52 spiral: `M -0.4 0.9 C … 0 0`): at the start the shape is at the path's start,

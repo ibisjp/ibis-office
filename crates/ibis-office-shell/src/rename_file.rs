@@ -9,9 +9,12 @@
 //! A rename leaves the window's content alone (an unsaved document stays unsaved, with its changes); the window title, the recent
 //! files, the watching for other apps' changes and the path the next save writes to all follow the new name.
 //!
-//! The browser version has no file path and nothing to rename, so it has no ▾ (the whole module is for the other platforms).
+//! The browser version has no file path: its ▾ is there only when a host gave `renameFile` or `getFileLocation` (`host.rs`), and the
+//! rename is the host's (`HostRename` below; the checks of the name are the same for both). 「パスの取得」 asks the host for the place.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+#[cfg(not(target_family = "wasm"))]
+use std::path::Path;
 
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -83,8 +86,8 @@ fn is_reserved(name: &str) -> bool {
 }
 
 /// The name `typed` (without the extension; the extension is stripped if it was typed too) checked for a file whose extension is `ext`
-/// (with its dot): the new name as a path next to `old`, `None` when it is the file's own name.
-pub(crate) fn rename_target(old: &Path, typed: &str, ext: &str) -> Result<Option<PathBuf>, RenameError> {
+/// (with its dot): the whole new name. The checks of a name are the same for the desktop (the file system) and the host.
+pub(crate) fn check_name(typed: &str, ext: &str) -> Result<String, RenameError> {
     let mut stem = typed.trim();
     if !ext.is_empty() && stem.len() > ext.len() && stem.is_char_boundary(stem.len() - ext.len()) && stem[stem.len() - ext.len()..].eq_ignore_ascii_case(ext) {
         stem = stem[..stem.len() - ext.len()].trim_end();
@@ -105,6 +108,13 @@ pub(crate) fn rename_target(old: &Path, typed: &str, ext: &str) -> Result<Option
     if name.len() > NAME_MAX_BYTES {
         return Err(RenameError::TooLong);
     }
+    Ok(name)
+}
+
+/// [`check_name`], and the new name as a path next to `old`: `None` when it is the file's own name.
+#[cfg(not(target_family = "wasm"))]
+pub(crate) fn rename_target(old: &Path, typed: &str, ext: &str) -> Result<Option<PathBuf>, RenameError> {
+    let name = check_name(typed, ext)?;
     let new = old.with_file_name(&name);
     if new == old {
         return Ok(None);
@@ -123,6 +133,7 @@ pub(crate) fn rename_target(old: &Path, typed: &str, ext: &str) -> Result<Option
 }
 
 /// The error of `std::fs::rename` as the message box tells it.
+#[cfg(not(target_family = "wasm"))]
 fn io_error(old: &Path, error: &std::io::Error) -> RenameError {
     use std::io::ErrorKind;
     #[cfg(unix)]
@@ -149,6 +160,7 @@ fn io_error(old: &Path, error: &std::io::Error) -> RenameError {
 }
 
 /// Rename `old` to the name `typed` (see [`rename_target`]) on disk. `Ok(None)` when the name is the file's own (nothing done).
+#[cfg(not(target_family = "wasm"))]
 pub(crate) fn rename_on_disk(old: &Path, typed: &str, ext: &str) -> Result<Option<PathBuf>, RenameError> {
     let Some(new) = rename_target(old, typed, ext)? else { return Ok(None) };
     match std::fs::rename(old, &new) {
@@ -160,17 +172,42 @@ pub(crate) fn rename_on_disk(old: &Path, typed: &str, ext: &str) -> Result<Optio
     }
 }
 
+/// Whether the ▾ has to do with a host: it is connected and gave a function the menu uses, and the document is its own.
+fn host_menu() -> bool {
+    let caps = crate::host::capabilities();
+    crate::host::is_connected() && (caps.rename_file || caps.get_file_location)
+}
+
 impl SlideEditor {
     /// The ▾ right of the file name in the title row, with its menu; `None` for a document that has no file yet (nothing to copy or
-    /// rename). `disabled` while a modal dialog is open.
+    /// rename). With a host the same menu works through the host's functions: an item the host cannot do (it gave no function, or the
+    /// document is not its own) is there, disabled, as the menus' rule is. `disabled` while a modal dialog is open.
     pub(crate) fn file_name_menu_button(&self, editor: &WeakEntity<SlideEditor>) -> Option<AnyElement> {
-        self.path.as_ref()?;
-        let items: Vec<MenuEntry> = vec![
-            MenuItem::tr("shell.file-name-menu.copy-name").icon("content_copy").on(|e, _, cx| e.copy_file_name(cx)).into(),
-            MenuItem::tr("shell.file-name-menu.copy-path").icon("link").on(|e, _, cx| e.copy_file_path(cx)).into(),
-            MenuEntry::Separator,
-            MenuItem::tr("shell.file-name-menu.rename").icon("edit").on(|e, window, cx| e.open_rename_file_dialog(window, cx)).into(),
-        ];
+        let on_host = host_menu();
+        #[cfg(not(target_family = "wasm"))]
+        let has_path = self.path.is_some();
+        #[cfg(target_family = "wasm")]
+        let has_path = false;
+        if !has_path && !on_host {
+            return None;
+        }
+        let caps = crate::host::capabilities();
+        let bound = self.is_host_bound();
+        let items: Vec<MenuEntry> = if on_host && (bound || !has_path) {
+            vec![
+                MenuItem::tr("shell.file-name-menu.copy-name").icon("content_copy").on(|e, _, cx| e.copy_file_name(cx)).into(),
+                MenuItem::tr("shell.file-name-menu.get-path").icon("link").disabled(!(caps.get_file_location && bound)).on(|e, _, cx| e.host_get_file_location(cx)).into(),
+                MenuEntry::Separator,
+                MenuItem::tr("shell.file-name-menu.rename").icon("edit").disabled(!(caps.rename_file && bound) || self.is_read_only()).on(|e, window, cx| e.open_rename_file_dialog(window, cx)).into(),
+            ]
+        } else {
+            vec![
+                MenuItem::tr("shell.file-name-menu.copy-name").icon("content_copy").on(|e, _, cx| e.copy_file_name(cx)).into(),
+                MenuItem::tr("shell.file-name-menu.copy-path").icon("link").on(|e, _, cx| e.copy_file_path(cx)).into(),
+                MenuEntry::Separator,
+                MenuItem::tr("shell.file-name-menu.rename").icon("edit").on(|e, window, cx| e.open_rename_file_dialog(window, cx)).into(),
+            ]
+        };
         let editor = editor.clone();
         let id = "title-file-menu";
         let button = Button::new(id)
@@ -193,51 +230,143 @@ impl SlideEditor {
 
     /// ファイル名をコピー: the name with its extension.
     pub(crate) fn copy_file_name(&mut self, cx: &mut Context<Self>) {
-        let Some(name) = self.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()) else { return };
+        #[cfg(not(target_family = "wasm"))]
+        let from_path = self.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
+        #[cfg(target_family = "wasm")]
+        let from_path: Option<String> = None;
+        let Some(name) = from_path.or_else(|| self.file_name.as_ref().map(|n| n.to_string())) else { return };
         cx.write_to_clipboard(ClipboardItem::new_string(name));
         self.set_status(text("shell.file-name-menu.name-copied").to_string(), cx);
     }
 
-    /// ファイルパスをコピー: the full path.
+    /// ファイルパスをコピー: the full path (the desktop; the host's is 「パスの取得」, `host_get_file_location`).
     pub(crate) fn copy_file_path(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = self.path.as_ref().map(|p| crate::plain_path::plain(p).to_string_lossy().into_owned()) else { return };
-        cx.write_to_clipboard(ClipboardItem::new_string(path));
-        self.set_status(text("shell.file-name-menu.path-copied").to_string(), cx);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let Some(path) = self.path.as_ref().map(|p| crate::plain_path::plain(p).to_string_lossy().into_owned()) else { return };
+            cx.write_to_clipboard(ClipboardItem::new_string(path));
+            self.set_status(text("shell.file-name-menu.path-copied").to_string(), cx);
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = cx;
+    }
+
+    /// パスの取得: the host's `getFileLocation` (the place it decided: a URL, ...) goes to the clipboard.
+    pub fn host_get_file_location(&mut self, cx: &mut Context<Self>) {
+        let Some(bridge) = crate::host::bridge_with(|c| c.get_file_location) else { return };
+        cx.spawn(async move |this, cx| {
+            let result = bridge.get_file_location().await;
+            this.update(cx, |this, cx| match result {
+                Ok(url) => {
+                    // The browser can refuse the clipboard (no permission): that is told in the status bar, not left as an unhandled rejection.
+                    #[cfg(not(target_family = "wasm"))]
+                    {
+                        cx.write_to_clipboard(ClipboardItem::new_string(url));
+                        this.set_status(text("shell.file-name-menu.path-copied").to_string(), cx);
+                    }
+                    #[cfg(target_family = "wasm")]
+                    cx.spawn(async move |this, cx| {
+                        let copied = crate::web::copy_text(&url).await;
+                        this.update(cx, |this, cx| this.set_status(text(if copied { "shell.file-name-menu.path-copied" } else { "shell.file-name-menu.path-copy-failed" }).to_string(), cx)).ok();
+                    })
+                    .detach();
+                }
+                Err(failure) => {
+                    let message = failure.message.clone().filter(|m| !m.is_empty()).unwrap_or_else(|| text("shell.host-file.error-path").to_string());
+                    this.show_alert(text("shell.host-file.error-path-title"), message.into(), cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// ファイル名を変更…: the dialog with the name (without its extension) to edit.
-    pub(crate) fn open_rename_file_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.path.clone() else { return };
+    pub fn open_rename_file_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(target_family = "wasm"))]
+        let name = self.path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
+        #[cfg(target_family = "wasm")]
+        let name: Option<String> = None;
+        // A host's document is renamed by the host: its name is the window's (the desktop's path is for the file system's).
+        let Some(name) = (if self.is_host_bound() { self.file_name.as_ref().map(|n| n.to_string()) } else { name.or_else(|| self.file_name.as_ref().map(|n| n.to_string())) }) else { return };
         self.end_text_edit(window, cx);
         if self.dialog.active {
             self.close_dialog(window, cx);
         }
-        let stem = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let extension = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let (stem, extension) = match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+            _ => (name.clone(), String::new()),
+        };
         let input = cx.new(|cx| InputState::new(window, cx).default_value(stem));
-        input.update(cx, |state, cx| state.focus(window, cx));
+        // The name opens all selected, so typing replaces it (K0040).
+        input.update(cx, |state, cx| {
+            state.focus(window, cx);
+            state.select_all(window, cx);
+        });
         self.rename_file = Some(RenameFileState { input, extension });
         self.sidebar_open = true;
         cx.notify();
     }
 
-    /// 名前を変更 of the dialog: rename the file on disk, then make the window follow it. An error is told in the message box.
-    pub(crate) fn apply_rename_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// 名前を変更 of the dialog: with a host, its `renameFile`; else rename the file on disk, then make the window follow it. An error is
+    /// told in the message box and the dialog stays, so the name can be corrected.
+    pub fn apply_rename_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((typed, ext)) = self.rename_file.as_ref().map(|s| (s.input.read(cx).value().to_string(), s.extension.clone())) else { return };
-        let Some(old) = self.path.clone() else { return };
-        match rename_on_disk(&old, &typed, &ext) {
-            Ok(None) => self.close_dialog(window, cx),
-            Ok(Some(new)) => {
-                self.close_dialog(window, cx);
-                self.adopt_renamed_path(&old, &new, window, cx);
-                self.set_status(text("shell.file-name-menu.renamed").to_string(), cx);
-            }
-            Err(error) => self.show_alert(text("shell.rename-file.error-title"), error.message().into(), cx),
+        if self.is_host_bound() {
+            return self.apply_rename_on_host(typed, ext, window, cx);
         }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let Some(old) = self.path.clone() else { return };
+            match rename_on_disk(&old, &typed, &ext) {
+                Ok(None) => self.close_dialog(window, cx),
+                Ok(Some(new)) => {
+                    self.close_dialog(window, cx);
+                    self.adopt_renamed_path(&old, &new, window, cx);
+                    self.set_status(text("shell.file-name-menu.renamed").to_string(), cx);
+                }
+                Err(error) => self.show_alert(text("shell.rename-file.error-title"), error.message().into(), cx),
+            }
+        }
+    }
+
+    /// 名前を変更 with a host: the host renames (it holds the lock and the permission); the document keeps its edits, and the window
+    /// takes the name and version the host gives back. A refusal is told in the message box with the host's words.
+    fn apply_rename_on_host(&mut self, typed: String, ext: String, window: &mut Window, cx: &mut Context<Self>) {
+        let name = match check_name(&typed, &ext) {
+            Ok(name) => name,
+            Err(error) => return self.show_alert(text("shell.rename-file.error-title"), error.message().into(), cx),
+        };
+        if self.file_name.as_ref().is_some_and(|n| n.as_ref() == name) {
+            return self.close_dialog(window, cx);
+        }
+        let Some(bridge) = crate::host::bridge_with(|c| c.rename_file) else { return };
+        let Some(version) = self.host.binding.as_ref().map(|b| b.version.clone()) else { return };
+        cx.spawn_in(window, async move |this, cx| {
+            let result = bridge.rename_file(name, version).await;
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(renamed) => {
+                    if let Some(binding) = &mut this.host.binding {
+                        binding.version = renamed.version;
+                    }
+                    this.file_name = Some(renamed.name.clone().into());
+                    window.set_window_title(&format!("{} - ibisOffice", renamed.name));
+                    this.close_dialog(window, cx);
+                    this.set_status(text("shell.file-name-menu.renamed").to_string(), cx);
+                }
+                Err(failure) => {
+                    let message = failure.message.clone().filter(|m| !m.is_empty()).unwrap_or_else(|| text("shell.host-file.error-rename").to_string());
+                    this.show_alert(text("shell.rename-file.error-title"), message.into(), cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The file at `old` is now at `new` (same folder): the path saving writes to, the name and title, the recent files, the watching for
     /// other apps' changes. The windows that show the same workbook or document (a second window) follow too.
+    #[cfg(not(target_family = "wasm"))]
     fn adopt_renamed_path(&mut self, old: &Path, new: &Path, window: &mut Window, cx: &mut Context<Self>) {
         // The list keeps the path as `add` stored it (the absolute one).
         crate::recent_files::remove(old);
@@ -245,6 +374,7 @@ impl SlideEditor {
             crate::recent_files::remove(&absolute);
         }
         self.recent_files = crate::recent_files::add(new);
+        crate::app::set_app_menus(cx);
         self.follow_renamed_path(new, window, cx);
         let me = cx.entity_id();
         let peers = if self.format_info().several_windows.is_some() { Self::find_other_matching_windows(self.file_id, me, cx) } else { Vec::new() };
@@ -254,6 +384,7 @@ impl SlideEditor {
         }
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn follow_renamed_path(&mut self, new: &Path, window: &mut Window, cx: &mut Context<Self>) {
         let name: SharedString = new.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default().into();
         self.file_name = Some(name);

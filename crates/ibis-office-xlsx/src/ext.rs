@@ -5,7 +5,7 @@
 //!
 //! The methods the files of this folder write for the editor (`#[ibis_office_macros::editor_ext(Name)] impl SlideEditor`)
 //! are methods of extension traits, one line each here. A file that calls a method written in another file brings them into
-//! scope with `use crate::ext::*;` (doc/rule/implimentationRule.md).
+//! scope with `use crate::ext::*;` (docs/rule/implimentationRule.md).
 // Every trait of the folder is listed, whether or not another file calls its methods yet: a line nobody uses is not a
 // mistake here. A method nobody calls is still reported at the method (`dead_code`).
 #![allow(unused_imports)]
@@ -72,6 +72,7 @@ pub(crate) use super::data_table::DataTableExtCrate as _;
 pub use super::dedupe_edit::DedupeEdit as _;
 pub(crate) use super::dedupe_edit::DedupeEditCrate as _;
 pub(crate) use super::dialog_hooks::DialogHooksCrate as _;
+pub(crate) use super::drag_autoscroll::DragAutoscrollCrate as _;
 pub(crate) use super::edit_panels::EditPanelsExtCrate as _;
 pub(crate) use super::error_check::ErrorCheckCrate as _;
 pub use super::error_check::ErrorCheck2 as _;
@@ -102,7 +103,6 @@ pub use super::goto_special::GotoSpecial as _;
 pub(crate) use super::goto_special::GotoSpecialCrate as _;
 pub use super::header_footer_edit::HeaderFooterEdit as _;
 pub(crate) use super::header_footer_edit::HeaderFooterEditCrate as _;
-pub(crate) use super::drag_autoscroll::DragAutoscrollCrate as _;
 pub use super::headers::Headers as _;
 pub(crate) use super::headers::HeadersCrate as _;
 pub use super::import_text::ImportText as _;
@@ -115,6 +115,7 @@ pub use super::Xlsx2 as _;
 pub(crate) use super::Xlsx2Crate as _;
 pub use super::links::Links as _;
 pub(crate) use super::links::LinksCrate as _;
+pub use super::machine_readability_panel::MachineReadabilityPanelExt as _;
 pub use super::move_chart::MoveChartExt as _;
 pub(crate) use super::move_chart::MoveChartExtCrate as _;
 pub(crate) use super::names::NamesCrate as _;
@@ -171,6 +172,8 @@ pub(crate) use super::series::SeriesExtCrate as _;
 pub use super::shape_edit::ShapeEdit as _;
 pub(crate) use super::shape_edit::ShapeEditCrate as _;
 pub(crate) use super::shape_edit::ShapeEdit2Crate as _;
+pub use super::sheet_group::SheetGroup as _;
+pub(crate) use super::sheet_group::SheetGroupCrate as _;
 pub(crate) use super::sheet_transfer::SheetTransferCrate as _;
 pub use super::sheet_ui::SheetUi as _;
 pub(crate) use super::sheet_ui::SheetUiCrate as _;

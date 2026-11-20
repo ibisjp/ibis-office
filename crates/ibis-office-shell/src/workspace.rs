@@ -53,7 +53,7 @@ impl SlideEditor {
             .h_full()
             .overflow_hidden()
             .bg(theme.muted)
-            .when(self.tool == Tool::TextBox, |d| d.cursor_crosshair())
+            .when(self.tool != Tool::Select, |d| d.cursor(crate::insert_band::insert_cursor()))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_workspace_down))
             .child(
                 div()
@@ -178,11 +178,8 @@ impl SlideEditor {
             .children(shapes)
             .when_some(self.render_selection(scale, cx), |d, sel| d.child(sel))
             .when_some(self.creation_rect(), |d, rect| {
-                d.child(
-                    place(div(), rect, scale)
-                        .border_1()
-                        .border_color(cx.theme().primary),
-                )
+                let (x0, y0, x1, y1) = (rect.x as f32 * scale, rect.y as f32 * scale, rect.right() as f32 * scale, rect.bottom() as f32 * scale);
+                d.child(crate::insert_band::band_element(Bounds::new(point(px(x0), px(y0)), Size { width: px(x1 - x0), height: px(y1 - y0) }), cx.theme().primary))
             })
     }
 
@@ -324,7 +321,7 @@ impl SlideEditor {
         let theme = cx.theme();
         let mut selected_color = theme.primary;
         selected_color.a = 0.25;
-        let caret_color = theme.foreground;
+        let caret_color = self.text_caret_color();
         let entity = cx.entity();
 
         div()

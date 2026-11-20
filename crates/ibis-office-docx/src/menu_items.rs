@@ -64,7 +64,7 @@ fn view_start(editor: &SlideEditor) -> Vec<MenuEntry> {
         item("docx.view.one-page", "description").into(),
         item("docx.view.multiple-pages", "filter_none").into(),
         item("docx.view.page-width", "fit_screen").into(),
-        item("docx.view.zoom-100", "zoom_in").shortcut("⌘0").into(),
+        item("view.zoom-100", "zoom_in").shortcut("⌘0").into(),
         SEP,
     ]
 }
@@ -87,7 +87,7 @@ fn window_end(editor: &SlideEditor) -> Vec<MenuEntry> {
         // While the document is split, the document's `menus()` (`docx/view_menu.rs`) turns this line into
         // `docx.remove-split` with a check mark; `docx/toolbar.rs` connects both.
         item("docx.split", "splitscreen").shortcut("⌥⌘S").into(),
-        item("docx.view-side-by-side", "splitscreen")
+        item("view.side-by-side", "splitscreen")
             .checked(editor.side_by_side)
             .on(|this, window, cx| {
                 this.toggle_view_side_by_side(window, cx);
@@ -116,7 +116,7 @@ fn insert_start() -> Vec<MenuEntry> {
         item("docx.column-break", "vertical_split").shortcut("⌃⇧↩").into(),
         item("docx.header-footer", "view_quilt").into(),
         item("docx.page-number", "tag").into(),
-        item("docx.toc", "toc").into(),
+        item("docx.table-of-contents", "toc").into(),
         SEP,
     ]
 }

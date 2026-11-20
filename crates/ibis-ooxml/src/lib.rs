@@ -11,6 +11,7 @@
 //!   every node it does not change.
 //! - [`package`]: the parts of a file, `[Content_Types].xml` and the
 //!   relationships, changed in place and saved.
+//! - [`signature`]: looking at the digital signatures of a package (not changing them).
 //! - [`canon`]: comparing two files by meaning (normalized XML), for tests
 //!   and the `ibis-ooxml-diff` tool.
 //!
@@ -23,6 +24,7 @@ pub mod encryption;
 pub mod legacy_crypt;
 pub mod modify_password;
 pub mod package;
+pub mod signature;
 pub mod xml;
 pub mod zip;
 

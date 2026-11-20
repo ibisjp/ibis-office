@@ -732,7 +732,7 @@ impl SlideEditor {
             if let Some((_, sheet)) = self.current_sheet() {
                 let mut print = sheet.print.clone();
                 print.margins = new_margins;
-                self.execute(vec![Command::Sheet(SheetCommand::SetPrint { slide, print, area: None })], cx);
+                self.execute(vec![Command::Sheet(SheetCommand::SetPrint { sheet: slide, print, area: None })], cx);
             }
         }
         cx.notify();

@@ -233,7 +233,7 @@ impl SlideEditor {
                 commands.push(Command::SetAspectLocked { slide, shape, locked });
             }
             if target.frame != frame {
-                commands.push(Command::SetFrame { slide, shape, frame });
+                commands.push(Command::SetFrame { slide, frames: vec![(shape, frame)], with_attached: true });
             }
             let rotation = if rot_set { rotation } else { target.rotation };
             if target.rotation != rotation {
@@ -390,12 +390,12 @@ impl SlideEditor {
                 .on(|this, _, cx| this.flip_selected(false, cx))
                 .into(),
             MenuEntry::Separator,
-            MenuItem::tr("pptx.align.center")
+            MenuItem::tr("arrange.align-center")
                 .icon("align_horizontal_center")
                 .disabled(!has)
                 .on(|this, _, cx| this.align_selected(Align::Center, cx))
                 .into(),
-            MenuItem::tr("pptx.align.middle")
+            MenuItem::tr("arrange.align-middle")
                 .icon("align_vertical_center")
                 .disabled(!has)
                 .on(|this, _, cx| this.align_selected(Align::Middle, cx))

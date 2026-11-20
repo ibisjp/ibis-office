@@ -820,7 +820,7 @@ impl SlideEditor {
                     commands.push(FlowCommand::SetRunFormat { from: a, to: b, change: RunChange::Underline(underline) });
                 }
                 if let Some(strike) = fmt.strike {
-                    commands.push(FlowCommand::SetRunFormat { from: a, to: b, change: RunChange::Strike(strike) });
+                    commands.push(FlowCommand::SetRunFormat { from: a, to: b, change: RunChange::Strikethrough(strike) });
                 }
                 if let Some(color) = fmt.color {
                     commands.push(FlowCommand::SetRunFormat { from: a, to: b, change: RunChange::Color(color) });
@@ -830,7 +830,7 @@ impl SlideEditor {
                 }
             }
             if let Some(align) = fmt.align {
-                commands.push(FlowCommand::SetParagraphFormat { first: a.para, last: a.para, change: ParaChange::Align(align) });
+                commands.push(FlowCommand::SetParagraphFormat { first: a.para, last: a.para, change: ParaChange::Alignment(align) });
             }
             if let Some(ref style) = fmt.style {
                 let resolved = resolve_style_id(doc, style);
@@ -876,7 +876,7 @@ impl SlideEditor {
                     commands.push(FlowCommand::SetRunFormat { from: insert, to: end, change: RunChange::Underline(underline) });
                 }
                 if let Some(strike) = fmt.strike {
-                    commands.push(FlowCommand::SetRunFormat { from: insert, to: end, change: RunChange::Strike(strike) });
+                    commands.push(FlowCommand::SetRunFormat { from: insert, to: end, change: RunChange::Strikethrough(strike) });
                 }
                 if let Some(color) = fmt.color {
                     commands.push(FlowCommand::SetRunFormat { from: insert, to: end, change: RunChange::Color(color) });
@@ -886,7 +886,7 @@ impl SlideEditor {
                 }
             }
             if let Some(align) = fmt.align {
-                commands.push(FlowCommand::SetParagraphFormat { first: insert.para, last: insert.para, change: ParaChange::Align(align) });
+                commands.push(FlowCommand::SetParagraphFormat { first: insert.para, last: insert.para, change: ParaChange::Alignment(align) });
             }
             if let Some(ref style) = fmt.style {
                 let resolved = resolve_style_id(doc, style);

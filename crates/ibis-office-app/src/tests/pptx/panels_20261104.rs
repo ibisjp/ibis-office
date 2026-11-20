@@ -150,7 +150,7 @@ fn chart_data_panel() {
     // Typing in the grid: the cell's text is put in the chart, and the chart's pane keeps the grid.
     s.update(|_, _, cx| workbook.update(cx, |d, cx| {
         let slide = d.current_slide;
-        d.run(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { slide, edits: vec![ibis_doc_model::CellEdit { row: 1, column: 1, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(12.5)) }] })], cx);
+        d.run(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::SetCells { sheet: slide, edits: vec![ibis_doc_model::CellEdit { row: 1, column: 1, input: ibis_doc_model::CellInput::Value(ibis_doc_model::CellValue::Number(12.5)) }] })], cx);
     }));
     let first = s.with(|e, _| e.selected_chart().and_then(|(_, _, c)| c.groups[0].series[0].values[0]));
     assert_eq!(first, Some(ibis_doc_model::Number(12.5)));
@@ -180,7 +180,7 @@ fn chart_without_workbook() {
     assert_eq!(s.with(|e, _| read(e.presentation())), (Some(77.0), "Edited".to_string()));
     s.screenshot("chart-no-workbook-edited");
     let path = s.save_as("chart-no-workbook.pptx");
-    let package = ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
+    let package = ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap();
     assert!(package.names().any(|n| n.starts_with("ppt/embeddings/")), "the workbook is in the file");
     assert_eq!(read(&s.reopen()), (Some(77.0), "Edited".to_string()));
 }

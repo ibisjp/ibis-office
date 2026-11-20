@@ -113,7 +113,7 @@ fn shape(id: ShapeId, k: i64) -> Shape {
 }
 
 fn start(count: i64) -> (Scenario, Vec<ShapeId>) {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Presentation);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Presentation);
     s.size(1200., 900.);
     let ids = s.update(|e, _, cx| {
         let ids: Vec<ShapeId> = (0..count).map(|k| {

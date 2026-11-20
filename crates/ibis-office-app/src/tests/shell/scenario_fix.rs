@@ -176,6 +176,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("shell::fix123_no_quick_analysis_button_on_multi_cell_selection", fix123_no_quick_analysis_button_on_multi_cell_selection),
         ("shell::fix124_no_mini_toolbar_on_body_text_selection", fix124_no_mini_toolbar_on_body_text_selection),
         ("shell::fix_embed_view_mode_and_bars", fix_embed_view_mode_and_bars),
+        ("shell::fix_embed_font_prompt_flag", fix_embed_font_prompt_flag),
+        ("shell::k0036_help_source_code_opens_the_project_page", k0036_help_source_code_opens_the_project_page),
         ("shell::fix72_infobar_hidden_under_view_only", fix72_infobar_hidden_under_view_only),
         ("shell::fix139_compat_infobar_hidden_under_view_only", fix139_compat_infobar_hidden_under_view_only),
         ("shell::compat_bar_old_files_on_three_screens", compat_bar_old_files_on_three_screens),
@@ -449,7 +451,7 @@ fn fix11_right_pane_tabs() {
     assert_eq!(state(&mut s), (true, false, false), "cells: the cell format");
     s.screenshot("cells");
     // A text box inserted and selected: its attributes.
-    s.menu("xlsx.insert-textbox");
+    s.menu("xlsx.insert-textbox"); s.place_armed();
     s.type_text("x");
     s.key("escape");
     s.settle();
@@ -486,11 +488,11 @@ fn fix11_right_pane_tabs() {
 fn fix17_print_is_bound() {
     for file in ["test/editing/xlsx-sales.xlsx", "test/editing/pptx-plan.pptx"] {
         let mut s = Scenario::open(file);
-        let bound = s.update(|_, window, _| window.bindings_for_action(&crate::PrintFile).iter().map(|b| b.keystrokes().iter().map(|k| k.unparse()).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>());
+        let bound = s.update(|_, window, _| window.bindings_for_action(&crate::Print).iter().map(|b| b.keystrokes().iter().map(|k| k.unparse()).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>());
         assert!(bound.iter().any(|k| k == "cmd-p"), "{file}: {bound:?}");
     }
     let mut s = Scenario::open("test/editing/docx-report.docx");
-    let bound = s.update(|_, window, _| window.bindings_for_action(&crate::PrintFile).len());
+    let bound = s.update(|_, window, _| window.bindings_for_action(&crate::Print).len());
     assert!(bound > 0);
 }
 
@@ -550,7 +552,7 @@ fn start_view_new_and_select() {
     // 新規作成's second page (xlsx), below the section's title.
     s.click((150.0, 140.0));
     s.settle();
-    assert!(s.with(|e, _| e.has_document && e.kind() == ibis_pptx::Kind::Workbook && e.path.is_none()));
+    assert!(s.with(|e, _| e.has_document && e.kind() == ibis_formats::Kind::Workbook && e.path.is_none()));
     s.screenshot("new-workbook");
 }
 
@@ -641,7 +643,7 @@ fn about_update_available_button() {
     assert!(update::asked_again_for_test().is_empty(), "no update found: nothing asks");
     s.key("escape");
     // A newer version found at start-up (the setting off does not matter: the click is the user's own).
-    crate::shell::settings::set("check-updates", "0");
+    crate::shell::settings::set("app.check-updates", "0");
     update::set_available_for_test(Some("99.0.0"));
     assert!(about::update_available());
     s.menu("help.about");
@@ -670,7 +672,7 @@ fn help_check_update_item() {
     use crate::shell::update;
     for path in ["test/editing/xlsx-sales.xlsx"] {
         let mut s = Scenario::open(path);
-        crate::shell::settings::set("check-updates", "0");
+        crate::shell::settings::set("app.check-updates", "0");
         let before = update::checked_now_for_test();
         s.menu("help.check-update");
         assert_eq!(update::checked_now_for_test(), before + 1, "更新を確認 checks");
@@ -1106,19 +1108,19 @@ fn fix_docx_widow_and_suppress_lines() {
     assert_eq!(flags_of(&mut s), (initial_widow, initial_suppress), "undo restores original settings");
 
     // Menu toggle: widow-control to opposite
-    s.menu("docx.para.widow-control");
+    s.menu("docx.paragraph.widow-control");
     assert_eq!(flags_of(&mut s).0, !initial_widow, "menu turned widow control to opposite");
 
     // Menu toggle: widow-control back to initial
-    s.menu("docx.para.widow-control");
+    s.menu("docx.paragraph.widow-control");
     assert_eq!(flags_of(&mut s).0, initial_widow, "menu turned widow control back to initial");
 
     // Menu toggle: suppress-line-numbers to opposite
-    s.menu("docx.para.suppress-line-numbers");
+    s.menu("docx.paragraph.suppress-line-numbers");
     assert_eq!(flags_of(&mut s).1, !initial_suppress, "menu turned suppress line numbers to opposite");
 
     // Menu toggle: suppress-line-numbers back to initial
-    s.menu("docx.para.suppress-line-numbers");
+    s.menu("docx.paragraph.suppress-line-numbers");
     assert_eq!(flags_of(&mut s).1, initial_suppress, "menu turned suppress line numbers back to initial");
 }
 
@@ -1500,7 +1502,7 @@ fn fix_xlsx_save_copy_and_recent() {
 
     // コピーされたファイルに編集が正しく反映されている
     let copied_bytes = std::fs::read(&copy_path).expect("copied file exists");
-    let copied = ibis_pptx::read(&copied_bytes).expect("can read copied xlsx");
+    let copied = ibis_formats::read(&copied_bytes).expect("can read copied xlsx");
     let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&copied.slides[0]).expect("sheet exists");
     let a1_cell = sheet.cell(0, 0).expect("A1 cell exists");
     assert_eq!(
@@ -1598,7 +1600,7 @@ fn fix_xlsx_validation_allow_blank() {
     s.update(|e, _, _| {
         e.document
             .execute(vec![Command::Sheet(SheetCommand::SetValidation {
-                slide,
+                sheet: slide,
                 ranges: vec![range],
                 rule: Some(rule_allow_blank),
             })])
@@ -1638,7 +1640,7 @@ fn fix_xlsx_validation_allow_blank() {
     s.update(|e, _, _| {
         e.document
             .execute(vec![Command::Sheet(SheetCommand::SetValidation {
-                slide,
+                sheet: slide,
                 ranges: vec![range],
                 rule: Some(rule_no_blank),
             })])
@@ -1672,7 +1674,7 @@ fn fix_xlsx_validation_allow_blank() {
     s.update(|e, _, _| {
         e.document
             .execute(vec![Command::Sheet(SheetCommand::SetValidation {
-                slide,
+                sheet: slide,
                 ranges: vec![range],
                 rule: None,
             })])
@@ -2260,7 +2262,7 @@ fn fix_xlsx_circle_invalid_data() {
     s.update(|e, _, _| {
         let slide = e.current_slide;
         let _ = e.document.execute(vec![Command::Sheet(SheetCommand::SetValidation {
-            slide,
+            sheet: slide,
             ranges: vec![CellRange { first_row: 0, last_row: 1, first_column: 0, last_column: 1 }],
             rule: Some(rule),
         })]);
@@ -2274,7 +2276,7 @@ fn fix_xlsx_circle_invalid_data() {
         edits.push(ibis_doc_model::CellEdit { row: 1, column: 0, input: ibis_doc_model::CellInput::Value(CellValue::Number(5.0)) });
         edits.push(ibis_doc_model::CellEdit { row: 0, column: 1, input: ibis_doc_model::CellInput::Value(CellValue::Number(150.0)) });
         edits.push(ibis_doc_model::CellEdit { row: 1, column: 1, input: ibis_doc_model::CellInput::Value(CellValue::Number(80.0)) });
-        let _ = e.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits })]);
+        let _ = e.document.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })]);
     });
 
     // 3. 初期状態：validation_circles は false、render_validation_circles は None
@@ -3388,7 +3390,7 @@ fn fix_docx_table_of_figures() {
 
     // カレットを図表目次の最初の段落に戻す
     s.click_text(FlowPos::new(p0.id, 0));
-    s.menu("docx.toc.update-entire-table");
+    s.menu("docx.table-of-contents.update-entire-table");
 
     let entries_updated = tof(&s.document());
     assert_eq!(entries_updated.len(), 3, "table of figures now has 3 entries after update");
@@ -3418,7 +3420,7 @@ fn fix_docx_table_of_figures() {
 
 /// todo-fix #40: the status bar's 「100%▲」 is one button (the pulldown arrow of the toolbar, turned up): a press on the percentage or on the arrow opens the list of zooms (a press again closes it); the hover shows the toolbar buttons' background. In the three formats.
 fn fix_zoom_percent_button() {
-    for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Document, ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let mut s = Scenario::new_document(kind);
         s.settle();
         let bounds = |s: &mut Scenario| s.with(|e, _| e.zoom_trigger_bounds.get()).expect("the zoom button is painted");
@@ -3460,7 +3462,7 @@ fn fix_status_bar_and_zoom_i18n() {
     assert_eq!(i18n::text("status.hint.textbox"), "スライドをクリックまたはドラッグしてテキスト ボックスを配置");
     assert_eq!(i18n::text("status.hint.esc"), "Esc で編集を終了");
 
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Presentation);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Presentation);
     s.update(|e, _, _| e.tool = Tool::TextBox);
     assert!(s.status_texts().iter().any(|t| t == "スライドをクリックまたはドラッグしてテキスト ボックスを配置"));
 
@@ -3520,7 +3522,7 @@ pub(crate) fn fix21_pptx_sidebar_close_zoom_fit_benchmark() {
 /// pptx の右ペインは、新規作成でも、開いたときでも、閉じた状態で始まる。
 /// ツールバー（view.sidebar）で開ける。docx の右ペインは今までどおり開いている。
 pub(crate) fn pptx_sidebar_starts_closed() {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Presentation);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Presentation);
     assert!(!s.with(|e, _| e.sidebar_open), "新しいプレゼンテーションでは右ペインが閉じている");
     let closed_scale = s.with(|e, _| e.slide_layout().map(|l| l.scale)).expect("slide_layout");
     s.menu("view.sidebar");
@@ -3534,7 +3536,7 @@ pub(crate) fn pptx_sidebar_starts_closed() {
     assert!(!s.with(|e, _| e.sidebar_open), "pptx を開いたとき右ペインは閉じている");
     drop(s);
 
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Document);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Document);
     assert!(s.with(|e, _| e.sidebar_open), "docx の右ペインは開いたまま");
 }
 
@@ -3674,7 +3676,7 @@ fn fix_xlsx_sheet_tabs_scrollbar_and_fixed_add() {
 ///  At Sheet12, + should NOT move to the fixed area prematurely.
 ///  It should remain inline until Sheet14+ approaching the right edge."
 fn fix_xlsx_sheet_add_threshold_blank_workbook() {
-    let mut s = Scenario::new_document(ibis_pptx::Kind::Workbook);
+    let mut s = Scenario::new_document(ibis_formats::Kind::Workbook);
     s.settle();
     let sheets = |s: &mut Scenario| s.with(|e, _| e.presentation().slides.len());
     let y = 679.0;
@@ -3927,7 +3929,7 @@ fn fix_xlsx_sec008_threaded_comments() {
     assert_eq!(re_t.posts[1].text, "返信メッセージ");
 
     // 7. コメントの削除
-    s.menu("xlsx.comment-delete");
+    s.menu("xlsx.delete-comment");
     s.with(|e, _| {
         let sheet = e.current_sheet().unwrap().1;
         assert!(sheet.thread_at(2, 2).is_none());
@@ -3979,14 +3981,14 @@ fn fix_xlsx_file004_file007_templates() {
         assert!(e.presentation().workbook.is_some());
     });
 
-    // 4. open_path でテンプレートファイルを開いた場合も新規ブック（path: None, Book1.xlsx）として開く
+    // 4. open_path でテンプレートファイルを開いた場合も新規ブック（path: None, 2 つ目なので Book2.xlsx）として開く
     s.update(|e, window, cx| {
         e.open_path(xltx_path.clone(), None, window, cx);
     });
     s.settle();
 
     s.with(|e, _| {
-        assert_eq!(e.file_name.as_deref(), Some("Book1.xlsx"));
+        assert_eq!(e.file_name.as_deref(), Some("Book2.xlsx"));
         assert!(e.path.is_none(), "opened template must be untitled (path is None)");
         assert!(e.is_workbook());
     });
@@ -4000,7 +4002,7 @@ fn fix_xlsx_sec021_accessibility_check() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
 
     // 1. メニューコマンド `xlsx.accessibility-check` からパネルを開く
-    s.menu("xlsx.accessibility-check");
+    s.menu("review.accessibility-check");
     s.settle();
 
     s.with(|e, _| {
@@ -4411,7 +4413,7 @@ fn fix_xlsx_object001_insert_shape_and_textbox() {
         }
         cx.notify();
     });
-    s.menu("xlsx.insert-textbox");
+    s.menu("xlsx.insert-textbox"); s.place_armed();
 
     // テキストボックスが追加され、選択されていることを確認
     let tb_id = s.with(|e, _| e.selected_sheet_shape()).expect("textbox is selected");
@@ -4439,7 +4441,7 @@ fn fix_xlsx_object001_insert_shape_and_textbox() {
         assert_eq!(body.text(), "ワークシート上のテキストボックス");
     });
 
-    // 2. 基本図形（四角形）の挿入 (xlsx.shape.rect)
+    // 2. 基本図形（四角形）の挿入 (shape.rect)
     s.update(|e, _, cx| {
         let slide = e.current_slide;
         if let Some(state) = e.sheet_state_mut() {
@@ -4447,7 +4449,7 @@ fn fix_xlsx_object001_insert_shape_and_textbox() {
         }
         cx.notify();
     });
-    s.menu("xlsx.shape.rect");
+    s.menu("shape.rect"); s.place_armed();
     let rect_id = s.with(|e, _| e.selected_sheet_shape()).expect("rect shape is selected");
     assert_ne!(rect_id, tb_id);
     let rect_shape = s.with(|e, _| e.slide().shape(rect_id).unwrap().clone());
@@ -4455,27 +4457,27 @@ fn fix_xlsx_object001_insert_shape_and_textbox() {
     assert_eq!(rect_shape.frame.width, 2_000_000);
     assert_eq!(rect_shape.frame.height, 1_200_000);
 
-    // 3. 楕円の挿入 (xlsx.shape.ellipse)
-    s.menu("xlsx.shape.ellipse");
+    // 3. 楕円の挿入 (shape.ellipse)
+    s.menu("shape.ellipse"); s.place_armed();
     let ellipse_id = s.with(|e, _| e.selected_sheet_shape()).expect("ellipse is selected");
     assert_ne!(ellipse_id, rect_id);
     let ellipse_shape = s.with(|e, _| e.slide().shape(ellipse_id).unwrap().clone());
     assert!(matches!(ellipse_shape.kind, ibis_doc_model::ShapeKind::Auto(_)));
 
-    // 4. 矢印（右矢印）の挿入 (xlsx.shape.right-arrow)
-    s.menu("xlsx.shape.right-arrow");
+    // 4. 矢印（右矢印）の挿入 (shape.rightArrow)
+    s.menu("shape.rightArrow"); s.place_armed();
     let arrow_id = s.with(|e, _| e.selected_sheet_shape()).expect("arrow is selected");
     assert!(matches!(s.with(|e, _| e.slide().shape(arrow_id).unwrap().kind.clone()), ibis_doc_model::ShapeKind::Auto(_)));
 
-    // 5. 直線の挿入 (xlsx.shape.line)
-    s.menu("xlsx.shape.line");
+    // 5. 直線の挿入 (docx.shape.line)
+    s.menu("docx.shape.line"); s.place_armed();
     let line_id = s.with(|e, _| e.selected_sheet_shape()).expect("line is selected");
     let line_shape = s.with(|e, _| e.slide().shape(line_id).unwrap().clone());
     assert!(matches!(line_shape.kind, ibis_doc_model::ShapeKind::Line(_)));
     assert_eq!(line_shape.frame.height, 0);
 
-    // 6. 矢印線の挿入 (xlsx.shape.line-arrow)
-    s.menu("xlsx.shape.line-arrow");
+    // 6. 矢印線の挿入 (docx.shape.arrow)
+    s.menu("docx.shape.arrow"); s.place_armed();
     let arrow_line_id = s.with(|e, _| e.selected_sheet_shape()).expect("arrow line is selected");
     let arrow_line_shape = s.with(|e, _| e.slide().shape(arrow_line_id).unwrap().clone());
     assert!(matches!(arrow_line_shape.kind, ibis_doc_model::ShapeKind::Line(_)));
@@ -4501,14 +4503,14 @@ fn fix_xlsx_object001_insert_shape_and_textbox() {
     // 8. 前後順（順序）の検証
     // 現在の末尾は pic_id。rect_id を選択して最前面へ移動
     s.update(|e, _, _| e.selection = Some(rect_id));
-    s.menu("xlsx.order-front");
+    s.menu("arrange.bring-to-front");
     s.with(|e, _| {
         let last = e.slide().shapes.last().unwrap();
         assert_eq!(last.id, rect_id, "rect moved to front");
     });
 
     // 最背面へ移動（シートの直後、インデックス 1）
-    s.menu("xlsx.order-back");
+    s.menu("arrange.send-to-back");
     s.with(|e, _| {
         assert_eq!(e.slide().shapes[1].id, rect_id, "rect moved to back (behind other shapes, above sheet)");
     });
@@ -4722,7 +4724,7 @@ fn fix_xlsx_object003_image011_image018_shape_format_and_picture_properties() {
     let initial_shapes = s.with(|e, _| e.slide().shapes.len());
 
     // 1. 図形（四角形）の挿入
-    s.menu("xlsx.shape.rect");
+    s.menu("shape.rect"); s.place_armed();
     let rect_id = s.with(|e, _| e.selected_sheet_shape()).expect("rect selected");
     assert!(matches!(s.with(|e, _| e.slide().shape(rect_id).unwrap().kind.clone()), ibis_doc_model::ShapeKind::Auto(_)));
 
@@ -4864,13 +4866,13 @@ fn fix_xlsx_object007_group_and_image012_crop() {
     assert!(s.with(|e, _| e.slide().groups.is_empty()), "initial groups empty");
 
     // 1. 基本図形2個（四角形、楕円）および画像を挿入
-    s.menu("xlsx.shape.rect");
+    s.menu("shape.rect"); s.place_armed();
     let rect_id = s.with(|e, _| e.selected_sheet_shape()).expect("rect inserted");
 
-    s.menu("xlsx.shape.ellipse");
+    s.menu("shape.ellipse"); s.place_armed();
     let ellipse_id = s.with(|e, _| e.selected_sheet_shape()).expect("ellipse inserted");
 
-    s.menu("xlsx.shape.star5");
+    s.menu("shape.star5"); s.place_armed();
     let star_id = s.with(|e, _| e.selected_sheet_shape()).expect("star inserted");
 
     let png_1x1 = vec![
@@ -5167,7 +5169,7 @@ fn fix_xlsx_object012_object013_text_format_and_textbox_layout() {
     let initial_shapes = s.with(|e, _| e.slide().shapes.len());
 
     // 1. テキストボックス挿入
-    s.menu("xlsx.insert-textbox");
+    s.menu("xlsx.insert-textbox"); s.place_armed();
     let tb_id = s.with(|e, _| e.selected_ids().first().copied()).expect("textbox inserted and selected");
 
     // テキストを入力
@@ -5421,7 +5423,7 @@ fn fix_xlsx_object002_change_shape() {
     let initial_shapes = s.with(|e, _| e.slide().shapes.len());
 
     // 1. 基本図形（四角形）を挿入
-    s.menu("xlsx.shape.rect");
+    s.menu("shape.rect"); s.place_armed();
     let shape_id = s.with(|e, _| e.selected_sheet_shape()).expect("rect shape inserted");
 
     s.with(|e, _| {
@@ -5477,7 +5479,7 @@ fn fix_xlsx_object002_change_shape() {
     });
 
     // 6. テキストボックスからの図形変更
-    s.menu("xlsx.insert-textbox");
+    s.menu("xlsx.insert-textbox"); s.place_armed();
     let tb_id = s.with(|e, _| e.selected_ids().first().copied()).expect("textbox inserted");
     s.type_text("Memo");
     s.update(|e, window, cx| e.commit_edit(window, cx));
@@ -5513,7 +5515,7 @@ fn fix_xlsx_object014_shape_formula_textlink() {
     s.enter("KPI-2026", "enter");
 
     // 2. 四角形を挿入
-    s.menu("xlsx.shape.rect");
+    s.menu("shape.rect"); s.place_armed();
     let shape_id = s.with(|e, _| e.selected_ids().first().copied()).expect("shape inserted");
 
     // 3. セル連動を設定（A1 と連動）
@@ -5869,7 +5871,7 @@ fn fix_xlsx_file011_csv_and_tsv() {
     std::fs::create_dir_all(&dir).unwrap();
     let sjis_csv_path = dir.join("file011_sjis.csv");
     let sjis_content = "品名,数量,単価,小計\r\nりんご,5,120,=B2*C2\r\n\"温州,みかん\",3,100,=B3*C3\r\n";
-    let sjis_bytes = ibis_pptx::csv::encode_sjis(sjis_content);
+    let sjis_bytes = ibis_formats::csv::encode_sjis(sjis_content);
     std::fs::write(&sjis_csv_path, &sjis_bytes).unwrap();
 
     // 1. Shift_JIS CSV を開く
@@ -5897,7 +5899,7 @@ fn fix_xlsx_file011_csv_and_tsv() {
     });
     let out_sjis_bytes = std::fs::read(&out_sjis_path).unwrap();
     assert!(!out_sjis_bytes.starts_with(b"\xEF\xBB\xBF"), "Shift_JIS must not have UTF-8 BOM");
-    let decoded_sjis = ibis_pptx::csv::decode(&out_sjis_bytes).expect("decode sjis");
+    let decoded_sjis = ibis_formats::csv::decode(&out_sjis_bytes).expect("decode sjis");
     assert!(decoded_sjis.contains("品名,数量,単価,小計\r\n"));
     assert!(decoded_sjis.contains("\"温州,みかん\",3,100"));
 
@@ -5907,7 +5909,7 @@ fn fix_xlsx_file011_csv_and_tsv() {
         e.write_tsv(&out_tsv_path).expect("write_tsv succeeds");
     });
     let out_tsv_bytes = std::fs::read(&out_tsv_path).unwrap();
-    let decoded_tsv = ibis_pptx::csv::decode(&out_tsv_bytes).expect("decode tsv");
+    let decoded_tsv = ibis_formats::csv::decode(&out_tsv_bytes).expect("decode tsv");
     assert!(decoded_tsv.contains("品名\t数量\t単価\t小計\r\n"));
     assert!(decoded_tsv.contains("りんご\t5\t120"));
 
@@ -6022,7 +6024,7 @@ fn fix31_sheet_100_percent_is_a_point_a_pixel() {
     }
     // A presentation's slide: 72 px an inch at 100% too (1 pt a pixel, as PowerPoint for Mac; todo-fix #41).
     drop(s);
-    let mut p = Scenario::new_document(ibis_pptx::Kind::Presentation);
+    let mut p = Scenario::new_document(ibis_formats::Kind::Presentation);
     p.update(|e, window, cx| e.set_zoom(Some(1.0), window, cx));
     p.settle();
     let ratio = p.with(|e, _| e.slide_layout().map(|l| l.scale * ibis_doc_model::EMU_PER_POINT as f32));
@@ -6104,7 +6106,7 @@ fn fix51_cell_edit_and_align_toolbar() {
     s.update(|e, _, _| {
         let slide = e.current_slide;
         let range = ibis_doc_model::CellRange { first_row: 3, first_column: 0, last_row: 5, last_column: 4 };
-        let _ = e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Merge { slide, range, center: false })]);
+        let _ = e.document.execute(vec![ibis_doc_model::Command::Sheet(ibis_doc_model::SheetCommand::Merge { sheet: slide, range, center: false })]);
     });
     s.click_cell("A4");
     let h0_m = s.with(|e, _| e.current_sheet().unwrap().1.rows[3]);
@@ -6120,7 +6122,7 @@ fn fix51_cell_edit_and_align_toolbar() {
 
     // 4. Start window menu item exists in xlsx.
     assert!(s.menu_state("file.start-window").is_some());
-    assert_eq!(s.with(|e, _| e.kind()), ibis_pptx::Kind::Workbook);
+    assert_eq!(s.with(|e, _| e.kind()), ibis_formats::Kind::Workbook);
     drop(s);
 
     // 5. If default.xlsx exists in test/private, verify directly.
@@ -6149,13 +6151,13 @@ fn fix51_cell_edit_and_align_toolbar() {
     {
         let mut s_docx = Scenario::open("test/editing/docx-report.docx");
         assert!(s_docx.menu_state("file.start-window").is_some());
-        assert_eq!(s_docx.with(|e, _| e.kind()), ibis_pptx::Kind::Document);
+        assert_eq!(s_docx.with(|e, _| e.kind()), ibis_formats::Kind::Document);
     }
 
     {
         let mut s_pptx = Scenario::open("test/editing/pptx-plan.pptx");
         assert!(s_pptx.menu_state("file.start-window").is_some());
-        assert_eq!(s_pptx.with(|e, _| e.kind()), ibis_pptx::Kind::Presentation);
+        assert_eq!(s_pptx.with(|e, _| e.kind()), ibis_formats::Kind::Presentation);
     }
 }
 
@@ -6294,7 +6296,7 @@ fn fix72_font_dropdown_preview() {
 const CJK_SAMPLE: &str = "直接・骨・写真";
 
 /// A window with a new file of `kind`, as ファイル > 新規 makes it.
-fn new_file(kind: ibis_pptx::Kind) -> Scenario {
+fn new_file(kind: ibis_formats::Kind) -> Scenario {
     let mut s = Scenario::start_view();
     s.update(|e, window, cx| e.new_file(kind, window, cx));
     s.settle();
@@ -6317,7 +6319,7 @@ fn compose_and_commit(s: &mut Scenario) {
 }
 
 fn fix_cjk_edit_font_xlsx() {
-    let mut s = new_file(ibis_pptx::Kind::Workbook);
+    let mut s = new_file(ibis_formats::Kind::Workbook);
     s.click_cell("B2");
     s.key("f2");
     compose_and_commit(&mut s);
@@ -6326,7 +6328,7 @@ fn fix_cjk_edit_font_xlsx() {
 }
 
 fn fix_cjk_edit_font_pptx() {
-    let mut s = new_file(ibis_pptx::Kind::Presentation);
+    let mut s = new_file(ibis_formats::Kind::Presentation);
     s.double_click_shape(0);
     compose_and_commit(&mut s);
     s.key("escape");
@@ -6335,7 +6337,7 @@ fn fix_cjk_edit_font_pptx() {
 }
 
 fn fix_cjk_edit_font_docx() {
-    let mut s = new_file(ibis_pptx::Kind::Document);
+    let mut s = new_file(ibis_formats::Kind::Document);
     let (id, _) = s.paragraph(0);
     s.click_text(ibis_doc_model::FlowPos::new(id, 0));
     compose_and_commit(&mut s);
@@ -6411,7 +6413,7 @@ fn fix78_dark_chrome() {
             s.screenshot("docx-dark-text-box-panel");
         }
         if name == "xlsx" {
-            s.menu("xlsx.insert-textbox");
+            s.menu("xlsx.insert-textbox"); s.place_armed();
             s.type_text("x");
             s.key("escape");
             s.settle();
@@ -6484,30 +6486,31 @@ fn fix75_start_window_closes_with_cmd_w() {
 /// An edit in a new file of `kind`, as the user makes it: a cell typed in (not yet entered, as when the window is
 /// closed right after typing), text typed in a document, a text box on a slide.
 /// A new file of `kind`, as ファイル > 新規作成 makes it on the start window.
-fn issue27_new(kind: ibis_pptx::Kind) -> Scenario {
+fn issue27_new(kind: ibis_formats::Kind) -> Scenario {
     let mut s = Scenario::start_view();
     s.update(|e, window, cx| e.new_file(kind, window, cx));
     s.settle();
     s
 }
 
-fn issue27_make_edit(s: &mut Scenario, kind: ibis_pptx::Kind) {
+fn issue27_make_edit(s: &mut Scenario, kind: ibis_formats::Kind) {
     match kind {
-        ibis_pptx::Kind::Workbook => {
+        ibis_formats::Kind::Pdf => unreachable!("a PDF is only viewed: the scenarios do not make one"),
+        ibis_formats::Kind::Workbook => {
             s.click_cell("A1");
             s.type_text("a");
         }
-        ibis_pptx::Kind::Document => {
+        ibis_formats::Kind::Document => {
             let (id, _) = s.paragraph(0);
             s.click_text(ibis_doc_model::FlowPos::new(id, 0));
             s.type_text("a");
             assert!(s.paragraph(0).1.contains('a'), "the document takes the typing");
         }
-        ibis_pptx::Kind::Presentation => s.update(|e, _, cx| {
+        ibis_formats::Kind::Presentation => s.update(|e, _, cx| {
             let slide = e.current_slide;
             let id = e.document.ids().new_shape_id();
             let frame = ibis_doc_model::EmuRect::new(0, 0, 914_400, 914_400);
-            e.execute(vec![ibis_doc_model::Command::InsertShape { slide, index: 0, shape: ibis_doc_model::Shape::text_box(id, frame, "a") }], cx);
+            e.execute(vec![ibis_doc_model::Command::InsertShape { slide, shapes: vec![(0, ibis_doc_model::Shape::text_box(id, frame, "a"))] }], cx);
         }),
     }
 }
@@ -6522,7 +6525,7 @@ fn click_client_close(s: &mut Scenario) {
 fn client_close_button_click_asks_to_save() {
     let _controls = crate::shell::chrome::scenario_client_window_controls();
     for compact in [false, true] {
-        for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+        for kind in [ibis_formats::Kind::Document, ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
             let setup = |s: &mut Scenario| {
                 s.size(1280.0, 800.0);
                 s.update(|e, _, cx| {
@@ -6562,9 +6565,9 @@ fn client_close_button_click_asks_to_save() {
 fn client_close_button_click_saves_then_closes() {
     let _controls = crate::shell::chrome::scenario_client_window_controls();
     for (kind, extension) in [
-        (ibis_pptx::Kind::Document, "docx"),
-        (ibis_pptx::Kind::Workbook, "xlsx"),
-        (ibis_pptx::Kind::Presentation, "pptx"),
+        (ibis_formats::Kind::Document, "docx"),
+        (ibis_formats::Kind::Workbook, "xlsx"),
+        (ibis_formats::Kind::Presentation, "pptx"),
     ] {
         let mut s = issue27_new(kind);
         s.size(1280.0, 800.0);
@@ -6577,19 +6580,20 @@ fn client_close_button_click_saves_then_closes() {
         s.update(|e, window, cx| e.confirm_save_and_close(window, cx));
         assert_eq!(s.window_count(), 0, "{kind:?}: Save finishes the requested close");
         assert!(s.quit_requested());
-        let saved = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+        let saved = ibis_formats::read(&std::fs::read(&path).unwrap()).unwrap();
         match kind {
-            ibis_pptx::Kind::Workbook => {
+            ibis_formats::Kind::Pdf => unreachable!("a PDF is only viewed: the scenarios do not make one"),
+            ibis_formats::Kind::Workbook => {
                 let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&saved.slides[0]).unwrap();
                 assert_eq!(sheet.cell(0, 0).map(|c| c.value.clone()), Some(ibis_doc_model::CellValue::Text("a".into())), "pending typed cell was saved");
             }
-            ibis_pptx::Kind::Document => {
+            ibis_formats::Kind::Document => {
                 assert!(saved.flow.as_ref().unwrap().body.iter().any(|block| match block {
                     ibis_doc_model::Block::Paragraph(p) => p.runs.iter().any(|r| matches!(&r.kind, ibis_doc_model::FlowRunKind::Text(text) if text.contains('a'))),
                     _ => false,
                 }), "document typing was saved");
             }
-            ibis_pptx::Kind::Presentation => {
+            ibis_formats::Kind::Presentation => {
                 assert!(saved.slides.iter().flat_map(|slide| &slide.shapes).any(|shape| shape.text_body().is_some_and(|body| body.paragraphs.iter().flat_map(|p| &p.runs).any(|run| run.text.contains('a')))), "inserted text was saved");
             }
         }
@@ -6600,7 +6604,7 @@ fn client_close_button_click_saves_then_closes() {
 /// them, in each format and for a new file; without edits it closes at once; キャンセル keeps the window and the edits;
 /// 保存しない from the close button closes the window (not only the file), and the app ends with its last window.
 fn issue27_close_button_asks_to_save() {
-    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Workbook, ibis_formats::Kind::Document, ibis_formats::Kind::Presentation] {
         // Nothing typed: the close button closes at once.
         let mut s = issue27_new(kind);
         s.quit_with_last_window();
@@ -6636,7 +6640,7 @@ fn issue27_close_button_asks_to_save() {
         assert!(s.quit_requested(), "{kind:?}: the app ends with its last window");
     }
     // ⌘W closes the window in every format, not showing the start view in it; the app ends with its last window.
-    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Workbook, ibis_formats::Kind::Document, ibis_formats::Kind::Presentation] {
         let mut s = issue27_new(kind);
         s.quit_with_last_window();
         s.key("cmd-w");
@@ -6675,14 +6679,14 @@ fn issue27_save_answer_writes_then_closes() {
     s.update(|e, window, cx| e.confirm_save_and_close(window, cx));
     assert_eq!(s.window_count(), 0, "保存 closes the window once written");
     assert!(s.quit_requested());
-    let saved = ibis_pptx::read(&std::fs::read(&path).unwrap()).unwrap();
+    let saved = ibis_formats::read(&std::fs::read(&path).unwrap()).unwrap();
     let sheet = ibis_doc_model::sheet_calc::sheet_of_slide(&saved.slides[0]).unwrap();
     assert_eq!(sheet.cell(19, 7).map(|c| c.value.clone()), Some(ibis_doc_model::CellValue::Text("issue27".into())), "the typed cell is saved");
 }
 
 /// GitHub issue #27: ibisOffice > 終了 (⌘Q) with edits not saved asks instead of ending; without edits it ends.
 fn issue27_quit_asks_to_save() {
-    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Document, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Workbook, ibis_formats::Kind::Document, ibis_formats::Kind::Presentation] {
         let mut s = issue27_new(kind);
         s.quit_with_last_window();
         s.key("cmd-q");
@@ -6713,7 +6717,7 @@ fn close_file_drops_recovery_state() {
     let dir = crate::shell::scenario::repo_root().join("target/scenario-input/close-recovery");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    for kind in [ibis_pptx::Kind::Document, ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Document, ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let mut s = issue27_new(kind);
         let snapshot = dir.join(format!("{kind:?}_autorecover_1.tmp"));
         std::fs::write(&snapshot, b"snapshot").unwrap();
@@ -6749,7 +6753,7 @@ fn right_pane_button_follows_the_pane() {
             .expect("表示 > サイドバー")
     });
     // docx: a new document has no panel open.
-    let mut s = issue27_new(ibis_pptx::Kind::Document);
+    let mut s = issue27_new(ibis_formats::Kind::Document);
     assert_eq!(pane(&mut s), crate::shell::chrome::RightPane { available: false, shown: false }, "docx: nothing to show: off, disabled");
     assert_eq!(menu(&mut s), (false, false), "docx: 表示 > サイドバー unchecked, disabled");
     // A panel opened: on, and the button hides it and shows it again.
@@ -6762,7 +6766,7 @@ fn right_pane_button_follows_the_pane() {
     assert!(pane(&mut s).shown, "docx: shown again");
     drop(s);
     // xlsx and pptx: the pane is there on request.
-    for kind in [ibis_pptx::Kind::Workbook, ibis_pptx::Kind::Presentation] {
+    for kind in [ibis_formats::Kind::Workbook, ibis_formats::Kind::Presentation] {
         let mut s = issue27_new(kind);
         let before = pane(&mut s);
         assert!(before.available, "{kind:?}: the pane can be shown");
@@ -7295,7 +7299,7 @@ fn fix_textbox_16_docx_undo_coalesces_typing_session() {
 /// 17. xlsx: Inserting a text box enters edit mode and typing 5+ lines keeps rectangle size fixed.
 fn fix_textbox_17_xlsx_insert_and_five_lines_fixed_rectangle_size() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     assert!(s.with(|e, _| e.editing.is_some()), "insert.text-box enters edit mode");
     let frame0 = s.with(|e, _| e.slide().shapes.last().unwrap().frame);
@@ -7313,7 +7317,7 @@ fn fix_textbox_17_xlsx_insert_and_five_lines_fixed_rectangle_size() {
 /// 18. xlsx: 2nd-line selection rectangle and caret align with 2nd-line painted glyphs.
 fn fix_textbox_18_xlsx_second_line_selection_and_caret_alignment() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     s.type_text("FirstLine");
     s.key("enter");
@@ -7346,7 +7350,7 @@ fn fix_textbox_18_xlsx_second_line_selection_and_caret_alignment() {
 /// 19. xlsx: 2nd line with 24pt font keeps 3rd-line caret and selection aligned with 3rd-line painted glyphs.
 fn fix_textbox_19_xlsx_second_line_large_font_third_line_alignment() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     s.type_text("Row1");
     s.key("enter");
@@ -7393,7 +7397,7 @@ fn fix_textbox_19_xlsx_second_line_large_font_third_line_alignment() {
 /// 20. xlsx: Up and Down arrow keys and Shift+Up / Shift+Down inside text box editing.
 fn fix_textbox_20_xlsx_arrow_up_down_and_shift_selection() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     s.type_text("12345");
     s.key("enter");
@@ -7419,7 +7423,7 @@ fn fix_textbox_20_xlsx_arrow_up_down_and_shift_selection() {
 /// 21. xlsx: Word navigation (Alt+Left/Right) and word/line deletion (Alt+Backspace, Cmd+Backspace).
 fn fix_textbox_21_xlsx_word_nav_and_delete_shortcuts() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     s.type_text("one two three");
     s.settle();
@@ -7439,7 +7443,7 @@ fn fix_textbox_21_xlsx_word_nav_and_delete_shortcuts() {
 /// 22. xlsx: IME composition ("あいうえお") is visible inline with underline and commits cleanly.
 fn fix_textbox_22_xlsx_ime_composing_visible_and_commit() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
 
     s.update(|e, _, cx| {
@@ -7471,7 +7475,7 @@ fn fix_textbox_22_xlsx_ime_composing_visible_and_commit() {
 /// 23. xlsx: Double-clicking a text box places the caret at the clicked position on line 1 or line 2.
 fn fix_textbox_23_xlsx_double_click_places_caret_at_click_pos() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     s.type_text("abcdefghij");
     s.key("enter");
@@ -7513,7 +7517,7 @@ fn fix_textbox_23_xlsx_double_click_places_caret_at_click_pos() {
 /// 24. xlsx: Double-click selects word, triple-click selects paragraph, mouse drag selects range inside edit mode.
 fn fix_textbox_24_xlsx_double_triple_click_and_drag_selection() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     s.type_text("hello world");
     s.key("enter");
@@ -7543,7 +7547,7 @@ fn fix_textbox_24_xlsx_double_triple_click_and_drag_selection() {
 /// 25. xlsx: Partial selection formatting (Cmd+B, Cmd+I, Cmd+U, font size) and toolbar current_style() sync.
 fn fix_textbox_25_xlsx_partial_selection_formatting_and_toolbar_sync() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     s.type_text("plain styled");
     s.settle();
@@ -7579,7 +7583,7 @@ fn fix_textbox_25_xlsx_partial_selection_formatting_and_toolbar_sync() {
 /// 26. xlsx: 8 resize handles and border drag strips work while editing a text box.
 fn fix_textbox_26_xlsx_eight_handles_and_border_drag_while_editing() {
     let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     s.type_text("Resize and move me");
     s.settle();
@@ -7627,7 +7631,7 @@ fn fix_textbox_27_xlsx_empty_new_textbox_retracted_on_escape_and_undo_coalesced(
     assert_eq!(s.with(|e, _| e.slide().shapes.len()), count0, "empty new text box retracted on Escape");
 
     // Insert and type, then Escape, then double-click to edit again and undo that second session in 1 step.
-    s.menu("insert.text-box");
+    s.menu("insert.text-box"); s.place_armed();
     s.settle();
     s.type_text("initial");
     s.key("escape");
@@ -7841,7 +7845,7 @@ fn fix_textbox_32_copy_cut_paste_and_select_all_across_docx_xlsx_pptx() {
     // 2. xlsx
     {
         let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-        s.menu("insert.text-box");
+        s.menu("insert.text-box"); s.place_armed();
         s.settle();
         s.type_text("abc def");
         for _ in 0..3 {
@@ -8119,7 +8123,7 @@ fn fix104_textbox_border_click_exits_edit_and_keeps_handles() {
     // 2. xlsx
     {
         let mut s = Scenario::open("test/editing/xlsx-sales.xlsx");
-        s.menu("insert.text-box");
+        s.menu("insert.text-box"); s.place_armed();
         s.settle();
         s.type_text("xlsx border click");
         assert!(s.with(|e, _| e.editing.is_some()));
@@ -8508,7 +8512,7 @@ fn fix116_117_clear_formatting_in_xlsx_docx_pptx() {
         assert_eq!(s.with(|e, _| e.current_style().fill), None, "xlsx cell fill cleared");
 
         // Worksheet text box: apply bold and clear formatting
-        s.menu("insert.text-box");
+        s.menu("insert.text-box"); s.place_armed();
         s.settle();
         s.type_text("Hello Clear");
         s.key("cmd-a");
@@ -8649,7 +8653,7 @@ fn fix118_multi_shape_selection_with_shift_click() {
             e.format_cells(ibis_doc_model::StyleChange::Bold(true), cx);
             e.format_cells(ibis_doc_model::StyleChange::Italic(true), cx);
             e.format_cells(ibis_doc_model::StyleChange::Color(ibis_doc_model::Rgb(0x0070c0)), cx);
-            e.format_cells(ibis_doc_model::StyleChange::Align(ibis_doc_model::CellAlign::Center), cx);
+            e.format_cells(ibis_doc_model::StyleChange::HorizontalAlignment(ibis_doc_model::CellAlign::Center), cx);
             e.step_font_size_selection(true, cx);
         });
         s.settle();
@@ -8784,7 +8788,7 @@ fn fix121_pptx_change_shape_removed_from_toolbar_kept_in_menus() {
         ibis_doc_model::ShapeKind::Auto(a) => a.geometry.clone(),
         _ => panic!("expected auto shape"),
     });
-    assert_eq!(Some(geom), ibis_pptx::preset_geometry("ellipse"), "change-shape via menu changed rect to ellipse");
+    assert_eq!(Some(geom), ibis_formats::preset_geometry("ellipse"), "change-shape via menu changed rect to ellipse");
 }
 
 /// #122 (GitHub issue #24): xlsx dynamic array spill range outline (solid blue when active,
@@ -8932,6 +8936,42 @@ fn fix124_no_mini_toolbar_on_body_text_selection() {
     s.settle();
     let bold_after = s.with(|e, _| e.current_format().map(|(_, st)| st.bold)).unwrap_or(false);
     assert_eq!(bold_after, !bold_before, "Cmd+B toggles bold on selected body text");
+}
+
+/// Web `?fd=0` turns off the guidance to the font downloads (the startup dialog and Help > セットアップ); on by default.
+fn fix_embed_font_prompt_flag() {
+    use crate::shell::embed::{font_prompt, resolve_font_prompt_query, set_font_prompt};
+    assert!(resolve_font_prompt_query(""), "default is on");
+    assert!(resolve_font_prompt_query("?view=1"), "other options leave it on");
+    assert!(resolve_font_prompt_query("?fd=1"));
+    assert!(!resolve_font_prompt_query("?fd=0"));
+    assert!(!resolve_font_prompt_query("?view=1&fd=false&open=a.docx"));
+    assert!(font_prompt(), "the flag starts on");
+    set_font_prompt(false);
+    assert!(!font_prompt());
+    set_font_prompt(true);
+    let main_ts = std::fs::read_to_string(crate::shell::scenario::repo_root().join("www/main.ts")).expect("read www/main.ts");
+    assert!(main_ts.contains("fd: js.fd ?? flag(params, 'fd') ?? true"), "www/main.ts defaults fd to on");
+    assert!(main_ts.contains("set_font_prompt(embed.fd)"), "www/main.ts hands fd to Rust");
+    let playground = std::fs::read_to_string(crate::shell::scenario::repo_root().join("publish/playground/index.html")).expect("read playground");
+    assert!(!playground.contains("href=\"app/?open="), "every playground link to the app carries fd=0");
+}
+
+/// K0036: ヘルプ > ソースコード (AGPL)… sits just above ibisOffice について in the three screens, and opens the project's page
+/// on GitHub in the browser (the users of a fork's build learn of ibis-office too).
+fn k0036_help_source_code_opens_the_project_page() {
+    for file in ["test/editing/docx-report.docx", "test/editing/xlsx-compatibility-v1.xlsx", "test/editing/pptx-plan.pptx"] {
+        let mut s = Scenario::open(file);
+        assert_eq!(s.menu_state("help.source-code").map(|(enabled, _)| enabled), Some(true), "{file}: the Help menu has Source Code, enabled");
+        crate::shell::external::take_launched();
+        s.menu("help.source-code");
+        s.settle();
+        assert_eq!(crate::shell::external::take_launched(), vec![format!("url {}", crate::shell::about::PROJECT_URL)], "{file}: it opens the project's page");
+    }
+    assert_eq!(crate::shell::about::PROJECT_URL, "https://github.com/ibisjp/ibis-office");
+    // Just above ibisOffice について in the redesigned bar of the three screens.
+    let data = std::fs::read_to_string(crate::shell::scenario::repo_root().join("crates/ibis-office-shell/src/menu_layout_data.rs")).expect("read menu_layout_data.rs");
+    assert_eq!(data.matches("LayoutItem::Cmd(\"help.source-code\"),\n        LayoutItem::Cmd(\"help.about\"),").count(), 3, "above About in the three screens");
 }
 
 /// Web `view=1` read-only mode and `menuBar=1` / `toolBar=1` defaults and overrides.
@@ -9806,7 +9846,7 @@ fn fix152_156_multi_shape_text_and_paragraph_formatting() {
                 if let Some(ShapeKind::Auto(mut auto)) = e.slide().shape(id).map(|sh| sh.kind.clone()) {
                     auto.text = Some(TextBody::plain(txt, TextStyle::default()));
                     e.run_sheet(
-                        vec![Command::SetKind {
+                        vec![Command::SetShapeKind {
                             slide,
                             shape: id,
                             kind: Box::new(ShapeKind::Auto(auto)),
@@ -10013,16 +10053,8 @@ fn fix152_156_xlsx_shape_underline_and_multi_shape_text_format() {
         let idx = e.slide().shapes.len();
         e.run_sheet(
             vec![
-                ibis_doc_model::Command::InsertShape {
-                    slide,
-                    index: idx,
-                    shape: sh1,
-                },
-                ibis_doc_model::Command::InsertShape {
-                    slide,
-                    index: idx + 1,
-                    shape: sh2,
-                },
+                ibis_doc_model::Command::InsertShape { slide, shapes: vec![(idx, sh1)] },
+                ibis_doc_model::Command::InsertShape { slide, shapes: vec![(idx + 1, sh2)] },
             ],
             cx,
         );
@@ -10125,7 +10157,7 @@ fn fix152_156_xlsx_shape_underline_and_multi_shape_text_format() {
         e.format_cells(StyleChange::Font(Some("Carlito".into())), cx);
         e.format_cells(StyleChange::Bold(true), cx);
         e.format_cells(StyleChange::Italic(true), cx);
-        e.format_cells(StyleChange::Strike(true), cx);
+        e.format_cells(StyleChange::Strikethrough(true), cx);
         e.format_cells(StyleChange::Color(Rgb(0xC00000)), cx);
         e.set_sheet_shape_highlight(Some(Rgb(0xFFFF00)), cx);
     });
@@ -10152,8 +10184,8 @@ fn fix152_156_xlsx_shape_underline_and_multi_shape_text_format() {
 
     // Horizontal alignment (Center), vertical alignment (Middle), bullet list, checklist, and indent +/- across both shapes.
     s.update(|e, _, cx| {
-        e.format_cells(StyleChange::Align(CellAlign::Center), cx);
-        e.format_cells(StyleChange::Vertical(CellVerticalAlign::Center), cx);
+        e.format_cells(StyleChange::HorizontalAlignment(CellAlign::Center), cx);
+        e.format_cells(StyleChange::VerticalAlignment(CellVerticalAlign::Center), cx);
         e.toggle_sheet_shape_list(ListKind::Bullet, cx);
         e.step_sheet_indent(true, cx);
     });

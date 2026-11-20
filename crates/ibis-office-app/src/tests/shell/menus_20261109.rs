@@ -151,7 +151,7 @@ fn chart_pictures_have_series_colours() {
                 edits.push(CellEdit { row: 20 + row, column: 10 + column, input });
             }
         }
-        e.document.execute(vec![Command::Sheet(SheetCommand::SetCells { slide, edits })]).unwrap();
+        e.document.execute(vec![Command::Sheet(SheetCommand::SetCells { sheet: slide, edits })]).unwrap();
         e.set_selected_ranges(&[CellRange { first_row: 20, last_row: 619, first_column: 10, last_column: 13 }]);
         cx.notify();
     });

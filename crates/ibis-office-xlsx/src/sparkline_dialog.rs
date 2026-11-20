@@ -492,7 +492,7 @@ impl SlideEditor {
             }) {
                 let mut edited = g.clone();
                 edited.kind = kind;
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -521,7 +521,7 @@ impl SlideEditor {
                 edited.last_color = Some(preset.last);
                 edited.high_color = Some(preset.high);
                 edited.low_color = Some(preset.low);
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -542,7 +542,7 @@ impl SlideEditor {
             if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
                 let mut edited = g.clone();
                 edited.series = color;
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -563,7 +563,7 @@ impl SlideEditor {
             if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
                 let mut edited = g.clone();
                 edited.display_hidden = display_hidden;
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -584,7 +584,7 @@ impl SlideEditor {
             if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
                 let mut edited = g.clone();
                 edited.date_axis = date_axis;
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -605,7 +605,7 @@ impl SlideEditor {
             if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
                 let mut edited = g.clone();
                 edited.empty = empty;
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -626,7 +626,7 @@ impl SlideEditor {
             if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
                 let mut edited = g.clone();
                 edited.line_weight = weight;
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -654,7 +654,7 @@ impl SlideEditor {
                     SparklinePointKind::Last => edited.last = !edited.last,
                     SparklinePointKind::Markers => edited.markers = !edited.markers,
                 }
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -700,7 +700,7 @@ impl SlideEditor {
                         if color.is_some() { edited.markers = true; }
                     }
                 }
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -721,7 +721,7 @@ impl SlideEditor {
             if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
                 let mut edited = g.clone();
                 edited.display_x_axis = !edited.display_x_axis;
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -742,7 +742,7 @@ impl SlideEditor {
             if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
                 let mut edited = g.clone();
                 edited.right_to_left = !edited.right_to_left;
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -763,7 +763,7 @@ impl SlideEditor {
             if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
                 let mut edited = g.clone();
                 edited.min_axis = min_axis.clone();
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -784,7 +784,7 @@ impl SlideEditor {
             if g.sparklines.iter().any(|s| ranges.iter().any(|r| s.row >= r.first_row && s.row <= r.last_row && s.column >= r.first_column && s.column <= r.last_column)) {
                 let mut edited = g.clone();
                 edited.max_axis = max_axis.clone();
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
             }
         }
         if !commands.is_empty() {
@@ -937,7 +937,7 @@ impl SlideEditor {
             group.empty = p.empty;
             group.sparklines = sparklines;
 
-            self.run_sheet(vec![Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group })], cx);
+            self.run_sheet(vec![Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group })], cx);
         } else {
             let group = SparklineGroup {
                 kind: p.kind,
@@ -966,7 +966,7 @@ impl SlideEditor {
                 empty: p.empty,
                 sparklines,
             };
-            self.run_sheet(vec![Command::Sheet(SheetCommand::AddSparklineGroup { slide, group })], cx);
+            self.run_sheet(vec![Command::Sheet(SheetCommand::AddSparklineGroup { sheet: slide, group })], cx);
         }
 
         self.wb_mut().panels.sparkline = None;
@@ -982,7 +982,7 @@ impl SlideEditor {
             return;
         }
         let slide = self.current_slide;
-        self.run_sheet(vec![Command::Sheet(SheetCommand::ClearSparklines { slide, ranges, whole_group })], cx);
+        self.run_sheet(vec![Command::Sheet(SheetCommand::ClearSparklines { sheet: slide, ranges, whole_group })], cx);
         if let Some(s) = self.sheet_state_mut() {
             s.panels.sparkline = None;
         }
@@ -1010,10 +1010,10 @@ impl SlideEditor {
             if !keep.is_empty() && !split.is_empty() {
                 let mut edited = g.clone();
                 edited.sparklines = keep;
-                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: idx, group: edited }));
+                commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: idx, group: edited }));
                 let mut new_g = g.clone();
                 new_g.sparklines = split;
-                commands.push(Command::Sheet(SheetCommand::AddSparklineGroup { slide, group: new_g }));
+                commands.push(Command::Sheet(SheetCommand::AddSparklineGroup { sheet: slide, group: new_g }));
             }
         }
         if !commands.is_empty() {
@@ -1046,9 +1046,9 @@ impl SlideEditor {
             }
             let mut commands = Vec::new();
             for &idx in matching_indices[1..].iter().rev() {
-                commands.push(Command::Sheet(SheetCommand::DeleteSparklineGroup { slide, index: idx }));
+                commands.push(Command::Sheet(SheetCommand::DeleteSparklineGroup { sheet: slide, index: idx }));
             }
-            commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { slide, index: base_idx, group: merged }));
+            commands.push(Command::Sheet(SheetCommand::EditSparklineGroup { sheet: slide, index: base_idx, group: merged }));
             self.run_sheet(commands, cx);
             if let Some(s) = self.sheet_state_mut() {
                 s.panels.sparkline = None;

@@ -223,6 +223,17 @@ impl Package {
         Ok(())
     }
 
+    /// Remove the `Default` of extension `extension` (no part name, no case), if it has one.
+    pub fn remove_default(&mut self, extension: &str) -> Result<(), Error> {
+        let doc = self.xml_mut(CONTENT_TYPES)?;
+        let Some(root) = doc.root_element() else { return Ok(()) };
+        let found: Vec<NodeId> = doc.children_named(root, "Default").filter(|&d| doc.attr(d, "Extension").is_some_and(|e| e.eq_ignore_ascii_case(extension))).collect();
+        for d in found {
+            doc.detach(d);
+        }
+        Ok(())
+    }
+
     // ----- Relationships --------------------------------------------------
 
     /// The relationships of `source` ("" for the package), in document order.

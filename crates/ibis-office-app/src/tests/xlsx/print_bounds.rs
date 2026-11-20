@@ -15,7 +15,7 @@ fn print_shaped_width_is_stable_in_sheet_points_at_different_print_scales() {
             for size in [9.0, 11.0, 14.0, 20.0] {
                 for text in ["OVERFLOW wide text 0123456789", "Typography AV fi ellipsis...", "日本語の印刷文字幅"] { // i18n-ok（試験の入力の和文）
                     let font = gpui_kit::font(name);
-                    let unit = ibis_pptx::EXCEL_METRICS.pixel_pt() as f32;
+                    let unit = ibis_formats::EXCEL_METRICS.pixel_pt() as f32;
                     let widths: Vec<_> = [0.5, 1.0, 1.3].into_iter().map(|scale| {
                         (crate::xlsx::sheet_view::printed_shaped_width(&text_system, text, &font, size, scale, false) / unit).round() as i64
                     }).collect();

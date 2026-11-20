@@ -66,7 +66,7 @@ impl SlideEditor {
             let mut direct=p.direct.clone();update(&mut direct,p);p.direct=direct;p.resolve(&doc.styles);
         });
         if blocks == list[first..=last] {return;}
-        self.run_flow(vec![FlowCommand::ReplaceBlocks {container,index:first,remove:last-first+1,blocks}],cx);
+        self.run_flow(vec![FlowCommand::ReplaceBlockRange {container,index:first,remove:last-first+1,blocks}],cx);
     }
     pub(crate) fn set_paragraph_shading(&mut self, color: Option<Rgb>, cx: &mut Context<Self>) {
         self.apply_paragraph_decoration(|d,_| d.shading=Some(color),cx);
@@ -225,4 +225,9 @@ pub(super) fn menu(editor:&SlideEditor)->Vec<MenuEntry> {
         Submenu::tr("docx.paragraph.border", "border_style",types).into(),
         Submenu::tr("docx.paragraph.border-width", "line_weight",widths).into(),
         Submenu::tr("docx.paragraph.border-color", "format_color_text",colors).into()]
+}
+
+/// The exact line height (EMU) of a drop cap that spans `lines` lines of `pitch` points each.
+pub(crate) fn drop_cap_line_emu(pitch: f64, lines: u32) -> ibis_doc_model::Emu {
+    (pitch * lines as f64 * 12700.0).round() as ibis_doc_model::Emu
 }

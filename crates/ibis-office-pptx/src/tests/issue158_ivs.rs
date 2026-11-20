@@ -14,6 +14,8 @@ pub(crate) fn all() -> Vec<(&'static str, fn())> {
         ("pptx::issue158_backspace_and_delete_take_the_pair", backspace_and_delete_take_the_pair),
         ("pptx::issue158_an_ime_range_between_the_pair_takes_the_pair", an_ime_range_between_the_pair_takes_the_pair),
         ("pptx::issue158_a_double_click_word_keeps_the_pair", a_double_click_word_keeps_the_pair),
+        ("pptx::issue158_a_plane_16_private_use_character_is_one_character", a_plane_16_character_is_one_character),
+        ("pptx::issue158_the_notes_pane_takes_the_pair_as_one_character", the_notes_pane_takes_the_pair_as_one_character),
     ]
 }
 
@@ -109,4 +111,60 @@ fn a_double_click_word_keeps_the_pair() {
         let word: String = text.chars().skip(a).take(b - a).collect();
         assert_eq!(word.trim_end(), "\u{845b}\u{e0100}\u{57ce}", "at {at}");
     }
+}
+
+/// The notes pane (a text area of the input element): ← and Delete go over the pair, Backspace takes it, and the notes keep it whole.
+fn the_notes_pane_takes_the_pair_as_one_character() {
+    let mut s = Scenario::open("test/editing/pptx-plan.pptx");
+    s.page(2);
+    let at = s.with(|e, _| {
+        let ws = e.workspace_bounds.expect("the workspace is laid out");
+        (f32::from(ws.origin.x + ws.size.width / 2.0), f32::from(ws.origin.y + ws.size.height) + 40.0)
+    });
+    let notes = |s: &mut Scenario| {
+        s.click_shape(0);
+        s.with(|e, _| e.presentation().slides[1].notes.clone())
+    };
+    for selector in ['\u{e0100}', '\u{fe00}'] {
+        s.click(at);
+        s.key("cmd-a");
+        s.type_text("A\u{845b}");
+        s.type_text(&selector.to_string());
+        s.type_text("B");
+        // Left twice: before the B, then before the pair (not between the kanji and its selector); X goes there.
+        s.key("left");
+        s.key("left");
+        s.type_text("X");
+        assert_eq!(notes(&mut s), format!("AX\u{845b}{selector}B"), "{selector:?}: ← goes over the pair");
+        // Delete takes the pair (the caret is after X), Backspace takes X.
+        s.click(at);
+        s.key("cmd-a");
+        s.type_text("A\u{845b}");
+        s.type_text(&selector.to_string());
+        s.type_text("B");
+        s.key("left");
+        s.key("backspace");
+        assert_eq!(notes(&mut s), "AB", "{selector:?}: Backspace takes the pair");
+        s.click(at);
+        s.key("cmd-a");
+        s.type_text("A\u{845b}");
+        s.type_text(&selector.to_string());
+        s.type_text("B");
+        s.key("left");
+        s.key("left");
+        s.key("delete");
+        assert_eq!(notes(&mut s), "AB", "{selector:?}: Delete takes the pair");
+    }
+}
+
+/// A Plane 16 private use character (U+100000.., the additional characters of the administrative standard set) is one character for the
+/// caret and Backspace, as a char of Rust is (it is two UTF-16 units for the input method).
+fn a_plane_16_character_is_one_character() {
+    let (mut s, id) = editing("A\u{100001}B");
+    assert_eq!(caret(&mut s), 3);
+    s.key("left");
+    s.key("left");
+    assert_eq!(caret(&mut s), 1, "← goes over the character");
+    s.key("delete");
+    assert_eq!(text_of(&mut s, id), "AB", "Delete takes the whole character");
 }

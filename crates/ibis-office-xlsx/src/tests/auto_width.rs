@@ -62,7 +62,7 @@ pub(super) fn run() {
     // 4. A column sized by hand does not widen.
     s.update(|e, _, cx| {
         let slide = e.current_slide;
-        e.run_sheet(vec![Command::Sheet(SheetCommand::SetSize { slide, axis: Axis::Columns, first: 7, last: 7, size: 40 * EMU_PER_POINT })], cx);
+        e.run_sheet(vec![Command::Sheet(SheetCommand::SetSize { sheet: slide, axis: Axis::Columns, first: 7, last: 7, size: 40 * EMU_PER_POINT })], cx);
     });
     assert!(custom(&mut s, 7));
     s.click_cell("H5");
@@ -79,7 +79,7 @@ pub(super) fn run() {
     assert!(s.size_pt("H") >= fitted);
     s.update(|e, _, cx| {
         let slide = e.current_slide;
-        e.run_sheet(vec![Command::Sheet(SheetCommand::SetSize { slide, axis: Axis::Columns, first: 9, last: 9, size: 33 * EMU_PER_POINT })], cx);
+        e.run_sheet(vec![Command::Sheet(SheetCommand::SetSize { sheet: slide, axis: Axis::Columns, first: 9, last: 9, size: 33 * EMU_PER_POINT })], cx);
     });
     s.click_cell("J5");
     s.header_menu("J", "xlsx.header-fit-columns");

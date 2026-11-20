@@ -422,7 +422,8 @@ fn t2_nowrap_fixed_cell_wraps_in_cell() {
     let mut failures = Vec::new();
     let pages = laid_out("r3-nowrap-cells.docx");
     let gs = glyphs(&pages.pages[0]);
-    let left = find(&gs, "normal cell")[0].x - 5.4;
+    // The file has no styles.xml, so Word gives its tables no margin at the cell's sides (Word's PDFs, #227): the table's left is where the text starts.
+    let left = find(&gs, "normal cell")[0].x;
     let (col2, col3) = (left + 100.0, left + 200.0);
     let center = find_all(&gs, "CENTER").pop().expect("CENTER");
     if center.iter().any(|g| g.x < col3 || g.x > col3 + 100.0) {
@@ -1305,6 +1306,9 @@ fn c011_b2_blank_paragraphs_after_wrap_square_take_height_check(file: &str) {
     let (box_y, box_h) = page.items.iter().find_map(|i| if let Item::Shape { y, h, .. } = i { Some((*y, *h)) } else { None }).expect("the box");
     let pitch = find(&gs, "先行段落 2")[0].y - find(&gs, "先行段落 1")[0].y;
     let below = find(&gs, "後続の本文 A")[0].y - (box_y + box_h);
+    // Word's XPS: the box ends at 419.65, the text after the nine empty paragraphs (Arial 10.5 pt, 12.07 pt each) has its baseline 122.94 pt below it.
+    // 9 empty Arial lines of 12.0745 pt (2355/2048 em) after the box's 3.6 pt, then the line of ＭＳ ゴシック with an Arial "A": its baseline 0.859 x 10.5 + 1.56 = 10.58 pt down (`ms_mixed_ascent`).
+    assert!((below - 122.94).abs() < 0.3, "the text after the nine empty paragraphs {below:.2}pt below the box; Word: 122.94pt");
     assert!(below >= 9.0 * pitch - 2.0, "the text after the nine empty paragraphs {below:.1}pt below the box; Word: at least 9 lines ({:.1}pt) below it", 9.0 * pitch);
 }
 

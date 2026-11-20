@@ -25,7 +25,7 @@ const CHILD_INDENT: f32 = 14.;
 pub(crate) fn preset_effect(shape: ShapeId, class: C, id: u32, subtype: u32) -> Animation {
     if !is_filter_preset(class, id) {
         // The rest of PowerPoint's gallery: the effect as PowerPoint wrote it.
-        if let Some(made) = ibis_pptx::animation_catalog::make(shape, class, id, subtype) {
+        if let Some(made) = ibis_formats::animation_catalog::make(shape, class, id, subtype) {
             return made;
         }
     }
@@ -41,7 +41,7 @@ const STRAIGHT_PATHS: [u32; 4] = [35, 42, 63, 64];
 /// The submenu その他の効果 with the gallery's effects of `class` that the menu has no item for; none when there are none.
 fn more_effects(class: C, mine: &[&Animation], selected: usize) -> Option<MenuEntry> {
     let items = catalog_items(class, mine, selected);
-    (!items.is_empty()).then(|| Submenu::tr("pptx.anim.more-effects", "more_horiz", items).into())
+    (!items.is_empty()).then(|| Submenu::tr("pptx.animation.more-effects", "more_horiz", items).into())
 }
 
 /// Whether effect `id` of `class` is one of the basic filter effects (ブラインド, ボックス…, 開始 and 終了 only: an 強調 effect's
@@ -55,15 +55,15 @@ fn first_option(class: C, id: u32) -> u32 {
     if is_filter_preset(class, id) {
         return ibis_doc_model::animation_preset::preset_def(id).map_or(0, |d| d.options[0].0);
     }
-    ibis_pptx::animation_catalog::effect(class, id).and_then(|e| e.options.first()).map_or(0, |o| o.0)
+    ibis_formats::animation_catalog::effect(class, id).and_then(|e| e.options.first()).map_or(0, |o| o.0)
 }
 
 /// The effects of PowerPoint's gallery that the menu has no item of its own for (the effects drawn by a look of their own, and the
 /// basic filter effects, are the menu's), as a menu: 開始・終了・強調・軌跡 → その他の効果.
 fn catalog_items(class: C, mine: &[&Animation], selected: usize) -> Vec<MenuEntry> {
-    let items: Vec<MenuEntry> = ibis_pptx::animation_catalog::effects_of(class)
+    let items: Vec<MenuEntry> = ibis_formats::animation_catalog::effects_of(class)
         .filter(|e| !is_filter_preset(class, e.id) && !(class == C::Path && STRAIGHT_PATHS.contains(&e.id)))
-        .filter(|e| ibis_pptx::animation_catalog::make(ShapeId(0), class, e.id, e.options[0].0).is_some_and(|a| matches!(a.look, L::Preset | L::Motion(..) | L::Other)))
+        .filter(|e| ibis_formats::animation_catalog::make(ShapeId(0), class, e.id, e.options[0].0).is_some_and(|a| matches!(a.look, L::Preset | L::Motion(..) | L::Other)))
         .map(|e| {
             let id = e.id;
             let on = mine.len() == selected && mine.iter().all(|a| a.class == class && a.preset.0 == id && matches!(a.look, L::Preset | L::Motion(..) | L::Other));
@@ -193,12 +193,7 @@ pub(crate) fn compute_timeline(animations: &[Animation]) -> (Vec<TimelineItem>, 
     let mut max_end_overall = 0u32;
 
     for (i, a) in animations.iter().enumerate() {
-        let repeat_factor = match a.repeat_count {
-            AnimationRepeat::None => 1,
-            AnimationRepeat::Count(n) => n.max(1),
-            AnimationRepeat::UntilNextClick | AnimationRepeat::UntilEndOfSlide => 1,
-        };
-        let anim_dur = a.duration * repeat_factor;
+        let anim_dur = a.span_ms();
         let (start_time, end_time) = match a.start {
             AnimationStart::OnClick => {
                 if i > 0 {
@@ -306,7 +301,7 @@ impl SlideEditor {
             for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape) && a.look == L::Preset) {
                 if !is_filter_preset(a.class, a.preset.0) {
                     // PowerPoint's own effect with this option: its behaviours and time, the effect's start and delay kept.
-                    if let Some(made) = ibis_pptx::animation_catalog::make(a.shape, a.class, a.preset.0, subtype) {
+                    if let Some(made) = ibis_formats::animation_catalog::make(a.shape, a.class, a.preset.0, subtype) {
                         a.preset = made.preset;
                         a.behaviors = made.behaviors;
                         a.duration = made.duration;
@@ -475,7 +470,7 @@ impl SlideEditor {
                 AnimationRepeat::Count(2) => AnimationRepeat::Count(3),
                 AnimationRepeat::Count(3) => AnimationRepeat::Count(5),
                 AnimationRepeat::Count(5) => AnimationRepeat::Count(10),
-                AnimationRepeat::Count(_) => AnimationRepeat::UntilNextClick,
+                AnimationRepeat::Count(_) | AnimationRepeat::Thousandths(_) => AnimationRepeat::UntilNextClick,
                 AnimationRepeat::UntilNextClick => AnimationRepeat::UntilEndOfSlide,
                 AnimationRepeat::UntilEndOfSlide => AnimationRepeat::None,
             };
@@ -552,8 +547,8 @@ impl SlideEditor {
         if let Some(after) = current {
             let next = match after {
                 AnimationAfterEffect::Hold => AnimationAfterEffect::Hide,
-                AnimationAfterEffect::Hide => AnimationAfterEffect::Dim,
-                AnimationAfterEffect::Dim => AnimationAfterEffect::HideOnNextClick,
+                AnimationAfterEffect::Hide => AnimationAfterEffect::Dim(AnimationAfterEffect::DEFAULT_DIM),
+                AnimationAfterEffect::Dim(_) => AnimationAfterEffect::HideOnNextClick,
                 AnimationAfterEffect::HideOnNextClick => AnimationAfterEffect::Hold,
             };
             self.set_effect_after_at(index, next, cx);
@@ -674,40 +669,40 @@ impl SlideEditor {
     fn panel_effect_choices(class: C, current: L) -> Vec<(&'static str, L, Option<u32>)> {
         let mut v: Vec<(&'static str, L, Option<u32>)> = match class {
             C::Entrance => vec![
-                ("pptx.anim.in.appear", L::Appear, None),
-                ("pptx.anim.in.fade", L::Fade, None),
-                ("pptx.anim.in.fly-bottom", L::Fly(AnimationSide::Bottom), None),
-                ("pptx.anim.in.float", L::Float(AnimationSide::Top), None),
-                ("pptx.anim.in.wipe", L::Wipe(AnimationSide::Bottom), None),
-                ("pptx.anim.in.zoom", L::Zoom, None),
+                ("pptx.animation.in.appear", L::Appear, None),
+                ("pptx.animation.in.fade", L::Fade, None),
+                ("pptx.animation.in.fly-bottom", L::Fly(AnimationSide::Bottom), None),
+                ("pptx.animation.in.float", L::Float(AnimationSide::Top), None),
+                ("pptx.animation.in.wipe", L::Wipe(AnimationSide::Bottom), None),
+                ("pptx.animation.in.zoom", L::Zoom, None),
             ],
             C::Exit => vec![
-                ("pptx.anim.out.disappear", L::Appear, None),
-                ("pptx.anim.out.fade", L::Fade, None),
-                ("pptx.anim.out.fly-bottom", L::Fly(AnimationSide::Bottom), None),
-                ("pptx.anim.out.float", L::Float(AnimationSide::Bottom), None),
-                ("pptx.anim.out.wipe", L::Wipe(AnimationSide::Bottom), None),
-                ("pptx.anim.out.zoom", L::Zoom, None),
+                ("pptx.animation.out.disappear", L::Appear, None),
+                ("pptx.animation.out.fade", L::Fade, None),
+                ("pptx.animation.out.fly-bottom", L::Fly(AnimationSide::Bottom), None),
+                ("pptx.animation.out.float", L::Float(AnimationSide::Bottom), None),
+                ("pptx.animation.out.wipe", L::Wipe(AnimationSide::Bottom), None),
+                ("pptx.animation.out.zoom", L::Zoom, None),
             ],
-            C::Emphasis => vec![("pptx.anim.em.spin", L::Spin(21_600_000), None), ("pptx.anim.em.grow", L::Scale(150_000, 150_000), None)],
+            C::Emphasis => vec![("pptx.animation.em.spin", L::Spin(21_600_000), None), ("pptx.animation.em.grow", L::Scale(150_000, 150_000), None)],
             C::Path => vec![
-                ("pptx.anim.path.down", L::Motion(0, 25_000), None),
-                ("pptx.anim.path.left", L::Motion(-25_000, 0), None),
-                ("pptx.anim.path.right", L::Motion(25_000, 0), None),
-                ("pptx.anim.path.up", L::Motion(0, -25_000), None),
+                ("pptx.animation.path.down", L::Motion(0, 25_000), None),
+                ("pptx.animation.path.left", L::Motion(-25_000, 0), None),
+                ("pptx.animation.path.right", L::Motion(25_000, 0), None),
+                ("pptx.animation.path.up", L::Motion(0, -25_000), None),
             ],
             C::Media => Vec::new(),
         };
         v.extend(
-            ibis_pptx::animation_catalog::effects_of(class)
+            ibis_formats::animation_catalog::effects_of(class)
                 .filter(|e| !is_filter_preset(class, e.id) && !(class == C::Path && STRAIGHT_PATHS.contains(&e.id)))
-                .filter(|e| ibis_pptx::animation_catalog::make(ShapeId(0), class, e.id, e.options[0].0).is_some_and(|a| matches!(a.look, L::Preset | L::Motion(..) | L::Other)))
+                .filter(|e| ibis_formats::animation_catalog::make(ShapeId(0), class, e.id, e.options[0].0).is_some_and(|a| matches!(a.look, L::Preset | L::Motion(..) | L::Other)))
                 .map(|e| (e.key, L::Preset, Some(e.id))),
         );
         if matches!(class, C::Entrance | C::Exit) {
             v.extend(ibis_doc_model::animation_preset::FILTER_PRESETS.iter().map(|def| (def.key, L::Preset, Some(def.id))));
             if current == L::Replay {
-                v.push((if class == C::Entrance { "pptx.anim.in.replay" } else { "pptx.anim.out.rewind" }, L::Replay, None));
+                v.push((if class == C::Entrance { "pptx.animation.in.replay" } else { "pptx.animation.out.rewind" }, L::Replay, None));
             }
         }
         v
@@ -821,8 +816,8 @@ impl SlideEditor {
         if let Some(p) = self.pptx_mut().and_then(|s| s.animation_options_panel.as_mut()) {
             p.after_effect = match p.after_effect {
                 AnimationAfterEffect::Hold => AnimationAfterEffect::Hide,
-                AnimationAfterEffect::Hide => AnimationAfterEffect::Dim,
-                AnimationAfterEffect::Dim => AnimationAfterEffect::HideOnNextClick,
+                AnimationAfterEffect::Hide => AnimationAfterEffect::Dim(AnimationAfterEffect::DEFAULT_DIM),
+                AnimationAfterEffect::Dim(_) => AnimationAfterEffect::HideOnNextClick,
                 AnimationAfterEffect::HideOnNextClick => AnimationAfterEffect::Hold,
             };
         }
@@ -873,31 +868,31 @@ impl SlideEditor {
         let auto_rev = a.auto_reverse;
         let rewind = a.rewind;
         vec![
-            MenuItem::tr("pptx.anim.start.click")
+            MenuItem::tr("pptx.animation.start.click")
                 .icon("mouse")
                 .checked(start == AnimationStart::OnClick)
                 .on(move |e, _, cx| e.set_effect_start_at(index, AnimationStart::OnClick, cx))
                 .into(),
-            MenuItem::tr("pptx.anim.start.with")
+            MenuItem::tr("pptx.animation.start.with")
                 .icon("play_arrow")
                 .checked(start == AnimationStart::WithPrevious)
                 .on(move |e, _, cx| e.set_effect_start_at(index, AnimationStart::WithPrevious, cx))
                 .into(),
-            MenuItem::tr("pptx.anim.start.after")
+            MenuItem::tr("pptx.animation.start.after")
                 .icon("schedule")
                 .checked(start == AnimationStart::AfterPrevious)
                 .on(move |e, _, cx| e.set_effect_start_at(index, AnimationStart::AfterPrevious, cx))
                 .into(),
             MenuEntry::Separator,
-            MenuItem::tr("pptx.anim.options-dialog")
+            MenuItem::tr("pptx.animation.options-dialog")
                 .icon("tune")
                 .on(move |e, _, cx| e.open_animation_options_panel(index, cx))
                 .into(),
-            MenuItem::tr("pptx.anim.autoreverse")
+            MenuItem::tr("pptx.animation.autoreverse")
                 .checked(auto_rev)
                 .on(move |e, _, cx| e.toggle_effect_autoreverse_at(index, cx))
                 .into(),
-            MenuItem::tr("pptx.anim.rewind")
+            MenuItem::tr("pptx.animation.rewind")
                 .checked(rewind)
                 .on(move |e, _, cx| e.toggle_effect_rewind_at(index, cx))
                 .into(),
@@ -913,20 +908,20 @@ impl SlideEditor {
                 .on(move |e, _, cx| e.move_effect(index, false, cx))
                 .into(),
             MenuEntry::Separator,
-            MenuItem::tr("pptx.anim.copy")
+            MenuItem::tr("pptx.animation.copy")
                 .icon("content_copy")
                 .shortcut("⌥⇧⌘C")
                 .disabled(!self.can_copy_animations())
                 .on(|e, _, cx| e.copy_shape_animations(cx))
                 .into(),
-            MenuItem::tr("pptx.anim.paste")
+            MenuItem::tr("pptx.animation.paste")
                 .icon("content_paste")
                 .shortcut("⌥⇧⌘V")
                 .disabled(!self.can_paste_animations())
                 .on(|e, _, cx| e.paste_shape_animations(cx))
                 .into(),
             MenuEntry::Separator,
-            MenuItem::tr("pptx.anim.remove")
+            MenuItem::tr("pptx.animation.remove")
                 .icon("delete")
                 .on(move |e, _, cx| e.remove_effect(index, cx))
                 .into(),
@@ -1112,7 +1107,7 @@ impl SlideEditor {
 
         let heading = |id: &'static str| div().text_xs().font_weight(FontWeight::MEDIUM).text_color(rgb(crate::shell::chrome::TEXT_SECONDARY)).child(t(id)).into_any_element();
         let columns = vec![TableColumn::fixed("order", ORDER_WIDTH), TableColumn::fixed("fx", FX_WIDTH), TableColumn::flex("name"), TableColumn::fixed("timeline", TIMELINE_WIDTH)];
-        let header = vec![heading("pptx.anim.pane.col.order"), div().into_any_element(), heading("pptx.anim.pane.col.effect"), heading("_pptx.timeline")];
+        let header = vec![heading("pptx.animation.pane.col.order"), div().into_any_element(), heading("pptx.animation.pane.col.effect"), heading("_pptx.timeline")];
 
         let build = {
             let (rows, shapes, keys, editor, display) = (rows.clone(), shapes.clone(), keys.clone(), editor.clone(), display.clone());
@@ -1131,10 +1126,10 @@ impl SlideEditor {
                         }),
                     };
                     let (start_icon, start_tip) = if r.triggered {
-                        ("link", t("pptx.anim.trigger"))
+                        ("link", t("pptx.animation.trigger"))
                     } else {
                         match r.start {
-                            AnimationStart::OnClick => ("mouse", t("pptx.anim.start.click")),
+                            AnimationStart::OnClick => ("mouse", t("pptx.animation.start.click")),
                             AnimationStart::WithPrevious => ("play_circle", t("_pptx.with-previous")),
                             AnimationStart::AfterPrevious => ("skip_next", t("_pptx.after-previous")),
                         }
@@ -1215,7 +1210,7 @@ impl SlideEditor {
                         let _ = fold.update(cx, |e, cx| e.fold_animation_boxes_for_drag(paragraph_row, cx));
                     });
                     table_row
-                        .action("anim-row-edit", "tune", t("pptx.anim.options-dialog"), move |_, _, cx| {
+                        .action("anim-row-edit", "tune", t("pptx.animation.options-dialog"), move |_, _, cx| {
                             let _ = edit.update(cx, |e, cx| e.open_animation_options_panel(i, cx));
                         })
                         .action_when_wide("anim-row-delete", "delete", t("_shell.delete"), move |_, _, cx| {
@@ -1245,10 +1240,10 @@ impl SlideEditor {
         let play = crate::shell::chrome::primary_button("anim-play-all")
             .small()
             .icon(Material("play_arrow"))
-            .label(t("pptx.anim.play-all"))
+            .label(t("pptx.animation.play-all"))
             .on_click(cx.listener(|e, _, window, cx| e.start_slideshow(window, cx)));
         let ruler = div().text_xs().text_color(rgb(crate::shell::chrome::TEXT_SECONDARY))
-            .child(crate::shell::i18n::format("pptx.anim.pane.total", &[("s", &format!("{:.1}", scale_ms as f32 / 1000.0))]));
+            .child(crate::shell::i18n::format("pptx.animation.pane.total", &[("s", &format!("{:.1}", scale_ms as f32 / 1000.0))]));
 
         let body = crate::shell::chrome::panel_form().p_0().size_full()
             .child(h_flex().w_full().items_center().justify_between().gap_2().child(play).child(ruler))
@@ -1280,14 +1275,14 @@ impl SlideEditor {
         let preset_of_panel = self.slide().animations.get(p.index).map_or((0, 0), |a| a.preset);
         let t = crate::shell::i18n::text;
 
-        let title = t("pptx.anim.options-dialog");
+        let title = t("pptx.animation.options-dialog");
 
         let (class_name, class_color, class_bg) = match p.class {
             C::Entrance => (crate::shell::i18n::text("_pptx.entrance"), rgb(0x2e7d32), rgb(0xe8f5e9)),
             C::Emphasis => (crate::shell::i18n::text("_pptx.emphasis"), rgb(0xed6c02), rgb(0xfff3e0)),
             C::Exit => (crate::shell::i18n::text("_pptx.exit"), rgb(0xd32f2f), rgb(0xffebee)),
             C::Path => (crate::shell::i18n::text("_pptx.motion-path"), rgb(0x1976d2), rgb(0xe3f2fd)),
-            C::Media => (crate::shell::i18n::text("pptx.anim.media.class"), rgb(0x1976d2), rgb(0xe3f2fd)),
+            C::Media => (crate::shell::i18n::text("pptx.animation.media.class"), rgb(0x1976d2), rgb(0xe3f2fd)),
         };
 
         let mut body = v_flex().gap_1().px(px(16.)).py(px(12.)).p_0();
@@ -1333,13 +1328,13 @@ impl SlideEditor {
                 None => p.look != L::Preset && std::mem::discriminant(&p.look) == std::mem::discriminant(&look),
             };
             let entries: Vec<MenuEntry> = choices.iter().map(|&(key, look, id)| MenuItem::tr(key).checked(on(look, id)).on(move |e, _, cx| e.set_panel_effect(look, id, cx)).into()).collect();
-            body = body.child(crate::shell::chrome::dropdown_row(t("pptx.anim.panel.effect-change"), crate::shell::chrome::Dropdown::from_entries("anim-opt-effect", look_label(p.class, p.look, p.preset), entries, true, 0, &cx.weak_entity()).fill_width()));
+            body = body.child(crate::shell::chrome::dropdown_row(t("pptx.animation.panel.effect-change"), crate::shell::chrome::Dropdown::from_entries("anim-opt-effect", look_label(p.class, p.look, p.preset), entries, true, 0, &cx.weak_entity()).fill_width()));
         }
 
         // 2. 「効果」セクション: 方向＝セグメント、滑らかさ・自動反転＝チェックボックス、再生後の動作＝ドロップダウン
         use crate::shell::chrome::segment_control::SegmentItem;
         let section_title = |key: &str| div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(rgb(0x212121)).pt_1().child(t(key));
-        body = body.child(section_title("pptx.anim.panel.effect"));
+        body = body.child(section_title("pptx.animation.panel.effect"));
 
         let direction_items: Vec<SegmentItem> = match p.look {
             L::Fly(cur) => [
@@ -1349,19 +1344,19 @@ impl SlideEditor {
                 (AnimationSide::Top, "transition.dir.up"),
             ].into_iter().map(|(s, key)| SegmentItem::label(("anim-fly-side", s as usize), t(key), cur == s).on_click(cx.listener(move |e, _, _, cx| e.set_panel_fly_side(s, cx)))).collect(),
             L::Float(cur) => [
-                (AnimationSide::Top, "pptx.anim.opt.float-up"),
-                (AnimationSide::Bottom, "pptx.anim.opt.float-down"),
+                (AnimationSide::Top, "pptx.animation.opt.float-up"),
+                (AnimationSide::Bottom, "pptx.animation.opt.float-down"),
             ].into_iter().map(|(s, key)| SegmentItem::label(("anim-float-side", s as usize), t(key), cur == s).on_click(cx.listener(move |e, _, _, cx| e.set_panel_float_side(s, cx)))).collect(),
             L::Wipe(cur) => [
-                (AnimationSide::Bottom, "pptx.anim.opt.wipe-bottom"),
-                (AnimationSide::Left, "pptx.anim.opt.wipe-left"),
-                (AnimationSide::Right, "pptx.anim.opt.wipe-right"),
-                (AnimationSide::Top, "pptx.anim.opt.wipe-top"),
+                (AnimationSide::Bottom, "pptx.animation.opt.wipe-bottom"),
+                (AnimationSide::Left, "pptx.animation.opt.wipe-left"),
+                (AnimationSide::Right, "pptx.animation.opt.wipe-right"),
+                (AnimationSide::Top, "pptx.animation.opt.wipe-top"),
             ].into_iter().map(|(s, key)| SegmentItem::label(("anim-wipe-side", s as usize), t(key), cur == s).on_click(cx.listener(move |e, _, _, cx| e.set_panel_wipe_side(s, cx)))).collect(),
             L::Motion(cur_x, cur_y) => [
                 (0, 25_000, "docx.find.dir.down"),
-                (-25_000, 0, "pptx.anim.opt.path-left"),
-                (25_000, 0, "pptx.anim.opt.path-right"),
+                (-25_000, 0, "pptx.animation.opt.path-left"),
+                (25_000, 0, "pptx.animation.opt.path-right"),
                 (0, -25_000, "docx.find.dir.up"),
             ].into_iter().enumerate().map(|(idx, (x, y, key))| SegmentItem::label(("anim-motion-dir", idx), t(key), cur_x == x && cur_y == y).on_click(cx.listener(move |e, _, _, cx| e.set_panel_motion_dir(x, y, cx)))).collect(),
             _ => Vec::new(),
@@ -1370,36 +1365,48 @@ impl SlideEditor {
             body = body.child(crate::shell::chrome::segment_control_row(t("_pptx.direction"), direction_items));
         }
         body = body
-            .child(crate::shell::chrome::checkbox_button("anim-opt-smooth-start", t("pptx.anim.smooth-start"), p.accel > 0, false, cx.listener(|e, _, _, cx| e.toggle_panel_smooth_start(cx))))
-            .child(crate::shell::chrome::checkbox_button("anim-opt-smooth-end", t("pptx.anim.smooth-end"), p.decel > 0, false, cx.listener(|e, _, _, cx| e.toggle_panel_smooth_end(cx))))
-            .child(crate::shell::chrome::checkbox_button("anim-opt-autorev", t("pptx.anim.autoreverse"), p.auto_reverse, false, cx.listener(|e, _, _, cx| e.toggle_panel_auto_reverse(cx))));
+            .child(crate::shell::chrome::checkbox_button("anim-opt-smooth-start", t("pptx.animation.smooth-start"), p.accel > 0, false, cx.listener(|e, _, _, cx| e.toggle_panel_smooth_start(cx))))
+            .child(crate::shell::chrome::checkbox_button("anim-opt-smooth-end", t("pptx.animation.smooth-end"), p.decel > 0, false, cx.listener(|e, _, _, cx| e.toggle_panel_smooth_end(cx))))
+            .child(crate::shell::chrome::checkbox_button("anim-opt-autorev", t("pptx.animation.autoreverse"), p.auto_reverse, false, cx.listener(|e, _, _, cx| e.toggle_panel_auto_reverse(cx))));
 
         // 再生後の動作（排他の 4 択）
         let after_key = |a: AnimationAfterEffect| match a {
-            AnimationAfterEffect::Hold => "pptx.anim.after.hold",
-            AnimationAfterEffect::Hide => "pptx.anim.after.hide",
-            AnimationAfterEffect::Dim => "pptx.anim.after.dim",
-            AnimationAfterEffect::HideOnNextClick => "pptx.anim.after.hide-next",
+            AnimationAfterEffect::Hold => "pptx.animation.after.hold",
+            AnimationAfterEffect::Hide => "pptx.animation.after.hide",
+            AnimationAfterEffect::Dim(_) => "pptx.animation.after.dim",
+            AnimationAfterEffect::HideOnNextClick => "pptx.animation.after.hide-next",
         };
-        let after_entries: Vec<MenuEntry> = [AnimationAfterEffect::Hold, AnimationAfterEffect::Dim, AnimationAfterEffect::Hide, AnimationAfterEffect::HideOnNextClick]
+        let after_entries: Vec<MenuEntry> = [AnimationAfterEffect::Hold, AnimationAfterEffect::Dim(match p.after_effect { AnimationAfterEffect::Dim(c) => c, _ => AnimationAfterEffect::DEFAULT_DIM }), AnimationAfterEffect::Hide, AnimationAfterEffect::HideOnNextClick]
             .into_iter()
-            .map(|a| MenuItem::tr(after_key(a)).checked(p.after_effect == a).on(move |e, _, cx| e.set_panel_after_effect(a, cx)).into())
+            .map(|a| MenuItem::tr(after_key(a)).checked(p.after_effect.same_kind(a)).on(move |e, _, cx| e.set_panel_after_effect(a, cx)).into())
             .collect();
         body = body.child(crate::shell::chrome::dropdown_row(t("_pptx.after-animation"), crate::shell::chrome::Dropdown::from_entries("anim-opt-after", t(after_key(p.after_effect)), after_entries, true, 0, &cx.weak_entity()).fill_width()));
 
+        // 淡色表示 takes the next click's colour: the palette of the common colour part (the text of its swatch is its `#RRGGBB`).
+        if let AnimationAfterEffect::Dim(dim) = p.after_effect {
+            let pick: crate::shell::color_palette::PickColor = std::rc::Rc::new(|e, color, _w, cx| {
+                if let Some(c) = color {
+                    e.set_panel_after_effect(AnimationAfterEffect::Dim(c), cx);
+                }
+            });
+            let colors: Vec<_> = crate::shell::color_editor::palette_colors().into_iter().map(|c| (gpui_kit::SharedString::from(format!("#{:06X}", c.0)), c, "color.swatch")).collect();
+            let entries = crate::shell::color_palette::simple_palette(None, None, &colors, Some(dim), pick);
+            body = body.child(crate::shell::chrome::dropdown_row(t("_pptx.dim-color"), crate::shell::chrome::Dropdown::from_entries("anim-opt-dim-color", format!("#{:06X}", dim.0), entries, true, 0, &cx.weak_entity()).fill_width()));
+        }
+
         // 3. 「タイミング」セクション
-        body = body.child(section_title("pptx.anim.panel.timing"));
+        body = body.child(section_title("pptx.animation.panel.timing"));
         body = body.child(crate::shell::chrome::segment_control_row(
             t("pptx.animation-ui.from"),
             [
-                (AnimationStart::OnClick, "pptx.anim.start.click", "anim-opt-start-click"),
+                (AnimationStart::OnClick, "pptx.animation.start.click", "anim-opt-start-click"),
                 (AnimationStart::WithPrevious, "_pptx.with-previous-2", "anim-opt-start-with"),
                 (AnimationStart::AfterPrevious, "_pptx.after-previous-2", "anim-opt-start-after"),
             ].into_iter().map(|(st, key, id)| SegmentItem::label(id, t(key), p.start == st).on_click(cx.listener(move |e, _, _, cx| e.set_panel_start(st, cx)))),
         ));
 
         // 継続時間・遅延: ツールバーのフォント サイズの部品（背景なし）
-        let unit = t("pptx.anim.unit.seconds");
+        let unit = t("pptx.animation.unit.seconds");
         body = body.child(crate::shell::chrome::control_row(
             t("_pptx.duration"),
             crate::shell::chrome::number_stepper("anim-opt-duration", p.duration_ms as f32 / 1000.0, cx, |e, v, _, cx| e.set_panel_duration_ms((v * 1000.0).round() as u32, cx))
@@ -1413,22 +1420,22 @@ impl SlideEditor {
 
         // 繰り返し（排他の選択肢）
         let repeat_key = |r: AnimationRepeat| match r {
-            AnimationRepeat::None => "pptx.anim.repeat.none",
-            AnimationRepeat::Count(2) => "pptx.anim.repeat.2",
-            AnimationRepeat::Count(3) => "pptx.anim.repeat.3",
-            AnimationRepeat::Count(4) => "pptx.anim.repeat.4",
-            AnimationRepeat::Count(5) => "pptx.anim.repeat.5",
-            AnimationRepeat::Count(10) => "pptx.anim.repeat.10",
-            AnimationRepeat::Count(_) => "_pptx.multiple-times",
-            AnimationRepeat::UntilNextClick => "pptx.anim.repeat.until-click",
-            AnimationRepeat::UntilEndOfSlide => "pptx.anim.repeat.until-end",
+            AnimationRepeat::None => "pptx.animation.repeat.none",
+            AnimationRepeat::Count(2) => "pptx.animation.repeat.2",
+            AnimationRepeat::Count(3) => "pptx.animation.repeat.3",
+            AnimationRepeat::Count(4) => "pptx.animation.repeat.4",
+            AnimationRepeat::Count(5) => "pptx.animation.repeat.5",
+            AnimationRepeat::Count(10) => "pptx.animation.repeat.10",
+            AnimationRepeat::Count(_) | AnimationRepeat::Thousandths(_) => "_pptx.multiple-times",
+            AnimationRepeat::UntilNextClick => "pptx.animation.repeat.until-click",
+            AnimationRepeat::UntilEndOfSlide => "pptx.animation.repeat.until-end",
         };
         let repeat_entries: Vec<MenuEntry> = [
             AnimationRepeat::None, AnimationRepeat::Count(2), AnimationRepeat::Count(3), AnimationRepeat::Count(4), AnimationRepeat::Count(5),
             AnimationRepeat::Count(10), AnimationRepeat::UntilNextClick, AnimationRepeat::UntilEndOfSlide,
         ].into_iter().map(|r| MenuItem::tr(repeat_key(r)).checked(p.repeat_count == r).on(move |e, _, cx| e.set_panel_repeat(r, cx)).into()).collect();
         body = body.child(crate::shell::chrome::dropdown_row(t("_pptx.repeat"), crate::shell::chrome::Dropdown::from_entries("anim-opt-repeat", t(repeat_key(p.repeat_count)), repeat_entries, true, 0, &cx.weak_entity()).fill_width()));
-        body = body.child(crate::shell::chrome::checkbox_button("anim-opt-rewind", t("pptx.anim.rewind"), p.rewind, false, cx.listener(|e, _, _, cx| e.toggle_panel_rewind(cx))));
+        body = body.child(crate::shell::chrome::checkbox_button("anim-opt-rewind", t("pptx.animation.rewind"), p.rewind, false, cx.listener(|e, _, _, cx| e.toggle_panel_rewind(cx))));
 
         // トリガー: 通常進行（クリック・自動）か図形のクリック時。同じ画面の中で選ぶ（図形のクリック時のときだけ対象の図形が出る）。
         let slide_shapes: Vec<(ShapeId, String)> = {
@@ -1447,7 +1454,7 @@ impl SlideEditor {
         let mut trigger_radios = crate::shell::chrome::radio_group()
             .child(crate::shell::chrome::radio_button("anim-opt-trigger-normal", p.trigger.is_none(), false, t("_pptx.normal-click-or-auto"),
                 cx.listener(|e, _, _, cx| e.set_panel_trigger(AnimationTrigger::None, cx))))
-            .child(crate::shell::chrome::radio_button("anim-opt-trigger-shape-click", trig_shape.is_some(), first_other.is_none(), t("pptx.anim.trigger.shape-click"),
+            .child(crate::shell::chrome::radio_button("anim-opt-trigger-shape-click", trig_shape.is_some(), first_other.is_none(), t("pptx.animation.trigger.shape-click"),
                 cx.listener(move |e, _, _, cx| { if let Some(s) = first_other { e.set_panel_trigger(AnimationTrigger::OnShapeClick(trig_shape.unwrap_or(s)), cx) } })));
         if let AnimationTrigger::OnMediaBookmark { bookmark, .. } = &p.trigger {
             trigger_radios = trigger_radios.child(crate::shell::chrome::radio_button("anim-opt-trigger-bookmark", true, false,
@@ -1458,9 +1465,9 @@ impl SlideEditor {
             let current_label = slide_shapes.iter().find(|(id, _)| *id == current).map(|(_, l)| l.clone()).unwrap_or_default();
             let shape_entries: Vec<MenuEntry> = slide_shapes.iter().map(|(id, label)| {
                 let id = *id;
-                MenuItem::new("pptx.anim.trigger.shape-item", label.clone()).checked(id == current).on(move |e, _, cx| e.set_panel_trigger(AnimationTrigger::OnShapeClick(id), cx)).into()
+                MenuItem::new("pptx.animation.trigger.shape-item", label.clone()).checked(id == current).on(move |e, _, cx| e.set_panel_trigger(AnimationTrigger::OnShapeClick(id), cx)).into()
             }).collect();
-            body = body.child(crate::shell::chrome::dropdown_row(t("pptx.anim.trigger.target"), crate::shell::chrome::Dropdown::from_entries("anim-opt-trigger-shape", current_label, shape_entries, true, 0, &cx.weak_entity()).fill_width()));
+            body = body.child(crate::shell::chrome::dropdown_row(t("pptx.animation.trigger.target"), crate::shell::chrome::Dropdown::from_entries("anim-opt-trigger-shape", current_label, shape_entries, true, 0, &cx.weak_entity()).fill_width()));
         }
 
         // 4. フッターボタン
@@ -1584,7 +1591,11 @@ impl SlideEditor {
     pub(crate) fn set_effect_after(&mut self, after: AnimationAfterEffect, cx: &mut Context<Self>) {
         self.change_animations(cx, |all, selected| {
             for a in all.iter_mut().filter(|a| !a.is_media() && selected.contains(&a.shape)) {
-                a.after_effect = after;
+                // (Choosing 淡色表示 again keeps the colour it has.)
+                a.after_effect = match (after, a.after_effect) {
+                    (AnimationAfterEffect::Dim(_), AnimationAfterEffect::Dim(own)) => AnimationAfterEffect::Dim(own),
+                    _ => after,
+                };
             }
         });
     }
@@ -2015,7 +2026,7 @@ impl SlideEditor {
         if let Some(s) = self.pptx_mut() {
             s.animation_copy = Some(animations);
         }
-        self.set_status(crate::shell::i18n::text("pptx.anim.copied").to_string(), cx);
+        self.set_status(crate::shell::i18n::text("pptx.animation.copied").to_string(), cx);
         cx.notify();
     }
 
@@ -2036,7 +2047,7 @@ impl SlideEditor {
                 }
             }
         });
-        self.set_status(crate::shell::i18n::text("pptx.anim.pasted").to_string(), cx);
+        self.set_status(crate::shell::i18n::text("pptx.animation.pasted").to_string(), cx);
     }
 
     /// Whether animation effects can be copied from the current selection.
@@ -2064,7 +2075,7 @@ impl SlideEditor {
 
 /// The name shown for an effect: its look's, or, for the effects of PowerPoint's presets, the preset's (with its option).
 fn look_label(class: C, look: L, preset: (u32, u32)) -> String {
-    if look == L::Preset || (class == C::Path && !STRAIGHT_PATHS.contains(&preset.0) && ibis_pptx::animation_catalog::effect(class, preset.0).is_some()) {
+    if look == L::Preset || (class == C::Path && !STRAIGHT_PATHS.contains(&preset.0) && ibis_formats::animation_catalog::effect(class, preset.0).is_some()) {
         if is_filter_preset(class, preset.0) {
             let def = ibis_doc_model::animation_preset::preset_def(preset.0).expect("a filter preset");
             let name = crate::shell::i18n::text(def.key);
@@ -2073,14 +2084,14 @@ fn look_label(class: C, look: L, preset: (u32, u32)) -> String {
                 None => name.to_string(),
             };
         }
-        if let Some(def) = ibis_pptx::animation_catalog::effect(class, preset.0) {
+        if let Some(def) = ibis_formats::animation_catalog::effect(class, preset.0) {
             let name = crate::shell::i18n::text(def.key);
             return match def.options.iter().find(|(s, _)| *s == preset.1).filter(|_| def.options.len() > 1) {
                 Some((_, option)) => format!("{name}（{}）", crate::shell::i18n::text(option)), // i18n-ok（括弧だけ）
                 None => name.to_string(),
             };
         }
-        return crate::shell::i18n::text("pptx.anim.preset.other").to_string();
+        return crate::shell::i18n::text("pptx.animation.preset.other").to_string();
     }
     crate::shell::i18n::text(look_id(class, look)).to_string()
 }
@@ -2088,47 +2099,47 @@ fn look_label(class: C, look: L, preset: (u32, u32)) -> String {
 /// The menu id (and label) of an effect's look.
 fn look_id(class: C, look: L) -> &'static str {
     match (class, look) {
-        (C::Entrance, L::Appear) => "pptx.anim.in.appear",
-        (C::Entrance, L::Fade) => "pptx.anim.in.fade",
-        (C::Entrance, L::Fly(AnimationSide::Bottom)) => "pptx.anim.in.fly-bottom",
-        (C::Entrance, L::Fly(AnimationSide::Left)) => "pptx.anim.in.fly-left",
-        (C::Entrance, L::Fly(AnimationSide::Right)) => "pptx.anim.in.fly-right",
-        (C::Entrance, L::Fly(AnimationSide::Top)) => "pptx.anim.in.fly-top",
-        (C::Entrance, L::Float(AnimationSide::Top)) => "pptx.anim.in.float",
-        (C::Entrance, L::Float(AnimationSide::Bottom)) => "pptx.anim.in.float-down",
-        (C::Entrance, L::Float(_)) => "pptx.anim.in.float",
-        (C::Entrance, L::Wipe(AnimationSide::Bottom)) => "pptx.anim.in.wipe-bottom",
-        (C::Entrance, L::Wipe(AnimationSide::Left)) => "pptx.anim.in.wipe-left",
-        (C::Entrance, L::Wipe(AnimationSide::Right)) => "pptx.anim.in.wipe-right",
-        (C::Entrance, L::Wipe(AnimationSide::Top)) => "pptx.anim.in.wipe-top",
-        (C::Entrance, L::Zoom) => "pptx.anim.in.zoom",
-        (C::Entrance, L::Replay) => "pptx.anim.in.replay",
-        (C::Exit, L::Appear) => "pptx.anim.out.disappear",
-        (C::Exit, L::Fade) => "pptx.anim.out.fade",
-        (C::Exit, L::Fly(AnimationSide::Bottom)) => "pptx.anim.out.fly-bottom",
-        (C::Exit, L::Fly(AnimationSide::Left)) => "pptx.anim.out.fly-left",
-        (C::Exit, L::Fly(AnimationSide::Right)) => "pptx.anim.out.fly-right",
-        (C::Exit, L::Fly(AnimationSide::Top)) => "pptx.anim.out.fly-top",
-        (C::Exit, L::Float(AnimationSide::Bottom)) => "pptx.anim.out.float",
-        (C::Exit, L::Float(AnimationSide::Top)) => "pptx.anim.out.float-up",
-        (C::Exit, L::Float(_)) => "pptx.anim.out.float",
-        (C::Exit, L::Wipe(AnimationSide::Bottom)) => "pptx.anim.out.wipe-bottom",
-        (C::Exit, L::Wipe(AnimationSide::Left)) => "pptx.anim.out.wipe-left",
-        (C::Exit, L::Wipe(AnimationSide::Right)) => "pptx.anim.out.wipe-right",
-        (C::Exit, L::Wipe(AnimationSide::Top)) => "pptx.anim.out.wipe-top",
-        (C::Exit, L::Zoom) => "pptx.anim.out.zoom",
-        (C::Exit, L::Replay) => "pptx.anim.out.rewind",
-        (C::Emphasis, L::Spin(_)) => "pptx.anim.em.spin",
-        (C::Emphasis, L::Scale(..)) => "pptx.anim.em.grow",
-        (C::Path, L::Motion(x, y)) if x == 0 && y > 0 => "pptx.anim.path.down",
-        (C::Path, L::Motion(x, y)) if x < 0 && y == 0 => "pptx.anim.path.left",
-        (C::Path, L::Motion(x, y)) if x > 0 && y == 0 => "pptx.anim.path.right",
-        (C::Path, L::Motion(x, y)) if x == 0 && y < 0 => "pptx.anim.path.up",
-        (C::Path, _) => "pptx.anim.path",
-        (C::Media, L::Media(ibis_doc_model::MediaCommand::Play)) => "pptx.anim.media.play",
-        (C::Media, L::Media(ibis_doc_model::MediaCommand::Pause)) => "pptx.anim.media.pause",
-        (C::Media, L::Media(ibis_doc_model::MediaCommand::Stop)) => "pptx.anim.media.stop",
-        _ => "pptx.anim.other",
+        (C::Entrance, L::Appear) => "pptx.animation.in.appear",
+        (C::Entrance, L::Fade) => "pptx.animation.in.fade",
+        (C::Entrance, L::Fly(AnimationSide::Bottom)) => "pptx.animation.in.fly-bottom",
+        (C::Entrance, L::Fly(AnimationSide::Left)) => "pptx.animation.in.fly-left",
+        (C::Entrance, L::Fly(AnimationSide::Right)) => "pptx.animation.in.fly-right",
+        (C::Entrance, L::Fly(AnimationSide::Top)) => "pptx.animation.in.fly-top",
+        (C::Entrance, L::Float(AnimationSide::Top)) => "pptx.animation.in.float",
+        (C::Entrance, L::Float(AnimationSide::Bottom)) => "pptx.animation.in.float-down",
+        (C::Entrance, L::Float(_)) => "pptx.animation.in.float",
+        (C::Entrance, L::Wipe(AnimationSide::Bottom)) => "pptx.animation.in.wipe-bottom",
+        (C::Entrance, L::Wipe(AnimationSide::Left)) => "pptx.animation.in.wipe-left",
+        (C::Entrance, L::Wipe(AnimationSide::Right)) => "pptx.animation.in.wipe-right",
+        (C::Entrance, L::Wipe(AnimationSide::Top)) => "pptx.animation.in.wipe-top",
+        (C::Entrance, L::Zoom) => "pptx.animation.in.zoom",
+        (C::Entrance, L::Replay) => "pptx.animation.in.replay",
+        (C::Exit, L::Appear) => "pptx.animation.out.disappear",
+        (C::Exit, L::Fade) => "pptx.animation.out.fade",
+        (C::Exit, L::Fly(AnimationSide::Bottom)) => "pptx.animation.out.fly-bottom",
+        (C::Exit, L::Fly(AnimationSide::Left)) => "pptx.animation.out.fly-left",
+        (C::Exit, L::Fly(AnimationSide::Right)) => "pptx.animation.out.fly-right",
+        (C::Exit, L::Fly(AnimationSide::Top)) => "pptx.animation.out.fly-top",
+        (C::Exit, L::Float(AnimationSide::Bottom)) => "pptx.animation.out.float",
+        (C::Exit, L::Float(AnimationSide::Top)) => "pptx.animation.out.float-up",
+        (C::Exit, L::Float(_)) => "pptx.animation.out.float",
+        (C::Exit, L::Wipe(AnimationSide::Bottom)) => "pptx.animation.out.wipe-bottom",
+        (C::Exit, L::Wipe(AnimationSide::Left)) => "pptx.animation.out.wipe-left",
+        (C::Exit, L::Wipe(AnimationSide::Right)) => "pptx.animation.out.wipe-right",
+        (C::Exit, L::Wipe(AnimationSide::Top)) => "pptx.animation.out.wipe-top",
+        (C::Exit, L::Zoom) => "pptx.animation.out.zoom",
+        (C::Exit, L::Replay) => "pptx.animation.out.rewind",
+        (C::Emphasis, L::Spin(_)) => "pptx.animation.em.spin",
+        (C::Emphasis, L::Scale(..)) => "pptx.animation.em.grow",
+        (C::Path, L::Motion(x, y)) if x == 0 && y > 0 => "pptx.animation.path.down",
+        (C::Path, L::Motion(x, y)) if x < 0 && y == 0 => "pptx.animation.path.left",
+        (C::Path, L::Motion(x, y)) if x > 0 && y == 0 => "pptx.animation.path.right",
+        (C::Path, L::Motion(x, y)) if x == 0 && y < 0 => "pptx.animation.path.up",
+        (C::Path, _) => "pptx.animation.path",
+        (C::Media, L::Media(ibis_doc_model::MediaCommand::Play)) => "pptx.animation.media.play",
+        (C::Media, L::Media(ibis_doc_model::MediaCommand::Pause)) => "pptx.animation.media.pause",
+        (C::Media, L::Media(ibis_doc_model::MediaCommand::Stop)) => "pptx.animation.media.stop",
+        _ => "pptx.animation.other",
     }
 }
 
@@ -2146,48 +2157,48 @@ pub(crate) fn animation_option_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let mut items: Vec<MenuEntry> = match first.map(|a| a.look) {
         Some(L::Fly(current_side)) => {
             vec![
-                MenuItem::tr("pptx.anim.opt.fly-bottom").checked(current_side == AnimationSide::Bottom).on(|e, _, cx| e.set_shape_effect_option(L::Fly(AnimationSide::Bottom), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.fly-left").checked(current_side == AnimationSide::Left).on(|e, _, cx| e.set_shape_effect_option(L::Fly(AnimationSide::Left), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.fly-right").checked(current_side == AnimationSide::Right).on(|e, _, cx| e.set_shape_effect_option(L::Fly(AnimationSide::Right), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.fly-top").checked(current_side == AnimationSide::Top).on(|e, _, cx| e.set_shape_effect_option(L::Fly(AnimationSide::Top), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.fly-bottom").checked(current_side == AnimationSide::Bottom).on(|e, _, cx| e.set_shape_effect_option(L::Fly(AnimationSide::Bottom), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.fly-left").checked(current_side == AnimationSide::Left).on(|e, _, cx| e.set_shape_effect_option(L::Fly(AnimationSide::Left), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.fly-right").checked(current_side == AnimationSide::Right).on(|e, _, cx| e.set_shape_effect_option(L::Fly(AnimationSide::Right), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.fly-top").checked(current_side == AnimationSide::Top).on(|e, _, cx| e.set_shape_effect_option(L::Fly(AnimationSide::Top), cx)).into(),
             ]
         }
         Some(L::Float(current_side)) => {
             vec![
-                MenuItem::tr("pptx.anim.opt.float-up").checked(current_side == AnimationSide::Top).on(|e, _, cx| e.set_shape_effect_option(L::Float(AnimationSide::Top), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.float-down").checked(current_side == AnimationSide::Bottom).on(|e, _, cx| e.set_shape_effect_option(L::Float(AnimationSide::Bottom), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.float-up").checked(current_side == AnimationSide::Top).on(|e, _, cx| e.set_shape_effect_option(L::Float(AnimationSide::Top), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.float-down").checked(current_side == AnimationSide::Bottom).on(|e, _, cx| e.set_shape_effect_option(L::Float(AnimationSide::Bottom), cx)).into(),
             ]
         }
         Some(L::Wipe(current_side)) => {
             vec![
-                MenuItem::tr("pptx.anim.opt.wipe-bottom").checked(current_side == AnimationSide::Bottom).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Bottom), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.wipe-left").checked(current_side == AnimationSide::Left).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Left), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.wipe-right").checked(current_side == AnimationSide::Right).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Right), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.wipe-top").checked(current_side == AnimationSide::Top).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Top), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.wipe-bottom").checked(current_side == AnimationSide::Bottom).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Bottom), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.wipe-left").checked(current_side == AnimationSide::Left).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Left), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.wipe-right").checked(current_side == AnimationSide::Right).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Right), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.wipe-top").checked(current_side == AnimationSide::Top).on(|e, _, cx| e.set_shape_effect_option(L::Wipe(AnimationSide::Top), cx)).into(),
             ]
         }
         Some(L::Spin(current_by)) => {
             vec![
-                MenuItem::tr("pptx.anim.opt.spin-360-cw").checked(current_by == 21_600_000).on(|e, _, cx| e.set_shape_effect_option(L::Spin(21_600_000), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.spin-360-ccw").checked(current_by == -21_600_000).on(|e, _, cx| e.set_shape_effect_option(L::Spin(-21_600_000), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.spin-180").checked(current_by == 10_800_000).on(|e, _, cx| e.set_shape_effect_option(L::Spin(10_800_000), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.spin-720").checked(current_by == 43_200_000).on(|e, _, cx| e.set_shape_effect_option(L::Spin(43_200_000), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.spin-360-cw").checked(current_by == 21_600_000).on(|e, _, cx| e.set_shape_effect_option(L::Spin(21_600_000), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.spin-360-ccw").checked(current_by == -21_600_000).on(|e, _, cx| e.set_shape_effect_option(L::Spin(-21_600_000), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.spin-180").checked(current_by == 10_800_000).on(|e, _, cx| e.set_shape_effect_option(L::Spin(10_800_000), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.spin-720").checked(current_by == 43_200_000).on(|e, _, cx| e.set_shape_effect_option(L::Spin(43_200_000), cx)).into(),
             ]
         }
         Some(L::Scale(current_x, _)) => {
             vec![
-                MenuItem::tr("pptx.anim.opt.scale-150").checked(current_x == 150_000).on(|e, _, cx| e.set_shape_effect_option(L::Scale(150_000, 150_000), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.scale-200").checked(current_x == 200_000).on(|e, _, cx| e.set_shape_effect_option(L::Scale(200_000, 200_000), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.scale-50").checked(current_x == 50_000).on(|e, _, cx| e.set_shape_effect_option(L::Scale(50_000, 50_000), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.scale-25").checked(current_x == 25_000).on(|e, _, cx| e.set_shape_effect_option(L::Scale(25_000, 25_000), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.scale-150").checked(current_x == 150_000).on(|e, _, cx| e.set_shape_effect_option(L::Scale(150_000, 150_000), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.scale-200").checked(current_x == 200_000).on(|e, _, cx| e.set_shape_effect_option(L::Scale(200_000, 200_000), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.scale-50").checked(current_x == 50_000).on(|e, _, cx| e.set_shape_effect_option(L::Scale(50_000, 50_000), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.scale-25").checked(current_x == 25_000).on(|e, _, cx| e.set_shape_effect_option(L::Scale(25_000, 25_000), cx)).into(),
             ]
         }
         Some(L::Motion(current_x, current_y)) => {
             vec![
-                MenuItem::tr("pptx.anim.opt.path-down").checked(current_x == 0 && current_y > 0).on(|e, _, cx| e.set_shape_effect_option(L::Motion(0, 25_000), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.path-left").checked(current_x < 0 && current_y == 0).on(|e, _, cx| e.set_shape_effect_option(L::Motion(-25_000, 0), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.path-right").checked(current_x > 0 && current_y == 0).on(|e, _, cx| e.set_shape_effect_option(L::Motion(25_000, 0), cx)).into(),
-                MenuItem::tr("pptx.anim.opt.path-up").checked(current_x == 0 && current_y < 0).on(|e, _, cx| e.set_shape_effect_option(L::Motion(0, -25_000), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.path-down").checked(current_x == 0 && current_y > 0).on(|e, _, cx| e.set_shape_effect_option(L::Motion(0, 25_000), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.path-left").checked(current_x < 0 && current_y == 0).on(|e, _, cx| e.set_shape_effect_option(L::Motion(-25_000, 0), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.path-right").checked(current_x > 0 && current_y == 0).on(|e, _, cx| e.set_shape_effect_option(L::Motion(25_000, 0), cx)).into(),
+                MenuItem::tr("pptx.animation.opt.path-up").checked(current_x == 0 && current_y < 0).on(|e, _, cx| e.set_shape_effect_option(L::Motion(0, -25_000), cx)).into(),
             ]
         }
         Some(L::Preset) => {
@@ -2205,7 +2216,7 @@ pub(crate) fn animation_option_items(editor: &SlideEditor) -> Vec<MenuEntry> {
                     .unwrap_or_default()
             } else {
                 // The options PowerPoint's own effect has (directions, colours, amounts), when it has more than one.
-                ibis_pptx::animation_catalog::effect(a.class, a.preset.0)
+                ibis_formats::animation_catalog::effect(a.class, a.preset.0)
                     .filter(|def| def.options.len() > 1)
                     .map(|def| {
                         def.options
@@ -2225,14 +2236,14 @@ pub(crate) fn animation_option_items(editor: &SlideEditor) -> Vec<MenuEntry> {
         }
         let current_chart_build = mine.iter().find_map(|a| a.chart_build).unwrap_or((ibis_doc_model::ChartBuildStep::AllAtOnce, true));
         let (chart_step, chart_anim_bg) = current_chart_build;
-        items.push(MenuItem::tr("pptx.anim.chart.whole").checked(chart_step == ibis_doc_model::ChartBuildStep::AllAtOnce).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::AllAtOnce, chart_anim_bg, cx)).into());
-        items.push(MenuItem::tr("pptx.anim.chart.series").checked(chart_step == ibis_doc_model::ChartBuildStep::Series).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::Series, chart_anim_bg, cx)).into());
-        items.push(MenuItem::tr("pptx.anim.chart.category").checked(chart_step == ibis_doc_model::ChartBuildStep::Category).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::Category, chart_anim_bg, cx)).into());
-        items.push(MenuItem::tr("pptx.anim.chart.series-el").checked(chart_step == ibis_doc_model::ChartBuildStep::SeriesEl).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::SeriesEl, chart_anim_bg, cx)).into());
-        items.push(MenuItem::tr("pptx.anim.chart.category-el").checked(chart_step == ibis_doc_model::ChartBuildStep::CategoryEl).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::CategoryEl, chart_anim_bg, cx)).into());
+        items.push(MenuItem::tr("pptx.animation.chart.whole").checked(chart_step == ibis_doc_model::ChartBuildStep::AllAtOnce).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::AllAtOnce, chart_anim_bg, cx)).into());
+        items.push(MenuItem::tr("pptx.animation.chart.series").checked(chart_step == ibis_doc_model::ChartBuildStep::Series).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::Series, chart_anim_bg, cx)).into());
+        items.push(MenuItem::tr("pptx.animation.chart.category").checked(chart_step == ibis_doc_model::ChartBuildStep::Category).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::Category, chart_anim_bg, cx)).into());
+        items.push(MenuItem::tr("pptx.animation.chart.series-el").checked(chart_step == ibis_doc_model::ChartBuildStep::SeriesEl).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::SeriesEl, chart_anim_bg, cx)).into());
+        items.push(MenuItem::tr("pptx.animation.chart.category-el").checked(chart_step == ibis_doc_model::ChartBuildStep::CategoryEl).on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::CategoryEl, chart_anim_bg, cx)).into());
         if chart_step != ibis_doc_model::ChartBuildStep::AllAtOnce {
             items.push(MenuEntry::Separator);
-            items.push(MenuItem::tr("pptx.anim.chart.anim-bg").checked(chart_anim_bg).on(move |e, _, cx| e.set_effect_chart_build(chart_step, !chart_anim_bg, cx)).into());
+            items.push(MenuItem::tr("pptx.animation.chart.anim-bg").checked(chart_anim_bg).on(move |e, _, cx| e.set_effect_chart_build(chart_step, !chart_anim_bg, cx)).into());
         }
     }
     let is_diagram = editor.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Placeholder(ibis_doc_model::Placeholder::Diagram)));
@@ -2241,21 +2252,21 @@ pub(crate) fn animation_option_items(editor: &SlideEditor) -> Vec<MenuEntry> {
             items.push(MenuEntry::Separator);
         }
         let current_dgm_build = mine.iter().find_map(|a| a.dgm_build).unwrap_or(ibis_doc_model::DiagramBuildStep::Whole);
-        items.push(MenuItem::tr("pptx.anim.dgm.whole").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::Whole).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::Whole, cx)).into());
-        items.push(MenuItem::tr("pptx.anim.dgm.all").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::AllAtOnce).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::AllAtOnce, cx)).into());
-        items.push(MenuItem::tr("pptx.anim.dgm.one-by-one").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::DepthByNode).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::DepthByNode, cx)).into());
-        items.push(MenuItem::tr("pptx.anim.dgm.level-at-once").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::BreadthByLvl).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::BreadthByLvl, cx)).into());
-        items.push(MenuItem::tr("pptx.anim.dgm.level-one-by-one").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::DepthByBranch).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::DepthByBranch, cx)).into());
+        items.push(MenuItem::tr("pptx.animation.dgm.whole").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::Whole).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::Whole, cx)).into());
+        items.push(MenuItem::tr("pptx.animation.dgm.all").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::AllAtOnce).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::AllAtOnce, cx)).into());
+        items.push(MenuItem::tr("pptx.animation.dgm.one-by-one").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::DepthByNode).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::DepthByNode, cx)).into());
+        items.push(MenuItem::tr("pptx.animation.dgm.level-at-once").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::BreadthByLvl).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::BreadthByLvl, cx)).into());
+        items.push(MenuItem::tr("pptx.animation.dgm.level-one-by-one").checked(current_dgm_build == ibis_doc_model::DiagramBuildStep::DepthByBranch).on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::DepthByBranch, cx)).into());
     }
     if !mine.is_empty() {
         if !items.is_empty() {
             items.push(MenuEntry::Separator);
         }
-        items.push(MenuItem::tr("pptx.anim.options-dialog").on(|e, _, cx| e.open_selected_animation_options_panel(cx)).into());
+        items.push(MenuItem::tr("pptx.animation.options-dialog").on(|e, _, cx| e.open_selected_animation_options_panel(cx)).into());
     }
     if items.is_empty() {
         // Nothing to set (no effect selected): the item is shown grey, as Office does.
-        items.push(MenuItem::tr("pptx.anim.options-dialog").into());
+        items.push(MenuItem::tr("pptx.animation.options-dialog").into());
     }
     items
 }
@@ -2274,28 +2285,28 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
         MenuItem::tr(id).checked(on).on(move |e, _, cx| e.set_shape_effect(class, look, cx)).into()
     };
     let mut entrance = vec![
-        effect_item("pptx.anim.in.appear", C::Entrance, L::Appear),
-        effect_item("pptx.anim.in.fade", C::Entrance, L::Fade),
-        effect_item("pptx.anim.in.fly-bottom", C::Entrance, L::Fly(AnimationSide::Bottom)),
-        effect_item("pptx.anim.in.fly-left", C::Entrance, L::Fly(AnimationSide::Left)),
-        effect_item("pptx.anim.in.fly-right", C::Entrance, L::Fly(AnimationSide::Right)),
-        effect_item("pptx.anim.in.fly-top", C::Entrance, L::Fly(AnimationSide::Top)),
-        effect_item("pptx.anim.in.float", C::Entrance, L::Float(AnimationSide::Top)),
-        effect_item("pptx.anim.in.wipe", C::Entrance, L::Wipe(AnimationSide::Bottom)),
-        effect_item("pptx.anim.in.zoom", C::Entrance, L::Zoom),
+        effect_item("pptx.animation.in.appear", C::Entrance, L::Appear),
+        effect_item("pptx.animation.in.fade", C::Entrance, L::Fade),
+        effect_item("pptx.animation.in.fly-bottom", C::Entrance, L::Fly(AnimationSide::Bottom)),
+        effect_item("pptx.animation.in.fly-left", C::Entrance, L::Fly(AnimationSide::Left)),
+        effect_item("pptx.animation.in.fly-right", C::Entrance, L::Fly(AnimationSide::Right)),
+        effect_item("pptx.animation.in.fly-top", C::Entrance, L::Fly(AnimationSide::Top)),
+        effect_item("pptx.animation.in.float", C::Entrance, L::Float(AnimationSide::Top)),
+        effect_item("pptx.animation.in.wipe", C::Entrance, L::Wipe(AnimationSide::Bottom)),
+        effect_item("pptx.animation.in.zoom", C::Entrance, L::Zoom),
     ];
-    let mut emphasis: Vec<MenuEntry> = vec![effect_item("pptx.anim.em.spin", C::Emphasis, L::Spin(21_600_000)), effect_item("pptx.anim.em.grow", C::Emphasis, L::Scale(150_000, 150_000))];
+    let mut emphasis: Vec<MenuEntry> = vec![effect_item("pptx.animation.em.spin", C::Emphasis, L::Spin(21_600_000)), effect_item("pptx.animation.em.grow", C::Emphasis, L::Scale(150_000, 150_000))];
     emphasis.extend(more_effects(C::Emphasis, &mine, selected.len()));
     let mut exit = vec![
-        effect_item("pptx.anim.out.disappear", C::Exit, L::Appear),
-        effect_item("pptx.anim.out.fade", C::Exit, L::Fade),
-        effect_item("pptx.anim.out.fly-bottom", C::Exit, L::Fly(AnimationSide::Bottom)),
-        effect_item("pptx.anim.out.fly-left", C::Exit, L::Fly(AnimationSide::Left)),
-        effect_item("pptx.anim.out.fly-right", C::Exit, L::Fly(AnimationSide::Right)),
-        effect_item("pptx.anim.out.fly-top", C::Exit, L::Fly(AnimationSide::Top)),
-        effect_item("pptx.anim.out.float", C::Exit, L::Float(AnimationSide::Bottom)),
-        effect_item("pptx.anim.out.wipe", C::Exit, L::Wipe(AnimationSide::Bottom)),
-        effect_item("pptx.anim.out.zoom", C::Exit, L::Zoom),
+        effect_item("pptx.animation.out.disappear", C::Exit, L::Appear),
+        effect_item("pptx.animation.out.fade", C::Exit, L::Fade),
+        effect_item("pptx.animation.out.fly-bottom", C::Exit, L::Fly(AnimationSide::Bottom)),
+        effect_item("pptx.animation.out.fly-left", C::Exit, L::Fly(AnimationSide::Left)),
+        effect_item("pptx.animation.out.fly-right", C::Exit, L::Fly(AnimationSide::Right)),
+        effect_item("pptx.animation.out.fly-top", C::Exit, L::Fly(AnimationSide::Top)),
+        effect_item("pptx.animation.out.float", C::Exit, L::Float(AnimationSide::Bottom)),
+        effect_item("pptx.animation.out.wipe", C::Exit, L::Wipe(AnimationSide::Bottom)),
+        effect_item("pptx.animation.out.zoom", C::Exit, L::Zoom),
     ];
     entrance.extend(preset_items(C::Entrance, &mine, selected.len()));
     exit.extend(preset_items(C::Exit, &mine, selected.len()));
@@ -2303,25 +2314,25 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     exit.extend(more_effects(C::Exit, &mine, selected.len()));
     let is_ink = editor.selected_shapes().iter().any(|s| crate::shell::ink::stroke_points(s).is_some());
     if is_ink {
-        entrance.push(effect_item("pptx.anim.in.replay", C::Entrance, L::Replay));
-        exit.push(effect_item("pptx.anim.out.rewind", C::Exit, L::Replay));
+        entrance.push(effect_item("pptx.animation.in.replay", C::Entrance, L::Replay));
+        exit.push(effect_item("pptx.animation.out.rewind", C::Exit, L::Replay));
     }
     let path = vec![
-        effect_item("pptx.anim.path.down", C::Path, L::Motion(0, 25_000)),
-        effect_item("pptx.anim.path.left", C::Path, L::Motion(-25_000, 0)),
-        effect_item("pptx.anim.path.right", C::Path, L::Motion(25_000, 0)),
-        effect_item("pptx.anim.path.up", C::Path, L::Motion(0, -25_000)),
+        effect_item("pptx.animation.path.down", C::Path, L::Motion(0, 25_000)),
+        effect_item("pptx.animation.path.left", C::Path, L::Motion(-25_000, 0)),
+        effect_item("pptx.animation.path.right", C::Path, L::Motion(25_000, 0)),
+        effect_item("pptx.animation.path.up", C::Path, L::Motion(0, -25_000)),
     ];
-    let path = path.into_iter().chain(more_effects(C::Path, &mine, selected.len())).chain([MenuEntry::Separator, MenuItem::tr("pptx.anim.path.custom").disabled(!editor.can_draw_path()).on(|e, _, cx| e.begin_path_draw(cx)).into()]).collect::<Vec<_>>();
-    let starts = [("pptx.anim.start.click", AnimationStart::OnClick), ("pptx.anim.start.with", AnimationStart::WithPrevious), ("pptx.anim.start.after", AnimationStart::AfterPrevious)]
+    let path = path.into_iter().chain(more_effects(C::Path, &mine, selected.len())).chain([MenuEntry::Separator, MenuItem::tr("pptx.animation.path.custom").disabled(!editor.can_draw_path()).on(|e, _, cx| e.begin_path_draw(cx)).into()]).collect::<Vec<_>>();
+    let starts = [("pptx.animation.start.click", AnimationStart::OnClick), ("pptx.animation.start.with", AnimationStart::WithPrevious), ("pptx.animation.start.after", AnimationStart::AfterPrevious)]
         .into_iter()
         .map(|(id, s)| MenuItem::tr(id).disabled(!has).checked(start == Some(s)).on(move |e, _, cx| e.set_effect_start(s, cx)).into())
         .collect();
-    let durations = [("pptx.anim.duration.500", 500), ("pptx.anim.duration.1000", 1000), ("pptx.anim.duration.2000", 2000)]
+    let durations = [("pptx.animation.duration.500", 500), ("pptx.animation.duration.1000", 1000), ("pptx.animation.duration.2000", 2000)]
         .into_iter()
         .map(|(id, ms)| MenuItem::tr(id).disabled(!has).checked(duration == Some(ms)).on(move |e, _, cx| e.set_effect_duration(ms, cx)).into())
         .collect();
-    let delays = [("pptx.anim.delay.0", 0), ("pptx.anim.delay.500", 500), ("pptx.anim.delay.1000", 1000), ("pptx.anim.delay.2000", 2000)]
+    let delays = [("pptx.animation.delay.0", 0), ("pptx.animation.delay.500", 500), ("pptx.animation.delay.1000", 1000), ("pptx.animation.delay.2000", 2000)]
         .into_iter()
         .map(|(id, ms)| MenuItem::tr(id).disabled(!has).checked(delay == Some(ms)).on(move |e, _, cx| e.set_effect_delay(ms, cx)).into())
         .collect();
@@ -2329,14 +2340,14 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let auto_rev = mine.first().map(|a| a.auto_reverse).unwrap_or(false);
     let rewind = mine.first().map(|a| a.rewind).unwrap_or(false);
     let repeats = [
-        ("pptx.anim.repeat.none", AnimationRepeat::None),
-        ("pptx.anim.repeat.2", AnimationRepeat::Count(2)),
-        ("pptx.anim.repeat.3", AnimationRepeat::Count(3)),
-        ("pptx.anim.repeat.4", AnimationRepeat::Count(4)),
-        ("pptx.anim.repeat.5", AnimationRepeat::Count(5)),
-        ("pptx.anim.repeat.10", AnimationRepeat::Count(10)),
-        ("pptx.anim.repeat.until-click", AnimationRepeat::UntilNextClick),
-        ("pptx.anim.repeat.until-end", AnimationRepeat::UntilEndOfSlide),
+        ("pptx.animation.repeat.none", AnimationRepeat::None),
+        ("pptx.animation.repeat.2", AnimationRepeat::Count(2)),
+        ("pptx.animation.repeat.3", AnimationRepeat::Count(3)),
+        ("pptx.animation.repeat.4", AnimationRepeat::Count(4)),
+        ("pptx.animation.repeat.5", AnimationRepeat::Count(5)),
+        ("pptx.animation.repeat.10", AnimationRepeat::Count(10)),
+        ("pptx.animation.repeat.until-click", AnimationRepeat::UntilNextClick),
+        ("pptx.animation.repeat.until-end", AnimationRepeat::UntilEndOfSlide),
     ]
     .into_iter()
     .map(|(id, r)| MenuItem::tr(id).disabled(!has).checked(repeat == Some(r)).on(move |e, _, cx| e.set_effect_repeat(r, cx)).into())
@@ -2344,10 +2355,10 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let accel = mine.first().map(|a| a.accel).unwrap_or(0);
     let decel = mine.first().map(|a| a.decel).unwrap_or(0);
     let smooths = [
-        ("pptx.anim.smooth.none", 0, 0),
-        ("pptx.anim.smooth.start", 50_000, 0),
-        ("pptx.anim.smooth.end", 0, 50_000),
-        ("pptx.anim.smooth.both", 50_000, 50_000),
+        ("pptx.animation.smooth.none", 0, 0),
+        ("pptx.animation.smooth.start", 50_000, 0),
+        ("pptx.animation.smooth.end", 0, 50_000),
+        ("pptx.animation.smooth.both", 50_000, 50_000),
     ]
     .into_iter()
     .map(|(id, ac, dc)| {
@@ -2360,18 +2371,18 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     .collect();
     let by_paragraph = has && mine.iter().all(|a| a.paragraph.is_some());
     let builds = vec![
-        MenuItem::tr("pptx.anim.build.whole").disabled(!has).checked(has && mine.iter().all(|a| a.paragraph.is_none() && a.text_unit.is_none())).on(|e, _, cx| e.set_effect_text_build(TextBuild::Whole, cx)).into(),
-        MenuItem::tr("pptx.anim.build.paragraph")
+        MenuItem::tr("pptx.animation.build.whole").disabled(!has).checked(has && mine.iter().all(|a| a.paragraph.is_none() && a.text_unit.is_none())).on(|e, _, cx| e.set_effect_text_build(TextBuild::Whole, cx)).into(),
+        MenuItem::tr("pptx.animation.build.paragraph")
             .disabled(!has || !editor.selected_shapes().iter().any(|s| s.text_body().is_some_and(|b| b.paragraphs.len() > 1)))
             .checked(by_paragraph)
             .on(|e, _, cx| e.set_effect_text_build(TextBuild::Paragraph, cx))
             .into(),
-        MenuItem::tr("pptx.anim.build.word")
+        MenuItem::tr("pptx.animation.build.word")
             .disabled(!has || !editor.selected_shapes().iter().any(|s| s.text_body().is_some()))
             .checked(has && mine.iter().all(|a| a.text_unit.is_some_and(|(u, _)| u == ibis_doc_model::TextUnit::Word)))
             .on(|e, _, cx| e.set_effect_text_build(TextBuild::Word, cx))
             .into(),
-        MenuItem::tr("pptx.anim.build.letter")
+        MenuItem::tr("pptx.animation.build.letter")
             .disabled(!has || !editor.selected_shapes().iter().any(|s| s.text_body().is_some()))
             .checked(has && mine.iter().all(|a| a.text_unit.is_some_and(|(u, _)| u == ibis_doc_model::TextUnit::Letter)))
             .on(|e, _, cx| e.set_effect_text_build(TextBuild::Letter, cx))
@@ -2381,33 +2392,33 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let current_chart_build = mine.iter().find_map(|a| a.chart_build).unwrap_or((ibis_doc_model::ChartBuildStep::AllAtOnce, true));
     let (chart_step, chart_anim_bg) = current_chart_build;
     let chart_builds = vec![
-        MenuItem::tr("pptx.anim.chart.whole")
+        MenuItem::tr("pptx.animation.chart.whole")
             .disabled(!has || !is_chart)
             .checked(is_chart && chart_step == ibis_doc_model::ChartBuildStep::AllAtOnce)
             .on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::AllAtOnce, chart_anim_bg, cx))
             .into(),
-        MenuItem::tr("pptx.anim.chart.series")
+        MenuItem::tr("pptx.animation.chart.series")
             .disabled(!has || !is_chart)
             .checked(is_chart && chart_step == ibis_doc_model::ChartBuildStep::Series)
             .on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::Series, chart_anim_bg, cx))
             .into(),
-        MenuItem::tr("pptx.anim.chart.category")
+        MenuItem::tr("pptx.animation.chart.category")
             .disabled(!has || !is_chart)
             .checked(is_chart && chart_step == ibis_doc_model::ChartBuildStep::Category)
             .on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::Category, chart_anim_bg, cx))
             .into(),
-        MenuItem::tr("pptx.anim.chart.series-el")
+        MenuItem::tr("pptx.animation.chart.series-el")
             .disabled(!has || !is_chart)
             .checked(is_chart && chart_step == ibis_doc_model::ChartBuildStep::SeriesEl)
             .on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::SeriesEl, chart_anim_bg, cx))
             .into(),
-        MenuItem::tr("pptx.anim.chart.category-el")
+        MenuItem::tr("pptx.animation.chart.category-el")
             .disabled(!has || !is_chart)
             .checked(is_chart && chart_step == ibis_doc_model::ChartBuildStep::CategoryEl)
             .on(move |e, _, cx| e.set_effect_chart_build(ibis_doc_model::ChartBuildStep::CategoryEl, chart_anim_bg, cx))
             .into(),
         MenuEntry::Separator,
-        MenuItem::tr("pptx.anim.chart.anim-bg")
+        MenuItem::tr("pptx.animation.chart.anim-bg")
             .disabled(!has || !is_chart || chart_step == ibis_doc_model::ChartBuildStep::AllAtOnce)
             .checked(is_chart && chart_anim_bg)
             .on(move |e, _, cx| e.set_effect_chart_build(chart_step, !chart_anim_bg, cx))
@@ -2416,27 +2427,27 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let is_diagram = editor.selected_shapes().iter().any(|s| matches!(s.kind, ibis_doc_model::ShapeKind::Placeholder(ibis_doc_model::Placeholder::Diagram)));
     let current_dgm_build = mine.iter().find_map(|a| a.dgm_build).unwrap_or(ibis_doc_model::DiagramBuildStep::Whole);
     let dgm_builds = vec![
-        MenuItem::tr("pptx.anim.dgm.whole")
+        MenuItem::tr("pptx.animation.dgm.whole")
             .disabled(!has || !is_diagram)
             .checked(is_diagram && current_dgm_build == ibis_doc_model::DiagramBuildStep::Whole)
             .on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::Whole, cx))
             .into(),
-        MenuItem::tr("pptx.anim.dgm.all")
+        MenuItem::tr("pptx.animation.dgm.all")
             .disabled(!has || !is_diagram)
             .checked(is_diagram && current_dgm_build == ibis_doc_model::DiagramBuildStep::AllAtOnce)
             .on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::AllAtOnce, cx))
             .into(),
-        MenuItem::tr("pptx.anim.dgm.one-by-one")
+        MenuItem::tr("pptx.animation.dgm.one-by-one")
             .disabled(!has || !is_diagram)
             .checked(is_diagram && current_dgm_build == ibis_doc_model::DiagramBuildStep::DepthByNode)
             .on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::DepthByNode, cx))
             .into(),
-        MenuItem::tr("pptx.anim.dgm.level-at-once")
+        MenuItem::tr("pptx.animation.dgm.level-at-once")
             .disabled(!has || !is_diagram)
             .checked(is_diagram && current_dgm_build == ibis_doc_model::DiagramBuildStep::BreadthByLvl)
             .on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::BreadthByLvl, cx))
             .into(),
-        MenuItem::tr("pptx.anim.dgm.level-one-by-one")
+        MenuItem::tr("pptx.animation.dgm.level-one-by-one")
             .disabled(!has || !is_diagram)
             .checked(is_diagram && current_dgm_build == ibis_doc_model::DiagramBuildStep::DepthByBranch)
             .on(move |e, _, cx| e.set_effect_diagram_build(ibis_doc_model::DiagramBuildStep::DepthByBranch, cx))
@@ -2444,16 +2455,16 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     ];
     let after_effect = mine.first().map(|a| a.after_effect);
     let after_effects = [
-        ("pptx.anim.after.hold", AnimationAfterEffect::Hold),
-        ("pptx.anim.after.hide", AnimationAfterEffect::Hide),
-        ("pptx.anim.after.dim", AnimationAfterEffect::Dim),
-        ("pptx.anim.after.hide-next", AnimationAfterEffect::HideOnNextClick),
+        ("pptx.animation.after.hold", AnimationAfterEffect::Hold),
+        ("pptx.animation.after.hide", AnimationAfterEffect::Hide),
+        ("pptx.animation.after.dim", AnimationAfterEffect::Dim(AnimationAfterEffect::DEFAULT_DIM)),
+        ("pptx.animation.after.hide-next", AnimationAfterEffect::HideOnNextClick),
     ]
     .into_iter()
     .map(|(id, af)| {
         MenuItem::tr(id)
             .disabled(!has)
-            .checked(after_effect == Some(af))
+            .checked(after_effect.is_some_and(|c| c.same_kind(af)))
             .on(move |e, _, cx| e.set_effect_after(af, cx))
             .into()
     })
@@ -2461,34 +2472,34 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
     let add_item = |id: &'static str, class: C, look: L| -> MenuEntry { MenuItem::new(id, crate::shell::i18n::text(&id["add.".len()..])).on(move |e, _, cx| e.add_shape_effect(class, look, cx)).into() };
     // The four kinds in groups (the entrance and the exit effects have the same words: フェード, ワイプ, ズーム).
     let mut add_entrance = vec![
-        add_item("add.pptx.anim.in.appear", C::Entrance, L::Appear),
-        add_item("add.pptx.anim.in.fade", C::Entrance, L::Fade),
-        add_item("add.pptx.anim.in.fly-bottom", C::Entrance, L::Fly(AnimationSide::Bottom)),
-        add_item("add.pptx.anim.in.float", C::Entrance, L::Float(AnimationSide::Top)),
-        add_item("add.pptx.anim.in.wipe", C::Entrance, L::Wipe(AnimationSide::Bottom)),
-        add_item("add.pptx.anim.in.zoom", C::Entrance, L::Zoom),
+        add_item("add.pptx.animation.in.appear", C::Entrance, L::Appear),
+        add_item("add.pptx.animation.in.fade", C::Entrance, L::Fade),
+        add_item("add.pptx.animation.in.fly-bottom", C::Entrance, L::Fly(AnimationSide::Bottom)),
+        add_item("add.pptx.animation.in.float", C::Entrance, L::Float(AnimationSide::Top)),
+        add_item("add.pptx.animation.in.wipe", C::Entrance, L::Wipe(AnimationSide::Bottom)),
+        add_item("add.pptx.animation.in.zoom", C::Entrance, L::Zoom),
     ];
     let add_emphasis = vec![
-        add_item("add.pptx.anim.em.spin", C::Emphasis, L::Spin(21_600_000)),
-        add_item("add.pptx.anim.em.grow", C::Emphasis, L::Scale(150_000, 150_000)),
+        add_item("add.pptx.animation.em.spin", C::Emphasis, L::Spin(21_600_000)),
+        add_item("add.pptx.animation.em.grow", C::Emphasis, L::Scale(150_000, 150_000)),
     ];
     let mut add_exit = vec![
-        add_item("add.pptx.anim.out.disappear", C::Exit, L::Appear),
-        add_item("add.pptx.anim.out.fade", C::Exit, L::Fade),
-        add_item("add.pptx.anim.out.fly-bottom", C::Exit, L::Fly(AnimationSide::Bottom)),
-        add_item("add.pptx.anim.out.float", C::Exit, L::Float(AnimationSide::Bottom)),
-        add_item("add.pptx.anim.out.wipe", C::Exit, L::Wipe(AnimationSide::Bottom)),
-        add_item("add.pptx.anim.out.zoom", C::Exit, L::Zoom),
+        add_item("add.pptx.animation.out.disappear", C::Exit, L::Appear),
+        add_item("add.pptx.animation.out.fade", C::Exit, L::Fade),
+        add_item("add.pptx.animation.out.fly-bottom", C::Exit, L::Fly(AnimationSide::Bottom)),
+        add_item("add.pptx.animation.out.float", C::Exit, L::Float(AnimationSide::Bottom)),
+        add_item("add.pptx.animation.out.wipe", C::Exit, L::Wipe(AnimationSide::Bottom)),
+        add_item("add.pptx.animation.out.zoom", C::Exit, L::Zoom),
     ];
     let add_path = vec![
-        add_item("add.pptx.anim.path.down", C::Path, L::Motion(0, 25_000)),
-        add_item("add.pptx.anim.path.left", C::Path, L::Motion(-25_000, 0)),
-        add_item("add.pptx.anim.path.right", C::Path, L::Motion(25_000, 0)),
-        add_item("add.pptx.anim.path.up", C::Path, L::Motion(0, -25_000)),
+        add_item("add.pptx.animation.path.down", C::Path, L::Motion(0, 25_000)),
+        add_item("add.pptx.animation.path.left", C::Path, L::Motion(-25_000, 0)),
+        add_item("add.pptx.animation.path.right", C::Path, L::Motion(25_000, 0)),
+        add_item("add.pptx.animation.path.up", C::Path, L::Motion(0, -25_000)),
     ];
     if is_ink {
-        add_entrance.push(add_item("add.pptx.anim.in.replay", C::Entrance, L::Replay));
-        add_exit.push(add_item("add.pptx.anim.out.rewind", C::Exit, L::Replay));
+        add_entrance.push(add_item("add.pptx.animation.in.replay", C::Entrance, L::Replay));
+        add_exit.push(add_item("add.pptx.animation.out.rewind", C::Exit, L::Replay));
     }
     let mut add: Vec<MenuEntry> = Vec::new();
     for group in [add_entrance, add_emphasis, add_exit, add_path] {
@@ -2498,33 +2509,33 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
         add.extend(group);
     }
     let media_menu: Option<MenuEntry> = (!selected.is_empty() && editor.selected_shapes().iter().all(|s| SlideEditor::clip_of(s).is_some())).then(|| {
-        let items = [("pptx.anim.media.play", ibis_doc_model::MediaCommand::Play), ("pptx.anim.media.pause", ibis_doc_model::MediaCommand::Pause), ("pptx.anim.media.stop", ibis_doc_model::MediaCommand::Stop)]
+        let items = [("pptx.animation.media.play", ibis_doc_model::MediaCommand::Play), ("pptx.animation.media.pause", ibis_doc_model::MediaCommand::Pause), ("pptx.animation.media.stop", ibis_doc_model::MediaCommand::Stop)]
             .into_iter()
             .map(|(id, c)| MenuItem::tr(id).on(move |e, _, cx| e.add_media_effect(c, cx)).into())
             .collect();
-        Submenu::tr("pptx.anim.media.class", "play_circle", items).into()
+        Submenu::tr("pptx.animation.media.class", "play_circle", items).into()
     });
     let mut menu = vec![
-        MenuItem::tr("pptx.anim.preview").disabled(editor.slide().animations.is_empty()).on(|e, w, cx| e.start_slideshow(w, cx)).into(),
+        MenuItem::tr("pptx.animation.preview").disabled(editor.slide().animations.is_empty()).on(|e, w, cx| e.start_slideshow(w, cx)).into(),
         MenuEntry::Separator,
-        Submenu::tr("pptx.anim.entrance", "animation", entrance).into(),
-        Submenu::tr("pptx.anim.emphasis", "animation", emphasis).into(),
-        Submenu::tr("pptx.anim.exit", "animation", exit).into(),
-        Submenu::tr("pptx.anim.path", "conversion_path", path).into(),
+        Submenu::tr("pptx.animation.entrance", "animation", entrance).into(),
+        Submenu::tr("pptx.animation.emphasis", "animation", emphasis).into(),
+        Submenu::tr("pptx.animation.exit", "animation", exit).into(),
+        Submenu::tr("pptx.animation.path", "conversion_path", path).into(),
         MenuEntry::Separator,
-        Submenu::tr("pptx.anim.options", "tune", options).into(),
-        Submenu::tr("pptx.anim.start", "schedule", starts).into(),
-        Submenu::tr("pptx.anim.duration", "schedule", durations).into(),
-        Submenu::tr("pptx.anim.delay", "schedule", delays).into(),
-        Submenu::tr("pptx.anim.repeat", "repeat", repeats).into(),
-        MenuItem::tr("pptx.anim.autoreverse").disabled(!has).checked(auto_rev).on(|e, _, cx| e.toggle_effect_autoreverse(cx)).into(),
-        MenuItem::tr("pptx.anim.rewind").disabled(!has).checked(rewind).on(|e, _, cx| e.toggle_effect_rewind(cx)).into(),
-        Submenu::tr("pptx.anim.smooth", "water", smooths).into(),
-        Submenu::tr("pptx.anim.after", "visibility_off", after_effects).into(),
-        Submenu::tr("pptx.anim.build", "format_list_bulleted", builds).into(),
-        Submenu::tr("pptx.anim.chart-build", "bar_chart", chart_builds).into(),
-        Submenu::tr("pptx.anim.dgm-build", "account_tree", dgm_builds).into(),
-        Submenu::tr("pptx.anim.trigger", "touch_app", {
+        Submenu::tr("pptx.animation.options", "tune", options).into(),
+        Submenu::tr("pptx.animation.start", "schedule", starts).into(),
+        Submenu::tr("pptx.animation.duration", "schedule", durations).into(),
+        Submenu::tr("pptx.animation.delay", "schedule", delays).into(),
+        Submenu::tr("pptx.animation.repeat", "repeat", repeats).into(),
+        MenuItem::tr("pptx.animation.autoreverse").disabled(!has).checked(auto_rev).on(|e, _, cx| e.toggle_effect_autoreverse(cx)).into(),
+        MenuItem::tr("pptx.animation.rewind").disabled(!has).checked(rewind).on(|e, _, cx| e.toggle_effect_rewind(cx)).into(),
+        Submenu::tr("pptx.animation.smooth", "water", smooths).into(),
+        Submenu::tr("pptx.animation.after", "visibility_off", after_effects).into(),
+        Submenu::tr("pptx.animation.build", "format_list_bulleted", builds).into(),
+        Submenu::tr("pptx.animation.chart-build", "bar_chart", chart_builds).into(),
+        Submenu::tr("pptx.animation.dgm-build", "account_tree", dgm_builds).into(),
+        Submenu::tr("pptx.animation.trigger", "touch_app", {
             let slide = editor.slide();
             let mut shape_click_items = Vec::new();
             for sh in &slide.shapes {
@@ -2535,7 +2546,7 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
                     .unwrap_or_else(|| crate::shell::i18n::format("pptx.selection-pane.shape-n", &[("n", &slide.shape_index(sh_id).map_or(0, |x| x + 1))]).to_string());
                 let is_checked = has && mine.iter().all(|a| matches!(a.trigger, AnimationTrigger::OnShapeClick(s) if s == sh_id));
                 shape_click_items.push(
-                    MenuItem::new("pptx.anim.trigger.shape-item", label)
+                    MenuItem::new("pptx.animation.trigger.shape-item", label)
                         .disabled(!has)
                         .checked(is_checked)
                         .on(move |e, _, cx| e.set_selected_effects_trigger(AnimationTrigger::OnShapeClick(sh_id), cx))
@@ -2554,7 +2565,7 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
                         let is_checked = has && mine.iter().all(|a| matches!(&a.trigger, AnimationTrigger::OnMediaBookmark { shape, bookmark } if *shape == sh_id && bookmark == &bmk_check));
                         let bmk_set = bmk_name.clone();
                         bookmark_items.push(
-                            MenuItem::new("pptx.anim.trigger.bookmark-item", label)
+                            MenuItem::new("pptx.animation.trigger.bookmark-item", label)
                                 .disabled(!has)
                                 .checked(is_checked)
                                 .on(move |e, _, cx| e.set_selected_effects_trigger(AnimationTrigger::OnMediaBookmark { shape: sh_id, bookmark: bmk_set.clone() }, cx))
@@ -2566,41 +2577,41 @@ pub(crate) fn animation_items(editor: &SlideEditor) -> Vec<MenuEntry> {
 
             let mut trigger_sub: Vec<MenuEntry> = Vec::new();
             if shape_click_items.is_empty() {
-                trigger_sub.push(MenuItem::tr("pptx.anim.trigger.click").disabled(true).into());
+                trigger_sub.push(MenuItem::tr("pptx.animation.trigger.click").disabled(true).into());
             } else {
-                trigger_sub.push(Submenu::tr("pptx.anim.trigger.click", "touch_app", shape_click_items).into());
+                trigger_sub.push(Submenu::tr("pptx.animation.trigger.click", "touch_app", shape_click_items).into());
             }
             if bookmark_items.is_empty() {
-                trigger_sub.push(MenuItem::tr("pptx.anim.trigger.bookmark").disabled(true).into());
+                trigger_sub.push(MenuItem::tr("pptx.animation.trigger.bookmark").disabled(true).into());
             } else {
-                trigger_sub.push(Submenu::tr("pptx.anim.trigger.bookmark", "bookmark", bookmark_items).into());
+                trigger_sub.push(Submenu::tr("pptx.animation.trigger.bookmark", "bookmark", bookmark_items).into());
             }
             trigger_sub.push(MenuEntry::Separator);
             let has_any_trigger = mine.iter().any(|a| !a.trigger.is_none());
             trigger_sub.push(
-                MenuItem::tr("pptx.anim.trigger.none")
+                MenuItem::tr("pptx.animation.trigger.none")
                     .disabled(!has || !has_any_trigger)
                     .on(|e, _, cx| e.clear_selected_effects_trigger(cx))
                     .into(),
             );
             trigger_sub
         }).into(),
-        MenuItem::tr("pptx.anim.options-dialog").disabled(!has).on(|e, _, cx| e.open_selected_animation_options_panel(cx)).into(),
+        MenuItem::tr("pptx.animation.options-dialog").disabled(!has).on(|e, _, cx| e.open_selected_animation_options_panel(cx)).into(),
         MenuEntry::Separator,
-        Submenu::tr("pptx.anim.add", "add", add).into(),
-        MenuItem::tr("pptx.anim.remove").disabled(!has).on(|e, _, cx| e.remove_shape_effects(cx)).into(),
+        Submenu::tr("pptx.animation.add", "add", add).into(),
+        MenuItem::tr("pptx.animation.remove").disabled(!has).on(|e, _, cx| e.remove_shape_effects(cx)).into(),
         MenuEntry::Separator,
-        MenuItem::tr("pptx.anim.copy").shortcut("⌥⇧⌘C").disabled(!editor.can_copy_animations()).on(|e, _, cx| e.copy_shape_animations(cx)).into(),
-        MenuItem::tr("pptx.anim.paste").shortcut("⌥⇧⌘V").disabled(!editor.can_paste_animations()).on(|e, _, cx| e.paste_shape_animations(cx)).into(),
+        MenuItem::tr("pptx.animation.copy").shortcut("⌥⇧⌘C").disabled(!editor.can_copy_animations()).on(|e, _, cx| e.copy_shape_animations(cx)).into(),
+        MenuItem::tr("pptx.animation.paste").shortcut("⌥⇧⌘V").disabled(!editor.can_paste_animations()).on(|e, _, cx| e.paste_shape_animations(cx)).into(),
         MenuEntry::Separator,
-        MenuItem::tr("pptx.anim.order.earlier").disabled(!editor.can_move_selected_effect(true)).on(|e, _, cx| e.move_selected_effect(true, cx)).into(),
-        MenuItem::tr("pptx.anim.order.later").disabled(!editor.can_move_selected_effect(false)).on(|e, _, cx| e.move_selected_effect(false, cx)).into(),
+        MenuItem::tr("pptx.animation.order.earlier").disabled(!editor.can_move_selected_effect(true)).on(|e, _, cx| e.move_selected_effect(true, cx)).into(),
+        MenuItem::tr("pptx.animation.order.later").disabled(!editor.can_move_selected_effect(false)).on(|e, _, cx| e.move_selected_effect(false, cx)).into(),
         MenuEntry::Separator,
-        MenuItem::tr("pptx.anim.pane").checked(editor.pptx().is_some_and(|s| s.animation_pane)).on(|e, _, cx| e.toggle_animation_pane(cx)).into(),
+        MenuItem::tr("pptx.animation.pane").checked(editor.pptx().is_some_and(|s| s.animation_pane)).on(|e, _, cx| e.toggle_animation_pane(cx)).into(),
     ];
     // メディア (再生・一時停止・停止) after the paths: only for a video or an audio.
     if let Some(media) = media_menu
-        && let Some(at) = menu.iter().position(|m| matches!(m, MenuEntry::Submenu(sub) if sub.id == "pptx.anim.path"))
+        && let Some(at) = menu.iter().position(|m| matches!(m, MenuEntry::Submenu(sub) if sub.id == "pptx.animation.path"))
     {
         menu.insert(at + 1, media);
     }

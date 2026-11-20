@@ -213,7 +213,7 @@ impl SlideEditor {
                 if took {
                     p.crop = Crop::default();
                 }
-                commands.push(Command::SetKind { slide, shape, kind: Box::new(ShapeKind::Picture(p)) });
+                commands.push(Command::SetShapeKind { slide, shape, kind: Box::new(ShapeKind::Picture(p)) });
             }
         }
         if !commands.is_empty() {

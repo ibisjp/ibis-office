@@ -44,7 +44,6 @@ pub fn sub(id: &'static str, icon: &'static str, items: Vec<MenuEntry>) -> MenuE
 pub const SEP: MenuEntry = MenuEntry::Separator;
 
 /// The icon of a recent file whose extension is no format's own.
-#[cfg(not(target_family = "wasm"))]
 const OTHER_FILE_ICON: &str = "description";
 
 /// The menus for the open document.
@@ -88,7 +87,12 @@ pub(crate) fn menus(editor: &SlideEditor) -> Menus {
                     entries.push(item("help.register-desktop", "download").on(|_, _, cx| crate::linux_desktop::register_again(cx)).into());
                 }
                 // セットアップ (K0001): the fonts that can be downloaded (every platform; the browser keeps them in IndexedDB).
-                entries.push(item("help.setup", "download").on(|this, window, cx| this.open_font_setup(window, cx)).into());
+                // Not with `?fd=0` (the playground: no guidance to the downloads).
+                if crate::embed::font_prompt() {
+                    entries.push(item("help.setup", "download").on(|this, window, cx| this.open_font_setup(window, cx)).into());
+                }
+                // ソースコード (AGPL)… (K0036): the project's page on GitHub, so that the users of a fork's build also learn of ibis-office.
+                entries.push(item("help.source-code", "link").on(|_, _, cx| crate::external::open_url(&crate::host::source_url(), cx)).into());
                 // The About screen is a dialog inside the window on every platform (shell/about.rs).
                 entries.push(item("help.about", "info").on(|this, _, cx| this.show_about(cx)).into());
                 entries
@@ -99,7 +103,8 @@ pub(crate) fn menus(editor: &SlideEditor) -> Menus {
     menus
 }
 
-fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
+/// The lines of ファイル > 最近使ったファイル: the recent files (the same as the start view's list), or the line that says there are none.
+pub(crate) fn recent_entries(editor: &SlideEditor) -> Vec<MenuEntry> {
     #[cfg(not(target_family = "wasm"))]
     let recent: Vec<MenuEntry> = if editor.recent_files.is_empty() {
         vec![MenuItem::tr("file.recent.none").into()]
@@ -115,7 +120,7 @@ fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
                 let icon = path
                     .extension()
                     .and_then(|e| e.to_str())
-                    .and_then(ibis_pptx::Kind::from_extension)
+                    .and_then(ibis_formats::Kind::from_extension)
                     .map_or(OTHER_FILE_ICON, |kind| crate::format::info(kind).icon);
                 let path = path.clone();
                 let exists = path.is_file();
@@ -126,11 +131,41 @@ fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
     #[cfg(target_family = "wasm")]
     let recent: Vec<MenuEntry> = {
         let _ = editor;
-        vec![MenuItem::tr("file.recent.none").into()]
+        host_recent_entries()
     };
+    #[cfg(not(target_family = "wasm"))]
+    let recent = if crate::host::is_connected() && !crate::host::recent_files().is_empty() { host_recent_entries() } else { recent };
+    recent
+}
+
+/// The recent files a host keeps (`listRecentFiles`): up to 20, each with the icon of its format and its name; one opens through the host's `openUrl` (a new tab).
+/// The browser has no recent files of its own, so without a host that gave the list, or with it empty, the line says there are none.
+fn host_recent_entries() -> Vec<MenuEntry> {
+    let files = crate::host::recent_files();
+    if !crate::host::is_connected() || files.is_empty() {
+        return vec![MenuItem::tr("file.recent.none").into()];
+    }
+    let can_open = crate::host::capabilities().open_url;
+    files
+        .into_iter()
+        .take(crate::host::RECENT_FILES_MAX)
+        .map(|file| {
+            let icon = file
+                .name
+                .rsplit_once('.')
+                .and_then(|(_, e)| ibis_formats::Kind::from_extension(&e.to_ascii_lowercase()))
+                .map_or(OTHER_FILE_ICON, |kind| crate::format::info(kind).icon);
+            let url = file.url.clone();
+            MenuItem::new("file.recent.item", file.name).icon(icon).disabled(!can_open).on(move |_, _, cx| crate::external::open_url(&url, cx)).into()
+        })
+        .collect()
+}
+
+fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
+    let recent = recent_entries(editor);
     let kind = editor.kind();
     // 新規作成: a line for each format, in the formats' order; ⌘N is the open screen's.
-    let new_items: Vec<MenuEntry> = crate::format::infos()
+    let new_items: Vec<MenuEntry> = crate::format::creatable_infos()
         .into_iter()
         .map(|(format, info)| -> MenuEntry {
             let new = item(info.new_command, info.icon).on(move |this, window, cx| this.new_file(format, window, cx));
@@ -138,32 +173,39 @@ fn file_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
         })
         .collect();
     let mut items: Vec<crate::chrome::MenuEntry> = Vec::new();
-    #[cfg(not(target_arch = "wasm32"))]
-    {
+    // A host with no start window (`ui.startWindow` off: ibisWorks) has neither this line nor the separator after it (K0037).
+    if cfg!(not(target_arch = "wasm32")) && !(crate::host::is_connected() && !crate::host::options().start_window) {
         items.push(item("file.start-window", "grid_view").on(|_, _, cx| crate::app::open_editor(None, None, cx)).into());
         items.push(SEP);
     }
     items.extend(vec![
         sub("file.new", "note_add", new_items),
-        item("file.open", "folder_open").shortcut("⌘O").on(|this, window, cx| this.open_file(&crate::actions::OpenFile, window, cx)).into(),
+        item("file.open", "folder_open").shortcut("⌘O").on(|this, window, cx| this.open_file(&crate::actions::Open, window, cx)).into(),
         sub("file.recent", "schedule", recent),
         SEP,
         item("file.save", "save").shortcut("⌘S").on(|this, window, cx| this.save(&crate::actions::Save, window, cx)).into(),
         item("file.save-as", "save_as").shortcut("⇧⌘S").on(|this, window, cx| this.save_as(&crate::actions::SaveAs, window, cx)).into(),
-        item("file.copy", "content_copy").on(|this, window, cx| this.save_copy(window, cx)).into(),
+        {
+            // The browser version: the copy is downloaded at once, with the changes so far (the document is not saved by it; K0037).
+            #[cfg(target_family = "wasm")]
+            let copy = item_key("file.copy", "content_copy", "file.copy-download");
+            #[cfg(not(target_family = "wasm"))]
+            let copy = item("file.copy", "content_copy");
+            copy.on(|this, window, cx| this.save_copy(window, cx)).into()
+        },
         SEP,
         sub("file.export", "ios_share", {
             let mut entries = vec![
-                item("file.export.pdf", "picture_as_pdf").on(|this, window, cx| this.export_pdf(window, cx)).into(),
-                item("file.export.png", "image").on(|this, window, cx| this.export_png(window, cx)).into(),
-                item("file.export.gif", "animation").on(|this, window, cx| this.export_gif(window, cx)).into(),
-                item("file.export.svg", "draw").into(),
+                item("file.export.pdf", "picture_as_pdf").disabled(!crate::host::export_allowed("pdf")).on(|this, window, cx| this.export_pdf(window, cx)).into(),
+                item("file.export.png", "image").disabled(!crate::host::export_allowed("png")).on(|this, window, cx| this.export_png(window, cx)).into(),
+                item("file.export.gif", "animation").disabled(!crate::host::export_allowed("gif")).on(|this, window, cx| this.export_gif(window, cx)).into(),
+                item("file.export.svg", "draw").disabled(!crate::host::export_allowed("svg")).into(),
             ];
             // The screen's own kinds of file (a presentation: OpenDocument).
             entries.extend(with_format!(editor, menu_items(editor, MenuPart::FileExport)));
             entries
         }),
-        item("file.print", "print").shortcut("⌘P").on(|this, window, cx| this.print(window, cx)).into(),
+        item("file.print", "print").disabled(!crate::host::print_allowed()).shortcut("⌘P").on(|this, window, cx| this.print(window, cx)).into(),
         SEP,
         item("file.info", "info").into(),
         item("file.protect", "lock").on(|this, window, cx| this.protect_with_password(window, cx)).into(),
@@ -216,6 +258,15 @@ pub fn view_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
                 this.toggle_sidebar(window, cx);
             })
             .into(),
+        // The soft proof (Photoshop's 色の校正): only a file with the CMYK mode on has it to switch.
+        MenuItem::tr("view.print-colors")
+            .checked(editor.cmyk_on() && editor.soft_proof)
+            .disabled(!editor.cmyk_on())
+            .on(|this, _, cx| {
+                this.soft_proof = !this.soft_proof;
+                cx.notify();
+            })
+            .into(),
         MenuItem::tr("view.menus")
             .shortcut("⌃⇧F")
             .on(|this, _, cx| {
@@ -256,7 +307,7 @@ fn window_menu(editor: &SlideEditor) -> Vec<MenuEntry> {
         let (next_key, prev_key) = if cfg!(target_os = "macos") { ("⌘`", "⌘⇧`") } else { ("⌃F6", "⌃⇧F6") };
         entries.push(item("window.list", "list").shortcut("⌃Tab").on(|this, window, cx| this.open_window_switcher(false, window, cx)).into());
         entries.push(item("window.next", "arrow_forward").disabled(editor.open_documents.len() < 2).shortcut(next_key).on(|this, window, cx| this.step_window(true, window, cx)).into());
-        entries.push(item("window.prev", "arrow_back").disabled(editor.open_documents.len() < 2).shortcut(prev_key).on(|this, window, cx| this.step_window(false, window, cx)).into());
+        entries.push(item("window.previous", "arrow_back").disabled(editor.open_documents.len() < 2).shortcut(prev_key).on(|this, window, cx| this.step_window(false, window, cx)).into());
         entries.push(SEP);
     }
     #[cfg(any(target_os = "macos", target_os = "windows"))]

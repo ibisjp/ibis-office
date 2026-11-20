@@ -178,7 +178,7 @@ impl SlideEditor {
                         if index == 1 {frame.width = emu;} else {frame.height = emu;}
                         if frame == shape.frame {return;}
                         let slide = this.current_slide;
-                        this.run(vec![Command::SetFrame {slide, shape: id, frame}], cx);
+                        this.run(vec![Command::SetFrame { slide, frames: vec![(id, frame)], with_attached: true }], cx);
                     }
                 }
             }));
@@ -262,7 +262,7 @@ impl SlideEditor {
             tilt.camera_preset = Some(CameraPreset::PerspectiveFront);
         }
         new_auto.tilt = Some(tilt);
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(new_auto)) }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(new_auto)) }], cx);
     }
 
     /// PPTX-THREED-003: 3D モデルの 3 軸回転を相対角度（度）だけ回転.
@@ -281,7 +281,7 @@ impl SlideEditor {
         let mut tilt = Tilt::from_preset(view.camera_preset());
         tilt.depth = prev_depth;
         new_auto.tilt = Some(tilt);
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(new_auto)) }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(new_auto)) }], cx);
     }
 
     /// PPTX-THREED-005: 3D モデルのパン（水平・垂直オフセット EMU）とズーム倍率（%）を取得.
@@ -314,7 +314,7 @@ impl SlideEditor {
             body.insets.left = (body.insets.left + dx_emu).max(0);
             body.insets.top = (body.insets.top + dy_emu).max(0);
         }
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(new_auto)) }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(new_auto)) }], cx);
     }
 
     /// PPTX-THREED-005: 3D モデルをズーム（% 増減、50%〜300%）.
@@ -328,7 +328,7 @@ impl SlideEditor {
         let next_pct = (cur_pct + delta_pct).clamp(50, 300);
         tilt.depth = (next_pct - 100) as i64 * ZOOM_EMU_PER_PCT;
         new_auto.tilt = Some(tilt);
-        self.run(vec![Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(new_auto)) }], cx);
+        self.run(vec![Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(new_auto)) }], cx);
     }
 
     /// PPTX-THREED-006: 3D モデルの位置とサイズ（倍率スケーリング）.
@@ -339,7 +339,7 @@ impl SlideEditor {
         let mut frame = shape.frame;
         frame.width = ((frame.width as f64 * w_factor).round() as i64).clamp(360_000, 12_000_000);
         frame.height = ((frame.height as f64 * h_factor).round() as i64).clamp(360_000, 12_000_000);
-        self.run(vec![Command::SetFrame { slide, shape: id, frame }], cx);
+        self.run(vec![Command::SetFrame { slide, frames: vec![(id, frame)], with_attached: true }], cx);
     }
 
     /// PPTX-THREED-007: 3D モデルの初期化（回転・ビュー・パン・ズーム・シーンを初期化し、オプションでサイズも初期値に戻す）.
@@ -353,7 +353,7 @@ impl SlideEditor {
             if let Some(body) = &mut new_auto.text {
                 body.insets = Insets::default();
             }
-            cmds.push(Command::SetKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(new_auto)) });
+            cmds.push(Command::SetShapeKind { slide, shape: id, kind: Box::new(ShapeKind::Auto(new_auto)) });
         }
         if self.slide().shape_names.contains_key(&id) {
             cmds.push(Command::SetShapeName { slide, shape: id, name: String::new() });
@@ -362,7 +362,7 @@ impl SlideEditor {
             let (w, h) = (3_000_000, 1_500_000);
             let (slide_w, slide_h) = (self.presentation().slide_size.width, self.presentation().slide_size.height);
             let frame = EmuRect::new((slide_w - w) / 2, (slide_h - h) / 2, w, h);
-            cmds.push(Command::SetFrame { slide, shape: id, frame });
+            cmds.push(Command::SetFrame { slide, frames: vec![(id, frame)], with_attached: true });
         }
         if let Some(s) = self.pptx_mut() {
             if let Some(p) = &mut s.threed_panel {
@@ -755,7 +755,7 @@ impl SlideEditor {
                 crate::shell::chrome::number_stepper("rec-prev-seconds", cur_after_ms.map_or(rp.seconds, |ms| ms as f32 / 1000.), cx, |e, v, _, cx| {
                     e.record_preview_set_seconds(v, cx);
                     e.record_preview_set_slide_timing_ms(Some((v * 1000.).round() as u32), cx);
-                }).range(0.1, 3600.).step(0.5).unit(text("pptx.anim.unit.seconds")).plain().disabled(cur_after_ms.is_none()),
+                }).range(0.1, 3600.).step(0.5).unit(text("pptx.animation.unit.seconds")).plain().disabled(cur_after_ms.is_none()),
             ))
             ;
 
@@ -1337,7 +1337,7 @@ impl SlideEditor {
             "pptx.duplicate-slide",
             "pptx.selection-pane",
             "pptx.reading-order",
-            "pptx.check-accessibility",
+            "review.accessibility-check",
             "pptx.3d-model",
             "pptx.record-preview",
             "pptx.screen-reader",

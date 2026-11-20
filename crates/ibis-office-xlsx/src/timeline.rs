@@ -164,7 +164,7 @@ impl SlideEditor {
 
     /// The timeline `shape` made `next`, and the items of its pivot tables kept as it says.
     pub(crate) fn apply_timeline(&mut self, slide: SlideId, shape: ShapeId, next: Timeline, cx: &mut Context<Self>) {
-        let edit = Command::Sheet(SheetCommand::EditTimeline { slide, shape, timeline: next.clone() });
+        let edit = Command::Sheet(SheetCommand::EditTimeline { sheet: slide, shape, timeline: next.clone() });
         let mut filtered = false;
         for name in &next.pivots {
             let Some(target) = locate_pivot(self.presentation(), name) else { continue };

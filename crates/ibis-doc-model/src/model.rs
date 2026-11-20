@@ -1322,6 +1322,15 @@ impl Shape {
         Self::new(id, frame, ShapeKind::TextBox(body))
     }
 
+    /// The colour of what is behind this shape's text (its fill's, see [`Fill::backdrop_rgb`]); `None` for a shape with no fill of its own (the
+    /// text box, the line, the picture, ...) or one that does not say.
+    pub fn backdrop_rgb(&self) -> Option<crate::Rgb> {
+        match &self.kind {
+            ShapeKind::Auto(shape) => shape.fill.backdrop_rgb(),
+            _ => None,
+        }
+    }
+
     pub fn text_body(&self) -> Option<&TextBody> {
         match &self.kind {
             ShapeKind::TextBox(body) => Some(body),
@@ -1336,6 +1345,29 @@ impl Shape {
             ShapeKind::Auto(shape) => shape.text.as_mut(),
             _ => None,
         }
+    }
+
+    /// The box Word's and PowerPoint's PDFs put a shape's link over, in EMU (left, top, right, bottom), for the shape drawn in `frame`: the frame widened by half the outline's
+    /// width on every side, turned about its centre (the box that holds the turned one), joined with the drop shadow's box (the frame moved by the shadow's distance towards its
+    /// direction and widened by its blur: it reaches out to the right and below, and not to the left and above, when the distance is longer than the blur).
+    pub fn link_box(&self, frame: EmuRect) -> [f64; 4] {
+        let (half, shadow) = match &self.kind {
+            ShapeKind::Auto(auto) => (auto.stroke.as_ref().map_or(0.0, |s| s.drawn_width() as f64 / 2.0), auto.shadow),
+            _ => (0.0, None),
+        };
+        let (w, h) = (frame.width as f64 + 2.0 * half, frame.height as f64 + 2.0 * half);
+        let angle = self.rotation as f64 / 60_000.0 * std::f64::consts::PI / 180.0;
+        let (sin, cos) = (angle.sin().abs(), angle.cos().abs());
+        let (bw, bh) = (w * cos + h * sin, w * sin + h * cos);
+        let (cx, cy) = (frame.x as f64 + frame.width as f64 / 2.0, frame.y as f64 + frame.height as f64 / 2.0);
+        let mut out = [cx - bw / 2.0, cy - bh / 2.0, cx + bw / 2.0, cy + bh / 2.0];
+        if let Some(s) = shadow {
+            let direction = s.direction as f64 / 60_000.0 * std::f64::consts::PI / 180.0;
+            let (dx, dy) = (s.distance as f64 * direction.cos(), s.distance as f64 * direction.sin());
+            let blur = s.blur as f64;
+            out = [out[0].min(out[0] + dx - blur), out[1].min(out[1] + dy - blur), out[2].max(out[2] + dx + blur), out[3].max(out[3] + dy + blur)];
+        }
+        out
     }
 }
 
@@ -1433,6 +1465,9 @@ pub struct Slide {
     pub notes_shapes: Vec<Shape>,
     /// How the slide comes in during the show (画面切り替え), if set.
     pub transition: Option<Transition>,
+    /// The audio the transition's sound plays (`p:snd r:embed`: PowerPoint embeds the wav of a named sound), in the presentation's media; `None` for a sound with no
+    /// audio in the file. Read for the slide show to play it (#224); the file's own part is saved as it was.
+    pub transition_sound: Option<MediaId>,
     /// Its animations' effects in order (read from the file, played in the
     /// slide show; the file's timing is saved as it was).
     pub animations: Vec<crate::Animation>,
@@ -1451,6 +1486,9 @@ pub struct Slide {
     pub guides: Vec<SlideGuide>,
     /// Shapes that are hyperlinks (図形のリンク, `cNvPr/a:hlinkClick`).
     pub shape_links: std::collections::HashMap<ShapeId, crate::text::SlideLink>,
+    /// The links of groups (`p:grpSp/p:nvGrpSpPr/p:cNvPr/a:hlinkClick`, which PowerPoint's screen cannot set but writes into a PDF), by the group's native id
+    /// (`ShapeGroup::native_id`). Read only: the saving leaves them as they are in the file.
+    pub group_links: std::collections::HashMap<String, crate::text::SlideLink>,
     /// Tooltips / ScreenTips of shape hyperlinks (`cNvPr/a:hlinkClick/@tooltip`).
     pub shape_link_tooltips: std::collections::HashMap<ShapeId, String>,
     /// Shapes whose proportions are kept when they are resized (縦横比を
@@ -1551,7 +1589,7 @@ impl Transition {
 
 impl Slide {
     pub fn new(id: SlideId) -> Self {
-        Self { id, shapes: Vec::new(), groups: Vec::new(), background: Fill::Solid(Color::WHITE), backdrop: Vec::new(), size: None, name: None, layout: None, attached: Default::default(), placeholders: Default::default(), hidden: false, notes: String::new(), notes_shapes: Vec::new(), transition: None, animations: Vec::new(), comments: Vec::new(), shape_names: Default::default(), hidden_shapes: Default::default(), hide_backdrop: false, guides: Vec::new(), shape_links: Default::default(), shape_link_tooltips: Default::default(), aspect_locked: Default::default(), shape_alt_texts: Default::default(), decorative_shapes: Default::default(), shape_placements: Default::default(), shape_prints: Default::default(), shape_formulas: Default::default(), shape_return_to_zoom: Default::default(), shape_zoom_show_bg: Default::default(), shape_zoom_durations: Default::default(), zoom_objects: Default::default(), shape_glues: Default::default(), ibis_wrap: Default::default(), ibis_wrap_ignore: Default::default(), text_chains: Vec::new() }
+        Self { id, shapes: Vec::new(), groups: Vec::new(), background: Fill::Solid(Color::WHITE), backdrop: Vec::new(), size: None, name: None, layout: None, attached: Default::default(), placeholders: Default::default(), hidden: false, notes: String::new(), notes_shapes: Vec::new(), transition: None, transition_sound: None, animations: Vec::new(), comments: Vec::new(), shape_names: Default::default(), hidden_shapes: Default::default(), hide_backdrop: false, guides: Vec::new(), shape_links: Default::default(), group_links: Default::default(), shape_link_tooltips: Default::default(), aspect_locked: Default::default(), shape_alt_texts: Default::default(), decorative_shapes: Default::default(), shape_placements: Default::default(), shape_prints: Default::default(), shape_formulas: Default::default(), shape_return_to_zoom: Default::default(), shape_zoom_show_bg: Default::default(), shape_zoom_durations: Default::default(), zoom_objects: Default::default(), shape_glues: Default::default(), ibis_wrap: Default::default(), ibis_wrap_ignore: Default::default(), text_chains: Vec::new() }
     }
 
     /// A new empty slide following `layout`, as PowerPoint's "New Slide"
@@ -1698,6 +1736,13 @@ pub struct Presentation {
     pub layout_scale: LayoutScale,
     /// The guides of the normal view (`p15:sldGuideLst` of `presentation.xml`).
     pub guides: Vec<SlideGuide>,
+    /// The zoom the file was saved at, in percent (a document's `w:zoom/@w:percent` of `settings.xml`, a presentation's slide view scale
+    /// `p:scale` of `viewProps.xml`), or the zoom the window has been put at since: written by the saving when it differs from what was read.
+    /// Not part of the model's equality (a zoom is not an edit).
+    pub view_zoom: Option<u16>,
+    /// The file asks to be opened fitted to the window: a document's `w:zoom/@w:val` of `bestFit`, `fullPage` or `textFit`. (A presentation is not read
+    /// at its slide view's scale (`p:cViewPr`): PowerPoint opens it fitted whatever `varScale` and `scale` say.) Not part of the equality.
+    pub view_fit: bool,
     /// How the notes pane stands when the file is opened (`normalViewPr` of `viewProps.xml`): read, not written (the file keeps its own).
     pub notes_pane: NotesPaneOpening,
     /// What the user did to the notes pane (moved its border, hid or showed it), written to `normalViewPr`; None: not touched, the file keeps its own.
@@ -1726,6 +1771,8 @@ pub struct Presentation {
     pub object_defaults: ObjectDefaults,
     /// フォトアルバムの設定 (`p:photoAlbum`)。
     pub photo_album: Option<PhotoAlbum>,
+    /// Raw PDF bytes when opened as a PDF document (`Kind::Pdf`).
+    pub pdf_bytes: Option<std::sync::Arc<[u8]>>,
     next_id: u64,
 }
 
@@ -1818,6 +1865,7 @@ impl Presentation {
             masters: _,
             flow: _,
             workbook: _,
+            pdf_bytes: _,
             // Not written: what the file says about its typefaces; where the file was read from; the media are the slides' (compared through them); the notes master's size and frames; a counter.
             media: _,
             typeface_traits: _,
@@ -1827,6 +1875,9 @@ impl Presentation {
             opened_from_legacy: _,
             // Not written: how the notes pane stood when the file was opened (the saving leaves `viewProps.xml`'s `normalViewPr` as it is).
             notes_pane: _,
+            // Not compared: the window's zoom is not an edit (the saving compares it with what was read).
+            view_zoom: _,
+            view_fit: _,
         } = self;
         *slide_size == other.slide_size
             && *slides == other.slides
@@ -2232,7 +2283,7 @@ impl Presentation {
     /// A presentation with no slides yet, for a reader to fill. It must end up
     /// with at least one slide.
     pub fn empty(slide_size: EmuSize) -> Self {
-        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), fonts: Vec::new(), font_substitutions: std::collections::BTreeMap::new(), typeface_traits: std::collections::BTreeMap::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), theme_effects: None, first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), guides: Vec::new(), notes_pane: NotesPaneOpening::default(), notes_pane_save: None, show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, opened_from_legacy: false, ibis_extensions: false, cmyk: Default::default(), modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), photo_album: None, next_id: 1 }
+        Self { slide_size, slides: Vec::new(), sections: Vec::new(), media: Vec::new(), fonts: Vec::new(), font_substitutions: std::collections::BTreeMap::new(), typeface_traits: std::collections::BTreeMap::new(), flow: None, workbook: None, notes_size: EmuSize::new(6_858_000, 9_144_000), notes_marks: NotesMarks::default(), notes_frames: Vec::new(), masters: Vec::new(), layouts: Vec::new(), theme_fonts: None, theme_colors: Vec::new(), theme_effects: None, first_slide_number: 1, header_footer: HeaderFooterMarks::default(), layout_scale: LayoutScale::default(), guides: Vec::new(), notes_pane: NotesPaneOpening::default(), view_zoom: None, view_fit: false, pdf_bytes: None, notes_pane_save: None, show_properties: ShowProperties::default(), custom_shows: Vec::new(), mark_as_final: false, read_only_recommended: false, opened_from_legacy: false, ibis_extensions: false, cmyk: Default::default(), modify_verifier: None, properties: crate::flow::DocProperties::default(), object_defaults: ObjectDefaults::default(), photo_album: None, next_id: 1 }
     }
 
     /// Look up a custom show by its numeric identifier.
@@ -2310,6 +2361,19 @@ impl Presentation {
             Some(layout) => Slide::from_layout(id, layout),
             None => Slide::new(id),
         }
+    }
+
+    /// The layout a new slide follows when added after a slide that follows `layout` (新しいスライド, as PowerPoint picks it, measured
+    /// on Microsoft PowerPoint): the same layout, except after a title slide (a layout with a centred title, `ctrTitle`): the 2nd layout
+    /// of the same master, by its place in the master's list (not by its name or its structure: moving or deleting layouts changes it).
+    /// Where the master has no 2nd layout, the same layout again.
+    pub fn layout_after(&self, layout: LayoutId) -> LayoutId {
+        let Some(current) = self.layout(layout) else { return layout };
+        let ctr_title = current.placeholders.iter().any(|p| p.placeholder.kind.as_deref() == Some("ctrTitle"));
+        if !ctr_title {
+            return layout;
+        }
+        self.layouts.iter().filter(|l| l.master == current.master).nth(1).map_or(layout, |l| l.id)
     }
 
     /// A copy of slide `slide` as slide `id`. Its shapes keep their ids

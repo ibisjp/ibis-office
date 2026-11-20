@@ -8,3 +8,4 @@ publish.workspace = true
 
 [dependencies]
 ibis-calc.workspace = true
+ibis-m-lang.workspace = true

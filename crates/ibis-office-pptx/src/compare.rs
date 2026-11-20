@@ -230,7 +230,7 @@ impl SlideEditor {
     /// 比較対象のプレゼンテーション ファイルを読み込んで差分を解析
     pub fn compare_presentation_with_file(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
         let data = std::fs::read(path).ok();
-        let rev = data.as_deref().and_then(|d| ibis_pptx::read(d).ok());
+        let rev = data.as_deref().and_then(|d| ibis_odf::read(d).ok());
         let Some(rev_pres) = rev else {
             self.status = Some(text("pptx.compare.cannot-read").into());
             cx.notify();
@@ -421,7 +421,7 @@ impl SlideEditor {
             }
             SlideDiff::DeletedSlide { slide_id, .. } => {
                 if self.presentation().slides.iter().any(|s| s.id == *slide_id) {
-                    self.run(vec![Command::RemoveSlide { slide: *slide_id }], cx);
+                    self.run(vec![Command::DeleteSlide { slide: *slide_id }], cx);
                 }
             }
             SlideDiff::ModifiedSlide { slide_id, shape_diffs, notes_diff, .. } => {
@@ -430,16 +430,16 @@ impl SlideEditor {
                     match sd {
                         ShapeDiff::Added { shape } => {
                             let at = self.presentation().slide(*slide_id).map(|s| s.shapes.len()).unwrap_or(0);
-                            cmds.push(Command::InsertShape { slide: *slide_id, index: at, shape: shape.clone() });
+                            cmds.push(Command::InsertShape { slide: *slide_id, shapes: vec![(at, shape.clone())] });
                         }
                         ShapeDiff::Deleted { shape_id, .. } => {
-                            cmds.push(Command::RemoveShape { slide: *slide_id, shape: *shape_id });
+                            cmds.push(Command::DeleteShape { slide: *slide_id, shapes: vec![*shape_id], with_attached: true });
                         }
                         ShapeDiff::ModifiedText { shape_id, new_text, .. } => {
                             cmds.push(Command::SetText { slide: *slide_id, shape: *shape_id, text: new_text.clone() });
                         }
                         ShapeDiff::ModifiedFrame { shape_id, new_frame, .. } => {
-                            cmds.push(Command::SetFrame { slide: *slide_id, shape: *shape_id, frame: *new_frame });
+                            cmds.push(Command::SetFrame { slide: *slide_id, frames: vec![(*shape_id, *new_frame)], with_attached: true });
                         }
                     }
                 }

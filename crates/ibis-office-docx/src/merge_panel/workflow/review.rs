@@ -1000,7 +1000,7 @@ impl SlideEditor {
             .collect::<Vec<Vec<String>>>();
         let text = ibis_doc_model::merge::serialize_table(&fields, &records);
         let bytes =
-            ibis_pptx::csv::workbook_from_with_delimiter(&text, &tr("merge.flow.recipients"), '\t')
+            ibis_formats::csv::workbook_from_with_delimiter(&text, &tr("merge.flow.recipients"), '\t')
                 .map_err(|e| e.to_string())?;
         crate::shell::save::write_replacing(path, &bytes).map_err(|e| e.to_string())
     }

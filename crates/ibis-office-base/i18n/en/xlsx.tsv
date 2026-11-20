@@ -14,9 +14,9 @@ xlsx.freeze-at-selection	Freeze Panes at Selection
 xlsx.freeze-top-row	Freeze Top Row
 xlsx.freeze-first-column	Freeze First Column
 xlsx.print-area-menu	Print Area
-xlsx.print-area-set	Set Print Area
+xlsx.set-print-area	Set Print Area
 xlsx.print-area-add	Add to Print Area
-xlsx.print-area-clear	Clear Print Area
+xlsx.clear-print-area	Clear Print Area
 xlsx.cell-link-open	Open Hyperlink
 xlsx.cell-link-edit	Edit Hyperlink…
 xlsx.cell-link-remove	Remove Hyperlink
@@ -103,7 +103,6 @@ xlsx.move-sheet-right	Move Sheet Right
 xlsx.split	Split
 xlsx.sort-manage	Sort Options…
 xlsx.remove-duplicates	Remove Duplicates…
-xlsx.goto	Go To…
 xlsx.goto-destination	Go to
 xlsx.goto-no-destinations	(No defined names or history)
 xlsx.goto-type-name	Name
@@ -116,6 +115,7 @@ xlsx.export-csv	CSV UTF-8 (.csv, Current Sheet)
 xlsx.export-csv-sjis	CSV Shift_JIS (.csv, Current Sheet)
 xlsx.export-tsv	Text TSV (.tsv, Current Sheet)
 xlsx.export-ods	OpenDocument Spreadsheet (.ods, Whole Workbook)
+xlsx.export-html	Web Page (.html, Current Sheet)
 xlsx.insert-cells-right	Insert Cells (Shift Cells Right)
 xlsx.delete-cells-left	Delete Cells (Shift Cells Left)
 xlsx.group	Group
@@ -409,6 +409,7 @@ _xlsx.print-area-range	Print area: {range}
 _xlsx.average-average-count-count-sum-sum	Average: {average}   Count: {count}   Sum: {sum}
 _xlsx.show-rows-where-name	Show rows where: {name}
 _xlsx.couldn-t-export-error	Couldn't export: {error}
+_xlsx.html-export-too-large	The sheet is too large to export as a Web page
 _xlsx.the-minimum-must-be-less-than-the-maximum	The minimum must be less than the maximum.
 _xlsx.enter-numbers-for-the-minimum-maximum-and-major	Enter numbers for the minimum, maximum and major unit (empty for Auto).
 _xlsx.gridlines	Gridlines
@@ -605,10 +606,10 @@ _xlsx.sun-sat-2	Sun–Sat
 _xlsx.sunday-saturday-2	Sunday–Saturday
 _xlsx.jan-dec-2	Jan–Dec
 _xlsx.e-g-sun-mon-tue-wed-thu-fri-sat	e.g. Sun, Mon, Tue, Wed, Thu, Fri, Sat
-xlsx.calc-options	Calculation Options
-xlsx.calc-auto	Automatic
-xlsx.calc-auto-no-table	Automatic Except Data Tables
-xlsx.calc-manual	Manual
+xlsx.calculate-options	Calculation Options
+xlsx.calculate-auto	Automatic
+xlsx.calculate-auto-no-table	Automatic Except Data Tables
+xlsx.calculate-manual	Manual
 xlsx.calculate-now	Calculate Now
 xlsx.calculate-sheet	Calculate Sheet
 xlsx.scenario-manager	Scenario Manager…
@@ -691,10 +692,9 @@ xlsx.alt-text.title	Title
 xlsx.alt-text.description	Description
 xlsx.alt-text.hint	Enter a description of the image or shape to be read by screen readers.
 xlsx.alt-text.apply	Apply
-xlsx.comment-delete	Delete Comment
+xlsx.delete-comment	Delete Comment
 xlsx.export-xltx	Excel Template (.xltx)
 xlsx.new-from-template	New from Template…
-xlsx.accessibility-check	Check Accessibility…
 xlsx.accessibility.title	Accessibility
 xlsx.accessibility.desc	Inspects workbook for accessibility issues.
 xlsx.accessibility.passed	No accessibility issues found.
@@ -748,17 +748,7 @@ _xlsx.place-in-cell	Place in Cell
 _xlsx.place-over-cells	Place over Cells
 xlsx.image-file	Picture from File
 xlsx.order	Order
-xlsx.order-front	Bring to Front
-xlsx.order-back	Send to Back
-xlsx.order-forward	Bring Forward
-xlsx.order-backward	Send Backward
 xlsx.align	Align
-xlsx.align.left	Align Left
-xlsx.align.center	Align Center
-xlsx.align.right	Align Right
-xlsx.align.top	Align Top
-xlsx.align.middle	Align Middle
-xlsx.align.bottom	Align Bottom
 xlsx.distribute.horizontal	Distribute Horizontally
 xlsx.distribute.vertical	Distribute Vertically
 xlsx.frame-settings	Size and Properties...
@@ -1028,6 +1018,10 @@ _xlsx.edit-hyperlink	Edit Hyperlink…
 _xlsx.remove-hyperlink	Remove Hyperlink
 _xlsx.define-name	Define Name…
 _xlsx.protect-sheet	Protect Sheet…
+_xlsx.group-select-all	Select All Sheets
+_xlsx.group-ungroup	Ungroup Sheets
+_xlsx.group-title	[Group]
+_xlsx.group-blocked	That command cannot be used on multiple selected sheets. Select a single sheet and then try the command again.
 _xlsx.the-number-in-this-cell-is-formatted-as-text	The number in this cell is formatted as text
 _xlsx.the-formula-in-this-cell-results-in-an-error	The formula in this cell results in an error
 _xlsx.this-formula-differs-from-the-formulas-around-it	This formula differs from the formulas around it
@@ -1885,7 +1879,7 @@ xlsx.ink.name	Ink {n}
 xlsx.ink.message.no-ink	Select an ink stroke first.
 xlsx.ink.message.not-recognized	The stroke does not look like a line, rectangle, ellipse or triangle.
 xlsx.ink.message.converted	The ink was changed to a shape.
-xlsx.slicer-insert	Slicer…
+xlsx.insert-slicer	Slicer…
 xlsx.slicer-insert.title	Insert Slicers
 xlsx.slicer-insert.select-table	Select a cell in a table or a pivot table first.
 xlsx.slicer-insert.choose	Check at least one field.
@@ -1937,6 +1931,8 @@ query.code-error.source	The source cannot be read: {detail}
 query.code-error.function	This function cannot be used: {detail}
 query.code-error.arguments	The arguments of {detail} cannot be read (the first one must be the name of the previous step).
 query.code-error.result	Write the name of the last step after "in": {detail}
+query.code-error.merge	A merge is written as two steps, Table.NestedJoin and then Table.ExpandTableColumn of its nested column (named as the merged query, with the new names Query.Column): {detail}
+query.code-error.at-line	Line {line}: {message}
 query.code-applied	The code was applied to the steps.
 query.code-source-failed	The source data cannot be loaded: {error}
 query.set-parameter	Set
@@ -1987,12 +1983,21 @@ query.op.append	Append Queries
 query.op.add-column	Custom Column
 query.op.add-conditional	Conditional Column
 query.op.add-index	Index Column
+query.op.filter-date	Date Filter
+query.op.transform	Transform
+query.op.alternate-rows	Remove Alternate Rows
+query.op.keep-range	Keep Range of Rows
+query.op.duplicate-column	Duplicate Column
+query.op.filter-code	Filter Rows (in code)
+query.op.split-code	Split Column (in code)
+query.op.missing-field	Step that handles missing columns
+query.op.group-local	Group By (neighbouring rows)
 query.field.column	Column
 query.field.columns	Columns (comma-separated)
 query.field.type	Type
 query.field.culture	Locale
-query.field.from	Old name
-query.field.to	New name
+query.field.from	Old names (comma-separated)
+query.field.to	New names (comma-separated, in the same order)
 query.field.comparison	Condition
 query.field.value	Value
 query.field.count	Number of rows
@@ -2029,6 +2034,14 @@ query.field.output2	Second then
 query.field.otherwise	Otherwise
 query.field.start	Start
 query.field.step	Step
+query.field.logic	How the two conditions join
+query.field.when	Period
+query.field.unit	Unit
+query.field.function	Function
+query.field.offset	Rows to keep at first
+query.field.skip	Rows to remove (repeated)
+query.field.take	Rows to keep (repeated)
+query.field.first-row	First row (1 is the top)
 query.field.parameter-name	Parameter name
 query.field.parameter-value	Current value
 query.type.any	Any
@@ -2039,6 +2052,11 @@ query.type.date	Date
 query.type.datetime	Date/Time
 query.type.time	Time
 query.type.logical	True/False
+query.type.currency	Fixed decimal number (currency)
+query.type.percentage	Percentage
+query.type.int32	Whole number (32-bit)
+query.type.datetimezone	Date/time/time zone
+query.type.duration	Duration
 query.culture.invariant	Default
 query.culture.en-us	English (United States)
 query.culture.ja-jp	Japanese (Japan)
@@ -2056,6 +2074,36 @@ query.cmp.begins-with	begins with
 query.cmp.ends-with	ends with
 query.cmp.is-null	is null
 query.cmp.is-not-null	is not null
+query.cmp.does-not-begin-with	does not begin with
+query.cmp.does-not-end-with	does not end with
+query.logic.and	and
+query.logic.or	or
+query.when.previous	previous
+query.when.current	current (this)
+query.when.next	next
+query.when.year-to-date	year to date
+query.unit.day	day(s)
+query.unit.week	week(s)
+query.unit.month	month(s)
+query.unit.quarter	quarter(s)
+query.unit.year	year(s)
+query.split.positions	Positions (from 0, separated by commas)
+query.fn.trim	Trim
+query.fn.upper	Uppercase
+query.fn.lower	Lowercase
+query.fn.proper	Capitalize each word
+query.fn.clean	Remove control characters
+query.fn.length	Length
+query.fn.round	Round (value: decimals)
+query.fn.round-up	Round up
+query.fn.round-down	Round down
+query.fn.abs	Absolute value
+query.fn.sqrt	Square root
+query.fn.year	Year
+query.fn.month	Month
+query.fn.day	Day
+query.fn.prefix	Add prefix (value: text)
+query.fn.suffix	Add suffix (value: text)
 query.agg.sum	Sum
 query.agg.average	Average
 query.agg.min	Minimum
@@ -2109,7 +2157,7 @@ xlsx.timeline.year-quarter	{y} Q{n}
 xlsx.timeline.year-month	{y}/{n}
 xlsx.timeline.date	{y}/{m}/{d}
 xlsx.timeline.range	{a} - {b}
-xlsx.timeline-insert	Timeline…
+xlsx.insert-timeline	Timeline…
 xlsx.timeline-insert.title	Insert Timelines
 xlsx.timeline-insert.select-pivot	Select a cell in a pivot table or table first.
 xlsx.timeline-insert.choose	Check at least one field.
@@ -2165,7 +2213,6 @@ xlsx.xml-map-properties.schema	Schema
 xlsx.xml-map-properties.validate	Validate data against schema for export
 xlsx.xml-map-properties.overwrite	Overwrite existing data with new data
 xlsx.3d-model	3D Model…
-xlsx.signature-line	Signature Line…
 xlsx.chart-ex.totals	Set as total (waterfall)
 xlsx.chart-ex.bins	Bins (histogram)
 xlsx.chart-ex.bin-width	Bin width
@@ -2219,10 +2266,7 @@ xlsx.page-orientation	Orientation
 xlsx.orientation-portrait	Portrait
 xlsx.orientation-landscape	Landscape
 xlsx.paper-size	Paper Size
-xlsx.paper-a4	A4 (210 x 297 mm)
-xlsx.paper-a3	A3 (297 x 420 mm)
-xlsx.paper-b5	B5 (182 x 257 mm)
-xlsx.paper-letter	Letter (8.5 x 11 in)
+page.paper-letter	Letter (8.5 x 11 in)
 xlsx.print-titles	Print Titles…
 xlsx.print-titles-dialog	Page Setup (Print Titles)…
 xlsx.print-titles-set-rows	Set Selected Rows as Title Rows
@@ -2451,8 +2495,8 @@ xlsx.scale-width-2	Width: 2 Pages
 xlsx.scale-height-auto	Height: Automatic
 xlsx.scale-height-1	Height: 1 Page
 xlsx.scale-height-2	Height: 2 Pages
-xlsx.scale-100	Scale: 100%
-xlsx.scale-80	Scale: 80%
+xlsx.print-scale-100	Scale: 100%
+xlsx.print-scale-80	Scale: 80%
 xlsx.scale-50	Scale: 50%
 xlsx.timeline.show-header	Header
 xlsx.timeline.show-selection-label	Selection Label
@@ -2864,3 +2908,110 @@ xlsx.hf.back-to-page-setup	Back to Page Setup
 xlsx.validation.list-needs-extension	This setting is not in Excel (the data validation does not work in Excel). Do you want to use it?
 xlsx.design-mode.close	Close Design Mode
 xlsx.sheet.delete-ask	Do you want to delete the sheet?
+xlsx.machine-readability-check	Digital Agency: Check Machine Readability…
+xlsx.machine.title	Machine readability
+xlsx.machine.desc	Checks conformance with the Digital Agency’s “{rule}”. Equivalent to {tool} ver.{version}.
+xlsx.machine.rule-link	Rules on Machine Readability in Administrative Data
+xlsx.machine.tool-link	Harunobu
+xlsx.machine.realtime	Real-time check
+xlsx.machine.passed	No machine readability issues found.
+xlsx.machine.passed-sub	No merged cells, hidden rows or columns, formulas or objects were found.
+xlsx.machine.scope-note	Only items that can be judged from the sheet's contents are checked. Code tables, region codes, units and the like are not.
+xlsx.machine.recheck	Recheck
+xlsx.machine.recheck-done	Recheck complete
+xlsx.machine.issue-title	[{id}] {sheet}: {title} ({count})
+xlsx.machine.examples	For example: {cells}
+xlsx.machine.multiple-tables.title	The sheet has more than one table
+xlsx.machine.multiple-tables.desc	Put one table on each sheet. Move the other tables to their own sheets.
+xlsx.machine.split-data.title	The data is split by blank rows or columns
+xlsx.machine.split-data.desc	Delete blank rows and columns used for layout so the table is in one piece.
+xlsx.machine.stray-info.title	There is unrelated information outside the table
+xlsx.machine.stray-info.desc	Delete notes and memos, or move them to another sheet.
+xlsx.machine.missing-header.title	A column has no header
+xlsx.machine.missing-header.desc	Give every column a header that says what it holds.
+xlsx.machine.padded-text.title	Spaces or line breaks are used for layout
+xlsx.machine.padded-text.desc	Remove spaces and line breaks added for appearance.
+xlsx.machine.objects.title	The sheet has objects such as shapes, pictures or charts
+xlsx.machine.objects.desc	Machines cannot read what is inside an object. Enter the information in cells.
+xlsx.machine.merged-cells.title	There are merged cells
+xlsx.machine.merged-cells.desc	Unmerge the cells and enter the same content in each cell.
+xlsx.machine.hidden-lines.title	There are hidden rows or columns
+xlsx.machine.hidden-lines.desc	Delete rows and columns you do not need instead of hiding them.
+xlsx.machine.number-as-text.title	A number is stored as text
+xlsx.machine.number-as-text.desc	Remove units, commas and footnote marks to make it a number; keep units and notes in another column.
+xlsx.machine.duplicate-header.title	Two columns have the same header
+xlsx.machine.duplicate-header.desc	Make each column's header different.
+xlsx.machine.formula.title	There are cells with formulas
+xlsx.machine.formula.desc	Convert formulas to values with Paste Values.
+xlsx.machine.title-row.title	A title row comes before the header row
+xlsx.machine.title-row.desc	Start the sheet with the header row and enter data from the second row.
+query.step-name.source	Source
+query.step-name.promoted-headers	Promoted Headers
+query.step-name.demoted-headers	Demoted Headers
+query.step-name.changed-type	Changed Type
+query.step-name.changed-type-locale	Changed Type with Locale
+query.step-name.removed-other-columns	Removed Other Columns
+query.step-name.removed-columns	Removed Columns
+query.step-name.renamed-columns	Renamed Columns
+query.step-name.reordered-columns	Reordered Columns
+query.step-name.filtered-rows	Filtered Rows
+query.step-name.sorted-rows	Sorted Rows
+query.step-name.grouped-rows	Grouped Rows
+query.step-name.split-delimiter	Split Column by Delimiter
+query.step-name.split-positions	Split Column by Position
+query.step-name.split-lengths	Split Column by Position
+query.step-name.split-transition	Split Column by Character Transition
+query.step-name.lowercased-text	Lowercased Text
+query.step-name.uppercased-text	Uppercased Text
+query.step-name.capitalized-each-word	Capitalized Each Word
+query.step-name.trimmed-text	Trimmed Text
+query.step-name.cleaned-text	Cleaned Text
+query.step-name.added-prefix	Added Prefix
+query.step-name.added-suffix	Added Suffix
+query.step-name.text-length	Calculated Text Length
+query.step-name.reversed-rows	Reversed Rows
+query.step-name.rounded-off	Rounded Off
+query.step-name.rounded-up	Rounded Up
+query.step-name.rounded-down	Rounded Down
+query.step-name.absolute-value	Calculated Absolute Value
+query.step-name.square-root	Calculated Square Root
+query.step-name.extracted-year	Extracted Year
+query.step-name.extracted-month	Extracted Month
+query.step-name.extracted-day	Extracted Day
+query.step-name.inserted-year	Inserted Year
+query.step-name.inserted-month	Inserted Month
+query.step-name.inserted-day	Inserted Day
+query.step-name.duplicated-column	Duplicated Column
+query.step-name.removed-alternate-rows	Removed Alternate Rows
+query.step-name.kept-range	Kept Range of Rows
+query.step-name.kept-first-rows	Kept First Rows
+query.step-name.kept-last-rows	Kept Last Rows
+query.step-name.removed-top-rows	Removed Top Rows
+query.step-name.removed-bottom-rows	Removed Bottom Rows
+query.step-name.removed-duplicates	Removed Duplicates
+query.step-name.removed-blank-rows	Removed Blank Rows
+query.step-name.removed-errors	Removed Errors
+query.step-name.replaced-errors	Replaced Errors
+query.step-name.merged-columns	Merged Columns
+query.step-name.replaced-value	Replaced Value
+query.step-name.filled-down	Filled Down
+query.step-name.filled-up	Filled Up
+query.step-name.transposed-table	Transposed Table
+query.step-name.pivoted-column	Pivoted Column
+query.step-name.unpivoted-columns	Unpivoted Columns
+query.step-name.unpivoted-other-columns	Unpivoted Other Columns
+query.step-name.merged-queries	Merged Queries
+query.step-name.appended-query	Appended Query
+query.step-name.added-custom	Added Custom
+query.step-name.added-conditional-column	Added Conditional Column
+query.step-name.added-index	Added Index
+query.culture.zh-cn	Chinese (Simplified, China)
+query.step-name.inserted-text-length	Inserted Text Length
+query.step-name.inserted-absolute-value	Inserted Absolute Value
+query.step-name.inserted-square-root	Inserted Square Root
+query.op.m-code	M Step (code)
+query.m-error.unsupported	Line {line}: {name} is not supported yet.
+query.m-error.syntax	Line {line}: The code cannot be read: {message}
+query.m-error.raised	{reason}: {message}
+query.m-error.limit	The code took too long to run or went too deep: {message}
+query.m-error.not-table	The result is not a table (it is a {type}).

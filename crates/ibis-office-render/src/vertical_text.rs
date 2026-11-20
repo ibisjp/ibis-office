@@ -13,6 +13,22 @@ pub fn upright(c: char) -> bool {
     }
 }
 
+/// Whether PowerPoint stands `c` in a column of vertical text (`vert="eaVert"`): Word's orientation (`upright`, UAX #50 with Word's few differences)
+/// except where PowerPoint turns a character UAX #50 sets upright, which are whole ranges of the Unicode blocks, not single characters.
+/// Microsoft PowerPoint for Windows (365), the XPS of a frame of `vert="eaVert"` in ＭＳ 明朝 18 pt with each character between two あ (issue #188,
+/// `tasks/doc/requests/2026-11-14-188-word-result.md` 1): PowerPoint lays down the Latin-1 Supplement (§ ° × U+00A0..00FF), the Letterlike
+/// Symbols and Number Forms (℃ Ⅰ U+2100..218F), the Miscellaneous Technical block (⌘ ⏰ ⌒ U+2300..23FF), the Mathematical Alphanumeric Symbols
+/// (𝒜), the Mahjong, Domino and Playing Cards blocks (🂡 U+1F000..1F0FF) and the private use areas (U+E000..F8FF and planes 15 and 16),
+/// and stands what UAX #50 and Word's table stand elsewhere (Hangul, the supplementary kanji, 😀, ☆ ♪ ① ❶ ➀ ✓ ■ and the brackets 〖〗 〘〙 〚〛 in
+/// all five typefaces measured). The arrows, the box drawing characters, the Greek letters and the mathematical operators are turned by
+/// UAX #50 already. Not found as a rule: ✂ U+2702 is turned and ✓ ❶ ➀ stand in the same Dingbats block; the block stays UAX #50's.
+pub fn powerpoint_upright(c: char) -> bool {
+    if !upright(c) {
+        return false;
+    }
+    !matches!(c as u32, 0x00A0..=0x00FF | 0x2100..=0x218F | 0x2300..=0x23FF | 0x1D400..=0x1D7FF | 0x1F000..=0x1F0FF | 0xE000..=0xF8FF | 0xF0000..=0x10FFFF)
+}
+
 /// Whether the base-less combining marks at the start of a vertical line (paragraph start, after a line break, after a tab) share one em cell of the column, the
 /// character `next` that follows them being what Word looks at. Word's PDFs of `m138-nobase-probe*.docx` (#M138, ＭＳ 明朝 10.5 pt, 1 to 4 marks of U+0300..033B):
 /// before ❶ ① ○ ★ ■ ※ ✓ the whole run of marks is ONE 1 em cell whatever its length, the marks across the column on the cell's top; before 亜 あ ア ㈱ 「 ０ Ａ
@@ -50,21 +66,22 @@ fn word_turns(c: char) -> bool {
 /// the Miscellaneous Technical characters ⎾ ⎿ (U+23BE, U+23BF) and ⏀ .. ⏌ (U+23C0..23CC). Word's PDF of `fullwidth-symbols-all.docx` (#M125, GitHub issue
 /// 54's F4, ＭＳ 明朝 and 游明朝 in vertical text; Microsoft 365) lays each of the 22 down, in both typefaces; the half-width ones of them take the half
 /// of an em along the column as the turned Latin letters do (their advance in the font, which the layout takes for a character that is not upright).
-/// © and ® (U+00A9, U+00AE) are laid down too, the half-width ones of ＭＳ 明朝 (Word's PDF of the marked copy, #M136: turned, 5.28 pt of the 10.56 pt text each; the
+/// ™ (U+2122) is laid down too (Windows Word's PDF of 5 typefaces, GitHub issue #188). © and ® (U+00A9, U+00AE) are laid down too, the half-width ones of ＭＳ 明朝 (Word's PDF of the marked copy, #M136: turned, 5.28 pt of the 10.56 pt text each; the
 /// first reading took them for upright). The other characters of those blocks the document has (§ 〓, ⌅ ⌘, ♩ ◁ ‼ ...) stay upright in Word, as UAX #50 has them. Characters of the same
 /// blocks the document does not have (⅐ ⅛ ⏍ ...) are not measured, and stay as UAX #50.
 fn word_turns_symbol(c: char) -> bool {
-    matches!(c as u32, 0x00A9 | 0x00AE | 0x00BC..=0x00BE | 0x2150..=0x2155 | 0x215B..=0x215E | 0x23BE..=0x23CD)
+    matches!(c as u32, 0x00A9 | 0x00AE | 0x00BC..=0x00BE | 0x2122 | 0x2150..=0x2155 | 0x215B..=0x215E | 0x23BE..=0x23CD)
 }
 
 /// Whether Word keeps `c` upright in vertical text though UAX #50 turns it (same PDF): the quotation marks ‘ ’ “ ” (U+2018, U+2019, U+201C,
-/// U+201D), ⇒ ⇔ (U+21D2, U+21D4) and Å (U+212B), which take the East Asian font of a run with the East Asian hint, and the fullwidth forms
+/// U+201D), ⇒ ⇔ (U+21D2, U+21D4), Å (U+212B) and ⁄ ⁋ ⁕ ⁜ (U+2044, U+204B, U+2055, U+205C; GitHub issue #188's n5 file: Word stands all four in the 21 typefaces
+/// it was tried in, where UAX #50 turns them), which take the East Asian font of a run with the East Asian hint, and the fullwidth forms
 /// (＋ is upright already; － ＜ ＝ ＞ are the ones UAX #50 turns). The other East Asian Ambiguous characters UAX #50 turns (Greek and Cyrillic
 /// letters, the mathematical operators, the arrows → ← ↑ ↓, the box-drawing characters ─ ┌ ╂ ...) are turned by Word too: 192 of the 199
 /// measured; an earlier rule that kept all East Asian Ambiguous characters upright was wrong for them.
 fn word_keeps_upright(c: char) -> bool {
     use unicode_width::UnicodeWidthChar;
-    matches!(c, '\u{2018}' | '\u{2019}' | '\u{201C}' | '\u{201D}' | '\u{21D2}' | '\u{21D4}' | '\u{212B}') || c.width() == Some(2)
+    matches!(c, '\u{2018}' | '\u{2019}' | '\u{201C}' | '\u{201D}' | '\u{21D2}' | '\u{21D4}' | '\u{212B}' | '\u{2044}' | '\u{204B}' | '\u{2055}' | '\u{205C}') || c.width() == Some(2)
 }
 
 /// Whether the font's vertical glyph (`vert`/`vrt2`) is used for `c`: UAX #50 Tu and Tr only (U, such as §, keeps its glyph). A character UAX #50 turns that
@@ -81,6 +98,20 @@ pub fn vertical_glyph(c: char) -> bool {
         use unicode_width::UnicodeWidthChar;
         matches!(orientation(c), unicode_vo::Orientation::Rotated) && c.width() == Some(2) && !word_turns(c)
     }
+}
+
+/// How far left of the column's centre (the centre of an upright あ, in ems of the size) Word puts the baseline of a letter turned in vertical text: half of the
+/// face's box, `(ascent - descent) / 2`, as the face's box is centred on the column. Windows Word's PDFs of 13 typefaces x 6 sizes x 6 letters (Tm of the
+/// letters against the あ; `tasks/doc/requests/2026-11-16-188-latin-column-position-result.md`): the Windows ascent and descent (`usWinAscent`, `usWinDescent`)
+/// fit within 0.12 pt for the nine Japanese faces, Arial, Calibri and Segoe UI within 0.25 pt; ＭＳ 明朝 0.3594 em, メイリオ 0.3101, Arial 0.3467. 游明朝 and
+/// 游ゴシック are the exceptions: their typographic ascent and descent (1802 and 246 of 2048) fit (0.3799 em), their Windows ones (2038/598, 2017/619) do not.
+/// `None` where the face's metrics are not known, which keeps the old place.
+pub fn turned_baseline_from_centre(family: &str) -> Option<f32> {
+    let n = family.trim();
+    if !n.contains("UI") && ["游明朝", "游ゴシック", "Yu Mincho", "Yu Gothic", "YuMincho", "YuGothic"].iter().any(|p| n.starts_with(p)) {
+        return Some((1802.0 - 246.0) / (2.0 * 2048.0));
+    }
+    crate::font_metrics::office_metrics(n).map(|(a, d)| (a - d) / 2.0)
 }
 
 pub fn font(base: &Font) -> Font {
@@ -339,7 +370,17 @@ pub fn marked_horizontal(text: String, spans: Vec<crate::ime_text::ImeSpan>, k: 
 
 #[cfg(test)]
 mod tests {
-    use super::{baseless_marks_share_a_cell, upright, vertical_glyph};
+    use super::{baseless_marks_share_a_cell, turned_baseline_from_centre, upright, vertical_glyph};
+
+    // Windows Word's PDFs of 13 typefaces (issue #188): the baseline of a turned letter against the centre of あ, in ems: (win ascent - win descent) / 2, Yu's typographic.
+    #[test]
+    fn turned_letter_baseline_is_half_the_faces_box_from_the_columns_centre() {
+        for (face, em) in [("ＭＳ 明朝", 0.3594), ("メイリオ", 0.3101), ("Meiryo UI", 0.4250), ("Arial", 0.3467), ("Calibri", 0.3418), ("游明朝", 0.3799), ("游ゴシック", 0.3799), ("BIZ UD明朝", 0.3799)] {
+            let got = turned_baseline_from_centre(face).unwrap_or_else(|| panic!("{face}"));
+            assert!((got - em).abs() < 0.005, "{face}: {got} against {em}");
+        }
+        assert!(turned_baseline_from_centre("An unknown face").is_none());
+    }
 
     // Word's PDF of issue 54 (vertical page, four typefaces): these stay upright.
     #[test]

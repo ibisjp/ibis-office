@@ -4,7 +4,7 @@
 //! The xlsx defects of the corpus report (Excel for the web's PDFs against
 //! ibisOffice's) that need drawing or printing, each as Excel shows it, on
 //! the small files of `test/corpus-report/xlsx` (made up, no corpus text).
-//! The ones the model shows are `ibis-pptx/tests/corpus_report_xlsx.rs`.
+//! The ones the model shows are `ibis-formats/tests/corpus_report_xlsx.rs`.
 //!
 //! TODO: このファイルは、実文書の比較（コーパス）から見つかった崩れの試験の
 //! 仮置き場で、ずっと残すものではない。試験が通るようになったら（崩れを直した
@@ -103,7 +103,7 @@ fn open(name: &str) -> Scenario {
 
 fn read(name: &str) -> ibis_doc_model::Presentation {
     let path = crate::shell::scenario::repo_root().join(DIR).join(name);
-    ibis_pptx::read(&std::fs::read(&path).unwrap_or_else(|e| panic!("{name}: {e}"))).unwrap_or_else(|e| panic!("{name}: {e}"))
+    ibis_formats::read(&std::fs::read(&path).unwrap_or_else(|e| panic!("{name}: {e}"))).unwrap_or_else(|e| panic!("{name}: {e}"))
 }
 
 /// The text each cell of the current sheet shows, by (row, column).
@@ -406,7 +406,7 @@ fn export_pdf(file: &str, label: &str) -> PathBuf {
     let root = crate::shell::scenario::repo_root();
     let path = root.join(DIR).join(file);
     let data = std::fs::read(&path).unwrap_or_else(|e| panic!("{file}: {e}"));
-    let presentation = ibis_pptx::read(&data).unwrap_or_else(|e| panic!("{file}: {e}"));
+    let presentation = ibis_formats::read(&data).unwrap_or_else(|e| panic!("{file}: {e}"));
     let out_dir = root.join("target/scenario/corpus_report_xlsx").join(label);
     std::fs::create_dir_all(&out_dir).unwrap();
     let name = Path::new(file).file_stem().unwrap().to_string_lossy().into_owned();
@@ -768,8 +768,10 @@ pub(crate) fn corpus_report_xlsx_center_across_wrapped_header_uses_the_whole_ran
     let rules = page.horizontal_rules(page.px(300.0), 200);
     let left = *page.vertical_rules(100.0, 200).first().expect("表の左の縦線");
     let table_top = page.dark_runs_down(left, 0.0, 400.0, 200).first().expect("表の左の縦線の上端").0 as f32 / page.px_per_pt;
-    let header_height = rules.first().expect("見出しの下の横線").0 - table_top;
-    let row_pitch = rules[1].0 - rules[0].0;
+    // 表の上端の罫線（セルの縁の中心に引くので、左の縦線の上端と同じ高さに出る）は見出しの下の線ではない。上端から 5pt より下の最初の線を見出しの下とする。
+    let below = rules.iter().position(|r| r.0 > table_top + 5.0).expect("見出しの下の横線");
+    let header_height = rules[below].0 - table_top;
+    let row_pitch = rules[below + 1].0 - rules[below].0;
     let ratio = header_height / row_pitch;
     if (ratio - 26.4 / 14.4).abs() > 0.1 {
         wrong.push(format!("見出しの行の高さは次の行の {ratio:.2} 倍（行の高さが `ht` のままなら 26.4 / 14.4 = 1.83 倍。見出し {header_height}pt、次の行 {row_pitch}pt）"));

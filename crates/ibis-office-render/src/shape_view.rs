@@ -148,6 +148,20 @@ pub(crate) struct SoftGroups {
     pub groups: Vec<SoftGroup>,
 }
 
+/// A paragraph whose bullet would start left of the text box (the margin plus the indent is negative) is shifted right as a whole: the bullet
+/// starts at the box's edge and the text a hang (`-indent`) from it. PowerPoint's PDFs of bullets with the margin 22.25 pt and indent -27, -47.2 pt, and
+/// margin 7.9 pt and indent -39.4 pt put the bullet at 0 and the text at 27.0, 47.3 and 39.4 pt; without a bullet the first line starts at 0 and
+/// the margin stays (the same margins, the continuation lines at 22.2 and 7.8 pt).
+fn bullet_hang_shifted(paragraph: &ibis_doc_model::text::Paragraph) -> std::borrow::Cow<'_, ibis_doc_model::text::Paragraph> {
+    if paragraph.bullet.is_some() && paragraph.margin_left + paragraph.indent < 0 && paragraph.runs.iter().any(|r| !r.text.is_empty()) {
+        let mut shifted = paragraph.clone();
+        shifted.margin_left = -paragraph.indent;
+        std::borrow::Cow::Owned(shifted)
+    } else {
+        std::borrow::Cow::Borrowed(paragraph)
+    }
+}
+
 impl SoftGroup {
     fn register(&self, id: ibis_doc_model::ShapeId, frame: (f32, f32), maker: LayerMaker) {
         let mut makers = self.makers.borrow_mut();
@@ -205,6 +219,8 @@ pub struct Resources {
     /// Pictures scaled down to their drawn pixel size so GPUI's bilinear
     /// sampler does not alias fine lines (`m1_downscaled_picture_is_averaged`).
     downscaled: std::cell::RefCell<HashMap<(MediaId, u32, u32), Arc<RenderImage>>>,
+    /// The average colour of pictures, by picture (`mean_color`).
+    mean_colors: std::cell::RefCell<HashMap<MediaId, ibis_doc_model::Rgb>>,
     /// Decoding the pictures and fonts, on other threads.
     pub preload: crate::preload::Preload,
     /// Formats of all media, for labelling pictures that cannot be drawn.
@@ -219,6 +235,8 @@ pub struct Resources {
     row_metrics: std::cell::RefCell<HashMap<String, Option<std::rc::Rc<crate::font_metrics::WinRowMetrics>>>>,
     /// Whether the installed font of a family supports the Japanese code page (`font_metrics::font_file_has_japanese`).
     japanese: std::cell::RefCell<HashMap<String, Option<bool>>>,
+    /// What Word draws an underline and a strike from, in the installed font of a typeface (and of its bold) (`font_metrics::DecorationMetrics`).
+    decoration: std::cell::RefCell<HashMap<(String, bool), Option<crate::font_metrics::DecorationMetrics>>>,
     /// The web build's shaped widths of single characters (`text_width`), by font, size and character.
     #[cfg(target_family = "wasm")]
     char_widths: std::cell::RefCell<HashMap<(FontId, u32, char), f32>>,
@@ -309,6 +327,61 @@ impl Resources {
     /// wide, at one pixel to a point, without painting anything: for the flow of linked text boxes (`flow_text`). `first` and
     /// `last` say where the paragraph is in its text (no space above the first, none below the last).
     pub fn measure_paragraph(&self, body: &TextBody, paragraph: &ibis_doc_model::text::Paragraph, width: f64, first: bool, last: bool, px_per_point: f32, among: Option<(&std::rc::Rc<crate::rich_text::LineObstacles>, f32)>, text: &gpui_kit::WindowTextSystem) -> ibis_doc_model::ibis_text::ParagraphMeasure {
+        self.measure_paragraph_widest(body, paragraph, width, first, last, px_per_point, among, text).0
+    }
+
+    /// `measure_paragraph`, and the width of the widest of its lines too (pixels, from the paragraph's margin: its left margin and,
+    /// for the first line, its indent included).
+    pub(crate) fn measure_paragraph_widest(&self, body: &TextBody, paragraph: &ibis_doc_model::text::Paragraph, width: f64, first: bool, last: bool, px_per_point: f32, among: Option<(&std::rc::Rc<crate::rich_text::LineObstacles>, f32)>, text: &gpui_kit::WindowTextSystem) -> (ibis_doc_model::ibis_text::ParagraphMeasure, f32) {
+        self.measure_paragraph_in(body, paragraph, width, first, last, px_per_point, among, None, text)
+    }
+
+    /// `measure_paragraph` for a text in columns (`columns`: the height of a column, the distance from one column's left edge to the
+    /// next's and their number, pixels): each line's height has the space left in the column above it added when the line starts
+    /// the next one, so that the heights add up to the place in the columns laid one below the other (the flow of linked text boxes
+    /// then holds a box of columns by the room of all of them). `width` is a column's.
+    pub fn measure_paragraph_columns(&self, body: &TextBody, paragraph: &ibis_doc_model::text::Paragraph, width: f64, first: bool, last: bool, px_per_point: f32, among: Option<(&std::rc::Rc<crate::rich_text::LineObstacles>, f32)>, columns: (f32, f32, usize), text: &gpui_kit::WindowTextSystem) -> ibis_doc_model::ibis_text::ParagraphMeasure {
+        self.measure_paragraph_in(body, paragraph, width, first, last, px_per_point, among, Some(columns), text).0
+    }
+
+    fn measure_paragraph_in(&self, body: &TextBody, paragraph: &ibis_doc_model::text::Paragraph, width: f64, first: bool, last: bool, px_per_point: f32, among: Option<(&std::rc::Rc<crate::rich_text::LineObstacles>, f32)>, columns: Option<(f32, f32, usize)>, text: &gpui_kit::WindowTextSystem) -> (ibis_doc_model::ibis_text::ParagraphMeasure, f32) {
+        let (mut rich, before, after, room) = self.rich_paragraph_for(body, paragraph, width, first, last, px_per_point, among);
+        rich.measure_flow = columns;
+        let lines = crate::rich_text::measure_lines(&rich, body.wrap.then_some(room), among.map_or(0.0, |(_, top)| top + before as f32 / 100.0 * px_per_point), text);
+        let widest = lines.iter().enumerate().map(|(i, l)| l.width + rich.margin_left + if i == 0 { rich.first_line } else { 0.0 }).fold(0.0f32, f32::max);
+        let measure = ibis_doc_model::ibis_text::ParagraphMeasure {
+            before: before as f32 / 100.0 * px_per_point,
+            after: after as f32 / 100.0 * px_per_point,
+            lines: lines.into_iter().map(|l| (l.start, l.end, l.height)).collect(),
+        };
+        (measure, widest)
+    }
+
+    /// Where each character of `body`'s text is, without painting it: the box (left, top, width, height) of every character of
+    /// every paragraph, in pixels from the top left of the text area, `width` EMU wide, at `px_per_point` pixels to a point. Left,
+    /// centre and right alignment are applied; a justified line is set as left (what the morph transition needs: where a word
+    /// starts and ends, not the spread of spaces). The text is anchored at the top.
+    pub fn char_boxes(&self, body: &TextBody, width: f64, px_per_point: f32, text: &gpui_kit::WindowTextSystem) -> Vec<crate::rich_text::CharBox> {
+        let mut out = Vec::new();
+        let mut top = 0.0f32;
+        let count = body.paragraphs.len();
+        for (n, paragraph) in body.paragraphs.iter().enumerate() {
+            let (rich, before, after, room) = self.rich_paragraph_for(body, paragraph, width, n == 0, n + 1 == count, px_per_point, None);
+            let before = before as f32 / 100.0 * px_per_point;
+            let after = after as f32 / 100.0 * px_per_point;
+            let boxes = crate::rich_text::paragraph_char_boxes(&rich, body.wrap.then_some(room), top + before, text);
+            top += before + boxes.height + after;
+            out.extend(boxes.chars.into_iter().map(|mut c| {
+                c.paragraph = n;
+                c
+            }));
+        }
+        out
+    }
+
+    fn rich_paragraph_for(&self, body: &TextBody, paragraph: &ibis_doc_model::text::Paragraph, width: f64, first: bool, last: bool, px_per_point: f32, among: Option<(&std::rc::Rc<crate::rich_text::LineObstacles>, f32)>) -> (crate::rich_text::RichParagraph, u32, u32, f32) {
+        let shifted = bullet_hang_shifted(paragraph);
+        let paragraph = &*shifted;
         let scale = px_per_point / EMU_PER_POINT as f32;
         let mark = [ibis_doc_model::Run { text: String::new(), style: paragraph.end_style.clone() }];
         let runs = if paragraph.runs.is_empty() { &mark[..] } else { &paragraph.runs[..] };
@@ -325,6 +398,7 @@ impl Resources {
                     text: r.text.clone(),
                     font,
                     size,
+                    inherits_size: false,
                     color: Hsla::default(),
                     underline: false,
                     underline_kind: r.style.underline_kind,
@@ -358,30 +432,32 @@ impl Resources {
         };
         let has_text = paragraph.runs.iter().any(|r| !r.text.is_empty());
         let first_line = if let Some(b) = paragraph.bullet.as_ref().filter(|_| has_text) {
-            let bullet_emu = (first_size / px_per_point * (b.size as f32 / 100_000.0) * 0.55 * EMU_PER_POINT as f32) as i64;
-            (paragraph.indent + bullet_emu * b.text.chars().count().max(1) as i64).max(0)
+            let base = self.with_theme_font(body.style.with_run(&runs[0].style), &runs[0].text);
+            (paragraph.indent + self.bullet_advance_emu(b, &base, first_size / px_per_point * (b.size as f32 / 100_000.0))).max(0)
         } else if paragraph.bullet.is_some() {
             0
         } else {
             (paragraph.margin_left + paragraph.indent).max(0) - paragraph.margin_left
         };
-        let before = if first {
+        let before = if first && !body.space_first_last {
             0
         } else if paragraph.space_before_exact {
             paragraph.space_before
         } else {
             (paragraph.space_before + 50) / 100 * 100
         };
-        let after = if last { 0 } else { paragraph.space_after };
+        let after = if last && !body.space_first_last { 0 } else { paragraph.space_after };
         let room = (width as f32 - paragraph.margin_left as f32).max(0.0) * scale;
         let rich = crate::rich_text::RichParagraph {
             obstacles: among.map(|(o, _)| o.clone()),
+            measure_flow: None,
             pieces,
             align: paragraph.align.unwrap_or(body.style.align),
             font_align: paragraph.font_align,
             line,
             grid_pitch: paragraph.grid_pitch.map(|p| p as f32 / 100.0 * px_per_point),
             wrap: body.wrap,
+            count_end_spaces: !body.wrap && self.fonts.kind() == DocKind::Presentation,
             first_line: first_line as f32 * scale,
             margin_left: paragraph.margin_left as f32 * scale,
             tabs: paragraph.tabs.iter().map(|t| t.position as f32 * scale).collect(),
@@ -398,13 +474,9 @@ impl Resources {
             upright: body.vertical,
             mirror: false,
             at_x: None,
+            mark: None,
         };
-        let lines = crate::rich_text::measure_lines(&rich, body.wrap.then_some(room), among.map_or(0.0, |(_, top)| top + before as f32 / 100.0 * px_per_point), text);
-        ibis_doc_model::ibis_text::ParagraphMeasure {
-            before: before as f32 / 100.0 * px_per_point,
-            after: after as f32 / 100.0 * px_per_point,
-            lines: lines.into_iter().map(|l| (l.start, l.end, l.height)).collect(),
-        }
+        (rich, before, after, room)
     }
 
     /// The height of the text of `body` (`width` EMU wide) laid out among `obstacles` (pixels, at `scale` pixels to an EMU).
@@ -417,6 +489,30 @@ impl Resources {
             y += m.before + m.lines.iter().map(|l| l.2).sum::<f32>() + m.after;
         }
         y
+    }
+
+    /// What the text of `shape` wraps round, for the flow of linked text boxes (`measure_paragraph`'s `among`): pixels at one pixel to a
+    /// point, in the text's layout frame (`LineObstacles`). `None`: nothing (no wrap on the slide, the shape ignores it, or its text is
+    /// not set in a quarter turn).
+    pub fn chain_obstacles(&self, shape: &Shape) -> Option<std::rc::Rc<crate::rich_text::LineObstacles>> {
+        let body = shape.text_body()?;
+        let (fw, fh) = (shape.frame.width as f64, shape.frame.height as f64);
+        let rect = match &shape.kind {
+            ShapeKind::Auto(auto) => auto.geometry.text_rect(fw, fh),
+            _ => (0.0, 0.0, fw, fh),
+        };
+        let quarter = quarter_turn(body).rem_euclid(21_600_000);
+        if !matches!(quarter, 0 | 5_400_000 | 16_200_000) {
+            return None;
+        }
+        let i = body.insets;
+        let insets = match quarter {
+            5_400_000 => ibis_doc_model::Insets { left: i.top, top: i.right, right: i.bottom, bottom: i.left },
+            16_200_000 => ibis_doc_model::Insets { left: i.bottom, top: i.left, right: i.top, bottom: i.right },
+            _ => i,
+        };
+        // (A text in columns is put in them by the same lanes, with no obstacles if there are none.)
+        self.wrap_rects(shape, rect, quarter, insets, 1.0 / EMU_PER_POINT as f32).or_else(|| (body.columns > 1).then(std::rc::Rc::default))
     }
 
     /// The rectangles the text of `shape` (its text rectangle `text_rect` = (l, t, r, b) in its frame, EMU) wraps
@@ -546,6 +642,7 @@ impl Resources {
             duotones: Default::default(),
             rasters: Default::default(),
             downscaled: Default::default(),
+            mean_colors: Default::default(),
             formats,
             sizes,
             fonts,
@@ -554,6 +651,7 @@ impl Resources {
             metrics: Default::default(),
             row_metrics: Default::default(),
             japanese: Default::default(),
+            decoration: Default::default(),
             #[cfg(target_family = "wasm")]
             char_widths: Default::default(),
             print: false,
@@ -670,6 +768,40 @@ impl Resources {
         None
     }
 
+    /// The average colour of the picture `media` (over a grid of about 32 by 32 of its pixels, the transparent ones left out), for choosing a colour over it (the
+    /// caret's). `None` while it is still decoding or when it is not decoded here.
+    pub fn mean_color(&self, media: MediaId) -> Option<ibis_doc_model::Rgb> {
+        if let Some(c) = self.mean_colors.borrow().get(&media) {
+            return Some(*c);
+        }
+        let Ok(Some(image)) = self.preload.decoded(media) else { return None };
+        let (w, h) = (image.size(0).width.0.max(1) as usize, image.size(0).height.0.max(1) as usize);
+        let bytes = image.as_bytes(0)?;
+        let (step_x, step_y) = ((w / 32).max(1), (h / 32).max(1));
+        let (mut sum, mut n) = ([0u64; 3], 0u64);
+        for y in (0..h).step_by(step_y) {
+            for x in (0..w).step_by(step_x) {
+                let at = (y * w + x) * 4;
+                let Some(p) = bytes.get(at..at + 4) else { continue };
+                if p[3] == 0 {
+                    continue;
+                }
+                // BGRA, premultiplied: undone for the colour.
+                let a = p[3] as u64;
+                for (i, c) in [p[2], p[1], p[0]].into_iter().enumerate() {
+                    sum[i] += (c as u64 * 255 / a).min(255);
+                }
+                n += 1;
+            }
+        }
+        if n == 0 {
+            return None;
+        }
+        let color = ibis_doc_model::Rgb::from_rgb((sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8);
+        self.mean_colors.borrow_mut().insert(media, color);
+        Some(color)
+    }
+
     /// The picture to draw for `media`: decoded, or left to GPUI to load.
     /// `None` while it is still decoding (it is drawn when it is ready) or
     /// when it cannot be drawn.
@@ -749,7 +881,7 @@ impl Resources {
     /// export does so before drawing: GPUI would rasterize them one after
     /// another (its headless executor runs on one thread), at the size of
     /// the picture itself.
-    #[cfg(headless_export)]
+    #[cfg(any(headless_export, target_family = "wasm"))]
     pub fn rasterize_svg_pictures(&self, renderer: &SvgRenderer) {
         let mut images: Vec<Arc<Image>> = self.rotated.borrow().values().map(|(image, _)| image.clone()).collect();
         images.extend(self.clipped.borrow().values().cloned());
@@ -862,6 +994,25 @@ impl Resources {
         v
     }
 
+    /// What Word draws an underline and a strike from (`font_metrics::DecorationMetrics`) in the file of typeface `name` (its bold file when `bold`): the
+    /// installed font's, else the table of the typefaces Office ships (`office_decoration_metrics`), else `None`.
+    pub fn decoration_metrics(&self, name: &str, bold: bool) -> Option<crate::font_metrics::DecorationMetrics> {
+        let key = (name.to_string(), bold);
+        if let Some(&v) = self.decoration.borrow().get(&key) {
+            return v;
+        }
+        let v = if self.fonts.available(name).is_some() {
+            let font = self.font(&TextStyle { font: Some(name.to_string()), bold, ..TextStyle::default() });
+            let id = self.text_system.resolve_font(&font);
+            self.text_system.font_data(id).and_then(|(data, index)| crate::font_metrics::font_file_decoration_metrics(&data, index))
+        } else {
+            None
+        }
+        .or_else(|| crate::font_metrics::office_decoration_metrics(name, bold));
+        self.decoration.borrow_mut().insert(key, v);
+        v
+    }
+
     /// What Microsoft Excel's row height follows (`font_metrics::WinRowMetrics`) in the file of the
     /// installed typeface `name`; `None` when it is not installed (a stand-in's file would give the stand-in's rows) or its file
     /// cannot be read.
@@ -880,6 +1031,18 @@ impl Resources {
         })();
         self.row_metrics.borrow_mut().insert(name.to_string(), m.clone());
         m
+    }
+
+    /// The ink of the glyph the typeface `name` has for `c`: its lowest and highest points above the baseline (`yMin`, `yMax` of the glyph's box in the font file, in ems);
+    /// `None` when the typeface's file cannot be read or has no glyph for `c`. An installed typeface's own file, else the one that stands in for it.
+    pub fn glyph_ink_em(&self, name: &str, c: char) -> Option<(f32, f32)> {
+        let font = self.font(&TextStyle { font: Some(name.into()), ..TextStyle::default() });
+        let id = self.text_system.resolve_font(&font);
+        let (data, index) = self.text_system.font_data(id)?;
+        let face = ttf_parser::Face::parse(&data, index).ok()?;
+        let upem = f32::from(face.units_per_em());
+        let r = face.glyph_bounding_box(face.glyph_index(c)?)?;
+        Some((f32::from(r.y_min) / upem, f32::from(r.y_max) / upem))
     }
 
     /// The ascent, descent and line gap of `font`, in ems.
@@ -931,7 +1094,7 @@ impl Resources {
         // left out: its substitute drawn to its width looks smaller than it,
         // and matched its PDF worse.)
         let expected = match name {
-            n if n.starts_with("ＭＳ") || n.starts_with("MS ") => if ibis_pptx::EXCEL_METRICS == ibis_pptx::ExcelMetrics::Windows { 0.5 } else { 0.54 }, // i18n-ok（フォント名の照合（ＭＳ で始まる名前の判定）。ファイルの中の名前。i18n-ok）
+            n if n.starts_with("ＭＳ") || n.starts_with("MS ") => if ibis_formats::EXCEL_METRICS == ibis_formats::ExcelMetrics::Windows { 0.5 } else { 0.54 }, // i18n-ok（フォント名の照合（ＭＳ で始まる名前の判定）。ファイルの中の名前。i18n-ok）
             // Noto Sans JP's digits (0.555 em, from the widths in Excel's PDF of a user's workbook).
             n if n.starts_with("Noto Sans") => 0.555,
             _ => return 1.0,
@@ -976,6 +1139,27 @@ impl Resources {
             style.fallback_font = fonts.other_for_text(text).map(str::to_string);
         }
         style
+    }
+
+    /// How far `b` pushes the text of its paragraph's first line (EMU) when its characters are `size_pt` high: the advance of the
+    /// characters in the bullet's own typeface (`Bullet::font`, as PowerPoint's outline sets it in Arial), else 0.55 of the size for
+    /// each character. `base` is the style of the paragraph's first run.
+    pub(crate) fn bullet_advance_emu(&self, b: &ibis_doc_model::Bullet, base: &TextStyle, size_pt: f32) -> i64 {
+        // A symbol typeface's bullet (Wingdings) is as wide as the typeface's own glyph at the full size (092: Wingdings 'u' is 0.986 em, so
+        // the text of a 28 pt line starts 27.6 pt from the bullet's left, past the hanging indent; the stand-in character is narrower).
+        if let Some(sym) = b.symbol.as_ref().filter(|s| self.fonts.installed.contains(s.font.as_str())) {
+            let code = sym.code.chars().next().map_or(' ', |c| if (c as u32) < 0x100 { char::from_u32(0xF000 + c as u32).unwrap_or(c) } else { c });
+            let font = self.fonts.font(&TextStyle { font: Some(sym.font.clone()), bold: false, italic: false, ..base.clone() });
+            let full = size_pt * 100.0 / sym.stand_in_percent.max(1) as f32;
+            return (self.text_width(&code.to_string(), &font, full) * EMU_PER_POINT as f32) as i64;
+        }
+        match &b.font {
+            Some(name) if b.picture.is_none() && b.auto.is_none() => {
+                let font = self.fonts.font(&TextStyle { font: Some(name.clone()), bold: false, italic: false, ..base.clone() });
+                (self.text_width(&b.text, &font, size_pt) * EMU_PER_POINT as f32) as i64
+            }
+            _ => (size_pt * 0.55 * EMU_PER_POINT as f32) as i64 * b.text.chars().count().max(1) as i64,
+        }
     }
 
     /// The installed font to draw `style` with.
@@ -1148,6 +1332,17 @@ const TYPEFACE_ALIASES: &[(&str, &str)] = &[
     // Cambria Math is Office's (and not on macOS); STIX Two Math and STIXGeneral, which macOS has, are serifs with the maths glyphs.
     ("Cambria Math", "STIX Two Math"),
     ("Cambria Math", "STIXGeneral"),
+    // BIZ UD (Morisawa): Windows 11's files carry the Japanese names as well (what Excel, Word and PowerPoint save), but the files for other
+    // systems (Google Fonts, the macOS download) have the English names only in their `name` tables, so the `OpenTypeIndex` has no
+    // Japanese name to read there (GitHub issue #213: the cells came out in the fallback Mincho on macOS).
+    ("BIZ UDゴシック", "BIZ UDGothic"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
+    ("BIZ UDPゴシック", "BIZ UDPGothic"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
+    ("BIZ UD明朝", "BIZ UDMincho"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
+    ("BIZ UDP明朝", "BIZ UDPMincho"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
+    ("BIZ UD明朝 Medium", "BIZ UDMincho Medium"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
+    ("BIZ UD明朝 Medium", "BIZ UDMincho"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
+    ("BIZ UDP明朝 Medium", "BIZ UDPMincho Medium"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
+    ("BIZ UDP明朝 Medium", "BIZ UDPMincho"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
     ("メイリオ", "Meiryo"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
     ("ＭＳ Ｐゴシック", "MS PGothic"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
     ("ＭＳ ゴシック", "MS Gothic"), // i18n-ok（フォント名の対応表（ファイルに保存されるフォント名）。font_label の対）
@@ -1228,25 +1423,27 @@ fn browser_fallbacks(_: &TextStyle) -> Option<FontFallbacks> {
     None
 }
 
+/// The fonts a character the family lacks is taken from: for a base block of a font the browser version took the blocks of (GitHub issue #157), the blocks that came
+/// after it, in the order of the blocks (the text system draws each character from the first that has it); then what `browser_fallbacks` gives.
+fn chain_fallbacks(family: &str, style: &TextStyle) -> Option<FontFallbacks> {
+    #[allow(unused_mut)]
+    let mut names = crate::subset_fonts::chain_after(family);
+    if names.is_empty() {
+        return browser_fallbacks(style);
+    }
+    #[cfg(target_family = "wasm")]
+    names.extend(browser_fallback_names(style));
+    Some(FontFallbacks::from_fonts(names))
+}
+
 /// Typefaces made for Japanese (or other East Asian) text.
 pub fn is_east_asian_typeface(name: &str) -> bool {
     const HINTS: &[&str] = &[
         "M PLUS", "Noto Sans JP", "Noto Serif JP", "Noto Sans CJK", "Yu Gothic", "Yu Mincho",
-        "Meiryo", "Hiragino", "MS Gothic", "MS Mincho", "MS PGothic", "BIZ UD", "Kosugi",
+        "Meiryo", "Hiragino", "MS Gothic", "MS Mincho", "MS PGothic", "MS PMincho", "MS UI Gothic", "BIZ UD", "Kosugi",
         "Sawarabi", "IPA", "Source Han",
     ];
     name.chars().any(|c| c as u32 >= 0x2e80) || HINTS.iter().any(|h| name.contains(h))
-}
-
-/// Whether an uninstalled Latin typeface name is a serif face (drawn with
-/// Times New Roman / Liberation Serif rather than a sans-serif stand-in).
-fn is_serif_latin_typeface(name: &str) -> bool {
-    const HINTS: &[&str] = &[
-        "Serif", "Goudy", "Merriweather", "Garamond", "Baskerville", "Palatino", "Bookman",
-        "Caslon", "Bodoni", "Didot", "Cambria", "Constantia", "Georgia", "Charter", "Rockwell",
-        "Slab", "Antiqua", "Minion", "Sabon", "Times",
-    ];
-    !name.contains("Sans") && HINTS.iter().any(|h| name.contains(h))
 }
 
 /// Fonts bundled with the desktop app (`fonts/carlito/`, OFL-1.1): Carlito,
@@ -1265,7 +1462,7 @@ const BUNDLED_FONTS: &[&[u8]] = &[];
 const BUNDLED_FAMILY: &str = "Carlito";
 
 /// The fonts the user downloaded with セットアップ (`ibis_office_base::app_data::fonts_dir`), as font files each (a collection is split).
-/// In the browser they are what the page read from IndexedDB at start (`set_web_fonts`).
+/// In the browser they are read behind the first drawing (`add_fonts_now`).
 #[cfg(not(target_family = "wasm"))]
 fn downloaded_fonts() -> Vec<std::borrow::Cow<'static, [u8]>> {
     let mut fonts = Vec::new();
@@ -1281,15 +1478,8 @@ fn downloaded_fonts() -> Vec<std::borrow::Cow<'static, [u8]>> {
 }
 #[cfg(target_family = "wasm")]
 fn downloaded_fonts() -> Vec<std::borrow::Cow<'static, [u8]>> {
-    WEB_FONTS.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().map(std::borrow::Cow::Owned).collect()
-}
-/// The font files the browser version read from IndexedDB before the editor started (the downloaded fonts).
-#[cfg(target_family = "wasm")]
-static WEB_FONTS: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
-/// The browser version: the downloaded fonts' files, read from IndexedDB, to give the text system when the first document is drawn.
-#[cfg(target_family = "wasm")]
-pub fn set_web_fonts(fonts: Vec<Vec<u8>>) {
-    *WEB_FONTS.lock().unwrap_or_else(|e| e.into_inner()) = fonts;
+    // The browser version has none at the first drawing: it reads them from IndexedDB behind it and gives each one as it comes (`add_fonts_now`, #157).
+    Vec::new()
 }
 
 /// For tests only: the fonts in the folders `IBIS_EXTRA_FONT_DIRS` names
@@ -1391,6 +1581,8 @@ pub(crate) struct OpenTypeFaceInfo {
     /// For a variable font with a weight axis: the weight its family is regular at (400 kept within the axis' range), which is not
     /// the weight of the file's default instance (`usWeightClass`; Noto Sans JP's file is its Thin).
     pub(crate) family_weight: Option<u16>,
+    /// `OS/2` `usWidthClass` (5 = normal, 3 = condensed: Arial Narrow).
+    pub(crate) width_class: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -1455,8 +1647,18 @@ impl OpenTypeIndex {
         for name16 in &face.id16_names {
             self.insert_candidate(name16, &id16_only, family_weight, face.italic, 0);
         }
+        // A face of another width than normal (Arial Narrow, usWidthClass 3) is a face of its typographic family (Arial) that no
+        // weight or style asks for: the text systems cannot ask for a width, so it is asked for by the name the file gives it
+        // (ID 1), which they list as a family of its own, before the typographic family.
+        let by_win32_name: Vec<String> = face.id1_names.iter().chain(all_families.iter()).fold(Vec::new(), |mut v, n| {
+            if !v.contains(n) {
+                v.push(n.clone());
+            }
+            v
+        });
         for name1 in &face.id1_names {
-            self.insert_candidate(name1, &all_families, family_weight, face.italic, 0);
+            let candidates = if face.width_class != 5 && (1..=9).contains(&face.width_class) { &by_win32_name } else { &all_families };
+            self.insert_candidate(name1, candidates, family_weight, face.italic, 0);
         }
         for name4 in &face.id4_names {
             self.insert_candidate(name4, &all_families, face.weight, face.italic, 1);
@@ -1662,10 +1864,14 @@ fn parse_opentype_faces<R: std::io::Read + std::io::Seek>(reader: &mut R) -> Vec
         if id16_names.is_empty() && id1_names.is_empty() {
             continue;
         }
+        let mut width_class = 5u16;
         let (weight, italic) = match os2_span {
             Some((os2_off, os2_len)) if os2_len >= 6 => {
                 let mut os2_buf = vec![0u8; os2_len.min(64)];
                 if reader.seek(SeekFrom::Start(os2_off)).is_ok() && reader.read_exact(&mut os2_buf).is_ok() {
+                    if os2_buf.len() >= 8 {
+                        width_class = u16::from_be_bytes([os2_buf[6], os2_buf[7]]);
+                    }
                     parse_os2_table(&os2_buf)
                 } else {
                     (400, false)
@@ -1677,7 +1883,7 @@ fn parse_opentype_faces<R: std::io::Read + std::io::Seek>(reader: &mut R) -> Vec
             let mut fvar = vec![0u8; len];
             (reader.seek(SeekFrom::Start(off)).is_ok() && reader.read_exact(&mut fvar).is_ok()).then(|| variable_family_weight(&fvar)).flatten()
         });
-        out.push(OpenTypeFaceInfo { id16_names, id1_names, id4_names, weight, italic, family_weight });
+        out.push(OpenTypeFaceInfo { id16_names, id1_names, id4_names, weight, italic, family_weight, width_class });
     }
     out
 }
@@ -1842,6 +2048,39 @@ pub(crate) fn resolve_font_with_index(
     None
 }
 
+/// The kind of a Japanese typeface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JapaneseKind {
+    Mincho,
+    Gothic,
+}
+
+/// The Japanese typefaces that Windows and Office always have (MS Mincho and Gothic and their proportional forms, MS UI Gothic, Yu Mincho and Yu Gothic,
+/// Meiryo, BIZ UD), by name (full-width letters, spaces and case do not matter; the Japanese and the English names), and their kind. A Mincho is a serif,
+/// a Gothic a sans.
+pub(crate) fn known_japanese_typeface(name: &str) -> Option<JapaneseKind> {
+    let key: String = name
+        .chars()
+        .map(|c| if ('\u{ff01}'..='\u{ff5e}').contains(&c) { char::from_u32(c as u32 - 0xfee0).unwrap_or(c) } else { c })
+        .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
+        .flat_map(char::to_lowercase)
+        .collect();
+    const MINCHO: [&str; 10] = ["ms\u{660e}\u{671d}", "msp\u{660e}\u{671d}", "msmincho", "mspmincho", "\u{6e38}\u{660e}\u{671d}", "yumincho", "bizud\u{660e}\u{671d}", "bizudmincho", "bizudp\u{660e}\u{671d}", "bizudpmincho"]; // i18n-ok（書体名の照合）
+    const GOTHIC: [&str; 13] = [
+        "ms\u{30b4}\u{30b7}\u{30c3}\u{30af}", "msp\u{30b4}\u{30b7}\u{30c3}\u{30af}", "msgothic", "mspgothic", "msuigothic", "\u{6e38}\u{30b4}\u{30b7}\u{30c3}\u{30af}", "yugothic", "\u{30e1}\u{30a4}\u{30ea}\u{30aa}", "meiryo", "bizud\u{30b4}\u{30b7}\u{30c3}\u{30af}", "bizudgothic", "bizudp\u{30b4}\u{30b7}\u{30c3}\u{30af}", "bizudpgothic", // i18n-ok（書体名の照合）
+    ];
+    // The weights and the UI form a typeface comes in (Yu Gothic Medium, Meiryo UI, Yu Mincho Demibold): after the name, only these.
+    const SUFFIXES: [&str; 9] = ["", "ui", "light", "regular", "medium", "bold", "demibold", "semibold", "semilight"];
+    let starts = |names: &[&str]| names.iter().any(|n| key.strip_prefix(n).is_some_and(|rest| SUFFIXES.contains(&rest)));
+    if starts(&MINCHO) {
+        Some(JapaneseKind::Mincho)
+    } else if starts(&GOTHIC) {
+        Some(JapaneseKind::Gothic)
+    } else {
+        None
+    }
+}
+
 /// The East Asian typefaces a typeface the PC lacks gives way to, the first one installed (macOS, then Windows, then Linux).
 const EAST_ASIAN_FALLBACKS: [&str; 5] = ["Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans CJK JP", "IPAexGothic"];
 
@@ -1873,10 +2112,51 @@ pub(crate) fn missing_japanese_stand_in(kind: DocKind, family: Option<u8>, chars
             Some(1 | 3) => JapaneseStandIn::MsMincho,
             _ => JapaneseStandIn::MsGothic,
         },
-        DocKind::Document if charset == Some(128) => JapaneseStandIn::YuGothic,
+        // Word: `word_missing_stand_ins`.
         DocKind::Document => JapaneseStandIn::MsMincho,
         DocKind::Presentation if charset == Some(-128) => JapaneseStandIn::YuGothic,
         DocKind::Presentation => JapaneseStandIn::MsGothic,
+    }
+}
+
+/// The typefaces Word draws a missing typeface with (Windows Word 365 16.0.20527, `tasks/doc/requests/2026-11-15-font-fallback-word-conflict-result.md`,
+/// the first appearance of the name in a new Word: a Word that has opened other documents keeps the stand-in it decided first for a name).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WordStandIn {
+    Cambria,
+    Calibri,
+    MsMincho,
+    YuGothic,
+    MalgunGothic,
+    MicrosoftYaHei,
+}
+
+/// The stand-ins of a missing typeface for Latin and for East Asian text. `entry`: the font table's entry of the name (matched ignoring case, not otherwise),
+/// `None` if it has none. Not listed: a name with a Japanese character is Yu Gothic for both, else Cambria and MS Mincho. Listed: the name is not read.
+/// `w:charset` 0x80 (Shift-JIS) or the Japanese bit of `w:sig` (csb0 bit 17): Yu Gothic for both; 0x81 Malgun Gothic; 0x86 Microsoft YaHei; otherwise
+/// Cambria (`w:family` roman) or Calibri for Latin and MS Mincho for East Asian text, whatever the family, panose and pitch (`w:altName` is tried before).
+pub(crate) fn word_missing_stand_ins(entry: Option<&ibis_doc_model::FontTableEntry>, name: &str) -> (WordStandIn, WordStandIn) {
+    use WordStandIn::*;
+    let Some(entry) = entry else {
+        return if name.chars().any(|c| c as u32 >= 0x2e80) { (YuGothic, YuGothic) } else { (Cambria, MsMincho) };
+    };
+    match entry.charset {
+        Some(0x81) => (MalgunGothic, MalgunGothic),
+        Some(0x86) => (MicrosoftYaHei, MicrosoftYaHei),
+        Some(0x80) => (YuGothic, YuGothic),
+        _ if entry.csb0.is_some_and(|b| b & (1 << 17) != 0) => (YuGothic, YuGothic),
+        _ => (if entry.family == "roman" { Cambria } else { Calibri }, MsMincho),
+    }
+}
+
+/// What Excel draws a missing typeface with, Latin and Japanese letters alike, when its font says charset 128 (Shift-JIS) and a family
+/// (Windows Excel 365, `tasks/doc/requests/2026-11-14-fake-font-fallback-result.md`): Roman: MS PMincho; Swiss and Modern: MS Gothic.
+pub(crate) fn workbook_charset128_stand_in(family: Option<u8>) -> Option<&'static [&'static str]> {
+    const P_MINCHO: [&str; 8] = ["MS PMincho", "MS Mincho", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "BIZ UDMincho", "Noto Serif CJK JP", "IPAexMincho"];
+    match family {
+        Some(1) => Some(&P_MINCHO),
+        Some(2 | 3) => Some(&MS_GOTHIC_STAND_INS),
+        _ => None,
     }
 }
 
@@ -2181,17 +2461,22 @@ impl Fonts {
         // Roman, Arial, Cambria stand in for the ones it names) were never drawn in the browser's own, and its Japanese came
         // out in the browser's default (#126). The system UI font takes them, as it does for a presentation's.
         #[cfg(target_family = "wasm")]
-        let family = if family.starts_with('.') || self.installed.contains(family.as_ref()) { family } else { SharedString::from(".SystemUIFont") };
+        let family = if family.starts_with('.') || self.installed.contains(family.as_ref()) || crate::subset_fonts::is_block_family(&family) { family } else { SharedString::from(".SystemUIFont") };
         // A typeface named for its weight ("Poppins SemiBold", "Segoe UI Semilight")
         // is its own family to PowerPoint, whose bold member is usually the same face,
-        // so bold only applies to plain typefaces (or faces lighter than Semibold).
+        // so bold only applies to plain typefaces (or faces lighter than Semibold that are a family of that name). (A Light or Semilight face, bold, is the same face embolden by PowerPoint's PDF
+        // (`2 Tr`; probed with Calibri Light, Segoe UI Light and Semilight, Yu Gothic Light), not the family's Bold: Calibri Bold is wider.)
         // ＭＳ 明朝 has no bold face of its own (Word uses the regular face, w5_mincho_bold_not_heavier_face).
         let resolved_name = style.font.as_deref().map(|n| self.resolve(n));
         let ms_mincho_standin = resolved_name.is_some_and(|n| {
             self.available(n).is_none() && matches!(n, "ＭＳ 明朝" | "MS Mincho" | "ＭＳ Ｐ明朝" | "MS PMincho" | "ＭＳ明朝" | "ＭＳＰ明朝") // i18n-ok（フォント名の判定）
         });
+        // A typeface named for its weight that the text system has only as a weight of its base family ("Calibri Light", "UD デジタル 教科書体 NK-R", "M PLUS 1p
+        // Medium") would take the base family's real Bold; PowerPoint embolden the named face itself (`2 Tr` in its PDFs, probed with Calibri Light, Segoe UI Light
+        // and Semilight, Yu Gothic Light), so the weight stays. A family of that very name (HGPｺﾞｼｯｸM) is embolden by the platform as it is.
+        let by_base_family = self.kind() == DocKind::Presentation && resolved_name.and_then(|n| self.available(n).map(|(family, _)| family.as_ref() != n)).unwrap_or(false);
         let named_weight = resolved_name.is_some_and(|n| strip_weight_suffix(n).is_some()) || weight != FontWeight::NORMAL;
-        if style.bold && !ms_mincho_standin && (!named_weight || weight < FontWeight::SEMIBOLD) {
+        if style.bold && !ms_mincho_standin && (!named_weight || (weight < FontWeight::SEMIBOLD && !by_base_family)) {
             weight = FontWeight::BOLD;
         }
         // A proportional Japanese typeface (MS P Gothic, HGP, Meiryo UI) narrows its kana and punctuation; the
@@ -2200,20 +2485,42 @@ impl Fonts {
             self.available(n).is_none() && (n.starts_with("ＭＳ Ｐ") || n.starts_with("MS P") || n.starts_with("HGP") || n.starts_with("Meiryo UI")) // i18n-ok（フォント名の判定（表示名ではなく、フォント名の接頭辞））
         });
         let mut features = vec![("kern".into(), u32::from(style.kern.0.is_some_and(|k| k > 0 && style.font_size > k)))];
+        // PowerPoint sets no ligatures (Calibri's "ti" and "fi" are drawn as separate letters in its PDFs: 122 and 157, whose Calibri runs
+        // were shaped with them here).
+        features.push(("liga".into(), 0));
+        features.push(("clig".into(), 0));
         if proportional {
             features.push(("palt".into(), 1));
             features.push(("pwid".into(), 1));
         }
         Font {
-            family,
             weight,
             style: if style.italic { FontStyle::Italic } else { FontStyle::Normal },
             // Kerned above the size the file says (`kern`, inherited from the master: 1200 is 12 pt; text of exactly 12 pt is not kerned in
             // PowerPoint's PDFs, PTXT-00107); not kerned when it says nothing.
             features: FontFeatures(Arc::new(features)),
-            fallbacks: browser_fallbacks(style),
+            fallbacks: self.with_administrative_fallback(chain_fallbacks(&family, style)),
+            family,
             ..font(".SystemUIFont")
         }
+    }
+
+    /// On macOS (#251, masanork's change; on by default since the user's decision of 2026-11-19, it was `IBIS_ADMIN_PUP_MODE=1` before): the Digital Agency's Add Character_GJMincho,
+    /// when it is installed, added to the fonts a character is taken from, so that the macOS text system (`forks/gpui-pre-macos`, which gives the supplementary private-use
+    /// characters to it directly where CoreText's cascade chose LastResort) draws the administrative variants. Nothing elsewhere, and nothing where the font is not there.
+    #[allow(unused_variables)]
+    fn with_administrative_fallback(&self, fallbacks: Option<FontFallbacks>) -> Option<FontFallbacks> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some((family, _)) = ["Add Character_GJMincho", "追加文字行政事務標準明朝"].iter().find_map(|n| self.available(n)) { // i18n-ok（フォントのファミリー名）
+                let mut names: Vec<String> = fallbacks.as_ref().map(|f| f.fallback_list().to_vec()).unwrap_or_default();
+                if !names.iter().any(|n| n.as_str() == family.as_ref()) {
+                    names.push(family.to_string());
+                }
+                return Some(FontFallbacks::from_fonts(names));
+            }
+        }
+        fallbacks
     }
 
     /// The available family and weight for a typeface name, if any: the
@@ -2227,6 +2534,8 @@ impl Fonts {
             // A font downloaded since the document was opened (`add_fonts_now`).
             .or_else(|| (*LATE_FONTS.read().unwrap_or_else(|e| e.into_inner())).and_then(|late| resolve_font_with_index(name, late, None, true)))
             .map(|(family, weight, _)| (family, weight))
+            // A typeface the browser version has the blocks of (GitHub issue #157): its base block, once it came.
+            .or_else(|| crate::subset_fonts::base_family_for_typeface(name).map(|family| (SharedString::from(family), FontWeight::NORMAL)))
     }
 
     fn kind(&self) -> DocKind {
@@ -2239,12 +2548,67 @@ impl Fonts {
         }
     }
 
+    /// The font table's entry of `name` (a Word file): the name matched ignoring case, not otherwise (Word 365 matches `zzqx foo` to `Zzqx Foo`, not a
+    /// full-width or double space).
+    fn docx_entry(&self, name: &str) -> Option<&ibis_doc_model::FontTableEntry> {
+        let table = self.docx_font_table.as_ref()?;
+        table.get(name).or_else(|| {
+            let lower = name.to_lowercase();
+            table.iter().find(|(k, _)| k.to_lowercase() == lower).map(|(_, e)| e)
+        })
+    }
+
+    /// The installed typeface for a Word stand-in (`word_missing_stand_ins`), `None` if none of its candidates is installed.
+    fn word_stand_in_family(&self, which: WordStandIn) -> Option<SharedString> {
+        let first = |names: &[&str]| first_installed_family(names, &self.installed, Some(&self.embedded_index), true);
+        match which {
+            WordStandIn::Cambria => ["Cambria", "Times New Roman"].into_iter().find(|f| self.installed.contains(*f)).map(Into::into),
+            WordStandIn::Calibri => ["Calibri", BUNDLED_FAMILY, "Arial"].into_iter().find(|f| self.installed.contains(*f)).map(Into::into),
+            WordStandIn::MsMincho => first(&MS_MINCHO_STAND_INS),
+            WordStandIn::YuGothic => self.east_asian_fallback.clone(),
+            WordStandIn::MalgunGothic => first(&["Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR"]).or_else(|| self.east_asian_fallback.clone()),
+            WordStandIn::MicrosoftYaHei => first(&["Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC"]).or_else(|| self.east_asian_fallback.clone()),
+        }
+    }
+
+    /// The installed typeface that stands in for a typeface that every Windows or Office has, drawn here where it is not installed (#248): one of its own kind,
+    /// a Mincho for a Mincho and a Gothic for a Gothic. Word on Windows has these typefaces, so `word_missing_stand_ins` (what it draws a typeface it lacks with,
+    /// whatever the font table's charset says) is not its rule for them.
+    fn known_japanese_stand_in(&self, name: &str) -> Option<SharedString> {
+        match known_japanese_typeface(name)? {
+            JapaneseKind::Mincho => first_installed_family(&MS_MINCHO_STAND_INS, &self.installed, Some(&self.embedded_index), true),
+            JapaneseKind::Gothic => first_installed_family(&MS_GOTHIC_STAND_INS, &self.installed, Some(&self.embedded_index), true),
+        }
+    }
+
+    /// The installed typeface that stands in for the missing typeface `name` of a Word file, by `word_missing_stand_ins`. The East Asian stand-in is
+    /// for a name with a Japanese character; the Latin one for the other names (the slot of the text is not known here), but a typeface the font table
+    /// gives a CJK charset draws Latin text with its stand-in too. `None` for Cambria and Calibri, which the Latin arm of `family` finds.
+    fn word_stand_in(&self, name: &str) -> Option<SharedString> {
+        if let Some(found) = self.known_japanese_stand_in(name) {
+            return Some(found);
+        }
+        let (latin, east_asian) = word_missing_stand_ins(self.docx_entry(name), name);
+        let which = if is_east_asian_typeface(name) { east_asian } else { latin };
+        if matches!(which, WordStandIn::Cambria | WordStandIn::Calibri) {
+            return None;
+        }
+        self.word_stand_in_family(which)
+    }
+
     /// The installed typeface that stands in for the missing East Asian typeface `name`, by `missing_japanese_stand_in`.
     fn japanese_stand_in_family(&self, name: &str) -> Option<SharedString> {
-        let (family, charset) = match self.docx_font_table.as_ref() {
-            Some(table) => (None, table.get(name).and_then(|e| e.charset).map(i16::from)),
-            None => self.traits.get(name).map_or((None, None), |t| (t.family, t.charset)),
-        };
+        if self.kind() == DocKind::Document {
+            return self.word_stand_in(name);
+        }
+        let (family, charset) = self.traits.get(name).map_or((None, None), |t| (t.family, t.charset));
+        if self.kind() == DocKind::Workbook
+            && charset == Some(128)
+            && let Some(names) = workbook_charset128_stand_in(family)
+            && let Some(found) = first_installed_family(names, &self.installed, Some(&self.embedded_index), true)
+        {
+            return Some(found);
+        }
         match missing_japanese_stand_in(self.kind(), family, charset) {
             JapaneseStandIn::YuGothic => self.east_asian_fallback.clone(),
             JapaneseStandIn::MsGothic => first_installed_family(&MS_GOTHIC_STAND_INS, &self.installed, Some(&self.embedded_index), true),
@@ -2260,7 +2624,7 @@ impl Fonts {
             return found;
         }
         // A Word file's font table names other typefaces for this one (`w:altName`, ECMA-376 Part 1 §17.8.3.2): the first installed one.
-        if let Some(entry) = self.docx_font_table.as_ref().and_then(|t| t.get(name))
+        if let Some(entry) = self.docx_entry(name)
             && let Some(found) = entry.alt_names.iter().find_map(|alt| self.available(alt))
         {
             return found;
@@ -2269,26 +2633,40 @@ impl Fonts {
         // A typeface the PC lacks that is East Asian gives way to the stand-in Word, Excel or PowerPoint draws for it, by what the file says about
         // the typeface, not by its name (`missing_japanese_stand_in`). Found by any of its names: a Japanese PC lists MS Mincho and Yu Gothic by
         // their Japanese names (PowerPoint's PDF of 082.ppt has YuGothic-Regular, not the UI face whose kana are narrower).
-        let stand_in = is_east_asian_typeface(name).then(|| self.japanese_stand_in_family(name)).flatten();
+        // The words of a name (ゴシック, 明朝, Sans, Serif, Mono...) are not read: Word, Excel and PowerPoint draw a missing typeface by what the file
+        // says about it, not by its name (13 invented names with and without such words, all drawn alike: `tasks/doc/requests/2026-11-14-fake-font-fallback-result.md`).
+        // (A Word file's: the Latin names of a typeface whose charset says CJK too, `word_stand_in`.)
+        let stand_in = if self.kind() == DocKind::Document { self.word_stand_in(name) } else { is_east_asian_typeface(name).then(|| self.japanese_stand_in_family(name)).flatten() };
         match stand_in {
             Some(fallback) => {
                 // ＭＳ ゴシック's strokes are heavier than 游ゴシック's / Hiragino Sans W3's regular weight (c006_b2).
                 let ms_gothic = matches!(name, "ＭＳ ゴシック" | "MS Gothic" | "ＭＳ Ｐゴシック" | "MS PGothic" | "ＭＳゴシック" | "ＭＳＰゴシック"); // i18n-ok（フォント名の判定）
+                // A weight letter at the end of a Japanese name ("AR P丸ゴシック体E") is no weight of the typeface PowerPoint draws instead (its PDF of
+                // 082.ppt has YuGothic-Regular for it, where the name's E made ibisOffice draw Bold): the stand-in comes from what the file says, not
+                // from the words of the name (as for the Calibri stand-in below).
+                // The HG typefaces (Ricoh's; HGP創英角ｺﾞｼｯｸUB, HGPｺﾞｼｯｸE, HGS創英角ｺﾞｼｯｸUB, HG丸ｺﾞｼｯｸM-PRO, HG明朝B...) are split off by their name, for what the name stands for: Microsoft
+                // Office's Japanese fonts install them (the Windows PC that made the corpus's PDFs, Microsoft 365, has 36 of them in its font list: HG, HGP and HGS of
+                // ｺﾞｼｯｸE/M, 創英角ｺﾞｼｯｸUB, 創英角ﾎﾟｯﾌﾟ体, 創英ﾌﾟﾚｾﾞﾝｽEB, 教科書体, 明朝B/E, 行書体...), so PowerPoint draws them as the real font, with its own weight: the weight letters of the
+                // name (E, UB, EB, B) are their weight (heavy-named-font.pptx, `pptx-C004-b1`). A typeface that is not on that PC (the AR ones: its font list has none, and PowerPoint's PDF of 082.ppt
+                // has YuGothic-Regular for "AR P丸ゴシック体E") is drawn by a stand-in that takes no weight from the name.
+                let office_typeface = name.starts_with("HG") || name.starts_with("ＨＧ"); // i18n-ok（フォント名の判定）
+                let weight = if self.calibri_for_missing && !name.is_ascii() && !office_typeface { FontWeight::NORMAL } else { weight };
                 let w = if ms_gothic && weight == FontWeight::NORMAL { FontWeight::MEDIUM } else { weight };
                 (fallback, w)
             }
             // Excel draws a typeface the PC lacks by the family of its font (Times New Roman, Courier New, Arial).
             _ if self.kind() == DocKind::Workbook => {
-                let family = self.traits.get(name).and_then(|t| t.family);
+                let traits = self.traits.get(name);
+                let family = traits.and_then(|t| t.family);
+                // charset 128 (Shift-JIS) with a family makes Excel draw Latin letters with the East Asian stand-in too (Windows measurement 2026-11-14).
+                if let Some(found) = traits.filter(|t| t.charset == Some(128)).and_then(|_| workbook_charset128_stand_in(family)).and_then(|names| first_installed_family(names, &self.installed, Some(&self.embedded_index), true)) {
+                    return (found, weight);
+                }
                 match workbook_latin_stand_in(family).iter().find(|f| self.installed.contains(**f)) {
                     Some(found) => ((*found).into(), weight),
                     None => (".SystemUIFont".into(), weight),
                 }
             }
-            _ if is_serif_latin_typeface(name) => match ["Times New Roman", "Liberation Serif", "Tinos", "Georgia"].into_iter().find(|f| self.installed.contains(*f)) {
-                Some(serif) => (serif.into(), weight),
-                None => (".SystemUIFont".into(), weight),
-            },
             // Humanist sans-serifs whose widths match Calibri (`Carlito`) closer than Arial.
             _ if name.starts_with("Meta") && self.installed.contains(BUNDLED_FAMILY) => (BUNDLED_FAMILY.into(), weight),
             // PowerPoint draws every line of a presentation in a typeface that is not on the PC with Calibri (Calibri-Bold
@@ -2309,7 +2687,7 @@ impl Fonts {
             // `missing-font-ctx-*.docx`, with and without a font table and theme: four of five typefaces Cambria, "Noto Sans JP", a typeface
             // Word itself knows, Calibri: not decided here).
             _ if self.docx_font_table.is_some() => {
-                let listed_other = self.docx_font_table.as_ref().is_some_and(|m| m.get(name).is_some_and(|f| f.family != "roman"));
+                let listed_other = word_missing_stand_ins(self.docx_entry(name), name).0 == WordStandIn::Calibri;
                 let wanted: &[&str] = if listed_other { &["Calibri", BUNDLED_FAMILY] } else { &["Cambria"] };
                 match wanted.iter().find(|f| self.installed.contains(**f)) {
                     Some(found) => ((*found).into(), weight),
@@ -2326,7 +2704,13 @@ impl Fonts {
     }
 }
 
+/// A colour of the document as GPUI draws it. In a file with the CMYK mode on the screen is a soft proof: the colour is what the
+/// press prints (the sRGB passed through CMYK and back with the converter in use; `ibis_office_base::cmyk`). The file keeps its sRGB.
 pub fn hsla(c: DocColor) -> Hsla {
+    plain_hsla(DocColor { rgb: ibis_office_base::cmyk::shown(c.rgb), ..c })
+}
+
+fn plain_hsla(c: DocColor) -> Hsla {
     let Rgb(v) = c.rgb;
     Rgba {
         r: ((v >> 16) & 0xff) as f32 / 255.0,
@@ -2338,8 +2722,9 @@ pub fn hsla(c: DocColor) -> Hsla {
 }
 
 pub(crate) fn hsla_mode(c: DocColor, mode: ColorMode) -> Hsla {
+    let c = DocColor { rgb: ibis_office_base::cmyk::shown(c.rgb), ..c };
     match mode {
-        ColorMode::Color => hsla(c),
+        ColorMode::Color => plain_hsla(c),
         ColorMode::Grayscale => {
             let Rgb(v) = c.rgb;
             let r = ((v >> 16) & 0xff) as f32;
@@ -3034,7 +3419,7 @@ fn clipped_fill(media: MediaId, shape: &Shape, outlines: &[ibis_doc_model::Outli
     let key = {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        (frame.width, frame.height, shape.flip_h, shape.flip_v).hash(&mut hasher);
+        (frame.width, frame.height, shape.flip_h, shape.flip_v, device_bucket(frame.width, res)).hash(&mut hasher);
         for p in subpaths.iter().flatten() {
             (p.0.to_bits(), p.1.to_bits()).hash(&mut hasher);
         }
@@ -3044,7 +3429,7 @@ fn clipped_fill(media: MediaId, shape: &Shape, outlines: &[ibis_doc_model::Outli
         return Some(found.clone());
     }
     let (encoding, data) = res.source(media)?;
-    let svg = crate::picture_svg::clipped_picture(&data, encoding, frame.width, frame.height, &subpaths, shape.flip_h, shape.flip_v);
+    let svg = crate::picture_svg::clipped_picture(&data, encoding, frame.width, frame.height, &subpaths, shape.flip_h, shape.flip_v, device_px_per_emu(res));
     let image = Arc::new(Image::from_bytes(ImageFormat::Svg, svg));
     res.clipped.borrow_mut().insert(key, image.clone());
     Some(image)
@@ -3186,20 +3571,19 @@ fn paint_outline_shadow(window: &mut Window, mapped: &[Vec<Vec<(f32, f32)>>], bl
 }
 
 /// Where a shape `w` × `h` pixels tilted by `tilt` appears in its frame, as
-/// x, y, width and height: an orthographic view shortens it by the cosine
-/// of each turn, and its lift off the slide moves it by the sine
-/// (measured against PowerPoint's PDF output: a lime band under a heading
-/// turned 75° about the horizontal axis and lifted 6 pt).
+/// x, y, width and height. The view is orthographic: a turn about the horizontal axis (`lat`) shortens the shape's height by the cosine of the angle
+/// and a turn about the vertical axis (`lon`) its width, and the shape's lift off the slide (`sp3d/@z`) moves it by the sine of the turn: down for a positive
+/// `lat`, to the left for a positive `lon`. Measured on PowerPoint for Windows (K0049: a probe of the shape of the heading's lime band, `lat` 0 to 105 degrees
+/// and `lon` 75 degrees, a lift of 0 to 24 pt; its PDF's lime rows and columns against this: within one pixel at 1920 across, and no band around the shape).
+/// A turn about both axes (or about the shape's own, `rev`) makes a parallelogram, which this does not draw: the product of the cosines stands for it.
 fn tilted_frame(tilt: ibis_doc_model::Tilt, w: f32, h: f32, scale: f32) -> (f32, f32, f32, f32) {
     let lat = (tilt.lat as f32 / 60_000.0).to_radians();
     let lon = (tilt.lon as f32 / 60_000.0).to_radians();
     let depth = tilt.depth as f32 * scale;
     let (tw, th) = (w * lon.cos().abs(), h * lat.cos().abs());
-    let x = (w - tw) / 2.0 + depth * lon.sin();
+    let x = (w - tw) / 2.0 - depth * lon.sin();
     let y = (h - th) / 2.0 + depth * lat.sin();
-    // PowerPoint draws the tilted shape's edges too, about a point around it.
-    let edge = 0.75 * scale * EMU_PER_POINT as f32;
-    (x - edge, y, tw + edge * 2.0, th + edge)
+    (x, y, tw, th)
 }
 
 /// Place an element at `frame` on a slide drawn at `scale`.
@@ -3446,6 +3830,54 @@ pub fn shape_element(
     shape_element_with_positions(shape, frame, scale, res, text, None)
 }
 
+thread_local! {
+    /// Pixels an EMU is in the picture being made now (the `scale` of the shape being drawn): a picture whose own size is not known (a metafile) is rasterized to
+    /// as many pixels as that shows (see `picture_svg::unknown_size_px`).
+    static OUTPUT_PX_PER_EMU: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+    static RECORD_TABLE_CELLS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static RECORDED_TEXT_BOXES: std::cell::RefCell<Vec<(ibis_doc_model::TextBody, crate::rich_text::TextPositions)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static RECORDED_CELLS: std::cell::RefCell<Vec<(ibis_doc_model::ShapeId, std::collections::HashMap<(usize, usize), crate::rich_text::TextPositions>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Device pixels an EMU is for a picture drawn now: the shape's `scale` times two (the retina factor `picture_at_size` counts on; a PNG's width, a window's zoom). 0 when
+/// the page is drawn for a PDF (`res.exact`): its pictures are as large as PowerPoint's PDF has them, 100 pixels an inch for a picture of unknown size.
+fn device_px_per_emu(res: &Resources) -> f64 {
+    if res.exact { 0.0 } else { f64::from(OUTPUT_PX_PER_EMU.with(std::cell::Cell::get)) * 2.0 }
+}
+
+/// The share of `device_px_per_emu` that matters to a picture of this frame width, in steps of 64 pixels up to the 2048 it is made at most: the cache keys of the pictures
+/// made for it carry it, so a picture made for a small zoom is not taken for a large one.
+fn device_bucket(frame_width: i64, res: &Resources) -> u32 {
+    ((frame_width as f64 * device_px_per_emu(res)).min(2048.0) / 64.0).ceil() as u32
+}
+
+/// Whether the tables painted from now on record where the text of their cells with a link is (for the links of a PDF); off by default.
+pub fn record_table_cells(on: bool) {
+    RECORD_TABLE_CELLS.with(|r| r.set(on));
+    RECORDED_CELLS.with(|l| l.borrow_mut().clear());
+    RECORDED_TEXT_BOXES.with(|l| l.borrow_mut().clear());
+}
+
+/// Whether the pages of a document painted from now on record where the text of their text boxes with a link is (the same switch as `record_table_cells`).
+pub fn recording_links() -> bool {
+    RECORD_TABLE_CELLS.with(|r| r.get())
+}
+
+/// A text box of a document's page painted with its text's positions (for its links in a PDF): the box's text and where it was painted.
+pub fn record_text_box(body: ibis_doc_model::TextBody, positions: crate::rich_text::TextPositions) {
+    RECORDED_TEXT_BOXES.with(|l| l.borrow_mut().push((body, positions)));
+}
+
+/// The text boxes recorded since the last call.
+pub fn take_recorded_text_boxes() -> Vec<(ibis_doc_model::TextBody, crate::rich_text::TextPositions)> {
+    RECORDED_TEXT_BOXES.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
+/// The cells recorded since the last call, by their table's shape: each (row, column) with the positions of its text.
+pub fn take_recorded_table_cells() -> Vec<(ibis_doc_model::ShapeId, std::collections::HashMap<(usize, usize), crate::rich_text::TextPositions>)> {
+    RECORDED_CELLS.with(|l| std::mem::take(&mut *l.borrow_mut()))
+}
+
 /// `shape_element`, recording where the shape's text is painted in
 /// `positions` (for the caret and clicks while the text is edited).
 pub fn shape_element_with_positions(
@@ -3456,6 +3888,7 @@ pub fn shape_element_with_positions(
     text: Option<AnyElement>,
     positions: Option<&crate::rich_text::TextPositions>,
 ) -> AnyElement {
+    OUTPUT_PX_PER_EMU.with(|c| c.set(scale));
     // A leaning shape (the slide show's ライト スピード): its fill and outline are painted as paths that lean, then its text, leaning too.
     if SHEAR.with(std::cell::Cell::get) != 0.0
         && let ShapeKind::Auto(auto) = &shape.kind
@@ -3601,7 +4034,25 @@ pub fn shape_element_with_positions(
         ShapeKind::Placeholder(kind) => placeholder_element(container, kind, frame, scale).into_any_element(),
         ShapeKind::Chart(chart) => container.child(crate::chart_view::chart_element(chart, frame, scale, res)).into_any_element(),
         // A table's rotation and flip are not applied (PowerPoint draws it upright, as measured by PTBL-00251 to 00255).
-        ShapeKind::Table(table) => container.child(crate::table_view::table_element(table, frame, scale, res)).into_any_element(),
+        ShapeKind::Table(table) => {
+            // The PDF's links over the text of cells (`record_table_cells`): where the text of each cell with a link is painted.
+            if RECORD_TABLE_CELLS.with(std::cell::Cell::get) {
+                let mut recorded = std::collections::HashMap::new();
+                for (r, row) in table.rows.iter().enumerate() {
+                    for (c, cell) in row.cells.iter().enumerate() {
+                        if cell.text.paragraphs.iter().any(|p| p.runs.iter().any(|run| run.style.link.is_some())) {
+                            recorded.insert((r, c), crate::rich_text::TextPositions::default());
+                        }
+                    }
+                }
+                if !recorded.is_empty() {
+                    let element = crate::table_view::table_element_recording(table, frame, scale, res, None, Some(&recorded));
+                    RECORDED_CELLS.with(|l| l.borrow_mut().push((shape.id, recorded)));
+                    return container.child(element).into_any_element();
+                }
+            }
+            container.child(crate::table_view::table_element(table, frame, scale, res)).into_any_element()
+        }
         ShapeKind::Sheet(sheet) => container.child(format_hooks::sheet_element(sheet, frame, scale, res)).into_any_element(),
         ShapeKind::Page { document, index } => container.child(format_hooks::page_element(document, *index, frame, scale, res)).into_any_element(),
         ShapeKind::Slicer(slicer) => container.child(format_hooks::slicer_element(slicer, frame, scale)).into_any_element(),
@@ -3686,11 +4137,15 @@ fn eavert_set_as_vert(shape: &Shape, body: &TextBody) -> bool {
         && (shape.rotation + body.rotation + 5_400_000).rem_euclid(21_600_000) == 0
 }
 
-fn text_turn(shape: &Shape, body: &TextBody, (l, t, r, b): (f64, f64, f64, f64), frame: EmuRect, scale: f32) -> Option<crate::rich_text::TextTurn> {
+fn text_turn(shape: &Shape, body: &TextBody, rect: (f64, f64, f64, f64), frame: EmuRect, scale: f32) -> Option<crate::rich_text::TextTurn> {
+    text_turn_of(shape.rotation, shape.flip_v, body, rect, (frame.width as f64, frame.height as f64), scale)
+}
+
+fn text_turn_of(rotation: i32, flip_v: bool, body: &TextBody, (l, t, r, b): (f64, f64, f64, f64), (fw, fh): (f64, f64), scale: f32) -> Option<crate::rich_text::TextTurn> {
     let degrees = |v: i32| v.rem_euclid(21_600_000) as f32 / 60_000.0;
-    let shape_turn = degrees(shape.rotation);
+    let shape_turn = degrees(rotation);
     // Upright text is turned back as much as the shape turns it.
-    let flip_turn = if body.upright { 360.0 - shape_turn } else if shape.flip_v { 180.0 } else { 0.0 };
+    let flip_turn = if body.upright { 360.0 - shape_turn } else if flip_v { 180.0 } else { 0.0 };
     let text = (degrees(body.rotation) + degrees(quarter_turn(body)) + flip_turn) % 360.0;
     let shear = SHEAR.with(std::cell::Cell::get);
     // East Asian vertical writing whose turns add up to a whole turn is still laid out as a column turned back: its characters stand up
@@ -3699,10 +4154,31 @@ fn text_turn(shape: &Shape, body: &TextBody, (l, t, r, b): (f64, f64, f64, f64),
     if shape_turn == 0.0 && text == 0.0 && shear == 0.0 && !columns {
         return None;
     }
-    let (fw, fh) = (frame.width as f64, frame.height as f64);
     let frame_offset = (((fw - l - r) / 2.0) as f32 * scale, ((fh - t - b) / 2.0) as f32 * scale);
-    let shape_turned = (shape_turn != 0.0 || shape.flip_v) && !body.upright;
+    let shape_turned = (shape_turn != 0.0 || flip_v) && !body.upright;
     Some(crate::rich_text::TextTurn { text, shape: shape_turn, frame: frame_offset, shape_turned, shear, columns })
+}
+
+/// The text of a table cell (`cw` by `ch` EMU) whose text is turned (`a:tcPr@vert`): laid out as a shape's text is (its rectangle turned a
+/// quarter turn when the writing is, the insets given turned back, the text turned about the cell's middle), in a box that fills the cell.
+pub(crate) fn turned_cell_text(
+    body: &TextBody,
+    cw: f64,
+    ch: f64,
+    scale: f32,
+    res: &Resources,
+    positions: Option<&crate::rich_text::TextPositions>,
+    origin_x: Option<f32>,
+) -> Div {
+    let turn = text_turn_of(0, false, body, (0.0, 0.0, cw, ch), (cw, ch), scale);
+    let quarter = quarter_turn(body).rem_euclid(21_600_000);
+    let sideways = quarter.rem_euclid(10_800_000) == 5_400_000;
+    let (w, h) = if sideways { (ch, cw) } else { (cw, ch) };
+    // A cell's insets are not turned back (the turned layout takes them as they are: marL at the top of a `vert` column; measured on the
+    // PowerPoint PDF of a table of vertical cells, 077), unlike a shape's.
+    let b = fit_insets(body, w, h).unwrap_or_else(|| body.clone());
+    let text = text_body_element(&b, Some(w), Some(h), scale, res, positions, turn, origin_x, None);
+    div().absolute().left(px(((cw - w) / 2.0) as f32 * scale)).top(px(((ch - h) / 2.0) as f32 * scale)).w(px(w as f32 * scale)).h(px(h as f32 * scale)).child(text)
 }
 
 /// The shape is grown by half the glow's radius (fitted 0.48, read as `rad / 2`).
@@ -3848,13 +4324,13 @@ fn outline_element(stroke: &Stroke, w: f32, h: f32, radius: Pixels, scale: f32, 
 /// Stroke width on screen. GPUI's path rasterizer drops paths thinner than a
 /// pixel, so thin lines are drawn one pixel wide (as PowerPoint does too).
 fn stroke_px(stroke: &Stroke, scale: f32) -> Pixels {
-    px((stroke.width as f32 * scale).max(1.0))
+    px((stroke.drawn_width() as f32 * scale).max(1.0))
 }
 
 /// Stroke width for painting: at least a pixel of the screen, so a thin line
 /// on a high-density screen is one device pixel wide, as PowerPoint draws it.
 fn painted_stroke_px(stroke: &Stroke, scale: f32, window: &Window) -> Pixels {
-    px((stroke.width as f32 * scale).max(1.0 / window.scale_factor()))
+    px((stroke.drawn_width() as f32 * scale).max(1.0 / window.scale_factor()))
 }
 
 /// The colour of a face a bevel is shaded from: a solid fill's, or a gradient's first stop.
@@ -3968,6 +4444,25 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
         // Drawn exactly, as paths (the quads would be put on whole pixels),
         // but for what only the elements draw (a picture fill, shadows).
         && (!res.exact || matches!(auto.fill, Fill::Image(_)) || auto.shadow.is_some() || auto.glow.is_some() || auto.inner_shadow.is_some() || auto.reflection.is_some());
+
+    // A tilted shape's body (fill and outline) is drawn as a shape of its own, as large and where `tilted_frame` puts it (an orthographic view shortens it by the
+    // cosine of each turn and lifts it by the sine: measured against PowerPoint for Windows, the probe of K0049); the text, drawn by the caller, keeps the frame.
+    if !rotated && let Some(tilt) = auto.tilt.filter(|t| t.lat != 0 || t.lon != 0 || t.depth != 0 || t.extrusion_h > 0) {
+        let (w, h) = (frame.width as f32 * scale, frame.height as f32 * scale);
+        let (x, y, tw, th) = tilted_frame(tilt, w, h, scale);
+        let to_emu = |v: f32| (v / scale).round() as i64;
+        let body_frame = EmuRect::new(frame.x + to_emu(x), frame.y + to_emu(y), to_emu(tw).max(0), to_emu(th).max(0));
+        let body_shape = Shape { frame: body_frame, ..shape.clone() };
+        let body = AutoShape { tilt: None, ..auto.clone() };
+        let body_div = div().absolute().left(px(x)).top(px(y)).w(px(tw)).h(px(th));
+        let mut container = container;
+        if tilt.extrusion_h > 0 {
+            let ext_px = (tilt.extrusion_h as f32 * scale).max(1.0);
+            let ext_clr = tilt.extrusion_color.map(hsla).unwrap_or_else(|| Hsla { a: 0.75, ..hsla(DocColor::opaque(Rgb(0x404040))) });
+            container = container.child(div().absolute().left(px(x)).top(px(y + 1.0)).w(px(tw)).h(px(th + ext_px)).bg(ext_clr));
+        }
+        return container.child(auto_shape(body_div, &body_shape, &body, body_frame, scale, res));
+    }
 
     if simple {
         let w = frame.width as f32 * scale;
@@ -4246,8 +4741,11 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
             if let Some(s) = auto.inner_shadow.filter(|_| auto.fill != Fill::None) {
                 let (dx, dy, blur, color) = shadow_parts(s, scale);
                 // GPUI moves the hole by the offset, so the shadow falls on the
-                // other side: PowerPoint's falls towards its direction.
-                let inner = BoxShadow { color, offset: point(px(-dx), px(-dy)), blur_radius: px(blur / 2.0), spread_radius: px(0.), inset: true };
+                // other side: PowerPoint's falls towards its direction. The blur is the outer shadow's (a third of the radius, GPUI's `blur_radius` being the
+                // deviation of the Gaussian: `shaders.metal`): the same rule for the bars of a chart (`chart_view`). Of 6 inner shadows of the PEFF suite (radius 2 pt) a half
+                // of it and a third pass alike (94 of 213 in all); the bars of corpus 098 (9 pt) fit a third (the shadow at the centre of a 6.1 pt bar is 0.30 in PowerPoint's PDF,
+                // 0.32 for a deviation of a third, 0.78 for the whole radius).
+                let inner = BoxShadow { color, offset: point(px(-dx), px(-dy)), blur_radius: px(blur / 3.0), spread_radius: px(0.), inset: true };
 
                 container = container.child(div().absolute().top_0().left_0().size_full().rounded(radius).shadow(vec![inner]));
             }
@@ -4288,32 +4786,7 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
             container
 
         };
-        return match auto.tilt {
-            // The tilted body is drawn apart from the frame, which keeps the text.
-            Some(tilt) => {
-                let (x, y, tw, th) = tilted_frame(tilt, w, h, scale);
-                let front = paint(div().absolute().left(px(x)).top(px(y)).w(px(tw)).h(px(th)));
-                if tilt.extrusion_h > 0 {
-                    let ext_px = (tilt.extrusion_h as f32 * scale).max(1.0);
-                    let ext_clr = tilt
-                        .extrusion_color
-                        .map(hsla)
-                        .unwrap_or_else(|| Hsla { a: 0.75, ..hsla(DocColor::opaque(Rgb(0x404040))) });
-                    let ext_div = div()
-                        .absolute()
-                        .left(px(x))
-                        .top(px(y + 1.0))
-                        .w(px(tw))
-                        .h(px(th + ext_px))
-                        .rounded(radius)
-                        .bg(ext_clr);
-                    container.child(ext_div).child(front)
-                } else {
-                    container.child(front)
-                }
-            }
-            None => paint(container),
-        };
+        return paint(container);
     }
 
     // Everything else is drawn as paths, which can also be rotated and flipped.
@@ -4516,7 +4989,7 @@ fn auto_shape(container: Div, shape: &Shape, auto: &AutoShape, frame: EmuRect, s
                     if !layers.is_empty()
                         && let Some(stroke) = &stroke_for_soft
                     {
-                        let width = f32::from(px((stroke.width as f32 * scale).max(1.0 / sf)));
+                        let width = f32::from(px((stroke.drawn_width() as f32 * scale).max(1.0 / sf)));
                         let mut quads: Vec<Vec<Vec<(f32, f32)>>> = Vec::new();
                         for o in outlines.iter().filter(|o| o.stroke) {
                             for sub in &o.subpaths {
@@ -5870,7 +6343,7 @@ fn styled_image_with(flip_h: bool, flip_v: bool, mirror: bool, picture: &Picture
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         (frame.width, frame.height, picture.crop, picture.clear, picture.luminance, picture.duotone, picture.effects, picture.soft_edge).hash(&mut hasher);
         (flip_h, flip_v, mirror, picture.tile, picture.fill_rect, picture.artistic_effect).hash(&mut hasher);
-        blur.map(f64::to_bits).hash(&mut hasher);
+        (blur.map(f64::to_bits), device_bucket(frame.width, res)).hash(&mut hasher);
         for p in subpaths.iter().flatten().flatten() {
             (p.0.to_bits(), p.1.to_bits()).hash(&mut hasher);
         }
@@ -5881,7 +6354,7 @@ fn styled_image_with(flip_h: bool, flip_v: bool, mirror: bool, picture: &Picture
     }
     let (encoding, data) = res.source(picture.media)?;
     let rgb = |c: ibis_doc_model::Rgb| (c.r(), c.g(), c.b());
-    let look = crate::picture_svg::Look { clear: picture.clear.map(rgb), luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| (rgb(a), rgb(b))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect, fill_rect: None, upright: false, mirror: if mirror { (flip_h, flip_v) } else { (false, false) }, blur };
+    let look = crate::picture_svg::Look { clear: picture.clear.map(rgb), luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| (rgb(a), rgb(b))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect, fill_rect: None, upright: false, mirror: if mirror { (flip_h, flip_v) } else { (false, false) }, blur, device_px_per_emu: device_px_per_emu(res) };
     // Tiles: a tile is the picture's pixels at one point each, scaled (`a:tile/@sx`, `@sy`); the first sits at
     // the frame's corner `align` names, moved by `tx`, `ty`.
     let tile = picture.tile.and_then(|t| {
@@ -5930,7 +6403,7 @@ fn rotated_image(shape: &Shape, picture: &Picture, frame: EmuRect, upright: bool
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         (shape.rotation, shape.flip_h, shape.flip_v, picture.crop, frame.width, frame.height, picture.clear, picture.luminance, picture.duotone, picture.effects, picture.soft_edge, picture.artistic_effect).hash(&mut hasher);
-        (upright, picture.fill_rect).hash(&mut hasher);
+        (upright, picture.fill_rect, device_bucket(frame.width, res)).hash(&mut hasher);
         for p in subpaths.iter().flatten().flatten() {
             (p.0.to_bits(), p.1.to_bits()).hash(&mut hasher);
         }
@@ -5942,7 +6415,7 @@ fn rotated_image(shape: &Shape, picture: &Picture, frame: EmuRect, upright: bool
     let (encoding, data) = res.source(picture.media)?;
     let local = EmuRect { x: 0, y: 0, ..frame };
     let rgb = |c: ibis_doc_model::Rgb| (c.r(), c.g(), c.b());
-    let look = crate::picture_svg::Look { clear: picture.clear.map(rgb), luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| (rgb(a), rgb(b))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect, fill_rect: picture.fill_rect, upright, mirror: (false, false), blur: None };
+    let look = crate::picture_svg::Look { clear: picture.clear.map(rgb), luminance: picture.luminance, duotone: picture.duotone.map(|(a, b)| (rgb(a), rgb(b))), effects: picture.effects, soft_edge: picture.soft_edge, artistic_effect: picture.artistic_effect, fill_rect: picture.fill_rect, upright, mirror: (false, false), blur: None, device_px_per_emu: device_px_per_emu(res) };
     let wrapped = crate::picture_svg::rotated_picture(&data, encoding, local, shape.rotation, shape.flip_h, shape.flip_v, picture.crop, subpaths.as_deref(), &look);
     let entry = (Arc::new(Image::from_bytes(ImageFormat::Svg, wrapped.svg)), wrapped.bounds);
     res.rotated.borrow_mut().insert(key, entry.clone());
@@ -5994,6 +6467,27 @@ pub(crate) fn text_body_element(
     if body.vertical && matches!(body.vertical_kind, ibis_doc_model::VerticalKind::WordArt | ibis_doc_model::VerticalKind::WordArtRtl) {
         return vertical_text_element(body, scale, res);
     }
+    // `anchorCtr`: PowerPoint puts the block of the widest line's width in the middle between the insets, and then aligns each line
+    // within it (issue #189: a left-aligned line of 180 pt in a 252 pt area starts 36 pt = (252 - 180) / 2 from the inset). The text is
+    // set again with the insets widened by that on both sides, so its room is the widest line's.
+    if body.anchor_center && !body.vertical && body.columns <= 1 && obstacles.is_none() {
+        if let Some(w) = width {
+            let text = res.window_text_system();
+            let px_per_point = scale * EMU_PER_POINT as f32;
+            let mut widest = 0.0f32;
+            for (i, p) in body.paragraphs.iter().enumerate() {
+                let (_, line) = res.measure_paragraph_widest(body, p, w, i == 0, i + 1 == body.paragraphs.len(), px_per_point, None, &text);
+                widest = widest.max(line);
+            }
+            let room = (w - (body.insets.left + body.insets.right) as f64).max(0.0);
+            let shift = ((room - (widest / scale) as f64) / 2.0).floor().max(0.0) as i64;
+            let mut centred = body.clone();
+            centred.anchor_center = false;
+            centred.insets.left += shift;
+            centred.insets.right += shift;
+            return text_body_element(&centred, width, height, scale, res, positions, turn, origin_x, obstacles);
+        }
+    }
     // Text among obstacles anchored to the middle or the bottom: it starts where the height it takes among them leaves it, so the
     // obstacles are moved up by that (two rounds: the height depends on where the text is).
     let obstacles = obstacles.map(|o| {
@@ -6003,7 +6497,8 @@ pub(crate) fn text_body_element(
             VerticalAnchor::Bottom => 1.0,
         };
         let (Some(w), Some(h)) = (width, height) else { return o };
-        if anchor == 0.0 {
+        // (Text in columns starts at the top.)
+        if anchor == 0.0 || body.columns > 1 {
             return o;
         }
         let area_w = (w - (body.insets.left + body.insets.right) as f64).max(0.0);
@@ -6035,7 +6530,7 @@ pub(crate) fn text_body_element(
     }
     // Text bent to a warp (`a:prstTxWarp`) that has two guide curves: its glyphs are collected and painted
     // bent after the paragraphs (the other warps are not drawn yet).
-    if let Some(geometry) = body.warp.as_deref().and_then(|name| ibis_pptx::text_warp_geometry(name, &body.warp_adjust))
+    if let Some(geometry) = body.warp.as_deref().and_then(|name| ibis_formats::text_warp_geometry(name, &body.warp_adjust))
         && matches!(geometry.outline(100.0, 100.0).len(), 1 | 2 | 3 | 4 | 6)
     {
         *block.warp.borrow_mut() = Some(crate::rich_text::Warp::new(geometry));
@@ -6045,6 +6540,8 @@ pub(crate) fn text_body_element(
     let single_path = block.warp.borrow().as_ref().is_some_and(|w| matches!(w.geometry.outline(100.0, 100.0).len(), 1 | 3));
     let slots = positions.map(|p| p.slots(body.paragraphs.len()));
     let paragraphs = body.paragraphs.iter().enumerate().map(|(index, paragraph)| {
+        let shifted = bullet_hang_shifted(paragraph);
+        let paragraph = &*shifted;
         let align = paragraph.align.unwrap_or(body.style.align);
         // (Vertical text is not kerned: PowerPoint's PDFs of PTXT-00158 to 00162 are not.)
         let unkerned = |mut s: TextStyle| {
@@ -6054,7 +6551,7 @@ pub(crate) fn text_body_element(
             s
         };
         let styles: Vec<TextStyle> = paragraph.runs.iter().map(|r| unkerned(res.with_theme_font(body.style.with_run(&r.style), &r.text))).collect();
-        let end_style = unkerned(res.with_theme_font(body.style.with_run(&paragraph.end_style), ""));
+        let end_style = unkerned(res.with_theme_font(body.style.with_run(&paragraph.mark_style()), ""));
         let first = styles.first().unwrap_or(&end_style);
         let line_height = match paragraph.line_spacing {
             Some(LineSpacing::Percent(p)) => relative(LINE_HEIGHT * p as f32 / 100_000.0),
@@ -6077,9 +6574,7 @@ pub(crate) fn text_body_element(
         // non-hanging bullet (`indent >= 0`) pushes the first line right.
         let has_text = paragraph.runs.iter().any(|r| !r.text.is_empty());
         let first_line = if let Some(b) = paragraph.bullet.as_ref().filter(|_| has_text) {
-            let bullet_emu = (first.font_size as f32 / 100.0 * font_scale * (b.size as f32 / 100_000.0) * 0.55 * EMU_PER_POINT as f32) as i64;
-            let text_chars = b.text.chars().count().max(1) as i64;
-            (paragraph.indent + bullet_emu * text_chars).max(0)
+            (paragraph.indent + res.bullet_advance_emu(b, first, first.font_size as f32 / 100.0 * font_scale * (b.size as f32 / 100_000.0))).max(0)
         } else if paragraph.bullet.is_some() {
             0
         } else {
@@ -6087,7 +6582,9 @@ pub(crate) fn text_body_element(
         };
         // PowerPoint puts no space above the first paragraph of a body, nor
         // below the last (measured: at the bottom of its box).
-        let space_before = if index == 0 {
+        // With `spcFirstLastPara="1"` (`TextBody::space_first_last`) it does (issue #189: PowerPoint 38.4 pt to the first baseline's
+        // descent against 20.1 pt, with 18 pt before).
+        let space_before = if index == 0 && !body.space_first_last {
             0
         } else if paragraph.space_before_exact {
             paragraph.space_before
@@ -6095,7 +6592,7 @@ pub(crate) fn text_body_element(
             // A space before in points is drawn rounded to a whole point (see `Paragraph::space_before_exact`; a half goes up: 5.5 is 6).
             (paragraph.space_before + 50) / 100 * 100
         };
-        let space_after = if index + 1 == body.paragraphs.len() { 0 } else { paragraph.space_after };
+        let space_after = if index + 1 == body.paragraphs.len() && !body.space_first_last { 0 } else { paragraph.space_after };
         // An empty paragraph still takes a line at its mark's size.
         let mark = [ibis_doc_model::Run { text: String::new(), style: paragraph.end_style.clone() }];
         let (runs, run_styles) = if paragraph.runs.is_empty() {
@@ -6108,7 +6605,9 @@ pub(crate) fn text_body_element(
         // size, so on the text's baseline, where a box of its own put it a little low.
         let turned_bullet = Some(()).filter(|_| turn.is_some() || paragraph.bullet.as_ref().is_some_and(|b| b.auto.is_some() || b.text == "•")).and_then(|_| {
             let b = paragraph.bullet.as_ref().filter(|b| has_text && b.picture.is_none())?;
-            let bullet_style = if b.auto.is_none()
+            let bullet_style = if let (Some(name), None) = (&b.font, &b.auto) {
+                TextStyle { font: Some(name.clone()), bold: false, italic: false, ..first.clone() }
+            } else if b.auto.is_none()
                 && !b.text.chars().any(ibis_doc_model::is_east_asian)
                 && first.font.as_deref().is_some_and(is_east_asian_typeface)
                 && first.fallback_font.is_some()
@@ -6116,6 +6615,13 @@ pub(crate) fn text_body_element(
                 TextStyle { font: first.fallback_font.clone(), bold: false, ..first.clone() }
             } else if b.auto.is_none() {
                 TextStyle { bold: false, ..first.clone() }
+            } else if !b.text.chars().any(ibis_doc_model::is_east_asian)
+                && first.font.as_deref().is_some_and(is_east_asian_typeface)
+                && first.fallback_font.is_some()
+            {
+                // A number is ASCII: it is in the text's Latin face, not the East Asian one the text's first run names (PowerPoint's PDF of
+                // 006's "2." heading: Meiryo Bold, the run's `a:latin`, while its `a:ea` is M PLUS 1p).
+                TextStyle { font: first.fallback_font.clone(), ..first.clone() }
             } else {
                 first.clone()
             };
@@ -6239,11 +6745,21 @@ pub(crate) fn text_body_element(
                                 1 => default_east_asian.clone().unwrap_or_else(|| font.clone()),
                                 _ => font.clone(),
                             };
+                            // PowerPoint does not kern East Asian characters: 044's title, 'kern="1200"' from its master and set in Yu Gothic Light, has the
+                            // kana at the font's design spacing in PowerPoint's PDF, and the shaper's pair kerning (GPOS) closes it up.
+                            let piece_font = if res.fonts.kind() != DocKind::Document && text.chars().any(crate::rich_text::is_cjk) {
+                                let mut f = piece_font;
+                                f.features = FontFeatures(Arc::new(f.features.0.iter().map(|(t, v)| (t.clone(), if t == "kern" { 0 } else { *v })).collect()));
+                                f
+                            } else {
+                                piece_font
+                            };
                             let bold_arrow = !r.style.invisible && s.bold && !text.is_empty() && text.chars().all(|c| ('\u{2190}'..='\u{21ff}').contains(&c));
                             crate::rich_text::Piece {
                                 text,
                                 font: piece_font,
                                 size: size * k,
+                                inherits_size: r.style.size_inherited,
                                 color: if r.style.invisible {
                                     Hsla::transparent_black()
                                 } else {
@@ -6304,13 +6820,15 @@ pub(crate) fn text_body_element(
                 None => crate::rich_text::LineRule::Multiple(LINE_HEIGHT),
             };
             crate::rich_text::rich_paragraph(crate::rich_text::RichParagraph {
-                obstacles: obstacles.clone().filter(|_| body.wrap && body.columns <= 1),
+                obstacles: obstacles.clone().filter(|_| body.wrap),
+                measure_flow: None,
                 pieces,
                 align,
                 font_align: paragraph.font_align,
                 line,
                 grid_pitch: paragraph.grid_pitch.map(|p| p as f32 / 100.0 * px_per_point),
                 wrap: body.wrap && !single_path,
+                count_end_spaces: !body.wrap && res.fonts.kind() == DocKind::Presentation,
                 first_line: first_line as f32 * scale,
                 margin_left: paragraph.margin_left as f32 * scale,
                 tabs: paragraph.tabs.iter().map(|t| t.position as f32 * scale).collect(),
@@ -6344,6 +6862,20 @@ pub(crate) fn text_body_element(
                 mirror: body.vertical && body.vertical_kind == ibis_doc_model::VerticalKind::Mongolian,
                 at_x: origin_x.filter(|_| turn.is_none() && !body.vertical && paragraph.align.unwrap_or(body.style.align) == TextAlign::Left).map(|x0| {
                     x0 + (body.insets.left + paragraph.margin_left) as f32 * scale + crate::rich_text::at_x_offset()
+                }),
+                // The paragraph's mark (its end_style: the paragraph's endParaRPr, or the last run's formatting without one) is a Latin
+                // character: its typeface lifts the paragraph's last line (PowerPoint's PDFs of a line in Courier New (Latin) and a Japanese
+                // typeface, at 80 to 150 % line spacing). A typeface not installed and not in `office_metrics` is drawn by a stand-in whose
+                // height is not PowerPoint's, so the line's own is kept. (A line ended by a line break has the break's formatting: end_style.)
+                mark: Some(()).filter(|_| {
+                    res.fonts.kind() == DocKind::Presentation && !paragraph.runs.is_empty()
+                }).and_then(|_| {
+                    let known = |n: &str| res.fonts.available(n).is_some() || crate::font_metrics::office_metrics(n).is_some();
+                    let name = end_style.font.as_deref()?;
+                    (known(name) && styles.last().and_then(|s| s.font.as_deref()).is_none_or(known)).then(|| {
+                        let (ascent, descent) = typeface(Some(name), &end_style);
+                        (ascent, descent, f32::from(size_px(&end_style)))
+                    })
                 }),
             })
             .into_any_element()
@@ -6381,10 +6913,29 @@ pub(crate) fn text_body_element(
                     .when(b.auto.is_some(), |d| {
                         // A number is set in the face of the text's first run (a bold Japanese heading has a bold number
                         // of the same face).
-                        let font = res.fonts.font(first);
+                        let latin_first;
+                        let face = if !b.text.chars().any(ibis_doc_model::is_east_asian)
+                            && first.font.as_deref().is_some_and(is_east_asian_typeface)
+                            && first.fallback_font.is_some()
+                        {
+                            latin_first = TextStyle { font: first.fallback_font.clone(), ..first.clone() };
+                            &latin_first
+                        } else {
+                            first
+                        };
+                        let font = res.fonts.font(face);
                         d.font_family(font.family.clone()).font_weight(font.weight)
                     })
                     .when_some(symbol, |d, s| d.font_family(SharedString::from(s.font.clone())))
+                    // A character bullet is in its own typeface (`buFont`: Arial's ● is the small circle PowerPoint draws; the text's typeface,
+                    // or the stand-in for a Japanese one, draws a bigger one).
+                    .when(symbol.is_none() && b.auto.is_none() && b.picture.is_none(), |d| match &b.font {
+                        Some(name) => {
+                            let font = res.fonts.font(&TextStyle { font: Some(name.clone()), bold: false, italic: false, ..first.clone() });
+                            d.font_family(font.family.clone()).font_weight(font.weight)
+                        }
+                        None => d,
+                    })
                     .text_color(rgb_hsla_mode(color, res.color_mode))
                     .child(SharedString::from(symbol.map_or_else(|| b.text.clone(), |s| s.code.clone()))),
             }
@@ -6691,6 +7242,112 @@ mod font_resolution_tests {
     }
     use core::prelude::v1::test;
 
+    fn office_fonts(kind_document: bool, calibri_for_missing: bool) -> Fonts {
+        let installed: HashSet<String> = ["Calibri", "Arial", "Carlito", "Cambria", "Times New Roman", "Courier New", "MS Gothic", "MS Mincho", "MS PMincho", "Yu Gothic"]
+            .iter().map(|s| s.to_string()).collect();
+        Fonts {
+            installed, embedded_index: OpenTypeIndex::default(), east_asian_fallback: Some("Yu Gothic".into()), substitutions: HashMap::new(), calibri_for_missing,
+            docx_font_table: kind_document.then(Default::default), traits: Default::default(),
+        }
+    }
+
+    /// Word, Excel and PowerPoint do not read the words of a missing typeface's name (Sans, Serif, Mono, Gothic, Mincho, ゴシック, 明朝): names with
+    /// and without them are drawn alike (Windows measurement of 13 invented names, `tasks/doc/requests/2026-11-14-fake-font-fallback-result.md`).
+    #[test]
+    fn a_missing_typeface_is_not_read_for_the_words_of_its_name() {
+        for (doc, calibri) in [(true, false), (false, true), (false, false)] {
+            let fonts = office_fonts(doc, calibri);
+            let plain = fonts.family("Zzqx Foo").0;
+            for n in ["Fake Sans", "Fake Serif", "Fake Mono", "Fake Gothic Pro", "Fake Rounded"] {
+                assert_eq!(fonts.family(n).0, plain, "{n} doc={doc} ppt={calibri}");
+            }
+            assert_ne!(plain.as_ref(), "", "doc={doc}");
+            let jp = fonts.family("架空ゴシック").0;
+            for n in ["架空明朝", "架空丸ゴシック", "架空体"] {
+                assert_eq!(fonts.family(n).0, jp, "{n} doc={doc} ppt={calibri}");
+            }
+        }
+        // Word: Latin Cambria or Calibri by the font table; PowerPoint: Calibri; Excel: Arial.
+        assert_eq!(office_fonts(false, true).family("Fake Serif").0.as_ref(), "Calibri");
+        assert_eq!(office_fonts(false, false).family("Fake Serif").0.as_ref(), "Arial");
+        assert_eq!(office_fonts(true, false).family("Fake Serif").0.as_ref(), "Cambria");
+        // PowerPoint's Japanese is MS Gothic, Word's (a name with a Japanese character, not in the font table) Yu Gothic, Excel's by family.
+        assert_eq!(office_fonts(false, true).family("架空明朝").0.as_ref(), "MS Gothic");
+        assert_eq!(office_fonts(true, false).family("架空ゴシック").0.as_ref(), "Yu Gothic");
+    }
+
+    /// Word decides a missing typeface by its font table entry (Windows Word 365, a new Word for each document,
+    /// `tasks/doc/requests/2026-11-15-font-fallback-word-conflict-result.md`): the table of that file, the Latin and the Japanese stand-in of each.
+    #[test]
+    fn word_decides_a_missing_typeface_by_its_font_table_entry() {
+        use ibis_doc_model::FontTableEntry as E;
+        let mut fonts = office_fonts(true, false);
+        fonts.installed.insert("Malgun Gothic".into());
+        fonts.installed.insert("Microsoft YaHei".into());
+        let e = |f: &str, charset: Option<u8>, csb0: Option<u32>, alt: &[&str]| E { family: f.into(), charset, csb0, alt_names: alt.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+        let rows: Vec<(&str, E, &str, &str)> = vec![
+            ("Zzqa", e("", None, None, &[]), "Calibri", "MS Mincho"),
+            ("Zzqb", e("swiss", None, None, &[]), "Calibri", "MS Mincho"),
+            ("Zzqc", e("modern", None, None, &[]), "Calibri", "MS Mincho"),
+            ("Zzqd", e("decorative", None, None, &[]), "Calibri", "MS Mincho"),
+            ("Zzqe", e("script", None, None, &[]), "Calibri", "MS Mincho"),
+            ("Zzqf", e("auto", None, None, &[]), "Calibri", "MS Mincho"),
+            ("Zzqg", E { pitch: "fixed".into(), ..Default::default() }, "Calibri", "MS Mincho"),
+            ("Zzqh", E { panose: "02020609040205080304".into(), ..Default::default() }, "Calibri", "MS Mincho"),
+            ("Zzqi", e("roman", None, None, &[]), "Cambria", "MS Mincho"),
+            ("Zzqj", e("swiss", Some(0), None, &[]), "Calibri", "MS Mincho"),
+            ("Zzqk", e("swiss", Some(1), None, &[]), "Calibri", "MS Mincho"),
+            ("Zzql", e("roman", Some(0x80), None, &[]), "Yu Gothic", "Yu Gothic"),
+            ("Zzqm", e("", None, Some(0x0002_0001), &[]), "Yu Gothic", "Yu Gothic"),
+            ("Zzqn", e("swiss", Some(0x81), None, &[]), "Malgun Gothic", "Malgun Gothic"),
+            ("Zzqo", e("swiss", Some(0x86), None, &[]), "Microsoft YaHei", "Microsoft YaHei"),
+            ("Zzqp", e("roman", Some(0x80), None, &["MS Mincho"]), "MS Mincho", "MS Mincho"),
+            ("Zzqq", e("swiss", None, None, &["Arial"]), "Arial", "Arial"),
+            // A listed name is not read for its characters.
+            ("架空体", e("swiss", None, None, &[]), "MS Mincho", "MS Mincho"),
+            ("架空体B", e("", Some(0x80), None, &[]), "Yu Gothic", "Yu Gothic"),
+        ];
+        for (name, entry, latin, ja) in &rows {
+            fonts.docx_font_table.as_mut().unwrap().insert(name.to_string(), entry.clone());
+            // The Latin text is drawn in the font of a name with no Japanese character; a Japanese name's text is the East Asian stand-in.
+            let got = fonts.family(name).0;
+            let want = if name.chars().any(|c| c as u32 >= 0x2e80) { ja } else { latin };
+            assert_eq!(got.as_ref(), *want, "{name}");
+        }
+        // Not listed: ASCII Cambria (Latin) / MS Mincho (Japanese); a Japanese name Yu Gothic for both.
+        assert_eq!(fonts.family("Unlisted Foo").0.as_ref(), "Cambria");
+        assert_eq!(fonts.family("未登録体").0.as_ref(), "Yu Gothic");
+        assert_eq!(word_missing_stand_ins(None, "Unlisted Foo"), (WordStandIn::Cambria, WordStandIn::MsMincho));
+        // The name is matched ignoring case, and only that.
+        for (n, listed) in [("zzqi", true), ("ZZQI", true), ("Zzqi ", false), ("Zzqi  ", false), ("Ｚｚｑｉ", false)] {
+            let calibri_row = fonts.docx_entry(n).is_some();
+            assert_eq!(calibri_row, listed, "{n}");
+        }
+    }
+
+    /// Excel decides by the font's `family` and `charset` (Windows measurement 2026-11-14): Roman Times New Roman / MS Mincho, Modern Courier New /
+    /// MS Mincho, Swiss and none Arial / MS Gothic; with charset 128 Latin and Japanese alike MS PMincho (Roman) or MS Gothic.
+    #[test]
+    fn excel_decides_a_missing_typeface_by_family_and_charset() {
+        let mut fonts = office_fonts(false, false);
+        let mut put = |n: &str, family: Option<u8>, charset: Option<i16>| {
+            fonts.traits.insert(n.into(), ibis_doc_model::TypefaceTraits { family, charset });
+        };
+        put("Fake Roman", Some(1), None);
+        put("Fake Modern", Some(3), None);
+        put("Fake Swiss", Some(2), None);
+        put("Fake R128", Some(1), Some(128));
+        put("Fake M128", Some(3), Some(128));
+        put("架空 R128", Some(1), Some(128));
+        assert_eq!(fonts.family("Fake Roman").0.as_ref(), "Times New Roman");
+        assert_eq!(fonts.family("Fake Modern").0.as_ref(), "Courier New");
+        assert_eq!(fonts.family("Fake Swiss").0.as_ref(), "Arial");
+        assert_eq!(fonts.family("Fake R128").0.as_ref(), "MS PMincho");
+        assert_eq!(fonts.family("Fake M128").0.as_ref(), "MS Gothic");
+        assert_eq!(fonts.family("架空 R128").0.as_ref(), "MS PMincho");
+        assert_eq!(fonts.family("架空ゴシック").0.as_ref(), "MS Gothic");
+    }
+
     /// Build a minimal valid TrueType font binary with a `name` table and an `OS/2` table.
     fn make_test_ttf(records: &[(u16, &str)], weight: u16, italic: bool) -> Vec<u8> {
         // Build `name` table (format 0) with Windows Unicode BMP (platform 3, encoding 1) records.
@@ -6848,6 +7505,42 @@ mod font_resolution_tests {
         assert!(it);
     }
 
+    /// #248: the typefaces every Windows and Office has keep their kind where they are not installed (a Mincho is a Mincho though the font table says Shift-JIS);
+    /// a typeface nobody has heard of is left to the file's own words.
+    #[test]
+    fn windows_japanese_typefaces_keep_their_kind_and_unknown_ones_follow_the_file() {
+        use JapaneseKind::*;
+        for (name, want) in [
+            ("\u{ff2d}\u{ff33} \u{660e}\u{671d}", Mincho),
+            ("\u{ff2d}\u{ff33} \u{ff30}\u{660e}\u{671d}", Mincho),
+            ("MS Mincho", Mincho),
+            ("MS PMincho", Mincho),
+            ("\u{6e38}\u{660e}\u{671d}", Mincho),
+            ("Yu Mincho", Mincho),
+            ("YuMincho Demibold", Mincho),
+            ("BIZ UDP\u{660e}\u{671d}", Mincho),
+            ("BIZ UDPMincho", Mincho),
+            ("\u{ff2d}\u{ff33} \u{30b4}\u{30b7}\u{30c3}\u{30af}", Gothic),
+            ("\u{ff2d}\u{ff33} \u{ff30}\u{30b4}\u{30b7}\u{30c3}\u{30af}", Gothic),
+            ("MS Gothic", Gothic),
+            ("MS UI Gothic", Gothic),
+            ("\u{6e38}\u{30b4}\u{30b7}\u{30c3}\u{30af}", Gothic),
+            ("Yu Gothic UI", Gothic),
+            ("\u{30e1}\u{30a4}\u{30ea}\u{30aa}", Gothic),
+            ("Meiryo UI", Gothic),
+            ("BIZ UDGothic", Gothic),
+            ("BIZ UDPGothic", Gothic),
+        ] {
+            assert_eq!(known_japanese_typeface(name), Some(want), "{name}");
+        }
+        for name in ["Arial", "Calibri", "\u{4e0d}\u{660e}\u{660e}\u{671d}", "Zzqx Mincho", "Hiragino Mincho ProN", "MS Mincho Fake", "\u{ff2d}\u{ff33} \u{660e}\u{671d}\u{ff21}\u{ff22}\u{ff23}\u{3042}"] {
+            assert_eq!(known_japanese_typeface(name), None, "{name}");
+        }
+        // The rule for a typeface that is not known is as it was: charset 0x80 is Yu Gothic.
+        let entry = ibis_doc_model::FontTableEntry { charset: Some(0x80), ..Default::default() };
+        assert_eq!(word_missing_stand_ins(Some(&entry), "Zzqx Mincho").1, WordStandIn::YuGothic);
+    }
+
     /// What stands in for a missing typeface by the file's own words (`tasks/doc/m56-missing-font-standins.md`, Windows' Office 2026-11-11).
     #[test]
     fn missing_typeface_stand_in_follows_the_file_not_the_name() {
@@ -6862,9 +7555,6 @@ mod font_resolution_tests {
         assert_eq!(workbook_latin_stand_in(Some(2))[0], "Arial");
         assert_eq!(workbook_latin_stand_in(None)[0], "Arial");
         // Word: the font table's charset 0x80 (128).
-        assert_eq!(missing_japanese_stand_in(Document, None, Some(128)), YuGothic);
-        assert_eq!(missing_japanese_stand_in(Document, Some(1), None), MsMincho);
-        assert_eq!(missing_japanese_stand_in(Document, None, Some(0)), MsMincho);
         // PowerPoint: the `a:ea` charset -128.
         assert_eq!(missing_japanese_stand_in(Presentation, None, Some(-128)), YuGothic);
         assert_eq!(missing_japanese_stand_in(Presentation, Some(1), None), MsGothic);
@@ -6941,6 +7631,17 @@ mod font_resolution_tests {
         let (fam, w, _) = resolve_font_with_index("游ゴシック Medium", &mac_installed, Some(&index), false).expect("resolved on macOS");
         assert_eq!(fam.as_ref(), "YuGothic");
         assert_eq!(w, FontWeight(500.0));
+    }
+
+    #[test]
+    fn issue213_japanese_biz_ud_names_resolve_to_installed_english_family() {
+        let installed: HashSet<String> = ["BIZ UDPGothic".to_string(), "BIZ UDPMincho".to_string()].into_iter().collect();
+        for (ja, en) in [("BIZ UDPゴシック", "BIZ UDPGothic"), ("BIZ UDP明朝", "BIZ UDPMincho"), ("BIZ UDP明朝 Medium", "BIZ UDPMincho")] { // i18n-ok（試験のフォント名）
+            let (fam, _, _) = resolve_font_with_index(ja, &installed, None, false).unwrap_or_else(|| panic!("{ja} not resolved"));
+            assert_eq!(fam.as_ref(), en);
+        }
+        // Not installed: no match (the stand-in logic takes over).
+        assert!(resolve_font_with_index("BIZ UDゴシック", &installed, None, false).is_none()); // i18n-ok（試験のフォント名）
     }
 
     #[test]
@@ -7061,3 +7762,7 @@ mod eavert_turn_tests {
         assert!(!set_as_vert(270, 0, VerticalKind::WordArt));
     }
 }
+
+#[cfg(test)]
+#[path = "shape_view_tilt_tests.rs"]
+mod tilted_frame_tests;

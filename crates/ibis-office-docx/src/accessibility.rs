@@ -1219,10 +1219,10 @@ impl SlideEditor {
             "docx.track.record",
             "docx.track.accept",
             "docx.track.reject",
-            "docx.accessibility-check",
+            "review.accessibility-check",
             "docx.read-aloud",
             "docx.inspect-document",
-            "docx.compatibility-check",
+            "review.compatibility-check",
             "docx.print-settings",
             "docx.file.convert-format",
         ];

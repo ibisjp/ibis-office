@@ -85,11 +85,11 @@ impl SlideEditor {
     fn replace_nodes(&mut self, shape: &ibis_doc_model::Shape, nodes: &Nodes, unturn: bool, cx: &mut Context<Self>) -> bool {
         let Some(new) = reshaped_nodes(shape, nodes) else { return false };
         let slide = self.current_slide;
-        let mut commands = vec![Command::SetKind { slide, shape: shape.id, kind: Box::new(new.kind.clone()) }, Command::SetFrame { slide, shape: shape.id, frame: new.frame }];
+        let mut commands = vec![Command::SetShapeKind { slide, shape: shape.id, kind: Box::new(new.kind.clone()) }, Command::SetFrame { slide, frames: vec![(shape.id, new.frame)], with_attached: true }];
         if unturn && (shape.rotation != 0 || shape.flip_h || shape.flip_v) {
             commands.push(Command::SetTransform { slide, shape: shape.id, rotation: 0, flip_h: false, flip_v: false });
         }
-        self.apply_pptx_commands_checked(vec![Command::Group(commands)], cx)
+        self.apply_pptx_commands_checked(vec![Command::Batch(commands)], cx)
     }
 
     /// The vertices with their handles, in slide EMU.

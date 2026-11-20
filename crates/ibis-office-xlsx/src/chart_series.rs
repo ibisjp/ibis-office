@@ -35,9 +35,9 @@ pub struct SeriesEditor {
     pub period: Entity<InputState>,
     pub(crate) error_value: Entity<InputState>,
     pub secondary: bool,
-    refs: ibis_pptx::SeriesRefs,
+    refs: ibis_formats::SeriesRefs,
     pub(crate) header: bool,
-    full_refs: ibis_pptx::SeriesRefs,
+    full_refs: ibis_formats::SeriesRefs,
     manual_name: String,
     pub error: Option<SharedString>,
 }
@@ -60,20 +60,20 @@ impl SlideEditor {
         }
         let mut refs=edit.full_refs.clone();
         if on {
-            let Some((sheet,mut values))=refs.values.as_deref().and_then(ibis_pptx::parse_ref)else{return;};
+            let Some((sheet,mut values))=refs.values.as_deref().and_then(ibis_formats::parse_ref)else{return;};
             let first=ibis_doc_model::CellRange{last_row:values.first_row,last_column:values.first_column,..values};
-            refs.name=Some(ibis_pptx::format_ref(&sheet,first));
+            refs.name=Some(ibis_formats::format_ref(&sheet,first));
             if values.first_column==values.last_column && values.first_row<values.last_row{values.first_row+=1;}
             else if values.first_row==values.last_row && values.first_column<values.last_column{values.first_column+=1;}else{return;}
-            refs.values=Some(ibis_pptx::format_ref(&sheet,values));
-            if let Some((sheet,mut cat))=refs.categories.as_deref().and_then(ibis_pptx::parse_ref){
+            refs.values=Some(ibis_formats::format_ref(&sheet,values));
+            if let Some((sheet,mut cat))=refs.categories.as_deref().and_then(ibis_formats::parse_ref){
                 if cat.first_column==cat.last_column && cat.first_row<cat.last_row{cat.first_row+=1;}else if cat.first_row==cat.last_row && cat.first_column<cat.last_column{cat.first_column+=1;}
-                refs.categories=Some(ibis_pptx::format_ref(&sheet,cat));
+                refs.categories=Some(ibis_formats::format_ref(&sheet,cat));
             }
         }else{refs.name=None;}
         edit.header=on;edit.refs=refs.clone();
         let name_field=edit.name.clone();let manual_name=edit.manual_name.clone();
-        let displayed=if on{refs.name.as_deref().and_then(ibis_pptx::parse_ref).and_then(|(sheet,r)|ibis_pptx::sheet_of(self.presentation(),&sheet).and_then(|s|s.cell(r.first_row,r.first_column)).map(|c|c.text.clone())).unwrap_or_default()}else{manual_name};
+        let displayed=if on{refs.name.as_deref().and_then(ibis_formats::parse_ref).and_then(|(sheet,r)|ibis_formats::sheet_of(self.presentation(),&sheet).and_then(|s|s.cell(r.first_row,r.first_column)).map(|c|c.text.clone())).unwrap_or_default()}else{manual_name};
         let edit=self.wb().chart_edit.as_ref().unwrap().series_editor.as_ref().unwrap();
         let fields=[(edit.values.clone(),refs.values.unwrap_or_default()),(edit.categories.clone(),refs.categories.unwrap_or_default()),(name_field,displayed)];
         for (field,value) in fields{field.update(cx,|i,cx|i.set_value(value,window,cx));}
@@ -513,13 +513,13 @@ impl SlideEditor {
         source.set_chart_data(
             shape,
             chart.clone(),
-            ibis_pptx::ChartData {
+            ibis_formats::ChartData {
                 workbook: vec![],
                 series: refs,
             },
         );
         self.document
-            .execute(vec![Command::SetKind {
+            .execute(vec![Command::SetShapeKind {
                 slide: self.current_slide,
                 shape,
                 kind: Box::new(ShapeKind::Chart(Box::new(chart))),
@@ -574,9 +574,9 @@ impl SlideEditor {
             _ => String::new(),
         };
         let mut full_refs=refs.clone();
-        let header=refs.name.as_ref().and_then(|n|ibis_pptx::parse_ref(n)).zip(refs.values.as_ref().and_then(|v|ibis_pptx::parse_ref(v))).is_some_and(|((ns,n),(vs,v))|ns==vs && n.first_row==n.last_row && n.first_column==n.last_column && ((v.first_column==v.last_column && n.first_column==v.first_column && n.first_row.checked_add(1)==Some(v.first_row)) || (v.first_row==v.last_row && n.first_row==v.first_row && n.first_column.checked_add(1)==Some(v.first_column))));
+        let header=refs.name.as_ref().and_then(|n|ibis_formats::parse_ref(n)).zip(refs.values.as_ref().and_then(|v|ibis_formats::parse_ref(v))).is_some_and(|((ns,n),(vs,v))|ns==vs && n.first_row==n.last_row && n.first_column==n.last_column && ((v.first_column==v.last_column && n.first_column==v.first_column && n.first_row.checked_add(1)==Some(v.first_row)) || (v.first_row==v.last_row && n.first_row==v.first_row && n.first_column.checked_add(1)==Some(v.first_column))));
         if header {
-            for r in [&mut full_refs.values,&mut full_refs.categories]{if let Some((sheet,mut range))=r.as_deref().and_then(ibis_pptx::parse_ref){if range.first_column==range.last_column && range.first_row>0{range.first_row-=1;}else if range.first_row==range.last_row && range.first_column>0{range.first_column-=1;}*r=Some(ibis_pptx::format_ref(&sheet,range));}}
+            for r in [&mut full_refs.values,&mut full_refs.categories]{if let Some((sheet,mut range))=r.as_deref().and_then(ibis_formats::parse_ref){if range.first_column==range.last_column && range.first_row>0{range.first_row-=1;}else if range.first_row==range.last_row && range.first_column>0{range.first_column-=1;}*r=Some(ibis_formats::format_ref(&sheet,range));}}
         }
         let editor = SeriesEditor {
             header, full_refs, manual_name:series.name.clone(),
@@ -726,8 +726,8 @@ impl SlideEditor {
                             .iter()
                             .find(|s| s.id == id)
                             .map(|s| {
-                                ibis_pptx::format_ref(
-                                    &ibis_pptx::quote_sheet(s.name.as_deref().unwrap_or_default()),
+                                ibis_formats::format_ref(
+                                    &ibis_formats::quote_sheet(s.name.as_deref().unwrap_or_default()),
                                     r,
                                 )
                             })
@@ -786,14 +786,14 @@ impl SlideEditor {
                         .iter()
                         .find(|s| s.id == id)
                         .map(|s| {
-                            ibis_pptx::format_ref(
-                                &ibis_pptx::quote_sheet(s.name.as_deref().unwrap_or_default()),
+                            ibis_formats::format_ref(
+                                &ibis_formats::quote_sheet(s.name.as_deref().unwrap_or_default()),
                                 r,
                             )
                         })
                 })
         };
-        let refs = ibis_pptx::SeriesRefs {
+        let refs = ibis_formats::SeriesRefs {
             categories: normalize(read(&edit.categories)),
             values: normalize(read(&edit.values)),
             sizes: edit.refs.sizes.clone(),
@@ -803,7 +803,7 @@ impl SlideEditor {
         };
         let valid = |r: &Option<String>| {
             r.as_ref()
-                .is_some_and(|r| ibis_pptx::parse_ref(r).is_some())
+                .is_some_and(|r| ibis_formats::parse_ref(r).is_some())
         };
         let width = read(&edit.line_width)
             .parse::<f64>()
@@ -814,7 +814,7 @@ impl SlideEditor {
             .ok()
             .filter(|n| (2..=72).contains(n));
         if (refs.categories.is_some() && !valid(&refs.categories)) || !valid(&refs.values) || (from_inputs && (width.is_none() || marker.is_none()))
-            || (read(&edit.name).starts_with('=') && refs.name.as_ref().and_then(|r|ibis_pptx::parse_ref(r)).is_none_or(|(_,r)|r.first_row!=r.last_row || r.first_column!=r.last_column)) {
+            || (read(&edit.name).starts_with('=') && refs.name.as_ref().and_then(|r|ibis_formats::parse_ref(r)).is_none_or(|(_,r)|r.first_row!=r.last_row || r.first_column!=r.last_column)) {
             self.wb_mut()
                 .chart_edit
                 .as_mut()
@@ -968,7 +968,7 @@ impl SlideEditor {
         }
         target.groups.retain(|g| !g.series.is_empty());
         ensure_primary_series_axis(&mut target);
-        let mut rebuilt = ibis_pptx::sheet_chart_from_data(&target, self.presentation(), &allrefs);
+        let mut rebuilt = ibis_formats::sheet_chart_from_data(&target, self.presentation(), &allrefs);
         // A literal series name is a draft value, not a workbook name formula.
         let flatindex = if append {
             allrefs.len() - 1
@@ -985,9 +985,9 @@ impl SlideEditor {
             s.name = draft.groups[0].series[0].name.clone();
         }
         }
-        source.set_chart_data(shape,rebuilt.clone(),ibis_pptx::ChartData {workbook:vec![],series:allrefs.clone()});
+        source.set_chart_data(shape,rebuilt.clone(),ibis_formats::ChartData {workbook:vec![],series:allrefs.clone()});
         if rebuilt != before {
-            self.document.execute(vec![Command::SetKind {slide:owner_slide,shape,kind:Box::new(ShapeKind::Chart(Box::new(rebuilt.clone())))}]).ok();
+            self.document.execute(vec![Command::SetShapeKind {slide:owner_slide,shape,kind:Box::new(ShapeKind::Chart(Box::new(rebuilt.clone())))}]).ok();
         }
         // A type/axis change may move this series to a new group. Keep the live editor bound to it.
         let mut draft = rebuilt.clone();

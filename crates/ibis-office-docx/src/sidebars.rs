@@ -29,7 +29,7 @@ pub(crate) const SIDEBARS: &[SidebarDef] = &[
     sidebar_def!("sidebar.spelling", "sidebar.spelling", Right, G::Review, Pane, panels: &["doc_spelling_panel"], cmd: None, open: Some(by_format), start: true, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.thesaurus", "sidebar.thesaurus", Right, G::Review, Pane, panels: &["doc_thesaurus_panel"], cmd: None, open: Some(by_format), start: true, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.word-count", "sidebar.word-count", Right, G::Review, Pane, panels: &["word_count_panel"], cmd: Some("tools.word-count"), open: None, start: true, available: always, key: Some("⇧⌘C"), toolbar: None),
-    sidebar_def!("sidebar.accessibility", "sidebar.accessibility", Right, G::Review, Pane, panels: &["accessibility_panel"], cmd: Some("docx.accessibility-check"), open: None, start: true, available: always, key: None, toolbar: None),
+    sidebar_def!("sidebar.accessibility", "sidebar.accessibility", Right, G::Review, Pane, panels: &["accessibility_panel"], cmd: Some("review.accessibility-check"), open: None, start: true, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.screen-reader", "sidebar.screen-reader", Right, G::Review, Pane, panels: &["docx_screen_reader_panel"], cmd: None, open: Some(by_format), start: false, available: always, key: None, toolbar: None),
     sidebar_def!("sidebar.read-aloud", "sidebar.read-aloud", Right, G::Review, Pane, panels: &["docx_read_aloud_panel"], cmd: None, open: Some(by_format), start: false, available: always, key: None, toolbar: None),
     // Right pane: drawing and settings.

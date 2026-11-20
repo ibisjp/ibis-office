@@ -53,7 +53,7 @@ pub(super) fn excel_mac_object() {
 pub(super) fn not_an_object() {
     assert!(read(b"", SlideId(1), "").is_none());
     assert!(read(b"plain text", SlideId(1), "").is_none());
-    let other = ibis_pptx::ibis_ooxml::cfb::write(&[ibis_pptx::ibis_ooxml::cfb::Item::stream("Package", b"not a zip".to_vec())]);
+    let other = ibis_formats::ibis_ooxml::cfb::write(&[ibis_formats::ibis_ooxml::cfb::Item::stream("Package", b"not a zip".to_vec())]);
     assert!(read(&other, SlideId(1), "").is_none());
 }
 
@@ -72,18 +72,18 @@ pub(super) fn copy_round_trip() {
         let one = vec![CellRange { first_row: 0, first_column: 0, last_row: 0, last_column: 0 }];
         let mut commands: Vec<Command> = [StyleChange::Bold(true), StyleChange::Fill(Some(Rgb(0x336699))), StyleChange::NumberFormat("0.00".into())]
             .into_iter()
-            .map(|change| Command::Sheet(SheetCommand::SetFormat { slide, ranges: one.clone(), change }))
+            .map(|change| Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: one.clone(), change }))
             .collect();
-        commands.push(Command::Sheet(SheetCommand::Merge { slide, range: CellRange { first_row: 1, first_column: 0, last_row: 1, last_column: 1 }, center: false }));
+        commands.push(Command::Sheet(SheetCommand::Merge { sheet: slide, range: CellRange { first_row: 1, first_column: 0, last_row: 1, last_column: 1 }, center: false }));
         e.document.execute(commands).unwrap();
     });
     select(&mut s, CellRange { first_row: 0, first_column: 0, last_row: 1, last_column: 2 });
     s.update(|e, _, cx| e.copy_cells(false, cx));
     let object = crate::native_shape_clipboard::read_embed_source().expect("the copy put a worksheet on the clipboard");
     // A compound file with the class of Excel.Sheet.12 on the root, the workbook, and the OLE header.
-    assert!(ibis_pptx::ibis_ooxml::cfb::is_cfb(&object));
+    assert!(ibis_formats::ibis_ooxml::cfb::is_cfb(&object));
     assert!(object.windows(16).any(|w| w == [0x30, 0x08, 0x02, 0, 0, 0, 0, 0, 0xC0, 0, 0, 0, 0, 0, 0, 0x46]));
-    assert!(ibis_pptx::ibis_ooxml::cfb::stream(&object, "\u{1}CompObj").unwrap().windows(14).any(|w| w == b"Excel.Sheet.12"));
+    assert!(ibis_formats::ibis_ooxml::cfb::stream(&object, "\u{1}CompObj").unwrap().windows(14).any(|w| w == b"Excel.Sheet.12"));
     let text = "dummy";
     let (clip, merges) = read(&object, SlideId(1), text).expect("a workbook");
     let at = |r: u32, c: u32| clip.cell_at(r, c).unwrap();
@@ -145,9 +145,9 @@ pub(super) fn xml_spreadsheet_of_copy() {
         let one = vec![CellRange { first_row: 0, first_column: 0, last_row: 0, last_column: 0 }];
         let mut commands: Vec<Command> = [StyleChange::Bold(true), StyleChange::Fill(Some(Rgb(0x336699))), StyleChange::NumberFormat("0.00".into())]
             .into_iter()
-            .map(|change| Command::Sheet(SheetCommand::SetFormat { slide, ranges: one.clone(), change }))
+            .map(|change| Command::Sheet(SheetCommand::SetFormat { sheet: slide, ranges: one.clone(), change }))
             .collect();
-        commands.push(Command::Sheet(SheetCommand::Merge { slide, range: CellRange { first_row: 1, first_column: 0, last_row: 1, last_column: 1 }, center: false }));
+        commands.push(Command::Sheet(SheetCommand::Merge { sheet: slide, range: CellRange { first_row: 1, first_column: 0, last_row: 1, last_column: 1 }, center: false }));
         e.document.execute(commands).unwrap();
     });
     select(&mut s, CellRange { first_row: 0, first_column: 0, last_row: 1, last_column: 2 });

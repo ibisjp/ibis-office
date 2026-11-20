@@ -63,7 +63,7 @@ impl SlideEditor {
         let slide = self.current_slide;
 
         let cmd = SheetCommand::SetCellPhonetic {
-            slide,
+            sheet: slide,
             row,
             column,
             phonetic,
@@ -81,7 +81,7 @@ impl SlideEditor {
         let slide = self.current_slide;
 
         let cmd = SheetCommand::SetCellPhonetic {
-            slide,
+            sheet: slide,
             row,
             column,
             phonetic: None,
@@ -103,7 +103,7 @@ impl SlideEditor {
             .unwrap_or(false);
 
         let cmd = SheetCommand::SetShowPhonetic {
-            slide: slide_id,
+            sheet: slide_id,
             show: !current_show,
         };
         let _ = self.document.execute(vec![Command::Sheet(cmd)]);

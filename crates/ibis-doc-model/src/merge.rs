@@ -1221,6 +1221,7 @@ pub fn label_sheet_table(preset: LabelPreset, address_format: &str, next_id: &mu
         floating: None,
         autofit: None,
         fit_to_page: true,
+        fixed_percent: None,
         cell_spacing: None,
     }
 }

@@ -15,10 +15,18 @@ mod m74_20261111;
 mod panels_20261104;
 #[path = "tests/pptx/panels_20261105_group1.rs"]
 mod panels_20261105_group1;
-#[path = "tests/pptx/cmyk_20261109.rs"]
-mod cmyk_20261109;
+#[path = "tests/pptx/cmyk_20261114.rs"]
+mod cmyk_20261114;
+#[path = "tests/pptx/scenario_issue208.rs"]
+mod scenario_issue208;
+#[cfg(target_os = "macos")]
+#[path = "tests/pptx/issue227_links.rs"]
+mod issue227_links;
 #[path = "tests/pptx/chart_data_workbook_scenarios.rs"]
 mod chart_data_workbook;
+#[cfg(all(target_os = "macos", feature = "scenarios"))]
+#[path = "tests/pptx/scenario_issue189.rs"]
+mod scenario_issue189;
 #[cfg(all(target_os = "macos", feature = "scenarios"))]
 #[path = "tests/pptx/corpus_report.rs"]
 mod corpus_report;
@@ -27,10 +35,15 @@ mod corpus_report;
 pub(crate) fn all() -> Vec<(&'static str, fn())> {
     let mut all = Vec::new();
     #[cfg(target_os = "macos")]
-    all.extend(corpus_report::all());
+    {
+        all.extend(corpus_report::all());
+        all.extend(scenario_issue189::all());
+        all.extend(issue227_links::all());
+    }
     all.extend(binding_roundtrip::all());
     all.extend(panels_20261104::all());
-    all.extend(cmyk_20261109::all());
+    all.extend(cmyk_20261114::all());
+    all.extend(scenario_issue208::all());
     all.extend(m74_20261111::all());
     all.extend(panels_20261105_group1::all());
     all.extend(chart_data_workbook::all());

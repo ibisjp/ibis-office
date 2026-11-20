@@ -194,10 +194,10 @@ impl SlideEditor {
             if picture.crop != crop {
                 let mut picture = picture.clone();
                 picture.crop = crop;
-                commands.push(Command::SetKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Picture(picture)) });
+                commands.push(Command::SetShapeKind { slide, shape: shape_id, kind: Box::new(ShapeKind::Picture(picture)) });
             }
             if shape.frame != frame {
-                commands.push(Command::SetFrame { slide, shape: shape_id, frame });
+                commands.push(Command::SetFrame { slide, frames: vec![(shape_id, frame)], with_attached: true });
             }
             if !commands.is_empty() {
                 self.run(commands, cx);

@@ -117,7 +117,7 @@ fn laid_out(file: &str) -> Arc<Pagination> {
 #[cfg(windows)]
 fn laid_out(file: &str) -> Arc<Pagination> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/corpus-report/docx").join(file);
-    let mut presentation = ibis_pptx::read(&std::fs::read(path).expect("the file")).expect("a document");
+    let mut presentation = ibis_formats::read(&std::fs::read(path).expect("the file")).expect("a document");
     let (_platform, mut cx) = crate::export::headless_app();
     cx.allow_parking();
     let resources = cx.update(|app| {
@@ -746,9 +746,9 @@ fn a_bullet_of_the_menu_is_saved_as_words_wingdings_code() {
     let _ = index;
     s.menu("docx.bullet.sparkle");
     let path = s.save_as("bullet-142.docx");
-    let numbering = String::from_utf8(ibis_pptx::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap().read("word/numbering.xml").unwrap()).unwrap();
+    let numbering = String::from_utf8(ibis_formats::ibis_ooxml::Package::open(std::fs::read(&path).unwrap()).unwrap().read("word/numbering.xml").unwrap()).unwrap();
     assert!(numbering.contains("w:val=\"\u{f0b2}\"") && numbering.contains("w:ascii=\"Wingdings\""), "Wingdings' code in numbering.xml");
-    let again = ibis_pptx::open(std::fs::read(&path).unwrap()).unwrap();
+    let again = ibis_formats::open(std::fs::read(&path).unwrap()).unwrap();
     let flow = again.presentation.flow.expect("a document");
     assert!(flow.styles.numbering.abstracts.values().flat_map(|a| a.levels.iter()).any(|l| l.symbol == Some(("Wingdings".to_string(), '\u{f0b2}'))), "read back as Wingdings' ✧");
 }
@@ -864,7 +864,7 @@ fn inline_picture_stretches_to_the_explicit_frame_when_rendered() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../");
     let source = root.join("test/corpus-report/docx/inline-picture-stretched-frame.docx");
     let bytes = std::fs::read(source).unwrap();
-    let presentation = ibis_pptx::read(&bytes).unwrap();
+    let presentation = ibis_formats::read(&bytes).unwrap();
     let out_dir = root.join("target/layout-regression").join(format!("picture-frame-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).unwrap();
     let options = crate::export::Options {
@@ -1633,5 +1633,5 @@ fn the_second_level_arrow_bullet_is_an_arrowhead_with_or_without_wingdings() {
         assert_eq!(l.symbol, Some(("Wingdings".to_string(), '\u{f0d8}')), "Word's code");
         assert_eq!(l.text, "\u{27a2}", "the arrowhead character is the stand-in without Wingdings");
     });
-    assert_eq!(ibis_pptx::symbol_font::stand_in("Wingdings", '\u{f0d8}'), Some('\u{27a2}'));
+    assert_eq!(ibis_formats::symbol_font::stand_in("Wingdings", '\u{f0d8}'), Some('\u{27a2}'));
 }
