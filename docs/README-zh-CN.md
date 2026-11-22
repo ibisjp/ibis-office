@@ -180,6 +180,14 @@ ibisOffice 的目标是成为世界一流的开源办公套件。
 
 ## 嵌入您的网页系统
 
+最简单的方式是使用 npm。一条命令即可将浏览器版加入您的项目：
+
+```sh
+npm install @ibisjp/ibis-office
+```
+
+软件包 [`@ibisjp/ibis-office`](https://www.npmjs.com/package/@ibisjp/ibis-office) 包含编辑器以及您的页面所导入的加载器。使用 `npx ibis-office-copy public/ibisoffice` 将编辑器复制到服务器提供的文件夹中，使用 `npm update` 获取新版本。不使用 npm 时，请使用下面的压缩包。
+
 网页版是一组静态文件。请下载 [`ibisOffice-0.8.9-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip)（[v0.8.9](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.9) 的网页版），用 [SHA-256](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip.sha256) 校验后，放到您自己的 Web 服务器上。您的页面用 `iframe` 加载它，并向 ibisOffice 提供几个函数（列出、打开和保存文件）；文件、登录和权限仍由您的系统管理，编辑器在访问者的浏览器中运行。
 
 下载与校验、最小化部署（文件放在哪里、服务器设置、打开文档的最小页面）以及全部选项、函数和事件，请见[嵌入网页版](web-embedding.md)（英文）。

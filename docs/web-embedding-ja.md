@@ -14,6 +14,8 @@ ibisOffice のブラウザー版は、静的なファイルの集まり（ロー
 
 ## ブラウザー版を入手する
 
+いちばん手軽なのは `npm install @ibisjp/ibis-office` です（[npm から入れる](#npm-から入れる)）。同じファイルを、各リリースにアーカイブとしても付けています。
+
 リリースごとに、ブラウザー版をアーカイブにして添付しています。[v0.8.9](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.9) のブラウザー版は、次の 3 つです。
 
 | ファイル | 内容 |
@@ -41,6 +43,17 @@ mkdir app && unzip -q ibisOffice-$V-Web.zip -d app
 Windows の PowerShell では、`(Get-FileHash ibisOffice-$V-Web.zip -Algorithm SHA256).Hash` の値を `.sha256` ファイルのハッシュと比べます（大文字小文字は区別しません）。
 
 アーカイブには、次の節でページから読み込む `ibisoffice-host.js` が入っている必要があります。`unzip -l ibisOffice-$V-Web.zip` で確かめてください。ホストのインターフェースより前の古い版のアーカイブには入っていません。
+
+## npm から入れる
+
+同じファイルを npm の [`@ibisjp/ibis-office`](https://www.npmjs.com/package/@ibisjp/ibis-office) でも配っています。パッケージの版はリリースの版と同じです（`0.9.0` は v0.9.0 のブラウザー版）。ホストのローダー（ページが import するもの）と、エディターのファイル（`editor/`）が入っています。
+
+```sh
+npm install @ibisjp/ibis-office          # package.json に 1 行でも可："@ibisjp/ibis-office": "^0.9.0"
+npx ibis-office-copy public/ibisoffice   # エディターを public/ibisoffice/<版>/ に写す
+```
+
+写したフォルダーは「[最小限の設置](#最小限の設置)」のとおりに配信します。ページは `attachIframe` を `@ibisjp/ibis-office` から（バンドラーか import map で）、または写したフォルダーの `ibisoffice-host.js` から import します。新しいリリースを使うときは `npm update @ibisjp/ibis-office` のあと、もう一度 `npx ibis-office-copy` を実行します。版ごとのフォルダーにすると、長くキャッシュできます。`--flat` を付けると、指定したフォルダーにそのまま写します。パッケージはインストール時のスクリプトを持たず、`ibis-office-copy` は Node の標準だけを使います。ライセンスはアーカイブと同じです（「ライセンス」の節）。
 
 ## 最小限の設置
 

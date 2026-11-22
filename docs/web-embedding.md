@@ -14,6 +14,8 @@ This page, in order:
 
 ## Get the browser version
 
+The quickest way is `npm install @ibisjp/ibis-office` (see [Install from npm](#install-from-npm)). The same files are also attached to every release as an archive.
+
 Every release carries the browser version as an archive. The browser version of [v0.8.9](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.9) is these three files:
 
 | File | What it is |
@@ -41,6 +43,17 @@ mkdir app && unzip -q ibisOffice-$V-Web.zip -d app
 On Windows PowerShell, compare `(Get-FileHash ibisOffice-$V-Web.zip -Algorithm SHA256).Hash` with the hash in the `.sha256` file (case-insensitive).
 
 The archive must contain `ibisoffice-host.js`, the file your page imports in the next section. List it with `unzip -l ibisOffice-$V-Web.zip`; an archive of an older version, from before the host interface, does not have it.
+
+## Install from npm
+
+The same files are on npm as [`@ibisjp/ibis-office`](https://www.npmjs.com/package/@ibisjp/ibis-office). The version of the package is the version of the release (`0.9.0` carries the browser version of v0.9.0). It holds the host loader (what your page imports) and the editor's files (`editor/`).
+
+```sh
+npm install @ibisjp/ibis-office          # or one line in package.json: "@ibisjp/ibis-office": "^0.9.0"
+npx ibis-office-copy public/ibisoffice   # copies the editor into public/ibisoffice/<version>/
+```
+
+Serve the copied folder as described in [Minimal setup](#minimal-setup). Your page imports `attachIframe` from `@ibisjp/ibis-office` (with a bundler or an import map), or from the copied folder's `ibisoffice-host.js`. To take a newer release, run `npm update @ibisjp/ibis-office` and `npx ibis-office-copy` again; a folder per version keeps the files cacheable. `--flat` copies into the folder itself. The package installs no scripts and `ibis-office-copy` uses only Node's standard library. It is under the same licence as the archive (see [Licence](#licence)).
 
 ## Minimal setup
 

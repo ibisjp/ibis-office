@@ -180,6 +180,14 @@ Conversion methods: ibisOffice `ibisOffice --export pdf`; Microsoft Office: open
 
 ## Add ibisOffice to your web system
 
+The quickest way is npm. One command puts the browser version into your project:
+
+```sh
+npm install @ibisjp/ibis-office
+```
+
+The package [`@ibisjp/ibis-office`](https://www.npmjs.com/package/@ibisjp/ibis-office) carries the editor and the loader your page imports. `npx ibis-office-copy public/ibisoffice` copies the editor into the folder your server serves, and `npm update` takes the next release. Without npm, use the archive below.
+
 The browser version is a set of static files. Download [`ibisOffice-0.8.9-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip) (the browser version of [v0.8.9](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.9)), check it with [its SHA-256](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip.sha256), and put it on your own web server. Your page loads it in an `iframe` and hands ibisOffice a few functions (list, open and save files); your system keeps the files, the sign-in and the permissions, and the editor runs in the visitor's browser.
 
 [Embedding the browser version](docs/web-embedding.md) has the download and check, the minimal setup (where to put the files, the server settings, the smallest page that opens a document) and every option, function and event.

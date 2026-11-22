@@ -180,6 +180,14 @@ ibisOffice は、世界でトップクラスのオープンソースのオフィ
 
 ## Web システムに組み込む
 
+いちばん手軽なのは npm です。次のコマンド 1 つで、ブラウザー版をプロジェクトに入れられます。
+
+```sh
+npm install @ibisjp/ibis-office
+```
+
+パッケージ [`@ibisjp/ibis-office`](https://www.npmjs.com/package/@ibisjp/ibis-office) には、エディターと、ご自身のページが読み込むローダーが入っています。`npx ibis-office-copy public/ibisoffice` でエディターをサーバーが配るフォルダーに写し、新しい版は `npm update` で取り込めます。npm を使わない場合は、次のアーカイブを使います。
+
 ブラウザー版は静的なファイルの集まりです。[`ibisOffice-0.8.9-Web.zip`](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip)（[v0.8.9](https://github.com/ibisjp/ibis-office/releases/tag/v0.8.9) のブラウザー版）をダウンロードし、[SHA-256](https://github.com/ibisjp/ibis-office/releases/download/v0.8.9/ibisOffice-0.8.9-Web.zip.sha256) で確かめて、自分の Web サーバーに置きます。ご自身のページが `iframe` で読み込み、ファイルの一覧・開く・保存の関数をいくつか ibisOffice に渡します。ファイル・ログイン・権限はご自身のシステムが持ち、エディターは閲覧者のブラウザーの中で動きます。
 
 ダウンロードと確認、最小限の設置（ファイルの置き場所・サーバーの設定・文書を開く最小のページ）、すべてのオプション・関数・イベントは、[ブラウザー版の組み込み](web-embedding-ja.md)をご覧ください。
