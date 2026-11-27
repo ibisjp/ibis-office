@@ -14,7 +14,7 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | Lucide | アイコン（`assets/icons/`） | ISC |
 | Material Symbols（Google） | タイトル行・メニュー・ツールバー・サイドバーのアイコン（実行ファイルに埋め込み） | Apache-2.0 |
 
-## Rust の部品（496 件）
+## Rust の部品（508 件）
 
 | 名前 | 版 | ライセンス | 入手先 |
 |---|---|---|---|
@@ -41,7 +41,9 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | base62 | 2.2.6 | MIT | https://github.com/fbernier/base62 |
 | base64 | 0.22.1 | MIT OR Apache-2.0 | https://github.com/marshallpierce/rust-base64 |
 | base64 | 0.23.1 | MIT OR Apache-2.0 | https://github.com/marshallpierce/rust-base64 |
+| bit-set | 0.8.0 | Apache-2.0 OR MIT | https://github.com/contain-rs/bit-set |
 | bit-set | 0.9.1 | Apache-2.0 OR MIT | https://github.com/contain-rs/bit-set |
+| bit-vec | 0.8.0 | Apache-2.0 OR MIT | https://github.com/contain-rs/bit-vec |
 | bit-vec | 0.9.1 | Apache-2.0 OR MIT | https://github.com/contain-rs/bit-vec |
 | bit_field | 0.10.3 | Apache-2.0/MIT | https://github.com/phil-opp/rust-bit-field |
 | bitflags | 1.3.2 | MIT/Apache-2.0 | https://github.com/bitflags/bitflags |
@@ -82,6 +84,7 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | ctor | 1.0.13 | Apache-2.0 OR MIT | https://github.com/mmastrac/linktime |
 | data-url | 0.3.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
+| delharc | 0.8.0 | MIT OR Apache-2.0 | https://github.com/royaltm/rust-delharc |
 | der | 0.7.10 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats/tree/master/der |
 | derive_more | 2.1.1 | MIT | https://github.com/JelteF/derive_more |
 | derive_more-impl | 2.1.1 | MIT | https://github.com/JelteF/derive_more |
@@ -116,6 +119,7 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | event-listener | 5.4.2 | Apache-2.0 OR MIT | https://github.com/smol-rs/event-listener |
 | event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT | https://github.com/smol-rs/event-listener-strategy |
 | exr | 1.74.2 | BSD-3-Clause | https://github.com/johannesvollmer/exrs |
+| fancy-regex | 0.17.0 | MIT | https://github.com/fancy-regex/fancy-regex |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/fastrand |
 | fax | 0.2.7 | MIT | https://github.com/pdf-rs/fax |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 | https://github.com/image-rs/fdeflate |
@@ -180,6 +184,7 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | gpui-pre-ztracing | 0.3.6 | Apache-2.0 | https://github.com/zed-industries/zed |
 | gpui-pre-ztracing-macro | 0.3.6 | Apache-2.0 | https://github.com/zed-industries/zed |
 | granit-parser | 1.3.0 | MIT OR Apache-2.0 | https://github.com/bourumir-wyngs/granit-parser |
+| granit-parser | 2.2.0 | MIT OR Apache-2.0 | https://github.com/bourumir-wyngs/granit-parser |
 | group | 0.13.0 | MIT/Apache-2.0 | https://github.com/zkcrypto/group |
 | half | 2.7.1 | MIT OR Apache-2.0 | https://github.com/VoidStarKat/half-rs |
 | harfrust | 0.5.2 | MIT | https://github.com/harfbuzz/harfrust |
@@ -202,12 +207,16 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | http | 1.5.0 | MIT OR Apache-2.0 | https://github.com/hyperium/http |
 | http-body | 1.1.0 | MIT | https://github.com/hyperium/http-body |
 | ibis-calc | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-calc |
+| ibis-jtd | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-jtd |
 | ibis-m-lang | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-m-lang |
+| ibis-odf | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-odf |
 | ibis-ofd | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-ofd |
 | ibis-office-macros | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-office-macros |
 | ibis-office-pdf | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-office-pdf |
 | ibis-ooxml | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-ooxml |
 | ibis-pdf | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-pdf |
+| ibis-xdw | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-xdw |
+| ibis-xdw-read | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-xdw-read |
 | ibis-xps | 0.8.0 | AGPL-3.0-only | https://crates.io/crates/ibis-xps |
 | icu_collections | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | icu_locale_core | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
@@ -250,6 +259,7 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | kurbo | 0.13.1 | Apache-2.0 OR MIT | https://github.com/linebender/kurbo |
 | lazy_static | 1.5.0 | MIT OR Apache-2.0 | https://github.com/rust-lang-nursery/lazy-static.rs |
 | lebe | 0.5.3 | BSD-3-Clause | https://github.com/johannesvollmer/lebe |
+| lewton | 0.10.2 | MIT OR Apache-2.0 | https://github.com/RustAudio/lewton |
 | libbz2-rs-sys | 0.2.5 | bzip2-1.0.6 | https://github.com/trifectatechfoundation/libbzip2-rs |
 | libc | 0.2.189 | MIT OR Apache-2.0 | https://github.com/rust-lang/libc |
 | libm | 0.2.16 | MIT | https://github.com/rust-lang/compiler-builtins |
@@ -292,6 +302,7 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | https://github.com/rust-num/num-traits |
 | num_cpus | 1.17.0 | MIT OR Apache-2.0 | https://github.com/seanmonstar/num_cpus |
 | object | 0.37.3 | Apache-2.0 OR MIT | https://github.com/gimli-rs/object |
+| ogg | 0.8.0 | BSD-3-Clause | https://github.com/RustAudio/ogg |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | https://github.com/matklad/once_cell |
 | parking | 2.2.1 | Apache-2.0 OR MIT | https://github.com/smol-rs/parking |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
@@ -372,6 +383,7 @@ ibisOffice の Web 版（`www/`）に含まれる、ibisOffice 以外の部品�
 | self_cell | 1.3.0 | Apache-2.0 OR GPL-2.0-only | https://github.com/Voultapher/self_cell |
 | serde | 1.0.229 | MIT OR Apache-2.0 | https://github.com/serde-rs/serde |
 | serde-saphyr | 1.3.0 | MIT OR Apache-2.0 | https://github.com/bourumir-wyngs/serde-saphyr |
+| serde-saphyr | 2.2.0 | MIT OR Apache-2.0 | https://github.com/bourumir-wyngs/serde-saphyr |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | https://github.com/serde-rs/serde |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | https://github.com/serde-rs/serde |
 | serde_derive_internals | 0.30.0 | MIT OR Apache-2.0 | https://github.com/serde-rs/serde |
@@ -783,7 +795,9 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 - **base62 2.2.6**：Copyright (c) 2015 François Bernier
 - **base64 0.22.1**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2015 Alice Maz
 - **base64 0.23.1**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2025 Alice Maz, Marshall Pierce
+- **bit-set 0.8.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2023 The Rust Project Developers
 - **bit-set 0.9.1**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2026 The Rust Project Developers
+- **bit-vec 0.8.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2023 The Rust Project Developers
 - **bit-vec 0.9.1**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2023 The Rust Project Developers
 - **bit_field 0.10.3**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2016 Philipp Oppermann
 - **bitflags 1.3.2**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2014 The Rust Project Developers
@@ -824,6 +838,7 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 - **crypto-common 0.1.7**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2021 RustCrypto Developers
 - **ctor 1.0.13**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **data-url 0.3.2**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2013-2025 The rust-url developers
+- **delharc 0.8.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright 2023 Rafal Michalski
 - **der 0.7.10**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2020-2023 The RustCrypto Project Developers
 - **derive_more 2.1.1**：Copyright (c) 2016 Jelte Fennema
 - **derive_more-impl 2.1.1**：Copyright (c) 2016 Jelte Fennema
@@ -846,6 +861,7 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 - **event-listener 5.4.2**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **event-listener-strategy 0.5.4**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **exr 1.74.2**：Copyright (c) Contributors to the OpenEXR Project. All rights reserved. / Copyright (c) Contributors to the exrs Project. All rights reserved.
+- **fancy-regex 0.17.0**：Copyright 2015 The Fancy Regex Authors.
 - **fastrand 2.5.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **fax 0.2.7**：Copyright © 2021 The pdf-rs contributers.
 - **fdeflate 0.3.7**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
@@ -966,6 +982,7 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 - **kurbo 0.13.1**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2018 Raph Levien
 - **lazy_static 1.5.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2010 The Rust Project Developers
 - **lebe 0.5.3**：Copyright (c) 2022 Contributors to the lebe Project. All rights reserved.
+- **lewton 0.10.2**：Copyright (c) 2016 est31 <MTest31@outlook.com> and contributors / copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **libbz2-rs-sys 0.2.5**：Copyright (C) 1996-2021 Julian R Seward. / Copyright (C) 2019-2020 Federico Mena Quintero / Copyright (C) 2021 Micah Snyder
 - **libc 0.2.189**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) The Rust Project Developers
 - **libm 0.2.16**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2018 Jorge Aparicio / copyright: / Copyright © 2005-2020 Rich Felker, et al. / Copyright © 1993,2004 Sun Microsystems or / Copyright © 2003-2011 David Schultz or / Copyright © 2003-2009 Steven G. Kargl or / Copyright © 2003-2009 Bruce D. Evans or / Copyright © 2008 Stephen L. Moshier or / Copyright © 2017-2018 Arm Limited / Copyright notices are retained in src/* files where relevant.
@@ -1001,6 +1018,7 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 - **num-traits 0.2.19**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2014 The Rust Project Developers
 - **num_cpus 1.17.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2015-2025 Sean McArthur
 - **object 0.37.3**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2015 The Gimli Developers
+- **ogg 0.8.0**：Copyright (c) 2016-2017 est31 <MTest31@outlook.com> and contributors / Copyright (c) 2002-2015 Xiph.org Foundation
 - **once_cell 1.21.4**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **parking 2.2.1**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright 2014-2020 The Rust Project Developers
 - **parking_lot 0.12.5**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (c) 2016 The Rust Project Developers
@@ -1074,6 +1092,7 @@ Copyright Google LLC. Apache License 2.0（本文は下の「ライセンス本�
 - **self_cell 1.3.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works / Copyright (C) 1989, 1991 Free Software Foundation, Inc., / copyright notice and disclaimer of warranty; keep intact all the
 - **serde 1.0.229**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **serde-saphyr 1.3.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
+- **serde-saphyr 2.2.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **serde_core 1.0.229**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **serde_derive 1.0.229**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
 - **serde_derive_internals 0.30.0**：copyright notice that is included in or attached to the work / copyright license to reproduce, prepare Derivative Works of, / (c) You must retain, in the Source form of any Derivative Works
@@ -1928,6 +1947,47 @@ For these and/or other purposes and motivations, and without any expectation of 
      c. Affirmer disclaims responsibility for clearing rights of other persons that may apply to the Work or any use thereof, including without limitation any person's Copyright and Related Rights in the Work. Further, Affirmer disclaims responsibility for obtaining any necessary consents, permissions or other rights required for any use of the Work.
 
      d. Affirmer understands and acknowledges that Creative Commons is not a party to this document and has no duty or obligation with respect to this CC0 or use of the Work.
+```
+
+### ogg 0.8.0（BSD-3-Clause）
+
+```text
+NOTE:
+The full list of contributors can be obtained by looking
+at the VCS log (originally, this crate was git versioned,
+there you can do "git shortlog -sn" for this task).
+
+License text
+------------
+Copyright (c) 2016-2017 est31 <MTest31@outlook.com> and contributors
+Copyright (c) 2002-2015 Xiph.org Foundation
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ### potential_utf 0.1.6（Unicode-3.0）

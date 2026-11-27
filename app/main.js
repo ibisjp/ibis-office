@@ -183,7 +183,7 @@ function pickFile(accept) {
     return new Promise((resolve, reject) => {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = accept ?? '.pptx,.xlsx,.docx,.ppt,.xls,.doc,.md,.markdown,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        input.accept = accept ?? '.jtd,.jtt,.jttc,.pptx,.xlsx,.docx,.ppt,.xls,.doc,.md,.markdown,.xdw,.xbd,.pdf,.ofd,.xps,.oxps,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
         input.addEventListener('change', () => {
             const file = input.files?.[0];
             if (!file) {
@@ -589,6 +589,16 @@ window.ibisOfficeFontsInstalled = fontsInstalled;
 window.ibisOfficeFontDownload = fontDownload;
 window.ibisOfficeFontsLoad = fontsLoad;
 window.ibisOfficeFontLoadOne = fontLoadOne;
+function downloadJtdConversion(name, bytes, type) {
+    const url = URL.createObjectURL(new Blob([bytes], { type }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+window.ibisOfficeDownloadDocx = (name, bytes) => downloadJtdConversion(name, bytes, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+window.ibisOfficeDownloadHtml = (name, bytes) => downloadJtdConversion(name, bytes, 'text/html;charset=utf-8');
 window.ibisOfficeEmbedAction = embedAction;
 window.ibisOfficeSaveFile = saveFile;
 window.ibisOfficeBlankTab = blankTab;
